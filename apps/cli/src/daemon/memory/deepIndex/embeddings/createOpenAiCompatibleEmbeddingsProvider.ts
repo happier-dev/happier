@@ -1,3 +1,5 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { z } from 'zod/mini';
 
 import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
@@ -8,11 +10,11 @@ import { withAbortTimeout } from '@/diagnostics/httpClient';
 
 import type { EmbeddingsProvider } from './embeddingsProviderTypes';
 
-const EmbeddingsResponseSchema = z.object({
+const EmbeddingsResponseSchema = lazyZodSchema(() => z.object({
   data: z.array(z.object({
     embedding: z.array(z.number()),
   })),
-});
+}));
 
 function buildEmbeddingsUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, '');
@@ -61,7 +63,7 @@ export async function createOpenAiCompatibleEmbeddingsProvider(params: Readonly<
         const requestSignal = callerSignal
           ? AbortSignal.any([callerSignal, signal])
           : signal;
-        return await fetch(buildEmbeddingsUrl(baseUrl), {
+        return await fetchWithCredentialRedirectRefusal(buildEmbeddingsUrl(baseUrl), {
           method: 'POST',
           headers: {
             'content-type': 'application/json',

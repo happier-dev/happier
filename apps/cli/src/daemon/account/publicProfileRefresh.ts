@@ -21,7 +21,6 @@ export function startPublicProfileRefresh(params: Readonly<{
   actions: PublicProfileRefreshActions;
   scheduler: DaemonServerWorkScheduler;
   signal: AbortSignal;
-  isCurrent(): Promise<boolean>;
   onError?: (error: unknown) => void;
 }>): SingleFlightIntervalLoopHandle {
   const dayMs = 24 * 60 * 60 * 1_000;
@@ -31,7 +30,6 @@ export function startPublicProfileRefresh(params: Readonly<{
     onError: params.onError,
     task: async loopSignal => {
       const signal = AbortSignal.any([loopSignal, params.signal]);
-      const isCurrent = async () => !signal.aborted && await params.isCurrent() && !signal.aborted;
       let nextAutomaticRunAfterMs: number | null = dayMs;
       const outcome = await params.scheduler.enqueue({
         key: 'publicProfileRefresh',
@@ -40,13 +38,13 @@ export function startPublicProfileRefresh(params: Readonly<{
         payload: null,
         payloadBytes: 0,
         run: async () => {
-          if (!await isCurrent()) {
+          if (signal.aborted) {
             nextAutomaticRunAfterMs = null;
             return { status: 'suppressed', reason: 'account_retired' };
           }
           const context = { surface: 'cli', signal } as const;
           const state = await params.actions.readMaintenanceState(context);
-          if (!await isCurrent()) {
+          if (signal.aborted) {
             nextAutomaticRunAfterMs = null;
             return { status: 'suppressed', reason: 'account_retired' };
           }
@@ -57,7 +55,7 @@ export function startPublicProfileRefresh(params: Readonly<{
             return { status: 'suppressed', reason: 'not_due' };
           }
           const result = await params.actions.refresh(context);
-          if (!await isCurrent()) {
+          if (signal.aborted) {
             nextAutomaticRunAfterMs = null;
             return { status: 'suppressed', reason: 'account_retired' };
           }

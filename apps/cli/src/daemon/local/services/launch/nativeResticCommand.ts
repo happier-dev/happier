@@ -103,7 +103,7 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
         const construct = () => construction ??= (async () => {
             signal?.throwIfAborted();
             createLaunch = await authorizePluginExecLaunchForHost(owner.exec, { executable: tool.executable, args: createArgs,
-                cwd: owner.source.rootPath, deploymentEnv: input.destinationAttachment }, signal ? { signal } : undefined);
+                cwd: owner.source.rootPath, deploymentEnv: input.destinationAttachment }, { agentIsolation: null, signal });
             await createLaunch.recheckInputs?.();
             signal?.throwIfAborted();
             constructorDispatched = true;
@@ -172,7 +172,7 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
                     const id = await construct();
                     signal?.throwIfAborted();
                     startLaunch = await authorizePluginExecLaunchForHost(owner.exec, { executable: tool.executable,
-                        args: ['start', '--attach', '--interactive', id], cwd: owner.source.rootPath }, signal ? { signal } : undefined);
+                        args: ['start', '--attach', '--interactive', id], cwd: owner.source.rootPath }, { agentIsolation: null, signal });
                     const created = createLaunch!;
                     if (startLaunch.secretRedactionLease) created.secretRedactionLease?.add(startLaunch.secretRedactionLease.values());
                     return { ...startLaunch, secretRedactionLease: created.secretRedactionLease,

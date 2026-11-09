@@ -78,17 +78,30 @@ const persistedProviderBinding = {
 } as const;
 
 describe('resolveSessionRuntimeSnapshot', () => {
+  it('restores the persisted launch profile for resume and preserves an explicit no-profile choice', async () => {
+    const { resolveSessionRuntimeSnapshot } = await import('./resolveSessionRuntimeSnapshot');
+    const incomingOptions: SpawnSessionOptions = { directory: '/repo', existingSessionId: 'session' };
+    const persistedMetadata = { profileId: 'focused' };
+    expect(resolveSessionRuntimeSnapshot({ incomingOptions, persistedMetadata }).spawnOptions.profileId).toBe('focused');
+    expect(resolveSessionRuntimeSnapshot({ incomingOptions: { ...incomingOptions, profileId: '' }, persistedMetadata }).spawnOptions.profileId).toBe('');
+    expect(resolveSessionRuntimeSnapshot({ incomingOptions,
+      trackedSpawnOptions: { ...incomingOptions, profileId: 'tracked' },
+    }).spawnOptions.profileId).toBe('tracked');
+  });
+
   it('retains requester attribution only for the same Session and never retains request admission callbacks', async () => {
     const { resolveSessionRuntimeSnapshot } = await import('./resolveSessionRuntimeSnapshot');
     const attribution = { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' };
     const incomingOptions: SpawnSessionOptions = { directory: '/repo', existingSessionId: 'session',
-      verifyRequesterMachineAdmissionCurrent: async () => true };
+      verifyRequesterMachineAdmissionCurrent: async () => true,
+      spawnActionContext: { actionRequestId: 'original-spawn-only' } };
     const trackedSpawnOptions: SpawnSessionOptions = { directory: '/repo', existingSessionId: 'session',
       requesterWorkAttributionV1: attribution };
     const recovered = resolveSessionRuntimeSnapshot({ incomingOptions, trackedSpawnOptions,
       persistedMetadata: { requesterWorkAttributionV1: { ...attribution, accountId: 'forged' } } }).spawnOptions;
     expect(recovered.requesterWorkAttributionV1).toEqual(attribution);
     expect(recovered.verifyRequesterMachineAdmissionCurrent).toBeUndefined();
+    expect(recovered.spawnActionContext).toBeUndefined();
     expect(resolveSessionRuntimeSnapshot({ incomingOptions,
       trackedSpawnOptions: { ...trackedSpawnOptions, existingSessionId: 'other-session' },
       persistedMetadata: { requesterWorkAttributionV1: attribution },

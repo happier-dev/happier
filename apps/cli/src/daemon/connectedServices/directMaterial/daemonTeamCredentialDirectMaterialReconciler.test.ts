@@ -1,8 +1,3 @@
-import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
-import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
-import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
-import { createConnectedAccountTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse, type ActionExecutorDeps } from '@happier-dev/protocol';
@@ -14,6 +9,11 @@ import {
   type TeamCredentialResourceSummaryV1,
 } from '@happier-dev/protocol/teams';
 import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
+import { createConnectedAccountTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { logger } from '@/utils/logger';
 
 vi.mock('./teamCredentialDirectMaterialHttp', () => ({
@@ -281,7 +281,6 @@ describe('daemon Team credential direct-material reconciler', () => {
     } finally { await admitted.dispose(); }
   });
 
-
   it('does no resource or account reads for 25 unrelated and cleanup-only publications across 20 resources and 5 sources', async () => {
     resetActiveAccountSettingsSnapshotForTests();
     const resources = Array.from({ length: 20 }, (_, index) => TeamCredentialResourceSummaryV1Schema.parse({
@@ -343,11 +342,12 @@ describe('daemon Team credential direct-material reconciler', () => {
     try {
       // Establish that the fixture actually reaches every owned source.
       await owner.reconcile('startup');
-      expect(homeDomainAction).toHaveBeenCalledTimes(2);
+      // C1-02 count RED/GREEN:101 Teams/351 resources,103 Home reads→1; real source changes below still reconcile.
+      expect(homeDomainAction).toHaveBeenCalledTimes(1);
       expect(listAccounts).toHaveBeenCalledTimes(5);
       expect(passRecords()).toEqual([['[DAEMON RUN] Team credential direct-material pass', {
         wakeReason: 'startup', observerCurrent: true, selectedServiceCount: 5,
-        readsIssued: { teamPages: 1, resourcePages: 1, qualifiedAccountLists: 5,
+        readsIssued: { teamPages: 0, resourcePages: 1, qualifiedAccountLists: 5,
           qualifiedGroupReads: 0, preparationPages: 20, censusPages: 20 },
       }]]);
       homeDomainAction.mockClear(); listAccounts.mockClear();
@@ -413,7 +413,7 @@ describe('daemon Team credential direct-material reconciler', () => {
       commitActiveProviderConnectionsCatalog({ ...incumbent, catalog: { ...providerCatalog, revision: 27,
         catalog: { ...providerCatalog.catalog, secretBindingsByConnectionId: { [ProviderConnectionIdSchema.parse('pc_a')]: { account: { apiKey: 'secret' } } } } } });
       await Promise.all(passes);
-      expect(homeDomainAction).toHaveBeenCalledTimes(2);
+      expect(homeDomainAction).toHaveBeenCalledTimes(1);
       expect(listAccounts).toHaveBeenCalledTimes(5);
       expect(sourceChanges.mock.calls.at(-1)?.[2]).toEqual({
         predicates: ['provider-catalog-authority'],
@@ -423,17 +423,17 @@ describe('daemon Team credential direct-material reconciler', () => {
       expect(passRecords().at(-1)?.[1]).toEqual({
         wakeReason: 'source-snapshot', observerCurrent: true, selectedServiceCount: 5,
         ...sourceChanges.mock.calls.at(-1)?.[2],
-        readsIssued: { teamPages: 1, resourcePages: 1, qualifiedAccountLists: 5,
+        readsIssued: { teamPages: 0, resourcePages: 1, qualifiedAccountLists: 5,
           qualifiedGroupReads: 0, preparationPages: 20, censusPages: 20 },
       });
       commitActiveConnectedAccountCatalog({ ...incumbent, key: 'configurations', catalog: { ...configurationCatalog, revision: 2 } });
       await Promise.all(passes);
-      expect(homeDomainAction).toHaveBeenCalledTimes(4);
+      expect(homeDomainAction).toHaveBeenCalledTimes(2);
       expect(listAccounts).toHaveBeenCalledTimes(10);
       expect(sourceChanges.mock.calls.at(-1)?.[2].predicates).toEqual(['connected-configuration-revision']);
       commitActiveProviderConnectionsCatalog({ ...incumbent, catalog: { status: 'unavailable', reason: 'forbidden' } });
       await Promise.all(passes);
-      expect(homeDomainAction).toHaveBeenCalledTimes(6);
+      expect(homeDomainAction).toHaveBeenCalledTimes(3);
       expect(listAccounts).toHaveBeenCalledTimes(15);
 
       // One refused service read must not be repeated for each resource in a
@@ -446,7 +446,7 @@ describe('daemon Team credential direct-material reconciler', () => {
       expect(passRecords().at(-1)?.[1]).toEqual({
         wakeReason: 'account-changes', observerCurrent: false, selectedServiceCount: 5,
         accountInvalidationReason: 'changes',
-        readsIssued: { teamPages: 1, resourcePages: 1, qualifiedAccountLists: 5,
+        readsIssued: { teamPages: 0, resourcePages: 1, qualifiedAccountLists: 5,
           qualifiedGroupReads: 0, preparationPages: 20, censusPages: 20 },
       });
       listAccounts.mockResolvedValue({ accounts: [] });
@@ -466,12 +466,12 @@ describe('daemon Team credential direct-material reconciler', () => {
       // A failed administration read is still one attributed pass; no payload
       // or error detail may leak into this bounded cost record.
       homeDomainAction.mockRejectedValueOnce(new Error('private transport detail'));
-      await expect(owner.reconcile('account-reconnect')).rejects.toThrow('private transport detail');
+      await expect(owner.reconcile('account-reconnect')).rejects.toMatchObject({ code: 'provider_catalog_unavailable', phase: 'resource_catalog' });
       expect(passRecords()).toHaveLength(8);
       expect(passRecords().at(-1)?.[1]).toEqual({
         wakeReason: 'account-reconnect', observerCurrent: false, selectedServiceCount: 0,
         accountInvalidationReason: 'reconnect',
-        readsIssued: { teamPages: 1, resourcePages: 0, qualifiedAccountLists: 0,
+        readsIssued: { teamPages: 0, resourcePages: 1, qualifiedAccountLists: 0,
           qualifiedGroupReads: 0, preparationPages: 0, censusPages: 0 },
       });
     } finally {

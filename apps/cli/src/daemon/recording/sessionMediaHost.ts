@@ -18,7 +18,7 @@ export function createRecordingSessionMediaHost(input: Readonly<{
   currentMachineHost: string;
   currentMachineHomeDir: string;
   signal?: AbortSignal;
-  mutationCustody: DaemonSessionMutationCustody;
+  mutationCustody: Pick<DaemonSessionMutationCustody, 'stageTranscriptMessage'>;
   title: string;
 }>) {
   function custody(context?: RecordingOperationContext) {

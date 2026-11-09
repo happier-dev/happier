@@ -67,6 +67,8 @@ function isPortReleased(probe: TerminateListenerProbeResult, identity: Terminate
 
 function refusedOutcome(outcome: ProcessTreeTerminationOutcome): LocalServiceActionExecutionOutcome {
     switch (outcome.reason) {
+        case 'native_service_control_required': return { status: 'denied', reasonCode: 'native_service_control_required' };
+        case 'ownership_unavailable': return { status: 'denied', reasonCode: 'process_identity_unavailable' };
         case 'identity_changed': return { status: 'denied', reasonCode: 'identity_changed' };
         case 'protected_process': return { status: 'denied', reasonCode: 'protected_process' };
         case 'permission_denied': return { status: 'failed', reasonCode: 'terminate_permission_denied' };
@@ -109,8 +111,8 @@ export function createTerminateDetectedService(
                 tree: execution?.tree ?? true,
                 policy: request.force ? 'kill' : 'stop',
                 rootKind: 'dev_server',
-                ...(execution ? { authorizeSnapshot: async snapshot => !execution.signal?.aborted
-                    && (!execution.authorizeSnapshot || await execution.authorizeSnapshot(snapshot))
+                ...(execution ? { authorizeSnapshot: async (snapshot, targets) => !execution.signal?.aborted
+                    && (!execution.authorizeSnapshot || await execution.authorizeSnapshot(snapshot, targets))
                     && !execution.signal?.aborted,
                     authorizeSignal: async () => !execution.signal?.aborted
                         && (!execution.authorizeSignal || await execution.authorizeSignal()) && !execution.signal?.aborted } : {}),

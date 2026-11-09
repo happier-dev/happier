@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 import {
   CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS,
@@ -54,6 +57,50 @@ function installGlobalFetchMock<TArgs extends readonly unknown[]>(
 }
 
 describe('serviceRefreshers', () => {
+  it.each([
+    { status: 307, sameOrigin: true },
+    { status: 307, sameOrigin: false },
+    { status: 308, sameOrigin: false },
+    { status: 302, sameOrigin: false },
+  ])('scopes the real OAuth secret-body redirect ($status, same-origin=$sameOrigin)', async ({ status, sameOrigin }) => {
+    vi.unstubAllGlobals();
+    const received: string[] = [];
+    const server = createServer(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) body += String(chunk);
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
+      if (request.url === '/oauth/token') {
+        response.writeHead(status, { location: `http://${sameOrigin ? '127.0.0.1' : '127.0.0.2'}:${address.port}/result` }).end();
+      } else {
+        received.push(body);
+        response.writeHead(200, { 'content-type': 'application/json' }).end('{"access_token":"refreshed-access"}');
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, '0.0.0.0', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected TCP listener');
+    const env = createEnvKeyScope(['HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL']);
+    env.patch({ HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL: `http://127.0.0.1:${address.port}/oauth/token` });
+    try {
+      const operation = refreshReleasedPeerLegacyConnectedAccountOauthTokens({ serviceId: 'openai-codex',
+        refreshToken: 'synthetic-refresh-token', now: 1000, runtimeFetch: createGlobalFetchRuntime() });
+      if (!sameOrigin && status !== 302) {
+        await expect(operation).rejects.toMatchObject({ code: 'credential_request_redirect_refused', retryable: false, status });
+        expect(received).toEqual([]);
+      } else {
+        await expect(operation).resolves.toMatchObject({ accessToken: 'refreshed-access' });
+        expect(received).toHaveLength(1);
+        if (sameOrigin) expect(received[0]).toContain('synthetic-refresh-token');
+        else expect(received[0]).toBe('');
+      }
+    } finally {
+      env.restore();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it('allows slow-but-valid provider OAuth refresh responses', () => {
     expect(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS).toBe(120_000);
   });

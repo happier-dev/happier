@@ -4,9 +4,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { StoredCredentials } from '@/persistence';
-import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { usageLimitRecoveryDisabledResult } from '@/features/usageLimitRecoveryFeatureGate';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
@@ -33,22 +31,15 @@ type RestoreSessionCommonInput = Readonly<{
 type RestoreSessionInput = RestoreSessionCommonInput & Readonly<{ sessionId: string }>;
 type RestoreSessionsInput = RestoreSessionCommonInput & Readonly<{ sessions: readonly RawSessionListRow[] }>;
 
-function recoveryEnabled(input: RestoreSessionCommonInput): boolean {
-  const serverSnapshot = input.getServerFeaturesSnapshot();
-  return input.isCurrent() && resolveCliFeatureDecision({ featureId: 'sessions.usageLimitRecovery',
-    env: process.env, ...(serverSnapshot ? { serverSnapshot } : {}),
-  }).state === 'enabled';
-}
-
 async function readRestorableSessionRecord(
   input: RestoreSessionInput,
   rawSession: RawSessionListRow,
   accountEncryptionCurrentness: AccountEncryptionCurrentnessResponse,
 ): Promise<
   | Readonly<{ status: 'ready'; recovery: SessionUsageLimitRecoveryV1; active: boolean; interrupted: boolean }>
-  | Readonly<{ status: 'disabled' | 'stale' | 'unavailable' }>
+  | Readonly<{ status: 'stale' | 'unavailable' }>
 > {
-  if (!recoveryEnabled(input) || !input.isCurrent()) return { status: 'disabled' };
+  if (!input.isCurrent()) return { status: 'stale' };
   if (rawSession.id !== input.sessionId
     || readSessionAccessProjectionRoleV1(rawSession) !== 'owner' || rawSession.archivedAt != null
     || rawSession.latestTurnStatus === 'completed' || rawSession.latestTurnStatus === 'cancelled') return { status: 'stale' };
@@ -73,9 +64,9 @@ async function readRestorableSessionRecord(
 
 async function readRestorableSession(input: RestoreSessionInput): Promise<
   | Readonly<{ status: 'ready'; recovery: SessionUsageLimitRecoveryV1; active: boolean; interrupted: boolean }>
-  | Readonly<{ status: 'disabled' | 'stale' | 'unavailable' }>
+  | Readonly<{ status: 'stale' | 'unavailable' }>
 > {
-  if (!recoveryEnabled(input)) return { status: 'disabled' };
+  if (!input.isCurrent()) return { status: 'stale' };
   const serverFeaturesSnapshot = input.getServerFeaturesSnapshot();
   const target = await resolveSessionTransportContext({ reason: 'session-control', credentials: input.credentials, idOrPrefix: input.sessionId,
     ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
@@ -135,11 +126,17 @@ export function createInactiveUsageLimitRecoveryCheckOwner() {
     if (initial.active || !initial.interrupted) return;
     const expected = initial.recovery;
     const existing = runnersBySessionId.get(input.sessionId);
-    if (existing && hasSameUsageLimitRecoveryIdentity(existing, expected)) return;
+    if (existing && hasSameUsageLimitRecoveryIdentity(existing, expected)) {
+      const scheduled = input.scheduler.read(input.sessionId);
+      if (scheduled && isPendingUsageLimitRecoveryStatus(scheduled.status)
+        && hasSameUsageLimitRecoveryIdentity(scheduled, expected) && scheduled.nextCheckAtMs === null) {
+        await input.scheduler.checkNow({ sessionId: input.sessionId });
+      }
+      return;
+    }
     await schedule({ sessionId: input.sessionId, recovery: expected, scheduler: input.scheduler,
       runCheckNow: async () => {
         const current = await readRestorableSession(input);
-        if (current.status === 'disabled') return usageLimitRecoveryDisabledResult();
         if (current.status === 'unavailable') return { ok: false, status: 'unavailable', errorCode: 'usage_limit_recovery_context_unavailable' };
         const scheduled = input.scheduler.read(input.sessionId);
         if (current.status !== 'ready' || !hasSameUsageLimitRecoveryIdentity(current.recovery, expected)
@@ -147,7 +144,6 @@ export function createInactiveUsageLimitRecoveryCheckOwner() {
           || !hasSameUsageLimitRecoveryIdentity(scheduled, expected)) {
           return { ok: false, status: 'cancelled', errorCode: 'usage_limit_recovery_attempt_superseded' };
         }
-        if (!recoveryEnabled(input)) return usageLimitRecoveryDisabledResult();
         // Active adoption delegates to the registered live owner after exact
         // identity proof; only initial discovery is restricted to inactive Sessions.
         return await input.runCheckNow(input.sessionId);
@@ -164,8 +160,8 @@ export function createInactiveUsageLimitRecoveryCheckOwner() {
     schedule,
     /** Reconnect uses its canonical owner-only inventory and one Account witness. */
     restoreSessions: async (input: RestoreSessionsInput): Promise<void> => {
-      if (!recoveryEnabled(input) || input.sessions.length === 0) return;
-      const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({ token: input.credentials.token });
+      if (!input.isCurrent() || input.sessions.length === 0) return;
+      const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({ credentials: input.credentials, token: input.credentials.token });
       if (!input.isCurrent()) return;
       for (const rawSession of input.sessions) {
         if (!input.isCurrent()) return;

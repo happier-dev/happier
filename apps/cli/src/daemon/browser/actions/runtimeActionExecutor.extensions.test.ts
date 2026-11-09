@@ -58,6 +58,14 @@ describe('browser extension runtime dispatch', () => {
         id: expect.stringMatching(/^[a-p]{32}$/), name: 'Approved local fixture', version: '1.0', enabled: true,
         permissions: ['storage'], source: { kind: 'unpacked', directory },
       }] });
+      await reopenedStore.registerPersistentProfile({ profileId: 'empty', storageMode: 'user',
+        owner: { kind: 'user', id: 'person' }, displayName: 'Empty profile' });
+      expect(await executor.execute('action.options.resolve', { actionId: 'browser.extensions.install',
+        fieldPath: 'profileId', draftInput: { machineId: 'machine' } }, { ...context,
+        surface: 'ui', authority: 'present_user' }))
+        .toMatchObject({ ok: true, result: { options: expect.arrayContaining([
+          { value: 'personal', label: 'personal' }, { value: 'empty', label: 'Empty profile' },
+        ]) } });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

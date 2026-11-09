@@ -10,7 +10,6 @@ export type GuardSessionStopReceipt = Readonly<{
 export function createGuardSessionStopReceipt(input: Readonly<{
   records: ReturnType<typeof createSessionSystemRecordPayloadService>;
   at: number;
-  isCurrent(): Promise<boolean>;
   nowMs?: () => number;
   onSettled?(record: SessionStopRecordV1): Promise<void>;
 }>): GuardSessionStopReceipt {
@@ -22,7 +21,6 @@ export function createGuardSessionStopReceipt(input: Readonly<{
       if (pending) await pending;
       if (settled === 'stopped' || settled === 'cancelled' || settled === status || settled !== 'requested' && status !== 'stopped') return;
       pending = (async () => {
-        if (!await input.isCurrent()) throw new Error('guard_stop_receipt_authority_unavailable');
         const record = await input.records.read({ namespace: 'activity', localId });
         // A refused pre-stop publication may definitively have created no record. Never create one at exit.
         if (!record) { settled = status; return; }
@@ -32,7 +30,6 @@ export function createGuardSessionStopReceipt(input: Readonly<{
         if (facts.status === 'stopped' || facts.status === 'cancelled' || facts.status === status) {
           await input.onSettled?.(facts); settled = facts.status; return;
         }
-        if (!await input.isCurrent()) throw new Error('guard_stop_receipt_authority_unavailable');
         const result = { ...facts, status, settledAt: (input.nowMs ?? Date.now)() };
         await input.records.write({ namespace: 'activity', kind: 'session_stop.v1', localId, payload: result });
         await input.onSettled?.(result);

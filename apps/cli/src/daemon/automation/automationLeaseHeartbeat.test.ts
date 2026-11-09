@@ -4,6 +4,57 @@ import { startAutomationLeaseHeartbeat } from './automationLeaseHeartbeat';
 afterEach(() => vi.useRealTimers());
 
 describe('Automation claim lease observation', () => {
+  it('keeps a long lease cadence without overflowing the platform timer delay', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const maximumPlatformDelay = 2_147_483_647;
+    const heartbeatMs = maximumPlatformDelay + 1_000;
+    const timer = vi.spyOn(globalThis, 'setTimeout');
+    const onHeartbeat = vi.fn(async () => Date.now() + 4 * heartbeatMs);
+    const heartbeat = startAutomationLeaseHeartbeat({ heartbeatMs, leaseExpiresAtMs: 4 * heartbeatMs,
+      onHeartbeat, onError: vi.fn() });
+    try {
+      expect(timer.mock.calls[0]?.[1]).toBeLessThanOrEqual(maximumPlatformDelay);
+      await vi.advanceTimersByTimeAsync(maximumPlatformDelay);
+      expect(onHeartbeat).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(onHeartbeat).toHaveBeenCalledOnce();
+    } finally { heartbeat.stop(); timer.mockRestore(); }
+  });
+
+  it('lets a pending renewal use the confirmed lease instead of a shorter attempt budget', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const deadlines: number[] = [];
+    const onError = vi.fn();
+    const heartbeat = startAutomationLeaseHeartbeat({ heartbeatMs: 1_000, leaseExpiresAtMs: 10_000,
+      onHeartbeat: async (_progress, deadline, signal) => {
+        deadlines.push(deadline);
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 6_000);
+          signal.addEventListener('abort', () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+        });
+        return 20_000;
+      }, onError });
+    try {
+      await vi.advanceTimersByTimeAsync(7_000);
+      expect(deadlines).toEqual([10_000]);
+      expect(onError).not.toHaveBeenCalled();
+    } finally { heartbeat.stop(); }
+  });
+
+  it('honors a renewal cadence below the removed one-second floor', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const starts: number[] = [];
+    const heartbeat = startAutomationLeaseHeartbeat({ heartbeatMs: 250, leaseExpiresAtMs: 1_000,
+      onHeartbeat: async () => { starts.push(Date.now()); return Date.now() + 1_000; }, onError: vi.fn() });
+    try {
+      await vi.advanceTimersByTimeAsync(750);
+      expect(starts).toEqual([250, 500, 750]);
+    } finally { heartbeat.stop(); }
+  });
+
   it('derives renewal windows from the confirmed lease left after slow claim delivery', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -27,7 +78,7 @@ describe('Automation claim lease observation', () => {
     } finally { heartbeat.stop(); }
   });
 
-  it('uses the remaining two seconds when a delayed timer finally starts renewal', async () => {
+  it('keeps a delayed renewal pending until the confirmed lease expires', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const starts: number[] = [];
@@ -42,9 +93,11 @@ describe('Automation claim lease observation', () => {
       }, onError });
     try {
       vi.setSystemTime(18_000);
-      await vi.advanceTimersByTimeAsync(11_001);
-      expect(starts).toEqual([28_000, 29_001]);
+      await vi.advanceTimersByTimeAsync(11_999);
+      expect(starts).toEqual([28_000]);
       expect(onError).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onError).toHaveBeenCalledOnce();
     } finally { heartbeat.stop(); }
   });
 
@@ -65,9 +118,9 @@ describe('Automation claim lease observation', () => {
         return 20_000;
       }, onError });
     try {
-      await vi.advanceTimersByTimeAsync(3_501);
-      expect(starts).toEqual([1_000, 3_501]);
-      expect(deadlines).toEqual([5_500, 6_750]);
+      await vi.advanceTimersByTimeAsync(4_500);
+      expect(starts).toEqual([1_000, 4_500]);
+      expect(deadlines).toEqual([10_000, 10_000]);
       expect(onError).not.toHaveBeenCalled();
     } finally { heartbeat.stop(); }
   });
@@ -141,7 +194,7 @@ describe('Automation claim lease observation', () => {
       expect.objectContaining({ event: 'renewal_started', observedAtMs: 1_000, scheduledAtMs: 1_000,
         leaseExpiresAtMs: 3_000, renewalStartedAtMs: 1_000 }),
       expect.objectContaining({ event: 'expired', observedAtMs: 3_000, renewalStartedAtMs: 1_000,
-        renewalInFlight: true, currentnessInFlight: false }),
+        renewalInFlight: true }),
     ]);
     acknowledge(30_000);
     await vi.advanceTimersByTimeAsync(1_000);
@@ -149,29 +202,6 @@ describe('Automation claim lease observation', () => {
       observedAtMs: 3_000, renewalStartedAtMs: 1_000, leaseExpiresAtMs: 3_000 }));
     expect(onError).toHaveBeenCalledOnce();
     heartbeat.stop();
-  });
-
-  it('renews the confirmed lease while a currentness read is pending without overlapping those reads', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    let rejectCurrentness!: (error: Error) => void;
-    const currentness = new Promise<void>((_resolve, reject) => { rejectCurrentness = reject; });
-    const onRenewed = vi.fn(() => currentness);
-    const onHeartbeat = vi.fn(async () => Date.now() + 3_000);
-    const onError = vi.fn();
-    const heartbeat = startAutomationLeaseHeartbeat({ heartbeatMs: 1_000, leaseExpiresAtMs: 3_000,
-      onHeartbeat, onRenewed, onError });
-    try {
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(onError).not.toHaveBeenCalled();
-      expect(onHeartbeat).toHaveBeenCalledTimes(10);
-      expect(onRenewed).toHaveBeenCalledOnce();
-      const refusal = new Error('authorization_not_current');
-      rejectCurrentness(refusal);
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(onError).toHaveBeenCalledExactlyOnceWith(refusal);
-      expect(onHeartbeat).toHaveBeenCalledTimes(10);
-    } finally { heartbeat.stop(); }
   });
 
   it('keeps a claim after a transient heartbeat failure and renews only from server expiry', async () => {

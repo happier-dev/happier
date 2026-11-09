@@ -13,7 +13,10 @@ import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol
 import { decryptWithDataKey } from '@/api/encryption';
 
 const artifactNetwork = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn() }));
-vi.mock('axios', () => ({ default: artifactNetwork }));
+vi.mock('axios', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: Object.assign(Object.create(actual.default), artifactNetwork) };
+});
 
 function dispatchConnectedServiceQuotaLifecycleNotificationAsync(params: Parameters<typeof dispatchNotification>[0]) {
   // Channel entities are a genuine Account boundary, authored separately from policy preferences.

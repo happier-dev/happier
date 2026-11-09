@@ -1,6 +1,7 @@
 import { ProjectSetupConsentFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ProjectSetupConsentFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import type { ActionOperationReviewContinuation, ActionOperationSetupDecision } from './actionOperationTypes';
+import { isDeepStrictEqual } from 'node:util';
 
 /** The existing occurrence owns execution; this owner only retains its human setup review. */
 export function createActionOperationSetupReview(input: Readonly<{
@@ -13,6 +14,7 @@ export function createActionOperationSetupReview(input: Readonly<{
   const operationReview: ActionOperationReviewContinuation = {
     async waitForResume(details, producer) {
       const parsed = ProjectSetupConsentFailureDetailsV1Schema.parse(details);
+      let currentDetails = parsed;
       input.signal.throwIfAborted();
       await new Promise<void>((resolve, reject) => {
         let current = true;
@@ -38,8 +40,12 @@ export function createActionOperationSetupReview(input: Readonly<{
           refreshing = (async () => {
             const reviewed = await producer.review(decision);
             if (!current || input.signal.aborted) return;
-            if (reviewed) input.publish(ProjectSetupConsentFailureDetailsV1Schema.parse(reviewed));
-            else complete();
+            if (!reviewed) { complete(); return; }
+            const next = ProjectSetupConsentFailureDetailsV1Schema.parse(reviewed);
+            if (!isDeepStrictEqual(currentDetails, next)) {
+              currentDetails = next;
+              input.publish(next);
+            }
           })().catch(error => {
             if (current) { cleanup(); reject(error); }
           }).finally(() => { refreshing = undefined; });

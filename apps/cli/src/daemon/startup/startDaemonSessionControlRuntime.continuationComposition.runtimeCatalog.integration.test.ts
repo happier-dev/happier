@@ -1,15 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createConnectedServiceSwitchDeferralQueue } from '../connectedServices/sessionAuthSwitch/connectedServiceSwitchDeferralQueue';
+import { ConnectedServiceAuthGroupGenerationConsumer } from '../connectedServices/accountGroups/generation/ConnectedServiceAuthGroupGenerationConsumer';
 import {
   isSupersededRuntimeAuthFailure,
   resolveConnectedServiceContinuationInterruptionForSwitch,
   settleSupersedingRuntimeAuthGenerationForSource,
 } from './startDaemonSessionControlRuntime';
 
+function createConsumer(adopt = true) {
+  return new ConnectedServiceAuthGroupGenerationConsumer({
+    resolveGenerationApplicationScope: async () => ({ status: 'supported', scope: 'per_session_runtime', ownerId: 'runner' }),
+    verifySharedGenerationApplication: async () => null,
+    clearAdoptedGeneration: async () => {},
+    applyCommittedGeneration: async ({ committedGeneration }) => adopt
+      ? { reconciliationDisposition: 'converged', errorCode: null,
+          providerAdoptedTarget: { ...committedGeneration.decisionCommittedTarget, proof: { status: 'verified', source: 'provider_runtime',
+            providerAccountId: 'current-account', credentialRevision: committedGeneration.decisionCommittedTarget.credentialRevision } } }
+      : { reconciliationDisposition: 'failed', errorCode: 'provider_application_unavailable' },
+  });
+}
+
 describe('runtime-v2 connected-service continuation composition', () => {
   it('classifies only the interrupted origin session as continuation-eligible', () => {
-    const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({ timeoutMs: 60_000, disableDeferral: false });
+    const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
     expect(resolveConnectedServiceContinuationInterruptionForSwitch({
       sessionId: 'session-1',
       interruptedSessionId: 'session-1',
@@ -64,7 +78,8 @@ describe('runtime-v2 connected-service continuation composition', () => {
   });
 
   it('reconsumes a superseding runtime-auth target through the existing generation consumer', async () => {
-    const consumeCommittedAuthGroupGeneration = vi.fn(async () => ({ outcome: 'adopted_current' as const }));
+    const consumer = createConsumer();
+    const consumeCommittedAuthGroupGeneration = vi.fn((input: Parameters<typeof consumer.consume>[0]) => consumer.consume(input));
 
     await expect(settleSupersedingRuntimeAuthGenerationForSource({
       recovery: {
@@ -81,7 +96,7 @@ describe('runtime-v2 connected-service continuation composition', () => {
       sessionId: 'session-1',
       fromProfileId: 'profile-stale',
       consumeCommittedAuthGroupGeneration,
-    })).resolves.toBeUndefined();
+    })).resolves.toMatchObject({ profileId: 'profile-current', generation: 7, credentialRevision: 'csr_cccccccccccccccccccccc' });
 
     expect(consumeCommittedAuthGroupGeneration).toHaveBeenCalledWith({
       committedGeneration: expect.objectContaining({
@@ -115,7 +130,7 @@ describe('runtime-v2 connected-service continuation composition', () => {
       groupId: 'group-a',
       sessionId: 'session-1',
       fromProfileId: 'profile-stale',
-      consumeCommittedAuthGroupGeneration: async () => ({ outcome: 'retryable_not_acknowledged' }),
+      consumeCommittedAuthGroupGeneration: input => createConsumer(false).consume(input),
     })).rejects.toMatchObject({
       code: 'connected_service_runtime_auth_superseding_generation_not_acknowledged',
       retryable: true,
@@ -136,7 +151,7 @@ describe('runtime-v2 connected-service continuation composition', () => {
       groupId: 'group-a',
       sessionId: 'session-1',
       fromProfileId: 'profile-stale',
-      consumeCommittedAuthGroupGeneration: async () => ({ outcome: 'adopted_current' }),
+      consumeCommittedAuthGroupGeneration: input => createConsumer().consume(input),
     })).rejects.toMatchObject({
       code: 'connected_service_runtime_auth_superseding_generation_target_unavailable',
       retryable: true,

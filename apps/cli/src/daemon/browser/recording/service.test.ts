@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { createSurfaceInputControl } from '../../surfaces/inputControl';
-import type { BrowserRecordingRuntimeStartInput } from './service';
+import type { BrowserRecordingRuntimeStartInput } from '../../recording/service';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 
@@ -161,7 +161,7 @@ describe('browser recording daemon service', () => {
 
   it.each([false, true])('projects retained recording paths and expiry with transcript custody=%s', async (attached) => {
     const { createBrowserRecordingDaemonService } = await import('./service');
-    const { createBrowserRecordingSessionMediaWriter } = await import('./sessionMediaWriter');
+    const { createBrowserRecordingSessionMediaWriter } = await import('../../recording/sessionMediaWriter');
     const workspace = await mkdtemp(join(tmpdir(), 'happier-recording-storage-'));
     const bytes = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x86, 0x81, 0x01]), Buffer.from('recording fixture')]);
     try {

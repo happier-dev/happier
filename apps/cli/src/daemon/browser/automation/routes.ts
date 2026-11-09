@@ -1,6 +1,6 @@
-import { BrowserAutomationActionRequestV1Schema, BrowserAutomationActionResultV1Schema, resolveBrowserAutomationActionRequester, BrowserAutomationCancelActiveResultV1Schema } from '@happier-dev/protocol/browser/automation/v1';
+import { BrowserAutomationActionResultV1Schema, resolveBrowserAutomationActionRequester, BrowserAutomationCancelActiveResultV1Schema } from '@happier-dev/protocol/browser/automation/v1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import type { BrowserAutomationActionResultV1, BrowserAutomationCancelActiveResultV1, ActionExecutorContext, BrowserAutomationTimelineV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
+import type { BrowserAutomationActionRequestV1, BrowserAutomationActionResultV1, BrowserAutomationCancelActiveResultV1, ActionExecutorContext, BrowserAutomationTimelineV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
 
 import type { BrowserAutomationDaemonService } from './service';
 import type { BrowserAutomationViewRef } from './owners';
@@ -74,7 +74,6 @@ export function createBrowserAutomationRoutes(input: Readonly<{
   return {
     resolveInputControl: view => input.service.getInputControl(view),
     async prepareConfidentialFill(rawInput, context) {
-      if (context?.authority !== 'present_user') return { status: 'refused', code: 'approval_required' };
       const parsed = BrowserAutomationSecretFillRequestV1Schema.safeParse(rawInput);
       if (!parsed.success) return { status: 'refused', code: 'target_changed' };
       return input.service.prepareConfidentialFill(parsed.data, context);
@@ -108,17 +107,14 @@ export function createBrowserAutomationRoutes(input: Readonly<{
         if (!parsed.success) return invalidParameters;
         const view = readViewRef(parsed.data);
         if (!view) return invalidParameters;
-        if (context?.authority !== 'present_user'
-          && !(context?.authority === 'account_automation' && context.bypassApprovals === true)) {
+        if (!context?.authority) {
           return BrowserAutomationCancelActiveResultV1Schema.parse({
             v: 1,
             outcome: 'owner_mismatch',
             canceledCount: 0,
           });
         }
-        const canceled = await input.service.cancelActive(context.authority === 'present_user'
-          ? { ...view, authority: 'present_user' }
-          : { ...view, authority: 'account_automation', bypassApprovals: true });
+        const canceled = await input.service.cancelActive({ ...view, authority: context.authority });
         return canceled.ok
           ? BrowserAutomationCancelActiveResultV1Schema.parse({
               v: 1,
@@ -135,12 +131,13 @@ export function createBrowserAutomationRoutes(input: Readonly<{
 
       const parsed = getActionSpec(actionId).inputSchema.safeParse(rawInput ?? {});
       if (!parsed.success) return invalidParameters;
-      const request = BrowserAutomationActionRequestV1Schema.safeParse(parsed.data);
-      if (!request.success) return invalidParameters;
+      // Runtime dispatch selects the automation Action family; its ActionSpec already parses
+      // the request and enforces the action-specific kind at this ingress.
+      const request = parsed.data as BrowserAutomationActionRequestV1;
 
-      const requestedBy = resolveBrowserAutomationActionRequester(request.data.requestedBy, context?.authority);
+      const requestedBy = resolveBrowserAutomationActionRequester(request.requestedBy, context?.authority);
       if (!requestedBy) return invalidParameters;
-      return input.service.execute({ ...request.data, requestedBy }, { signal: context?.signal });
+      return input.service.execute({ ...request, requestedBy }, { signal: context?.signal });
     },
   };
 }

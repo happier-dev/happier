@@ -50,7 +50,7 @@ describe('waitForTrackedRunnerProcessesExit', () => {
     }
   });
 
-  it('settles physical exit only after real exit custody cleanup, recording file-only phases', async () => {
+  it.each([0, 1_000])('joins real exit custody beyond the %i ms physical-exit grace without requiring another Stop', async (timeoutMs) => {
     const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
     await once(child, 'spawn');
     const pid = child.pid!;
@@ -63,10 +63,11 @@ describe('waitForTrackedRunnerProcessesExit', () => {
     let markerStarted!: () => void;
     const markerPending = new Promise<void>((resolve) => { releaseMarker = resolve; });
     const markerObserved = new Promise<void>((resolve) => { markerStarted = resolve; });
+    let markerRetirementAttempts = 0;
     const onExitObserved = createOnChildExited({
       pidToTrackedSession: tracked, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
       getApiMachineForSessions: () => null,
-      removeSessionMarkerFn: async () => { markerStarted(); await markerPending; },
+      removeSessionMarkerFn: async () => { markerRetirementAttempts += 1; markerStarted(); await markerPending; },
     });
     logger.flushSync();
     const previousLogLength = existsSync(logger.getLogPath()) ? readFileSync(logger.getLogPath(), 'utf8').length : 0;
@@ -74,15 +75,26 @@ describe('waitForTrackedRunnerProcessesExit', () => {
     const nodeConsole = new Console({ stdout: process.stdout, stderr: process.stderr });
     const consoleLog = vi.spyOn(console, 'log').mockImplementation(nodeConsole.log.bind(nodeConsole));
     let completed = false;
-    const request = { runners: [{ pid }], timeoutMs: 0, pollIntervalMs: 0, onExitObserved };
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const request = { runners: [{ pid }], timeoutMs, pollIntervalMs: 0, onExitObserved };
     const waiting = waitForTrackedRunnerProcessesExit(request).then((result) => { completed = true; return result; });
     try {
       await Promise.race([markerObserved, waiting]);
       expect(completed).toBe(false);
       expect(tracked.has(pid)).toBe(true);
+      await vi.advanceTimersByTimeAsync(timeoutMs);
+      // Brief Task 2 replaces the development-only shared physical/retirement
+      // cutoff documented in docs/cli-architecture.md:5465–5471.
+      expect(completed, 'Physical-exit grace cannot expire required retirement').toBe(false);
+      expect(tracked.has(pid)).toBe(true);
+      // Concurrent Stop joins the same cleanup; the original caller also sees
+      // its terminal result, without another request to refresh that outcome.
+      const retry = waitForTrackedRunnerProcessesExit({ ...request, timeoutMs: 1_000 });
       releaseMarker();
       expect(await waiting).toBe(true);
+      expect(await retry).toBe(true);
       expect(tracked.has(pid)).toBe(false);
+      expect(markerRetirementAttempts).toBe(1);
       logger.flushSync();
       const diagnostic = readFileSync(logger.getLogPath(), 'utf8').slice(previousLogLength);
       expect(diagnostic).toContain('[DAEMON STOP] Tracked runner physical exit observed');
@@ -92,8 +104,87 @@ describe('waitForTrackedRunnerProcessesExit', () => {
     } finally {
       releaseMarker();
       await waiting;
+      vi.useRealTimers();
       consoleLog.mockRestore();
       stdout.mockRestore();
+    }
+  });
+
+  it.each([false, true])('observes an owned child exit without scans or retiring a replacement (%s)', async replacement => {
+    const child = spawn(process.execPath, ['-e', "process.send('ready');process.on('message',()=>process.exit(0))"], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+    const exited = once(child, 'exit');
+    await once(child, 'message');
+    const readRunState = vi.fn(async () => 'servable' as const);
+    const exits: number[] = [];
+    const exitListeners = child.listenerCount('exit');
+    const pid = child.pid!;
+    const sessionId = `PID-${pid}`;
+    const tracked = new Map<number, TrackedSession>([[pid, {
+      pid, childProcess: child, startedBy: 'daemon', happySessionId: sessionId, stopRequestedAtMs: Date.now(),
+    }]]);
+    const onExitObserved = createOnChildExited({
+      pidToTrackedSession: tracked, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => null,
+      // Marker persistence is the OS boundary; retirement and map custody stay real.
+      removeSessionMarkerFn: async retiredPid => { exits.push(retiredPid); },
+    });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const waiting = waitForExistingSessionExitIfStopRequested({
+      sessionId, pidToTrackedSession: tracked,
+      timeoutMs: 1_000, pollIntervalMs: 100, readRunState,
+      onExitObserved,
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(900);
+      expect(readRunState, 'An owned child supplies push terminal evidence without OS polling').not.toHaveBeenCalled();
+      expect(exits).toEqual([]);
+      if (replacement) tracked.set(pid, { pid, startedBy: 'daemon', happySessionId: sessionId });
+      child.send('exit');
+      await exited;
+      await waiting;
+      expect(exits).toEqual(replacement ? [] : [child.pid]);
+      expect(tracked.has(pid)).toBe(replacement);
+      expect(child.listenerCount('exit')).toBe(exitListeners - 1);
+      // File logging buffers its own flush; exclude that independent owner.
+      logger.flushSync();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.send('exit');
+      await exited;
+      await vi.advanceTimersByTimeAsync(1_000);
+      await waiting;
+      vi.useRealTimers();
+    }
+  });
+
+  it('releases an owned child subscription when live-runner grace expires and accepts an already-exited child', async () => {
+    const child = spawn(process.execPath, ['-e', "process.send('ready');process.on('message',()=>process.exit(0))"], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+    });
+    const exited = once(child, 'exit');
+    await once(child, 'message');
+    const readRunState = vi.fn(async () => 'servable' as const);
+    const exitListeners = child.listenerCount('exit');
+    const request = { runners: [{ pid: child.pid!, childProcess: child }],
+      timeoutMs: 1_000, pollIntervalMs: 100, readRunState };
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    try {
+      const waiting = waitForTrackedRunnerProcessesExit(request);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await waiting).toBe(false);
+      expect(child.listenerCount('exit')).toBe(exitListeners);
+      logger.flushSync();
+      expect(vi.getTimerCount()).toBe(0);
+      child.send('exit');
+      await exited;
+      expect(await waitForTrackedRunnerProcessesExit({ ...request, timeoutMs: 0 })).toBe(true);
+      expect(readRunState).not.toHaveBeenCalled();
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.send('exit');
+      await exited;
+      vi.useRealTimers();
     }
   });
 
@@ -115,6 +206,37 @@ describe('waitForTrackedRunnerProcessesExit', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('observes every runner death before joining slow exit retirement', async () => {
+    const tracked = new Map<number, TrackedSession>([101, 202].map(pid => [pid, {
+      pid, startedBy: 'terminal', happySessionId: `PID-${pid}`, stopRequestedAtMs: Date.now(),
+    }]));
+    let releaseMarker!: () => void;
+    let startMarker!: () => void;
+    const markerPending = new Promise<void>(resolve => { releaseMarker = resolve; });
+    const markerStarted = new Promise<void>(resolve => { startMarker = resolve; });
+    const onExitObserved = createOnChildExited({
+      pidToTrackedSession: tracked, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => null,
+      removeSessionMarkerFn: async pid => {
+        if (pid === 101) { startMarker(); await markerPending; }
+      },
+    });
+    const readRunState = vi.fn(async (_pid: number) => 'dead' as const);
+    const waiting = waitForTrackedRunnerProcessesExit({
+      runners: [{ pid: 101 }, { pid: 202 }], timeoutMs: 0, pollIntervalMs: 0, readRunState, onExitObserved,
+    });
+    try {
+      await markerStarted;
+      // Slow retirement of one runner must not hold physical observation or
+      // the escalation decision for another runner in the same Stop.
+      expect(readRunState.mock.calls.map(([pid]) => pid)).toEqual([101, 202]);
+    } finally {
+      releaseMarker();
+      await waiting;
+    }
+    expect(tracked.size).toBe(0);
   });
 
   it('preserves the host while a tracked PID remains live or unprobeable', async () => {

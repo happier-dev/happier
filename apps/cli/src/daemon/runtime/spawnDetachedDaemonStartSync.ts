@@ -1,7 +1,14 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
+import { randomUUID } from 'node:crypto';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { getReleaseRingCatalogEntry } from '@happier-dev/release-runtime/releaseRings';
 import { configuration } from '@/configuration';
+import { resolveCliHappyHomeDir } from '@/configuration/resolveCliHappyHomeDir';
+import { resolveCliHomeStoragePaths } from '@/configuration/homeStoragePaths';
+import { DAEMON_STDERR_LOG_PATH_ENV } from '@/utils/logs/logRetention';
+import { createTimestampForFilename } from '@/utils/logs/logFileName';
 import type { DaemonStartupSource } from '@/daemon/ownership/daemonOwnershipMetadata';
 import {
   buildSystemdUserCriticalScopedLaunchSpec,
@@ -34,6 +41,7 @@ function buildWindowsDetachedDaemonCreateInvocation(params: Readonly<{
   args: string[];
   env: NodeJS.ProcessEnv;
   cwd: string;
+  stderrPath: string;
 }>): Readonly<{ command: string; args: string[] }> {
   const forwardedEnvAssignments = Object.entries(params.env)
     .flatMap(([key, value]) => (
@@ -46,7 +54,7 @@ function buildWindowsDetachedDaemonCreateInvocation(params: Readonly<{
   const script = [
     '$ErrorActionPreference = "Stop";',
     ...forwardedEnvAssignments,
-    `$p = Start-Process -FilePath ${toPowerShellStringLiteral(params.filePath)} -ArgumentList ${argsArrayLiteral} -WorkingDirectory ${toPowerShellStringLiteral(params.cwd)} -WindowStyle Hidden -PassThru;`,
+    `$p = Start-Process -FilePath ${toPowerShellStringLiteral(params.filePath)} -ArgumentList ${argsArrayLiteral} -WorkingDirectory ${toPowerShellStringLiteral(params.cwd)} -WindowStyle Hidden -RedirectStandardOutput 'NUL' -RedirectStandardError ${toPowerShellStringLiteral(params.stderrPath)} -PassThru;`,
     'Write-Output $p.Id;',
   ].join(' ');
 
@@ -61,6 +69,7 @@ async function spawnWindowsDetachedDaemonStartSync(params: Readonly<{
   args: string[];
   env: NodeJS.ProcessEnv;
   cwd?: string;
+  stderrPath: string;
 }>): Promise<DetachedDaemonStartProcess> {
   const workingDirectory = typeof params.cwd === 'string' && params.cwd.trim().length > 0
     ? params.cwd
@@ -70,6 +79,7 @@ async function spawnWindowsDetachedDaemonStartSync(params: Readonly<{
     args: params.args,
     env: params.env,
     cwd: workingDirectory,
+    stderrPath: params.stderrPath,
   });
 
   return await new Promise((resolve, reject) => {
@@ -134,16 +144,8 @@ export async function spawnDetachedDaemonStartSync(
     env.HAPPIER_DAEMON_STARTUP_SOURCE = startupSource ?? 'manual';
   }
 
-  if (process.platform === 'win32') {
-    return await spawnWindowsDetachedDaemonStartSync({
-      filePath: launchSpec.filePath,
-      args: launchSpec.args,
-      env,
-      cwd: typeof spawnOptions.cwd === 'string' ? spawnOptions.cwd : undefined,
-    });
-  }
-
-  const scopedLaunchSpec = await isSystemdUserCriticalResourceGovernorReady({ environment: env })
+  const scopedLaunchSpec = process.platform !== 'win32'
+    && await isSystemdUserCriticalResourceGovernorReady({ environment: env })
     ? buildSystemdUserCriticalScopedLaunchSpec({
       launchSpec: {
         filePath: launchSpec.filePath,
@@ -152,10 +154,34 @@ export async function spawnDetachedDaemonStartSync(
     })
     : launchSpec;
 
-  return spawn(scopedLaunchSpec.filePath, scopedLaunchSpec.args, {
-    ...spawnOptions,
-    env,
-    detached: true,
-    stdio: 'ignore',
-  });
+  const { logsDir } = resolveCliHomeStoragePaths(resolveCliHappyHomeDir(env));
+  mkdirSync(logsDir, { recursive: true, mode: 0o700 });
+  // A launcher PID identifies this attempt even when systemd-run or PowerShell
+  // owns the first child. The daemon writes its own PID when startup begins.
+  // Keep the daemon suffix so the existing log-retention owner includes it.
+  const stderrPath = join(logsDir, `${createTimestampForFilename()}-${randomUUID()}-stderr-daemon.log`);
+  env[DAEMON_STDERR_LOG_PATH_ENV] = stderrPath;
+  const stderrFd = openSync(stderrPath, 'ax', 0o600);
+  try {
+    if (process.platform === 'win32') {
+      // Windows Start-Process owns the child's inherited file handle. It stays
+      // writable after PowerShell exits and needs no pipe-forwarding process.
+      closeSync(stderrFd);
+      return await spawnWindowsDetachedDaemonStartSync({
+        filePath: launchSpec.filePath,
+        args: launchSpec.args,
+        env,
+        cwd: typeof spawnOptions.cwd === 'string' ? spawnOptions.cwd : undefined,
+        stderrPath,
+      });
+    }
+    return spawn(scopedLaunchSpec.filePath, scopedLaunchSpec.args, {
+      ...spawnOptions,
+      env,
+      detached: true,
+      stdio: ['ignore', 'ignore', stderrFd],
+    });
+  } finally {
+    if (process.platform !== 'win32') closeSync(stderrFd);
+  }
 }

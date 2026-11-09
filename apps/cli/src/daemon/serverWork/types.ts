@@ -16,8 +16,6 @@ export type DaemonServerWorkKind =
   | 'livenessReadiness'
   | 'userInitiatedCommand';
 
-export type DaemonServerWorkPriority = 'low' | 'normal' | 'high';
-
 export type DaemonServerWorkCounter =
   | 'accepted'
   | 'coalesced'
@@ -78,7 +76,6 @@ export type DaemonServerWorkRequest<TPayload> = Readonly<{
   key: string;
   purpose: DaemonServerWorkPurpose | string;
   kind: DaemonServerWorkKind | string;
-  priority?: DaemonServerWorkPriority;
   payload: TPayload;
   payloadBytes: number;
   signal?: AbortSignal;

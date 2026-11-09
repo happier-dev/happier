@@ -3,7 +3,7 @@ import type { ApiClient } from '@/api/api';
 import type { StoredCredentials } from '@/persistence';
 import { readStoredCredentialsForServerId, sameStoredCredentials } from '@/persistence';
 import { readInstallationIdentityIfExistsSync } from '../identity/store';
-import { resolveAdmittedRequesterAccountReadRuntime } from "../sessionEncryption/requesterAccountActionProjection";
+import { readAdmittedRequesterAccountReadRuntime } from "../sessionEncryption/requesterAccountActionProjection";
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { readProjectFiniteIngressRefusal, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { createWorkspaceSyncWorkerPreparation } from '@/workspaces/sync/workspaceSyncPreparation';
@@ -29,13 +29,14 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
   registeredMachineId: string;
   admission: ProjectFiniteActionRuntime['workerAdmission'];
   nativeIo: ReturnType<typeof createProjectNativeIo>;
+  agentIsolation?: ProjectFiniteActionRuntime['agentIsolation'];
   plugins?: ProjectFiniteActionRuntime['plugins'];
   successHomeDir: string;
   isCurrent(): Promise<boolean>;
   prepareBetween: NonNullable<WorkspaceSyncHandoffAdapterDeps['prepareBetween']>;
   resolveCurrentMachineExecutionOriginContext(signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null>;
 }>): NonNullable<ApiMachineClientLifecycleDependencies['createProjectFiniteRuntime']> {
-  const { api, credentials, externalActionAccountId, finiteServerId, finiteServerHttpBaseUrl,
+  const { api, credentials, externalActionAccountId, finiteServerId,
     registeredMachineId, admission, isCurrent, resolveCurrentMachineExecutionOriginContext } = params;
   const secretEnvironment = async (operationContext: SavedSecretOperationContextV1,
     bindings: Parameters<NonNullable<ProjectFiniteActionRuntime['resolveSecretEnvironment']>>[0], signal?: AbortSignal) => {
@@ -49,10 +50,12 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
   const nativeRuntime = (runtimeCurrent: () => Promise<boolean>) => ({
     workerAdmission: admission, isCurrent: runtimeCurrent,
     nativeIo: params.nativeIo.commandIo, environmentIo: params.nativeIo.environmentIo,
+    agentIsolation: params.agentIsolation,
     ...(params.plugins ? { plugins: params.plugins } : {}),
     successHomeDir: params.successHomeDir,
   });
   return async (ports, ingress) => {
+    const finiteServerHttpBaseUrl = params.finiteServerHttpBaseUrl;
     const refuse = (reason: string): null => {
       logger.debug('[ProjectFinite] Runtime resolution refused', { reason,
         ...(ingress.requesterSessionBootstrap?.getBoundSessionId()
@@ -91,7 +94,7 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
     }
     if (!externalActionAccountId) return refuse('installed_account_unavailable');
     const requester = ingress.callerInputAuthorization && installationId
-      ? await resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: finiteServerId,
+      ? readAdmittedRequesterAccountReadRuntime({ ingress, serverId: finiteServerId,
         machineId: registeredMachineId, installationId, isInstalledCurrent: isCurrent }) : null;
     if (ingress.callerInputAuthorization && !requester || !requester && readProjectFiniteIngressRefusal(ingress)) return refuse('requester_authority_unavailable');
     const currentCredentials = requester ? null : await readStoredCredentialsForServerId(finiteServerId).catch(() => null);
@@ -101,21 +104,12 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
     const runtimeCurrent = requesterContext?.isCustodyCurrent
       ? async () => await isCurrent() && await requesterContext.isCustodyCurrent!() && await isCurrent()
       : requester?.isCurrent ?? isCurrent;
-    const verifyCurrent = requesterContext?.isCustodyCurrent
-      ? async () => await runtimeCurrent() && await requester!.isCurrent()
-        // The installed Account ingress carries this exact requester predicate
-        // as Machine admission. requester.isCurrent already awaits it; retain
-        // a separate root check only when admission proves a different fact.
-        && (ingress.verifyMachineAdmissionCurrent === requesterContext.isCurrent || await requesterContext.isCurrent())
-        && await runtimeCurrent()
-      : undefined;
     const workerCredentials = requesterContext?.credentials ?? currentCredentials;
     if (!workerCredentials) return refuse('worker_credentials_unavailable');
     const accountAccess = requester ?? (currentCredentials ? { serverId: finiteServerId, machineId: registeredMachineId,
       accountId: externalActionAccountId, credentials: currentCredentials, serverHttpBaseUrl: finiteServerHttpBaseUrl } : null);
     if (!accountAccess) return refuse('account_access_unavailable');
     return { ...ports, ...accountAccess, ...nativeRuntime(runtimeCurrent),
-      ...(verifyCurrent ? { verifyCurrent } : {}),
       ...(!requester ? { resolveSecretEnvironment: async (bindings, signal) => {
         if (!bindings) return undefined;
         return await runWithServerHttpBaseUrl(accountAccess.serverHttpBaseUrl, async () => {
@@ -130,12 +124,9 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
       inspectSourceProjectManifest: async input => {
         const { createProjectFiniteSourceManifestInspector } = await import('./createDaemonMachineBootstrapRuntime');
         return await createProjectFiniteSourceManifestInspector({
-          api: requester ? { getMachine: (machineId, options) => api.getMachine(machineId, {
-            ...options, authorization: requester.accountAuthorization,
-          }) } : api,
           credentials: workerCredentials, serverId: accountAccess.serverId,
           serverHttpBaseUrl: accountAccess.serverHttpBaseUrl,
-          accountId: accountAccess.accountId, ingress, isCurrent: runtimeCurrent })(input);
+          accountId: accountAccess.accountId, ingress })(input);
       },
       ...createWorkspaceSyncWorkerPreparation({ serverId: finiteServerId,
         serverHttpBaseUrl: accountAccess.serverHttpBaseUrl, targetMachineId: registeredMachineId,
@@ -144,9 +135,9 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
         prepareBetween: (request, signal) => params.prepareBetween(request, signal, requester ? ingress : undefined) }),
       resolveWorkspaceExecutionConfig: async (context, currentIngress, actionId) => {
         const preferenceCredentials = requesterContext?.credentials ?? currentCredentials;
-        if (!preferenceCredentials || !await runtimeCurrent()) return null;
+        if (!preferenceCredentials) return null;
         const origin = await resolveCurrentMachineExecutionOriginContext(currentIngress.signal);
-        if (!origin || origin.machineId !== registeredMachineId || !await isCurrent()) return null;
+        if (!origin || origin.machineId !== registeredMachineId) return null;
         const authorization = currentIngress.callerInputAuthorization;
         const requestContext = { ...context, ...(authorization ? {
           externalActionExecutionAuthorization: authorization,
@@ -156,7 +147,7 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
         return await createAccountServerWorkspaceWorkerPreferenceClient({
           token: preferenceCredentials.token, credentials: preferenceCredentials,
           serverHttpBaseUrl: accountAccess.serverHttpBaseUrl, signal: currentIngress.signal,
-          context: requestContext, actionId, isCredentialCurrent: runtimeCurrent,
+          context: requestContext, actionId,
           ...(requesterContext ? { operationContext: requesterContext.savedSecretOperationContext } : {}),
           resolveRequestHeaders: async request => {
             if (requester) return await requester.accountAuthorization.requesterHttpProjection!.createRequestHeaders({

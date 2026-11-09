@@ -5,7 +5,7 @@ import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sess
 import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/spawnSession';
 import { resolveWorkspaceSyncEndpoint } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
-import type { ActionExecuteResult, SessionHandoffPrepareTargetResponse, SessionHandoffStorageMode } from '@happier-dev/protocol';
+import type { ActionExecuteResult, SessionHandoffPrepareTargetResponse, SessionHandoffStatus, SessionHandoffStorageMode } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
@@ -88,6 +88,10 @@ type HostCoordinatorInput = Readonly<{
   start: (privateActionInput: unknown) => Promise<ActionExecuteResult>;
   signal: AbortSignal;
   publishOwnerUpdate: (update: ActionOperationOwnerUpdate) => void;
+  localPreparation?: Readonly<{
+    machineId: string;
+    waitForChange: (status: SessionHandoffStatus, signal: AbortSignal) => Promise<void>;
+  }>;
   /** Preserved by the accepted Action owner, never read from author input. */
   context?: RpcActionExecutorContext;
 }>;
@@ -323,6 +327,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
             : authorization ? { authorization, effectActionId: authorization.binding.actionId }
               : { credentials, publication: 'installed' as const }),
           serverId: workspaceAccountServerId, signal: hostInput.signal,
+          selection: { kinds: ['workspace-ref', 'relationship-graph'] },
         });
         const sessionCwd = source.sourceRootPath;
         if (!sessionCwd) throw Object.assign(new Error('Source workspace path is unavailable'), { code: 'workspace_ref_not_ready' });
@@ -603,7 +608,10 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       },
       publishOwnerUpdate: hostInput.publishOwnerUpdate,
       workspaceSyncAdapter: deps.workspaceSyncAdapter,
-      ...(deps.wait ? { wait: deps.wait } : {}),
+      ...(hostInput.localPreparation && targetMachineId === hostInput.localPreparation.machineId
+        && !hostInput.context?.externalActionExecutionAuthorization
+        ? { wait: (signal: AbortSignal, status: SessionHandoffStatus) => hostInput.localPreparation!.waitForChange(status, signal) }
+        : deps.wait ? { wait: deps.wait } : {}),
     });
     };
     return requester ? await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, coordinate) : await coordinate();

@@ -1,6 +1,6 @@
-import type { ActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
 import type { createProjectServiceDeclarationStarter } from './projectDeclarations';
+import type { ActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 
 import type { LocalServiceLauncherFeed, LocalServiceLauncherFeedSnapshotRequest } from './feed';
 import type { LocalServiceLauncherLeafRoutes } from './leaves';

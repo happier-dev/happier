@@ -74,7 +74,7 @@ async function withColdNativeLogTarget<T>(input: MachineServiceTargetInput,
       cwd: configuration.happyHomeDir, signal });
     launch = await exec.authorizePluginExecLaunchForHost(runtime.exec, {
       executable: tool.executable, args: [], cwd: configuration.happyHomeDir,
-    }, { signal });
+    }, { agentIsolation: null, signal });
     const tuple = launch;
     const env = Object.fromEntries(Object.entries(tuple.env ?? {}).filter((entry): entry is [string, string] => entry[1] !== undefined));
     const run = (args: readonly string[], readSignal?: AbortSignal) => runtime.nativeIo.run({
@@ -188,3 +188,4 @@ async function withSelectedMachineServiceTarget<T>(input: MachineServiceTargetIn
     await lease.release();
   }
 }
+

@@ -22,47 +22,52 @@ export function createPendingResetStartRecoveryPorts(input: Readonly<{
   onError: (error: unknown) => void;
 }>): PendingResetStartRecoveryPorts {
   return {
-    withSession: async (sessionId, run) => {
+    withSession: async (sessionId, run, signal) => {
+      signal?.throwIfAborted();
       if (!input.isCurrent()) return;
       const releaseRequesterContext = input.releaseRequesterSessionRuntimeContext;
       const context = input.resolveRequesterSessionRuntimeContext && releaseRequesterContext
-        ? await input.resolveRequesterSessionRuntimeContext(sessionId) : null;
+        ? await input.resolveRequesterSessionRuntimeContext(sessionId, undefined, signal) : null;
       try {
         const credentials = context?.bootstrap.credentials ?? input.credentials;
         const serverUrl = context?.bootstrap.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
-        const isCurrent = async () => input.isCurrent() && (!context
-          || context.bootstrap.getBoundSessionId() === sessionId && context.bootstrap.attribution.machineId === input.machineId
-            && await context.isCurrent());
+        signal?.throwIfAborted();
+        if (context && (context.bootstrap.getBoundSessionId() !== sessionId
+          || context.bootstrap.attribution.machineId !== input.machineId || !await context.isCurrent(signal))) return;
         await runWithServerHttpBaseUrl(serverUrl, async () => {
-          if (!await isCurrent()) return;
-          const authority = await fetchAccountEncryptionCurrentness({ token: credentials.token });
-          const rawSession = await fetchSessionById({ reason: 'session-control', token: credentials.token, sessionId });
-          if (!await isCurrent() || !rawSession || rawSession.id !== sessionId
+          signal?.throwIfAborted();
+          const authority = await fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token, signal });
+          signal?.throwIfAborted();
+          const rawSession = await fetchSessionById({ reason: 'session-control', token: credentials.token, sessionId, signal });
+          signal?.throwIfAborted();
+          if (!rawSession || rawSession.id !== sessionId
             || readSessionAccessProjectionRoleV1(rawSession) !== 'owner' || rawSession.archivedAt != null) return;
           const metadata = tryDecryptSessionOwnerMetadataView({ credentials, rawSession, accountEncryptionMode: authority.mode });
           if (metadata?.machineId !== input.machineId) return;
-          const assertCurrent = async () => { if (!await isCurrent()) throw new Error('requester_session_not_current'); };
+          // These shared readers retain cancellation between HTTP phases;
+          // Session currentness was already decided at this wake's admission.
+          const readOptions = { credentials, accountMode: authority.mode, signal,
+            assertCurrent: async () => { signal?.throwIfAborted(); } };
           await run({
-            isCurrent,
             read: async () => {
-              const rows = await listPendingQueueV2ResetStartDemands({ token: credentials.token, sessionId });
-              return await isCurrent() ? rows : [];
+              signal?.throwIfAborted();
+              return await listPendingQueueV2ResetStartDemands({ token: credentials.token, sessionId, signal });
             },
             readAuthority: async demand => {
-              const projection = await readPendingResetStartsForSource({ token: credentials.token, source: demand.reset.source });
-              return await isCurrent() && projection.entries.some(entry => entry.sessionId === sessionId
+              signal?.throwIfAborted();
+              const projection = await readPendingResetStartsForSource({ token: credentials.token, source: demand.reset.source, signal });
+              return projection.entries.some(entry => entry.sessionId === sessionId
                 && entry.localId === demand.localId && entry.authorityCurrent
                 && deterministicStringify(entry.reset) === deterministicStringify(demand.reset));
             },
             readWitness: reset => readProviderAccountUsageHistoryWitnessV4({ recordId: reset.recordId, witness: reset.witness },
-              { credentials, accountMode: authority.mode, assertCurrent }),
+              readOptions),
             readCurrent: async reset => (await readProviderAccountUsageQuotaV4({ source: reset.source },
-              { credentials, accountMode: authority.mode, assertCurrent })).current,
+              readOptions)).current,
             release: async demand => {
-              if (!input.isCurrent()) throw new Error('requester_session_not_current');
+              signal?.throwIfAborted();
               // Installed Machine owner rechecks exact retained target and Pending CAS.
               await input.release({ sessionId, ...demand });
-              await assertCurrent();
             },
           });
         });

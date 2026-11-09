@@ -4,7 +4,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS, FeaturesResponseSchema, type BrowserAutomationActionRequestV1 } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, type BrowserAutomationActionRequestV1 } from '@happier-dev/protocol';
 
 // Environment and Home response are the substituted boundaries. Chromium, CDP,
 // feature decisions, routing, and purge stay real.
@@ -89,7 +89,7 @@ describe('managed browser live Session execution', () => {
             const provisioner = createBrowserAutomationRuntimeProvisioner({ refreshRouteOwners: async () => {} });
             const candidate = await resolveManagedBrowserSidecarCandidate();
             if (candidate?.available === false) expect(await provisioner.provision()).toBe('ready');
-            runtime = await createProductBrowserSidecarControlAdapterFactory({
+            runtime = await createProductBrowserSidecarControlAdapterFactory({ 
                 profileStore: profiles,
                 readMachineResourcesPolicy: resourcesPolicy.read,
                 createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({
@@ -150,7 +150,7 @@ describe('managed browser live Session execution', () => {
                     v: 1, ...view, automationRequestId: `live_${++request}`, actionKind,
                     navigationGeneration: capture.getNavigationState?.(view)?.navigationGeneration ?? 0,
                     requestedBy: 'agent', requesterRef: { kind: 'agent', id: 'fixture_agent' }, payload,
-                    timeoutMs: BROWSER_AUTOMATION_MAX_ACTION_TIMEOUT_MS,
+                    timeoutMs: 60_000,
                 } satisfies BrowserAutomationActionRequestV1 });
             }
             expect(await action('waitFor', { selector: '#name' })).toMatchObject({ status: 'succeeded' });

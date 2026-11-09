@@ -12,6 +12,8 @@ import { createGuardLeftBehindActionExecutor } from './actions';
 
 function fixture() {
   let current = true;
+  let verifications = 0;
+  let onEffect: (() => void) | undefined;
   const requests: unknown[] = [];
   const effects: unknown[] = [];
   const settings = ActionsSettingsV1Schema.parse({ v: 1 });
@@ -19,7 +21,7 @@ function fixture() {
     serverId: 'home', serverIdentityId: 'home-identity', runtimeAccountId: 'owner', actionRequestId: 'guard-request',
     externalActionTarget: { kind: 'machine', machineId: 'machine' }, defaultSessionMachineId: 'machine',
     machineAdmission: { machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner',
-      actorAccountId: 'owner', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => current };
+      actorAccountId: 'owner', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => { verifications++; return current; } };
   const coordinator = createBlockingApprovalCoordinator();
   const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: 'machine',
     custodyBinding: { serverId: 'home', installationId: 'installation' }, resolveAccountId: async () => 'owner', generateOperationId: () => 'cleanup-operation' });
@@ -39,16 +41,27 @@ function fixture() {
       const result = await coordinator.waitForDecision(args);
       return { ...result, request: ApprovalRequestSchema.parse(result.request) };
     },
-    machineProcessesAction: async request => { effects.push(request); return { ended: [{ ref: 'exact-ref', freedBytes: 100 }], skipped: [] }; },
+    machineProcessesAction: async request => { effects.push(request); onEffect?.(); return { ended: [{ ref: 'exact-ref', freedBytes: 100 }], skipped: [] }; },
     isActionEnabled: (id, ctx) => isActionEnabledByActionsSettings(id, settings, ctx),
     isActionApprovalRequired: (id, ctx) => isApprovalRequiredByActionsSettings(id, settings, ctx),
   });
   const execute = createGuardLeftBehindActionExecutor({ readContext: async () => context, getExecutor,
     observeExecution: request => operations.observeExecution(request) });
   return { execute, requests, effects, settings, operations, coordinator, context, setCurrent(value: boolean) { current = value; },
+    verifications: () => verifications, onEffect: (effect: () => void) => { onEffect = effect; },
     setActor(actorAccountId: string) { context = { ...context, machineAdmission: { ...context.machineAdmission!, actorAccountId } }; } };
 }
 describe('Guard left-behind canonical Action bridge', () => {
+  it('keeps the admitted cleanup effect result after revoke and re-admits the next request', async () => {
+    const f = fixture();
+    f.onEffect(() => { f.setCurrent(false); });
+    expect(await f.execute({ mode: 'automatic', refs: ['exact-ref'] }))
+      .toMatchObject({ ok: true, result: { ended: [{ ref: 'exact-ref', freedBytes: 100 }], skipped: [] } });
+    expect(f.verifications()).toBe(1);
+    expect(await f.execute({ mode: 'automatic', refs: ['exact-ref'] })).toMatchObject({ ok: false, errorCode: 'scope-retired' });
+    expect(f.verifications()).toBe(2);
+    expect(f.effects).toHaveLength(1);
+  });
   it('accepts cleanup at the real installed operation owner before providing its approval lifetime', async () => {
     const f = fixture();
     let accepted: ActionExecutorContext['operationAcceptance'];

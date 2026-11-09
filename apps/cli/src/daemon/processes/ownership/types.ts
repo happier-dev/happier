@@ -18,12 +18,12 @@ export type HappierProcessRoot = Readonly<{
     endedAtMs?: number;
     workspacePath?: string;
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
-    containment?: Readonly<{ kind: 'linux_unit'; prefix: string }> | Readonly<{ kind: 'windows_job'; name: string }>;
+    containment?: Readonly<{ kind: 'linux_unit' | 'linux_container'; prefix: string }> | Readonly<{ kind: 'windows_job'; name: string }>;
     stop?: () => void | Promise<unknown>;
     startAgain?: (execution: ProcessActionExecution) => Promise<MachineProcessesStartAgainResultV1>;
 }>;
 export type ProcessEvidenceReasonCode =
-    | 'linux_scope' | 'windows_job' | 'macos_no_fence' | 'no_systemd_user_manager' | 'job_join_failed'
+    | 'linux_scope' | 'linux_container' | 'windows_job' | 'macos_no_fence' | 'no_systemd_user_manager' | 'job_join_failed'
     | 'outside_fence' | 'live_root_chain' | 'chain_broken_at_exit' | 'no_live_root'
     | 'marker_matches' | 'marker_cleared' | 'foreign_home_marker'
     | 'marker_owner_unknown' | 'marker_predates_owner' | 'same_group_port_opened_while_running'
@@ -43,11 +43,17 @@ export type ResolvedProcessOwnership = Readonly<{
 }>;
 export type ListenerFact = Readonly<{ pid?: number; port: number }>;
 
+/** Native service authority is not interchangeable with raw Machine process control. */
+export function resolveRawProcessControlRefusal(owner: ProcessOwnerRef | null): 'native_service_control_required' | null {
+    return owner?.kind === 'container' ? 'native_service_control_required' : null;
+}
+
 export function processOwnerKey(owner: ProcessOwnerRef): string {
     switch (owner.kind) {
         case 'session': return `session:${owner.sessionId}`;
         case 'terminal': return `terminal:${owner.terminalId}`;
         case 'service': return `service:${owner.serviceId}`;
+        case 'container': return `container:${JSON.stringify([owner.serverId, owner.machineId, owner.serviceId, owner.containerId])}`;
         case 'run': return `run:${owner.runId}`;
         case 'happier': return `happier:${owner.component ?? 'daemon'}`;
         default: return owner.kind;

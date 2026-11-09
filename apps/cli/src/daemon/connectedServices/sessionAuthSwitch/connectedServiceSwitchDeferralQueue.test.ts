@@ -25,7 +25,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         const emitSessionEvent = vi.fn();
         const runSwitch = vi.fn(async () => {});
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
             emitSessionEvent,
         });
@@ -45,7 +44,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             type: 'connected_service_account_switch_deferred',
             policy: 'defer_until_turn_boundary',
             awaitingBoundary: true,
-            timeoutMs: 60_000,
         }));
 
         queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'assistant_message_end' });
@@ -61,7 +59,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
     it('defers automatic restarts while resumed provider work has an active task marker', async () => {
         const runSwitch = vi.fn(async () => {});
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
         });
 
@@ -85,7 +82,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
 
     it('exposes current turn in-flight state for continuation eligibility', () => {
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
         });
 
@@ -100,7 +96,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
 
     it('records an exact null prompt witness as idle without changing ordinary prompt semantics', () => {
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
         });
 
@@ -124,7 +119,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
 
     it('exposes lifecycle evidence so recovery can distinguish first-prompt retry from mid-turn continuation', () => {
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
         });
 
@@ -132,7 +126,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             inFlight: false,
             lastEvent: null,
             hasProviderActivityThisTurn: false,
-            forcedSwitchInterruptedLiveTurn: false,
         });
 
         queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'prompt_or_steer' });
@@ -140,7 +133,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             inFlight: true,
             lastEvent: 'prompt_or_steer',
             hasProviderActivityThisTurn: false,
-            forcedSwitchInterruptedLiveTurn: false,
         });
 
         queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'task_started' });
@@ -148,7 +140,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             inFlight: true,
             lastEvent: 'task_started',
             hasProviderActivityThisTurn: true,
-            forcedSwitchInterruptedLiveTurn: false,
         });
 
         queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'assistant_message_end' });
@@ -156,14 +147,17 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             inFlight: false,
             lastEvent: 'assistant_message_end',
             hasProviderActivityThisTurn: true,
-            forcedSwitchInterruptedLiveTurn: false,
         });
     });
 
-    it('falls back to abort-and-restart exactly once when boundary timeout expires', async () => {
-        const runSwitch = vi.fn(async () => {});
+    it('keeps a long turn live until its real boundary and applies the deferred switch once', async () => {
+        let finishSwitch!: () => void;
+        let executionSignal: AbortSignal | undefined;
+        const runSwitch = vi.fn((signal?: AbortSignal) => {
+            executionSignal = signal;
+            return new Promise<void>((resolve) => { finishSwitch = resolve; });
+        });
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
         });
 
@@ -176,16 +170,29 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             runSwitch,
         });
 
-        vi.advanceTimersByTime(59_999);
+        vi.advanceTimersByTime(61_000);
         expect(runSwitch).not.toHaveBeenCalled();
-
-        vi.advanceTimersByTime(1);
-        await pending;
-
-        expect(runSwitch).toHaveBeenCalledTimes(1);
+        expect(queue.isTurnInFlight('sess_1')).toBe(true);
 
         queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'assistant_message_end' });
+        vi.advanceTimersByTime(61_000);
+        expect(executionSignal?.aborted).toBe(false);
+        finishSwitch();
+        await pending;
         expect(runSwitch).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels the queued switch when the user stops the live turn', async () => {
+        const runSwitch = vi.fn(async () => {});
+        const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
+        queue.recordTurnLifecycleEvent({ sessionId: 'stopped', event: 'prompt_or_steer' });
+        const pending = queue.requestSwitch({ sessionId: 'stopped', policy: 'defer_until_turn_boundary',
+            source: 'manual', target: target(), runSwitch });
+        const outcome = pending.then(() => 'applied', (error: unknown) =>
+            error instanceof ConnectedServiceSwitchDeferralConflictError ? error.code : 'unknown');
+        queue.recordTurnLifecycleEvent({ sessionId: 'stopped', event: 'turn_cancelled' });
+        expect(await outcome).toBe('switch_cancelled');
+        expect(runSwitch).not.toHaveBeenCalled();
     });
 
     it('runs a deferred switch only once when two terminal events arrive while runSwitch is in flight', async () => {
@@ -195,7 +202,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         }));
         const emitSessionEvent = vi.fn();
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
             emitSessionEvent,
         });
@@ -228,100 +234,13 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         expect(completedEvents).toHaveLength(1);
     });
 
-    it('rejects the deferred callers with a bounded typed error when runSwitch itself hangs (CL-1)', async () => {
-        // A hung runSwitch (stuck materialization / network hang) must not strand the deferred callers
-        // forever: the deferral-window timer is cleared at execute-start, so without an execution bound
-        // the pending leaks until session teardown.
-        let executionSignal: AbortSignal | undefined;
-        const runSwitch = vi.fn((signal?: AbortSignal) => {
-            executionSignal = signal;
-            return new Promise<void>(() => {});
-        });
-        const emitSessionEvent = vi.fn();
-        const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
-            disableDeferral: false,
-            emitSessionEvent,
-        });
 
-        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'prompt_or_steer' });
-        const pending = queue.requestSwitch({
-            sessionId: 'sess_1',
-            policy: 'defer_until_turn_boundary',
-            source: 'manual',
-            target: target(),
-            runSwitch,
-        });
-        const outcome = expect(pending).rejects.toMatchObject({
-            name: 'ConnectedServiceSwitchDeferralConflictError',
-            code: 'switch_execution_timeout',
-        });
 
-        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'assistant_message_end' });
-        expect(runSwitch).toHaveBeenCalledTimes(1);
-        expect(executionSignal?.aborted).toBe(false);
 
-        vi.advanceTimersByTime(60_000);
-        await outcome;
-        expect(executionSignal?.aborted).toBe(true);
-        expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
-            type: 'connected_service_account_switch_deferral_completed',
-            reason: 'aborted_after_timeout',
-        }));
-
-        // The pending entry is settled and cleared: a fresh idle-session request runs immediately
-        // instead of piggybacking onto the leaked hung pending.
-        const followUp = vi.fn(async () => {});
-        await queue.requestSwitch({
-            sessionId: 'sess_1',
-            policy: 'defer_until_turn_boundary',
-            source: 'manual',
-            target: target(),
-            runSwitch: followUp,
-        });
-        expect(followUp).toHaveBeenCalledTimes(1);
-    });
-
-    it('force-closes the in-flight turn at a boundary when the timeout forces the switch', async () => {
-        const runSwitch = vi.fn(async () => {});
-        const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
-            disableDeferral: false,
-        });
-
-        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'prompt_or_steer' });
-        expect(queue.isTurnInFlight('sess_1')).toBe(true);
-        const pending = queue.requestSwitch({
-            sessionId: 'sess_1',
-            policy: 'defer_until_turn_boundary',
-            source: 'manual',
-            target: target(),
-            runSwitch,
-        });
-
-        vi.advanceTimersByTime(60_000);
-        await pending;
-
-        expect(runSwitch).toHaveBeenCalledTimes(1);
-        // After a forced (timeout) switch, the turn must no longer report in-flight, so the
-        // managed-server release guard does not defer the now-forced switch (which would otherwise
-        // leak the prior-fingerprint server). The forced boundary is observable as turn_cancelled.
-        expect(queue.isTurnInFlight('sess_1')).toBe(false);
-        expect(queue.getTurnLifecycleState('sess_1').lastEvent).toBe('turn_cancelled');
-        // The forced boundary genuinely interrupted a live turn — the continuation replay plan needs
-        // this fact, because at plan-resolution time the turn is already closed (inFlight false).
-        expect(queue.getTurnLifecycleState('sess_1').forcedSwitchInterruptedLiveTurn).toBe(true);
-
-        // The interruption fact is scoped to the interrupted turn: the next prompt starts a new turn
-        // and clears it, so a later idle-session switch cannot read it as stale interruption evidence.
-        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'prompt_or_steer' });
-        expect(queue.getTurnLifecycleState('sess_1').forcedSwitchInterruptedLiveTurn).toBe(false);
-    });
 
     it('does not record a forced-boundary interruption when the switch runs at a clean boundary', async () => {
         const runSwitch = vi.fn(async () => {});
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
         });
 
@@ -339,13 +258,14 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         await pending;
 
         expect(runSwitch).toHaveBeenCalledTimes(1);
-        expect(queue.getTurnLifecycleState('sess_1').forcedSwitchInterruptedLiveTurn).toBe(false);
+        expect(queue.getTurnLifecycleState('sess_1')).toMatchObject({
+            inFlight: false, lastEvent: 'assistant_message_end',
+        });
     });
 
     it('bypasses deferral when HAPPIER_CONNECTED_SERVICES_DISABLE_TURN_DEFERRAL is enabled', async () => {
         const runSwitch = vi.fn(async () => {});
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: true,
         });
 
@@ -361,37 +281,10 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         expect(runSwitch).toHaveBeenCalledTimes(1);
     });
 
-    it('treats turn cancellation as a real boundary completion instead of a cancelled switch', async () => {
-        const emitSessionEvent = vi.fn();
-        const runSwitch = vi.fn(async () => {});
-        const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
-            disableDeferral: false,
-            emitSessionEvent,
-        });
 
-        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'prompt_or_steer' });
-        const pending = queue.requestSwitch({
-            sessionId: 'sess_1',
-            policy: 'defer_until_turn_boundary',
-            source: 'manual',
-            target: target(),
-            runSwitch,
-        });
-
-        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'turn_cancelled' });
-        await pending;
-
-        expect(runSwitch).toHaveBeenCalledTimes(1);
-        expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
-            type: 'connected_service_account_switch_deferral_completed',
-            reason: 'completed_at_boundary',
-        }));
-    });
 
     it('exposes the canonical turn lifecycle state for policy callers', () => {
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
         });
 
@@ -399,7 +292,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             inFlight: false,
             lastEvent: null,
             hasProviderActivityThisTurn: false,
-            forcedSwitchInterruptedLiveTurn: false,
         });
 
         queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'prompt_or_steer' });
@@ -407,7 +299,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             inFlight: true,
             lastEvent: 'prompt_or_steer',
             hasProviderActivityThisTurn: false,
-            forcedSwitchInterruptedLiveTurn: false,
         });
 
         queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'assistant_message_end' });
@@ -415,7 +306,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
             inFlight: false,
             lastEvent: 'assistant_message_end',
             hasProviderActivityThisTurn: false,
-            forcedSwitchInterruptedLiveTurn: false,
         });
     });
 
@@ -423,7 +313,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         const emitSessionEvent = vi.fn();
         const runSwitch = vi.fn(async () => {});
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
             emitSessionEvent,
         });
@@ -488,7 +377,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         const emitSessionEvent = vi.fn();
         const runSwitch = vi.fn(async () => {});
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
             emitSessionEvent,
         });
@@ -522,7 +410,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         const emitSessionEvent = vi.fn();
         const runSwitch = vi.fn(async () => {});
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
             emitSessionEvent,
         });
@@ -549,7 +436,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         const emitSessionEvent = vi.fn();
         const runSwitch = vi.fn(async () => {});
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
             emitSessionEvent,
         });
@@ -598,7 +484,6 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         });
         const runSwitch = vi.fn(async () => {});
         const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
             disableDeferral: false,
             emitSessionEvent,
         });
@@ -617,33 +502,5 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         expect(runSwitch).toHaveBeenCalledTimes(1);
     });
 
-    it('preserves the forced-interruption witness when the restart it caused terminates the runner', async () => {
-        // The forced boundary interrupted a LIVE user turn, then the restart signal killed the
-        // runner. The exit observer cancels the session as `session_restarting` BEFORE the
-        // continuation plan resolves; wiping the witness there silently loses the user's turn.
-        const queue = createConnectedServiceSwitchDeferralQueue({
-            timeoutMs: 60_000,
-            disableDeferral: false,
-        });
 
-        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'prompt_or_steer' });
-        const pending = queue.requestSwitch({
-            sessionId: 'sess_1',
-            policy: 'defer_until_turn_boundary',
-            source: 'manual',
-            target: target(),
-            runSwitch: async () => {},
-        });
-        vi.advanceTimersByTime(60_000);
-        await pending;
-        expect(queue.getTurnLifecycleState('sess_1').forcedSwitchInterruptedLiveTurn).toBe(true);
-
-        await queue.cancelSession('sess_1', 'session_restarting');
-
-        expect(queue.getTurnLifecycleState('sess_1').forcedSwitchInterruptedLiveTurn).toBe(true);
-        expect(queue.isTurnInFlight('sess_1')).toBe(false);
-        // A genuine session teardown still clears everything.
-        await queue.cancelSession('sess_1', 'session_terminated');
-        expect(queue.getTurnLifecycleState('sess_1').forcedSwitchInterruptedLiveTurn).toBe(false);
-    });
 });

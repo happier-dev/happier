@@ -1,6 +1,6 @@
 import type { GuardCandidate } from '../guardPlanner';
 
-/** Captured launch owner disposal includes profile cleanup and stopAndWait; never signal a PID here. */
+/** The launch owner settles Chromium while retaining the Session workspace; never signal a PID here. */
 export async function browserClose(candidate: GuardCandidate, signal: AbortSignal): Promise<
   Readonly<{ status: 'stopped' } | { status: 'failed'; reason: string }>> {
   if (signal.aborted) return { status: 'failed', reason: 'cancelled' };

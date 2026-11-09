@@ -8,6 +8,7 @@ import { AccountSettingsSchema, FeaturesResponseSchema, SavedSecretResourceMater
   sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
 import { verifyMachineInstallationProof, type RequesterSessionCurrentnessPurposeV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { configuration } from '@/configuration';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -19,7 +20,7 @@ import { createExternalConnectedAccountForegroundFixture, createForegroundPurpos
 import type { PrepareForegroundAgentRuntimeAdmissionDependencies } from './prepareForegroundAdmission';
 import { createRequesterSessionRuntimeContext } from '../sessionEncryption/createRequesterSessionRuntimeContext';
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
-import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { fetchServerFeaturesSnapshot, readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveQualifiedConnectedAccountAtomicV4Negotiation } from '@/api/client/qualifiedConnectedAccountApi';
 import { promoteForegroundDaemonServiceAuthority } from './promoteForegroundDaemonServiceAuthority';
 import { readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
@@ -31,7 +32,7 @@ import { createRequesterSessionControlRuntimeFixture } from '../testkit/requeste
 import { artifactListResponse } from '@/testkit/http/artifactHome';
 
 describe('foreground requester Account admission through protected custody', () => {
-  it('claims Bob Profile material without publishing Bob as Alice, and refuses lost admission before claiming material', async () => {
+  it('claims Bob Profile material without publishing Bob as Alice, and refuses disposed custody or a revoked new admission', async () => {
     const service = { pluginId: 'acme.credentials', localId: 'native' } as const;
     const alicePurpose = createExternalConnectedAccountForegroundFixture({ service, materializationKinds: ['files'],
       launch: { stateSharingDescriptor: { providerSupportStatus: 'supported',
@@ -63,7 +64,10 @@ describe('foreground requester Account admission through protected custody', () 
       await writeFile(join(aliceNativeHome, 'config.toml'), 'alice-private-config');
       const app = fastify();
       const origin = new URL(configuration.serverUrl).origin;
-      const credentials = { token: 'bob-foreground-private', encryption: null } as const;
+      const activeServerDir = configuration.activeServerDir;
+      // Home HTTP authenticates the fixture; real Account owners also inspect its subject.
+      const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'bob', tokenEpoch: 1,
+        provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.fixture`, encryption: null } as const;
       const attribution = { serverId: configuration.activeServerId, accountId: 'bob', machineId: 'machine-1', installationId: 'install-1' };
       const sessionId = 'bob-foreground-session';
       const reference = 'happier:shared-secret:v1:bob-profile-secret';
@@ -78,13 +82,14 @@ describe('foreground requester Account admission through protected custody', () 
           defaultPermissionModeByTargetKey: {}, compatibilityByTargetKey: {}, isBuiltIn: false,
           createdAt: 1, updatedAt: 1, version: '1.0.0',
         } } });
-      const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} });
+      const features = FeaturesResponseSchema.parse({ features: { teams: { enabled: true } },
+        capabilities: { serverIdentity: { serverIdentityId: 'srv_foreground_home' } } });
       app.addHook('onRequest', async request => { reads.push({ path: request.url, bearer: request.headers.authorization }); });
       app.get('/v1/features', async () => features);
       app.get('/v1/features/authenticated', async () => features);
       app.get('/v1/account/profile', async () => ({ id: 'bob' }));
       app.get(ACCOUNT_SECURITY_PATH_V1, async () => AccountSecurityGetResponseV1Schema.parse({
-        v: 1, encryptionMode: 'plain', terminalPresentUserPolicy: 'allowed', nativeEmail: null,
+        v: 1, encryptionMode: 'plain', nativeEmail: null,
         password: { status: 'not_enrolled', revision: null },
       }));
       app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
@@ -97,10 +102,13 @@ describe('foreground requester Account admission through protected custody', () 
       app.get('/v1/account/entity-rows/profiles', async () => ({ status: 'listed', rows: [{ id: profile.id, revision: 1,
         content: sealProfileRecordContentV1({ mode: 'plain', material: null, record: profile }) }], nextCursor: null,
         complete: true, diagnostics: [], referenceGuardRevision: 1, transferControl: { status: 'absent' } }));
-      app.get('/v1/machines/machine-1/access', async (_request, reply) => granted ? { machineId: 'machine-1',
-        custodian: { accountId: 'alice', displayName: 'Alice' }, access: { custodian: { accountId: 'alice', displayName: 'Alice' },
-          role: 'use', resourceMode: 'plain', accessState: 'ready' }, canManage: false, grants: [], ownDirectGrant: true, ownAccessSources: [] }
-        : reply.code(403).send({ kind: 'refused', code: 'access_denied' }));
+      app.get('/v1/machines/machine-1', async (_request, reply) => granted
+        ? { machine: MachinePublishedRowV1Schema.parse({ id: 'machine-1', installationId: 'install-1',
+          metadata: 'opaque-machine-content', metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+          revokedAt: null, replacedByMachineId: null,
+          access: { custodian: { accountId: 'alice', displayName: 'Alice' },
+            role: 'use', resourceMode: 'plain', accessState: 'ready' } }) }
+        : reply.code(404).send({ error: 'machine_unavailable' }));
       app.post('/v1/machines/machine-1/admission/verify', async (request, reply) => {
         const body = request.body as { context: SocketRpcMachineAdmissionContextV1; method?: string;
           purpose?: RequesterSessionCurrentnessPurposeV1;
@@ -136,10 +144,17 @@ describe('foreground requester Account admission through protected custody', () 
       let disposeBootstrap: (() => Promise<void>) | undefined;
       try {
         channel = await createRequesterCurrentnessSocketHarness();
-        await createRequesterSessionCredentialCustody({ happyHomeDir: fixture.home, sessionId, attribution, credentials });
-        const bootstrap = await resolveRequesterSessionBootstrap({ happyHomeDir: fixture.home, sessionId, attribution,
-          serverHttpBaseUrl: origin, machineAdmissionBoundary: { machineId: 'machine-1', daemonToken: 'alice-daemon',
-            isHomeCurrent: () => true, readInstallation: () => ({ installationId: 'install-1', privateKey: keyPair.secretKey }) } });
+        const homeFeatures = await fetchServerFeaturesSnapshot({ serverUrl: origin, token: credentials.token, projection: 'authenticated' });
+        const homeServerIdentityId = readServerIdentityIdFromFeaturesSnapshot(homeFeatures);
+        if (!homeServerIdentityId) throw new Error('Observed requester Home identity unavailable');
+        const machineAdmissionBoundary = { machineId: 'machine-1', daemonToken: 'alice-daemon',
+          isHomeCurrent: () => true, getObservedServerIdentityId: () => homeServerIdentityId,
+          readInstallation: () => ({ installationId: 'install-1', privateKey: keyPair.secretKey }) };
+        await createRequesterSessionCredentialCustody({ happyHomeDir: fixture.home, sessionId, attribution, credentials,
+          homeServerIdentityId });
+        const recoverBootstrap = () => resolveRequesterSessionBootstrap({ happyHomeDir: fixture.home, sessionId, attribution,
+          serverHttpBaseUrl: origin, machineAdmissionBoundary });
+        const bootstrap = await recoverBootstrap();
         disposeBootstrap = bootstrap?.dispose;
         expect(bootstrap).not.toBeNull();
         if (!bootstrap) throw new Error('Real Bob bootstrap unavailable');
@@ -180,27 +195,25 @@ describe('foreground requester Account admission through protected custody', () 
         const pending = await fixture.prepare({ ...request, attemptId: 'lost-grant-attempt' }, dependencies);
         expect(pending.ok).toBe(true);
         if (!pending.ok) throw new Error('Current Bob foreground preparation failed');
-        const homeFeatures = await fetchServerFeaturesSnapshot({ serverUrl: origin, token: credentials.token, projection: 'authenticated' });
         const trackedSessions = new Map<number, TrackedSession>();
         // The runtime owns its bootstrap; foreground preparation keeps its independent acquisition current.
         const runtimeBootstrap = await resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: fixture.home,
           serverId: attribution.serverId, sessionId, serverHttpBaseUrl: origin, expectedAttribution: attribution,
-          machineAdmissionBoundary: { machineId: 'machine-1', daemonToken: 'alice-daemon', isHomeCurrent: () => true,
-            readInstallation: () => ({ installationId: 'install-1', privateKey: keyPair.secretKey }) } });
+          machineAdmissionBoundary });
         if (!runtimeBootstrap) throw new Error('Real requester runtime bootstrap unavailable');
         let runtime: Awaited<ReturnType<typeof createRequesterSessionRuntimeContext>> = null;
         let host: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | null = null;
         const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
         try {
           host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: fixture.home,
-            activeServerDir: fixture.home, serverId: attribution.serverId, serverHttpBaseUrl: origin,
+            activeServerDir, serverId: attribution.serverId, serverHttpBaseUrl: origin,
             machineId: attribution.machineId, custodianAccountId: 'alice',
             credentials: { token: 'alice-daemon', encryption: null },
             connectedServicesMaterializationBaseDir: join(fixture.home, 'alice-runtime-materialized'),
             registry: runtimeRegistry, trackedSessions, getRequester: () => runtime,
             resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(homeFeatures) });
           runtime = await createRequesterSessionRuntimeContext({ providerAccountUsageStore: createProviderAccountUsageStore(), bootstrap: runtimeBootstrap,
-            activeServerDir: fixture.home, connectedServicesMaterializationBaseDir: join(fixture.home, 'bob-runtime-materialized'),
+            activeServerDir, connectedServicesMaterializationBaseDir: join(fixture.home, 'bob-runtime-materialized'),
             resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(homeFeatures), coordinatorInput: {
               machineId: 'machine-1', machineIdProvider: () => 'machine-1', runtimeId: 'foreground-runtime', happyHomeDir: fixture.home,
               logger: { debug: () => {}, info: () => {}, warn: () => {} }, processEnv: {
@@ -239,6 +252,10 @@ describe('foreground requester Account admission through protected custody', () 
             ...dependencies, requesterSessionRuntimeContext: runtime,
           })).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
           granted = false;
+          expect(await recoverBootstrap()).toBeNull();
+          // Revocation refuses fresh recovery; explicit disposal retires already
+          // admitted foreground preparation at its existing local lifetime.
+          await bootstrap.dispose();
           expect(await pending.prepared.claim({ canonicalSessionId: sessionId, httpPort: 43127,
             foregroundSatisfiedProfileSecretRequirementNames: [] })).toMatchObject({ ok: false });
           expect(await fixture.prepare({ ...request, attemptId: 'lost-grant-before-prepare' }, dependencies)).toMatchObject({ ok: false });

@@ -16,9 +16,10 @@ import { equalProcessStart } from '../../processes/ownership/types';
 import { setGuardSessionMemoryHigh, sessionScopeExitEvidencePath } from './systemdUserResourceGovernor';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { readGuardSessionTitle } from '../../guard/readGuardSessionTitle';
 
 export type SessionMemoryCeilingTarget = Readonly<{
-  tracked: TrackedSession; root: HappierProcessRoot; label: string;
+  tracked: TrackedSession; root: HappierProcessRoot; label: string | null;
   attribution: MachineGuardActivityEntryV1['attribution'];
   metadata: Readonly<Record<string, unknown>>;
 }>;
@@ -210,20 +211,10 @@ export function createSessionMemoryCeiling(input: SessionMemoryCeilingInput) {
       pending.entry = { ...record(runner, 'ceiling_near', 'ceiling', 'done'), ...(pending.memory ? { memory: pending.memory } : {}) };
       return runEdge(runner, pending, signal);
     }
-    let eligibility = await input.readEligibility(target.tracked, signal);
-    signal.throwIfAborted();
-    let reason: string | undefined = eligibility.eligible ? undefined : eligibility.reasons[0]?.kind ?? 'activity_unknown';
+    let reason: string | undefined;
     try {
-      if (!reason) {
-        const marked = await input.notice(target.tracked, { kind: 'stopped', at: now(), rule: 'ceiling', ceilingBytes: runner.ceilingBytes }, signal);
-        if (marked) pending.clearTracked = target.tracked; else reason = 'notice_unavailable';
-      }
-      const fresh = reason ? undefined : await current(target, signal);
-      if (!reason && !fresh) reason = 'identity_changed';
-      if (!reason && fresh) {
-        eligibility = await input.readEligibility(fresh.tracked, signal);
-        if (!eligibility.eligible) reason = eligibility.reasons[0]?.kind ?? 'activity_unknown';
-      }
+      const marked = await input.notice(target.tracked, { kind: 'stopped', at: now(), rule: 'ceiling', ceilingBytes: runner.ceilingBytes }, signal);
+      if (marked) pending.clearTracked = target.tracked; else reason = 'notice_unavailable';
       signal.throwIfAborted(); if (stopped) return;
       if (reason) pending.entry = record(runner, 'ceiling_reached', 'ceiling', 'done', reason);
       else {
@@ -236,7 +227,9 @@ export function createSessionMemoryCeiling(input: SessionMemoryCeilingInput) {
           else if (runner.ceilingBytes !== pending.bytes
             || resolveSessionMemoryCeilingBytes(admitted.metadata, input.readPolicy()) !== pending.bytes) reason = 'ceiling_changed';
           else {
-            eligibility = await input.readEligibility(admitted.tracked, signal);
+            // Notice and notification may await transport. Only this final
+            // exact-runner admission can authorize the subsequent native stop.
+            const eligibility = await input.readEligibility(admitted.tracked, signal);
             if (!eligibility.eligible) reason = eligibility.reasons[0]?.kind ?? 'activity_unknown';
           }
           signal.throwIfAborted();
@@ -296,7 +289,7 @@ export function createSessionMemoryCeiling(input: SessionMemoryCeilingInput) {
           return { status: 'not_observed' };
         }
         const metadata = tracked.happySessionMetadataFromLocalWebhook;
-        const title = metadata?.summary?.text ?? sessionId;
+        const title = readGuardSessionTitle(metadata);
         const entry: MachineGuardActivityEntryV1 = { v: 1, id: randomUUID(), at: now(), kind: 'system_oom_kill',
           rule: 'system', outcome: 'done', note: SESSION_OOM_EXPLANATION,
           subject: { kind: 'session', sessionId, title }, attribution: tracked.requesterWorkAttributionV1 ?? { kind: 'unknown' } };

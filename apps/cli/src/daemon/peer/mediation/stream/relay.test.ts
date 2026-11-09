@@ -1,4 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import tweetnacl from 'tweetnacl';
+import { createMachineLiveStreamRelayAuthorizationSigningInputV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
+import { registerDaemonLiveStreamRelayHandlers } from '@/rpc/handlers/daemonLiveStreamRelay';
+import { DaemonMachineLiveStreamRelayStartResponseV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
 
 import {
     MachineLiveStreamReceiptV1Schema,
@@ -89,6 +95,69 @@ function startRequestWithViewerSocket(viewerSocketId: string): MachineLiveStream
 }
 
 describe('createMachineLiveStreamRelayTerminator', () => {
+    it('verifies the Home-signed personal source before capture and binds capture to its admitted occurrence', async () => {
+        const keys = tweetnacl.sign.keyPair();
+        const registry = createMachineLiveStreamCaptureRegistry();
+        let captures = 0;
+        const register = () => registry.register({ sourceId: 'personal-source', streamFamily: 'screen',
+            capabilities: { v: 1, sourceId: 'personal-source', sourceKind: 'screen', supportedCodecs: ['image.mjpeg'],
+                inputMode: 'none', sidebands: [], health: { status: 'available' } },
+            // Native capture boundary; no permission logic is replaced.
+            adapter: { async start() { captures += 1; return { ok: true, session: { stop() {} } }; } },
+        });
+        register();
+        const source = registry.resolve({ sourceId: 'personal-source' });
+        if (!source.ok || !source.source.sourceOccurrenceId) throw new Error('missing source occurrence');
+        const request = startRequestWithViewerSocket('viewer-socket');
+        request.targetMachineId = 'machine_source';
+        request.sourceId = 'personal-source';
+        const payload = { ...request.authorization!.payload, v: 2 as const, targetMachineId: 'machine_source', sourceId: 'personal-source', viewerSocketId: 'viewer-socket',
+            viewerAccountId: 'guest', sourceMachineInstallationId: 'installation', personalSourceAdmission: {
+                homeServerIdentityId: 'home', actorAccountId: 'guest', streamFamily: 'screen',
+                sourceId: 'personal-source', sourceOccurrenceId: source.source.sourceOccurrenceId,
+            } };
+        request.authorization = { payload, signature: { keyId: 'home-key', alg: 'Ed25519', valueBase64Url:
+            Buffer.from(tweetnacl.sign.detached(Buffer.from(createMachineLiveStreamRelayAuthorizationSigningInputV1(payload)), keys.secretKey)).toString('base64url') } };
+        const terminator = createMachineLiveStreamRelayTerminator({ machineId: 'machine_source', sourceMachineInstallationId: 'installation',
+            accountId: 'account_1', resolveRelayAuthorizationTrustRoots: () => [{ keyId: 'home-key', publicKey: Buffer.from(keys.publicKey).toString('base64url') }],
+            captureAdapter: createDaemonMachineLiveStreamCaptureAdapter(registry), nowMs: () => 2_000, emitEnvelope() {} });
+        const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+        registerDaemonLiveStreamRelayHandlers({ registerHandler(method, handler) {
+            // Simulate the untyped RPC transport; the real handler parses its request schema.
+            handlers.set(method, handler as RpcHandler<unknown, unknown>);
+        } }, { relay: terminator });
+        const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+            machineAdmission: { actorAccountId: 'guest', custodianAccountId: 'account_1', machineId: 'machine_source',
+                installationId: 'installation', role: 'use', encryptionMode: 'plain' } };
+        const start = async (startRequest: MachineLiveStreamStartRequestV1, ingress = context) =>
+            DaemonMachineLiveStreamRelayStartResponseV1Schema.parse(await handlers.get(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START)?.({
+                protocolVersion: 1, machineId: 'machine_source', startRequest,
+            }, ingress)).result;
+        const forged = { ...request, authorization: { ...request.authorization, signature: { ...request.authorization.signature,
+            valueBase64Url: Buffer.alloc(64).toString('base64url') } } };
+        expect(await start(forged)).toEqual({ ok: false, reasonCode: 'grant_bad_signature' });
+        expect(captures).toBe(0);
+        expect(await start(request, { ...context, machineAdmission: { ...context.machineAdmission!, actorAccountId: 'another-person' } }))
+            .toEqual({ ok: false, reasonCode: 'capture_source_denied' });
+        expect(captures).toBe(0);
+        expect(await start(request)).toMatchObject({ ok: true });
+        expect(captures).toBe(1);
+        const replacedPayload = { ...payload, exp: 121_000, personalSourceAdmission: {
+            ...payload.personalSourceAdmission, sourceOccurrenceId: 'replacement-occurrence',
+        } };
+        expect(terminator.applyControl({ v: 1, sourceMachineId: request.sourceMachineId,
+            targetMachineId: request.targetMachineId, viewerSocketId: request.viewerSocketId,
+            message: { kind: 'renew', startRequest: { ...request, authorization: {
+                payload: replacedPayload, signature: { keyId: 'home-key', alg: 'Ed25519', valueBase64Url:
+                    Buffer.from(tweetnacl.sign.detached(Buffer.from(createMachineLiveStreamRelayAuthorizationSigningInputV1(replacedPayload)), keys.secretKey)).toString('base64url') },
+            } } },
+        })).toEqual({ ok: false, reasonCode: 'renewal_scope_mismatch' });
+        await terminator.stop(request.streamId);
+        register();
+        expect(await start(request)).toEqual({ ok: false, reasonCode: 'capture_source_unavailable' });
+        expect(captures).toBe(1);
+        await terminator.dispose();
+    });
     it('refuses a replaced source occurrence and stops a live capture when its exact source retires', async () => {
         const registry = createMachineLiveStreamCaptureRegistry();
         let captureInput: MachineLiveStreamCaptureStartInput | null = null;
@@ -173,7 +242,7 @@ describe('createMachineLiveStreamRelayTerminator', () => {
         } }));
         await terminator.dispose();
     });
-    it.each(['stop', 'dispose'] as const)('stops a late capture after %s while startup is pending', async (action) => {
+    it.each(['stop', 'control', 'dispose'] as const)('stops a late capture after %s while startup is pending', async (action) => {
         let resolveCapture!: (value: MachineLiveStreamCaptureStartResult) => void;
         const stop = vi.fn();
         const emitted: MachineLiveStreamRelayEnvelopeV1[] = [];
@@ -185,9 +254,18 @@ describe('createMachineLiveStreamRelayTerminator', () => {
         });
         const starting = terminator.start(startRequest());
         if (action === 'stop') await terminator.stop('stream_1');
+        else if (action === 'control') expect(terminator.applyControl({
+            v: 1,
+            sourceMachineId: 'machine_source',
+            targetMachineId: 'machine_target',
+            message: { kind: 'control', control: {
+                v: 1, streamId: 'stream_1', kind: 'stop', reasonCode: 'live_stream_authorization_expired',
+            } },
+        })).toEqual({ ok: true });
         else await terminator.dispose();
         resolveCapture({ ok: true, session: { stop } });
-        expect(await starting).toEqual({ ok: false, reasonCode: action === 'stop' ? 'stream_stopped' : 'relay_disposed' });
+        expect(await starting).toEqual({ ok: false, reasonCode: action === 'control'
+            ? 'live_stream_authorization_expired' : action === 'stop' ? 'stream_stopped' : 'relay_disposed' });
         expect(stop).toHaveBeenCalledOnce();
         expect(emitted.some((envelope) => envelope.message.kind === 'start')).toBe(false);
     });

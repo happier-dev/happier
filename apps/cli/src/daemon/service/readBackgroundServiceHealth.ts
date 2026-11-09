@@ -36,11 +36,12 @@ export function readBackgroundServiceHealth(params: Readonly<{
   label: string;
   errLogPath: string | null;
   mode?: DaemonServiceMode | null;
+  deadlineMs?: number;
 }>): ServiceHealthSignal {
   const platformHealth = params.platform === 'darwin'
-    ? readLaunchdHealth({ uid: params.uid, label: params.label })
+    ? readLaunchdHealth({ uid: params.uid, label: params.label, deadlineMs: params.deadlineMs })
     : params.platform === 'linux'
-      ? readSystemdHealth({ label: params.label, mode: params.mode ?? 'user', uid: params.uid })
+      ? readSystemdHealth({ label: params.label, mode: params.mode ?? 'user', uid: params.uid, deadlineMs: params.deadlineMs })
       : { runs: null, lastExitCode: null, isCrashLooping: false, lastErrorLine: null };
 
   const lastErrorLine = platformHealth.lastErrorLine
@@ -82,13 +83,14 @@ export function readBackgroundServiceActivity(params: Readonly<{
       unitName: normalizeSystemdUnitName(params.label),
       mode: params.mode ?? 'user',
       uid: params.uid,
+      deadlineMs: params.deadlineMs,
     });
     if (!status) return 'unknown';
     const activeState = String(status.activeState ?? '').trim().toLowerCase();
     return activeState === 'active' || activeState === 'activating' || activeState === 'reloading' ? 'active' : 'inactive';
   }
   if (params.platform === 'win32') {
-    return tryReadScheduledTaskActivity(params.label);
+    return tryReadScheduledTaskActivity(params.label, params.deadlineMs);
   }
   return 'unknown';
 }
@@ -110,9 +112,10 @@ export function readBackgroundServiceStartupFailure(params: Readonly<{
   startedAtMs: number;
   /** A newly bootstrapped launchd job starts at zero; kickstart retains its prior runs. */
   priorLaunchdRuns?: number | null;
+  deadlineMs?: number;
 }>): BackgroundServiceStartupFailure | null {
   if (params.platform === 'linux') {
-    const status = tryReadSystemdStatus({ unitName: normalizeSystemdUnitName(params.label), mode: params.mode, uid: params.uid });
+    const status = tryReadSystemdStatus({ unitName: normalizeSystemdUnitName(params.label), mode: params.mode, uid: params.uid, deadlineMs: params.deadlineMs });
     if (!status) return null;
     if (status.activeState === 'failed') return 'systemd_failed';
     if (status.subState === 'auto-restart' && isFaultedSystemdUnit(status)) return 'systemd_auto_restart_failed';
@@ -123,7 +126,7 @@ export function readBackgroundServiceStartupFailure(params: Readonly<{
   }
   if (params.platform === 'darwin') {
     if (params.uid === null) return null;
-    const output = tryReadLaunchctl(params.uid, params.label);
+    const output = tryReadLaunchctl(params.uid, params.label, params.deadlineMs);
     if (output === null) return null;
     if (!output) return 'launchd_unloaded';
     const state = /^\s*state\s*=\s*(.+)$/m.exec(output)?.[1]?.trim();
@@ -133,7 +136,7 @@ export function readBackgroundServiceStartupFailure(params: Readonly<{
       ? 'launchd_exited' : null;
   }
   if (params.platform === 'win32') {
-    const status = tryReadScheduledTaskStatus(params.label);
+    const status = tryReadScheduledTaskStatus(params.label, false, params.deadlineMs);
     if (!status) return null;
     if (!status.exists) return 'scheduled_task_missing';
     if (status.active || status.stateValue === 2) return null;
@@ -147,13 +150,19 @@ export function readBackgroundServiceStartupFailure(params: Readonly<{
   return null;
 }
 
-function tryReadScheduledTaskActivity(label: string): BackgroundServiceActivity {
-  const status = tryReadScheduledTaskStatus(label);
+function tryReadScheduledTaskActivity(label: string, deadlineMs?: number): BackgroundServiceActivity {
+  const status = tryReadScheduledTaskStatus(label, false, deadlineMs);
   if (!status) return 'unknown';
   return status.exists && status.active ? 'active' : 'inactive';
 }
 
-function tryReadScheduledTaskStatus(label: string, includeAutostart = false) {
+function healthQueryTimeoutMs(defaultTimeoutMs: number, deadlineMs?: number): number {
+  return deadlineMs === undefined ? defaultTimeoutMs : Math.min(defaultTimeoutMs, deadlineMs - Date.now());
+}
+
+function tryReadScheduledTaskStatus(label: string, includeAutostart = false, deadlineMs?: number) {
+  const timeout = healthQueryTimeoutMs(5_000, deadlineMs);
+  if (timeout <= 0) return null;
   try {
     const task = splitQualifiedWindowsScheduledTaskName(label);
     const result = spawnBackgroundSync('powershell.exe', [
@@ -161,7 +170,7 @@ function tryReadScheduledTaskStatus(label: string, includeAutostart = false) {
       '-NonInteractive',
       '-Command',
       buildReadWindowsScheduledTaskStatusPowerShellCommand({ ...task, includeAutostart }),
-    ], { encoding: 'utf-8', timeout: 5_000 });
+    ], { encoding: 'utf-8', timeout });
     return result.status === 0 ? parseWindowsScheduledTaskStatusPowerShellJson(String(result.stdout ?? '')) : null;
   } catch {
     return null;
@@ -175,6 +184,7 @@ export function readBackgroundServiceAutostartMode(params: Readonly<{
   label: string;
   mode?: DaemonServiceMode | null;
   installedMode: DaemonServiceAutostartMode | null;
+  deadlineMs?: number;
 }>): DaemonServiceAutostartMode | null {
   return readBackgroundServiceLoginState(params).autostart;
 }
@@ -185,6 +195,7 @@ export function readBackgroundServiceEnablement(params: Readonly<{
   uid: number | null;
   label: string;
   mode?: DaemonServiceMode | null;
+  deadlineMs?: number;
 }>): DaemonServiceInstallEnablement | null {
   return readBackgroundServiceLoginState({ ...params, installedMode: null }).enablement;
 }
@@ -195,24 +206,27 @@ function readBackgroundServiceLoginState(params: Readonly<{
   label: string;
   mode?: DaemonServiceMode | null;
   installedMode: DaemonServiceAutostartMode | null;
+  deadlineMs?: number;
 }>): Readonly<{ enablement: DaemonServiceInstallEnablement | null; autostart: DaemonServiceAutostartMode | null }> {
   const unknown = { enablement: null, autostart: null };
   if (params.platform === 'linux') {
-    const state = tryReadSystemdStatus({ unitName: normalizeSystemdUnitName(params.label), mode: params.mode ?? 'user', uid: params.uid, includeEnablement: true })?.unitFileState;
+    const state = tryReadSystemdStatus({ unitName: normalizeSystemdUnitName(params.label), mode: params.mode ?? 'user', uid: params.uid, includeEnablement: true, deadlineMs: params.deadlineMs })?.unitFileState;
     if (state === 'enabled' || state === 'enabled-runtime') return { enablement: 'enabled', autostart: 'at-login' };
     if (state === 'disabled') return { enablement: 'disabled', autostart: 'on-demand' };
     return unknown;
   }
   if (params.platform === 'win32') {
-    const status = tryReadScheduledTaskStatus(params.label, true);
+    const status = tryReadScheduledTaskStatus(params.label, true, params.deadlineMs);
     if (!status?.exists) return unknown;
     if (!status.enabled) return { enablement: 'disabled', autostart: 'on-demand' };
     return { enablement: 'enabled', autostart: typeof status.autostart === 'boolean' ? status.autostart ? 'at-login' : 'on-demand' : null };
   }
   if (params.platform === 'darwin' && params.uid !== null) {
+    const timeout = healthQueryTimeoutMs(2_000, params.deadlineMs);
+    if (timeout <= 0) return unknown;
     const args = ['print-disabled', `gui/${params.uid}`];
     try {
-      const result = spawnBackgroundSync('launchctl', args, { encoding: 'utf-8', timeout: 2_000, env: buildServiceCommandEnv({ cmd: 'launchctl', args, env: process.env }) });
+      const result = spawnBackgroundSync('launchctl', args, { encoding: 'utf-8', timeout, env: buildServiceCommandEnv({ cmd: 'launchctl', args, env: process.env }) });
       if (result.status !== 0) return unknown;
       const enabled = readLaunchdServiceEnabled({ output: String(result.stdout ?? '').trim() || null, label: params.label });
       return enabled === false ? { enablement: 'disabled', autostart: 'on-demand' } : enabled === true ? { enablement: 'enabled', autostart: params.installedMode } : unknown;
@@ -226,8 +240,9 @@ function readBackgroundServiceLoginState(params: Readonly<{
 function readLaunchdHealth(params: Readonly<{
   uid: number | null;
   label: string;
+  deadlineMs?: number;
 }>): Pick<ServiceHealthSignal, 'runs' | 'lastExitCode' | 'isCrashLooping' | 'lastErrorLine'> {
-  const launchctlOutput = params.uid != null ? tryReadLaunchctl(params.uid, params.label) : '';
+  const launchctlOutput = params.uid != null ? tryReadLaunchctl(params.uid, params.label, params.deadlineMs) : '';
   const { runs, lastExitCode } = parseLaunchctlFields(launchctlOutput ?? '');
   return {
     runs,
@@ -242,9 +257,10 @@ function readSystemdHealth(params: Readonly<{
   label: string;
   mode: DaemonServiceMode;
   uid: number | null;
+  deadlineMs?: number;
 }>): Pick<ServiceHealthSignal, 'runs' | 'lastExitCode' | 'isCrashLooping' | 'lastErrorLine'> {
   const unitName = normalizeSystemdUnitName(params.label);
-  const status = tryReadSystemdStatus({ unitName, mode: params.mode, uid: params.uid });
+  const status = tryReadSystemdStatus({ unitName, mode: params.mode, uid: params.uid, deadlineMs: params.deadlineMs });
   const runs = status?.nRestarts ?? null;
   const lastExitCode = status?.execMainStatus ?? null;
   const faulted = status !== null && isFaultedSystemdUnit(status);
@@ -255,7 +271,7 @@ function readSystemdHealth(params: Readonly<{
       && runs >= CRASH_LOOP_RUNS_THRESHOLD
       && faulted,
     lastErrorLine: faulted
-      ? tryReadJournalctlLastErrorLine({ unitName, mode: params.mode, uid: params.uid })
+      ? tryReadJournalctlLastErrorLine({ unitName, mode: params.mode, uid: params.uid, deadlineMs: params.deadlineMs })
       : null,
   };
 }
@@ -267,10 +283,6 @@ function normalizeSystemdUnitName(label: string): string {
 
 function systemdScopeArgs(mode: DaemonServiceMode): readonly string[] {
   return mode === 'system' ? [] : ['--user'];
-}
-
-function healthQueryTimeoutMs(defaultTimeoutMs: number, deadlineMs?: number): number {
-  return deadlineMs === undefined ? defaultTimeoutMs : Math.min(defaultTimeoutMs, deadlineMs - Date.now());
 }
 
 function tryReadLaunchctl(uid: number, label: string, deadlineMs?: number): string | null {
@@ -298,7 +310,10 @@ function tryReadSystemdStatus(params: Readonly<{
   mode: DaemonServiceMode;
   uid: number | null;
   includeEnablement?: boolean;
+  deadlineMs?: number;
 }>): SystemdUnitStatus | null {
+  const timeout = healthQueryTimeoutMs(2_000, params.deadlineMs);
+  if (timeout <= 0) return null;
   const args = [
     ...systemdScopeArgs(params.mode),
     'show',
@@ -309,7 +324,7 @@ function tryReadSystemdStatus(params: Readonly<{
   try {
     const result = spawnBackgroundSync('systemctl', args, {
       encoding: 'utf-8',
-      timeout: 2_000,
+      timeout,
       env: buildServiceCommandEnv({ cmd: 'systemctl', args, env: process.env, uid: params.uid }),
     });
     if (result.status !== 0) return null;
@@ -323,7 +338,10 @@ function tryReadJournalctlLastErrorLine(params: Readonly<{
   unitName: string;
   mode: DaemonServiceMode;
   uid: number | null;
+  deadlineMs?: number;
 }>): string | null {
+  const timeout = healthQueryTimeoutMs(2_000, params.deadlineMs);
+  if (timeout <= 0) return null;
   const args = [
     ...systemdScopeArgs(params.mode),
     '-u',
@@ -335,7 +353,7 @@ function tryReadJournalctlLastErrorLine(params: Readonly<{
   try {
     const result = spawnBackgroundSync('journalctl', args, {
       encoding: 'utf-8',
-      timeout: 2_000,
+      timeout,
       env: buildServiceCommandEnv({ cmd: 'journalctl', args, env: process.env, uid: params.uid }),
     });
     if (result.status !== 0) return null;

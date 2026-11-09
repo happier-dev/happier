@@ -1,5 +1,3 @@
-
-
 export { buildUserManagerGroupRefreshStep } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 
 import { readFile } from 'node:fs/promises';

@@ -10,7 +10,7 @@ export type ConnectedServiceRefreshLoopHandle = Readonly<{
 export function startConnectedServiceRefreshLoop(params: Readonly<{
     enabled: boolean;
     tickMs: number;
-    coordinator: Readonly<{ tickOnce: () => Promise<void | SingleFlightLoopSchedule> }>;
+    coordinator: Readonly<{ tickOnce: (options?: Readonly<{ signal?: AbortSignal }>) => Promise<void | SingleFlightLoopSchedule> }>;
     subscribeWake?: (listener: () => void) => () => void;
     onTickError: (error: unknown) => void;
     runImmediately?: boolean;
@@ -23,7 +23,7 @@ export function startConnectedServiceRefreshLoop(params: Readonly<{
         intervalMs: params.tickMs,
         failureBackoffMs: Math.max(params.tickMs, 5_000),
         maxFailureBackoffMs: 60_000,
-        task: () => params.coordinator.tickOnce(),
+        task: signal => params.coordinator.tickOnce({ signal }),
         onError: params.onTickError,
         unref: true,
     });

@@ -19,7 +19,7 @@ afterEach(async () => { await Promise.all(fixtures.splice(0).map((f) => f.cleanu
 const input = (monotonicMs: number, overviewExtras = false, intervalMs = 2000) => ({ sampledAt: 1_000_000 + monotonicMs, monotonicMs, intervalMs, overviewExtras });
 
 describe('Linux machine vitals reader', () => {
-    it('reports a D3cold GPU as off, preserves unknown power and observes recovery on the existing extras cadence', async () => {
+    it('reports a D3cold GPU as off, preserves unknown power and observes recovery on the selected tick', async () => {
         const f = await fixture();
         await f.put('/sys/class/drm/card0/device/power_state', 'D3cold\n');
         await f.put('/sys/class/drm/card0/device/gpu_busy_percent', '72');
@@ -32,7 +32,7 @@ describe('Linux machine vitals reader', () => {
             expect(MachineVitalsSampleV1Schema.parse(off.sample).gpu).toEqual(off.sample.gpu);
         }
         await f.put('/sys/class/drm/card0/device/power_state', 'D0\n');
-        const active = await reader.read(input(15_000, true));
+        const active = await reader.read(input(2_000, true));
         if (active.state === 'reporting') expect(active.sample.gpu).toEqual([{ name: 'card0', busyPct: 72 }, { name: 'card1', busyPct: 0 }]);
     });
 
@@ -124,6 +124,34 @@ describe('Linux machine vitals reader', () => {
         expect(second.sample.network).toMatchObject({ rxBps: 1000, txBps: 2000, interfaces: [{ id: 'eth0', included: true }, { id: 'veth0', included: false }] });
         expect(second.sample.memory).toMatchObject({ composition: expect.any(Array), pressure: { level: 'calm', source: 'psi' } });
         expect(MachineVitalsSampleV1Schema.safeParse(second.sample).success).toBe(true);
+    });
+
+    it.each([false, true])('normalizes host load by logical cores independently of busy time and quota (limited: %s)', async (limited) => {
+        const f = await fixture();
+        const stat = (busy: number, idle: number) => [
+            `cpu ${busy * 4} 0 0 ${idle * 4} 0 0 0 0`,
+            ...Array.from({ length: 4 }, (_, index) => `cpu${index} ${busy} 0 0 ${idle} 0 0 0 0`),
+            'btime 100', '',
+        ].join('\n');
+        await f.put('/proc/stat', stat(100, 100));
+        await f.put('/proc/loadavg', '8.0 4.0 2.0 1/100 23\n');
+        if (limited) {
+            await f.put('/proc/self/cgroup', '0::/child\n');
+            await f.put('/proc/self/mountinfo', '1 0 0:1 / /sys/fs/cgroup rw - cgroup2 cgroup rw\n2 0 8:1 / / rw - ext4 /dev/sda rw\n');
+            await f.put('/sys/fs/cgroup/child/cpu.max', '50000 100000\n');
+            await f.put('/sys/fs/cgroup/child/cpu.stat', 'usage_usec 1000000\n');
+        }
+        const reader = createLinuxMachineVitalsReader({ root: f.root });
+        await reader.read(input(0));
+        await f.put('/proc/stat', stat(188, 112));
+        if (limited) await f.put('/sys/fs/cgroup/child/cpu.stat', 'usage_usec 1500000\n');
+
+        const result = await reader.read(input(2000));
+        expect(result.state).toBe('reporting');
+        if (result.state !== 'reporting') throw new Error('Machine vitals unavailable');
+        expect(result.host).toMatchObject({ logicalCores: 4, effectiveCores: limited ? 0.5 : 4 });
+        expect(result.sample.cpu).toMatchObject({ busyPct: limited ? 50 : 88, load1: 2, load5: 1, load15: 0.5 });
+        expect(MachineVitalsSampleV1Schema.parse(result.sample).cpu).toEqual(result.sample.cpu);
     });
 
     it('does not re-read non-directory bind mounts as volumes during a settled minute', async () => {
@@ -365,7 +393,7 @@ describe('Linux machine vitals reader', () => {
             .not.toEqual(expect.arrayContaining([expect.objectContaining({ metric: 'disk' })]));
     });
 
-    it('reads files and ptys each tick but reads thermal/GPU/inotify only for Overview', async () => {
+    it('reads files and ptys each tick but reads thermal/GPU only for Overview', async () => {
         const f = await fixture();
         await f.put('/proc/sys/fs/file-nr', '20 2 100');
         await f.put('/proc/sys/kernel/pty/nr', '5');
@@ -407,97 +435,37 @@ describe('Linux machine vitals reader', () => {
         if (result.state === 'reporting') expect(result.sample.gpu).toEqual([{ name: 'NVIDIA Test', busyPct: 42, memUsedBytes: 104857600, memTotalBytes: 1048576000 }]);
     });
 
-    it.each(['pid', 'fd', 'fdinfo'] as const)('continues the inotify walk after a vanished %s and does no walk without Overview demand', async vanished => {
+    it('reports Overview metrics without traversing 128 process descriptor trees', async () => {
         const f = await fixture();
         await f.put('/proc/sys/fs/inotify/max_user_watches', '100');
-        const status = `Uid:\t${process.getuid?.() ?? 0}\t0\t0\t0\n`;
-        await f.put('/proc/123/status', status);
-        await f.put('/proc/456/status', status);
-        await mkdir(join(f.root, '/proc/456/fd'), { recursive: true });
-        await symlink('anon_inode:inotify', join(f.root, '/proc/456/fd/3'));
-        await f.put('/proc/456/fdinfo/3', 'inotify wd:1 ino:1\ninotify wd:2 ino:2\n');
-        if (vanished !== 'pid') {
-            await mkdir(join(f.root, '/proc/123/fd'), { recursive: true });
-            await symlink('anon_inode:inotify', join(f.root, '/proc/123/fd/3'));
-        }
-        const reader = createLinuxMachineVitalsReader({ root: f.root });
-        const walk = vi.spyOn(filesystem, 'readlink');
-        try {
-            const idle = await reader.read(input(0));
-            expect(idle.state).toBe('reporting');
-            expect(walk.mock.calls.filter(([path]) => String(path).includes('/proc/'))).toHaveLength(0);
-            if (vanished === 'fd') {
-                // OS boundary: the fd closes after its directory entry was returned.
-                walk.mockImplementationOnce(async () => {
-                    await rm(join(f.root, '/proc/123/fd/3'));
-                    throw Object.assign(new Error('Descriptor vanished'), { code: 'ENOENT' });
-                });
-            }
-            const result = await reader.read(input(2000, true));
-            expect(result.state).toBe('reporting');
-            if (result.state === 'reporting') expect(result.sample.limits?.inotify).toEqual({ used: 2, max: 100 });
-        } finally { walk.mockRestore(); }
-    });
-
-    it.each(['status', 'fd', 'fdinfo'] as const)('omits inotify counts when same-UID %s is permission-limited, rather than publishing a subtotal', async deniedPart => {
-        const f = await fixture();
-        await f.put('/proc/sys/fs/inotify/max_user_watches', '100');
-        for (const pid of ['123', '456']) {
+        await f.put('/proc/sys/fs/file-nr', '20 2 100');
+        await f.put('/proc/sys/kernel/pty/nr', '5');
+        await f.put('/proc/sys/kernel/pty/max', '20');
+        await f.put('/sys/class/thermal/thermal_zone0/temp', '45000');
+        await f.put('/sys/class/thermal/thermal_zone0/type', 'x86_pkg_temp');
+        await f.put('/sys/class/drm/card0/device/gpu_busy_percent', '25');
+        for (let index = 0; index < 128; index++) {
+            const pid = 1000 + index;
             await f.put(`/proc/${pid}/status`, `Uid:\t${process.getuid?.() ?? 0}\t0\t0\t0\n`);
             await mkdir(join(f.root, `/proc/${pid}/fd`), { recursive: true });
             await symlink('anon_inode:inotify', join(f.root, `/proc/${pid}/fd/3`));
             await f.put(`/proc/${pid}/fdinfo/3`, 'inotify wd:1 ino:1\n');
         }
-        const readDirectory = filesystem.readdir;
-        const readContents = filesystem.readFile;
-        // OS boundary: chmod is not a reliable EACCES fixture when the executor is privileged.
-        const denied = vi.spyOn(filesystem, 'readdir').mockImplementation(async (...args) => {
-            if (deniedPart === 'fd' && String(args[0]) === join(f.root, '/proc/456/fd')) throw Object.assign(new Error('Permission denied'), { code: 'EACCES' });
-            return readDirectory(...args);
-        });
-        const deniedRead = vi.spyOn(filesystem, 'readFile').mockImplementation((...args) => {
-            const deniedPath = deniedPart === 'status' ? '/proc/456/status' : '/proc/456/fdinfo/3';
-            if (deniedPart !== 'fd' && String(args[0]) === join(f.root, deniedPath))
-                return Promise.reject(Object.assign(new Error('Permission denied'), { code: 'EACCES' }));
-            return readContents(...args);
-        });
+        // Observe genuine filesystem boundaries while the production reader parses real fixture files.
+        const directories = vi.spyOn(filesystem, 'readdir');
+        const contents = vi.spyOn(filesystem, 'readFile');
+        const links = vi.spyOn(filesystem, 'readlink');
         try {
             const result = await createLinuxMachineVitalsReader({ root: f.root }).read(input(0, true));
-            expect(result.state).toBe('reporting');
-            if (result.state === 'reporting') expect(MachineVitalsSampleV1Schema.parse(result.sample).limits?.inotify).toBeUndefined();
-        } finally { deniedRead.mockRestore(); denied.mockRestore(); }
-    });
-
-    it('settles unexpected inotify IO failure through reader_failed instead of a successful subtotal', async () => {
-        const f = await fixture();
-        await f.put('/proc/sys/fs/inotify/max_user_watches', '100');
-        await f.put('/proc/123/status', `Uid:\t${process.getuid?.() ?? 0}\t0\t0\t0\n`);
-        const readDirectory = filesystem.readdir;
-        const failed = vi.spyOn(filesystem, 'readdir').mockImplementation((...args) => {
-            if (String(args[0]) === join(f.root, '/proc/123/fd'))
-                return Promise.reject(Object.assign(new Error('IO failure'), { code: 'EIO' }));
-            return readDirectory(...args);
-        });
-        try { expect(await createLinuxMachineVitalsReader({ root: f.root }).read(input(0, true)))
-            .toEqual({ state: 'unavailable', reason: 'reader_failed' }); }
-        finally { failed.mockRestore(); }
-    });
-
-    it('reports inotify watches when same-user process descriptors are completely readable', async () => {
-        const f = await fixture();
-        await f.put('/proc/sys/fs/inotify/max_user_watches', '100');
-        await f.put('/proc/123/status', `Uid:\t${process.getuid?.() ?? 0}\t0\t0\t0\n`);
-        const reader = createLinuxMachineVitalsReader({ root: f.root });
-        await mkdir(join(f.root, '/proc/123/fd'), { recursive: true });
-        await symlink('anon_inode:inotify', join(f.root, '/proc/123/fd/3'));
-        await symlink('/tmp/regular-file', join(f.root, '/proc/123/fd/4'));
-        await f.put('/proc/123/fdinfo/3', 'pos:\t0\nflags:\t02000000\ninotify wd:1 ino:1\ninotify wd:2 ino:2\n');
-        await f.put('/proc/456/status', `Uid:\t${(process.getuid?.() ?? 0) + 1}\t0\t0\t0\n`);
-        await mkdir(join(f.root, '/proc/456/fd'), { recursive: true });
-        await symlink('anon_inode:inotify', join(f.root, '/proc/456/fd/3'));
-        await f.put('/proc/456/fdinfo/3', 'inotify wd:3 ino:3\n');
-        const complete = await reader.read(input(2000, true));
-        expect(complete.state).toBe('reporting');
-        if (complete.state === 'reporting') expect(complete.sample.limits?.inotify).toEqual({ used: 2, max: 100 });
+            const paths = [...directories.mock.calls, ...contents.mock.calls, ...links.mock.calls].map(([path]) => String(path));
+            expect(paths.filter(path => path === join(f.root, '/proc') || /\/proc\/\d+(?:\/|$)/u.test(path))).toHaveLength(0);
+            expect(result).toMatchObject({ state: 'reporting', sample: {
+                cpu: { reported: true }, memory: { reported: true, usedBytes: 61_440_000 },
+                disk: { reported: true }, network: { reported: true },
+                limits: { files: { used: 18, max: 100 }, ptys: { used: 5, max: 20 } },
+                thermal: { tempC: 45 }, gpu: [{ name: 'card0', busyPct: 25 }],
+            } });
+            if (result.state === 'reporting') expect(result.sample.limits?.inotify).toBeUndefined();
+        } finally { links.mockRestore(); contents.mockRestore(); directories.mockRestore(); }
     });
 });

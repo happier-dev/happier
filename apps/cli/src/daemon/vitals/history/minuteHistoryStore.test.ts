@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -16,22 +16,26 @@ const minute = (t: number): MachineVitalsMinuteRecordV1 => ({ t, cpu: 20, cpuMax
   lvl: 'calm', swp: null, rx: 30, tx: 40 });
 
 describe('minute history store', () => {
-  it('restores a tolerant strictly increasing stream with gaps and alert episodes from the same files', async () => {
+  it('persists minute history but never writes or revives alert state across restarts', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-minute-history-'));
     roots.push(directory);
     const now = Date.UTC(2026, 9, 10, 12);
     const store = await createMinuteHistoryStore({ directory, nowMs: () => now });
     const first = minute(now - 240_000);
     expect(await store.append(first)).toBe(true);
+    const file = join(directory, 'minutes-2026-10-10.jsonl');
+    const beforeAlert = await readFile(file, 'utf8');
     const alert = { kind: 'alert' as const, rule: 'memory' as const, state: 'fired' as const, at: now - 120_000 };
     await store.appendAlert(alert);
+    expect(store.alerts()).toEqual([alert]);
+    expect(await readFile(file, 'utf8')).toBe(beforeAlert);
     expect(await store.append(minute(now - 120_000))).toBe(true);
     expect(await store.append(minute(now - 180_000))).toBe(false);
-    await appendFile(join(directory, 'minutes-2026-10-10.jsonl'),
-      `${JSON.stringify({ ...minute(now - 60_000), future: 'ignored' })}\n{"bad":true}\n{"t":`);
+    await appendFile(file,
+      `${JSON.stringify(alert)}\n${JSON.stringify({ kind: 'alert_checkpoint', at: now, episode: alert })}\n${JSON.stringify({ ...minute(now - 60_000), future: 'ignored' })}\n{"bad":true}\n{"t":`);
     const restored = await createMinuteHistoryStore({ directory, nowMs: () => now });
     expect(restored.minutes(0)).toEqual([first, minute(now - 120_000), minute(now - 60_000)]);
-    expect(restored.alerts()).toEqual([alert]);
+    expect(restored.alerts()).toEqual([]);
     expect(await restored.append(minute(now - 180_000))).toBe(false);
     expect(await restored.append(minute(now))).toBe(true);
     expect(await restored.read(now - 60_000)).toEqual([minute(now - 60_000), minute(now)]);
@@ -56,7 +60,7 @@ describe('minute history store', () => {
     expect(await readdir(directory)).toEqual(['minutes-2026-10-11.jsonl']);
   });
 
-  it('retains only open old episodes in the same journal across pruning, downtime and recovery', async () => {
+  it('retains runtime suppression and recovery without checkpointing episodes during pruning', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-minute-open-alert-'));
     roots.push(directory);
     let now = Date.UTC(2026, 9, 1);
@@ -67,33 +71,31 @@ describe('minute history store', () => {
     await store.appendAlert({ ...open, volumeId: 'closed' });
     await store.appendAlert({ ...open, volumeId: 'closed', state: 'recovered', at: now + 60_000 });
     now += 8 * 86_400_000;
-    // Startup must recover the active truth before removing its original day file.
-    let restored = await createMinuteHistoryStore({ directory, nowMs: () => now });
-    expect(restored.alerts()).toEqual([open]);
-    expect(restored.minutes(0)).toEqual([]);
-    expect(await readdir(directory)).toEqual(['minutes-2026-10-09.jsonl']);
-    now += 8 * 86_400_000;
-    await restored.prune();
-    restored = await createMinuteHistoryStore({ directory, nowMs: () => now });
-    expect(restored.alerts()).toEqual([open]);
+    await store.prune();
+    expect(store.alerts()).toEqual([open]);
+    expect(store.minutes(0)).toEqual([]);
+    expect(await readdir(directory)).toEqual([]);
     const policy = MachineVitalsAlertsPolicyV1Schema.parse({ disk: { enabled: true } });
     const sample = MachineVitalsSampleV1Schema.parse({ v: 1, sampledAt: now, intervalMs: 60_000,
       cpu: { reported: false, reason: 'unavailable' }, memory: { reported: false, reason: 'unavailable' },
       network: { reported: false, reason: 'unavailable' }, disk: { reported: true,
         volumes: [{ id: 'data', label: 'Data', mount: '/data', totalBytes: 1000, availableBytes: 0 }] } });
-    expect(evaluateMachineVitalsAlertsV1({ policy, now, records: [], episodes: restored.alerts(), disk: sample.disk })).toEqual([]);
+    expect(evaluateMachineVitalsAlertsV1({ policy, now, records: [], episodes: store.alerts(), disk: sample.disk })).toEqual([]);
     const recoveredDisk = MachineVitalsSampleV1Schema.parse({ ...sample, disk: { reported: true,
       volumes: [{ id: 'data', label: 'Data', mount: '/data', totalBytes: 1000, availableBytes: 500 }] } }).disk;
-    const recovery = evaluateMachineVitalsAlertsV1({ policy, now, records: [], episodes: restored.alerts(), disk: recoveredDisk });
+    const recovery = evaluateMachineVitalsAlertsV1({ policy, now, records: [], episodes: store.alerts(), disk: recoveredDisk });
     expect(recovery).toHaveLength(1);
     const recovered = MachineVitalsAlertEpisodeV1Schema.parse(recovery[0].episode);
     expect(recovered).toEqual({ ...open, state: 'recovered', at: now });
-    await restored.appendAlert(recovered);
-    restored = await createMinuteHistoryStore({ directory, nowMs: () => now });
-    expect(restored.alerts().at(-1)).toEqual(recovered);
+    await store.appendAlert(recovered);
+    expect(store.alerts().at(-1)).toEqual(recovered);
+    const restarted = await createMinuteHistoryStore({ directory, nowMs: () => now });
+    expect(restarted.alerts()).toEqual([]);
+    expect(evaluateMachineVitalsAlertsV1({ policy, now, records: [], episodes: restarted.alerts(), disk: sample.disk }))
+      .toEqual([expect.objectContaining({ episode: { ...open, at: now } })]);
     now += 8 * 86_400_000;
-    await restored.prune();
-    expect(restored.alerts()).toEqual([]);
+    await store.prune();
+    expect(store.alerts()).toEqual([]);
     expect(await readdir(directory)).toEqual([]);
   });
 });

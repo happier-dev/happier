@@ -1,4 +1,6 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
+import { logger } from '@/ui/logger';
 
 import {
   clearTrackedRunnerAgentDaemonServiceAdmission,
@@ -9,7 +11,7 @@ import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 type TurnLifecycleEvent = 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
 
-export const TrackedSessionTurnLifecycleResultSchema = z.strictObject({
+export const TrackedSessionTurnLifecycleResultSchema = lazyZodSchema(() => z.strictObject({
   status: z.enum([
     'recorded',
     'ignored_missing_exact_turn',
@@ -19,7 +21,7 @@ export const TrackedSessionTurnLifecycleResultSchema = z.strictObject({
     'ignored_marker_not_updated',
   ]),
   activeTurnId: z.nullable(z.string()),
-});
+}));
 
 export type TrackedSessionTurnLifecycleResult =
   z.infer<typeof TrackedSessionTurnLifecycleResultSchema>;
@@ -174,19 +176,36 @@ export async function applyTrackedSessionTurnLifecycle(input: Readonly<{
               .agentRuntimeDaemonServiceAdmittedUserMessageSeqs,
         }
       : undefined;
-  const markerUpdated = await (input.updateSessionMarkerActiveTurn ?? updateSessionMarkerActiveTurn)({
-    pid: tracked.sessionRunnerPid ?? tracked.pid,
-    sessionId: input.sessionId,
-    activeTurnId: nextActiveTurnId,
-    ...(recoveredTerminalTurnId ? { expectedActiveTurnId: recoveredTerminalTurnId } : {}),
-    ...(retainedAdmission
-      ? {
-          agentRuntimeDaemonServiceActiveAdmission:
-            retainedAdmission,
-        }
-      : {}),
-  });
+  // A provider-started turn may have no earlier prompt witness. Capture accepted
+  // identity before disk IO so runner death can use the existing exact-exit outbox
+  // even while marker publication is pending or the filesystem is unavailable.
+  const acceptedNativeBegin = input.event === 'task_started';
+  if (acceptedNativeBegin) tracked.activeTurnId = turnId;
+  let markerUpdated: boolean;
+  try {
+    markerUpdated = await (input.updateSessionMarkerActiveTurn ?? updateSessionMarkerActiveTurn)({
+      pid: tracked.sessionRunnerPid ?? tracked.pid,
+      sessionId: input.sessionId,
+      activeTurnId: nextActiveTurnId,
+      ...(recoveredTerminalTurnId ? { expectedActiveTurnId: recoveredTerminalTurnId } : {}),
+      ...(retainedAdmission
+        ? { agentRuntimeDaemonServiceActiveAdmission: retainedAdmission }
+        : {}),
+    });
+  } catch (error) {
+    if (!acceptedNativeBegin) throw error;
+    try {
+      logger.infoFile('[session-turn] Marker persistence unavailable; daemon retains accepted turn custody', {
+        sessionId: input.sessionId, turnId,
+      });
+    } catch { /* Diagnostics cannot release accepted turn custody. */ }
+    return { status: 'recorded', activeTurnId: turnId };
+  }
   if (!markerUpdated) {
+    if (acceptedNativeBegin && tracked.activeTurnId === turnId) {
+      if (currentActiveTurnId) tracked.activeTurnId = currentActiveTurnId;
+      else delete tracked.activeTurnId;
+    }
     return { status: 'ignored_marker_not_updated', activeTurnId: currentActiveTurnId };
   }
 

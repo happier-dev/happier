@@ -2,21 +2,18 @@ export function resolveAutomationPollingConfig(env: NodeJS.ProcessEnv): {
   leaseDurationMs: number;
   heartbeatMs: number;
 } {
-  const readInt = (value: string | undefined, fallback: number, min: number, max: number): number => {
+  const readInt = (value: string | undefined, fallback: number): number => {
     const parsed = Number.parseInt((value ?? '').trim(), 10);
-    if (!Number.isFinite(parsed)) return fallback;
-    return Math.min(max, Math.max(min, parsed));
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
   };
 
-  const leaseDurationMs = readInt(env.HAPPIER_AUTOMATION_LEASE_MS, 30_000, 5_000, 15 * 60_000);
+  const leaseDurationMs = readInt(env.HAPPIER_AUTOMATION_LEASE_MS, 30_000);
   const heartbeatMs = readInt(
     env.HAPPIER_AUTOMATION_HEARTBEAT_MS,
-    Math.floor(leaseDurationMs / 2),
-    1_000,
-    60_000,
+    Math.ceil(leaseDurationMs / 2),
   );
   return {
     leaseDurationMs,
-    heartbeatMs: Math.min(heartbeatMs, Math.floor(leaseDurationMs / 2)),
+    heartbeatMs: Math.min(heartbeatMs, Math.ceil(leaseDurationMs / 2)),
   };
 }

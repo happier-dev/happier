@@ -5,6 +5,7 @@ import {
 } from './predictiveSoftSwitchPolicy';
 
 export type ConnectedServicePredictiveSwitchGuardInput = Readonly<{
+  signal?: AbortSignal;
   sessionId: string;
   serviceId: ConnectedAccountServiceKey;
   groupId: string;
@@ -21,18 +22,13 @@ type ConnectedServicePredictiveSwitchTurnState = Readonly<{
   inFlight: boolean;
 }>;
 export function createConnectedServicePredictiveSwitchGuard(deps: Readonly<{
-  isSessionCurrent?: (sessionId: string) => boolean | Promise<boolean>;
   readTurnState?: (sessionId: string) => ConnectedServicePredictiveSwitchTurnState | null;
   resolvePredictiveSoftSwitchMode?: (
     input: ConnectedServicePredictiveSwitchGuardInput,
   ) => PredictiveSoftSwitchCapability | Promise<PredictiveSoftSwitchCapability>;
 }>): (input: ConnectedServicePredictiveSwitchGuardInput) => Promise<ConnectedServicePredictiveSwitchGuardResult> {
   return async (input) => {
-    const isCurrent = async () => {
-      try { return await deps.isSessionCurrent?.(input.sessionId) ?? true; }
-      catch { return false; }
-    };
-    if (!await isCurrent()) return { status: 'suppress', reason: 'requester_session_not_current' };
+    input.signal?.throwIfAborted();
     if (input.reason === 'soft_threshold' || input.reason === 'same_provider_account_exhausted') {
       const predictiveDecision = evaluatePredictiveSoftSwitchPolicy({
         reason: input.reason,
@@ -41,12 +37,11 @@ export function createConnectedServicePredictiveSwitchGuard(deps: Readonly<{
           : 'supported',
         turnState: deps.readTurnState?.(input.sessionId) ?? null,
       });
+      input.signal?.throwIfAborted();
       if (predictiveDecision.status === 'suppress') {
         return predictiveDecision;
       }
     }
-    return await isCurrent()
-      ? { status: 'allow' }
-      : { status: 'suppress', reason: 'requester_session_not_current' };
+    return { status: 'allow' };
   };
 }

@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { deriveWorkspaceSyncEndpointId } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { computeWorkspaceSyncPolicyDigest } from '@/workspaces/sync/workspaceSyncTypes';
+import type { WorkspaceSyncRelationshipV1 } from '@/workspaces/sync/workspaceSyncTypes';
 import { createManagedActivityInventory } from '@/daemon/lifecycle/managedActivity';
 import { projectMachineWorkSummary } from '@/daemon/machines/machineWorkSummary';
 import {
@@ -54,7 +55,7 @@ function session(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 function snapshot(
-  relationships = [relationship],
+  relationships: WorkspaceSyncRelationshipV1[] = [relationship],
   graphRevision: number | 'absent' = 1,
 ): ActiveProjectAccountRowsSnapshot {
   return {
@@ -189,6 +190,52 @@ function boundaries(options: Readonly<{
 }
 
 describe('createDaemonWorkspaceSyncRuntime', () => {
+  it('holds recovery-paused links across unchanged Project snapshots and retries once after desired state changes', async () => {
+    const harness = boundaries();
+    harness.activateRelationships();
+    await harness.command({ t: 'pause' });
+    // The remote recovery RPC is the process boundary; runtime, controller and
+    // native adapter reconciliation remain real beneath Project publication.
+    const recover = vi.fn<NonNullable<DaemonWorkspaceSyncRuntimeDependencies['recoverConflictResolutionAtTarget']>>(async request => {
+      if (request.targetMachineId === 'machine-2') {
+        throw Object.assign(new Error('Restored caller has no isolated agent'), { code: 'agent_isolation_unavailable' });
+      }
+      return { status: 'settled' };
+    });
+    const runtime = createDaemonWorkspaceSyncRuntime({ ...harness.deps, recoverConflictResolutionAtTarget: recover });
+    try {
+      await runtime.start();
+      expect(recover.mock.calls.filter(([request]) => request.targetMachineId === 'machine-2')).toHaveLength(1);
+      recover.mockClear();
+      await runtime.managedWorkspaceSync.pause(relationship.relationshipId);
+      for (let revision = 2; revision <= 4; revision += 1) {
+        // A status viewer must not erase a controller-owned hold with the
+        // native engine's paused projection, which has no refusal code.
+        await runtime.managedWorkspaceSync.watchStatuses({});
+        harness.publishSnapshot({ ...snapshot([{ ...relationship, updatedAtMs: revision }], revision), loadedAtMs: revision });
+        await runtime.whenProjectsSettled({ graphRevision: revision, scopeKey: 'account-1' });
+      }
+      expect(recover).not.toHaveBeenCalled();
+
+      // The old native session has been removed before replacing its runtime
+      // definition; recovery still refuses, so no new session may start.
+      await harness.command({ t: 'terminate' });
+      harness.publishSnapshot(snapshot([{ ...relationship, mode: 'mirror_exactly', updatedAtMs: 5 }], 5));
+      await runtime.whenProjectsSettled({ graphRevision: 5, scopeKey: 'account-1' });
+      expect(recover.mock.calls.filter(([request]) => request.targetMachineId === 'machine-2')).toHaveLength(1);
+
+      recover.mockClear();
+      harness.publishSnapshot(snapshot([{ ...relationship, mode: 'mirror_exactly', enabled: false, updatedAtMs: 6 }], 6));
+      await runtime.whenProjectsSettled({ graphRevision: 6, scopeKey: 'account-1' });
+      expect(recover).not.toHaveBeenCalled();
+      harness.publishSnapshot(snapshot([{ ...relationship, mode: 'mirror_exactly', updatedAtMs: 7 }], 7));
+      await runtime.whenProjectsSettled({ graphRevision: 7, scopeKey: 'account-1' });
+      expect(recover.mock.calls.filter(([request]) => request.targetMachineId === 'machine-2')).toHaveLength(1);
+    } finally {
+      await runtime.stop();
+    }
+  });
+
   it('preserves the idle interval across equal Project refreshes without local relationships', async () => {
     const harness = boundaries();
     const foreignRelationships = [{ ...relationship, controllerMachineId: 'machine-2' }];

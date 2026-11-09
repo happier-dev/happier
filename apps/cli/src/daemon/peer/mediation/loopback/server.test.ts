@@ -9,7 +9,6 @@ import {
   createDirectRouteGrantSigningInputV2,
   createEphemeralPeerRouteProofHandleV2,
   IrohMachineHandshakeV1Schema,
-  createPeerMachineRpcRequestHashV1,
   PEER_MEDIATION_RECEIPTS,
   PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
   PeerMachineRpcDirectResponseV2Schema,
@@ -786,7 +785,6 @@ describe('peer mediation loopback server', () => {
       },
     });
     const requestId = 'request_voice_upload_1';
-    const replayKey = requestId;
     const payload = {
       v: 2 as const,
       requestId,
@@ -797,19 +795,6 @@ describe('peer mediation loopback server', () => {
       routeKind: 'loopback_direct' as const,
       flowKind: 'machine_rpc' as const,
       endpointFingerprint: 'loopback_endpoint_1',
-      commandReceipt: {
-        v: 1 as const,
-        issuer: 'ui' as const,
-        issuedAtMs: 2_000,
-        requestHash: createPeerMachineRpcRequestHashV1({
-          method,
-          params,
-          grantId: grant.payload.grantId,
-          endpointFingerprint: 'loopback_endpoint_1',
-          replayKey,
-        }),
-        replayKey,
-      },
     };
     expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBeGreaterThan(64 * 1024);
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
+import * as accountScopedCipher from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createPlainSessionOwnerMetadataEnvelopeV1, sealSessionOwnerMetadataEnvelopeV1,
   SessionOwnerMetadataV1Schema, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
@@ -61,6 +62,23 @@ describe('resolveMemoryInventoryScopes', () => {
 });
 
 describe('refreshMemoryInventoryOnce', () => {
+  it('selects a scale-shaped page with work linear in its rows', async () => {
+    const count = 1_024;
+    let identityReads = 0;
+    const sessions = Array.from({ length: count }, (_, index) => {
+      const session = row(`session-${index}`);
+      Object.defineProperty(session, 'id', { get: () => { identityReads++; return `session-${index}`; } });
+      return session;
+    });
+    const { fetchSessionsPage } = createFetcher({ active: [{ sessions, nextCursor: null, hasNext: false }] });
+    const result = await refreshMemoryInventoryOnce({ ...BASE, backfillPolicy: 'all_history',
+      includeArchivedSessions: false, fetchSessionsPage });
+    expect(result.sessionIds).toHaveLength(count);
+    // Selection, indexing and eligibility may each read identity; no selected
+    // identity may rescan the whole page to recover its already-admitted row.
+    expect(identityReads).toBeLessThanOrEqual(6 * count);
+  });
+
   it('reuses unchanged legacy and foreign owner locality, but reopens changed access or content', () => {
     const secret = new Uint8Array(32).fill(19);
     const credentials: StoredCredentials = { token: 'test', encryption: { type: 'legacy', secret } };
@@ -92,8 +110,10 @@ describe('refreshMemoryInventoryOnce', () => {
     });
     const session = row('local', { encryptionMode: 'e2ee', metadataLayoutVersion: 1, ownerMetadata: envelope('here') });
     const read = createMemorySessionLocalityReader({ credentials, machineId: 'here' });
-    // Transparent measurement: actual authentication and schema parsing run.
-    const opens = vi.spyOn(nacl.secretbox, 'open');
+    // Measure the Account crypto boundary used by layout-one envelopes rather
+    // than the CLI's legacy cipher facade. This spy calls through, preserving
+    // real authentication and schema parsing.
+    const opens = vi.spyOn(accountScopedCipher, 'openAccountScopedBlobCiphertext');
     try {
       expect(read.isOnMachine(session, 'e2ee')).toBe(true);
       expect(read.isOnMachine({ ...session, updatedAt: 200, ownerMetadata: { ...session.ownerMetadata! } }, 'e2ee')).toBe(true);

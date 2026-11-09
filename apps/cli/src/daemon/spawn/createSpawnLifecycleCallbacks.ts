@@ -10,6 +10,7 @@ import {
 } from '../sessions/cleanupPidSessionResources';
 import { removeSessionMarkerIfOwned } from '../sessionRegistry';
 import type { ConnectedServiceMaterializedStateObservationBinding } from '../connectedServices/materialization/materializer';
+import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
 
 type SpawnResourceCleanup = () => void | Promise<void>;
 type SessionAttachCleanup = () => Promise<void>;
@@ -46,6 +47,7 @@ export function createSpawnLifecycleCallbacks<
   CatalogAgentId extends string,
   ConnectedServicesBindingsRaw,
 >(params: Readonly<{
+  agentLaunchMaterials?: AgentLaunchMaterialization;
   connectedServicesBindingsRaw: ConnectedServicesBindingsRaw;
   connectedServiceSelectionsEnv?: Readonly<Record<string, string>>;
   connectedServiceSelectionsEnvRaw?: string;
@@ -73,6 +75,7 @@ export function createSpawnLifecycleCallbacks<
     connectedServiceSelectionsEnvRaw?: string;
   }>) => void;
   registerConnectedServiceRuntimeTarget?: (target: Readonly<{
+    agentLaunchMaterials?: AgentLaunchMaterialization;
     pid: number;
     agentId: CatalogAgentId | null;
     sessionId?: string;
@@ -132,6 +135,7 @@ export function createSpawnLifecycleCallbacks<
         : {}),
     });
     params.registerConnectedServiceRuntimeTarget?.({
+      ...(params.agentLaunchMaterials ? { agentLaunchMaterials: params.agentLaunchMaterials } : {}),
       pid,
       agentId: params.catalogAgentId,
       ...(sessionId ? { sessionId } : {}),

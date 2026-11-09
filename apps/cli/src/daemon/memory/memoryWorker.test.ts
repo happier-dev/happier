@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fetchMemorySessionListVisibilityFixture } from './testkit/startMemoryWorker';
 import { mkdir, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
@@ -86,7 +87,7 @@ describe('memoryWorker', () => {
       active: true, activeAt: 3000, archivedAt: null, encryptionMode: 'plain' };
     let sessionGate: Promise<void> | null = null;
     let sessionEntered = () => {};
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: async ({ archivedOnly }: { archivedOnly?: boolean }) => ({
         sessions: archivedOnly ? [] : [{ ...session }], nextCursor: null, hasNext: false,
       }),
@@ -179,7 +180,7 @@ describe('memoryWorker', () => {
     let releasePending!: () => void;
     const held = new Promise<void>(resolve => { releasePending = resolve; });
     let pendingReadStarted = false;
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: async ({ archivedOnly }: { archivedOnly?: boolean }) => ({
         sessions: archivedOnly ? [] : includePending ? [covered, pending] : [covered], nextCursor: null, hasNext: false,
       }),
@@ -234,7 +235,7 @@ describe('memoryWorker', () => {
   ])('keeps an exhausted active Session ready across non-message inventory refreshes ($backfillPolicy $observed/$indexed)', async ({ observed, indexed, backfillPolicy }) => {
     const session = { id: 'exhausted', machineId: 'machine_1', seq: observed, createdAt: 2000, updatedAt: 3000,
       active: true, activeAt: 3000, archivedAt: null, encryptionMode: 'plain' };
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: async ({ archivedOnly }: { archivedOnly?: boolean }) => ({
         sessions: archivedOnly ? [] : [session], nextCursor: null, hasNext: false,
       }),
@@ -284,7 +285,7 @@ describe('memoryWorker', () => {
     let text = `quartz ${'valid body '.repeat(10_000)}`;
     let messageSeq = 1;
     let fetchedBytes = 0;
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: async ({ archivedOnly }: { archivedOnly?: boolean }) => ({ sessions: archivedOnly ? [] : [session], nextCursor: null, hasNext: false }),
       fetchSessionById: async () => session,
     }));
@@ -348,7 +349,7 @@ describe('memoryWorker', () => {
     const transcriptReads = new Map<string, { selected: number; legacy: number }>();
     const sessions = Array.from({ length: 16 }, (_, index) => ({ id: `retained-${index}`, machineId: 'machine_1',
       seq: 4, createdAt: 2000, updatedAt: 3000, active: false, activeAt: 0, archivedAt: null, encryptionMode: 'plain' }));
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: async ({ archivedOnly }: { archivedOnly?: boolean }) => {
         inventoryReads++;
         return { sessions: archivedOnly ? [] : sessions, nextCursor: null, hasNext: false };
@@ -428,7 +429,7 @@ describe('memoryWorker', () => {
     } finally { await worker.stop(); setDaemonProcess(configuration, previousDaemon); }
   });
   it('publishes a retained queue failure code without exposing its private message', async () => {
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: async () => ({ sessions: [], nextCursor: null, hasNext: false }),
     }));
     const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
@@ -452,7 +453,7 @@ describe('memoryWorker', () => {
     } finally { await worker.stop(); }
   });
   it('reads status without joining an index writer or mutating its cursor', async () => {
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: async () => ({ sessions: [], nextCursor: null, hasNext: false }),
     }));
     const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
@@ -497,8 +498,8 @@ describe('memoryWorker', () => {
     const entered = new Promise<void>(resolve => { readStarted = resolve; });
     const session = { id: 'covered', machineId: 'machine_1', seq: 7, createdAt: 1000, updatedAt: 2000,
       active: false, activeAt: 0, archivedAt: null, encryptionMode: 'plain' };
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
-      fetchSessionsPage: async () => ({ sessions: [], nextCursor: null, hasNext: false }),
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
+      fetchSessionsPage: async ({ archivedOnly }: { archivedOnly?: boolean }) => ({ sessions: archivedOnly ? [] : [session], nextCursor: null, hasNext: false }),
       fetchSessionById: async () => { readStarted(); await held; return session; },
     }));
     vi.doMock('@/session/replay/fetchEncryptedTranscriptMessages', () => ({
@@ -514,22 +515,26 @@ describe('memoryWorker', () => {
     await writeMemorySettingsToDisk({ v: 1, enabled: true, indexMode: 'deep', backfillPolicy: 'all_history',
       coveragePolicy: { type: 'full' }, deep: { minChunkMessages: 1 } });
     const { startMemoryWorker } = await import('./testkit/startMemoryWorker');
+    const initialWorker = await startMemoryWorker({ credentials: { token: 'fixture', encryption: null }, machineId: 'machine_1' });
+    const tier1DbPath = initialWorker.getTier1DbPath()!;
+    await initialWorker.stop();
+    // Retained rows must predate startup admission, as they do after a real restart.
+    const { openSummaryShardIndexDb } = await import('./summaryShardIndexDb');
+    const db = openSummaryShardIndexDb({ dbPath: tier1DbPath });
+    // Retained qa-r232 shape: source metadata observed a later sequence,
+    // while the completed transcript scan has no remaining message rows.
+    db.markDeepIndexSuccess({ sessionId: 'covered', seqTo: status === 'indexed' ? 1 : 0, nowMs: Date.now() });
+    db.recordMemorySessionIndexState({ sessionId: 'covered', status, lastObservedSeq: 7, updatedAtMs: Date.now() });
+    db.close();
+    const { openSqliteDatabaseSync } = await import('../persistence/sqliteSync');
+    const fixture = openSqliteDatabaseSync(tier1DbPath);
+    fixture.exec("UPDATE session_cursors SET lastObservedSeq=7 WHERE sessionId='covered'");
+    fixture.close();
     const worker = await startMemoryWorker({ credentials: { token: 'fixture', encryption: null }, machineId: 'machine_1' });
     let revision: Promise<void> | undefined;
     let refresh: Promise<void> | undefined;
     try {
       expect(worker.getSettings()).toMatchObject({ backfillPolicy: 'all_history', coveragePolicy: { type: 'full' } });
-      const { openSummaryShardIndexDb } = await import('./summaryShardIndexDb');
-      const db = openSummaryShardIndexDb({ dbPath: worker.getTier1DbPath()! });
-      // Retained qa-r232 shape: source metadata observed a later sequence,
-      // while the completed transcript scan has no remaining message rows.
-      db.markDeepIndexSuccess({ sessionId: 'covered', seqTo: status === 'indexed' ? 1 : 0, nowMs: Date.now() });
-      db.recordMemorySessionIndexState({ sessionId: 'covered', status, lastObservedSeq: 7, updatedAtMs: Date.now() });
-      db.close();
-      const { openSqliteDatabaseSync } = await import('../persistence/sqliteSync');
-      const fixture = openSqliteDatabaseSync(worker.getTier1DbPath()!);
-      fixture.exec("UPDATE session_cursors SET lastObservedSeq=7 WHERE sessionId='covered'");
-      fixture.close();
       expect(worker.getIndexSources?.()).toContainEqual({ source: { type: 'happier_session', sessionId: 'covered' }, state: 'ready' });
       revision = worker.noteSessionTranscriptRevised?.({ sessionId: 'covered', seq: 7 });
       await revision;
@@ -559,8 +564,12 @@ describe('memoryWorker', () => {
     let incrementalReads = 0;
     const session = { id: 'local', machineId: 'machine_1', seq: 1, createdAt: 1000, updatedAt: 2000,
       active: false, activeAt: 0, archivedAt: null, encryptionMode: 'plain' };
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
-      fetchSessionsPage: async () => ({ sessions: [session], nextCursor: null, hasNext: false }),
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
+      // This Session is not archived. Returning it from the archived-only
+      // visibility read would make settings admission reconcile a false change.
+      fetchSessionsPage: async ({ archivedOnly }: { archivedOnly?: boolean }) => ({
+        sessions: archivedOnly ? [] : [session], nextCursor: null, hasNext: false,
+      }),
       fetchSessionById: async () => session,
     }));
     vi.doMock('@/session/replay/fetchEncryptedTranscriptMessages', () => ({
@@ -690,7 +699,7 @@ describe('memoryWorker', () => {
       metadata: encodeBase64(encryptLegacy(createTestMetadata({ machineId }), secret)),
     }));
     const fetchSessionsPage = vi.fn(async () => ({ sessions, nextCursor: null, hasNext: false }));
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage,
       fetchSessionById: async ({ sessionId }: { sessionId: string }) => sessions.find(session => session.id === sessionId),
     }));
@@ -732,7 +741,7 @@ describe('memoryWorker', () => {
       { id: 'unknown' },
     ].map(session => ({ ...session, seq: 1, createdAt: 1000, updatedAt: 2000, active: false, activeAt: 0,
       archivedAt: null, encryptionMode: 'plain' }));
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: vi.fn(async ({ archivedOnly }: { archivedOnly?: boolean }) => {
         if (waitForVisibility) { visibilityStarted(); await waitForVisibility; }
         return { sessions: archivedOnly ? [] : sessions(), nextCursor: null, hasNext: false };
@@ -1281,7 +1290,7 @@ describe('memoryWorker', () => {
     });
     try {
       vi.doMock('@huggingface/transformers', () => ({ env: {}, pipeline }));
-      vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
         fetchSessionsPage,
         fetchSessionById: async () => ({}),
       }));
@@ -1417,7 +1426,7 @@ describe('memoryWorker', () => {
   });
 
   it('does not hydrate unversioned committed summaries into a fresh local projection', async () => {
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false })),
       fetchSessionById: vi.fn(async () => ({
         id: 'sess-1', machineId: 'machine_1', seq: 12, createdAt: 1_000, updatedAt: 2_000,
@@ -1480,7 +1489,7 @@ describe('memoryWorker', () => {
   }, 60_000);
 
   it('indexes transcript text into the deep index when ensureUpToDate is called', async () => {
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false })),
       fetchSessionById: vi.fn(async () => ({
         id: 'sess-1', machineId: 'machine_1', seq: 2, createdAt: 1_000, updatedAt: 2_000,
@@ -1541,7 +1550,7 @@ describe('memoryWorker', () => {
   });
 
   it('rebuilds an advanced empty projection when a content-policy change admits earlier rows', async () => {
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false })),
       fetchSessionById: vi.fn(async () => ({
         id: 'sess-policy', machineId: 'machine_1', seq: 1, createdAt: 1_000, updatedAt: 2_000,
@@ -1609,7 +1618,7 @@ describe('memoryWorker', () => {
     const session = { id: 'retained', machineId: 'machine_1', seq: 7, createdAt: 1000, updatedAt: 2000,
       active: false, activeAt: 0, archivedAt: null, encryptionMode: 'plain' };
     const fetchSession = vi.fn(async () => { throw new Error('source_temporarily_unavailable'); });
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: async ({ archivedOnly }: { archivedOnly?: boolean }) => ({ sessions: archivedOnly ? [] : [session], nextCursor: null, hasNext: false }),
       fetchSessionById: fetchSession,
     }));
@@ -1687,7 +1696,7 @@ describe('memoryWorker', () => {
       if (unavailable) throw new Error('HTTP 500');
       return { sessions: archivedOnly ? [] : [session], nextCursor: null, hasNext: false };
     });
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionsPage, fetchSessionById: async () => session }));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture, fetchSessionsPage, fetchSessionById: async () => session }));
     vi.doMock('@/session/replay/fetchEncryptedTranscriptMessages', () => ({
       fetchEncryptedTranscriptMessagesPage: async () => ({ messages: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null }),
     }));
@@ -1725,7 +1734,7 @@ describe('memoryWorker', () => {
 
   it('invalidates a real policy change before returning without waiting for source backfill', async () => {
     const fetchSessionById = vi.fn(async () => { throw new Error('HTTP 500'); });
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionById,
       fetchSessionsPage: async () => ({ sessions: [], hasNext: false, nextCursor: null }),
     }));
@@ -1755,7 +1764,7 @@ describe('memoryWorker', () => {
     const sessions = ['sess-stale-deep-policy', 'sess-deep-cursor-only'].map(id => ({
       id, machineId: 'machine_1', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 0, archivedAt: null,
     }));
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: async ({ archivedOnly }: { archivedOnly?: boolean }) => ({ sessions: archivedOnly ? [] : sessions, nextCursor: null, hasNext: false }),
       fetchSessionById: async ({ sessionId }: { sessionId: string }) => sessions.find(session => session.id === sessionId),
     }));
@@ -1852,7 +1861,7 @@ describe('memoryWorker', () => {
       archivedAt: null,
       encryptionMode: 'plain',
     }));
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: vi.fn(async ({ archivedOnly }: { archivedOnly?: boolean }) => ({ sessions: archivedOnly ? [] : [await fetchSessionById()], nextCursor: null, hasNext: false })),
       fetchSessionById,
     }));
@@ -2033,7 +2042,7 @@ describe('memoryWorker', () => {
     vi.doMock('@/ui/logger', () => ({
       logger: { debug: loggerDebug, infoFile: vi.fn() },
     }));
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionById,
       fetchSessionsPage,
     }));
@@ -2143,7 +2152,7 @@ describe('memoryWorker', () => {
         };
       });
 
-      vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
         fetchSessionsPage,
         fetchSessionById,
       }));
@@ -2192,6 +2201,11 @@ describe('memoryWorker', () => {
         content: { type: 'text', text: 'inactive session follow-up should be indexed' },
       });
       observedSeq = 2;
+
+      // Idle activity/presence/ready changes carry the feed's Memory-unchanged proof: no Session read.
+      const memoryReadsBeforeIdle = fetchSessionById.mock.calls.length;
+      for (let tick = 0; tick < 5; tick += 1) await worker.noteSessionChanged!({ sessionId: 'sess-1', memoryInputsChanged: false });
+      expect(fetchSessionById.mock.calls.length).toBe(memoryReadsBeforeIdle);
 
       const initialInventoryReads = fetchSessionsPage.mock.calls.length;
       await worker.noteSessionChanged!({ sessionId: 'sess-1' });

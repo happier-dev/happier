@@ -127,6 +127,10 @@ export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, 
     const cacheHome = await prepareAgentLaunchIdentityCache(await realpath(io.agentHome));
     await publishPreparedAgentLaunchMaterials(prepared);
     cleanupNativeSocketDirectory = await prepareNativeSocketDirectory(payload);
+    if (payload.accountSettingsApplication) {
+      const { applyAgentLaunchAccountSettings } = await import('./agentLaunchAccountSettings');
+      await applyAgentLaunchAccountSettings(payload, io.signal);
+    }
     if (io.signal?.aborted) throw new AgentLaunchDiagnosticError({ stage: 'caller_cancelled' });
     const { spawnSupervisedPluginProcess } = await import('../../plugins/runtime/exec/processSupervisor');
     if (io.signal?.aborted) throw new AgentLaunchDiagnosticError({ stage: 'caller_cancelled' });

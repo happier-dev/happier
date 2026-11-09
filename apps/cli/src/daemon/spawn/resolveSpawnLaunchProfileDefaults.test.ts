@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
+import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
+import { AIBackendProfileSchema } from '@happier-dev/protocol';
 import { resolveSpawnLaunchProfileDefaults } from './resolveSpawnLaunchProfileDefaults';
 
 const baseOptions: SpawnSessionOptions = {
@@ -28,6 +30,23 @@ const profile = {
 };
 
 describe('resolveSpawnLaunchProfileDefaults', () => {
+  it('restores retained legacy profile environment on resume through the admitted profile snapshot', () => {
+    const legacy = AIBackendProfileSchema.parse({ id: 'custom-profile', name: 'Custom provider',
+      environmentVariables: [{ name: 'CUSTOM_ENDPOINT', value: 'https://provider.example' }], createdAt: 0, updatedAt: 0 });
+    const rawSettings = { profiles: [legacy] };
+    const result = resolveSpawnLaunchProfileDefaults({
+      options: { ...baseOptions, existingSessionId: 'session', profileId: legacy.id },
+      effectiveBackendTarget: baseOptions.backendTarget!, rawSettings,
+      profilesSnapshot: readProfilesFromAccountSettings(rawSettings),
+    });
+    expect(result).toMatchObject({ ok: true, options: { environmentVariables: { CUSTOM_ENDPOINT: 'https://provider.example' } } });
+  });
+
+  it('allows an unspecified native target and applies its profile environment', () => {
+    const result = resolveSpawnLaunchProfileDefaults({ options: baseOptions,
+      effectiveBackendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'claude' }, rawSettings: { profiles: [profile] } });
+    expect(result).toMatchObject({ ok: true, options: { environmentVariables: { TEAM_FLAG: 'profile' } } });
+  });
   it('fills absent spawn fields from the canonical V2 profile', () => {
     expect(resolveSpawnLaunchProfileDefaults({
       options: baseOptions,

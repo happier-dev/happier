@@ -39,20 +39,29 @@ async function waitForClaim(check: () => boolean) {
     }
 }
 
-async function harness(withSession = false) {
+async function harness(withSession = false, failedInitialAssignments = false, initialAssignments: unknown[] = []) {
     const directory = await mkdtemp(join(tmpdir(), 'qb64-idle-'));
     const claims: ServerResponse[] = [];
     let holdClaims = false;
     let failClaims = false;
+    let failAssignments = failedInitialAssignments;
     let holdSessions = false;
     const sessionReads: ServerResponse[] = [];
+    let assignmentRows = initialAssignments;
+    const assignmentReads: string[] = [];
     const sessionReply = (response: ServerResponse) => response.end(JSON.stringify({
         session: 'settled', input: 'settled', agents: 'settled', attention: 'settled', settledAt: 1,
     }));
     const server = createServer((request, response) => {
         response.setHeader('Content-Type', 'application/json');
         if (request.url?.startsWith('/v3/automations/worker/assignments')) {
-            response.end(JSON.stringify({ assignments: [], settings: {
+            assignmentReads.push(request.url);
+            if (failAssignments) {
+                response.statusCode = 503;
+                response.end(JSON.stringify({ error: 'assignments_unavailable' }));
+                return;
+            }
+            response.end(JSON.stringify({ assignments: assignmentRows, settings: {
                 maxActiveRunsPerMachine: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
             } }));
         } else if (request.url?.startsWith('/v3/automations/worker/run-lifecycle')) {
@@ -93,9 +102,11 @@ async function harness(withSession = false) {
     const publications: unknown[] = [];
     const unsubscribe = inventory.subscribe(decision => { publications.push(decision); });
     await worker.refreshAssignments();
-    return { since, origin, directory, worker, inventory, drain, claims, publications, operations, sessionReads,
+    return { since, origin, directory, worker, inventory, drain, claims, publications, operations, sessionReads, assignmentReads,
+        replaceAssignments(rows: unknown[]) { assignmentRows = rows; },
         holdClaims() { holdClaims = true; },
         failClaims(value: boolean) { failClaims = value; },
+        failAssignments(value: boolean) { failAssignments = value; },
         holdSessions() { holdSessions = true; },
         releaseSessions() { holdSessions = false; for (const response of sessionReads) if (!response.writableEnded) sessionReply(response); },
         releaseClaims() {
@@ -114,19 +125,44 @@ async function harness(withSession = false) {
 }
 
 describe('Automation observation and managed unused retention', () => {
+
+    it('keeps failed assignment-read coverage unknown until a successful read proves idle', async () => {
+        const owner = await harness(false, true);
+        try {
+            expect(await owner.inventory.readDecision()).toEqual({ kind: 'unknown', reasons: ['coverage_unknown'] });
+            owner.drain.beginUnusedStopDrain();
+            expect(await owner.inventory.readDecision()).toEqual({ kind: 'unknown', reasons: ['coverage_unknown'] });
+            await vi.advanceTimersByTimeAsync(4_000);
+            owner.failAssignments(false);
+            await owner.worker.refreshAssignments();
+            expect(await owner.inventory.readDecision()).toEqual({ kind: 'idle', since: Date.now() });
+        } finally { await owner.close(); }
+    });
+
+    it('catches up once immediately after a lost queued push with no Automation assignments', async () => {
+        const owner = await harness();
+        try {
+            await owner.worker.catchUp();
+            await vi.advanceTimersByTimeAsync(0);
+            await waitForClaim(() => owner.claims.length === 1);
+            expect(await owner.inventory.readDecision()).toEqual({ kind: 'idle', since: owner.since });
+            expect(owner.claims).toHaveLength(1);
+        } finally { await owner.close(); }
+    });
+
     it('keeps failed claim coverage unknown until a successful observation starts a new idle interval', async () => {
         const owner = await harness();
         try {
             expect(await owner.inventory.readDecision()).toEqual({ kind: 'idle', since: owner.since });
             owner.failClaims(true);
-            await vi.advanceTimersByTimeAsync(60_000);
+            await owner.worker.catchUp();
             await waitForClaim(() => owner.claims.length > 0);
             expect(await owner.inventory.readDecision()).toEqual({ kind: 'unknown', reasons: ['coverage_unknown'] });
             owner.failClaims(false);
             const previous = owner.claims.length;
-            // First retry uses the worker's existing one-second backoff;
-            // advancing only the next timer can consume HTTP cleanup instead.
-            await vi.advanceTimersByTimeAsync(1_000);
+            await vi.advanceTimersByTimeAsync(180_000);
+            expect(owner.claims).toHaveLength(previous);
+            await owner.worker.catchUp();
             await waitForClaim(() => owner.claims.length > previous);
             expect(await owner.inventory.readDecision()).toEqual({ kind: 'idle', since: Date.now() });
         } finally { await owner.close(); }
@@ -141,7 +177,7 @@ describe('Automation observation and managed unused retention', () => {
             const oldObservation = owner.inventory.readDecision();
             await waitForClaim(() => owner.sessionReads.length > priorRequests);
             owner.holdClaims();
-            await vi.advanceTimersByTimeAsync(60_000);
+            void owner.worker.catchUp();
             await waitForClaim(() => owner.claims.length === 1);
             owner.drain.beginUnusedStopDrain();
             let confirmed = false;
@@ -155,7 +191,7 @@ describe('Automation observation and managed unused retention', () => {
         } finally { owner.releaseSessions(); owner.releaseClaims(); await owner.close(); }
     });
 
-    it('preserves idle across empty periodic claims and admits Stop at the original one-hour boundary', async () => {
+    it('preserves idle across empty catch-up claims and admits Stop at the original one-hour boundary', async () => {
         const owner = await harness();
         const cancellation = new AbortController();
         const handlers = new Map<string, RpcHandler<unknown, unknown>>();
@@ -177,8 +213,7 @@ describe('Automation observation and managed unused retention', () => {
         registerManagedActivityRpcHandlers({ activity: owner.inventory, admissionDrain: owner.drain,
             rpcHandlerManager: { registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>) {
                 handlers.set(method, (raw, ingress) => handler(raw as TRequest, ingress));
-            } }, validateCurrentTarget: async candidate => candidate.managedId === machine.id
-                && candidate.expectedRevision === machine.intentRevision,
+            } },
             commitIdleEvidence: (managedTarget, idle, ingress) => {
                 if (!owner.drain.isQuiescing() || !ingress.machineAdmission) return null;
                 const method = `guest:${MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD}`;
@@ -229,20 +264,23 @@ describe('Automation observation and managed unused retention', () => {
             for (let index = 0; index < 59; index++) {
                 const previous = owner.claims.length;
                 await vi.advanceTimersByTimeAsync(60_000);
+                expect(owner.claims).toHaveLength(previous);
+                await owner.worker.catchUp();
                 await waitForClaim(() => owner.claims.length > previous);
-                expect(await bridge.read()).toMatchObject({ kind: 'idle', since: owner.since });
+                // The policy owns the remote drain probe while it waits. Observe
+                // the same live inventory without opening a competing probe.
+                expect(await owner.inventory.readDecision()).toMatchObject({ kind: 'idle', since: owner.since });
                 expect(ready).toBe(false);
             }
             await vi.advanceTimersByTimeAsync(owner.since + 3_599_999 - Date.now());
-            expect(await bridge.read()).toMatchObject({ kind: 'idle', since: owner.since });
+            expect(await owner.inventory.readDecision()).toMatchObject({ kind: 'idle', since: owner.since });
             expect(ready).toBe(false);
             await vi.advanceTimersByTimeAsync(owner.since + 3_600_000 - Date.now());
             const result = await preparation;
             expect(owner.drain.isQuiescing()).toBe(false);
             expect(result).toMatchObject({ purpose: { kind: 'retention',
                 evidence: { decision: { kind: 'idle', since: owner.since, confirmedAt: owner.since + 3_600_000 } } } });
-            expect(owner.publications.length).toBeGreaterThan(1);
-            for (const publication of owner.publications) expect(publication).toEqual({ kind: 'idle', since: owner.since });
+            expect(owner.publications).toEqual([{ kind: 'idle', since: owner.since }]);
         } finally {
             cancellation.abort();
             await preparation?.catch(() => {});
@@ -255,7 +293,7 @@ describe('Automation observation and managed unused retention', () => {
         try {
             expect(await owner.inventory.readDecision()).toEqual({ kind: 'idle', since: owner.since });
             owner.holdClaims();
-            await vi.advanceTimersByTimeAsync(60_000);
+            void owner.worker.catchUp();
             await waitForClaim(() => owner.claims.length === 1);
             owner.drain.beginUnusedStopDrain();
             let observed = false;

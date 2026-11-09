@@ -263,6 +263,11 @@ export function createDaemonSessionAccountActionAuthorizationPreparer(params: Re
           authorization,
           target,
           originalActionEnvelope: preparedAuthorization.envelope,
+          // The Home mint verified this root's Home and installed receiver.
+          // Retain its issuer's ingress only when this Session host receives it.
+          ...(authorization.binding.machineId === params.machineId
+            ? { verifyMachineAdmissionCurrent: isCurrent }
+            : {}),
           ...(!requesterRuntime && encryption.settingsVersion !== undefined
             ? { accountSettingsVersion: encryption.settingsVersion }
             : {}),

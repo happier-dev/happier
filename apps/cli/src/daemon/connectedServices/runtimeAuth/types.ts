@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { z } from 'zod/mini';
 import {
   AGENT_CONNECTED_ACCOUNT_RUNTIME_AUTH_FAILURE_KINDS,
@@ -22,9 +23,9 @@ export const CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_KINDS =
   AGENT_CONNECTED_ACCOUNT_RUNTIME_AUTH_FAILURE_KINDS;
 export type ConnectedServiceRuntimeAuthFailureKind =
   AgentConnectedAccountRuntimeAuthFailureKind;
-export const ConnectedServiceRuntimeAuthFailureKindSchema = z.enum(
+export const ConnectedServiceRuntimeAuthFailureKindSchema = lazyZodSchema(() => z.enum(
   CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_KINDS,
-);
+));
 
 export type ConnectedServiceRuntimeLimitCategory = ConnectedServiceLimitCategoryV1;
 export type ConnectedServiceRuntimeQuotaScope = ProviderAccountUsageQuotaScopeV1;

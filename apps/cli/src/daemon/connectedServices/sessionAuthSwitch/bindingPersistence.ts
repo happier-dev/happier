@@ -1,3 +1,4 @@
+import { projectProviderObservedAccountMetadata } from './providerObservedAccountMetadata';
 import { readConnectedServiceMaterializationIdentityV1FromMetadata, writeConnectedServiceMaterializationIdentityV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
 import type { ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -13,11 +14,11 @@ export async function persistSessionConnectedServiceBindings(
       typeof updateSessionMetadataWithRetry
     >[0]['credentials'];
     sessionId: string;
-    normalizedBindings: ConnectedServiceBindingsV2;
     connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1 | null;
     teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1;
     teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
-  }>,
+  }> & (Readonly<{ normalizedBindings: ConnectedServiceBindingsV2; providerObservedAccount?: never; isCurrent?: never }>
+    | Readonly<{ normalizedBindings?: never; providerObservedAccount: Readonly<{ serviceId: import('@happier-dev/protocol').ConnectedAccountServiceKey; groupId: string; profileId: string }>; isCurrent: () => boolean | Promise<boolean> }>),
 ): Promise<void> {
   const rawSession = await fetchSessionByIdCompat({ reason: 'session-control',
     token: input.token,
@@ -31,6 +32,7 @@ export async function persistSessionConnectedServiceBindings(
     credentials: input.credentials,
     sessionId: input.sessionId,
     rawSession,
+    ...(input.providerObservedAccount ? { currentness: { verifyCurrent: async () => input.isCurrent() } } : {}),
     ...(input.teamCredentialBindings
       ? {
           teamCredentialBindings: input.teamCredentialBindings,
@@ -41,7 +43,12 @@ export async function persistSessionConnectedServiceBindings(
     ...(input.teamVisibilityGrantConsent
       ? { teamVisibilityGrantConsent: input.teamVisibilityGrantConsent }
       : {}),
-    updater: (metadata) => {
+    updater: async (metadata) => {
+      if (input.providerObservedAccount && !await input.isCurrent()) return metadata;
+      const projected = input.providerObservedAccount
+        ? projectProviderObservedAccountMetadata(metadata, input.providerObservedAccount)
+        : { ...metadata, connectedServices: input.normalizedBindings };
+      if (projected === metadata) return metadata;
       const existingUpdatedAt =
         typeof metadata.connectedServicesUpdatedAt === 'number' &&
         Number.isFinite(metadata.connectedServicesUpdatedAt)
@@ -51,8 +58,7 @@ export async function persistSessionConnectedServiceBindings(
         input.connectedServiceMaterializationIdentityV1 ??
         readConnectedServiceMaterializationIdentityV1FromMetadata(metadata);
       const nextMetadata = {
-        ...metadata,
-        connectedServices: input.normalizedBindings,
+        ...projected,
         connectedServicesUpdatedAt: Math.max(Date.now(), existingUpdatedAt + 1),
       };
       return materializationIdentity

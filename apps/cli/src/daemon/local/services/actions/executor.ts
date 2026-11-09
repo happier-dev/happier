@@ -1,4 +1,3 @@
-import type { WorkspaceProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { LocalServiceActionRequestV1, DaemonLocalServiceLauncherStartRequestV1, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 import type { ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -7,7 +6,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { LocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 import type { TerminateDetectedService } from './terminate';
-import type { ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import type { ProjectManagedServiceHandle, WorkspaceProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { LocalServiceLauncherHistoryStore } from '../launch/leaves';
 
 export type ResolvedLocalServiceActionTarget =
@@ -76,7 +75,8 @@ export async function executeLocalServiceAction(input: Readonly<{
                 : { status: 'succeeded', undoKey: result.undoKey };
         }
         case 'stop_managed': {
-            if (input.target.kind !== 'managed_service' || input.target.handle.kind !== 'workspace') return { status: 'denied', reasonCode: 'wrong_target_kind' };
+            if (input.target.kind !== 'managed_service' || input.target.handle.kind !== 'workspace')
+                return { status: 'denied', reasonCode: 'wrong_target_kind' };
             const signals = [input.execution?.ingress?.signal, input.execution?.actionContext.signal]
                 .filter((signal): signal is AbortSignal => signal !== undefined);
             return await stopProjectManagedService(input.target.handle, signals.length ? AbortSignal.any(signals) : undefined);

@@ -32,6 +32,12 @@ afterEach(async () => {
 });
 
 describe('managed Provider operation authority', () => {
+  it('performs one explicit admission during activation, retaining later credential checks', async () => {
+    const source = await readFile(new URL('./managedProviderOperationAuthority.ts', import.meta.url), 'utf8');
+    // Count activation's explicit refusals, excluding callbacks retained for
+    // the next credential acquisition by the real purpose/request-auth owners.
+    expect([...source.matchAll(/if \(!(?:purposeLease\?\.|subject\.)?isCurrent\(\)\)/g)]).toHaveLength(1);
+  });
   it('fences the exact managed row and role throughout the real purpose and request-auth lease', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-managed-provider-custody-'));
     roots.push(baseDir);

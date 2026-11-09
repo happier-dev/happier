@@ -33,7 +33,6 @@ export function applyDaemonUsageLimitRecoveryMutation(
 
   return mergeUsageLimitRecoveryFieldIntoMetadata({
     latestMetadata: metadata,
-    baseMetadata: metadata,
     candidateMetadata: {
       [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: mutation.op.value,
     },

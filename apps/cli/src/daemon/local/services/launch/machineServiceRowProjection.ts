@@ -3,6 +3,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { managedServiceEndpointHostPolicyForMode, readManagedServiceEndpointUrl } from '@happier-dev/protocol/plugins/managedServiceEndpointUrl';
 import type { ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import type { MachineManagedServiceHandle } from '@/plugins/runtime/invocation/services/machineManagedServices';
+import type { SavedMachineServiceHealthResult } from '@/deployments/healthChecks/savedHealthChecks';
 
 type ServiceHandle = ProjectManagedServiceHandle | MachineManagedServiceHandle;
 export type MachineServiceRowChange = Readonly<{
@@ -30,6 +31,8 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
     const unavailable = new WeakMap<MachineServiceWatchV1, MachineServiceRowV1>();
     const published = new WeakMap<ServiceHandle, MachineServiceRowV1>();
     const listeners = new Map<string, Set<(change: MachineServiceRowChange) => void>>();
+    const healthResults = new Map<ServiceHandle, Map<string, SavedMachineServiceHealthResult>>();
+    const statusRank = { up: 0, degraded: 1, unknown: 2, down: 3 } as const;
     const watchIdentity = (watch: MachineServiceWatchV1, machineId: string): Extract<MachineServiceIdentityV1, { kind: 'adopted' }> => Object.freeze({
         kind: 'adopted', machineId, serviceId: watch.watchId, watchId: watch.watchId, watchRevision: watchRevision(watch),
     });
@@ -43,6 +46,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
         }
     };
     const retire = (handle: ServiceHandle) => {
+        healthResults.delete(handle);
         if (!published.has(handle)) return;
         published.delete(handle);
         deliver(handle, null);
@@ -76,12 +80,22 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                     : snapshot.state === 'healthy' ? 'up' : 'unknown';
             const reason = freshness !== 'current' ? 'coverage_unavailable'
                 : snapshot.nativePhase === 'stopped' ? 'stopped' : snapshot.readiness === 'not_ready' ? 'not_ready' : undefined;
-            const health: NonNullable<MachineServiceRowV1['health']> = {
+            const nativeHealth: NonNullable<MachineServiceRowV1['health']> = {
                 status, observedAtMs: facts?.observedAt ?? null, freshness,
                 ...(facts?.healthSince === undefined ? {} : { since: facts.healthSince }),
                 ...(reason ? { reason } : {}),
                 ...(handle.readHealthSnapshot?.().expectedDown ? { expectedDown: 'stop' } : {}),
             };
+            // Native failures remain authoritative; otherwise the admitted saved
+            // checks supply readiness that native adapters do not report.
+            let checkResult: SavedMachineServiceHealthResult | undefined;
+            for (const result of healthResults.get(handle)?.values() ?? []) {
+                if (!checkResult || statusRank[result.result.status] > statusRank[checkResult.result.status]) checkResult = result;
+            }
+            const health: NonNullable<MachineServiceRowV1['health']> = checkResult && nativeHealth.status !== 'down'
+                ? { status: checkResult.result.status, observedAtMs: checkResult.result.observedAt, freshness: 'current',
+                    ...(nativeHealth.expectedDown ? { expectedDown: nativeHealth.expectedDown } : {}) }
+                : nativeHealth;
             // The clock identifies the adopted semantic proof, not every raw
             // native refresh. Explicit detail reads retain the latest raw clock.
             const prior = previous?.health;
@@ -102,7 +116,7 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
                 baseUrl: endpoint.ok ? endpoint.endpoint.baseUrl : null,
                 port: endpoint.ok ? endpoint.endpoint.port : null,
                 ...(native ? { native: sameStrictJsonValue(previous?.native, native) ? previous!.native : Object.freeze(native) } : {}),
-                ...(native ? { health: stableHealth } : {}),
+                ...(native || checkResult ? { health: stableHealth } : {}),
                 ...(facts?.accounting ? { accounting: sameStrictJsonValue(previous?.accounting, facts.accounting)
                     ? previous!.accounting : Object.freeze({ ...facts.accounting }) } : {}),
                 ...(facts ? { configuration: sameStrictJsonValue(previous?.configuration, configuration)
@@ -141,14 +155,35 @@ export function createMachineServiceRowProjection(watchRevision: (watch: Machine
             return row;
         },
     };
-    return { ...projection,
-        publish(handle: ServiceHandle) {
-            if (!listeners.has(targetOf(handle).machineId)) return;
-            if (handle.retirementSignal.aborted || !handle.isCurrent()) { retire(handle); return; }
-            const row = projection.read(handle);
-            if (published.get(handle) === row) return;
-            published.set(handle, row);
-            deliver(handle, row);
+    const publish = (handle: ServiceHandle) => {
+        if (!listeners.has(targetOf(handle).machineId)) return;
+        if (handle.retirementSignal.aborted || !handle.isCurrent()) { retire(handle); return; }
+        const row = projection.read(handle);
+        if (published.get(handle) === row) return;
+        published.set(handle, row);
+        deliver(handle, row);
+    };
+    return { ...projection, publish,
+        publishHealthResult(handle: ServiceHandle, result: SavedMachineServiceHealthResult) {
+            const target = targetOf(handle);
+            if (target.serverId !== result.serverId || target.machineId !== result.subject.machineId
+                || handle.serviceId !== result.subject.serviceId || handle.instanceId !== result.generation
+                || handle.retirementSignal.aborted || !handle.isCurrent()) return;
+            let results = healthResults.get(handle);
+            if (!results) { results = new Map(); healthResults.set(handle, results); }
+            results.set(JSON.stringify([result.caller, result.occurrenceId, result.sourceInstanceId, result.check.checkId]), result);
+            publish(handle);
+        },
+        reconcileHealthResults(isCurrent: (result: SavedMachineServiceHealthResult) => boolean) {
+            for (const [handle, results] of healthResults) {
+                let changed = false;
+                for (const [key, result] of results) {
+                    if (isCurrent(result)) continue;
+                    results.delete(key); changed = true;
+                }
+                if (!results.size) healthResults.delete(handle);
+                if (changed) publish(handle);
+            }
         },
         retire,
         subscribe(machineId: string, initial: readonly ServiceHandle[], listener: (change: MachineServiceRowChange) => void) {

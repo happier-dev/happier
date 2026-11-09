@@ -84,9 +84,32 @@ describe('resolveDaemonExecutionRunBrokerAuthority', () => {
     });
   });
 
+  it('routes a foreign recipient attached Run to its exact Session authority without using custodian identity as recipient identity', async () => {
+    const result = await resolveDaemonExecutionRunBrokerAuthority(request, {
+      currentIdentity: { serverIdentityId: 'srv_home_one', accountId: 'worker-custodian', machineId: 'machine-one' },
+      listMarkers: async () => [{ runId: 'run-one', happySessionId: 'session-one', intent: 'voice_agent', status: 'running', pid: 41 }],
+      isPidAlive: async () => true,
+      resolveLiveAuthority: async input => {
+        expect(input).toMatchObject({ sessionId: 'session-one', requestingAccountId: 'account-one' });
+        return liveCurrent();
+      },
+    });
+    expect(result).toMatchObject({ status: 'current', requestingAccountId: 'account-one', parentSessionId: 'session-one' });
+  });
+
+  it('never lends a detached custodian Run to a foreign recipient', async () => {
+    let reads = 0;
+    await expect(resolveDaemonExecutionRunBrokerAuthority(request, {
+      currentIdentity: { serverIdentityId: 'srv_home_one', accountId: 'worker-custodian', machineId: 'machine-one' },
+      listMarkers: async () => [{ runId: 'run-one', happySessionId: null, intent: 'voice_agent', status: 'running', pid: 41 }],
+      isPidAlive: async () => true,
+      resolveLiveAuthority: async () => { reads += 1; return { ...await liveCurrent(), parentSessionId: null }; },
+    })).resolves.toMatchObject({ status: 'not_current', reason: 'identity_mismatch' });
+    expect(reads).toBe(0);
+  });
+
   it.each([
     ['wrong Home', { ...request, serverIdentityId: 'srv_other' }, 'identity_mismatch'],
-    ['wrong Account', { ...request, requestingAccountId: 'account-other' }, 'identity_mismatch'],
     ['wrong Machine', { ...request, workerMachineId: 'machine-other' }, 'identity_mismatch'],
     ['wrong occurrence', { ...request, expectedOccurrenceId: 'occurrence-old' }, 'occurrence_mismatch'],
   ] as const)('rejects %s', async (_label, candidate, reason) => {

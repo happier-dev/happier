@@ -1,5 +1,5 @@
 import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
-import type { VoiceCredentialBindingIdentityV1, VoiceCredentialSourceSelection } from '@happier-dev/protocol';
+import type { RecipientOperationV1, VoiceCredentialBindingIdentityV1, VoiceCredentialSourceSelection } from '@happier-dev/protocol';
 import { resolveSavedSecretCatalogVoiceCredentialSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -19,6 +19,7 @@ import {
 } from '@/settings/secrets/savedSecretCatalog';
 import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import { savedSecretOperationAdmissionStatus, refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
+import { admitMediatedSavedSecretCredential, type MediatedCredentialAdmission, type MediatedCredentialGrantContext } from '@/plugins/runtime/credentials/mediatedCredentialAdmission';
 
 export type VoiceCredentialResolutionSource = 'account' | 'machine_override';
 
@@ -26,6 +27,7 @@ type VoiceCredentialReference = Readonly<{
   secretId: string;
   source: VoiceCredentialResolutionSource;
   materialFingerprint: string;
+  relationship: 'owner' | 'recipient';
 }>;
 
 export type VoiceCredentialMaterialStatus = SavedSecretResolutionV1['status'];
@@ -46,7 +48,8 @@ export type VoiceCredentialResolver = Readonly<{
   }>;
   withSecret<T>(params: Readonly<{
     identity: VoiceCredentialBindingIdentityV1;
-    recipientContractDigest?: string;
+    operationPurpose?: RecipientOperationV1['purpose'];
+    admission?: MediatedCredentialAdmission;
     use: (secret: string) => Promise<T>;
   }>): Promise<T>;
 }>;
@@ -77,7 +80,6 @@ function inspectReference(params: Readonly<{
   snapshot: ActiveAccountSettingsSnapshot | null;
   machineId: string | null;
   identity: VoiceCredentialBindingIdentityV1;
-  recipientContractDigest?: string;
 }>): VoiceCredentialReferenceInspection {
   if (!params.snapshot) return { status: 'missing' };
   const purposes = params.snapshot.connectedPurposeCatalog;
@@ -98,12 +100,6 @@ function inspectReference(params: Readonly<{
     return { status: 'missing' };
   }
   if (resolved.selection.kind !== 'savedSecret' || !resolved.savedSecret) return { status: 'missing' };
-  if (
-    params.recipientContractDigest
-    && resolved.approvedRecipientContractDigest !== params.recipientContractDigest
-  ) {
-    return { status: 'missing' };
-  }
   const secretId = resolved.savedSecret.secretId;
   const inspected = createSavedSecretMaterializerFromSnapshotV1(params.snapshot).inspect(secretId);
   if (inspected.status !== 'ready') return inspected;
@@ -113,6 +109,7 @@ function inspectReference(params: Readonly<{
       secretId,
       source: resolved.savedSecret.source,
       materialFingerprint: inspected.fingerprint,
+      relationship: inspected.relationship,
     }),
   };
 }
@@ -161,8 +158,9 @@ export function createVoiceCredentialResolver(params: Readonly<{
   machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
   secretSources?: TargetSecretSourcesV1;
   ensureSnapshot?: () => Promise<void>;
+  credentialGrantContext?: MediatedCredentialGrantContext;
 }>): VoiceCredentialResolver {
-  const getSnapshot = params.getSnapshot ?? getActiveAccountSettingsSnapshot;
+  const getSnapshot = params.getSnapshot ?? params.operationContext?.readSnapshot ?? getActiveAccountSettingsSnapshot;
   const getLifetimeToken = params.getLifetimeToken ?? getActiveAccountSettingsSnapshotLifetimeToken;
   const refreshForOperation = params.refreshForOperation ?? refreshSavedSecretCatalogForOperation;
 
@@ -218,7 +216,8 @@ export function createVoiceCredentialResolver(params: Readonly<{
     const expectedScopeKey = snapshot.scopeKey;
     if (expectedScopeKey === undefined) return snapshot;
     try {
-      return await refreshForOperation({ expectedScopeKey, references: [{ ref }] });
+      const refresh = () => refreshForOperation({ expectedScopeKey, references: [{ ref }], operationContext: params.operationContext });
+      return params.operationContext ? await runWithServerHttpBaseUrl(params.operationContext.serverHttpBaseUrl, refresh) : await refresh();
     } catch (error) {
       if (error instanceof SavedSecretOperationAdmissionError) {
         throw Object.assign(
@@ -254,7 +253,8 @@ export function createVoiceCredentialResolver(params: Readonly<{
     },
     async withSecret<T>(input: Readonly<{
       identity: VoiceCredentialBindingIdentityV1;
-      recipientContractDigest?: string;
+      operationPurpose?: RecipientOperationV1['purpose'];
+      admission?: MediatedCredentialAdmission;
       use: (secret: string) => Promise<T>;
     }>): Promise<T> {
       if (!input.identity) throw unavailable();
@@ -264,9 +264,6 @@ export function createVoiceCredentialResolver(params: Readonly<{
         snapshot,
         machineId: params.machineId,
         identity: input.identity,
-        ...(input.recipientContractDigest
-          ? { recipientContractDigest: input.recipientContractDigest }
-          : {}),
       });
       if (!snapshot) throw unavailable();
       if (inspected.status !== 'ready') throw unavailable(inspected.status);
@@ -277,12 +274,15 @@ export function createVoiceCredentialResolver(params: Readonly<{
             snapshot: admittedSnapshot,
             machineId: params.machineId,
             identity: input.identity,
-            ...(input.recipientContractDigest
-              ? { recipientContractDigest: input.recipientContractDigest }
-              : {}),
           });
       if (admittedInspection.status !== 'ready') throw unavailable(admittedInspection.status);
       const resolved = admittedInspection.reference;
+      await admitMediatedSavedSecretCredential({ identity: input.identity,
+        relationship: resolved.relationship,
+        snapshot: admittedSnapshot, machineId: params.machineId,
+        readCredentials: async () => params.operationContext?.credentials ?? params.credentials
+          ?? await (params.readCredentials ?? readStoredCredentials)(),
+        admission: input.admission, grantContext: params.credentialGrantContext });
       // The SavedSecret catalog is the only owner of "the material behind this
       // fingerprint moved"; ask it rather than re-deciding drift locally.
       const materializer = await acquireSavedSecretMaterializerForOperation({ snapshot: admittedSnapshot,

@@ -38,6 +38,7 @@ type CredentialUpdateResult = Readonly<{ status: 'unchanged' | 'hot_applied' | '
 
 /** Notification admission and application share the existing Session transition custody. */
 export async function applyConnectedServiceCredentialUpdate(input: Readonly<{
+  signal?: AbortSignal;
   sessionId: string;
   serviceId: ConnectedAccountServiceKey;
   profileId: string;
@@ -51,6 +52,7 @@ export async function applyConnectedServiceCredentialUpdate(input: Readonly<{
     generation: number | null;
   }>): Promise<Readonly<{ ok: true; action?: string }> | Readonly<{ ok: false; errorCode: string }>>;
 }>): Promise<CredentialUpdateResult> {
+  input.signal?.throwIfAborted();
   const sessionId = input.sessionId.trim();
   if (!sessionId) return { status: 'failed', errorCode: 'session_not_found' };
   return await input.core.run<CredentialUpdateResult>({ sessionId, reason: 'automatic_runtime_failure', execute: async () => {

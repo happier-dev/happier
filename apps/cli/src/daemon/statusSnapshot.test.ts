@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StoredCredentials } from '@/persistence';
-import type { ActiveServerAuthReadiness } from '@/auth/resolveActiveServerAuthReadiness';
+import type { Settings } from '@/persistence';
 
 const {
     readCredentialsMock,
     readStoredCredentialsMock,
     readDaemonStateMock,
     resolveDaemonServiceInstallationSnapshotFromEnvMock,
-    resolveActiveServerAuthReadinessMock,
+    readSettingsMock,
 } = vi.hoisted(() => ({
     readCredentialsMock: vi.fn(async () => null),
     readStoredCredentialsMock: vi.fn(
@@ -34,16 +34,7 @@ const {
         installedPath: '/tmp/com.happier.cli.daemon.default.plist',
         label: 'com.happier.cli.daemon.default',
     })),
-    resolveActiveServerAuthReadinessMock: vi.fn(async (): Promise<ActiveServerAuthReadiness> => ({
-        credentials: null,
-        credentialState: 'missing' as const,
-        authenticated: false,
-        unusableReason: 'no-credentials' as const,
-        accountLabel: null,
-        machineId: null,
-        machineRegistrationState: 'no-local-id' as const,
-        machineRegistered: false,
-    })),
+    readSettingsMock: vi.fn(async (): Promise<Settings> => ({ schemaVersion: 2, onboardingCompleted: false })),
 }));
 
 vi.mock('@/configuration', () => ({
@@ -60,15 +51,12 @@ vi.mock('@/persistence', () => ({
     readCredentials: () => readCredentialsMock(),
     readStoredCredentials: () => readStoredCredentialsMock(),
     readDaemonState: () => readDaemonStateMock(),
+    readSettings: () => readSettingsMock(),
 }));
 
 vi.mock('@/daemon/service/cli', () => ({
     resolveDaemonServiceInstallationSnapshotFromEnv: () =>
         resolveDaemonServiceInstallationSnapshotFromEnvMock(),
-}));
-
-vi.mock('@/auth/resolveActiveServerAuthReadiness', () => ({
-    resolveActiveServerAuthReadiness: () => resolveActiveServerAuthReadinessMock(),
 }));
 
 describe('readDaemonStatusSnapshot', () => {
@@ -77,17 +65,10 @@ describe('readDaemonStatusSnapshot', () => {
         readStoredCredentialsMock.mockClear();
         readDaemonStateMock.mockClear();
         resolveDaemonServiceInstallationSnapshotFromEnvMock.mockClear();
-        resolveActiveServerAuthReadinessMock.mockReset();
-        resolveActiveServerAuthReadinessMock.mockResolvedValue({
-            credentials: null,
-            credentialState: 'missing',
-            authenticated: false,
-            unusableReason: 'no-credentials',
-            accountLabel: null,
-            machineId: null,
-            machineRegistrationState: 'no-local-id',
-            machineRegistered: false,
-        });
+        readSettingsMock.mockReset();
+        readSettingsMock.mockResolvedValue({ schemaVersion: 2, onboardingCompleted: false });
+        readStoredCredentialsMock.mockReset();
+        vi.unstubAllGlobals();
         vi.resetModules();
     });
 
@@ -97,19 +78,9 @@ describe('readDaemonStatusSnapshot', () => {
             token: `header.${payload}.signature`,
             encryption: null,
         });
-        resolveActiveServerAuthReadinessMock.mockResolvedValueOnce({
-            credentials: {
-                token: `header.${payload}.signature`,
-                encryption: null,
-            },
-            credentialState: 'valid',
-            authenticated: true,
-            unusableReason: null,
-            accountLabel: 'alice',
-            machineId: 'machine-confirmed',
-            machineRegistrationState: 'server-confirmed',
-            machineRegistered: true,
-        });
+        readSettingsMock.mockResolvedValueOnce({ schemaVersion: 2, onboardingCompleted: false,
+            machineId: 'machine-confirmed', machineIdConfirmedByServer: true });
+        vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 'acct_status', username: 'alice' }), { status: 200 })));
 
         const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
 
@@ -123,25 +94,15 @@ describe('readDaemonStatusSnapshot', () => {
             machineRegistered: true,
             accountId: 'account-token-only',
         });
-        expect(resolveActiveServerAuthReadinessMock).toHaveBeenCalledOnce();
-        expect(readStoredCredentialsMock).not.toHaveBeenCalled();
+        expect(readStoredCredentialsMock).toHaveBeenCalledOnce();
         expect(readCredentialsMock).not.toHaveBeenCalled();
     });
 
     it('preserves unknown validation and local-only machine identity without declaring either ready', async () => {
-        resolveActiveServerAuthReadinessMock.mockResolvedValueOnce({
-            credentials: {
-                token: 'stored-token',
-                encryption: null,
-            },
-            credentialState: 'unknown',
-            authenticated: false,
-            unusableReason: null,
-            accountLabel: null,
-            machineId: 'machine-local',
-            machineRegistrationState: 'local-only',
-            machineRegistered: false,
-        });
+        readStoredCredentialsMock.mockResolvedValueOnce({ token: 'fixture-status', encryption: null });
+        readSettingsMock.mockResolvedValueOnce({ schemaVersion: 2, onboardingCompleted: false,
+            machineId: 'machine-local', machineIdConfirmedByServer: false });
+        vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('connection refused'); }));
 
         const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
         const snapshot = await readDaemonStatusSnapshot();
@@ -154,6 +115,26 @@ describe('readDaemonStatusSnapshot', () => {
             machineRegistered: false,
             needsAuth: true,
         });
+    });
+
+    it.each(['unreachable', 'rejected', 'missing'] as const)('reports a confirmed Machine with %s sign-in accurately', async (state) => {
+        readSettingsMock.mockResolvedValueOnce({ schemaVersion: 2, onboardingCompleted: false,
+            machineId: 'machine-confirmed', machineIdConfirmedByServer: true });
+        if (state !== 'missing') readStoredCredentialsMock.mockResolvedValueOnce({ token: 'fixture-status', encryption: null });
+        const fetch = vi.fn(async () => {
+            if (state === 'unreachable') throw new TypeError('connection refused');
+            return new Response('{}', { status: 401 });
+        });
+        vi.stubGlobal('fetch', fetch);
+        const { readDaemonStatusSnapshot } = await import('./statusSnapshot');
+        const snapshot = await readDaemonStatusSnapshot();
+        expect(snapshot.auth).toMatchObject({
+            authenticated: false,
+            credentialState: state === 'unreachable' ? 'unknown' : state === 'rejected' ? 'invalid' : 'missing',
+            machineRegistrationState: 'server-confirmed', machineRegistered: true,
+            needsAuth: state !== 'unreachable',
+        });
+        expect(fetch).toHaveBeenCalledTimes(state === 'missing' ? 0 : 1);
     });
 
     it('treats a matching running background-service owner as installed even when the filesystem probe lags', async () => {

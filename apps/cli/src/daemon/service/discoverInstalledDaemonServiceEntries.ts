@@ -12,6 +12,7 @@ import {
   type ParsedWindowsScheduledTaskWrapperPs1,
 } from '@happier-dev/cli-common/service';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { FIRST_PARTY_INSTALL_HOME_ENV_KEY } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import {
   DAEMON_SERVICE_MANAGED_BY_ENV_KEY,
@@ -23,6 +24,7 @@ import {
   type DaemonServiceMode,
   type DaemonServiceTargetMode,
 } from './plan';
+import { resolveDaemonWindowsServiceLauncherInstallSpec } from './windowsServiceLauncher';
 
 export type InstalledDaemonServiceEntry = Readonly<{
   serverId: string;
@@ -40,6 +42,7 @@ export type InstalledDaemonServiceEntry = Readonly<{
   targetMode: DaemonServiceTargetMode;
   /** `desktop` when the definition carries the desktop marker; `null` (user-owned) otherwise. */
   managedBy?: DaemonServiceManagedBy | null;
+  windowsLauncherUpgradeNeeded?: boolean;
 }>;
 
 function isLegacyEnvHashServiceId(serverId: string): boolean {
@@ -128,6 +131,17 @@ export function readInstalledDaemonServiceEnvValue(params: Readonly<{
   return readParsedServiceEnvValue(readInstalledDaemonServiceDefinition(params), params.key);
 }
 
+/** Read the CLI launcher prefix of a daemon definition through the platform parser. */
+export function readInstalledDaemonServiceLauncher(params: Readonly<{
+  platform: 'darwin' | 'linux' | 'win32';
+  path: string;
+}>): readonly string[] | null {
+  const programArgs = readInstalledDaemonServiceDefinition({ ...params, requireReadable: true })?.programArgs;
+  if (!programArgs || !isDaemonStartSyncCommand(programArgs)) return null;
+  const daemonIndex = programArgs.findIndex((arg) => arg.trim().toLowerCase() === 'daemon');
+  return daemonIndex > 0 ? programArgs.slice(0, daemonIndex) : null;
+}
+
 /** The management marker a definition carries; anything but `desktop` reads as none (user-owned). */
 export function readInstalledDaemonServiceManagedBy(params: Readonly<{
   platform: 'darwin' | 'linux' | 'win32';
@@ -167,12 +181,16 @@ export function readInstalledDaemonServiceAutostartMode(params: Readonly<{
 export function readInstalledDaemonServiceInstallOptions(params: Readonly<{
   platform: 'darwin' | 'linux' | 'win32';
   path: string;
-}>): Readonly<{ bundleId: string | null; autostart: DaemonServiceAutostartMode | undefined }> {
+  processEnv?: NodeJS.ProcessEnv;
+}>): Readonly<{ bundleId: string | null; autostart: DaemonServiceAutostartMode | undefined; firstPartyInstallHome?: string }> {
   const mode = readInstalledDaemonServiceAutostartMode(params);
   const recorded = readInstalledDaemonServiceEnvValue({ ...params, key: DAEMON_SERVICE_AUTOSTART_ENV_KEY });
+  const firstPartyInstallHome = params.processEnv?.[FIRST_PARTY_INSTALL_HOME_ENV_KEY]?.trim()
+    || readInstalledDaemonServiceEnvValue({ ...params, key: FIRST_PARTY_INSTALL_HOME_ENV_KEY });
   return {
     bundleId: readInstalledDaemonServiceBundleId(params),
     autostart: mode && (recorded || mode === 'on-demand') ? mode : undefined,
+    ...(firstPartyInstallHome ? { firstPartyInstallHome } : {}),
   };
 }
 
@@ -191,8 +209,9 @@ export function isValidInstalledDaemonServiceFile(params: Readonly<{
 /** A registered Windows task decides which wrapper owns its global task name. */
 export function resolveInstalledDaemonServiceDefinitionPath(params: Readonly<{
   platform: 'darwin' | 'linux' | 'win32'; path: string; taskName: string;
+  deadlineMs?: number;
 }>): string {
-  return params.platform === 'win32' ? readWindowsScheduledTaskWrapperPath(params.taskName) ?? params.path : params.path;
+  return params.platform === 'win32' ? readWindowsScheduledTaskWrapperPath(params.taskName, undefined, params.deadlineMs) ?? params.path : params.path;
 }
 
 export function readInstalledDaemonServiceHomeDir(params: Readonly<{
@@ -219,6 +238,7 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
   happierHomeDir: string;
   mode: DaemonServiceMode;
   serversById: Readonly<Record<string, unknown>>;
+  deadlineMs?: number;
 }>): Promise<readonly InstalledDaemonServiceEntry[]> {
   const servicesDir =
     params.platform === 'linux'
@@ -231,8 +251,10 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
 
   const { services } = await discoverHappierServices({
     platform: params.platform,
+    deadlineMs: params.deadlineMs,
     roots: [{ path: servicesDir, scope: params.mode }],
     deep: true,
+    ...(params.platform === 'win32' ? { windowsLauncher: resolveDaemonWindowsServiceLauncherInstallSpec() } : {}),
   });
 
   return services.flatMap((service): InstalledDaemonServiceEntry[] => {
@@ -274,6 +296,7 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
       label: params.platform === 'win32' ? `Happier\\${service.label}` : service.label,
       targetMode,
       managedBy: service.managedBy ?? null,
+      ...(typeof service.windowsLauncherUpgradeNeeded === 'boolean' ? { windowsLauncherUpgradeNeeded: service.windowsLauncherUpgradeNeeded } : {}),
     }];
   });
 }

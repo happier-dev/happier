@@ -175,8 +175,24 @@ export function normalizeLocalServiceScan(input: Readonly<{
         ? Number.POSITIVE_INFINITY
         : Math.max(1, Math.trunc(input.staleAfterMs));
     const projectProcessLineage = createProcessLineageProjector(input.processes);
+    const isInternalListener = (listener: Pick<LocalServiceListenerFact, 'address' | 'port' | 'pid'>): boolean => {
+        if (listener.pid !== undefined && input.internalProcessPids?.includes(listener.pid)) return true;
+        const address = classifyAddress(listener.address);
+        const host = normalizeHostnameForLoopbackCheck(address.host);
+        return internalEndpoints.some(endpoint => {
+            if (endpoint.port !== listener.port) return false;
+            if (host === endpoint.host) return true;
+            const localhost = endpoint.host === 'localhost';
+            if (address.kind === 'loopback') return localhost && (host === '127.0.0.1' || host === '::1');
+            if (address.kind !== 'wildcard') return false;
+            return host === '*' || localhost
+                || (address.family === 'ipv4' && !endpoint.host.includes(':'))
+                || (address.family === 'ipv6' && endpoint.host.includes(':'));
+        });
+    };
 
     for (const listener of input.listeners) {
+        if (isInternalListener(listener)) continue;
         const address = classifyAddress(listener.address);
         const recovered = listener.pid
             ? projectProcessLineage(listener.pid)
@@ -190,24 +206,16 @@ export function normalizeLocalServiceScan(input: Readonly<{
             : owned?.owner && 'sessionId' in owned.owner ? owned.owner.sessionId : undefined;
         const sessionAttribution = ownerSessionId ? { id: ownerSessionId } : undefined;
         const listenerProcess = listener.pid ? input.processes.get(listener.pid) : undefined;
-        const classificationCommand = [listenerProcess?.command, recovered?.command].filter(Boolean).join(' ');
-        const internal = (listener.pid !== undefined && input.internalProcessPids?.includes(listener.pid))
-            || internalEndpoints.some((endpoint) => {
-                if (endpoint.port !== listener.port) return false;
-                const host = normalizeHostnameForLoopbackCheck(address.host);
-                if (host === endpoint.host) return true;
-                const localhost = endpoint.host === 'localhost';
-                if (address.kind === 'loopback') return localhost && (host === '127.0.0.1' || host === '::1');
-                if (address.kind !== 'wildcard') return false;
-                return host === '*' || localhost
-                    || (address.family === 'ipv4' && !endpoint.host.includes(':'))
-                    || (address.family === 'ipv6' && endpoint.host.includes(':'));
-            });
-        const classification: ReturnType<typeof classifyLocalServiceProcess> | undefined = internal
-            ? { kind: 'happier', displayName: 'Happier', confidence: 'high' as const, signals: ['owner:happier'] }
-            : classificationCommand
-            ? classifyLocalServiceProcess({ command: classificationCommand, cwd: recovered?.cwd, ...input.processRoleCatalog })
+        const listenerClassification = listenerProcess?.command
+            ? classifyLocalServiceProcess({ command: listenerProcess.command, cwd: listenerProcess.cwd, ...input.processRoleCatalog })
             : undefined;
+        // A browser, shell or Agent does not become a web server through its launcher.
+        // Generic runtime children still inherit their dev command's useful classification.
+        const classification = listenerClassification?.role || listenerClassification?.lowSignal
+            ? listenerClassification
+            : recovered?.command && recovered.command !== listenerProcess?.command
+                ? classifyLocalServiceProcess({ command: recovered.command, cwd: recovered.cwd, ...input.processRoleCatalog })
+                : listenerClassification;
         const id = buildInventoryId({
             machineId: input.machineId,
             address,
@@ -256,6 +264,7 @@ export function normalizeLocalServiceScan(input: Readonly<{
     }
 
     for (const previous of input.previous?.entries ?? []) {
+        if (isInternalListener({ address: previous.address.host, port: previous.port, pid: previous.provenance?.process?.pid })) continue;
         if (entries.has(previous.id)) continue;
         const missingAgeMs = now - previous.lastSeenAt;
         if (previous.state === 'gone' && missingAgeMs >= staleAfterMs * 2) {

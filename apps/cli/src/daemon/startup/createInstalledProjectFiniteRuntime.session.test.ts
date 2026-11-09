@@ -60,6 +60,12 @@ it('uses admitted foreign Session custody for installed Project setup without ex
   expect(await runtime.isCurrent?.()).toBe(false);
   installedCurrent = true;
   f.retire();
+  // Owner ruling 2026-10-29: withdrawal blocks the next admission; admitted
+  // finite work retains its requester custody until its local lifetime ends.
+  expect(await runtime.isCurrent?.()).toBe(true);
+  expect(await factory({ operationRuntime, terminalSessions }, ingress)).not.toBeNull();
+  await expect(f.createBootstrap()).rejects.toThrow();
+  await f.bootstrap.dispose();
   expect(await runtime.isCurrent?.()).toBe(false);
   expect(await factory({ operationRuntime, terminalSessions }, ingress)).toBeNull();
 });
@@ -83,5 +89,10 @@ it('scopes private Session operations to the admitted requester and preserves in
   await expect(wrongInstallation.observeExecution({ actionId: 'projects.prepare', input: {}, rpcContext: context,
     execute: async () => { throw new Error('Must refuse before execution'); } })).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
   f.retire();
+  expect(await resolveActionOperationScope(deps, context)).toEqual({ accountId: 'requester', machineId: 'machine' });
+  expect(await runtime.handlers.getV2({ operationId: 'operation' }, context)).toMatchObject({ kind: 'found', operation: {
+    scope: { accountId: 'requester', machineId: 'machine', sessionId: 'session' } } });
+  await expect(f.createBootstrap()).rejects.toThrow();
+  await f.bootstrap.dispose();
   await expect(resolveActionOperationScope(deps, context)).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
 });

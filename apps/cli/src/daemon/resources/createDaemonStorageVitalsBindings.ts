@@ -17,18 +17,13 @@ export function createDaemonStorageVitalsBindings(vitals: Pick<MachineVitalsSamp
             listener();
         }) ?? (() => {});
     };
-    // Capacity values belong to the view. Maintenance needs mount/availability
+    // Vitals publishes capacity. Storage and maintenance need mount/availability
     // edges to discover returning Trash roots, not changing free-space counters.
     const volumeIdentity = () => JSON.stringify([readVolumesReported(),
         readVolumes().map(volume => [volume.id, volume.mount]).sort()]);
-    const volumeCapacity = () => JSON.stringify([readVolumesReported(), readVolumes()
-        .map(volume => [volume.id, volume.mount, volume.label, volume.totalBytes, volume.availableBytes,
-            volume.reservedBytes, volume.apfsContainerId, volume.availableIncludingPurgeableBytes])
-        .sort((a, b) => String(a[0]).localeCompare(String(b[0])))]);
     return {
         readVolumes,
         readVolumesReported,
-        subscribeVolumeChanges: (listener: () => void) => subscribeProjection(volumeCapacity, listener),
         subscribeVolumes: (listener: () => void) => subscribeProjection(volumeIdentity, listener),
         isOnPower,
         subscribePower: (listener: () => void) => subscribeProjection(isOnPower, listener),

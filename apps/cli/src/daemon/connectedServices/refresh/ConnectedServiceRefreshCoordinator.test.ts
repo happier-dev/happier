@@ -51,6 +51,7 @@ import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolv
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { createConnectedAccountPurposeBindingOwner } from '../purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { startConnectedServiceRefreshLoop } from './startConnectedServiceRefreshLoop';
 
 // Genuine HTTP boundary: Node's runtime uses the package's Undici fetch.
 vi.mock('undici', async importOriginal => {
@@ -3472,7 +3473,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
     });
   });
 
-  it('distributes a spawn-preflight rotation to registered targets by construction (RR-1)', async () => {
+  it.each([false, true])('distributes a rotation to registered targets by construction (RR-1, stopAfterCommit=%s)', async (stopAfterCommit) => {
     // A spawn-preflight refresh that ROTATES (the store credential is near expiry) must distribute the
     // fresh token to every already-registered target for the binding — not only when the caller
     // remembers to. This is the 13:27 murder-window shape: a sibling session holding the superseded
@@ -3507,6 +3508,10 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       },
     });
 
+    let loop: ReturnType<typeof startConnectedServiceRefreshLoop> = null;
+    let stopping: Promise<void> | undefined;
+    let committed!: () => void;
+    const credentialCommitted = new Promise<void>(resolve => { committed = resolve; });
     let sealedCiphertext = sealAccountScopedBlobCiphertext({
       kind: 'connected_service_credential',
       material: { type: 'legacy', secret: credentials.encryption.secret },
@@ -3526,6 +3531,10 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       acquireConnectedServiceRefreshLease: vi.fn(async () => ({ acquired: true, leaseUntil: now + 60_000 })),
       registerConnectedServiceCredentialSealed: vi.fn(async (params: { sealed: { ciphertext: string } }) => {
         sealedCiphertext = params.sealed.ciphertext;
+        if (stopAfterCommit) {
+          stopping = loop!.stop();
+          committed();
+        }
       }),
       updateConnectedServiceCredentialHealth: vi.fn(async () => {}),
     } as unknown as ApiClient;
@@ -3540,7 +3549,16 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       }),
     })));
 
-    const onAuthUpdated = vi.fn();
+    let distributionEntered!: () => void;
+    const distributionStarted = new Promise<void>(resolve => { distributionEntered = resolve; });
+    let releaseDistribution!: () => void;
+    const distributionRelease = new Promise<void>(resolve => { releaseDistribution = resolve; });
+    let adopted = false;
+    const onAuthUpdated = vi.fn(async () => {
+      distributionEntered();
+      if (stopAfterCommit) await distributionRelease;
+      adopted = true;
+    });
     const coordinator = createRefreshCoordinator({
       api,
       credentials,
@@ -3566,12 +3584,34 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       materializationKey: 'session-claude-preflight-sibling',
     });
 
-    const result = await coordinator.refreshConnectedServiceCredentialForSpawnPreflight({
-      serviceId: 'claude-subscription',
-      profileId: 'work',
-    });
-
-    expect(result.status).toBe('refreshed');
+    if (stopAfterCommit) {
+      loop = startConnectedServiceRefreshLoop({ enabled: true, tickMs: 30_000, coordinator,
+        runImmediately: true, onTickError: () => {} });
+      try {
+        await credentialCommitted;
+        const first = await Promise.race([
+          distributionStarted.then(() => 'distribution'),
+          stopping!.then(() => 'stopped'),
+        ]);
+        expect(first).toBe('distribution');
+        let stopped = false;
+        void stopping!.then(() => { stopped = true; });
+        await Promise.resolve();
+        expect(stopped).toBe(false);
+        expect(adopted).toBe(false);
+        releaseDistribution();
+        await stopping;
+        expect(adopted).toBe(true);
+      } finally {
+        releaseDistribution();
+        await loop?.stop();
+      }
+    } else {
+      const result = await coordinator.refreshConnectedServiceCredentialForSpawnPreflight({
+        serviceId: 'claude-subscription', profileId: 'work',
+      });
+      expect(result.status).toBe('refreshed');
+    }
     const stableConfigDir = join(
       activeServerDir,
       'daemon',

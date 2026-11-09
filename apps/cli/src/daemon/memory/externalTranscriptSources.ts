@@ -1,14 +1,12 @@
-import { createHash } from 'node:crypto';
 import type { MemoryExternalTranscriptSourceV1 } from '@happier-dev/protocol/memory/memorySearch';
 import type { MemorySettingsV1 } from '@happier-dev/protocol/memory/memorySettings';
 import type { MemoryIndexSourceStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
 import type { DeepIndexDbHandle } from './deepIndex/deepIndexDb';
-import type { StoredCredentials } from '@/persistence';
 import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
-import { externalMemoryStorageId, memoryExternalSourceReadError, memoryExternalSourceFailure, type MemoryExternalSourceReader } from './externalTranscriptIndex';
+import { externalMemoryStorageId, memoryExternalSourceReadError, memoryExternalSourceFailure, readExternalMemoryUnavailableFailure, type MemoryExternalSourceReader } from './externalTranscriptIndex';
 import { resolveMemoryCoverageCreatedAtCutoffMs } from './transcript/coveragePolicy';
 import { logger } from '@/ui/logger';
-import { createMemoryExternalTranscriptObservation, type MemoryExternalTranscriptSourcesSnapshot } from './externalTranscriptObservation';
+import type { MemoryExternalTranscriptSourcesSnapshot } from './externalTranscriptObservation';
 export { createMemoryExternalTranscriptObservation, discoverMemoryExternalTranscriptSources } from './externalTranscriptObservation';
 export type { MemoryExternalObservation, MemoryExternalTranscriptSourceDescriptor, MemoryExternalTranscriptSourceChange, MemoryExternalTranscriptSourcesSnapshot } from './externalTranscriptObservation';
 
@@ -23,8 +21,7 @@ type NativeInventory = {
   pending: Map<string, MemoryExternalTranscriptCandidate> | null;
   pendingIdentitiesComplete: boolean;
   cursor?: string;
-  seenCursorDigests: Set<string>;
-  refresh: { cursor?: string; seenCursorDigests: Set<string> } | null;
+  refresh: { cursor?: string } | null;
   refreshRequested: boolean;
   preferRefresh: boolean;
   needsInventory: boolean;
@@ -123,6 +120,11 @@ export function createMemoryExternalTranscriptTraversal() {
         if (previous?.state !== 'ready') continue;
         const id = externalMemoryStorageId(candidate.source);
         const retained = db?.getExternalSourceState({ sessionId: id });
+        const unavailable = readExternalMemoryUnavailableFailure(retained?.cursor);
+        if (unavailable) {
+          groups.set(key, { source: { type: 'external_transcript', agentId, sourceKey }, state: 'error', ...unavailable });
+          continue;
+        }
         // An append may have several tail pages; it does not reopen completed
         // initial history. Replacement deletes this persisted frontier.
         // A fresh child has not attempted these admitted identities yet. Their
@@ -277,7 +279,7 @@ export function createMemoryExternalTranscriptReader(input: Readonly<{
         continue;
       }
       if (previous) traversal.invalidate(native.agentId, native.sourceKey);
-      inventories.set(key, { native, candidates: new Map(), pending: null, pendingIdentitiesComplete: true, seenCursorDigests: new Set(),
+      inventories.set(key, { native, candidates: new Map(), pending: null, pendingIdentitiesComplete: true,
         refresh: null, refreshRequested: true, preferRefresh: true,
         needsInventory: true, failed: false, initialInventoryComplete: false });
       inventoryChanged = true;
@@ -311,14 +313,13 @@ export function createMemoryExternalTranscriptReader(input: Readonly<{
         state.pending = new Map();
         state.pendingIdentitiesComplete = true;
         state.cursor = undefined;
-        state.seenCursorDigests.clear();
         state.needsInventory = false;
         state.refreshRequested = false;
         completeSources.delete(key);
       }
       if (state.pending === null) continue;
       if (state.refreshRequested && state.refresh === null) {
-        state.refresh = { seenCursorDigests: new Set() };
+        state.refresh = {};
         state.refreshRequested = false;
         state.preferRefresh = true;
       }
@@ -363,13 +364,8 @@ export function createMemoryExternalTranscriptReader(input: Readonly<{
             readObservation: () => state.native.readObservation?.() ?? state.native.observation }, source });
         }
         if (page.value.nextCursor) {
-          // Opaque cursors may carry a whole native directory snapshot. Keep
-          // only its digest for cycle detection, preserving JavaScript code units.
-          const digest = createHash('sha256').update(page.value.nextCursor, 'utf16le').digest('base64url');
           const position = refresh ?? state;
-          if (position.seenCursorDigests.has(digest)) throw new Error('memory_external_inventory_cursor_stalled');
           position.cursor = page.value.nextCursor;
-          position.seenCursorDigests.add(digest);
         } else if (refresh) {
           state.refresh = null;
           if (page.value.searchIncomplete) state.needsInventory = true;
@@ -412,7 +408,6 @@ export function createMemoryExternalTranscriptReader(input: Readonly<{
       } finally {
         if (state.pending === null) {
           state.cursor = undefined;
-          state.seenCursorDigests.clear();
         }
       }
     }
@@ -480,41 +475,5 @@ export function createMemoryExternalTranscriptReader(input: Readonly<{
       return false;
     },
     async dispose() { stopped = true; await releaseSources(); },
-  };
-}
-
-/** Incumbent in-process composition, also used by source-driven integration tests. */
-export function createMemoryExternalTranscriptSources(input: Readonly<{
-  credentials: StoredCredentials;
-  onChange(refreshSources: boolean): void;
-}>) {
-  const daemon = createMemoryExternalTranscriptObservation(input);
-  const reader = createMemoryExternalTranscriptReader({ onChange: input.onChange, resolveReader: async agentId => {
-    const { acquireAuthoritativePluginRuntimeRegistryLease } = await import('@/plugins/runtime/reload/runtimeLease');
-    const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
-    try {
-      const runtime = lease.registry.agentRuntimesByAgentId.get(agentId);
-      return runtime?.isCurrent() && !runtime.retirementSignal.aborted ? runtime.externalSessions ?? null : null;
-    } finally { await lease.release(); }
-  } });
-  let indexSettings: MemorySettingsV1 | null = null;
-  return {
-    ...reader,
-    attach: daemon.attach,
-    async refresh(settings: MemorySettingsV1, signal: AbortSignal) {
-      indexSettings = settings;
-      await daemon.refresh(settings, signal);
-      await reader.refresh(daemon.takeSnapshot(), settings, signal);
-    },
-    async inventory(signal: AbortSignal) {
-      if (indexSettings) await reader.refresh(daemon.takeSnapshot(), indexSettings, signal);
-      return reader.inventory(signal);
-    },
-    async readPage(request: Readonly<{ source: MemoryExternalTranscriptSourceV1; cursor?: string }>, settings: MemorySettingsV1, signal: AbortSignal) {
-      if (!indexSettings) { await daemon.refresh(settings, signal); indexSettings = settings; }
-      await reader.refresh(daemon.takeSnapshot(), settings, signal);
-      return reader.readPage(request, settings, signal);
-    },
-    async dispose() { await reader.dispose(); await daemon.dispose(); },
   };
 }

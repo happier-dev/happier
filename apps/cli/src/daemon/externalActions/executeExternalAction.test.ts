@@ -29,6 +29,8 @@ import {
 } from './executeExternalAction';
 import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
+import { deriveSessionInputActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
 import { ApprovalRequestV2Schema, resolveApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1, buildTargetActionApprovalArtifactHeaderV1, listApprovalArtifactsV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
@@ -1564,11 +1566,54 @@ describe('executeExternalAction', () => {
     expect(servedContext).toMatchObject({ surface: expectedSurface, authority: 'account_automation' });
   });
 
-  it('materializes only the exact signed Session caller and cause instead of promoting it to a present user', async () => {
-    const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1,
-      caller: { kind: 'session', sessionId: 'source', starterDepth: 1, turnDepth: 2 }, sourceTurnId: 'turn',
-      callerPermissionMode: 'read-only', causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
-      workspaceWrites: 'deny', requestId: 'original-request' });
+  it.each(['owner', 'unknown', 'other_account', 'other_home', 'terminal'] as const)('admits only a qualified own-Account host cause at the real receiver (%s)', async scenario => {
+    const authentication = { kind: scenario === 'terminal' ? 'terminal' as const : 'account' as const, tokenEpoch: 7 };
+    const principal = { accountId: 'requester', authority: 'account_automation' as const, authentication };
+    const target = { kind: 'machine' as const, machineId: 'controller' };
+    const envelope = { v: 1 as const, requestId: 'qualified-host-cause', target, input: { homeId: 'srv_home' } };
+    const cause = { requestRef: 'original-input', requester: scenario === 'unknown' ? null : {
+      accountId: scenario === 'other_account' ? 'other-person' : 'requester',
+      serverId: scenario === 'other_home' ? 'srv_other_home' : 'srv_home',
+    }, persona: { serverId: 'srv_home', sessionId: 'original-session' }, origin: null };
+    let servedContext: ActionExecutorContext | undefined;
+    const result = await executeExternalAction({ actionId: 'machines.managed.list', envelope, principal,
+      localRootInvocation: { caller: { kind: 'host' }, surface: 'mcp', authority: 'account_automation', actionRequestAttributionV1: cause },
+      currentMachineId: target.machineId, currentServerId: 'profile', currentInstallationId: 'installation',
+      executionAuthorization: { v: 1, token: 'home-signed-root', binding: {
+        accountId: principal.accountId, authentication, serverIdentityId: 'srv_home', machineId: target.machineId,
+        custodianAccountId: 'requester', installationId: 'installation', actionId: 'machines.managed.list',
+        requestId: envelope.requestId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), accountEncryptionMode: 'plain',
+      } },
+      externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8)).secretKey,
+      verifyExecutionAuthorization: async () => true,
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'requester', encryption: null } }),
+      executor: createActionExecutor({ ...createUnavailableHostActionDeps(), managedMachineAction: async ({ context }) => {
+        servedContext = context; return { machines: [] };
+      } }),
+    });
+    if (scenario === 'owner' || scenario === 'unknown') {
+      expect(result).toMatchObject({ kind: 'response', response: { execution: { ok: true } } });
+      expect(servedContext).toMatchObject({ actionRequestAttributionV1: cause, authority: 'account_automation' });
+    } else {
+      expect(result).toMatchObject({ kind: 'response', response: { execution: { ok: false, errorCode: 'forbidden' } } });
+      expect(servedContext).toBeUndefined();
+    }
+  });
+
+  it.each(['account', 'unknown'] as const)('materializes only the exact signed Session caller and %s cause instead of promoting it to a present user', async requester => {
+    const cause = deriveSessionInputActionRequestAttributionV1({ requestRef: 'original-input',
+      persona: { serverId: 'srv_home', sessionId: 'source' }, messageRole: 'user', origin: null,
+      inputAdmissionReceipt: requester === 'account'
+        ? { v: 1, issuer: 'authenticatedAccount', actorAccountId: 'requester', sessionRelationship: 'owner' }
+        : { v: 1, issuer: 'authenticatedMachine' } });
+    if (!cause) throw new Error('Expected a receipt-derived Session input cause');
+    const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse(JSON.parse(JSON.stringify(resolveSessionRoleRpcOrigin({
+      actionCaller: { kind: 'session', sessionId: 'source', starterDepth: 1, turnDepth: 2 },
+      sessionInputSource: { sourceSessionId: 'source', sourceTurnId: 'turn', sourceInputId: 'original-input' },
+      actionRequestAttributionV1: cause, callerPermissionMode: 'read-only',
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
+      workspaceWrites: 'deny', actionRequestId: 'original-request',
+    }))));
     const accountPrincipal = { accountId: 'requester', authority: 'account_automation' as const,
       authentication: { kind: 'account' as const, tokenEpoch: 7 }, sessionActionOrigin };
     const target = { kind: 'machine' as const, machineId: 'controller' };
@@ -1599,11 +1644,15 @@ describe('executeExternalAction', () => {
     expect(await run(accountPrincipal)).toMatchObject({ kind: 'response', response: { execution: { ok: true } } });
     expect(servedContext).toMatchObject({ surface: 'agent', authority: 'account_automation',
       actionCaller: sessionActionOrigin.caller, defaultSessionId: 'source', callerPermissionMode: 'read-only', workspaceWrites: 'deny',
+      actionRequestAttributionV1: cause,
       causalPermissionAuthority: sessionActionOrigin.causalPermissionAuthority,
-      sessionInputSource: { sourceSessionId: 'source', sourceTurnId: 'turn', via: 'action' } });
+      sessionInputSource: { sourceSessionId: 'source', sourceTurnId: 'turn', sourceInputId: 'original-input', via: 'action' } });
     expect(servedContext).not.toHaveProperty('externalActionCredential');
     expect(await run({ ...accountPrincipal, sessionActionOrigin: { ...sessionActionOrigin,
       caller: { ...sessionActionOrigin.caller, turnDepth: 0 } } })).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
+    expect(await run({ ...accountPrincipal, sessionActionOrigin: { ...sessionActionOrigin,
+      actionRequestAttributionV1: { ...cause, requester: { serverId: 'srv_home', accountId: 'substituted-person' } },
+    } })).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
     expect(managedMachineAction).toHaveBeenCalledTimes(1);
   });
   it('admits ordinary Account proof without PAT grants and rejects changed pre-forward compute before any effect', async () => {

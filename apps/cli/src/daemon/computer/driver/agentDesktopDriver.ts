@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { z } from 'zod/mini';
+import { resolveExecutableCommand } from '@happier-dev/cli-common/process';
 
 import { ComputerCaptureGeometryV1Schema, computerTargetKeyV1 } from '@happier-dev/protocol/computer/v1';
 import type { ComputerAccessibilityNodeV1, ComputerTargetV1 } from '@happier-dev/protocol';
@@ -44,29 +45,38 @@ export async function createAgentDesktopComputerDriver(params: Readonly<{ displa
   }
   let closing = false;
   let closePromise: Promise<void> | undefined;
-  const pending = new Set<Promise<Envelope>>();
+  const pending = new Set<Promise<Readonly<{ output: Buffer; code: number | null }>>>();
   type Binding = Readonly<{ captureId: string; target: ComputerTargetV1; geometry: ComputerDriverCapture['geometry'];
     refs: ReadonlySet<string>; focusedRef?: string }>;
   let binding: Binding | undefined;
 
-  function run(args: readonly string[]): Promise<Envelope> {
+  function execute(executablePath: string, args: readonly string[], input?: string) {
     if (closing) return Promise.reject(new ComputerDriverError('driver_unavailable'));
-    const operation = new Promise<Envelope>((resolve, reject) => {
-      const child = spawn(params.executablePath, [...args], { env: environment, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    const operation = new Promise<Readonly<{ output: Buffer; code: number | null }>>((resolve, reject) => {
+      const child = spawn(executablePath, [...args], { env: environment,
+        stdio: input === undefined ? ['ignore', 'pipe', 'ignore'] : ['pipe', 'ignore', 'ignore'], windowsHide: true });
       const output: Buffer[] = [];
-      child.stdout.on('data', (chunk: Buffer) => output.push(chunk));
+      let inputFailed = false;
+      child.stdout?.on('data', (chunk: Buffer) => output.push(chunk));
       child.once('error', () => reject(new ComputerDriverError('driver_unavailable')));
-      child.once('close', () => {
-        try {
-          const parsed = envelopeSchema.safeParse(JSON.parse(Buffer.concat(output).toString('utf8')));
-          if (!parsed.success || (!parsed.data.ok && !parsed.data.error)) throw new ComputerDriverError('driver_result_invalid');
-          resolve(parsed.data);
-        } catch { reject(new ComputerDriverError('driver_result_invalid')); }
-      });
+      child.once('close', code => inputFailed ? reject(new ComputerDriverError('driver_refused'))
+        : resolve({ output: Buffer.concat(output), code }));
+      if (input !== undefined) {
+        child.stdin?.once('error', () => { inputFailed = true; });
+        child.stdin?.end(input, 'utf8');
+      }
     });
     pending.add(operation);
     void operation.then(() => pending.delete(operation), () => pending.delete(operation));
     return operation;
+  }
+  async function run(args: readonly string[]): Promise<Envelope> {
+    const { output } = await execute(params.executablePath, args);
+    try {
+      const parsed = envelopeSchema.safeParse(JSON.parse(output.toString('utf8')));
+      if (!parsed.success || (!parsed.data.ok && !parsed.data.error)) throw new ComputerDriverError('driver_result_invalid');
+      return parsed.data;
+    } catch { throw new ComputerDriverError('driver_result_invalid'); }
   }
   const read = async (args: readonly string[]) => {
     const result = await run(args);
@@ -254,9 +264,17 @@ export async function createAgentDesktopComputerDriver(params: Readonly<{ displa
           if (!result.success) return { ok: false, code: 'driver_result_invalid' };
           return result.data.text === undefined ? { ok: false, code: 'clipboard_text_unavailable' } : { ok: true, text: result.data.text };
         }
-        // Pinned 1.0.2 accepts clipboard text only in argv (including batch JSON).
-        // Refuse rather than disclose clipboard content to other local OS users.
-        return { ok: false, code: 'input_not_supported' };
+        // Pinned 1.0.2 only accepts text in argv. Resolve an existing native
+        // stdin tool instead, on this exact desktop; never install or cross
+        // from a selected Wayland connection to an unrelated X11 clipboard.
+        const command = process.platform === 'darwin' ? 'pbcopy'
+          : process.platform === 'linux' ? (params.displayId.startsWith(':') ? 'xclip' : 'wl-copy') : undefined;
+        const executablePath = command && resolveExecutableCommand(command, { env: environment });
+        if (!executablePath) return { ok: false, code: 'input_not_supported' };
+        const args = command === 'xclip' ? ['-selection', 'clipboard', '-in']
+          : command === 'wl-copy' ? ['--type', 'text/plain;charset=utf-8'] : [];
+        const result = await execute(executablePath, args, operation.text);
+        return result.code === 0 ? { ok: true } : { ok: false, code: 'driver_refused' };
       } catch (error) {
         return { ok: false, code: error instanceof ComputerDriverError ? error.code : 'driver_result_invalid' };
       }

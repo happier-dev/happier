@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createDaemonControlApp } from './controlServer';
 import { createDaemonAdmissionDrain } from './lifecycle/admissionDrain';
+import { createStopSession } from './sessions/stopSession';
 import { applyTrackedSessionTurnLifecycle } from './sessions/applyTrackedSessionTurnLifecycle';
 import type { TrackedSession } from './types';
 import { admitDaemonForegroundAgentRuntime, releaseDaemonForegroundAgentRuntime } from './controlClient';
@@ -17,6 +18,47 @@ const foregroundRequest = {
 };
 
 describe('daemon control server quiescing producer routes', () => {
+  it.each(['before', 'during'] as const)('preserves another temporary drain acquired %s incomplete stop cleanup', async (ordering) => {
+    const admissionDrain = createDaemonAdmissionDrain();
+    let releaseOtherDrain = () => {};
+    if (ordering === 'before') releaseOtherDrain = admissionDrain.beginTemporaryDrain();
+    const tracked = new Map<number, TrackedSession>([[44_001,
+      { pid: 44_001, startedBy: 'daemon', happySessionId: 'pending-stop' }]]);
+    const stopSession = createStopSession({ pidToTrackedSession: tracked,
+      // Unreadable topology is the filesystem boundary. Real Stop refuses before any native signal.
+      readHostAttachmentState: async () => {
+        if (ordering === 'during') releaseOtherDrain = admissionDrain.beginTemporaryDrain();
+        return { status: 'unreadable', reason: 'io_error' };
+      } });
+    const app = createDaemonControlApp({
+      getChildren: () => [...tracked.values()],
+      stopSession: sessionId => stopSession(sessionId),
+      spawnSession: async () => ({ type: 'success' as const, sessionId: 'unexpected-start' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {},
+      controlToken: 'test-token', machineId: 'machine-local', admissionDrain,
+      verifyRunMaterializeToken: token => token === 'run-token',
+    });
+    try {
+      await app.ready();
+      const stopped = await app.inject({ method: 'POST', url: '/stop',
+        headers: { 'x-happier-daemon-token': 'test-token' }, payload: { stopSessions: true } });
+      expect(stopped.json()).toEqual({
+        status: 'session_cleanup_incomplete',
+        sessionResults: [{ sessionId: 'pending-stop', result: { status: 'incomplete', reason: 'missing_topology_proof' } }],
+      });
+      expect(admissionDrain.isQuiescing()).toBe(true);
+      expect((await app.inject({ method: 'POST', url: '/execution-run/admission',
+        headers: { 'x-happier-daemon-token': 'run-token' }, payload: {} })).json())
+        .toEqual({ admitted: false, reason: 'daemon_draining' });
+      expect((await app.inject({ method: 'POST', url: '/spawn-session',
+        headers: { 'x-happier-daemon-token': 'test-token' }, payload: { directory: '/repo' } })).json())
+        .toMatchObject({ errorCode: 'daemon_draining' });
+      expect(admissionDrain.isFinalShutdown()).toBe(false);
+      releaseOtherDrain();
+      expect((await app.inject({ method: 'POST', url: '/execution-run/admission',
+        headers: { 'x-happier-daemon-token': 'run-token' }, payload: {} })).json()).toEqual({ admitted: true });
+    } finally { await app.close(); }
+  });
   it('reopens the same control ingress after a temporary drain without final teardown', async () => {
     const admissionDrain = createDaemonAdmissionDrain();
     const tracked: TrackedSession = { pid: 44_001, startedBy: 'daemon', happySessionId: 'happy-test-123', activeTurnId: 'turn-test' };

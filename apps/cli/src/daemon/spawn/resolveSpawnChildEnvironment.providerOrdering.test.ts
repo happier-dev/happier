@@ -36,8 +36,8 @@ async function createProviderOrderingFixture(params: Readonly<{
           agents: [{ id: localAgentId, title: 'Ordering Agent', runtime: { kind: 'custom' }, primary: 'sessions',
             capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }],
           hooks: [
-            { hookApiVersion: 1, id: 'prerequisites', on: 'agent.resolvePrerequisites', category: 'decision', scope: 'agent', executionKind: 'decide' },
-            { hookApiVersion: 1, id: 'augment', on: 'agent.spawnEnv.augment', category: 'augmentation', scope: 'daemon', executionKind: 'augment' },
+            { id: 'prerequisites', on: 'agent.resolvePrerequisites', category: 'decision', scope: 'agent', executionKind: 'decide' },
+            { id: 'augment', on: 'agent.spawnEnv.augment', category: 'augmentation', scope: 'daemon', executionKind: 'augment' },
           ],
         },
       }),

@@ -85,7 +85,9 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
         if (!admitted) throw new Error('Missing real requester admission');
         const initial = initialBootstrap === undefined;
         initialBootstrap ??= admitted.admitted;
-        admitted.admitted.bindRuntimeMachineAdmissionCurrentness(async () => {
+        // Machine permission was admitted once. The retained Home identity
+        // observation still belongs to the runtime's local custody lifetime.
+        admitted.admitted.bindRuntimeMachineAdmissionCurrentness(async () => true, async () => {
           if (initial && replacement === 'shared_predecessor_recovery') {
             return (await axios.get('https://bob-home.test/initial-admission')).status === 200;
           }
@@ -161,7 +163,7 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
         // published subscription API independently observes physical retirement.
         expect(await initialRequester.isCurrent()).toBe(false);
         expect(() => {
-          const unsubscribe = initialRequester.subscribeAccountSettingsSnapshot(() => {});
+          const unsubscribe = initialRequester.subscribeAccountSettingsSnapshot(() => {}, {});
           unsubscribe();
         }, 'One replaced pointer must not physically retire another tracked PID\'s requester resources').not.toThrow();
       }
@@ -232,7 +234,7 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
       expect(await requester.isCurrent(), 'Requester authority must follow its remaining tracked owner').toBe(shared);
       if (replacement === 'shared_predecessor_recovery') {
         expect(() => {
-          const unsubscribe = initialRequester.subscribeAccountSettingsSnapshot(() => {});
+          const unsubscribe = initialRequester.subscribeAccountSettingsSnapshot(() => {}, {});
           unsubscribe();
         }).not.toThrow();
       }

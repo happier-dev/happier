@@ -339,7 +339,7 @@ describe('strict persisted takeover /session-started admission', () => {
       expect(credentialReaderMocks.readCredentials).not.toHaveBeenCalled();
       expect(
         accountCurrentnessMocks.fetchAccountEncryptionCurrentness,
-      ).toHaveBeenCalledWith({ token: 'token-only' });
+      ).toHaveBeenCalledWith({ credentials: expect.objectContaining({ token: 'token-only' }), token: 'token-only' });
       expect(sendHistoricalCommand).not.toHaveBeenCalled();
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });

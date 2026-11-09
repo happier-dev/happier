@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { isBuiltInLegacyConnectedAccountPeerOperationSupported } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -152,9 +153,11 @@ export async function materializeExactV021ConnectedServiceCredential(input: Read
       input.serviceId
     ];
   if (
-    !compatibility.peerOperations.exactV0_2_1.some(
-      (operation) => operation === 'one_shot_materialization',
-    )
+    !isBuiltInLegacyConnectedAccountPeerOperationSupported({
+      serviceId: input.serviceId,
+      peerClass: 'exact_v0_2_1',
+      operation: 'one_shot_materialization',
+    })
     || !sameService(compatibility.service, input.account.service)
     || input.record.serviceId !== input.serviceId
     || input.record.profileId !== input.account.accountId
@@ -373,15 +376,15 @@ export async function materializeExactV021AgentLaunchProjection(input: Readonly<
   input.signal?.throwIfAborted();
   const record = (serviceId: ConnectedServiceId) => {
     const candidate = input.recordsByServiceId.get(serviceId) ?? null;
-    const compatibility =
-      BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[serviceId];
     if (
       candidate
       && (
         candidate.serviceId !== serviceId
-        || !compatibility.peerOperations.exactV0_2_1.some(
-          (operation) => operation === 'one_shot_materialization',
-        )
+        || !isBuiltInLegacyConnectedAccountPeerOperationSupported({
+          serviceId,
+          peerClass: 'exact_v0_2_1',
+          operation: 'one_shot_materialization',
+        })
       )
     ) {
       throw new Error(

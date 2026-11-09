@@ -76,7 +76,12 @@ export function createSidecarCdpBrowserContextSource(
 
     return createCdpBrowserContextSource({
         transport: input.contextCapture.transport,
-        resolveView: (view) => input.contextCapture.resolvePageHandle(view),
+        resolveView: (view) => {
+            const handle = input.contextCapture.resolvePageHandle(view);
+            if (!handle) return null;
+            const profile = input.contextCapture.resolveProfile?.(view);
+            return { ...handle, ...(profile ? { profileId: profile.profileId } : {}) };
+        },
         screenshotMediaWriter,
         ...(input.readFocusedCredentialTarget ? { readFocusedCredentialTarget: input.readFocusedCredentialTarget } : {}),
         ...(input.resolveInputControl ? { resolveInputControl: input.resolveInputControl } : {}),

@@ -1,5 +1,5 @@
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import type {
   AutomationAccountCurrentnessWitnessV1,
   AutomationV3WorkerClaimResponse,
@@ -11,7 +11,7 @@ import { AutomationV3WorkerClaimResponseSchema, AutomationV3WorkerAssignmentsRes
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { AutomationExecutionRunLifecycleSourcesResponseSchema, AutomationExecutionRunLifecycleReportResponseSchema } from '@happier-dev/protocol/automations/automationRunLifecycle';
 
-import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { captureServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemonServerWorkError';
 import { logger } from '@/ui/logger';
 import {
@@ -65,6 +65,7 @@ function toWorkerAssignmentResponseFromV3(
       nextClaimAt: assignment.nextClaimAt,
       ...(assignment.executionRecipeVersion === undefined ? {} : { executionRecipeVersion: assignment.executionRecipeVersion }),
     })),
+    ...(response.directRunClaimDeadlines === undefined ? {} : { directRunClaimDeadlines: response.directRunClaimDeadlines }),
     settings: response.settings,
   };
 }
@@ -140,7 +141,7 @@ export function createAutomationClaimClient(params: {
   token: string;
   createPublisherHeader?: CreatePluginInstallationPublisherHeader;
 }) {
-  const baseUrl = resolveServerHttpBaseUrl();
+  const readBaseUrl = captureServerHttpBaseUrl();
   const token = params.token;
   const createPublisherHeader = params.createPublisherHeader
     ?? createDefaultPluginInstallationPublisherHeader;
@@ -162,30 +163,40 @@ export function createAutomationClaimClient(params: {
     async reportRequesterCustodyUnavailable(input: Readonly<{ machineId: string; runId: string }>): Promise<void> {
       const path = `/v3/automations/runs/${encodeURIComponent(input.runId)}/requester-custody-unavailable`;
       const body = { machineId: input.machineId };
-      await axios.post(`${baseUrl}${path}`, body, { headers: await workerHeaders({ method: 'POST', path, body }), timeout: 15_000 });
+      await axios.post(`${readBaseUrl()}${path}`, body, { headers: await workerHeaders({ method: 'POST', path, body }), timeout: 15_000 });
     },
-    async fetchAssignments(machineId: string): Promise<AutomationWorkerAssignmentsResponse> {
+    async fetchAssignments(machineId: string, signal?: AbortSignal): Promise<AutomationWorkerAssignmentsResponse> {
+      const baseUrl = readBaseUrl();
+      signal?.throwIfAborted();
+      const headers = await workerHeaders({ method: 'GET', path: '/v3/automations/worker/assignments', body: null });
+      signal?.throwIfAborted();
       const response = await axios.get<AutomationV3WorkerAssignmentsResponse>(
         `${baseUrl}/v3/automations/worker/assignments`,
         {
-          headers: await workerHeaders({ method: 'GET', path: '/v3/automations/worker/assignments', body: null }),
+          headers,
           params: { machineId },
+          signal,
           timeout: 15_000,
         },
       );
+      signal?.throwIfAborted();
+      const lifecycleHeaders = await workerHeaders({ method: 'GET', path: '/v3/automations/worker/run-lifecycle', body: null });
+      signal?.throwIfAborted();
       const sources = await axios.get(`${baseUrl}/v3/automations/worker/run-lifecycle`, {
-        headers: await workerHeaders({ method: 'GET', path: '/v3/automations/worker/run-lifecycle', body: null }),
-        params: { machineId }, timeout: 15_000,
+        headers: lifecycleHeaders,
+        params: { machineId }, signal, timeout: 15_000,
       }).then(result => AutomationExecutionRunLifecycleSourcesResponseSchema.parse(result.data).sources)
         .catch((error: unknown) => {
           // Supported older servers lack this additive source endpoint. Keep ordinary claims usable.
           if (axios.isAxiosError(error) && error.response?.status === 404) return [];
           throw error;
         });
+      signal?.throwIfAborted();
       return { ...toWorkerAssignmentResponseFromV3(AutomationV3WorkerAssignmentsResponseSchema.parse(response.data)), runLifecycleSources: sources };
     },
 
     async reportRunLifecycle(machineId: string, occurrence: AutomationRunLifecycleOccurrenceEvidenceV1, signal: AbortSignal): Promise<void> {
+      const baseUrl = readBaseUrl();
       const path = '/v3/automations/worker/run-lifecycle';
       const body = { machineId, occurrence };
       const response = await axios.post<unknown>(`${baseUrl}${path}`, body, {
@@ -194,7 +205,8 @@ export function createAutomationClaimClient(params: {
       if (!AutomationExecutionRunLifecycleReportResponseSchema.parse(response.data).consumed) throw new Error('run_source_admission_ineligible');
     },
 
-    async claimRun(paramsClaim: { machineId: string; leaseDurationMs: number; scope?: 'session_scoped' | 'workflow' }): Promise<AutomationClaimRunResponse> {
+    async claimRun(paramsClaim: { machineId: string; leaseDurationMs: number; scope?: 'session_scoped' | 'workflow' | 'execution' }): Promise<AutomationClaimRunResponse> {
+      const baseUrl = readBaseUrl();
       const body = {
         machineId: paramsClaim.machineId,
         leaseDurationMs: paramsClaim.leaseDurationMs,
@@ -222,6 +234,7 @@ export function createAutomationClaimClient(params: {
       signal: AbortSignal;
       onProgress?: (progress: AutomationLeaseRenewalProgress) => void;
     }): Promise<number> {
+      const baseUrl = readBaseUrl();
       const path = `/${paramsHeartbeat.protocol}/automations/runs/${encodeURIComponent(paramsHeartbeat.runId)}/heartbeat`;
       const body = {
         machineId: paramsHeartbeat.machineId,
@@ -262,7 +275,7 @@ export function createAutomationClaimClient(params: {
             error => { dispose(); reject(error); },
           );
         });
-        const timeout = Math.min(15_000, remainingBudgetMs());
+        const timeout = remainingBudgetMs();
         const httpStartedAtMs = Date.now();
         progress = { ...progress, stage: 'http', stageStartedAtMs: httpStartedAtMs,
           publisherProofDurationMs: httpStartedAtMs - renewalStartedAtMs };
@@ -297,6 +310,7 @@ export function createAutomationClaimClient(params: {
       attempt: number;
       accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     }): Promise<AutomationAccountCurrentnessWitnessV1 | null> {
+      const baseUrl = readBaseUrl();
       if (!paramsStart.accountCurrentness) throw new Error('Automation start requires Account currentness');
       const path = `/v3/automations/runs/${encodeURIComponent(paramsStart.runId)}/start`;
       const body = { machineId: paramsStart.machineId, attempt: paramsStart.attempt,
@@ -316,6 +330,7 @@ export function createAutomationClaimClient(params: {
       producedSessionId?: string | null;
       resultEnvelope?: string | null;
     }): Promise<void> {
+      const baseUrl = readBaseUrl();
       if (!paramsSucceed.accountCurrentness) throw new Error('Automation success requires Account currentness');
       const path = `/v3/automations/runs/${encodeURIComponent(paramsSucceed.runId)}/succeed`;
       const body = {
@@ -343,6 +358,7 @@ export function createAutomationClaimClient(params: {
       accountCurrentness: AutomationAccountCurrentnessWitnessV1;
       outcome: AutomationV3WorkerExecutionDispatchOutcome;
     }): Promise<void> {
+      const baseUrl = readBaseUrl();
       const path = `/v3/automations/runs/${encodeURIComponent(paramsSettlement.runId)}/execution-dispatch/settle`;
       const body = {
         machineId: paramsSettlement.machineId,
@@ -373,6 +389,7 @@ export function createAutomationClaimClient(params: {
       errorDetailEnvelope: string | null;
       errorMessage?: never;
     }): Promise<void> {
+      const baseUrl = readBaseUrl();
       if (!paramsFail.accountCurrentness) throw new Error('Automation failure requires Account currentness');
       if (!Object.prototype.hasOwnProperty.call(paramsFail, 'errorDetailEnvelope')) {
         throw new Error('Automation failure requires a private error-detail envelope');

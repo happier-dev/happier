@@ -139,7 +139,9 @@ export function createIdleTerminalPolicy(input: IdleTerminalPolicyInput): GuardP
         : next === undefined ? item.nextAt : Math.min(next, item.nextAt), undefined);
       return { ...(nextAt === undefined ? {} : { nextAt }), ...(due ? { run: async () => {
         await waitForChangeOrDeadline({ signal: request.signal, waitForChange: async () => {
-        const current = (await read(terminals, request.signal)).find(item => item.terminal.terminalId === due.terminal.terminalId
+        // Warning delivery needs a fresh preview. A close instead delegates its
+        // one final native/policy admission to the captured PTY owner below.
+        const current = due.due === 'close' ? due : (await read(terminals, request.signal)).find(item => item.terminal.terminalId === due.terminal.terminalId
           && item.terminal.lastActivityAtMs === due.terminal.lastActivityAtMs);
         if (!current?.due || request.signal.aborted) return;
         if (current.due === 'warning') {

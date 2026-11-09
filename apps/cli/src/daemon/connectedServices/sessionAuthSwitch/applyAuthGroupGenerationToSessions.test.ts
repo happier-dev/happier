@@ -10,7 +10,6 @@ import {
   InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
 } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
-import { mapCommittedGenerationApplyResult } from '../accountGroups/generation/mapCommittedGenerationApplyResult';
 
 const credentialRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
 
@@ -56,6 +55,22 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
       credentialRevision,
     },
   });
+  it.each(['per_session_runtime', 'shared_group_auth_surface'] as const)(
+    'settles %s using the actual revision of the selected account when commit projection lacks one', async (applicationScope) => {
+      const committedGeneration = buildConnectedServiceAuthGroupCommittedGenerationFact({ ...manualGeneration,
+        decisionCommittedTarget: { ...manualGeneration.decisionCommittedTarget, credentialRevision: null } });
+      const actual = converged(manualGeneration);
+      const settled: string[] = [];
+      const result = await applyConnectedServiceAuthGroupGenerationToSessions({ committedGeneration,
+        switchReason: 'automatic_runtime_failure', executionAuthority: 'runtime_recovery',
+        targets: [{ sessionId: 'recipient', fromProfileId: 'old', applicationScope, applicationOwnerId: 'codex' }],
+        applyCommittedGeneration: async () => actual,
+        verifySharedGenerationApplication: async () => actual.providerAdoptedTarget,
+        clearAdoptedGeneration: async ({ providerAdoptedTarget }) => { settled.push(providerAdoptedTarget.credentialRevision!); },
+      });
+      expect(result).toMatchObject({ ok: true, appliedSessionCount: 1, failedSessionCount: 0 });
+      expect(settled).toEqual([credentialRevision]);
+    });
   it('accepts one immutable committed generation and reports every non-converged recipient locally', async () => {
     const committedGeneration = buildConnectedServiceAuthGroupCommittedGenerationFact({
       decisionId: 'decision-once',
@@ -122,7 +137,7 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     });
   });
 
-  it('redistributes the authoritative generation when B is superseded by C during apply', async () => {
+  it('applies each committed member once and leaves newer truth to its own delivery', async () => {
     const generationB = buildConnectedServiceAuthGroupCommittedGenerationFact({
       decisionId: 'decision-b',
       provenance: 'hard_limit',
@@ -169,17 +184,18 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
       clearAdoptedGeneration: async () => {},
     });
 
-    expect(applied).toEqual(expect.arrayContaining([
+    expect(applied).toEqual([
       'session-1:2',
       'session-2:2',
-      'session-1:3',
-      'session-2:3',
-    ]));
-    expect(result.appliedSessionCount).toBe(2);
-    expect(result.failedSessionCount).toBe(0);
+    ]);
+    expect(result.appliedSessionCount).toBe(1);
+    expect(result.failedSessionCount).toBe(1);
+    expect(result.resultsBySessionId?.['session-1']).toMatchObject({
+      reconciliationDisposition: 'superseded_after_apply',
+    });
   });
 
-  it('follows valid superseding generations beyond four redistributions within caller lifetime', async () => {
+  it('settles a superseded delivery without following the next member', async () => {
     const controller = new AbortController();
     const result = await applyConnectedServiceAuthGroupGenerationToSessions({
       committedGeneration: manualGeneration,
@@ -204,11 +220,11 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
       },
       clearAdoptedGeneration: async () => {},
     });
-    expect(result).toMatchObject({ ok: true, appliedSessionCount: 1, failedSessionCount: 0 });
+    expect(result).toMatchObject({ ok: false, appliedSessionCount: 0, failedSessionCount: 1 });
     expect(controller.signal.aborted).toBe(false);
   });
 
-  it('re-applies C when its projection already advanced the cursor before the real B apply observes supersession', async () => {
+  it('keeps current C when a stale B delivery arrives after its projection advanced', async () => {
     const generationB = buildConnectedServiceAuthGroupCommittedGenerationFact({
       decisionId: 'decision-b-after-projection-c',
       provenance: 'hard_limit',
@@ -231,7 +247,6 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
       nowMs: () => 1_000,
-      quotaFreshnessMs: 60_000,
       loadState: async () => authoritativeState,
       commitSwitch: async () => authoritativeState,
       applyGeneration: async ({ activeProfileId, generation, credentialRevision: appliedRevision }) => {
@@ -275,19 +290,20 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
           reason: committedGeneration.provenance,
         });
         coordinatorStatuses.push(coordinatorResult.status);
-        return mapCommittedGenerationApplyResult({ committedGeneration, result: coordinatorResult });
+        return coordinatorResult;
       },
       clearAdoptedGeneration: async () => {},
     });
 
-    // C was already projected and acknowledged before this call. The real coordinator applies stale
-    // B, then reloads server C and reports supersession; no later projection edge is guaranteed.
-    expect(coordinatorStatuses).toEqual(['superseded_after_apply', 'observed_generation']);
-    expect(runtimeEpochs).toEqual(['backup-c:3', 'backup-b:2', 'backup-c:3']);
-    expect(result).toMatchObject({ ok: true, appliedSessionCount: 1, failedSessionCount: 0 });
+    // The canonical coordinator consumes current C at admission; delayed B never becomes native
+    // truth. This B delivery cannot claim B was adopted, even though C is already healthy.
+    expect(coordinatorStatuses).toEqual(['observed_generation']);
+    expect(runtimeEpochs).toEqual(['backup-c:3', 'backup-c:3']);
+    expect(result).toMatchObject({ appliedSessionCount: 0, failedSessionCount: 0 });
+    expect(result.resultsBySessionId?.['session-1']).toMatchObject({ reconciliationDisposition: 'deferred_restart' });
   });
 
-  it('redistributes an authoritative revision-only epoch at the same group generation', async () => {
+  it('leaves a newer revision at the same generation for its source delivery', async () => {
     const initial = buildConnectedServiceAuthGroupCommittedGenerationFact({
       decisionId: 'revision-a',
       provenance: 'reconciliation',
@@ -329,9 +345,8 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
 
     expect(appliedRevisions).toEqual([
       'csr_aaaaaaaaaaaaaaaaaaaaaa',
-      'csr_bbbbbbbbbbbbbbbbbbbbbb',
     ]);
-    expect(result.failedSessionCount).toBe(0);
+    expect(result.failedSessionCount).toBe(1);
   });
 
   it('keeps shared provider owners and per-session runtimes as distinct application effects', async () => {
@@ -525,7 +540,7 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     });
   });
 
-  it('re-enters one shared provider application per superseding epoch and adopts the final proof N times', async () => {
+  it('reports shared application supersession without restarting the shared owner', async () => {
     const generationC = buildConnectedServiceAuthGroupCommittedGenerationFact({
       decisionId: 'shared-c',
       provenance: 'reconciliation',
@@ -561,9 +576,10 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
       clearAdoptedGeneration: async ({ sessionId }) => { cleared.push(sessionId); },
     });
 
-    expect(appliedGenerations).toEqual([7, 8]);
-    expect(cleared.sort()).toEqual(['a', 'b', 'c']);
-    expect(result.appliedSessionCount).toBe(3);
+    expect(appliedGenerations).toEqual([7]);
+    expect(cleared).toEqual([]);
+    expect(result.appliedSessionCount).toBe(0);
+    expect(result.failedSessionCount).toBe(3);
   });
 
   it('recovers a lost shared-effect response through exact provider verification without receipt I/O or a duplicate effect', async () => {
@@ -681,7 +697,7 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     });
   });
 
-  it('honors caller cancellation while following superseding generations beyond four redistributions', async () => {
+  it('honors caller cancellation while an apply reports supersession', async () => {
     const controller = new AbortController();
     const cancelled = new Error('caller_cancelled_generation_fanout');
     const initial = buildConnectedServiceAuthGroupCommittedGenerationFact({
@@ -704,7 +720,7 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
       targets: [{ sessionId: 'session-1', fromProfileId: 'source' }],
       applyCommittedGeneration: async ({ committedGeneration }) => {
         const generation = committedGeneration.decisionCommittedTarget.generation + 1;
-        if (generation === 7) controller.abort(cancelled);
+        controller.abort(cancelled);
         return {
           reconciliationDisposition: 'superseded_after_apply',
           errorCode: null,
@@ -728,21 +744,17 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     // Live incident 2026-07-10: the sequential loop meant N mid-turn sessions cost N × the 60s
     // deferral window, guaranteeing the client ack aborted and the UI reported divergence on every
     // pool switch. Sessions are independent (per-session FSM locks); the fan-out must overlap them.
-    const first = deferred();
-    const second = deferred();
+    const pendingApplies = Array.from({ length: 6 }, () => deferred());
     const started: string[] = [];
 
     const resultPromise = applyConnectedServiceAuthGroupGenerationToSessions({
       committedGeneration: manualGeneration,
       switchReason: 'manual',
       executionAuthority: 'fresh_user_action',
-      targets: [
-        { sessionId: 'sess_1', fromProfileId: 'prev' },
-        { sessionId: 'sess_2', fromProfileId: null },
-      ],
+      targets: pendingApplies.map((_, index) => ({ sessionId: `sess_${index}`, fromProfileId: 'prev' })),
       applyCommittedGeneration: async (input) => {
         started.push(input.sessionId);
-        return input.sessionId === 'sess_1' ? first.promise : second.promise;
+        return pendingApplies[Number(input.sessionId.slice(5))]!.promise;
       },
       clearAdoptedGeneration: async () => {},
     });
@@ -750,13 +762,12 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     // Both applies must have STARTED before either resolves — the sequential shape never starts
     // the second until the first settles.
     await Promise.resolve();
-    expect(started.sort()).toEqual(['sess_1', 'sess_2']);
+    expect(started.sort()).toEqual(pendingApplies.map((_, index) => `sess_${index}`));
 
-    first.resolve(converged(manualGeneration));
-    second.resolve(converged(manualGeneration));
+    for (const pending of pendingApplies) pending.resolve(converged(manualGeneration));
     await expect(resultPromise).resolves.toMatchObject({
       ok: true,
-      appliedSessionCount: 2,
+      appliedSessionCount: 6,
       restartRequestedSessionCount: 0,
       skippedIdleSessionCount: 0,
       failedSessionCount: 0,
@@ -899,31 +910,4 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
     ]));
   });
 
-  it('bounds fan-out concurrency so a large pool cannot thundering-herd restarts', async () => {
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const targets = Array.from({ length: 12 }, (_, index) => ({
-      sessionId: `sess_${index}`,
-      fromProfileId: null,
-    }));
-
-    const result = await applyConnectedServiceAuthGroupGenerationToSessions({
-      committedGeneration: manualGeneration,
-      switchReason: 'manual',
-      executionAuthority: 'fresh_user_action',
-      targets,
-      applyCommittedGeneration: async () => {
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        await new Promise((resolve) => setTimeout(resolve, 1));
-        inFlight -= 1;
-        return converged(manualGeneration);
-      },
-      clearAdoptedGeneration: async () => {},
-    });
-
-    expect(result.appliedSessionCount).toBe(12);
-    expect(maxInFlight).toBeLessThanOrEqual(4);
-    expect(maxInFlight).toBeGreaterThan(1);
-  });
 });

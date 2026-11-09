@@ -91,6 +91,18 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
   agentId: CatalogAgentId;
   error: unknown;
 }>): Extract<SpawnSessionResult, { type: 'error' }> | null {
+  const authorityError = readRecord(input.error);
+  if (readStringField(authorityError, 'name') === 'ConnectedServiceSpawnAuthGroupAuthorityError'
+    && readStringField(authorityError, 'kind') === 'active_profile_missing') {
+    const code = 'connected_service_auth_group_authority_active_profile_missing';
+    const message = 'The selected Connected Account profile is unavailable in your Account. Select a profile in your own Account and update the launch selection. For a Workflow, edit its Connected Account selection before starting a new Run.';
+    return {
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: message,
+      errorDetail: { kind: 'launch_error', code, message },
+    };
+  }
   const missingCredential = readCredentialMissingSpawnError(input.error);
   if (missingCredential) {
     const code = CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired;

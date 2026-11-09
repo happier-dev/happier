@@ -243,7 +243,10 @@ describe.skipIf(!executablePath || !fixturePath || process.platform !== 'linux')
       expect(await routes.dispatch('computer.target.get', input, context)).toMatchObject({ consentGranted: true,
         approvalDisplay: { requiresTargetSelection: false, target: { kind: 'window', title: 'Happier native computer fixture' },
           captureMedia: observation.media } });
-      expect(await routes.dispatch('computer.targets.list', { ...input, displayId }, context)).toMatchObject({ ok: false, errorCode: 'approval_required' });
+      approve = false;
+      expect(await executor.execute('computer.targets.list', { ...input, displayId }, context))
+        .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+      expect(approvals.at(-1)).toMatchObject({ actionId: 'computer.targets.list' });
       const frames: MachineLiveStreamFrameV1[] = [];
       const now = Date.now();
       const caps = { maxBitrateBps: 1_000_000, maxFramesPerSecond: 10, maxFrameBytes: 100_000, maxDurationMs: 60_000 };

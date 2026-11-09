@@ -69,6 +69,34 @@ const goal: WorkflowActionLeafV1 = { kind: 'action', id: 'goal', actionId: 'sess
   input: { sessionId: { kind: 'origin_session_id' }, status: { kind: 'literal', value: 'complete' } } };
 
 describe('workflow Action leaves', () => {
+  it('retains a scalar Action lost acknowledgement as uncertain without replaying its effect', async () => {
+    const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'setup', actionId: 'machines.setup.apply', input: {
+      homeId: { kind: 'literal', value: 'home' }, machineId: { kind: 'literal', value: workspace.machineId },
+      targets: { kind: 'literal', value: [{ homeId: 'home', machineId: workspace.machineId,
+        desiredRevision: 0, recipePlans: [], sources: [
+        { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+        { kind: 'direct', setup: {} },
+      ] }] },
+    } };
+    const store = createInMemoryWorkflowCoordinatorStore();
+    let effects = 0;
+    const executor = createTestActionExecutor({ machineSetupApply: async () => {
+      effects++;
+      // The native transport delivered the scalar effect but lost its reply.
+      return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
+    } });
+    const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }),
+      action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation', bypassApprovals: true }),
+        observeRun: async () => { throw new Error('Scalar Action has no awaited Run'); } } });
+    const input = { runId: 'scalar-unknown', definition: definition([leaf]), inputs: {}, executionTarget,
+      authorization, materializedLeaves: [frozen(leaf)] };
+    expect(await coordinator.run(input)).toMatchObject({ state: 'outcome_uncertain', reason: 'outcome_unknown' });
+    expect(store.list().find(row => row.blockId === leaf.id)).toMatchObject({ lifecycle: 'outcome_uncertain' });
+    expect(await coordinator.run(input)).toMatchObject({ state: 'outcome_uncertain' });
+    expect(effects).toBe(1);
+  });
+
   it.each(['native_effect_failed', 'action_failed'] as const)('preserves a scalar Action %s cause without changing its result payload', async errorCode => {
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'setup', actionId: 'machines.setup.apply', input: {
       homeId: { kind: 'literal', value: 'home' }, machineId: { kind: 'literal', value: workspace.machineId },
@@ -162,7 +190,7 @@ describe('workflow Action leaves', () => {
       expect(requests).toHaveLength(1);
     },
   );
-  it('retains JSON failure output and gives the effect its run/step/attempt idempotency identity', async () => {
+  it.each(['failure_envelope', 'finite_output'] as const)('retains JSON failure output and gives the effect its run/step/attempt idempotency identity (%s)', async responseKind => {
     const contexts: string[] = [];
     const store = createInMemoryWorkflowCoordinatorStore();
     const output = { exitCode: 7, stdout: 'partial', stderr: 'refused' };
@@ -170,7 +198,8 @@ describe('workflow Action leaves', () => {
       input: { command: { kind: 'literal', value: 'exit 7' } } };
     const executor = createTestActionExecutor({ machineCommandRun: async (_input, context) => {
       contexts.push(context.actionRequestId ?? '');
-      return { ok: false, errorCode: 'command_failed', error: 'Command failed', details: output };
+      return responseKind === 'finite_output' ? output
+        : { ok: false, errorCode: 'command_failed', error: 'Command failed', details: output };
     } });
     // Admission remains real; the process-effect dependency supplies its definitive response.
     const observedCoordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Action has no Agent'); },
@@ -659,6 +688,42 @@ describe('workflow Action leaves', () => {
     expect(await coordinator.run(params)).toMatchObject({ state: 'succeeded' });
     expect(effects).toBe(1);
   });
+  it.each(['action_admission', 'action_slot', 'wait_slot'] as const)('parks a server-refused %s under Pause and resumes without an uncertain effect', async refusal => {
+    let effects = 0;
+    const executor = createTestActionExecutor({ sessionGoalSet: async () => { effects++; return { ok: true }; } });
+    const baseStore = createInMemoryWorkflowCoordinatorStore();
+    let control: 'running' | 'pause_requested' = 'pause_requested';
+    // The durable Run store is the boundary: S29 refuses the write after Pause.
+    const store = {
+      ...baseStore,
+      ensureIntent: async (invocation: Parameters<typeof baseStore.ensureIntent>[0]) => {
+        if (control === 'pause_requested' && refusal !== 'action_admission') throw new Error('workflow_input_admission_refused');
+        return await baseStore.ensureIntent(invocation);
+      },
+      commitFact: async (fact: Parameters<typeof baseStore.commitFact>[0]) => {
+        if (control === 'pause_requested' && refusal === 'action_admission' && fact.lifecycle === 'admitting') {
+          throw new Error('workflow_input_admission_refused');
+        }
+        return await baseStore.commitFact(fact);
+      },
+      readControl: async () => control,
+    };
+    const wait = { kind: 'wait' as const, id: 'human', document: { text: 'Continue', references: [], attachments: [] } };
+    const coordinator = createWorkflowCoordinator({ store, executeStep: async () => { throw new Error('Agent dispatch'); },
+      resolveWorkspace: async () => ({ ok: true, workspace }),
+      action: { executor, buildContext: async () => ({ surface: 'cli', authority: 'account_automation' }), observeRun: async () => { throw new Error('Immediate Action observation'); } },
+    });
+    const params = { runId: `paused-${refusal}`, definition: definition([refusal === 'wait_slot' ? wait : goal]),
+      materializedLeaves: refusal === 'wait_slot' ? [] : [frozen(goal)], inputs: {}, executionTarget, authorization, originSessionId: 'origin' };
+    expect(await coordinator.run(params)).toEqual({ state: 'paused' });
+    expect(effects).toBe(0);
+    expect(store.list().some(row => row.lifecycle === 'outcome_uncertain' || row.lifecycle === 'failed')).toBe(false);
+    if (refusal === 'wait_slot') return;
+    control = 'running';
+    expect(await coordinator.run(params)).toMatchObject({ state: 'succeeded' });
+    expect(effects).toBe(1);
+  });
+
   it('runs the real immediate Action with the bound origin and persists a typed result', async () => {
     const writes: unknown[] = [];
     const executor = createTestActionExecutor({ sessionGoalSet: async (value) => { writes.push(value); return { ok: true }; } });

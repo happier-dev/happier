@@ -6,6 +6,7 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   sealQualifiedConnectedAccountContentEnvelope,
+  openQualifiedConnectedAccountContentEnvelope,
   type QualifiedConnectedAccountProfileV4,
   type ConnectedServiceCredentialHealthV1,
   QualifiedConnectedAccountCredentialHealthPatchV4Schema,
@@ -52,9 +53,14 @@ afterEach(async () => {
 });
 
 async function createHarness(input: Readonly<{
+  github?: boolean;
+  accountMode?: 'plain' | 'e2ee';
+  credentialSecretRef?: string;
   clock?: () => number;
+  healthProbeIntervalMs?: number;
   onCredentialRead?: () => void;
-  profile?: () => Partial<Pick<QualifiedConnectedAccountProfileV4, 'kind' | 'expiresAt'>> & Readonly<{ credentialRevision?: string }>;
+  onCredentialMutation?: (revision: string) => void;
+  profile?: () => Partial<Pick<QualifiedConnectedAccountProfileV4, 'kind' | 'expiresAt' | 'status'>> & Readonly<{ credentialRevision?: string }>;
   noScheduledAccounts?: boolean;
   retireRegistry?: boolean;
   pluginEnabled?: boolean;
@@ -62,17 +68,18 @@ async function createHarness(input: Readonly<{
   v4Support?: 'advertised' | 'absent' | 'indeterminate';
   omitQualifiedRuntime?: boolean;
   health?: ConnectedServiceCredentialHealthV1;
-  healthOnCurrentnessRead?: ConnectedServiceCredentialHealthV1;
   credentialSnapshot?: () => QualifiedConnectedAccountCredentialSnapshotV4 | null;
   listedProfiles?: readonly QualifiedConnectedAccountProfileV4[];
   isAccountRuntimeCurrent?: () => Promise<boolean>;
 }>) {
+  const service = input.github ? { pluginId: 'happier.scm.forge.github', localId: 'github-account' } : openAiService;
+  const authenticationModeId = input.github ? 'fine-grained-pat' : 'api-key';
   const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-qualified-status-'));
   createdDirectories.push(happyHomeDir);
   const admitted = await createAdmittedPluginRuntimeFixture({
     happyHomeDir,
     runtimeOptions: {
-      pluginIds: input.pluginEnabled === false ? [] : [openAiService.pluginId],
+      pluginIds: input.pluginEnabled === false ? [] : [service.pluginId],
       ...(input.pluginEnabled === false ? { contributes: createResolvedContributionRegistry({}) } : {}),
     },
   });
@@ -96,10 +103,9 @@ async function createHarness(input: Readonly<{
   });
   let persistedHealth = input.health;
   let persistedRevision = credentialRevision;
-  let credentialReads = 0;
+  let persistedMetadata: QualifiedConnectedAccountCredentialSnapshotV4['metadata'] = { scopes: [] };
+  let writtenCredential: QualifiedConnectedAccountCredentialSnapshotV4['content'] | undefined;
   const readQualifiedCredential = vi.fn(async () => {
-    credentialReads++;
-    if (credentialReads > 1 && input.healthOnCurrentnessRead) persistedHealth = input.healthOnCurrentnessRead;
     input.onCredentialRead?.();
     if (input.credentialSnapshot) return input.credentialSnapshot();
     const currentRevision = input.profile?.().credentialRevision ?? credentialRevision;
@@ -109,15 +115,24 @@ async function createHarness(input: Readonly<{
       ? null
       : {
           ref: {
-            service: openAiService,
+            service,
             accountId: 'work',
           },
-          authenticationModeId: 'api-key',
+          authenticationModeId,
           revisionSemantics: 'revisioned' as const,
           credentialRevision: persistedRevision,
           configurationRevision: null,
-          content: credentialContent,
-          metadata: { scopes: [] },
+          content: input.github ? sealQualifiedConnectedAccountContentEnvelope({
+            kind: 'credential',
+            ...(input.accountMode === 'e2ee'
+              ? { accountMode: 'e2ee' as const, material: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } }
+              : { accountMode: 'plain' as const }),
+            payload: input.credentialSecretRef
+              ? { v: 1, values: {}, secretRefs: { token: input.credentialSecretRef } }
+              : { v: 1, values: { token: `fixture-${currentRevision}` } },
+            randomBytes: length => new Uint8Array(length),
+          }) : credentialContent,
+          metadata: persistedMetadata,
           ...(persistedHealth ? { health: persistedHealth } : {}),
         };
   });
@@ -125,15 +140,15 @@ async function createHarness(input: Readonly<{
     createQualifiedConnectedAccountEstablishedRuntimeOwner({
       reloadController,
       credentials,
-      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getAccountEncryptionMode: vi.fn(async () => input.accountMode ?? 'plain'),
       readCredential: readQualifiedCredential,
       readConfiguration: vi.fn(async () => null),
       configuration: {
         read: vi.fn(async () => null),
         secrets: {
           admit: vi.fn(async () => undefined),
-          has: vi.fn(async () => false),
-          read: vi.fn(async () => null),
+          has: vi.fn(async ref => ref === input.credentialSecretRef),
+          read: vi.fn(async ref => ref === input.credentialSecretRef ? 'fixture-saved-github-token' : null),
         },
       },
     });
@@ -157,9 +172,9 @@ async function createHarness(input: Readonly<{
   });
   const listScheduledAccounts = vi.fn(async (): Promise<readonly QualifiedConnectedAccountProfileV4[]> =>
     input.listedProfiles ?? (input.noScheduledAccounts ? [] : [{
-      ref: { service: openAiService, accountId: 'work' },
+      ref: { service, accountId: 'work' },
       status: 'connected',
-      authenticationModeId: 'api-key',
+      authenticationModeId,
       revisionSemantics: 'revisioned',
       credentialRevision,
       configurationReady: false,
@@ -178,6 +193,7 @@ async function createHarness(input: Readonly<{
     baseDir: join(happyHomeDir, 'materialized'),
     refreshWindowMs: 60_000,
     refreshLeaseMs: 30_000,
+    healthProbeIntervalMs: input.healthProbeIntervalMs,
     now: input.clock ?? (() => now),
     isAccountRuntimeCurrent: input.isAccountRuntimeCurrent,
     ...(input.omitQualifiedRuntime
@@ -201,11 +217,16 @@ async function createHarness(input: Readonly<{
               ownerId: 'unused',
               credentialRevision,
             })),
-            mutateCredential: vi.fn(async () => ({
+            mutateCredential: vi.fn(async ({ mutation }) => {
+              persistedMetadata = mutation.metadata;
+              writtenCredential = mutation.content;
+              persistedRevision = 'csr_cdefghijklmnopqrstuvwx';
+              input.onCredentialMutation?.(persistedRevision);
+              return ({
               success: true as const,
-              credentialRevision,
+              credentialRevision: persistedRevision,
               configurationRevision: null,
-            })),
+            }); }),
           },
         }),
   };
@@ -222,10 +243,109 @@ async function createHarness(input: Readonly<{
     mutateCredentialHealth,
     readQualifiedCredential,
     listScheduledAccounts,
+    persistedMetadata: () => persistedMetadata,
+    writtenCredential: () => writtenCredential,
+    setPersistedHealth(health: ConnectedServiceCredentialHealthV1) {
+      persistedHealth = health;
+    },
   };
 }
 
 describe('ConnectedServiceRefreshCoordinator qualified status integration', () => {
+  it('backfills identity without inlining an E2EE Saved Secret credential', async () => {
+    let revision = credentialRevision;
+    const secretRef = 'happier:shared-secret:v1:github-identity-test';
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 12345, login: 'octocat' }), { status: 200 })));
+    const harness = await createHarness({ github: true, accountMode: 'e2ee', credentialSecretRef: secretRef,
+      onCredentialMutation: next => { revision = next; }, profile: () => ({ credentialRevision: revision }),
+    });
+    await harness.coordinator.tickOnce();
+    expect(harness.persistedMetadata().providerIdentity).toEqual({ accountId: '12345' });
+    const content = harness.writtenCredential();
+    if (!content) throw new Error('Identity backfill did not write credential content');
+    expect(content?.t).toBe('encrypted');
+    expect(openQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'e2ee',
+      material: { type: 'legacy', secret: new Uint8Array(32).fill(7) }, envelope: content,
+    })).toEqual({ v: 1, values: {}, secretRefs: { token: secretRef } });
+  });
+
+  it('persists the subject from scheduled GitHub health when the static credential is bound', async () => {
+    let revision = credentialRevision;
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ id: 12345, login: 'octocat' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetch);
+    const harness = await createHarness({ github: true,
+      onCredentialMutation: next => { revision = next; },
+      profile: () => ({ credentialRevision: revision }),
+    });
+    harness.coordinator.registerSpawnTarget({ pid: 123, agentId: 'codex', materializationKey: 'github-session',
+      connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: { github: { source: 'connected', profileId: 'work' } } },
+    });
+    await harness.coordinator.tickOnce();
+    expect(harness.persistedMetadata().providerIdentity).toEqual({ accountId: '12345' });
+    await harness.coordinator.tickOnce();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it.each([200, 403])('checks a changed GitHub credential once and makes zero idle /user requests after %s', async status => {
+    let clock = now;
+    let revision = credentialRevision;
+    let profileStatus: QualifiedConnectedAccountProfileV4['status'] = 'connected';
+    const requests: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      requests.push(String(url));
+      return new Response(JSON.stringify(status === 200 ? { id: 12345, login: 'octocat' } : { message: 'API rate limit exceeded' }), {
+        status, headers: status === 403 ? { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String((now + 3_600_000) / 1000) } : {},
+      });
+    }));
+    const harness = await createHarness({ github: true, clock: () => clock,
+      onCredentialMutation: next => { revision = next; },
+      profile: () => ({ credentialRevision: revision, status: profileStatus, kind: null }) });
+    expect(await harness.coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+    expect(requests).toEqual(['https://api.github.com/user']);
+    expect(harness.persistedMetadata().providerIdentity).toEqual(status === 200 ? { accountId: '12345' } : undefined);
+    profileStatus = status === 200 ? 'connected' : 'refresh_failed_retryable';
+    // Health publication and unrelated scheduler wakes are not credential demand.
+    for (let minute = 0; minute < 10; minute++) {
+      clock += 60_000;
+      expect(await harness.coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+    }
+    expect(requests).toHaveLength(1);
+    revision = 'csr_bcdefghijklmnopqrstuvw';
+    // The server snapshot and profile advance together at the credential boundary.
+    expect(await harness.coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+    expect(requests).toHaveLength(2);
+  });
+
+  it('returns the admitted profile and revision without a metadata relist when refresh is unnecessary', async () => {
+    const harness = await createHarness({});
+    const profile = QualifiedConnectedAccountProfileV4Schema.parse({
+      ref: { service: openAiService, accountId: 'work' }, status: 'connected',
+      authenticationModeId: 'api-key', revisionSemantics: 'revisioned', credentialRevision,
+      configurationReady: false, configurationRevision: null, expiresAt: now + 3_600_000, scopes: [],
+    });
+    expect(await harness.coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({ profile }))
+      .toEqual({ status: 'ready', profile });
+    expect(harness.listScheduledAccounts).not.toHaveBeenCalled();
+    expect(harness.readQualifiedCredential).not.toHaveBeenCalled();
+  });
+
+  it('returns the acknowledged credential revision when spawn health backfills a legacy GitHub subject', async () => {
+    let revision = credentialRevision;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 12345, login: 'octocat' }), { status: 200 })));
+    const harness = await createHarness({ github: true,
+      onCredentialMutation: next => { revision = next; },
+      profile: () => ({ credentialRevision: revision }),
+    });
+    const profile = QualifiedConnectedAccountProfileV4Schema.parse({
+      ref: { service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' }, accountId: 'work' }, status: 'connected',
+      authenticationModeId: 'fine-grained-pat', revisionSemantics: 'revisioned', credentialRevision,
+      configurationReady: false, configurationRevision: null, expiresAt: null, scopes: [],
+    });
+    const result = await harness.coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({ profile });
+    expect(revision).not.toBe(credentialRevision);
+    expect(result).toMatchObject({ status: 'ready', profile: { credentialRevision: revision } });
+  });
+
   it.each(['reconnect', 'reconnect-flag', 'reconnect-status', 'healthy', 'replaced', 'unrevisioned', 'missing', 'other-account'] as const)(
     'reads exact fresh reconnect health without listing the service cohort (%s)', async (scenario) => {
       const profile = QualifiedConnectedAccountProfileV4Schema.parse({
@@ -258,15 +378,15 @@ describe('ConnectedServiceRefreshCoordinator qualified status integration', () =
       });
       const expected = reconnect ? 'reconnect_required' : scenario === 'healthy' ? 'ready' : 'refresh_failed';
       expect(await harness.coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({ profile }))
-        .toEqual({ status: expected });
+        .toMatchObject({ status: expected });
       expect(harness.listScheduledAccounts).not.toHaveBeenCalled();
       if (reconnect) {
         expect(harness.readQualifiedCredential).toHaveBeenCalledOnce();
-        expect(harness.readQualifiedCredential).toHaveBeenCalledWith({ token: 'happier-token', ref: profile.ref });
+        expect(harness.readQualifiedCredential).toHaveBeenCalledWith(expect.objectContaining({ token: 'happier-token', ref: profile.ref }));
         // A second check must see the newly committed health immediately.
         current = snapshot && { ...snapshot, health: { v: 1, status: 'connected', reconnectRequired: false } };
         expect(await harness.coordinator.refreshQualifiedConnectedAccountCredentialForSpawnPreflight({ profile }))
-          .toEqual({ status: 'ready' });
+          .toMatchObject({ status: 'ready', profile: { ref: profile.ref, credentialRevision } });
         expect(harness.listScheduledAccounts).not.toHaveBeenCalled();
       }
     },
@@ -291,15 +411,23 @@ describe('ConnectedServiceRefreshCoordinator qualified status integration', () =
     expect(harness.mutateCredentialHealth).not.toHaveBeenCalled();
   });
 
-  it('settles and publishes connected when the final currentness read sees a concurrent health failure', async () => {
+  it('observes a changed health fact at the next status admission and publishes recovery', async () => {
+    let clock = now;
     const diagnostic = vi.spyOn(logger, 'debug');
     const harness = await createHarness({
+      clock: () => clock,
       health: { v: 1, status: 'connected', reconnectRequired: false },
-      healthOnCurrentnessRead: { v: 1, status: 'refresh_failed_retryable', reconnectRequired: false,
-        providerErrorCode: 'materialization_failed' },
     });
     await harness.coordinator.tickOnce();
-    expect(harness.readQualifiedCredential.mock.calls.length).toBeGreaterThan(1);
+    expect(harness.readQualifiedCredential).toHaveBeenCalledOnce();
+    expect(harness.mutateCredentialHealth).not.toHaveBeenCalled();
+    // Finite status work consumes its admitted snapshot. A later admission
+    // acquires the persisted health again, including intervening failures.
+    harness.setPersistedHealth({ v: 1, status: 'refresh_failed_retryable', reconnectRequired: false,
+      providerErrorCode: 'materialization_failed' });
+    clock += 300_000;
+    await harness.createCoordinator().tickOnce();
+    expect(harness.readQualifiedCredential).toHaveBeenCalledTimes(2);
     expect(harness.mutateCredentialHealth).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       patch: expect.objectContaining({ health: { v: 1, status: 'connected', reconnectRequired: false } }),
     }));
@@ -331,6 +459,7 @@ describe('ConnectedServiceRefreshCoordinator qualified status integration', () =
     expect(diagnostic.mock.calls.filter(([event]) => event === '[ConnectedServiceRefreshCoordinator] credential health write'))
       .toEqual(timestampOnly ? [] : [['[ConnectedServiceRefreshCoordinator] credential health write', {
         path: 'status', serviceKind: 'openai', beforeStatus: timestampOnly ? 'connected' : null, afterStatus: 'connected',
+        account: { service: openAiService, accountId: 'work' }, credentialRevision, configurationRevision: null,
         substantiveChanged: !timestampOnly,
       }]]);
   });
@@ -380,29 +509,39 @@ describe('ConnectedServiceRefreshCoordinator qualified status integration', () =
     expect(harness.mutateCredentialHealth).toHaveBeenCalledOnce();
   });
 
-  it('returns the existing credential-health recovery deadline when a null-expiry account is unavailable', async () => {
-    const harness = await createHarness({ credentialAvailable: false });
+  it('returns the existing OAuth recovery deadline when a null-expiry account is unavailable', async () => {
+    const harness = await createHarness({ credentialAvailable: false, profile: () => ({ kind: 'oauth' }) });
     await expect(harness.coordinator.tickOnce()).rejects.toBeInstanceOf(AggregateError);
-    expect(await harness.coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 60_000 });
+    expect(await harness.coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 30_000 });
+  });
+
+  it('uses the acquisition cadence for every failed OAuth observation without an escalating ladder', async () => {
+    let clock = now;
+    const harness = await createHarness({ clock: () => clock, credentialAvailable: false, healthProbeIntervalMs: 17_000, profile: () => ({ kind: 'oauth' }) });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await expect(harness.coordinator.tickOnce()).rejects.toBeInstanceOf(AggregateError);
+      expect(await harness.coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 17_000 });
+      clock += 17_000;
+    }
   });
 
   it('retains the existing recovery interval after a slow failed credential observation', async () => {
     let clock = now;
-    const harness = await createHarness({ clock: () => clock, credentialAvailable: false,
+    const harness = await createHarness({ clock: () => clock, credentialAvailable: false, profile: () => ({ kind: 'oauth' }),
       onCredentialRead: () => { clock = Math.max(clock, now + 90_000); } });
     await expect(harness.coordinator.tickOnce()).rejects.toBeInstanceOf(AggregateError);
     const reads = harness.readQualifiedCredential.mock.calls.length;
-    expect(await harness.coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 60_000 });
+    expect(await harness.coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 30_000 });
     expect(harness.readQualifiedCredential).toHaveBeenCalledTimes(reads);
     expect(harness.mutateCredentialHealth).not.toHaveBeenCalled();
   });
   it('rearms a replaced credential without inheriting the old revision recovery deadline', async () => {
     let revision = credentialRevision;
     const harness = await createHarness({ credentialAvailable: false,
-      profile: () => ({ credentialRevision: revision }) });
+      profile: () => ({ credentialRevision: revision, kind: 'oauth' }) });
     await expect(harness.coordinator.tickOnce()).rejects.toBeInstanceOf(AggregateError);
     const reads = harness.readQualifiedCredential.mock.calls.length;
-    expect(await harness.coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 60_000 });
+    expect(await harness.coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 30_000 });
     expect(harness.readQualifiedCredential).toHaveBeenCalledTimes(reads);
     revision = 'csr_bcdefghijklmnopqrstuvw';
     await expect(harness.coordinator.tickOnce()).rejects.toBeInstanceOf(AggregateError);

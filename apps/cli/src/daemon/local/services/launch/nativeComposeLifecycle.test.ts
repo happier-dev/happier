@@ -1,19 +1,240 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
-import { PluginError } from '@happier-dev/plugin-sdk';
-import { createProviderRedactionLease } from '@/providers/spawn/redaction';
-import { canReadIncompleteSecretMaskingForHost } from '@/plugins/runtime/invocation/services/managedServiceNativeLogs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { setImmediate as nextTurn } from 'node:timers/promises';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
+import { openDockerEngineEvents } from './dockerEngineObservation';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { canReadIncompleteSecretMaskingForHost } from '@/plugins/runtime/invocation/services/managedServiceNativeLogs';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 
 describe('Compose exact native resource lifetime', () => {
     afterEach(() => vi.useRealTimers());
+
+    it('lends the retained Docker transport and every observed replica name and network to Domain routing', async () => {
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const requests: Parameters<ProjectNativeToolchainIo['run']>[0][] = [];
+        const rows = ['a', 'b'].map((id, index) => ({ ...container(id, 'running'),
+            Name: `/native-worker-${index + 1}`, NetworkSettings: { Ports: {}, Networks: { 'generation-network': {} } } }));
+        const capture = createNativeComposeLifecycle({ args, engineId: 'selected-engine',
+            environment: { composeService: 'worker', containerIds: rows.map(row => row.Id) }, io: {
+                async events() { return { async dispose() {} }; }, async run(request) {
+                requests.push(request);
+                if (request.args.includes('info')) return { exitCode: 0, stdout: JSON.stringify({ ID: 'selected-engine' }) };
+                if (request.args.includes('ps')) return { exitCode: 0, stdout: rows.map(row => row.Id).join('\n') };
+                if (request.args.includes('inspect')) return { exitCode: 0, stdout: JSON.stringify(rows) };
+                return { exitCode: 0, stdout: 'native-result' };
+            } } });
+        capture.bindLaunch({ command: '/owned/docker', args: ['--context', 'selected', ...args], cwd: '/release', env: { DOCKER_CONFIG: '/owned/config' }, release() {} });
+        const subscription = await capture.lifecycle.observe!(() => {});
+        try {
+        expect(capture.lifecycle.nativeContainers?.()).toMatchObject(rows.map((_row, index) => ({
+            containerName: `native-worker-${index + 1}`, networkNames: ['generation-network'],
+        })));
+        const docker = await capture.lifecycle.nativeDocker?.();
+        expect(docker?.engineId).toBe('selected-engine');
+        expect(await docker?.run(['container', 'ls'])).toMatchObject({ exitCode: 0, stdout: 'native-result' });
+        expect(requests.at(-1)).toMatchObject({ command: '/owned/docker', args: ['--context', 'selected', 'container', 'ls'],
+            cwd: '/release', env: { DOCKER_CONFIG: '/owned/config' } });
+        } finally { await subscription.dispose(); }
+    });
+
+    it('observes exact retained-generation absence: rejects failed empty inspection and cached stopped proof', async () => {
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const id = 'a'.repeat(64);
+        const requests: string[][] = [];
+        let inspectUnavailable = true;
+        let present = true;
+        let engine = 'retained-engine';
+        const capture = createNativeComposeLifecycle({ args, engineId: 'retained-engine',
+            environment: { composeService: 'worker', containerIds: [id] }, io: { async run(request) {
+                requests.push([...request.args]);
+                if (request.args[0] === 'info') return { exitCode: 0, stdout: JSON.stringify({ ID: engine }) };
+                if (request.args[0] === 'ps') return { exitCode: 0, stdout: present ? id : '' };
+                if (request.args[0] === 'container' && request.args[1] === 'rm') {
+                    present = false;
+                    return { exitCode: 0, stdout: '' };
+                }
+                if (inspectUnavailable) return { exitCode: 1, stdout: '[]' };
+                return { exitCode: 0, stdout: JSON.stringify(present ? [container('a', 'exited')] : []) };
+            } } });
+        capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+        expect(await capture.lifecycle.remove!()).toEqual({ status: 'termination_incomplete' });
+        // A later read can recover absence, but a different engine cannot
+        // inherit the earlier capture's cached stopped result.
+        inspectUnavailable = false;
+        present = false;
+        engine = 'another-engine';
+        expect(await capture.lifecycle.remove!()).toEqual({ status: 'termination_incomplete' });
+        engine = 'retained-engine';
+        expect(await capture.lifecycle.remove!()).toEqual({ status: 'stopped' });
+        expect(requests.some(request => request[0] === 'container' && request[1] === 'rm')).toBe(false);
+    });
+
+    it('observes exact retained-generation absence without confusing exited containers, engine loss, or replacement with removal', async () => {
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const requests: string[][] = [];
+        let engine = 'retained-engine';
+        let rows = [container('a', 'exited')];
+        let unavailable = false;
+        const capture = createNativeComposeLifecycle({ args, engineId: 'retained-engine',
+            environment: { composeService: 'worker', containerIds: ['a'.repeat(64)] }, io: { async run(request) {
+                requests.push([...request.args]);
+                if (request.args[0] === 'info') return { exitCode: 0, stdout: JSON.stringify({ ID: engine }) };
+                if (unavailable) return { exitCode: 1, stdout: '' };
+                if (request.args[0] === 'ps') return { exitCode: 0, stdout: rows.map(row => row.Id).join('\n') };
+                return { exitCode: 0, stdout: JSON.stringify(rows) };
+            } } });
+        capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+        const inspectRemoval = capture.lifecycle.inspectRemoval!;
+        expect(await inspectRemoval()).toBe('present');
+        rows = [];
+        expect(await inspectRemoval()).toBe('absent');
+        rows = [container('b', 'running')];
+        expect(await inspectRemoval()).toBe('unknown');
+        rows = [];
+        engine = 'another-engine';
+        expect(await inspectRemoval()).toBe('unknown');
+        engine = 'retained-engine';
+        unavailable = true;
+        expect(await inspectRemoval()).toBe('unknown');
+        expect(requests.some(request => request.includes('rm') || request.includes('stop') || request.includes('down'))).toBe(false);
+    });
+
+    it('recovers unproved removal without repeating it and requires fresh engine evidence after success', async () => {
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const id = 'a'.repeat(64);
+        let engine = 'retained-engine';
+        let present = true;
+        let unavailable = false;
+        let removals = 0;
+        const capture = createNativeComposeLifecycle({ args, engineId: engine,
+            environment: { composeService: 'worker', containerIds: [id] }, io: { async run(request) {
+                if (request.args[0] === 'info') return { exitCode: 0, stdout: JSON.stringify({ ID: engine }) };
+                if (request.args[0] === 'container' && request.args[1] === 'rm') {
+                    removals += 1;
+                    present = false;
+                    unavailable = true;
+                    return { exitCode: 0, stdout: '' };
+                }
+                if (unavailable) return { exitCode: 1, stdout: '[]' };
+                if (request.args[0] === 'ps') return { exitCode: 0, stdout: present ? id : '' };
+                return { exitCode: 0, stdout: JSON.stringify(present ? [container('a', 'running')] : []) };
+            } } });
+        capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+        expect(await capture.lifecycle.remove!()).toEqual({ status: 'termination_incomplete' });
+        unavailable = false;
+        expect(await capture.lifecycle.remove!()).toEqual({ status: 'stopped' });
+        expect(removals).toBe(1);
+        engine = 'another-engine';
+        expect(await capture.lifecycle.remove!()).toEqual({ status: 'termination_incomplete' });
+        expect(removals).toBe(1);
+    });
+
+    it('refuses retained candidate removal on another engine and preserves the matching generation for later cleanup', async () => {
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const prefix = ['--host', 'tcp://retained-engine:2375'];
+        const requests: string[][] = [];
+        let actualEngine = 'different-engine';
+        let present = true;
+        const capture = createNativeComposeLifecycle({ args, engineId: 'retained-engine',
+            environment: { composeService: 'worker', containerIds: ['a'.repeat(64)] }, io: { async run(request) {
+                expect(request.cwd).toBe('/release');
+                expect(request.env).toEqual({ DOCKER_CONTEXT: 'retained-context' });
+                expect(request.args.slice(0, prefix.length)).toEqual(prefix);
+                const nativeArgs = request.args.slice(prefix.length);
+                requests.push([...nativeArgs]);
+                if (nativeArgs[0] === 'info') return { exitCode: 0, stdout: JSON.stringify({ ID: actualEngine }) };
+                if (nativeArgs[0] === 'container' && nativeArgs[1] === 'rm') {
+                    expect(actualEngine).toBe('retained-engine');
+                    expect(nativeArgs).toEqual(['container', 'rm', '--force', 'a'.repeat(64)]);
+                    present = false;
+                    return { exitCode: 0, stdout: '' };
+                }
+                if (nativeArgs[0] === 'ps') return { exitCode: 0, stdout: present && actualEngine === 'retained-engine' ? 'a'.repeat(64) : '' };
+                return { exitCode: 0, stdout: JSON.stringify(present && actualEngine === 'retained-engine' ? [container('a', 'running')] : []) };
+            } } });
+        capture.bindLaunch({ command: '/docker', args: [...prefix, ...args], cwd: '/release', env: { DOCKER_CONTEXT: 'retained-context' }, release() {} });
+        expect(await capture.lifecycle.remove!()).toEqual({ status: 'termination_incomplete' });
+        expect(requests.some(request => request[0] === 'inspect' || request[0] === 'container')).toBe(false);
+        actualEngine = 'retained-engine';
+        expect(await capture.lifecycle.inspect()).toMatchObject({ phase: 'running' });
+        expect(await capture.lifecycle.remove!()).toEqual({ status: 'stopped' });
+        expect(present).toBe(false);
+        expect(await capture.lifecycle.inspect()).toMatchObject({ phase: 'stopped' });
+    });
+
+    it('refuses retained candidate removal without its source engine witness', async () => {
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const requests: string[][] = [];
+        const capture = createNativeComposeLifecycle({ args, environment: { composeService: 'worker', containerIds: ['a'.repeat(64)] },
+            io: { async run(request) { requests.push([...request.args]); return { exitCode: 0, stdout: '[]' }; } } });
+        capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+        expect(await capture.lifecycle.remove!()).toEqual({ status: 'termination_incomplete' });
+        expect(requests).toEqual([]);
+    });
+
+    it('cancels a native accounting read only when its final demand is released', async () => {
+        const id = 'd'.repeat(64);
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const reads: Array<Readonly<{ signal?: AbortSignal; finish(): void }>> = [];
+        let abortFailure: unknown;
+        const capture = createNativeComposeLifecycle({ args, engineId: 'accounting-cancellation-test',
+            environment: { composeService: 'worker', containerIds: [id] }, io: {
+                async events() { return { async dispose() {} }; },
+                async run(request) {
+                    if (!request.args.includes('stats')) return { exitCode: 0, stdout: JSON.stringify([container('d', 'running')]) };
+                    return await new Promise<{ exitCode: number; stdout: string }>((resolve, reject) => {
+                        const aborted = () => reject(abortFailure ?? request.signal?.reason);
+                        request.signal?.addEventListener('abort', aborted, { once: true });
+                        reads.push({ signal: request.signal, finish() {
+                            request.signal?.removeEventListener('abort', aborted);
+                            resolve({ exitCode: 0, stdout: JSON.stringify({ ID: id, CPUPerc: '1%', MemUsage: '1KiB / 1GiB' }) });
+                        } });
+                    });
+                },
+            } });
+        capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+        const observation = await capture.lifecycle.observe!(() => {});
+        const firstDemand = new AbortController();
+        const lastDemand = new AbortController();
+        const failedCleanupDemand = new AbortController();
+        try {
+            const first = capture.lifecycle.readAccounting!({ signal: firstDemand.signal });
+            const last = capture.lifecycle.readAccounting!({ signal: lastDemand.signal });
+            // Early assertion failure still owns the other pending viewer's cleanup.
+            void last.catch(() => {});
+            let released = false;
+            const cancelled = first.then(() => { released = true; return null; }, (error: unknown) => { released = true; return error; });
+            await vi.waitFor(() => expect(reads).toHaveLength(1));
+            firstDemand.abort();
+            await nextTurn();
+            expect(released, 'an aborted visible demand settles without waiting for another viewer').toBe(true);
+            expect(await cancelled).toMatchObject({ name: 'AbortError' });
+            expect(reads[0].signal?.aborted).toBe(false);
+            reads[0].finish();
+            expect(await last).toEqual({ kind: 'sample', samples: [{ nativeResourceId: id, cpuPercent: 1, memoryBytes: 1024 }] });
+            const pending = capture.lifecycle.readAccounting!({ signal: lastDemand.signal });
+            const finalCancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+            await vi.waitFor(() => expect(reads).toHaveLength(2));
+            lastDemand.abort();
+            await finalCancelled;
+            expect(reads[1].signal?.aborted).toBe(true);
+            await nextTurn();
+            abortFailure = new PluginError({ code: 'plugin_exec_termination_incomplete', message: 'Cancelled native query custody is unsettled' });
+            const failing = capture.lifecycle.readAccounting!({ signal: failedCleanupDemand.signal });
+            const failedCleanup = expect(failing).rejects.toMatchObject({ code: 'plugin_exec_termination_incomplete' });
+            await vi.waitFor(() => expect(reads).toHaveLength(3));
+            failedCleanupDemand.abort();
+            await failedCleanup;
+        } finally { firstDemand.abort(); lastDemand.abort(); failedCleanupDemand.abort(); for (const read of reads) read.finish(); await observation.dispose(); }
+    });
 
     it('samples one admitted full-container accounting batch on demand and leaves unknown metrics null', async () => {
         const ids = ['a'.repeat(64), 'b'.repeat(64)];
@@ -78,6 +299,174 @@ describe('Compose exact native resource lifetime', () => {
         } finally { release(); await observation.dispose(); }
         expect(await capture.lifecycle.readAccounting!()).toEqual({ kind: 'unavailable', reason: 'unavailable' });
         expect(requests.filter(request => request.includes('stats'))).toHaveLength(6);
+    });
+
+    it('proves HTTP subscription over the supervised Docker transport and cancels its child', async () => {
+        // The OS process is the boundary: mimic Docker dial-stdio's transparent
+        // stream with a real child, leaving HTTP framing/observation real.
+        const script = `process.stdin.once('data', () => {
+            process.stdout.write('HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n');
+            const event = JSON.stringify({Type:'container',Action:'die',Actor:{ID:'${'a'.repeat(64)}'}})+'\\n';
+            process.stdout.write(Buffer.byteLength(event).toString(16)+'\\r\\n'+event+'\\r\\n');
+        }); process.stdin.resume();`;
+        const controller = new AbortController();
+        let observed!: () => void;
+        const delivered = new Promise<void>(resolve => { observed = resolve; });
+        const events: unknown[] = [];
+        const open = openDockerEngineEvents({ command: process.execPath, args: [], cwd: process.cwd(), env: {}, release() {} }, ['-e', script, '--']);
+        const subscription = await open({ signal: controller.signal, disconnected() {}, event(value) { events.push(value); observed(); } });
+        try {
+            await delivered;
+            expect(events).toEqual([{ Type: 'container', Action: 'die', Actor: { ID: 'a'.repeat(64) } }]);
+        } finally {
+            controller.abort();
+            await subscription.dispose();
+        }
+    });
+
+    it('joins shared native teardown when abort and supervisor disposal overlap', async () => {
+        let release!: () => void;
+        let entered!: () => void;
+        const teardown = new Promise<void>(resolve => { release = resolve; });
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const capture = createNativeComposeLifecycle({ args, engineId: 'engine-teardown-join-test',
+            environment: { composeService: 'worker', containerIds: ['a'.repeat(64)] }, io: {
+                async events() { return { async dispose() { entered(); await teardown; } }; },
+                async run() { return { exitCode: 0, stdout: JSON.stringify([container('a', 'running')]) }; },
+            } });
+        capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+        const supervisor = createManagedServiceProcessSupervisorHost({}).bind({ kind: 'project', isOccurrenceCurrent: () => true });
+        let observationReleased = false;
+        const handle = await supervisor.supervise({ id: 'engine-teardown-join-test', watchdog: { intervalMs: 5000, missedIntervals: 2 },
+            mode: { kind: 'native', observationOnly: true, builtinLifecycle: capture.lifecycle,
+                async releaseObservation() { observationReleased = true; } } });
+        let settled = false;
+        const disposal = handle.dispose().then(() => { settled = true; });
+        try {
+            await started;
+            for (let index = 0; index < 20; index++) await Promise.resolve();
+            expect(settled).toBe(false);
+            expect(observationReleased).toBe(false);
+        } finally { release(); await disposal; }
+        expect(observationReleased).toBe(true);
+    });
+
+    it.each([[false, false], [true, false], [false, true]] as const)('transfers the engine stream before its source capture releases native environment custody (disconnected=%s, allRetire=%s)', async (disconnected, allRetire) => {
+        const ids = ['a'.repeat(64), 'b'.repeat(64)];
+        const operations: string[] = [];
+        const leases = ids.map(() => createProviderRedactionLease({ values: ['native-environment-custody'] }));
+        let finishTeardown!: () => void;
+        const teardown = new Promise<void>(resolve => { finishTeardown = resolve; });
+        let active = 0;
+        let maximum = 0;
+        let disconnectSource: (() => void) | undefined;
+        const host = createManagedServiceProcessSupervisorHost({});
+        const supervisor = host.bind({ kind: 'project', isOccurrenceCurrent: () => true });
+        const handles = [];
+        for (const [index, id] of ids.entries()) {
+            const project = `happier-${id[0]}`;
+            const args = ['compose', '--project-name', project, '--file', '/release/compose.yaml'];
+            const capture = createNativeComposeLifecycle({ args, engineId: 'engine-source-custody-test',
+                environment: { composeService: 'worker', containerIds: [id] }, io: {
+                    async events(request) {
+                        if (index === 0) disconnectSource = request.disconnected;
+                        operations.push(`start:${id[0]}`);
+                        active++;
+                        maximum = Math.max(maximum, active);
+                        return { async dispose() {
+                            if (index === 0) await teardown;
+                            active--;
+                            operations.push(`stop:${id[0]}`);
+                        } };
+                    },
+                    async run(request) {
+                        return { exitCode: 0, stdout: JSON.stringify(ids.filter(nativeId => request.args.includes(nativeId)).map(nativeId => ({
+                            ...container(nativeId[0], 'running'), State: { Status: 'running', Health: { Status: 'healthy' } },
+                            Config: { Labels: { 'com.docker.compose.project': `happier-${nativeId[0]}`, 'com.docker.compose.service': 'worker' } },
+                        }))) };
+                    },
+                } });
+            const launch = { command: '/docker', args, cwd: '/release', env: {}, secretRedactionLease: leases[index],
+                release() { operations.push(`release:${id[0]}`); leases[index].close(); } };
+            capture.bindLaunch(launch);
+            handles.push(await supervisor.supervise({ id: `engine-source-${id[0]}`, watchdog: { intervalMs: 5000, missedIntervals: 2 },
+                mode: { kind: 'native', observationOnly: true, builtinLifecycle: capture.lifecycle,
+                    async releaseObservation() { launch.release(); } } }));
+        }
+        if (disconnected) disconnectSource?.();
+        const disposal = handles[0].dispose();
+        const otherDisposal = allRetire ? handles[1].dispose() : undefined;
+        try {
+            for (let index = 0; index < 20; index++) await Promise.resolve();
+            expect(leases[0].isActive()).toBe(true);
+            expect(operations).toEqual(['start:a']);
+            finishTeardown();
+            await disposal;
+            await otherDisposal;
+            if (allRetire) {
+                expect(operations).not.toContain('start:b');
+                expect(operations.indexOf('release:a')).toBeGreaterThan(operations.indexOf('stop:a'));
+            } else expect(operations).toEqual(['start:a', 'stop:a', 'start:b', 'release:a']);
+            expect(leases[0].isActive()).toBe(false);
+            expect(leases[1].isActive()).toBe(!allRetire);
+            if (!allRetire) expect(handles[1].snapshot().state).toBe('healthy');
+            expect(maximum).toBe(1);
+        } finally {
+            finishTeardown();
+            await disposal;
+            await handles[1].dispose();
+        }
+        expect(active).toBe(0);
+        expect(leases[1].isActive()).toBe(false);
+    });
+
+    it('keeps one engine stream while unrelated projects overlap last-observer teardown', async () => {
+        let release!: () => void;
+        let entered!: () => void;
+        const teardown = new Promise<void>(resolve => { release = resolve; });
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        let subscriptions = 0;
+        let active = 0;
+        let maximum = 0;
+        const ids = ['a'.repeat(64), 'b'.repeat(64)];
+        const io = {
+            async events() {
+                subscriptions++;
+                active++;
+                maximum = Math.max(maximum, active);
+                const first = subscriptions === 1;
+                return { async dispose() { if (first) { entered(); await teardown; } active--; } };
+            },
+            async run(request: Parameters<ProjectNativeToolchainIo['run']>[0]) {
+                return { exitCode: 0, stdout: JSON.stringify(ids.filter(id => request.args.includes(id)).map(id => ({
+                    ...container(id[0], 'running'), Config: { Labels: {
+                        'com.docker.compose.project': `happier-${id[0]}`, 'com.docker.compose.service': 'worker',
+                    } },
+                }))) };
+            },
+        };
+        const captures = ids.map(id => {
+            const args = ['compose', '--project-name', `happier-${id[0]}`, '--file', '/release/compose.yaml'];
+            const capture = createNativeComposeLifecycle({ args, io, engineId: 'engine-turnover-test',
+                environment: { composeService: 'worker', containerIds: [id] } });
+            capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+            return capture;
+        });
+        const first = await captures[0].lifecycle.observe!(() => {});
+        const disposal = first.dispose();
+        await started;
+        const second = captures[1].lifecycle.observe!(() => {});
+        try {
+            for (let index = 0; index < 20; index++) await Promise.resolve();
+            expect(subscriptions).toBe(1);
+        } finally {
+            release();
+            await disposal;
+            await (await second).dispose();
+        }
+        expect(maximum).toBe(1);
+        expect(active).toBe(0);
     });
 
     it('shares one proven engine subscription and outage recovery across 120 admitted services', async () => {
@@ -202,6 +591,115 @@ describe('Compose exact native resource lifetime', () => {
         expect(subscriptions).toHaveLength(5);
     });
 
+    it('derives an interactive shell only from the admitted Compose service generation', async () => {
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const requests: Array<Parameters<ProjectNativeToolchainIo['run']>[0]> = [];
+        let current = true;
+        let released = 0;
+        let selectedEngine = 'shell-engine';
+        const redaction = createProviderRedactionLease({ values: ['shell-secret'] });
+        const observer = { command: '/docker', args, cwd: '/release', env: { PATH: '/bin', UNREVIEWED: 'ambient' },
+            secretRedactionLease: redaction, release() { released += 1; } };
+        const control = createNativeComposeLifecycle({ args, engineId: 'shell-engine', retainLaunch: () => observer,
+            environment: { composeService: 'worker', containerIds: ['a'.repeat(64)] }, io: { async run(request) {
+            requests.push(request);
+            return { exitCode: 0, stdout: request.args[0] === 'info' ? JSON.stringify({ ID: selectedEngine })
+                : request.args.includes('ps') ? (current ? 'a' : 'b').repeat(64)
+                : JSON.stringify([container(current ? 'a' : 'b', 'running')]) };
+        } } });
+        control.bindLaunch(observer);
+        const launch = await control.lifecycle.shell?.();
+        expect(launch).toMatchObject({ command: '/docker',
+            args: [...args, 'exec', '-it', 'worker', '/bin/sh'], cwd: '/release', env: { PATH: '/bin', COMPOSE_DISABLE_ENV_FILE: '1' } });
+        // Owner 2026-10-30 keeps the trusted machine profile; the exact
+        // admitted Compose operands above, not ambient filtering, select it.
+        expect(launch?.env.UNREVIEWED).toBe('ambient');
+        expect(released).toBe(0);
+        await launch?.release();
+        await launch?.release();
+        expect(released).toBe(1);
+        expect(requests.every(request => !request.args.includes('exec'))).toBe(true);
+        current = false;
+        await expect(control.lifecycle.shell?.()).rejects.toMatchObject({ code: 'deployment_generation_required' });
+        current = true;
+        selectedEngine = 'different-engine';
+        await expect(control.lifecycle.shell?.()).rejects.toMatchObject({ code: 'deployment_generation_required' });
+        expect(released).toBe(2);
+        redaction.close();
+        selectedEngine = 'shell-engine';
+        await expect(control.lifecycle.shell?.()).rejects.toMatchObject({
+            code: 'secret_redaction_redeploy_required', retryable: false,
+        });
+        expect(released).toBe(3);
+        expect(requests.every(request => !request.args.includes('exec'))).toBe(true);
+    });
+
+    it('refuses a replacement before the first Environment observation', async () => {
+        const requests: string[][] = [];
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const control = createNativeComposeLifecycle({ args, environment: { composeService: 'worker', containerIds: ['a'.repeat(64)] },
+            io: { async run(request) {
+                requests.push([...request.args]);
+                return { exitCode: 0, stdout: request.args.includes('ps') ? 'b'.repeat(64)
+                    : request.args.includes('inspect') ? JSON.stringify([container('b', 'running')]) : '' };
+            } } });
+        control.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+        expect(await control.lifecycle.inspect()).toMatchObject({ phase: 'unknown' });
+        await expect(control.lifecycle.restart?.()).rejects.toMatchObject({ code: 'deployment_generation_required' });
+        expect(await control.lifecycle.stop()).toEqual({ status: 'termination_incomplete' });
+        expect(requests.some(request => request.includes('compose'))).toBe(false);
+    });
+    it('returns UTF-8 bounded pages and refuses a cursor after the observed member set changes', async () => {
+        let id = 'a';
+        const requests: string[][] = [];
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const control = createNativeComposeLifecycle({ args, environment: { composeService: 'worker', containerIds: ['a'.repeat(64)] }, io: { async run(request) {
+            requests.push([...request.args]);
+            return { exitCode: 0, stdout: request.args.includes('ps') ? id.repeat(64)
+                : request.args.includes('inspect') ? JSON.stringify([container(id, 'running')]) : 'ééééé' };
+        } } });
+        control.bindLaunch({ command: '/docker', args, cwd: '/release', env: {},
+            secretRedactionLease: createProviderRedactionLease({ values: [] }), release() {} });
+        await control.lifecycle.inspect();
+        expect(requests.filter(request => request.includes('logs'))).toHaveLength(0);
+        const result = await control.lifecycle.logs?.({ kind: 'read', maxBytes: 5 });
+        expect(result).toMatchObject({ kind: 'page', page: { text: 'éé', truncated: true, nextCursor: null } });
+        if (!result || !('kind' in result) || result.kind !== 'page') throw new Error('Expected a native log page');
+        id = 'b';
+        await control.lifecycle.inspect();
+        const reads = requests.filter(request => request.includes('logs')).length;
+        expect(await control.lifecycle.logs?.({ kind: 'read', maxBytes: 5,
+            cursor: { sourceRevision: result.page.sourceRevision, token: '' } })).toMatchObject({ kind: 'source-changed' });
+        expect(requests.filter(request => request.includes('logs'))).toHaveLength(reads);
+        const events: unknown[] = [];
+        const beforeWatch = requests.length;
+        const watch = await control.lifecycle.logs?.({ kind: 'watch', maxBytes: 5, emit: result => events.push(result) });
+        expect(events).toEqual([{ kind: 'unavailable', reason: 'unsupported' }]);
+        expect(requests).toHaveLength(beforeWatch);
+        if (!watch || !('dispose' in watch)) throw new Error('Expected a native watch disposal');
+        await watch.dispose();
+    });
+
+    it('redacts only delivered secret material in post-detach generation logs', async () => {
+        const secretRedactionLease = createProviderRedactionLease({ values: ['s0-secret-sentinel'] });
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml', 'up', '--detach', 'worker'];
+        const control = createNativeComposeLifecycle({ args, io: { async run(request) {
+            return { exitCode: 0, stdout: request.args.includes('ps') ? 'a'.repeat(64)
+                : request.args.includes('inspect') ? JSON.stringify([container('a', 'running')])
+                    : 'after-detach s0-secret-sentinel PORT=3000 COMMIT=abc123' };
+        } } });
+        control.bindLaunch({ command: '/docker', args, cwd: '/release',
+            env: { S0_SECRET: 's0-secret-sentinel', PORT: '3000', COMMIT: 'abc123' },
+            secretRedactionLease, release() { secretRedactionLease.close(); } });
+        control.lifecycle.markStarted?.();
+        await control.lifecycle.inspect();
+        expect(control.lifecycle.redactedValues).toEqual(['s0-secret-sentinel']);
+        expect(await control.lifecycle.logs?.({ kind: 'read', maxBytes: 8192 }))
+            .toMatchObject({ kind: 'page', page: { text: 'after-detach [REDACTED] PORT=3000 COMMIT=abc123' } });
+        secretRedactionLease.close();
+        await expect(control.lifecycle.logs?.({ kind: 'read', maxBytes: 8192 })).rejects.toMatchObject({ code: 'secret_redaction_unavailable' });
+    });
+
     it('keeps person Environment logs readable with incomplete masking while automation refuses and the app keeps running', async () => {
         const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
         const requests: string[][] = [];
@@ -301,6 +799,28 @@ describe('Compose exact native resource lifetime', () => {
         expect(requests.some(request => request.includes('compose'))).toBe(false);
         expect(requests.some(request => request.includes('up') || request.includes('down'))).toBe(false);
         expect(await webLifecycle.inspect()).toMatchObject({ phase: 'running', readiness: 'ready' });
+    });
+
+    it('refuses Environment controls when the admitted native generation is absent or replaced', async () => {
+        let id = 'a'.repeat(64);
+        const requests: string[][] = [];
+        const io: Pick<ProjectNativeToolchainIo, 'run'> = { async run(request) {
+            const args = [...request.args];
+            requests.push(args);
+            return { exitCode: 0, stdout: args.includes('ps') ? id
+                : args.includes('inspect') ? JSON.stringify([{ ...container(id.slice(0, 1), 'running'), Id: id }]) : '' };
+        } };
+        const args = ['compose', '--project-name', 'happier-test', '--file', '/release/compose.yaml'];
+        const control = createNativeComposeLifecycle({ args, io, environment: { composeService: 'worker', containerIds: ['a'.repeat(64)] } });
+        control.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
+        expect(await control.lifecycle.inspect()).toMatchObject({ phase: 'running' });
+        id = 'b'.repeat(64);
+        await expect(control.lifecycle.restart?.()).rejects.toMatchObject({ code: 'deployment_generation_required' });
+        expect(await control.lifecycle.stop()).toEqual({ status: 'termination_incomplete' });
+        id = '';
+        expect(await control.lifecycle.inspect()).toMatchObject({ phase: 'unknown' });
+        await expect(control.lifecycle.start?.()).rejects.toMatchObject({ code: 'deployment_generation_required' });
+        expect(requests.some(request => request.includes('compose'))).toBe(false);
     });
 
     function fixture() {
@@ -450,7 +970,7 @@ describe('Compose exact native resource lifetime', () => {
             const id = (await run(list)).stdout.trim();
             expect(id).toMatch(/^[a-f0-9]{64}$/u);
             const observation = await first.lifecycle.inspect();
-            if (observation.phase !== 'running') throw new Error(`Native fixture did not stay running: ${await first.lifecycle.logs?.({ kind: 'read', maxBytes: 8_192 })}`);
+            if (observation.phase !== 'running') throw new Error(`Native fixture did not stay running: ${JSON.stringify(await first.lifecycle.logs?.({ kind: 'read', maxBytes: 8_192 }))}`);
             expect(observation).toMatchObject({ phase: 'running', readiness: 'not_reported' });
             expect(observation.endpoint).toBeTruthy();
             await expect(fetch(observation.endpoint!).then(response => response.text())).resolves.toContain('fx16-http');

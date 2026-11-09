@@ -1,8 +1,8 @@
-import type { SessionFollowOriginalOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 import { z } from 'zod/mini';
 import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { RunFollowOccurrenceV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { SessionFollowRuleSourceOccurrenceV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
+import type { SessionFollowOriginalOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
 
 /** Source-original hint only. The dispatcher re-reads retained source and relation authority. */
 export const SessionFollowRunOccurrenceSchema = RunFollowOccurrenceV1Schema;
@@ -11,6 +11,16 @@ export const SessionFollowOccurrenceNotificationSchema = z.union([
     SessionFollowRuleSourceOccurrenceV1Schema, SessionFollowRunOccurrenceSchema,
 ]);
 export type SessionFollowOccurrenceNotification = z.infer<typeof SessionFollowOccurrenceNotificationSchema>;
+
+/** Only host identities/frontiers enter diagnostics, never authored original content. */
+export function projectSessionFollowOccurrenceDiagnostic(occurrence: SessionFollowOriginalOccurrenceV1): Readonly<{
+    sourceSessionId: string; sourceMessageSeq?: number; sourceTurnId?: string; agentStateVersion?: number;
+}> {
+    return { sourceSessionId: occurrence.sourceSessionId,
+        ...('sourceMessage' in occurrence ? { sourceMessageSeq: occurrence.sourceMessage.seq }
+            : 'sourceTurn' in occurrence ? { sourceTurnId: occurrence.sourceTurn.id }
+                : { agentStateVersion: occurrence.sourceRequests.agentStateVersion }) };
+}
 
 /** Private source-to-original-owner contribution. Rule definitions and identities never leave the evaluator. */
 export const SessionActivityChangedResultSchema = z.strictObject({
@@ -34,12 +44,3 @@ export const SessionActivityChangedResponseSchema = z.strictObject({
     ok: z.literal(true),
     ...SessionActivityChangedResultSchema.shape,
 });
-
-export function projectSessionFollowOccurrenceDiagnostic(occurrence: SessionFollowOriginalOccurrenceV1): Readonly<{
-    sourceSessionId: string; sourceMessageSeq?: number; sourceTurnId?: string; agentStateVersion?: number;
-}> {
-    return { sourceSessionId: occurrence.sourceSessionId,
-        ...('sourceMessage' in occurrence ? { sourceMessageSeq: occurrence.sourceMessage.seq }
-            : 'sourceTurn' in occurrence ? { sourceTurnId: occurrence.sourceTurn.id }
-                : { agentStateVersion: occurrence.sourceRequests.agentStateVersion }) };
-}

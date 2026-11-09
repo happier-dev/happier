@@ -10,12 +10,15 @@ import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { prepareRequesterSessionBootstrap, type AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { StoredCredentials } from '@/persistence';
 import type { MachineInstallationIdentityV1 } from '@happier-dev/protocol';
+import type { McpServerCatalogV1 } from '@happier-dev/protocol';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
-
 import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowMutationV1Schema, type PromptLibraryContentV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 
 export type ProjectSessionRuntimeFixture = Readonly<{
@@ -34,10 +37,16 @@ export type ProjectSessionRuntimeFixture = Readonly<{
 export async function createProjectSessionRuntimeFixture(options: Readonly<{
   serverId?: string; serverUrl?: string; accountSettings?: Readonly<Record<string, unknown>>; boundSessionId?: string;
   credentials?: StoredCredentials;
-  readAdditionalHttpResponse?: (url: string, request: import('axios').AxiosRequestConfig | undefined) => Promise<Readonly<{ status: number; data: unknown }> | undefined>;
+  accountId?: string;
   homeServerIdentityId?: string;
   machineAccess?: Readonly<{ custodianAccountId: string; role: 'use' | 'manage' }>;
+  agentIsolationEnabled?: boolean;
+  mcpCatalog?: McpServerCatalogV1;
+  additionalAccountCredentials?: readonly StoredCredentials[];
+  readAdditionalHttpResponse?: (url: string, request: import('axios').AxiosRequestConfig | undefined) => Promise<Readonly<{ status: number; data: unknown }> | undefined>;
 }> = {}): Promise<ProjectSessionRuntimeFixture> {
+  const accountId = options.accountId ?? 'requester';
+  const mcpCatalog = options.mcpCatalog ? McpServerCatalogV1Schema.parse(options.mcpCatalog) : undefined;
   const lifetime = new AbortController();
   onTestFinished(() => lifetime.abort());
   const directory = await mkdtemp(join(tmpdir(), 'project-session-runtime-'));
@@ -70,15 +79,23 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
     promptRows.set(key, { revision, content: mutation.content });
     return { status: 'updated', revision, cursor: revision };
   };
-  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async url => {
-    const path = new URL(String(url)).pathname;
-    if (path === '/v1/account/profile') return Response.json({ id: 'requester' });
+  const machineAccess = options.machineAccess ?? { custodianAccountId: accountId, role: 'manage' as const };
+  const nativeFetch = globalThis.fetch;
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input, init) => {
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+    // The composed seed fixture owns its listening port and real transfer HTTP.
+    if (url.hostname === '127.0.0.1' && url.pathname.startsWith('/machine-transfers/')) return await nativeFetch(input, init);
+    const path = url.pathname;
+    if (path === '/v1/account/profile') return Response.json({ id: accountId });
     throw new Error(`Unexpected Home fetch: ${path}`);
   }));
   vi.spyOn(axios, 'get').mockImplementation(async (url: string, requestOptions) => {
     const supplied = await options.readAdditionalHttpResponse?.(url, requestOptions);
     if (supplied !== undefined) return supplied;
-    if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'requester' } };
+    if (url.endsWith('/v1/account/profile')) {
+      const additional = options.additionalAccountCredentials?.find(credentials => requestOptions?.headers?.Authorization === `Bearer ${credentials.token}`);
+      return { status: 200, data: { id: additional ? readAccountIdFromToken(additional.token) : accountId } };
+    }
     if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
     if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -86,33 +103,36 @@ export async function createProjectSessionRuntimeFixture(options: Readonly<{
     if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: options.accountSettings ?? {} }, version: 0 } };
     if (url.endsWith('/v1/account/entity-rows/prompt-library')) return { status: 200, data: { status: 'listed',
       rows: [...promptRows].map(([key, row]) => ({ key, ...row })) } };
+    if (url.endsWith('/v1/account/entity-rows/mcp')) return { status: 200, data: mcpCatalog
+      ? { status: 'present', revision: 1, content: { t: 'plain', v: mcpCatalog } } : { status: 'absent' } };
     const sessionId = new URL(url).pathname.match(/^\/v2\/sessions\/([^/]+)$/u)?.[1];
     if (sessionId) return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId,
-      encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine' }), dataEncryptionKey: null, share: null }) } };
+      encryptionMode: 'plain', metadata: JSON.stringify(createTestMetadata({ machineId: 'machine', path: directory })), dataEncryptionKey: null, share: null }) } };
     if (options.boundSessionId && new URL(url).pathname === `/v1/access-keys/${options.boundSessionId}/machine`) {
       return { status: 200, data: { accessKey: { sessionId: options.boundSessionId, machineId: 'machine',
         data: 'session-machine-control:fixture' } } };
     }
     if (url.endsWith('/v1/machines/machine/access')) return { status: current ? 200 : 403, data: current
-      ? MachineAccessGrantsListResponseV1Schema.parse({ machineId: 'machine', custodian: { accountId: options.machineAccess?.custodianAccountId ?? 'requester', displayName: 'Requester' },
-        access: { custodian: { accountId: options.machineAccess?.custodianAccountId ?? 'requester', displayName: 'Requester' }, role: options.machineAccess?.role ?? 'manage', resourceMode: 'plain', accessState: 'ready' },
-        canManage: (options.machineAccess?.role ?? 'manage') === 'manage', grants: [], ownDirectGrant: false, ownAccessSources: [] })
+      ? MachineAccessGrantsListResponseV1Schema.parse({ machineId: 'machine', custodian: { accountId: machineAccess.custodianAccountId, displayName: 'Requester' },
+        access: { custodian: { accountId: machineAccess.custodianAccountId, displayName: 'Requester' }, role: machineAccess.role, resourceMode: 'plain', accessState: 'ready' },
+        canManage: machineAccess.role === 'manage', grants: [], ownDirectGrant: false, ownAccessSources: [] })
       : { kind: 'refused', code: 'access_denied' } };
     if (url.endsWith('/v1/machines/machine')) return { status: 200, data: { machine: {
       id: 'machine', managedMachineRef: null, installationId: installation.installationId, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-      access: { custodian: { accountId: options.machineAccess?.custodianAccountId ?? 'requester', displayName: 'Requester' },
-        role: options.machineAccess?.role ?? 'manage', resourceMode: 'plain', accessState: 'ready' },
+      access: { custodian: { accountId: machineAccess.custodianAccountId, displayName: 'Requester' },
+        role: machineAccess.role, resourceMode: 'plain', accessState: 'ready' },
       metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
       metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', homeDir: '/home/user',
-        happyCliVersion: 'test', happyHomeDir: '/home/user/.happier' }),
+        happyCliVersion: 'test', happyHomeDir: '/home/user/.happier',
+        ...(options.agentIsolationEnabled !== undefined ? { agentIsolation: { enabled: options.agentIsolationEnabled } } : {}) }),
     } } };
     throw new Error(`Unexpected Home read: ${new URL(url).pathname}`);
   });
   let currentBootstrap: Awaited<ReturnType<typeof prepareRequesterSessionBootstrap>> = null;
   const createBootstrap = async () => {
     const prepared = await prepareRequesterSessionBootstrap({ credentials: options.credentials ?? {
-      token: `e30.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature`, encryption: null },
-      attribution: { serverId: options.serverId ?? 'session-home', accountId: 'requester', machineId: 'machine', installationId: installation.installationId },
+      token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null },
+      attribution: { serverId: options.serverId ?? 'session-home', accountId, machineId: 'machine', installationId: installation.installationId },
       boundary: { serverId: options.serverId ?? 'session-home', serverHttpBaseUrl: options.serverUrl ?? 'https://session-home.test', happyHomeDir: directory },
       ...(options.homeServerIdentityId ? { homeServerIdentityId: options.homeServerIdentityId } : {}),
       ...(options.boundSessionId ? { boundSessionId: options.boundSessionId } : {}),

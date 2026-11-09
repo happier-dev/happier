@@ -24,6 +24,20 @@ import { McpRequestAuthResultV1Schema, type McpRequestAuthPort, MCP_REQUEST_AUTH
 import { createConnectedAccountRequestAuthClient } from '@happier-dev/plugin-sdk/connected-accounts/request-auth';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createCliMcpServerStoreForOperation } from '@/settings/mcp/mcpServerStore';
+import { createDaemonMcpRequestAuthForTest } from '@/daemon/connectedServices/requestAuth/createDaemonMcpRequestAuthForTest';
+import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
+import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createQualifiedConnectedAccountDaemonPersistence, createAccountSettingsConnectedAccountSecrets } from '@/daemon/connectedServices/qualifiedConnectedAccountDaemonPersistence';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
+import { createMcpSignInConnectedAccountRegistration } from '@/mcp/oauth/mcpSignInRuntime';
 import { logger } from '@/ui/logger';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -32,6 +46,7 @@ import { activateRequesterPendingSession } from '@/daemon/sessions/pendingSessio
 import { releaseUnretainedRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { createEphemeralTlsServerFixture } from '../../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
@@ -50,6 +65,103 @@ vi.mock('@/daemon/controlServer', async importOriginal => {
   } };
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); boundary.control = null; });
+
+it.each(['plain', 'e2ee'] as const)('issues a capability from a cold %s daemon Account and requires sign-in only for an absent grant', async mode => {
+  const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
+    contributes: createResolvedContributionRegistry({}), pluginIds: [],
+  } });
+  onTestFinished(() => runtime.dispose());
+  onTestFinished(resetActiveAccountSettingsSnapshotForTests);
+  const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: `daemon-mcp-${mode}` })).toString('base64url')}.signature`, encryption: mode === 'e2ee'
+    ? { type: 'legacy' as const, secret: new Uint8Array(32).fill(19) } : null };
+  const settings = { experiments: false, featureToggles: { 'execution.runs': true } };
+  setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(settings), rawSettings: settings,
+    settingsVersion: 5531, loadedAtMs: 1, settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(credentials),
+    scopeKey: resolveAccountSettingsScopeKey(credentials) });
+  const resource = 'https://oauth.example.test/mcp';
+  const ref = { service: HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1, accountId: 'oauth-server' };
+  if (!runtime.registry.connectedAccountContributions?.describe(ref.service)) {
+    runtime.registry.connectedAccountContributions?.registerHostConnectedAccountRuntime(createMcpSignInConnectedAccountRegistration());
+  }
+  const catalog = McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: ref.accountId, name: 'oauth_fixture',
+    transport: 'http', remote: { url: resource, headers: {}, auth: { kind: 'oauth' } },
+    env: {}, createdAt: 1, updatedAt: 1 }], bindings: [] });
+  const material = credentials.encryption;
+  const contentKeyFingerprint = material ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+    createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint) : null;
+  const reads: string[] = [];
+  let grant: 'present' | 'absent' | 'invalid' | 'unreachable' = 'present';
+  const envelope = (kind: 'credential' | 'configuration', payload: unknown) => {
+    if (mode === 'plain') return sealQualifiedConnectedAccountContentEnvelope({ kind, accountMode: 'plain', payload,
+      randomBytes: length => new Uint8Array(length).fill(7) });
+    if (!material) throw new Error('E2EE fixture material is missing');
+    return sealQualifiedConnectedAccountContentEnvelope({ kind, accountMode: 'e2ee', material, payload,
+      randomBytes: length => new Uint8Array(length).fill(7) });
+  };
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    reads.push(path);
+    if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+      mode, version: 1, settingsVersion: 5531, signingKeyFingerprint: null,
+      contentKeyFingerprint, updatedAt: 1,
+      ...(mode === 'e2ee' ? { recipientEnvelopeReadiness: { status: 'available' } } : {}),
+    } };
+    if (path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1) return { status: 200, data: { status: 'present', revision: 3,
+      content: sealMcpServerCatalogContentV1({ mode, material, catalog }) } };
+    if (path === '/v4/connect/qualified/credential') {
+      if (grant === 'absent') return { status: 404, data: {} };
+      if (grant === 'unreachable') return { status: 503, data: {} };
+      if (grant === 'invalid') return { status: 200, data: { private: 'invalid-credential-payload' } };
+      return { status: 200, data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref,
+        authenticationModeId: 'oauth', revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        configurationRevision: 'config-1', metadata: { scopes: ['read'] },
+        content: envelope('credential', { v: 1, values: { accessToken: 'fixture-bearer' } }) }) };
+    }
+    if (path === '/v4/connect/qualified/configuration') return { status: 200,
+      data: QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({ target: { kind: 'account', ref },
+        authenticationModeId: 'oauth', revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        configurationRevision: 'config-1', configurationContent: envelope('configuration', {
+          values: { serverId: ref.accountId, resource }, secretRefs: {}, secretValues: {},
+        }) }) };
+    throw new Error(`Unexpected cold daemon Account boundary: ${path}`);
+  });
+  const readMode = async (signal?: AbortSignal) => (await fetchAccountEncryptionCurrentness({ token: credentials.token, signal })).mode;
+  const persistence = createQualifiedConnectedAccountDaemonPersistence({ credentials,
+    getAccountEncryptionMode: () => readMode(),
+    secrets: createAccountSettingsConnectedAccountSecrets({ expectedScopeKey: resolveAccountSettingsScopeKey(credentials) }) });
+  const established = createQualifiedConnectedAccountEstablishedRuntimeOwner({ credentials, reloadController: runtime.controller,
+    getAccountEncryptionMode: readMode, configuration: persistence.configuration });
+  const purposes = createDaemonConnectedAccountPurposeBindingRuntime({ establishedRuntimeOwner: established,
+    reloadController: runtime.controller, resolveQualifiedConnectedAccountV4Support: () => 'advertised', allowNativeAccountCredentials: false });
+  const issue = createDaemonMcpRequestAuthForTest({ credentials, materializationBaseDir: runtime.happyHomeDir,
+    establishedOwner: established, activatePurposeBindings: purposes.activatePurposeBindings,
+    registry: createConnectedAccountRequestAuthSubjectRegistry(), getHttpPort: () => 1,
+    isCurrent: () => runtime.controller.isRuntimeRegistryCurrent(runtime.registry) });
+  const diagnostics = vi.spyOn(logger, 'infoFile');
+  for (let open = 0; open < 2; open++) {
+    const capability = await issue({ serverId: ref.accountId, resource, materializationId: `cold-daemon-${open}` }, null);
+    try {
+      McpRequestAuthResultV1Schema.parse({ kind: 'mcp.request_auth', capabilityFile: capability.capabilityFile, resource: capability.resource });
+      expect((await stat(capability.capabilityFile)).isFile()).toBe(true);
+      expect(diagnostics.mock.calls).toEqual(expect.arrayContaining([
+        ['[mcp] Request-auth issuance phase', expect.objectContaining({ phase: 'initial_admission', status: 'completed' })],
+        ['[mcp] Request-auth issuance phase', expect.objectContaining({ phase: 'authority_commit', status: 'completed' })],
+      ]));
+    } finally { await capability.cleanup(); }
+    await expect(stat(capability.capabilityFile)).rejects.toMatchObject({ code: 'ENOENT' });
+  }
+  expect(getActiveAccountSettingsSnapshot()?.mcpServerCatalog).toMatchObject({ status: 'ready', revision: 3 });
+  expect(reads.filter(path => path === MCP_SERVER_CATALOG_ROWS_ROUTE_V1)).toHaveLength(1);
+  for (const state of ['absent', 'invalid', 'unreachable'] as const) {
+    grant = state;
+    await expect(issue({ serverId: ref.accountId, resource, materializationId: `refused-${state}` }, null))
+      .rejects.toThrow(state === 'absent' ? /^mcp_sign_in_required$/ : /^mcp_request_auth_unavailable$/);
+    expect((await readdir(runtime.happyHomeDir)).filter(name => name.startsWith('mcp-'))).toEqual([]);
+  }
+  grant = 'present';
+  const recovered = await issue({ serverId: ref.accountId, resource, materializationId: 'recovered' }, null);
+  await recovered.cleanup();
+});
 
 it('logs the requester admission refusal before issuance without disclosing Home exception text', async () => {
   vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
@@ -447,9 +559,11 @@ it('admits an OAuth server from the Session requester catalog and supplies reque
       const missingReadsBefore = missingCredentialReads;
       const settings = accountSettingsParse({ ...runnerSnapshot.settings, mcpServersStrictMode: strictMode });
       const notices: unknown[] = [];
+      let metadata = createTestMetadata();
       const prepare = () => runWithServerHttpBaseUrl('https://session-home.test', () => resolveRunnerMcpServers({
         session: { sessionId: h.sessionId, getServerBinding: () => ({ serverId: 'session-home', serverUrl: 'https://session-home.test' }),
-          rpcHandlerManager: new RpcHandlerManager({ scopePrefix: h.sessionId, encryptionMode: 'plain' }), updateMetadata() {},
+          rpcHandlerManager: new RpcHandlerManager({ scopePrefix: h.sessionId, encryptionMode: 'plain' }),
+          getMetadataSnapshot: () => metadata, updateMetadata(update) { metadata = update(metadata); },
           getMcpRequestAuthPort: () => port,
           enqueueSessionEventCommitted: async event => { notices.push(event); return { persisted: true, delivered: true }; } },
         credentials: requester.bootstrap.credentials, accountCredentials: requester.bootstrap.credentials,
@@ -457,7 +571,7 @@ it('admits an OAuth server from the Session requester catalog and supplies reque
         machineId: 'machine', directory: h.cwd, tmpDir: h.f.directory, includeHappierMcpServer: false,
       }));
       if (strictMode) {
-        await expect(prepare()).rejects.toThrow(/^mcp_request_auth_unavailable$/);
+        await expect(prepare()).rejects.toThrow(/^mcp_sign_in_required$/);
         expect(notices).toEqual([]);
       } else {
         for (let startup = 0; startup < 2; startup++) {
@@ -465,14 +579,13 @@ it('admits an OAuth server from the Session requester catalog and supplies reque
           try { expect(optional.mcpServers).toEqual({}); }
           finally { optional.happierMcpServer.stop(); }
         }
-        expect(notices).toHaveLength(2);
-        expect(notices.map(readSessionCapabilityNoticeV1)).toEqual(Array.from({ length: 2 }, () => ({
+        expect(notices.map(readSessionCapabilityNoticeV1)).toEqual([{
           v: 1, items: [{ kind: 'mcp_server', name: 'oauth_fixture', itemId: 'oauth-server',
-            code: 'invalid_server', detail: 'mcp_request_auth_unavailable' }],
-        })));
+            code: 'invalid_server', detail: 'mcp_sign_in_required' }],
+        }]);
       }
       expect(missingCredentialReads).toBeGreaterThan(missingReadsBefore);
-      expect(issuanceFailure).toBe('mcp_request_auth_unavailable');
+      expect(issuanceFailure).toBe('mcp_sign_in_required');
     }
     credentialSnapshotUnavailable = false;
   } finally {

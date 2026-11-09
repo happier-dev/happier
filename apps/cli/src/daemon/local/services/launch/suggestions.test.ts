@@ -212,7 +212,7 @@ describe('buildLocalServiceLauncherSnapshot', () => {
         expect(snapshot.targets[0]).toMatchObject({
             title: 'Local Vite App',
             kind: 'vite',
-            browserTarget: { targetId: 'preview-a' },
+            browserTarget: { targetId: previewId },
         });
         expect(snapshot.targets[1]?.unavailableReason).toBe('launch_unavailable');
         expect(snapshot.targets[1]).not.toHaveProperty('sessionId');

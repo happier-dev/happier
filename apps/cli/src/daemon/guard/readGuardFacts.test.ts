@@ -13,6 +13,7 @@ import { evaluateSessionEligibility } from './sessionEligibility';
 import { createReadGuardFacts } from './readGuardFacts';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { applyDisplayTitleSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -64,12 +65,47 @@ async function fixture() {
   } }));
   const project = { workspace: { id: 'workspace', rootPath: '/project', serverId: 'server', machineId: 'm', createdAtMs: 1 },
     cwd: '/project/nested', requester: { serverId: 'server', accountId: 'account', machineId: 'm', installationId: 'installation' } };
-  const resourceTargets = [{ root: roots[1]!, project }, { root: roots[3]! }];
+  const resourceTargets = [{ root: roots[1]!, project, lifecyclePurpose: 'development' as const },
+    { root: roots[3]!, lifecyclePurpose: 'development' as const }];
   const deferWorkReads = (boundary: () => Promise<void>) => { workReadBoundary = boundary; };
   return { tracked, roots, ownership, inventory, activity, updateWork, deferWorkReads, project, resourceTargets, services: normalizeServices(0), normalizeServices, eligibility };
 }
 
 describe('Guard canonical owner fact projection', () => {
+  it('carries only a real Session title, never a private directory or an English fallback', async () => {
+    const f = await fixture();
+    const metadata = f.tracked.happySessionMetadataFromLocalWebhook!;
+    const read = (tracked: TrackedSession) => createReadGuardFacts({ trackedSessions: () => [tracked], readBrowsers: () => [],
+      readServices: async () => f.services, readInventory: () => f.activity.read(),
+      readSessionEligibility: async () => f.eligibility() })(f);
+    for (const [summary, name, expected] of [
+      [undefined, undefined, null],
+      [{ text: '   ', updatedAt: 1 }, '  ', null],
+      [{ text: '  ', updatedAt: 1 }, '  Authored name  ', 'Authored name'],
+      [undefined, '3f9a0c21', '3f9a0c21'],
+      [{ text: '  Build tests  ', updatedAt: 1 }, 'Authored name', 'Build tests'],
+    ] as const) {
+      const facts = await read({ ...f.tracked, happySessionMetadataFromLocalWebhook: {
+        ...metadata, path: '/home/test/.happier/session-directories/3f9a0c21',
+        sessionDirectoryV1: { v: 1, kind: 'managed' }, summary, name,
+      } });
+      expect(facts.targets.find(target => target.kind === 'session')?.label).toBe(expected);
+    }
+    const currentMetadata = applyDisplayTitleSessionMetadata(metadata, { title: 'Current state title', updatedAt: 2 });
+    expect((await read({ ...f.tracked, happySessionMetadataFromLocalWebhook: currentMetadata }))
+      .targets.find(target => target.kind === 'session')?.label).toBe('Current state title');
+  });
+  it('excludes deployment and infrastructure service purposes from development cleanup', async () => {
+    const f = await fixture();
+    for (const lifecyclePurpose of ['development', 'deployment', 'infrastructure'] as const) {
+      const reader = createReadGuardFacts({ trackedSessions: () => [], readBrowsers: () => [],
+        readServices: async () => f.services, readInventory: () => f.activity.read(),
+        readServiceTargets: () => [{ ...f.resourceTargets[0]!, lifecyclePurpose }],
+        readSessionEligibility: async () => f.eligibility() });
+      expect((await reader(f)).targets.filter(target => target.kind === 'service'))
+        .toHaveLength(lifecyclePurpose === 'development' ? 1 : 0);
+    }
+  });
   it('joins a promoted runner by its own birth, never the original wrapper birth', async () => {
     const f = await fixture();
     const promoted: TrackedSession = { ...f.tracked, pid: 29, processStartTimeMs: 9, sessionRunnerPid: 30,
@@ -211,8 +247,7 @@ describe('Guard canonical owner fact projection', () => {
       scan: async () => { nativeScans++; return { listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 21, establishedConnections: 0 }],
         processes: new Map(f.ownership.snapshot.rows.map(row => [row.pid, { pid: row.pid, ppid: row.ppid ?? undefined,
           censusRow: row, processStartTimeMs: row.start.startTimeMs, command: 'vite' }])), workspaces: [], diagnostics: [] }; },
-      endpointEnricher: createLocalServiceEndpointEnricher({ now: () => 100, timeoutMs: 250, concurrency: 1,
-        successTtlMs: 30_000, failureTtlMs: 5_000, probe: async ({ scheme }) => scheme === 'http' }),
+      endpointEnricher: createLocalServiceEndpointEnricher({ now: () => 100, probe: async ({ scheme }) => scheme === 'http' }),
       pageTitleEnricher: createLocalPageTitleEnricher({ timeoutMs: 10_000, maxBodyBytes: 1_024, concurrency: 1,
         successTtlMs: 30_000, failureTtlMs: 5_000, fetch: async () => {
           enterHttp(); await httpRead; return new Response('<title>Project</title>', { headers: { 'content-type': 'text/html' } });

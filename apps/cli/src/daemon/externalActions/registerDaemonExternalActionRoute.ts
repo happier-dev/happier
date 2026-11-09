@@ -1,12 +1,13 @@
 import { Buffer } from 'node:buffer';
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { ExternalActionAuthorizationHttpResult } from '@/api/externalActionAuthorizationHttp';
 import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { createDaemonControlRequestLifetime as createRequestLifetime } from '../controlRequestLifetime';
 
 import { ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1, AccountApiTokenEncryptionAccessRequestV1Schema, parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
-import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol';
+import type { ExternalActionRequestEnvelope } from '@happier-dev/protocol';
 import type { AccountServerPatEncryptionAccessReader } from '../auth/accountServerPatEncryptionAccess';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES_V2, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, projectExternalActionHttpError, readExternalActionProtectedRequestId } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ExternalActionHttpErrorCode, PreparedExternalActionResponseEnvelope } from '@happier-dev/protocol/actions';
@@ -146,10 +147,7 @@ export function registerDaemonExternalActionRoute(
       machineId: string;
       pat: string;
       signal?: AbortSignal;
-    }>) => Promise<
-      | Readonly<{ ok: true; authorization: ExternalActionExecutionAuthorizationV1 }>
-      | Readonly<{ ok: false; code: 'invalid_token' | 'credential_scope_denied' | 'auth_unavailable' | 'server_unavailable' | 'target_unavailable'; diagnostic?: MachineAvailabilityDiagnosticV1 }>
-    >;
+    }>) => Promise<ExternalActionAuthorizationHttpResult>;
     externalActionMachineRequestPrivateKey?: string | Uint8Array;
     resolveInstallationId?: () => string | null;
     verifyExecutionAuthorization?: VerifyExternalActionExecutionAuthorization;
@@ -241,7 +239,12 @@ export function registerDaemonExternalActionRoute(
             signal: admission.lifetime.signal,
           })
         : null;
-      if (minted && !minted.ok && (minted.code === 'invalid_token' || minted.code === 'credential_scope_denied')) {
+      if (minted && !minted.ok && (minted.code === 'invalid_token' || minted.code === 'credential_scope_denied' || minted.code === 'present_user_required')) {
+        if (minted.code === 'credential_scope_denied' && minted.details !== undefined) {
+          const projected = projectExternalActionHttpError(minted.code);
+          return sendExternalActionJson(reply, projected.statusCode, { ...projected.payload, details: minted.details,
+            ...(minted.failureCause === undefined ? {} : { failureCause: minted.failureCause }) });
+        }
         return sendExternalActionHttpError(reply, minted.code);
       }
       if (minted && !minted.ok && minted.code === 'target_unavailable' && minted.diagnostic) {

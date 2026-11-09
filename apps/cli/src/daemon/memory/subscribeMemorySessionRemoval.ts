@@ -17,8 +17,9 @@ type Subscribe<T> = (listener: (change: T) => void | Promise<void>) => Unsubscri
 export function subscribeMemorySessionRemoval(params: Readonly<{
   memoryWorker: Pick<
     MemoryWorkerHandle,
-    'removeSessions' | 'reconcileRetainedSessionAccess' | 'applySessionArchivedState' | 'noteSessionTranscriptRevised'
+    'removeSessions' | 'reconcileRetainedSessionAccess' | 'applySessionArchivedState' | 'noteSessionTranscriptRevised' | 'noteSessionChanged'
   >;
+  onSessionChanged?: Subscribe<Readonly<{ sessionId: string; removed?: true; memoryInputsChanged?: false }>>;
   onSessionTranscriptRevised?: Subscribe<Readonly<{ sessionId: string; seq: number; messageId?: string }>>;
   onSessionDeletedChange: Subscribe<Readonly<{ sessionId: string }>>;
   onSessionAccessRevoked: Subscribe<Readonly<{ sessionId: string }>>;
@@ -39,6 +40,12 @@ export function subscribeMemorySessionRemoval(params: Readonly<{
       async (change) => await params.memoryWorker.applySessionArchivedState(change),
     ),
   ];
+  if (params.onSessionChanged && params.memoryWorker.noteSessionChanged) {
+    const noteChange = params.memoryWorker.noteSessionChanged;
+    unsubscribes.push(params.onSessionChanged(async change => {
+      if (!change.removed) await noteChange(change);
+    }));
+  }
   if (params.onSessionTranscriptRevised && params.memoryWorker.noteSessionTranscriptRevised) {
     const noteRevision = params.memoryWorker.noteSessionTranscriptRevised;
     unsubscribes.push(params.onSessionTranscriptRevised(async change => await noteRevision(change)));

@@ -22,7 +22,6 @@ export function canDriveQuotaLifecycleEdge(input: Readonly<{
   expectedGroupGeneration: number;
   observedGroupGeneration: number;
   nowMs: number;
-  quotaFreshnessMs: number;
   allowUnconfirmedConfidence?: boolean;
 }>): QuotaLifecycleEvidenceDecision {
   if (input.observedGroupGeneration !== input.expectedGroupGeneration) {
@@ -48,7 +47,7 @@ export function canDriveQuotaLifecycleEdge(input: Readonly<{
   if (!isConnectedServiceQuotaObservationFresh({
     observedAtMs: fetchedAtMs,
     nowMs: input.nowMs,
-    maxAgeMs: Math.min(input.snapshot.staleAfterMs, input.quotaFreshnessMs),
+    maxAgeMs: input.snapshot.staleAfterMs,
   })) {
     return { ok: false, reason: 'stale' };
   }
@@ -61,13 +60,11 @@ export function canDriveSoftSwitch(input: Readonly<{
   expectedGroupGeneration: number;
   observedGroupGeneration: number;
   nowMs: number;
-  quotaFreshnessMs: number;
 }>): QuotaLifecycleEvidenceDecision {
   return canDriveQuotaLifecycleEdge({
     snapshot: input.snapshot,
     expectedGroupGeneration: input.expectedGroupGeneration,
     observedGroupGeneration: input.observedGroupGeneration,
     nowMs: input.nowMs,
-    quotaFreshnessMs: input.quotaFreshnessMs,
   });
 }

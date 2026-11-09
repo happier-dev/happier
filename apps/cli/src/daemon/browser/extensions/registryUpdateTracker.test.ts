@@ -12,6 +12,11 @@ import { createConfiguredBrowserProfileStore } from '../profiles/configuredStore
 import { reloadConfiguration } from '@/configuration';
 import type { RegistryHttpV1 } from '@happier-dev/protocol/registries';
 
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, readFile: vi.fn(actual.readFile), readdir: vi.fn(actual.readdir) };
+});
+
 describe('browser extension updates through the registry tracker', () => {
   it('records a profile-qualified version observation without applying an update', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-extension-tracker-'));
@@ -78,15 +83,25 @@ describe('browser extension updates through the registry tracker', () => {
         expect(await service.execute('browser.extensions.install', { ...request, reviewedPermissions: review.review }))
           .toMatchObject({ status: 'updated' });
       }
+      const work = await store.listExtensions('work');
+      if (!work.ok) throw new Error('Expected installed work extension');
+      const siblingId = 'a'.repeat(32);
+      await store.setExtension('work', { ...work.extensions[0]!, id: siblingId,
+        source: { kind: 'webStore', extensionId: siblingId } });
       downloads = 0;
+      vi.mocked(readFile).mockClear();
+      vi.mocked(readdir).mockClear();
       const check = createRegistryUpdateCheck({ trackers: [createBrowserExtensionRegistryUpdateTracker({ profileStore: store })],
         ctx: { http }, readSources: forbidden });
       const key = JSON.stringify(['work', extensionId]);
       expect(await check.checkNow({ kind: 'browserExtension', keys: [key] }))
         .toMatchObject({ results: [{ kind: 'browserExtension', key, upstream: { state: 'current' } }] });
       expect(downloads).toBe(1);
+      expect(vi.mocked(readFile).mock.calls.filter(([path]) => String(path).startsWith(join(root, 'profiles', 'personal', 'extensions', 'records')))).toHaveLength(0);
+      expect(vi.mocked(readFile).mock.calls.filter(([path]) => String(path) === join(root, 'profiles', 'work', 'extensions', 'records', `${siblingId}.json`))).toHaveLength(0);
+      expect(vi.mocked(readdir).mock.calls.filter(([path]) => String(path) === join(root, 'profiles'))).toHaveLength(0);
       const current = await store.listExtensions('work');
-      expect(current).toMatchObject({ ok: true, extensions: [{ upstream: { state: 'current' } }] });
+      expect(current.ok && current.extensions.find(extension => extension.id === extensionId)).toMatchObject({ upstream: { state: 'current' } });
       const personal = await store.listExtensions('personal');
       if (!personal.ok) throw new Error('Expected other profile');
       expect(personal.extensions[0].upstream).toBeUndefined();

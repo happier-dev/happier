@@ -69,7 +69,10 @@ it.each(['ui', 'agent'] as const)('returns typed OS authorization from the appro
     // The Machine RPC boundary delivers to the real daemon family dispatcher and installer.
     const execute = createBrowserRuntimeActionExecutor({ executeOnMachine: daemon });
     const proposals: ApprovalRequest[] = [];
-    const { executor } = createCliActionExecutorHarness({ token: 'test', sessionId: 'session', mode: 'plain', ctx: null }, {
+    const { executor } = createCliActionExecutorHarness({ token: 'test', sessionId: 'session', mode: 'plain', ctx: null,
+      // The bound Session supplies the real approval-profile admission reader.
+      getCurrentSessionMetadata: () => ({ machineId: 'machine', path: '/work' }),
+    }, {
       runtimeActionExecute: execute,
       approvalsCreate: async ({ request }) => { proposals.push(request); return { artifactId: 'sandbox-approval' }; },
       approvalsGet: async () => null,

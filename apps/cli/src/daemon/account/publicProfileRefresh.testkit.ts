@@ -17,6 +17,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createDeferred } from '@/testkit/async/deferred';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
 import { createNativePublicProfileRefreshActions } from './nativePublicProfileRefreshActions';
 
 /** Persisted remote owner state, not a substitute for snapshot computation. */
@@ -50,9 +51,7 @@ export async function createNativePublicProfileRefreshFixture(options: {
   const origin = 'http://profile-home.test';
   let owner = createPublicProfileRefreshOwner(options.computedAtMs === undefined
     ? Date.now() - 24 * 60 * 60 * 1_000 : options.computedAtMs);
-  let settings = ActionsSettingsV1Schema.parse(options.settings ?? {
-    v: 1, approvalWaivedSurfaces: { 'account.public_profile.refresh': ['cli'] },
-  });
+  let settings = ActionsSettingsV1Schema.parse(options.settings ?? { v: 1 });
   let current = true;
   let usageAvailable = true;
   let sourceLagMs = 0;
@@ -98,6 +97,9 @@ export async function createNativePublicProfileRefreshFixture(options: {
   app.get('/v1/account/encryption/currentness', async () => AccountEncryptionCurrentnessResponseSchema.parse({
     mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
   }));
+  app.post('/v2/sessions/read-batch', async request => createSessionReadBatchResponseFixture({
+    request: request.body, sessions: [],
+  }));
   app.get('/v2/account/settings', async () => AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 1 }));
   app.get('/v1/account/profile', async () => AccountProfileResponseSchema.parse({ id: 'account', username: 'ada' }));
   app.put('/v1/account/public-profile/snapshot', async request => {
@@ -132,7 +134,7 @@ export async function createNativePublicProfileRefreshFixture(options: {
     isActionApprovalRequired: (id, context, input) =>
       isApprovalRequiredByActionsSettings(id, settings, context, undefined, undefined, input),
   });
-  const actions = createNativePublicProfileRefreshActions({ executor, serverId: 'home', getActionsSettings: () => settings });
+  const actions = createNativePublicProfileRefreshActions({ executor, serverId: 'home' });
   const releaseReads = () => { for (const release of releases) release(); };
   return {
     actions, requests, refreshes, isCurrent: async () => current,

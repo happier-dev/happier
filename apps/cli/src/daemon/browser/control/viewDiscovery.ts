@@ -1,5 +1,5 @@
 import { BrowserDaemonViewV1Schema, type BrowserDaemonViewV1 } from '@happier-dev/protocol/browser/control/v1';
-import type { BrowserDaemonControlBroker, BrowserDaemonViewWatch } from './types';
+import type { BrowserCommandScope, BrowserDaemonControlBroker, BrowserDaemonViewWatch } from './types';
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
 
 /** Both one-shot and parked discovery use the capture owner's current readiness. */
@@ -15,13 +15,13 @@ export function createBrowserDaemonViewDiscovery(input: Readonly<{
   broker: Pick<BrowserDaemonControlBroker, 'listViews' | 'watchViews'>;
   captureRegistry?: Pick<MachineLiveStreamCaptureRegistry, 'resolve'>;
 }>) {
-  const listViews = (browserSessionId: string) => projectBrowserDaemonViews(input.broker.listViews(browserSessionId), input.captureRegistry);
+  const listViews = (browserSessionId: string, scope?: BrowserCommandScope) => projectBrowserDaemonViews(input.broker.listViews(browserSessionId, scope), input.captureRegistry);
   return {
     listViews,
     async watchViews(request: BrowserDaemonViewWatch) {
       await input.broker.watchViews(request);
       request.signal?.throwIfAborted();
-      return listViews(request.browserSessionId);
+      return listViews(request.browserSessionId, request.scope);
     },
   };
 }

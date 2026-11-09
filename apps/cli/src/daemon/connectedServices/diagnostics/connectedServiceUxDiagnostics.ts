@@ -1,8 +1,6 @@
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, ConnectedServiceUxDiagnosticV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import type { ConnectedServiceUxDiagnosticCodeV1, ConnectedServiceUxDiagnosticFailurePhaseV1, ConnectedServiceUxDiagnosticSourceV1, ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol';
 
-type DiagnosticScalar = string | number | boolean | null;
-
 export function resolveConnectedServiceUxDiagnosticActions(
   code: ConnectedServiceUxDiagnosticCodeV1,
   retryable: boolean,
@@ -67,7 +65,7 @@ export function buildConnectedServiceUxDiagnostic(input: Readonly<{
   groupId?: string | null;
   retryable: boolean;
   suggestedActions?: ReadonlyArray<ConnectedServiceUxDiagnosticV1['suggestedActions'][number]>;
-  diagnostics?: Readonly<Record<string, DiagnosticScalar>>;
+  diagnostics?: Readonly<NonNullable<ConnectedServiceUxDiagnosticV1['diagnostics']>>;
 }>): ConnectedServiceUxDiagnosticV1 {
   return ConnectedServiceUxDiagnosticV1Schema.parse({
     code: input.code,

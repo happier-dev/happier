@@ -1,3 +1,4 @@
+import { createSnapshotCaptureTestRoutes, snapshotReadBoundaryFixture } from '../context/cdp/snapshotMasking.testkit';
 import { describe, expect, it } from 'vitest';
 import { createBrowserAutomationDaemonService } from '../automation/service';
 import { createBrowserSidecarCdpControlAdapter } from '../sidecar/controlAdapter';
@@ -6,8 +7,10 @@ import { createBrowserDaemonControlRoutes } from './routes';
 import { createBrowserAutomationCdpAdapter } from '../automation/adapters/cdp';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createDaemonRuntimeActionExecutor } from '../../runtimeActionExecutor';
-import { ActionsSettingsV1Schema, FeaturesResponseSchema, type ApprovalRequest, type BrowserCommandV1 } from '@happier-dev/protocol';
+import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '../../externalActions/daemonExternalActionTargetResolver';
+import { accountSettingsParse, ActionsSettingsV1Schema, FeaturesResponseSchema, type ApprovalRequest, type BrowserCommandV1 } from '@happier-dev/protocol';
 import { createControlAdapterAutomationTransport } from '../automation/adapters/controlBridge';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
 
 function deferred() {
@@ -33,6 +36,8 @@ function navigationHarness(input: Readonly<{ cleanupFails?: boolean; navigationF
     dispatchBrowserCommand: async () => ({}),
     dispatchPageCommand: async (command: Readonly<{ method: string; params?: Record<string, unknown> }>) => {
       pageCommands.push(command.method);
+      const snapshotRead = snapshotReadBoundaryFixture(command);
+      if (snapshotRead !== undefined) return snapshotRead;
       if (command.method === 'Page.navigate') {
         navigationUrls.push(command.params?.url);
         if (command.params?.url === 'https://example.test/pending-agent' || command.params?.url === 'https://example.test/pending-human') {
@@ -60,6 +65,7 @@ function navigationHarness(input: Readonly<{ cleanupFails?: boolean; navigationF
   broker.registerAdapter(adapter);
   const automation = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
     transport: createControlAdapterAutomationTransport({ adapter,
+      browserContext: createSnapshotCaptureTestRoutes({ transport, resolvePageHandle: adapter.resolvePageHandle }),
       contextCapture: { transport, resolvePageHandle: adapter.resolvePageHandle } }),
   }) });
   const routes = createBrowserDaemonControlRoutes({ broker, automation: () => automation });
@@ -211,7 +217,7 @@ describe('daemon browser controller commands', () => {
         const command: BrowserCommandV1 = kind === 'navigate'
           ? { ...harness.view, kind, commandId: 'agent', url: 'https://example.test/agent' }
           : { ...harness.view, kind, commandId: 'agent' };
-        expect(await harness.routes.dispatchCommand(command, { authority: 'account_automation', bypassApprovals: true }))
+        expect(await harness.routes.dispatchCommand(command, { authority: 'account_automation' }))
           .toMatchObject({ status: 'failed', error: { code: 'permission_denied' } });
         expect(harness.pageCommands).toHaveLength(before);
         expect(harness.automation.getStatus(harness.view).controller).toBe('human');
@@ -224,7 +230,7 @@ describe('daemon browser controller commands', () => {
     try {
       await harness.open();
       const agent = harness.routes.dispatchCommand({ ...harness.view, kind: 'navigate', commandId: 'agent', url: 'https://example.test/pending-agent' },
-        { authority: 'account_automation', bypassApprovals: true });
+        { authority: 'account_automation' });
       await harness.navigating.promise;
       expect(harness.automation.getStatus(harness.view).controller).toBe('agent');
       const human = harness.routes.dispatchCommand({ ...harness.view, kind: 'navigate', commandId: 'human', url: 'https://example.test/human' }, { authority: 'present_user' });
@@ -245,7 +251,7 @@ describe('daemon browser controller commands', () => {
     try {
       await harness.open();
       const agent = harness.routes.dispatchCommand({ ...harness.view, kind: 'navigate', commandId: 'agent', url: 'https://example.test/pending-agent' },
-        { authority: 'account_automation', bypassApprovals: true });
+        { authority: 'account_automation' });
       await harness.navigating.promise;
       const human = harness.routes.dispatchCommand({ ...harness.view, kind: 'navigate', commandId: 'human', url: 'https://example.test/human' }, { authority: 'present_user' });
       harness.releaseNavigation.resolve();
@@ -273,7 +279,7 @@ describe('daemon browser controller commands', () => {
       await harness.routes.dispatchCommand({ ...harness.view, kind: 'focusView', commandId: 'focus' }, { authority: 'present_user' });
       expect(harness.automation.getStatus(harness.view).controller).toBe('none');
       const command = { ...harness.view, kind: 'navigate' as const, commandId: 'agent-nav', url: 'https://example.test/agent' };
-      expect(await harness.routes.dispatchCommand(command, { authority: 'account_automation', bypassApprovals: true })).toMatchObject({ status: 'dispatched' });
+      expect(await harness.routes.dispatchCommand(command, { authority: 'account_automation' })).toMatchObject({ status: 'dispatched' });
       expect(harness.automation.getStatus(harness.view).controller).toBe('none');
       const withoutAutomation = createBrowserDaemonControlRoutes({ broker: harness.broker, automation: () => null });
       expect(await withoutAutomation.dispatchCommand(command, { authority: 'present_user' })).toMatchObject({ status: 'dispatched' });
@@ -301,7 +307,6 @@ describe('daemon browser controller commands', () => {
       dispatchPageQuery: async () => ({ ok: true }), dispatchInputCommand: async () => ({ ok: true }),
     } }) });
     const control = createBrowserDaemonControlRoutes({ broker, automation: () => automation });
-    let decision: 'approve' | 'reject' = 'reject';
     let stored: ApprovalRequest | undefined;
     const harness = createCliActionExecutorHarness({ token: 'token', sessionId: 'browser', mode: 'plain', ctx: null }, {
       runtimeActionExecute: createDaemonRuntimeActionExecutor({ env: {}, resolveRouteOwners: () => ({ browserControl: control,
@@ -310,9 +315,23 @@ describe('daemon browser controller commands', () => {
           browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, sidecar: { enabled: true } },
         } }) }) }),
       approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'control-approval' }; },
-      approvalsGet: async () => null, approvalsUpdate: async () => ({ ok: true }),
-      approvalsWaitForDecision: async ({ request }) => ({ decision, request }),
-      isApprovalExecutionOriginCurrent: async () => true,
+      approvalsGet: async () => stored ?? null,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing Browser control approval');
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = request;
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+        accountId: 'account', machineId: 'machine-browser', serverId: 'home',
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'fixture-account-token', encryption: null } }),
+        // Home identity and Account eligibility are authenticated remote boundaries.
+        resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'stable-home', machineId: 'machine-browser' }),
+        isAccountCurrent: async () => true,
+        resolveCurrentSessionAgentSpawnPolicyV1: async () => accountSettingsParse({}).sessionAgentSpawnPolicyV1,
+        listAccountApiTokens: async () => { throw new Error('Unsigned host approval has no API-token lookup'); },
+      }),
     });
     const context = { surface: 'agent' as const, authority: 'account_automation' as const, defaultSessionId: 'browser',
       defaultSessionMachineId: 'machine-browser',
@@ -321,12 +340,19 @@ describe('daemon browser controller commands', () => {
       if (kind === 'handBack') await control.dispatchCommand({ ...view, kind: 'takeControl', commandId: 'take' }, { authority: 'present_user' });
       const before = automation.getStatus(view).controller;
       expect(await harness.executor.execute(`browser.control.${kind}`, { ...view, kind, commandId: 'control' }, context))
-        .toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       expect(automation.getStatus(view).controller).toBe(before);
       expect(stored).toMatchObject({ executionOriginV1: { authority: 'account_automation', machineId: context.defaultSessionMachineId } });
-      decision = 'approve';
-      const approved = await harness.executor.execute(`browser.control.${kind}`, { ...view, kind, commandId: 'control' }, context);
-      expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true, result: { status: 'dispatched' } });
+      const decisionContext = { ...context, surface: 'ui' as const, authority: 'present_user' as const };
+      expect(await harness.executor.execute('approval.request.decide', { artifactId: 'control-approval', decision: 'reject' },
+        decisionContext)).toMatchObject({ ok: true, result: { status: 'rejected' } });
+      expect(automation.getStatus(view).controller).toBe(before);
+      expect(await harness.executor.execute(`browser.control.${kind}`, { ...view, kind, commandId: 'control' }, context))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      const approved = await harness.executor.execute('approval.request.decide', {
+        artifactId: 'control-approval', decision: 'approve',
+      }, decisionContext);
+      expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true, result: { status: 'executed' } });
       expect(automation.getStatus(view).controller).toBe(kind === 'takeControl' ? 'human' : 'none');
       if (kind === 'handBack') {
         const request = { ...view, v: 1 as const, automationRequestId: 'next', navigationGeneration: 0,

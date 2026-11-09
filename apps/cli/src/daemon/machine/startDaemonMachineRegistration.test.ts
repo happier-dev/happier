@@ -128,6 +128,7 @@ describe('startDaemonMachineRegistration', () => {
         stop: vi.fn(() => {
           events.push(`memory-stopped:${attempt}`);
         }),
+        waitForReady: async () => {},
         reloadSettings: vi.fn(async () => {}),
         clearIndex: vi.fn(async () => {}),
         ensureUpToDate: vi.fn(async () => {}),
@@ -327,6 +328,7 @@ describe('startDaemonMachineRegistration', () => {
         stop: vi.fn(() => {
           events.push(`memory-stopped:${attempt}`);
         }),
+        waitForReady: async () => {},
         reloadSettings: vi.fn(async () => {}),
         clearIndex: vi.fn(async () => {}),
         ensureUpToDate: vi.fn(async () => {}),

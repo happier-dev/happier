@@ -113,10 +113,11 @@ describe('Automation exact execution source observers', () => {
     expect(errors).toHaveLength(1);
     observers.clear();
   });
-  it('consumes retained terminal evidence once, cancels removal, and never reports a removed pending source', async () => {
+  it.each(['resolve', 'reject'] as const)('consumes retained terminal evidence once and keeps an aborted %s silent', async (settlement) => {
     const completed = { kind: 'execution_run' as const, machineId: 'machine-one', runId: 'retained-terminal' };
     const pending = { ...completed, runId: 'running-source' };
     const occurrences: AutomationRunLifecycleOccurrenceEvidenceV1[] = [];
+    const errors: unknown[] = [];
     let pendingSignal: AbortSignal | undefined;
     let releasePending: ((value: unknown) => void) | undefined;
     const terminal = (runId: string) => ({ ok: true, status: 'succeeded', result: { run: ExecutionRunPublicStateSchema.parse({
@@ -130,10 +131,12 @@ describe('Automation exact execution source observers', () => {
       wait: async (source, signal) => {
         if (source.runId === completed.runId) return terminal(source.runId);
         pendingSignal = signal;
-        return await new Promise<unknown>(resolve => { releasePending = resolve; });
+        return await new Promise<unknown>((resolve, reject) => {
+          releasePending = settlement === 'resolve' ? resolve : reject;
+        });
       },
       report: async occurrence => { occurrences.push(occurrence); },
-      onError: error => { throw error; },
+      onError: error => { errors.push(error); },
     });
     observers.replace([completed, pending]);
     await vi.waitFor(() => {
@@ -146,6 +149,7 @@ describe('Automation exact execution source observers', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(occurrences).toEqual([{ v: 1, kind: 'runLifecycle', source: completed, condition: 'terminal', sourceRevision: 200, occurredAt: 200 }]);
+    expect(errors).toEqual([]);
     observers.clear();
   });
 });

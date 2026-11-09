@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createBrowserRecordingDaemonRuntime } from '../recording/runtime';
 import { createBrowserRecordingActionRoutes } from '../recording/actionRoutes';
 import { createBrowserRecordingNativeViewCaptureCommand } from '../recording/adapters/nativeViewCommand';
-import { createBrowserRecordingAttachToComposer } from '../recording/attachToComposer';
+import { createBrowserRecordingAttachToComposer } from '../../recording/attachToComposer';
 import { createBrowserAutomationDaemonService } from '../automation/service';
 import { createBrowserAutomationRoutes } from '../automation/routes';
 import type { BrowserAutomationAdapter } from '../automation/adapters/types';

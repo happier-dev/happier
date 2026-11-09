@@ -1,7 +1,8 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { RuntimeActionIdV1 } from '@happier-dev/protocol';
 
-import type { BrowserRecordingRoutes } from './routes';
+import type { BrowserRecordingCleanupOptions, BrowserRecordingRoutes } from './routes';
+import type { RecordingOperationContext } from '../../recording/sessionMediaHost';
 
 /**
  * BA-5: the non-attach `browser.recording.*` runtime-action route owner. The recording daemon
@@ -19,7 +20,8 @@ export type BrowserRecordingActionRouteFailure = Readonly<{
 }>;
 
 export type BrowserRecordingActionRoutes = Readonly<{
-  dispatch(actionId: RuntimeActionIdV1, input: unknown): Promise<unknown>;
+  getRecordingStatus?: BrowserRecordingRoutes['getRecordingStatus'];
+  dispatch(actionId: RuntimeActionIdV1, input: unknown, context?: RecordingOperationContext, options?: BrowserRecordingCleanupOptions): Promise<unknown>;
 }>;
 
 const invalidParameters: BrowserRecordingActionRouteFailure = {
@@ -38,13 +40,14 @@ export function createBrowserRecordingActionRoutes(input: Readonly<{
 }>): BrowserRecordingActionRoutes {
   const { routes } = input;
   return {
-    async dispatch(actionId, rawInput) {
+    getRecordingStatus: routes.getRecordingStatus,
+    async dispatch(actionId, rawInput, context, options) {
       const parsed = parseInput(actionId, rawInput);
       if (!parsed.ok) return invalidParameters;
       const value = parsed.value as never;
       switch (actionId) {
         case 'browser.recording.start':
-          return await routes.startRecording(value);
+          return await routes.startRecording(value, context);
         case 'browser.recording.stop':
           return await routes.stopRecording(value);
         // `cancel` aborts an in-flight recording; `discard` disposes a finalized one. Both share the
@@ -56,9 +59,9 @@ export function createBrowserRecordingActionRoutes(input: Readonly<{
         case 'browser.recording.status':
           return await routes.getRecordingStatus(value);
         case 'browser.recording.listForView':
-          return await routes.listRecordingsForView(value);
+          return (await routes.listRecordingsForView(value)).filter(recording => options?.includeRecording?.(recording) ?? true);
         case 'browser.recording.cleanupExpired':
-          return await routes.cleanupExpiredRecordings(value);
+          return await routes.cleanupExpiredRecordings(value, options);
         default:
           return invalidParameters;
       }

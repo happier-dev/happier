@@ -1,10 +1,3 @@
-import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
-import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
-import type { EnvironmentProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
-import type { NativeComposeObservationIo, NativeComposeActivatedProject } from './nativeComposeLifecycle';
-import type { MachineNativeEffectKey } from './machineNativeEffectAdmission';
-import type { ManagedServiceNativeInstanceV1, ManagedServiceNativeLogWatchV1 } from '@happier-dev/plugin-sdk/managed-services';
-import type { Disposable } from '@happier-dev/plugin-sdk';
 import { createHash } from 'node:crypto';
 import { isAbsolute, relative } from 'node:path';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -12,19 +5,24 @@ import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue
 import type { DaemonLocalServiceLauncherStartRequestV1, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 import type { ProjectCommandSourceV1, ProjectExecutionInputV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import { readProjectFiniteIngressRefusal, readProjectRuntimeRequesterRefusal, readProjectRuntimeCurrentnessRefusal, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import { readProjectFiniteIngressRefusal, readProjectRuntimeAdmissionRefusal, type ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { resolveProjectRequesterSecretEnvironment } from '@/workspaces/projectSetup/projectSetupRequesterInputs';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
-import { prepareProjectSetup, readProjectActionApprovalSettings, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
-import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { prepareProjectSetup, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
 import { authorizePreparedProjectCommand, createProjectNativeInvocationCustody, executeProjectSetup, projectBaseEnvironment, publishProjectFiniteAdmission, type ProjectSetupExecutionInput, type ProjectSetupExecutionOutcome, type ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { readProjectExecutionInputs, resolveProjectNativeCommand } from '@/workspaces/projectSetup/projectNativeResolution';
 import { readProjectDefinitionFileBytes } from '@/workspaces/projectSetup/nativeDefinitionFiles';
 import { resolveProjectServiceStartChoice } from '@/workspaces/execution/projectServicePlacement';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
-import { buildProjectManagedServiceStartRequest, type ProjectManagedServiceSupervisionInput, type createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { buildProjectManagedServiceStartRequest, type ProjectManagedServiceSupervisionInput, type ProjectManagedServiceHandle, type EnvironmentProjectManagedServiceHandle, type createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { Disposable } from '@happier-dev/plugin-sdk';
+import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
+import type { ManagedServiceNativeInstanceV1, ManagedServiceNativeLogWatchV1 } from '@happier-dev/plugin-sdk/managed-services';
+import type { HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
+import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
+import type { MachineNativeEffectKey } from './machineNativeEffectAdmission';
 import { discoverLocalServiceRunTargets } from './runTargets';
 import type { LocalServiceLauncherStartExecutionOutcome, LocalServiceLauncherStartResolution } from './start';
 import { DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceNativePrerequisiteV1Schema, LocalServiceEstablishmentFailureV1Schema,
@@ -39,16 +37,29 @@ import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/project
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { assertProjectReceivingPlacement } from '@/workspaces/execution/projectReceivingPlacement';
 import { isProjectNativeProcessUncertain, preserveUnconfirmedNativeProcess, type ProjectNativeAdapterLeaseV1, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
-import { ProjectNativeEnvironmentUncertainError } from '@/workspaces/environment/produceProjectNativeEnvironment';
+import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import type { ProjectNativeEffectCaptureForHost } from '@/plugins/runtime/invocation/services/exec';
-import { assertNativeComposeAvailable, createNativeComposeLifecycle, NativeComposePrerequisiteError } from './nativeComposeLifecycle';
+import { assertNativeComposeAvailable, createNativeComposeLifecycle, NativeComposePrerequisiteError, type NativeComposeObservationIo, type NativeComposeActivatedProject } from './nativeComposeLifecycle';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { logger } from '@/ui/logger';
 
 type ActionContext = RuntimeActionExecuteArgs['context'];
 type CanonicalPoolRead = RuntimeActionExecuteArgs['executeCanonicalAction'];
+type AdmittedReview = Readonly<{
+    runtime: ProjectFiniteActionRuntime;
+    request: DaemonLocalServiceLauncherStartRequestV1 & Required<Pick<DaemonLocalServiceLauncherStartRequestV1, 'workspace' | 'declaration'>>;
+    ingress: RpcHandlerContext & Required<Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent'>>;
+    context: NonNullable<ActionContext>;
+}>;
 type SupportedServiceCommand = Exclude<PreparedProjectSetupCommand, { kind: 'pluginNativeReference' }>;
-type SelectedDeclaration = Readonly<{ targetId: string; reviewedEffectDigest: string }>;
+type SelectedDeclaration = Readonly<{
+    targetId: string;
+    reviewedEffectDigest: string;
+    workspace: NonNullable<DaemonLocalServiceLauncherStartRequestV1['workspace']>;
+    declaration: ProjectServiceDeclarationRefV1;
+    runtime: ProjectFiniteActionRuntime;
+    source?: SourceReview;
+}>;
 type PluginRuntimeLease = Readonly<{
     registry: Readonly<{ projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>, 'superviseProject'> }>;
     release(): Promise<void>;
@@ -170,15 +181,15 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
     const platformFor = (runtime: ProjectFiniteActionRuntime) => ({ os: (runtime.platform ?? process.platform) === 'win32' ? 'windows' : runtime.platform ?? process.platform, arch: runtime.arch ?? process.arch });
     async function readPlacement(runtime: ProjectFiniteActionRuntime, request: DaemonLocalServiceLauncherStartRequestV1,
         ingress: RpcHandlerContext, context: ActionContext, workspaceRefId: string,
-        assertCurrent: () => Promise<void>,
+        assertNotCancelled: () => void,
         phase: <T>(name: string, read: () => T | Promise<T>) => Promise<T>) {
         const config = await phase('placement_context', () => runtime.resolveWorkspaceExecutionConfig(context, ingress, 'localServices.launcher.start'));
-        await assertCurrent();
+        assertNotCancelled();
         if (!config?.getService || !request.declaration) throw new ServiceStartRefusal('project_service_placement_unavailable');
         const selection = request.declaration.selection;
         const placement = await phase('placement_read', () => config.getService!({ workspace: { serverId: runtime.serverId, refId: workspaceRefId },
             serviceName: selection.kind === 'manifest' ? selection.name : request.targetId }));
-        await assertCurrent();
+        assertNotCancelled();
         if (placement.status !== 'ready') throw new ServiceStartRefusal(`project_service_placement_${placement.status}`);
         return placement;
     }
@@ -188,7 +199,27 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         if (resolved.status === 'refused') throw new ServiceStartRefusal(resolved.reason);
         return { placement, choice: resolved.choice };
     }
-    async function review(nativeInvocations: Set<ProjectNativeEffectCaptureForHost>, request: DaemonLocalServiceLauncherStartRequestV1, ingress?: RpcHandlerContext, context?: ActionContext,
+    async function admitRequest(request: DaemonLocalServiceLauncherStartRequestV1, ingress?: RpcHandlerContext, context?: ActionContext): Promise<AdmittedReview> {
+        if (!ingress?.machineAdmission || !ingress.verifyMachineAdmissionCurrent) throw new ServiceStartRefusal('machine_admission_required');
+        if (!context) throw new ServiceStartRefusal('project_service_action_context_unavailable');
+        if (!request.workspace || !request.declaration) throw new ServiceStartRefusal('launcher_start_declaration_unavailable');
+        const constrained = readProjectFiniteIngressRefusal(ingress);
+        if (constrained) throw new ServiceStartRefusal(constrained.errorCode);
+        const runtime = await input.resolveRuntime(ingress);
+        if (!runtime) throw new ServiceStartRefusal('project_service_runtime_unavailable');
+        const admission = ingress.machineAdmission;
+        if (admission.machineId !== runtime.machineId || request.machineId !== runtime.machineId
+            || !await isServerProfileHomeIdentity(runtime.serverId, request.workspace.serverId)
+            || context.serverId && context.serverId !== runtime.serverId
+                && context.serverId !== request.workspace.serverId) throw new ServiceStartRefusal('target_mismatch');
+        const signal = context.signal ? AbortSignal.any([ingress.signal, context.signal]) : ingress.signal;
+        if (!runtime.isCurrent) throw new ServiceStartRefusal('project_requester_credentials_unavailable');
+        const refusal = await readProjectRuntimeAdmissionRefusal(runtime, { ...ingress, signal });
+        if (refusal) throw new ServiceStartRefusal(refusal.errorCode);
+        return { runtime, request: { ...request, workspace: request.workspace, declaration: request.declaration },
+            ingress: { ...ingress, machineAdmission: admission, verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent }, context };
+    }
+    async function review(nativeInvocations: Set<ProjectNativeEffectCaptureForHost>, { runtime: authorityRuntime, request, ingress, context }: AdmittedReview,
         afterCopy = false, executeCanonicalAction?: CanonicalPoolRead,
         nativeCustody?: Pick<ReturnType<typeof createProjectNativeInvocationCustody>, 'retain'>,
         approvalPreparation = false, copiedSource?: SourceReview): Promise<Review | SourceReview> {
@@ -200,54 +231,28 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 requestId: context?.actionRequestId, machineId: request.machineId, targetId: request.targetId,
                 afterCopy, approvalPreparation, durationMs: Math.round(performance.now() - startedAt) }); }
         };
-        if (!ingress?.machineAdmission || !ingress.verifyMachineAdmissionCurrent) throw new ServiceStartRefusal('machine_admission_required');
-        if (!context) throw new ServiceStartRefusal('project_service_action_context_unavailable');
-        if (!request.workspace || !request.declaration) throw new ServiceStartRefusal('launcher_start_declaration_unavailable');
         const approval = context.nativeServiceStartApproval;
         if (approval && !sameStrictJsonValue(approval.request, request)) throw new ServiceStartRefusal('project_service_effect_changed');
-        const constrained = readProjectFiniteIngressRefusal(ingress);
-        if (constrained) throw new ServiceStartRefusal(constrained.errorCode);
-        const authorityRuntime = await phase('runtime', () => input.resolveRuntime(ingress));
-        if (!authorityRuntime) throw new ServiceStartRefusal('project_service_runtime_unavailable');
         const runtime = { ...authorityRuntime, serverId: request.workspace.serverId };
         const admission = ingress.machineAdmission;
-        if (admission.machineId !== runtime.machineId || request.machineId !== runtime.machineId
-            || !await phase('home_identity', () => isServerProfileHomeIdentity(authorityRuntime.serverId, request.workspace!.serverId))
-            || context.serverId && context.serverId !== authorityRuntime.serverId
-                && context.serverId !== request.workspace.serverId) throw new ServiceStartRefusal('target_mismatch');
-        const requesterRefusal = await phase('requester', () => readProjectRuntimeRequesterRefusal(authorityRuntime, ingress));
-        if (requesterRefusal) throw new ServiceStartRefusal(requesterRefusal.errorCode);
         const signal = context.signal ? AbortSignal.any([ingress.signal, context.signal]) : ingress.signal;
-        const assertCurrent = async (freshAdmission = false) => {
+        const assertNotCancelled = () => {
             if (signal.aborted) throw new ServiceStartRefusal('cancelled');
-            if (!runtime.isCurrent) throw new ServiceStartRefusal('project_requester_credentials_unavailable');
-            const requester = await phase('requester_currentness_before', () => readProjectRuntimeCurrentnessRefusal(runtime, signal));
-            if (requester) throw new ServiceStartRefusal(requester.errorCode);
-            // These independent reads authorize no effects. Keep requester
-            // currentness around both, and wait for both before using any data.
-            const [admitted, eligibility] = await Promise.all([
-                freshAdmission ? phase('machine_admission', () => ingress.verifyMachineAdmissionCurrent!()) : true,
-                phase('service_eligibility', () => runtime.workerAdmission.observeServiceEligibility(undefined, { includeLoad: false })),
-            ]);
-            if (!admitted) throw new ServiceStartRefusal('machine_admission_changed');
-            if (!eligibility.eligible) throw new ServiceStartRefusal(eligibility.reason ?? 'project_service_admission_unavailable');
-            const fresh = await phase('requester_currentness_after', () => readProjectRuntimeCurrentnessRefusal(runtime, signal));
-            if (fresh) throw new ServiceStartRefusal(fresh.errorCode);
         };
-        // Fresh authority brackets each review. Intermediate passive reads keep
-        // local requester custody, cancellation and service eligibility checks.
-        await assertCurrent(true);
+        // Admission belongs to the request. Effect reviews retain local cancellation;
+        // each Home call and the native resource owner enforce their own boundary.
+        assertNotCancelled();
         let association = await phase('source_workspace', () => resolveProjectSetupAcceptedWorkspace({ address: request.workspace!, ...projectRuntimeAccountRowsInput(runtime),
             serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal }));
-        await assertCurrent();
+        assertNotCancelled();
         if (request.declaration.workspaceRefId !== association.workspace.id || request.workspaceId && request.workspaceId !== association.workspace.id) throw new ServiceStartRefusal('wrong_workspace');
         const sourceAssociation = association;
         const assertPlacement = async (choice: Extract<ProjectServiceStartChoice, { status: 'resolved' }>['choice']) => {
             await assertProjectReceivingPlacement({ choice, sourceMachineId: sourceAssociation.workspace.machineId,
                 receivingMachineId: runtime.machineId, ...(executeCanonicalAction ? { readPool: async poolId => {
-                    await assertCurrent();
+                    assertNotCancelled();
                     const result = await executeCanonicalAction('machines.pools.get', { poolId });
-                    await assertCurrent();
+                    assertNotCancelled();
                     return result;
                 } } : {}) });
         };
@@ -257,14 +262,16 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             // These are independent passive reads. Placement stays current;
             // portability comes from SOURCE, never destination-authored policy.
             const [snapshot, sourcePlacement] = await Promise.all([
-                // After this invocation's clean copy, TARGET bytes must match
-                // its approved SOURCE basis. Re-fetching SOURCE cannot establish
+                // Retain this request's one SOURCE review. TARGET bytes after
+                // copy must match that basis; a later SOURCE read cannot prove
                 // the bytes that the destination will actually execute.
-                afterCopy && copiedSource ? copiedSource.snapshot
-                    : phase('source_manifest', () => runtime.inspectSourceProjectManifest!({ source: sourceAssociation.workspace, signal })),
-                phase('source_placement', () => readPlacement(runtime, request, ingress, context, sourceAssociation.workspace.id, assertCurrent, phase)),
+                copiedSource ? copiedSource.snapshot
+                    : phase('source_manifest', () => runtime.inspectSourceProjectManifest!({ source: sourceAssociation.workspace, signal,
+                        ...(request.declaration!.selection.kind === 'manifest'
+                            ? { command: { usage: 'service', name: request.declaration!.selection.name } } : {}) })),
+                phase('source_placement', () => readPlacement(runtime, request, ingress, context, sourceAssociation.workspace.id, assertNotCancelled, phase)),
             ]);
-            await assertCurrent();
+            assertNotCancelled();
             if (snapshot.document?.status === 'invalid') throw new ServiceStartRefusal('invalid_manifest');
             const manifest = snapshot.document?.manifest;
             const selection = request.declaration.selection;
@@ -276,14 +283,14 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             if (!manifest || !service) throw new ServiceStartRefusal('project_service_not_found');
             const eligibility = await phase('source_memory_eligibility', () => runtime.workerAdmission.observeServiceEligibility(manifest?.workspace?.memoryDemand, { includeLoad: false }));
             if (!eligibility.eligible) throw new ServiceStartRefusal(eligibility.reason ?? 'project_service_admission_unavailable');
-            await assertCurrent();
+            assertNotCancelled();
             if (!runtime.resolveWorkerTarget || !runtime.prepareDequeue) throw new ServiceStartRefusal('workspace_sync_source_unavailable');
             const basis = await phase('worker_target', () => runtime.resolveWorkerTarget!({ source: association.workspace, signal }));
-            await assertCurrent();
+            assertNotCancelled();
             if (basis.target.machineId !== runtime.machineId || digest(workspaceAddressFromRefV1(basis.source)) !== digest(workspaceAddressFromRefV1(association.workspace))
                 || basis.source.projectKey !== association.workspace.projectKey
                 || basis.target.projectKey !== association.workspace.projectKey) throw new ServiceStartRefusal('project_workspace_changed');
-            const literalHost = service.source.kind === 'command' && (!manifest.environment || manifest.environment.kind === 'host');
+            const literalHost = service.source.kind === 'command' && (!manifest.toolchain || manifest.toolchain.kind === 'host');
             const executionFiles = new Map<string, string>();
             if (service.source.kind !== 'command') {
                 const command = snapshot.commands?.find(entry => entry.usage === 'service'
@@ -291,14 +298,14 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 if (!command?.executionInputs?.length) throw new ServiceStartRefusal('project_source_declaration_unavailable');
                 for (const fact of command.executionInputs) executionFiles.set(fact.file, fact.hash);
             }
-            if (manifest.environment && manifest.environment.kind !== 'host') {
-                if (!snapshot.environmentExecutionInputs?.length) throw new ServiceStartRefusal('project_source_declaration_unavailable');
-                for (const fact of snapshot.environmentExecutionInputs) executionFiles.set(fact.file, fact.hash);
+            if (manifest.toolchain && manifest.toolchain.kind !== 'host') {
+                if (!snapshot.toolchainExecutionInputs?.length) throw new ServiceStartRefusal('project_source_declaration_unavailable');
+                for (const fact of snapshot.toolchainExecutionInputs) executionFiles.set(fact.file, fact.hash);
             }
             const executionInputs = [...executionFiles].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, hash]) => ({ file, hash }));
             const serviceEffect = literalHost && service.source.kind === 'command'
                 ? { command: literalServiceCommand(service.source, basis.target.rootPath, platformFor(runtime).os),
-                    environment: { kind: 'host' }, configEnvironment: runtime.configEnvironment ?? {}, platform: platformFor(runtime) }
+                    toolchain: { kind: 'host' }, configEnvironment: runtime.configEnvironment ?? {}, platform: platformFor(runtime) }
                 : undefined;
             const reviewedEffect = projectNativeJsonValueForTransport({ v: 1, purpose: 'service', declaration: request.declaration,
                 source: { ...workspaceAddressFromRefV1(association.workspace), projectKey: association.workspace.projectKey },
@@ -312,7 +319,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             // The ordinary launcher can review a literal SOURCE effect before transfer.
             // Durable approval additionally requires the actual target's preparation facts.
             if (!afterCopy && literalHost && !approval) {
-                await assertCurrent(true);
+                assertNotCancelled();
                 return worker;
             }
             // Native command/toolchain review needs the actual destination's installed
@@ -320,18 +327,18 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             // neither native evaluation nor Service launch happens during this review.
             if (!afterCopy && !approval) {
                 await phase('clean_preparation', () => runtime.prepareDequeue!({ workspace: basis.source, choice, basis, signal }));
-                await assertCurrent();
+                assertNotCancelled();
             }
             association = await phase('target_workspace', () => resolveProjectSetupAcceptedWorkspace({ address: { serverId: basis.target.serverId, machineId: basis.target.machineId,
                 workspaceId: basis.target.id, rootPath: basis.target.rootPath }, ...projectRuntimeAccountRowsInput(runtime),
                 serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal }));
-            await assertCurrent();
+            assertNotCancelled();
             const copiedInputs = await phase('copied_inputs', () => readProjectExecutionInputs(association.workspace.rootPath, executionInputs.map(fact => fact.file)));
-            await assertCurrent();
+            assertNotCancelled();
             if (!copiedInputs || digest(copiedInputs) !== digest(executionInputs)) throw new ServiceStartRefusal('project_service_effect_changed');
         } else {
             const currentTargets = await phase('local_declarations', () => discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [association.workspace] }));
-            await assertCurrent();
+            assertNotCancelled();
             if (!currentTargets.some(target => 'declaration' in target && target.id === request.targetId && digest(target.declaration) === digest(request.declaration))) throw new ServiceStartRefusal('launcher_target_unknown');
         }
         const secretEnvironment = await phase('requester_environment', () => resolveProjectRequesterSecretEnvironment(runtime, undefined, signal));
@@ -339,6 +346,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             throw new ServiceStartRefusal('project_service_effect_changed');
         }
         const preparation: ProjectSetupPreparationInput = { workspace: association.workspace, projectAssociation: association,
+            requesterIdentity: runtime.requesterIdentity,
             approvalContext: context,
             requester: { ...projectRuntimeAccountRowsInput(runtime), serverHttpBaseUrl: runtime.serverHttpBaseUrl }, purpose: 'setup',
             platform: platformFor(runtime),
@@ -351,11 +359,9 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             ...(runtime.configEnvironment ? { configEnvironment: runtime.configEnvironment } : {}),
             ...(runtime.plugins ? { plugins: runtime.plugins } : {}),
         };
-        // Preparation may produce a selected native environment. Keep its fresh
-        // authority fence even though the surrounding reads are passive.
-        await assertCurrent(true);
+        assertNotCancelled();
         const prepared = await phase('setup_review', () => prepareProjectSetup(preparation));
-        await assertCurrent();
+        assertNotCancelled();
         if (prepared.kind === 'refused') throw new ServiceStartRefusal(prepared.code);
         const plan = prepared.plan;
         if (approval?.setup && (approval.setup.reviewedEffectDigest !== plan.reviewedEffectDigest
@@ -364,19 +370,18 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         }
         const eligibility = await phase('target_memory_eligibility', () => runtime.workerAdmission.observeServiceEligibility(plan.manifest?.workspace?.memoryDemand, { includeLoad: false }));
         if (!eligibility.eligible) throw new ServiceStartRefusal(eligibility.reason ?? 'project_service_admission_unavailable');
-        await assertCurrent();
+        assertNotCancelled();
         if (worker && (digest(plan.fileBasis) !== digest(worker.snapshot.basis) || digest(plan.manifest) !== digest(worker.manifest))) throw new ServiceStartRefusal('project_service_effect_changed');
         const selection = request.declaration.selection;
         const service = selection.kind === 'manifest' ? plan.manifest?.services?.[selection.name] : undefined;
         const source: ProjectCommandSourceV1 | undefined = selection.kind === 'native' ? selection.source : service?.source;
         if (!source) throw new ServiceStartRefusal('project_service_not_found');
         const { placement, choice } = await phase('target_placement', async () => readChoice(
-            await readPlacement(runtime, request, ingress, context, sourceAssociation.workspace.id, assertCurrent, phase), request, service));
+            await readPlacement(runtime, request, ingress, context, sourceAssociation.workspace.id, assertNotCancelled, phase), request, service));
         if (worker && digest({ placement: placement.placement, choice }) !== worker.placementEffectDigest) throw new ServiceStartRefusal('project_service_effect_changed');
         await phase('target_receiving_placement', () => assertPlacement(choice));
         if (prepared.kind === 'pendingApproval' && !approvalPreparation && (!worker || !worker.serviceEffectDigest)) {
-            // This refusal discloses a review, so it is also a result boundary.
-            await assertCurrent(true);
+            assertNotCancelled();
             throw new ServiceStartRefusal(prepared.code, {
                 reviewedEffect: projectNativeJsonValueForTransport(prepared.plan.reviewedEffect), reviewedEffectDigest: prepared.plan.reviewedEffectDigest,
             });
@@ -392,7 +397,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         if (source.kind === 'command') {
             command = literalServiceCommand(source, association.workspace.rootPath, preparation.platform.os);
         } else {
-            await assertCurrent(true);
+            assertNotCancelled();
             let production: ProjectNativeAdapterProductionV1 | undefined;
             if (source.kind === 'pluginNative') {
                 if (!runtime.plugins) throw new ServiceStartRefusal('native_service_instance_unavailable');
@@ -408,7 +413,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             const resolved = await phase('native_command', () => resolveProjectNativeCommand({ root: association.workspace.rootPath, source, usage: 'service', io: runtime.nativeIo, signal,
                 serviceScope: digest({ serverId: runtime.serverId, accountId: admission.actorAccountId }),
                 ...(production ? { plugin: { lease: production } } : {}) }));
-            await assertCurrent(true);
+            assertNotCancelled();
             if (resolved.kind === 'refused') {
                 if (source.kind === 'native' && source.tool === 'compose' && resolved.code === 'native_tool_unavailable') {
                     throw new NativeComposePrerequisiteError('not_installed');
@@ -420,12 +425,12 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 if (source.tool === 'compose') {
                     // A toolchain may select a different Docker endpoint. Its
                     // engine prerequisite belongs to the final produced environment.
-                    if (plan.environment.kind === 'host'
+                    if (plan.toolchain.kind === 'host'
                         && !plan.manifest?.environmentVariables?.some(requirement => requirement.kind !== 'config')) {
                         await phase('native_prerequisite', () => assertNativeComposeAvailable({ io: runtime.environmentIo, command: resolved.command,
                             prefix: resolved.args.slice(0, resolved.args.length - resolved.reviewInvocation.args.length), cwd: resolved.cwd,
                             env: { ...projectBaseEnvironment({ hostEnvironment: runtime.hostEnvironment }, plan), ...resolved.environmentOverlay }, signal }));
-                        await assertCurrent();
+                        assertNotCancelled();
                     }
                     builtinNative = createNativeComposeLifecycle({ args: resolved.reviewInvocation.args, io: runtime.environmentIo });
                     processMode = { kind: 'native', builtinLifecycle: builtinNative.lifecycle };
@@ -504,7 +509,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 }
             } else throw new ServiceStartRefusal('native_adapter_result_invalid');
         }
-        if (worker?.serviceEffectDigest && digest({ command, environment: plan.environment, configEnvironment: preparation.configEnvironment ?? {},
+        if (worker?.serviceEffectDigest && digest({ command, toolchain: plan.toolchain, configEnvironment: preparation.configEnvironment ?? {},
             platform: preparation.platform }) !== worker.serviceEffectDigest) throw new ServiceStartRefusal('project_service_effect_changed');
         const files: Array<{ file: string; digest: string }> = [];
         if (command.kind !== 'literal') {
@@ -517,7 +522,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             }
             for (const file of nativeFiles) {
                 const read = await phase('native_definition', () => readProjectDefinitionFileBytes(association.workspace.rootPath, file));
-                await assertCurrent();
+                assertNotCancelled();
                 if (read.kind !== 'read') throw new ServiceStartRefusal(read.kind === 'refused' ? read.code : 'native_configuration_missing');
                 if (command.resolution.reviewInputs.some(fact => fact.file === file && fact.content !== read.bytes.toString('utf8'))) throw new ServiceStartRefusal('project_service_effect_changed');
                 files.push({ file, digest: createHash('sha256').update(read.bytes).digest('hex') });
@@ -531,17 +536,17 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             : command.kind === 'pluginNative' ? { source: command.source, executable: command.resolution.executable,
                 args: command.resolution.args.map(portablePath), cwd: portablePath(command.resolution.cwd),
                 adapterVersion: command.lease.pluginVersion, nativeInstance: command.resolution.nativeInstance,
-                nativeCommandEnvironment: command.resolution.environmentApplied }
+                nativeCommandToolchain: command.resolution.toolchainApplied }
             : { source: command.source, executable: portablePath(command.resolution.command),
                 args: command.resolution.args.map(portablePath), cwd: portablePath(command.resolution.cwd),
                 toolchain: command.resolution.toolchain, environmentOverlay: command.resolution.environmentOverlay,
-                nativeCommandEnvironment: command.resolution.nativeCommandEnvironment };
+                nativeCommandToolchain: command.resolution.nativeCommandToolchain };
         const reviewedEffect = projectNativeJsonValueForTransport({ v: 1, purpose: 'service', declaration: request.declaration,
             service, command: resolvedCommand, files: files.sort((a, b) => a.file.localeCompare(b.file)), setupEffectDigest: plan.reviewedEffectDigest,
             placement: placement.placement, choice, configEnvironment: plan.configEnvironment, platform: preparation.platform,
             ...(worker && !worker.serviceEffectDigest ? { sourceReview: worker.reviewedEffect } : {}) });
         const declaration = { ...request.declaration, workspaceRefId: association.workspace.id };
-        await assertCurrent(true);
+        assertNotCancelled();
         return { kind: 'target', runtime, preparation, plan, declaration,
             ...(worker ? { source: worker } : {}),
             serviceId: createProjectServiceDeclarationTargetIdV1(association.workspace, declaration.selection),
@@ -553,45 +558,44 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             reviewedEffectDigest: worker?.serviceEffectDigest ? worker.reviewedEffectDigest : digest(reviewedEffect) };
     }
 
-    async function reviewTarget(nativeInvocations: Set<ProjectNativeEffectCaptureForHost>, request: DaemonLocalServiceLauncherStartRequestV1, ingress?: RpcHandlerContext, context?: ActionContext, executeCanonicalAction?: CanonicalPoolRead,
+    async function reviewTarget(nativeInvocations: Set<ProjectNativeEffectCaptureForHost>, reviewInputs: AdmittedReview, executeCanonicalAction?: CanonicalPoolRead,
         nativeCustody?: Pick<ReturnType<typeof createProjectNativeInvocationCustody>, 'retain'>, copiedSource?: SourceReview): Promise<Review> {
-        const result = await review(nativeInvocations, request, ingress, context, true, executeCanonicalAction, nativeCustody, false, copiedSource);
+        const result = await review(nativeInvocations, reviewInputs, true, executeCanonicalAction, nativeCustody, false, copiedSource);
         if (result.kind !== 'target') throw new ServiceStartRefusal('project_service_effect_changed');
         return result;
     }
 
-    async function resolveStartTargetForAction(actionId: 'localServices.launcher.start' | 'localServices.actions.restartManaged', request: DaemonLocalServiceLauncherStartRequestV1, ingress?: RpcHandlerContext, context?: ActionContext, executeCanonicalAction?: CanonicalPoolRead): Promise<LocalServiceLauncherStartResolution<SelectedDeclaration>> {
+    async function resolveStartTarget(request: DaemonLocalServiceLauncherStartRequestV1, ingress?: RpcHandlerContext, context?: ActionContext, executeCanonicalAction?: CanonicalPoolRead): Promise<LocalServiceLauncherStartResolution<SelectedDeclaration>> {
         const nativeInvocations = new Set<ProjectNativeEffectCaptureForHost>();
         let uncertain = false;
         try {
-            const current = await review(nativeInvocations, request, ingress, context, false, executeCanonicalAction);
-            const settings = readProjectActionApprovalSettings(current.kind === 'target' ? current.preparation : {
-                approvalContext: context, requester: { ...projectRuntimeAccountRowsInput(current.runtime), serverHttpBaseUrl: current.runtime.serverHttpBaseUrl },
-                secretEnvironment: current.runtime.secretEnvironment,
-            });
+            const reviewInputs = await admitRequest(request, ingress, context);
+            const { runtime } = reviewInputs;
+            const current = await review(nativeInvocations, reviewInputs, false, executeCanonicalAction);
             const expectedEffectDigest = context?.nativeServiceStartApproval?.reviewedEffectDigest ?? request.expectedEffectDigest;
-            if (expectedEffectDigest !== undefined ? expectedEffectDigest !== current.reviewedEffectDigest
-                : resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), settings, context, input: request }).required) return {
-                ok: false, reasonCode: expectedEffectDigest ? 'project_service_effect_changed' : 'project_service_effect_review_required',
+            if (expectedEffectDigest !== undefined && expectedEffectDigest !== current.reviewedEffectDigest) return {
+                ok: false, reasonCode: 'project_service_effect_changed',
                 reviewedEffect: current.reviewedEffect, reviewedEffectDigest: current.reviewedEffectDigest,
             };
-            return { ok: true, declaration: { targetId: request.targetId, reviewedEffectDigest: current.reviewedEffectDigest } };
+            const destination = current.kind === 'target' ? current.plan.workspace : current.basis.target;
+            return { ok: true, declaration: { targetId: request.targetId, reviewedEffectDigest: current.reviewedEffectDigest, runtime,
+                ...(current.kind === 'source' ? { source: current } : current.source ? { source: current.source } : {}),
+                workspace: workspaceAddressFromRefV1(destination),
+                declaration: current.kind === 'target' ? current.declaration : { ...request.declaration!, workspaceRefId: destination.id } } };
         } catch (error) {
-            uncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError;
+            uncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
             if (uncertain) throw error;
             return refusal(error);
         } finally { if (!uncertain) await Promise.all([...nativeInvocations].map(production => production.release())); }
     }
-
-    const resolveStartTarget = (request: DaemonLocalServiceLauncherStartRequestV1, ingress?: RpcHandlerContext, context?: ActionContext, executeCanonicalAction?: CanonicalPoolRead) =>
-        resolveStartTargetForAction('localServices.launcher.start', request, ingress, context, executeCanonicalAction);
 
     async function prepareStartApproval(request: DaemonLocalServiceLauncherStartRequestV1, ingress?: RpcHandlerContext,
         context?: ActionContext, executeCanonicalAction?: CanonicalPoolRead): Promise<LocalServiceStartApprovalReviewV1 | ActionExecuteFailure> {
         const nativeInvocations = new Set<ProjectNativeEffectCaptureForHost>();
         let uncertain = false;
         try {
-            const current = await review(nativeInvocations, request, ingress, context, true, executeCanonicalAction, undefined, true);
+            const reviewInputs = await admitRequest(request, ingress, context);
+            const current = await review(nativeInvocations, reviewInputs, true, executeCanonicalAction, undefined, true);
             if (current.kind !== 'target') throw new ServiceStartRefusal('project_service_effect_review_required');
             if (request.expectedEffectDigest && request.expectedEffectDigest !== current.reviewedEffectDigest) {
                 throw new ServiceStartRefusal('project_service_effect_changed');
@@ -603,7 +607,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                     reviewedEffect: projectNativeJsonValueForTransport(current.plan.reviewedEffect),
                     reviewedEffectDigest: current.plan.reviewedEffectDigest } });
         } catch (error) {
-            uncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError;
+            uncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
             if (uncertain) throw error;
             return { ok: false, errorCode: codeOf(error), error: codeOf(error) };
         } finally { if (!uncertain) await Promise.all([...nativeInvocations].map(production => production.release())); }
@@ -614,41 +618,46 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         if (!ingress || !context || !workspace || !declaration) {
             return executeManagedDeclaration(selected, request, ingress, context, executeCanonicalAction);
         }
-        const runtime = await input.resolveRuntime(ingress);
-        if (!runtime) return { status: 'denied', reasonCode: 'project_service_runtime_unavailable' };
+        const runtime = selected.runtime;
         if (ingress.signal.aborted || context.signal?.aborted) return { status: 'denied', reasonCode: 'cancelled' };
         let outcome: LocalServiceLauncherStartExecutionOutcome | undefined;
         let uncertainError: unknown;
         // The native receiver owns Start observation for UI, approved CLI and Move.
         // Finite setup keeps its own review/output custody beneath this Service operation.
-        const observed = await runtime.operationRuntime.observeExecution({ actionId: 'localServices.launcher.start', input: request,
-            rpcContext: ingress, ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
-            execute: async operation => {
-                // Once admitted, the operation owns preparation and launch. A lost
-                // browser ACK ends observation, not the user's accepted Service.
-                // Keep live Machine authority and an enclosing Move's cancellation.
-                const parentSignal = context.operationCancellation
-                    || ingress.callerInputAuthorization?.binding.actionId === 'projects.service.relocate'
-                    ? context.signal ?? ingress.signal : undefined;
-                const acceptedSignal = parentSignal ? AbortSignal.any([operation.signal, parentSignal]) : operation.signal;
-                const acceptedIngress: RpcHandlerContext = { ...ingress, signal: acceptedSignal,
-                    verifyMachineAdmissionCurrent: ingress.verifyMachineAuthorityCurrent ?? ingress.verifyMachineAdmissionCurrent };
-                operation.operationOwnerUpdate.update({ state: 'running', domainRef: { kind: 'projectService', purpose: 'start',
-                    sourceWorkspace: { serverId: workspace.serverId, refId: workspace.workspaceId }, workspace, declaration } });
-                operation.operationProgress.update({ phase: 'preparing', label: 'Preparing service' });
-                try {
-                    outcome = await executeManagedDeclaration(selected, request, acceptedIngress, { ...context, ...operation,
-                        signal: acceptedSignal, verifyMachineAdmissionCurrent: acceptedIngress.verifyMachineAdmissionCurrent }, executeCanonicalAction);
-                    return outcome.status === 'succeeded' ? { ok: true, result: outcome }
-                        : { ok: false, errorCode: outcome.reasonCode, error: outcome.reasonCode };
-                } catch (error) {
-                    if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError) {
-                        uncertainError = error;
-                        return { ok: false, errorCode: 'outcome_uncertain', error: 'outcome_uncertain' };
-                    }
-                    throw error;
+        const execute: Parameters<typeof runtime.operationRuntime.observeExecution>[0]['execute'] = async operation => {
+            // Once admitted, the operation owns preparation and launch. A lost
+            // browser ACK ends observation, not the user's accepted Service.
+            // Keep the operation's cancellation and an enclosing Move's cancellation.
+            const parentSignal = context.operationCancellation
+                || ingress.callerInputAuthorization?.binding.actionId === 'projects.service.relocate'
+                ? context.signal ?? ingress.signal : undefined;
+            const acceptedSignal = parentSignal ? AbortSignal.any([operation.signal, parentSignal]) : operation.signal;
+            const acceptedIngress: RpcHandlerContext = { ...ingress, signal: acceptedSignal };
+            operation.operationOwnerUpdate.update({ state: 'running', domainRef: { kind: 'projectService', purpose: 'start',
+                sourceWorkspace: { serverId: workspace.serverId, refId: workspace.workspaceId },
+                workspace: selected.workspace, declaration: selected.declaration } });
+            operation.operationProgress.update({ phase: 'preparing', label: 'Preparing service' });
+            try {
+                outcome = await executeManagedDeclaration(selected, request, acceptedIngress, { ...context, ...operation,
+                    signal: acceptedSignal, verifyMachineAdmissionCurrent: acceptedIngress.verifyMachineAdmissionCurrent }, executeCanonicalAction);
+                return outcome.status === 'succeeded' ? { ok: true, result: outcome }
+                    : { ok: false, errorCode: outcome.reasonCode, error: outcome.reasonCode };
+            } catch (error) {
+                if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) {
+                    uncertainError = error;
+                    return { ok: false, errorCode: 'outcome_uncertain', error: 'outcome_uncertain' };
                 }
-            } });
+                throw error;
+            }
+        };
+        // The same request owner may already have admitted this installed
+        // invocation before confirmation policy. Its acceptance and sibling
+        // lifecycle ports come from that owner, not from serialized input.
+        const observed = context.operationAcceptance?.actionId === 'localServices.launcher.start'
+            ? await execute({ ...context, actionRequestId: context.actionRequestId ?? undefined, resumeActionRequest: context.resumeActionRequest === true ? true : undefined, signal: context.signal ?? ingress.signal,
+                operationProgress: context.operationProgress!, operationOwnerUpdate: context.operationOwnerUpdate! })
+            : await runtime.operationRuntime.observeExecution({ actionId: 'localServices.launcher.start', input: request,
+                rpcContext: ingress, ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}), execute });
         if (uncertainError) throw uncertainError;
         if (outcome) return outcome;
         if (!observed.ok) return { status: 'failed', reasonCode: observed.errorCode };
@@ -664,7 +673,13 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         try {
             if (selected.targetId !== request.targetId || request.expectedEffectDigest !== undefined
                 && selected.reviewedEffectDigest !== request.expectedEffectDigest) throw new ServiceStartRefusal('project_service_effect_changed');
-            const initial = await review(nativeInvocations, request, ingress, context, false, executeCanonicalAction);
+            if (!ingress?.machineAdmission || !ingress.verifyMachineAdmissionCurrent) throw new ServiceStartRefusal('machine_admission_required');
+            if (!context) throw new ServiceStartRefusal('project_service_action_context_unavailable');
+            if (!request.workspace || !request.declaration) throw new ServiceStartRefusal('launcher_start_declaration_unavailable');
+            const reviewInputs: AdmittedReview = { runtime: selected.runtime,
+                request: { ...request, workspace: request.workspace, declaration: request.declaration },
+                ingress: { ...ingress, machineAdmission: ingress.machineAdmission, verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent }, context };
+            const initial = await review(nativeInvocations, reviewInputs, false, executeCanonicalAction, undefined, false, selected.source);
             const initialSource = initial.kind === 'source' ? initial : initial.source;
             // Without durable approval, a native TARGET review has already made
             // its causal copy to inspect native facts. Retain that SOURCE basis
@@ -674,7 +689,6 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 if (fresh.reviewedEffectDigest !== selected.reviewedEffectDigest) throw new ServiceStartRefusal('project_service_effect_changed', fresh);
             };
             unchanged(initial);
-            if (!ingress || !context || !request.declaration) throw new ServiceStartRefusal('machine_admission_required');
             const prepareCopy = async (signal: AbortSignal) => {
                 const source = initialSource;
                 if (!source) return;
@@ -685,7 +699,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             };
             if (needsCopy) await prepareCopy(initial.kind === 'source' ? initial.signal : initial.preparation.signal!);
             context.operationProgress?.update({ phase: 'preparing', label: 'Preparing service' });
-            let current = initial.kind === 'source' || needsCopy ? await reviewTarget(nativeInvocations, request, ingress, context, executeCanonicalAction, undefined, initialSource) : initial;
+            let current = initial.kind === 'source' || needsCopy ? await reviewTarget(nativeInvocations, reviewInputs, executeCanonicalAction, undefined, initialSource) : initial;
             unchanged(current);
             let setupInput: ProjectSetupExecutionInput | undefined;
             let finishSetup!: (outcome: ProjectSetupExecutionOutcome) => void;
@@ -732,17 +746,17 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         onUnknown: error => operation.operationOwnerUpdate.update({ observation: { kind: 'outcome_uncertain', code: codeOf(error) } }),
                         run: async reservation => {
                             try {
-                                current = await reviewTarget(nativeInvocations, request, ingress, context, executeCanonicalAction, undefined, initialSource);
+                                current = await reviewTarget(nativeInvocations, reviewInputs, executeCanonicalAction, undefined, initialSource);
                                 unchanged(current);
                                 while (current.setupReview) {
                                     if (!operation.operationReview) throw new ServiceStartRefusal(current.setupReview.code, current.setupReview);
                                     reservation.phase('setup');
                                     await operation.operationReview.waitForResume({ kind: 'pendingApproval', ...current.setupReview });
                                     // Resume the SAME accepted setup, under the original exact Sync basis and current source effect.
-                                    const fresh = await review(nativeInvocations, request, ingress, context, false, executeCanonicalAction);
+                                    const fresh = await review(nativeInvocations, reviewInputs, false, executeCanonicalAction);
                                     unchanged(fresh);
                                     if (needsCopy) await prepareCopy(operationSignal);
-                                    current = await reviewTarget(nativeInvocations, request, ingress, context, executeCanonicalAction, undefined, initialSource);
+                                    current = await reviewTarget(nativeInvocations, reviewInputs, executeCanonicalAction, undefined, initialSource);
                                     unchanged(current);
                                 }
                             } catch (error) {
@@ -767,15 +781,15 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             if (outcome.kind === 'outcome_uncertain') { uncertain = true; throw new ServiceStartRefusal('outcome_uncertain'); }
             if (!outcome.result.ok) throw new ServiceStartRefusal(outcome.result.errorCode);
             if (!setupInput) throw new ServiceStartRefusal('project_setup_operation_unavailable');
-            current = await reviewTarget(nativeInvocations, request, ingress, context, executeCanonicalAction, undefined, initialSource);
+            current = await reviewTarget(nativeInvocations, reviewInputs, executeCanonicalAction, undefined, initialSource);
             unchanged(current);
             if (current.setupReview) throw new ServiceStartRefusal(current.setupReview.code, current.setupReview);
             lease = await input.acquirePluginRuntime();
             const registry = lease.registry;
             // Project custody belongs to the stable daemon owner, not the registry projection
             // which supplied its port. Exact selected environment leases retain their own lifetime;
-            // requester access loss is retired by the same owner's D19 cleanup.
-            const isCurrent = () => (!current.plan.environmentAdapterLease || current.plan.environmentAdapterLease.isCurrent())
+            // admitted requester work keeps that custody until its natural boundary.
+            const isCurrent = () => (!current.plan.toolchainAdapterLease || current.plan.toolchainAdapterLease.isCurrent())
                 && (!current.nativeLifecycleLease || current.nativeLifecycleLease.isCurrent());
             if (!isCurrent()) throw new ServiceStartRefusal('native_adapter_retired');
             const builtinNative = current.builtinNative;
@@ -795,15 +809,12 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                     let launchUncertain = false;
                     let retained = false;
                     try {
-                    current = await reviewTarget(launchInvocations, request, ingress, context, executeCanonicalAction, nativeCustody, initialSource);
+                    current = await reviewTarget(launchInvocations, reviewInputs, executeCanonicalAction, nativeCustody, initialSource);
                     unchanged(current);
                     if (current.setupReview) throw new ServiceStartRefusal(current.setupReview.code, current.setupReview);
                     if (!isCurrent()) throw new ServiceStartRefusal('native_adapter_retired');
                     const launch = await authorizePreparedProjectCommand({ ...setupInput!, preparation: current.preparation }, current.plan, current.command, signal);
                     try {
-                        const fresh = await reviewTarget(launchInvocations, request, ingress, context, executeCanonicalAction, nativeCustody, initialSource);
-                        unchanged(fresh);
-                        if (fresh.setupReview) throw new ServiceStartRefusal(fresh.setupReview.code, fresh.setupReview);
                         if (!isCurrent() || signal.aborted) throw new ServiceStartRefusal('cancelled');
                         builtinNative?.bindLaunch(launch);
                         await builtinNative?.assertAvailable(signal);
@@ -819,11 +830,11 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                                 finally { await nativeCustody.release({ waitForSettlement: false }); nativeCustody.dispose(); } }
                         } };
                     } catch (error) {
-                        if (!isProjectNativeProcessUncertain(error) && !(error instanceof ProjectNativeEnvironmentUncertainError)) await launch.release();
+                        if (!isProjectNativeProcessUncertain(error) && !(error instanceof ProjectNativeToolchainUncertainError)) await launch.release();
                         throw error;
                     }
                     } catch (error) {
-                        launchUncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError;
+                        launchUncertain = isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
                         if (launchUncertain) uncertain = true;
                         throw error;
                     } finally { if (!launchUncertain && !retained) {
@@ -838,8 +849,8 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 sourceWorkspace: { serverId: request.workspace!.serverId, refId: request.workspace!.workspaceId },
                 workspace: workspaceAddressFromRefV1(handle.workspace), declaration: handle.declaration, currentTarget } });
             return { status: 'succeeded', currentTarget };
-        } catch (error) { uncertain ||= isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError;
-            if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeEnvironmentUncertainError) throw error;
+        } catch (error) { uncertain ||= isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
+            if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) throw error;
             const denied = refusal(error); return { status: 'denied', reasonCode: denied.reasonCode,
             ...(denied.establishmentFailure ? { establishmentFailure: denied.establishmentFailure } : {}),
             ...(denied.prerequisite ? { prerequisite: denied.prerequisite } : {}),
@@ -856,7 +867,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             ...(request.choice ? { choice: request.choice } : {}),
         };
         // Fresh source/effect/placement review precedes disruption. Stop never authorizes replacement.
-        const selected = await resolveStartTargetForAction('localServices.actions.restartManaged', start, execution.ingress, execution.actionContext);
+        const selected = await resolveStartTarget(start, execution.ingress, execution.actionContext);
         if (!selected.ok) return { status: 'denied', reasonCode: selected.reasonCode,
             ...(selected.reviewedEffect !== undefined ? { reviewedEffect: selected.reviewedEffect } : {}),
             ...(selected.reviewedEffectDigest ? { reviewedEffectDigest: selected.reviewedEffectDigest } : {}) };

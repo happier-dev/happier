@@ -9,9 +9,6 @@ import { buildChildExitBeforeWebhookFailure } from './childStderrDiagnostic';
 
 export { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS };
 const SESSION_WEBHOOK_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS';
-const SESSION_WEBHOOK_TIMED_OUT_PID_TOMBSTONE_TTL_MS = 10 * 60_000;
-
-const timedOutSessionWebhookPidTombstones = new Map<number, NodeJS.Timeout>();
 
 type WaitForSessionWebhookParams = {
   pid: number;
@@ -44,23 +41,6 @@ export function resolveSessionStartupTimeoutMs(explicitTimeoutMs?: number): numb
   return parsed;
 }
 
-export function markSessionWebhookPidTimedOut(pid: number): void {
-  if (!Number.isInteger(pid) || pid <= 0) return;
-  const previous = timedOutSessionWebhookPidTombstones.get(pid);
-  if (previous) {
-    clearTimeout(previous);
-  }
-  const timeout = setTimeout(() => {
-    timedOutSessionWebhookPidTombstones.delete(pid);
-  }, SESSION_WEBHOOK_TIMED_OUT_PID_TOMBSTONE_TTL_MS);
-  timeout.unref?.();
-  timedOutSessionWebhookPidTombstones.set(pid, timeout);
-}
-
-export function hasSessionWebhookPidTimedOut(pid: number): boolean {
-  return timedOutSessionWebhookPidTombstones.has(pid);
-}
-
 function findRequestTrackedSession(
   params: Pick<WaitForSessionWebhookParams, 'pid' | 'pidToTrackedSession'>,
   requestTrackedSession: TrackedSession | undefined,
@@ -75,34 +55,6 @@ function findRequestTrackedSession(
     return requestTrackedSession;
   }
   return null;
-}
-
-export function tombstoneTrackedSessionWebhookPids(
-  requestPid: number,
-  tracked: TrackedSession | null,
-): void {
-  if (!tracked) return;
-  markSessionWebhookPidTimedOut(requestPid);
-  if (tracked.pid !== requestPid) {
-    markSessionWebhookPidTimedOut(tracked.pid);
-  }
-  if (
-    typeof tracked.sessionRunnerPid === 'number'
-    && tracked.sessionRunnerPid > 0
-    && tracked.sessionRunnerPid !== requestPid
-    && tracked.sessionRunnerPid !== tracked.pid
-  ) {
-    markSessionWebhookPidTimedOut(tracked.sessionRunnerPid);
-  }
-}
-
-function markTrackedSessionWebhookTimedOut(
-  params: Pick<WaitForSessionWebhookParams, 'pid'>,
-  tracked: TrackedSession | null,
-): void {
-  if (!tracked) return;
-  tracked.sessionWebhookTimedOutAtMs = Date.now();
-  tombstoneTrackedSessionWebhookPids(params.pid, tracked);
 }
 
 export type SessionWebhookCompletion = Promise<SpawnSessionResult> & Readonly<{
@@ -193,7 +145,7 @@ export function waitForSessionWebhook(
         || currentTrackedSession !== null;
       clearRequestOwnedState();
       if (stillOwnsTimeout && stillOwnsTrackedSession) {
-        markTrackedSessionWebhookTimedOut(params, currentTrackedSession);
+        if (currentTrackedSession) currentTrackedSession.sessionWebhookTimedOutAtMs = Date.now();
         params.onTimeout?.(currentTrackedSession);
       }
       requestResolver({

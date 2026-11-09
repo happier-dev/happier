@@ -2,6 +2,31 @@ import { describe, expect, it } from 'vitest';
 import { createMachineResourcesPolicyRuntime } from './machineResourcesPolicy';
 
 describe('daemon resources policy reader', () => {
+  it('publishes monitoring-key changes without notifying that key for unrelated policy or revision changes', async () => {
+    let metadata: Record<string, unknown> = {};
+    let revision = 1;
+    let available = true;
+    const runtime = createMachineResourcesPolicyRuntime({ port: {
+      read: async () => available ? { status: 'ready', metadata, metadataVersion: revision } : { status: 'unavailable' },
+      compareAndSwap: async input => { metadata = input.metadata; revision++; return { status: 'applied', metadata, metadataVersion: revision }; },
+    } });
+    let publications = 0;
+    const release = runtime.subscribeKey('monitoring', () => { publications++; });
+    try {
+      await runtime.reload(); expect(publications).toBe(1);
+      await runtime.set({ expectedRevision: revision, patch: { alerts: { cpu: { enabled: true } } } });
+      await runtime.set({ expectedRevision: revision, patch: { monitoring: { intervalMs: 2_000 } } });
+      revision++; await runtime.reload();
+      expect(publications).toBe(1);
+      await runtime.set({ expectedRevision: revision, patch: { monitoring: { mode: 'off' } } });
+      expect(publications).toBe(2);
+      await runtime.reload(); expect(publications).toBe(2);
+      available = false; await runtime.reload(); expect(publications).toBe(3);
+      await runtime.reload(); expect(publications).toBe(3);
+      release();
+      available = true; await runtime.reload(); expect(publications).toBe(3);
+    } finally { release(); runtime.stop(); }
+  });
   it('publishes the acknowledged policy without waiting for another metadata read or reapplying the same receipt', async () => {
     let acknowledged = false;
     let metadata: Record<string, unknown> = {};
@@ -61,13 +86,16 @@ describe('daemon resources policy reader', () => {
     expect(runtime.read()).toEqual({ status: 'locked' });
     runtime.stop();
   });
-  it.each([1, 0])('revalidates even a no-write receipt before disclosing the policy: expected revision %s', async expectedRevision => {
+  it.each([1, 0])('returns the admitted no-write policy receipt without reauthorization: expected revision %s', async expectedRevision => {
     const runtime = createMachineResourcesPolicyRuntime({ port: {
       read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 1 }),
       compareAndSwap: async () => { throw new Error('A no-write operation must not write'); },
     } });
-    expect(await runtime.set({ expectedRevision, patch: {} }, { verifyCurrent: async () => false }))
-      .toEqual({ status: 'unavailable', reason: 'admission_withdrawn' });
+    let verifications = 0;
+    const options = { signal: new AbortController().signal, verifyCurrent: async () => { verifications++; return false; } };
+    expect(await runtime.set({ expectedRevision, patch: {} }, options))
+      .toMatchObject({ status: expectedRevision === 1 ? 'unchanged' : 'conflict', revision: 1 });
+    expect(verifications).toBe(0);
     runtime.stop();
   });
   it('reloads on metadata changes without manufacturing defaults from malformed retained data', async () => {
@@ -106,15 +134,13 @@ describe('daemon resources policy reader', () => {
     runtime.stop();
   });
 
-  it('does not write after shutdown while custody verification is awaiting', async () => {
+  it('does not write after shutdown during the metadata read', async () => {
     let writes = 0;
     const runtime = createMachineResourcesPolicyRuntime({ port: {
-      read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 1 }),
+      read: async () => { runtime.stop(); return { status: 'ready', metadata: {}, metadataVersion: 1 }; },
       compareAndSwap: async ({ metadata }) => { writes++; return { status: 'applied', metadata, metadataVersion: 2 }; },
     } });
-    expect(await runtime.set({ expectedRevision: 1, patch: { alerts: { cpu: { enabled: true } } } }, {
-      verifyCurrent: async () => { runtime.stop(); return true; },
-    })).toMatchObject({ status: 'unavailable' });
+    expect(await runtime.set({ expectedRevision: 1, patch: { alerts: { cpu: { enabled: true } } } })).toMatchObject({ status: 'unavailable' });
     expect(writes).toBe(0);
   });
 });

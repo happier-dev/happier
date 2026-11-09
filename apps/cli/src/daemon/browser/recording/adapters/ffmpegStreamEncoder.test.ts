@@ -108,7 +108,7 @@ function outputPathFromArgs(args: readonly string[]): string {
 
 describe('browser recording ffmpeg stream encoder', () => {
   it('writes machine-live-stream MJPEG frames to a local video/webm artifact through bundled ffmpeg', async () => {
-    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('./ffmpegStreamEncoder');
+    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('../../../recording/ffmpegStreamEncoder');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-ffmpeg-encoder-'));
     const spawned: FakeFfmpegProcess[] = [];
     const spawnFfmpeg = vi.fn((binaryPath: string, args: readonly string[]) => {
@@ -182,7 +182,7 @@ describe('browser recording ffmpeg stream encoder', () => {
   });
 
   it('fails closed when bundled ffmpeg is unavailable', async () => {
-    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('./ffmpegStreamEncoder');
+    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('../../../recording/ffmpegStreamEncoder');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-ffmpeg-encoder-missing-'));
 
     try {
@@ -204,7 +204,7 @@ describe('browser recording ffmpeg stream encoder', () => {
   });
 
   it('does not admit an encoder whose process cannot spawn', async () => {
-    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('./ffmpegStreamEncoder');
+    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('../../../recording/ffmpegStreamEncoder');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-ffmpeg-spawn-fail-'));
     try {
       const factory = createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory,
@@ -221,7 +221,7 @@ describe('browser recording ffmpeg stream encoder', () => {
   });
 
   it('removes partial output and surfaces a generic error when ffmpeg fails', async () => {
-    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('./ffmpegStreamEncoder');
+    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('../../../recording/ffmpegStreamEncoder');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-ffmpeg-encoder-fail-'));
     const spawnFfmpeg = vi.fn((_binaryPath: string, args: readonly string[]) => new FakeFfmpegProcess(outputPathFromArgs(args), 1));
 
@@ -259,7 +259,7 @@ describe('browser recording ffmpeg stream encoder', () => {
   });
 
   it('stores a frame accepted by stdin when its write signals backpressure', async () => {
-    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('./ffmpegStreamEncoder');
+    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('../../../recording/ffmpegStreamEncoder');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-ffmpeg-encoder-backpressure-'));
     const spawned: FakeFfmpegProcess[] = [];
     const spawnFfmpeg = vi.fn((_binaryPath: string, args: readonly string[]) => {

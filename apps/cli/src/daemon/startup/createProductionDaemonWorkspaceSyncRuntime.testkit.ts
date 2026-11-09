@@ -36,7 +36,7 @@ import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import type { MutagenControlCommandV1, MutagenSessionSummaryV1 } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { BrokerProtocolError } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { listenWorkspaceSyncBroker } from '@/workspaces/sync/transport/workspaceSyncBroker';
-import { WorkspaceSyncBrokerClient } from '@/workspaces/sync/transport/workspaceSyncBrokerClient.testkit';
+import { WorkspaceSyncBrokerClient, createMutagenChangeWaitBoundary } from '@/workspaces/sync/transport/workspaceSyncBrokerClient.testkit';
 import { createWorkspaceSyncPeerIdentityValidator } from '@/workspaces/sync/transport/workspaceSyncPeerIdentity';
 import { createWorkspaceMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/workspaceMachineCarrierTunnelOpen';
 import { createDaemonMachineIrohRuntime, type DaemonMachineIrohRuntime } from '@/daemon/peer/iroh/daemonMachineIrohRuntime';
@@ -508,6 +508,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     const localSnapshot = localHomeTarget || accountServerId === serverId ? accountSnapshot : { ...accountSnapshot,
       workspaceRefs: accountSnapshot.workspaceRefs.map(ref => ({ ...ref, serverId: accountServerId })) };
     const sessions = new Map<string, MutagenSessionSummaryV1>();
+    const nativeChanges = createMutagenChangeWaitBoundary();
     const nativeSummary = (session: MutagenSessionSummaryV1) => {
       if (options.nativeEndpointSummary !== 'pinned-9') return session;
       // Real native producer: pkg/externalbroker/engine.go at f02d01e8,
@@ -518,7 +519,11 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
       return { ...session, alpha: endpoint(session.alpha), beta: endpoint(session.beta) };
     };
     let endSidecar: (() => void) | undefined;
-    const command = async (input: MutagenControlCommandV1): Promise<unknown> => {
+    const command = async (input: MutagenControlCommandV1, signal?: AbortSignal): Promise<unknown> => {
+      if (input.t === 'wait_for_change') {
+        if (!signal) throw new Error('Native change wait requires cancellation');
+        return { stateIndex: await nativeChanges.waitForChange(input.previousStateIndex, signal) };
+      }
       if (input.t === 'shutdown') { if (!options.nativeCarrierRefusal && !options.nativeCarrierHome) endSidecar?.(); return null; }
       if (input.t === 'list') return { sessions: [...sessions.values()].map(nativeSummary), nextCursor: null };
       if (input.t === 'create') {
@@ -530,10 +535,11 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
           labels: input.session.labels, alpha: endpoint(input.session.alpha), beta: endpoint(input.session.beta),
           mode: input.session.mode, paused: true, status: 'watching', successfulCycles: 0, conflictCount: 0 };
         sessions.set(session.identifier, session);
+        nativeChanges.change();
         return nativeSummary(session);
       }
       const session = sessions.get(input.sessionIdentifier);
-      if (input.t === 'terminate') { sessions.delete(input.sessionIdentifier); return null; }
+      if (input.t === 'terminate') { if (sessions.delete(input.sessionIdentifier)) nativeChanges.change(); return null; }
       if (!session) throw new Error(`Mutagen session missing: ${input.sessionIdentifier}`);
       if (input.t === 'get_policy') return { selection: 'all_files', patterns: [], nextCursor: null };
       if (input.t === 'list_conflicts') return { totalCount: 0, shownCount: 0, truncatedCount: 0, conflicts: [], nextCursor: null };
@@ -551,6 +557,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
       const next = { ...session, paused: input.t === 'pause' ? true : input.t === 'resume' ? false : session.paused,
         successfulCycles: session.successfulCycles + (input.t === 'flush' ? 1 : 0) };
       sessions.set(next.identifier, next);
+      if (next.paused !== session.paused || next.successfulCycles !== session.successfulCycles) nativeChanges.change();
       return nativeSummary(next);
     };
     let brokerClient: WorkspaceSyncBrokerClient | undefined;
@@ -584,7 +591,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
               brokerInstanceId: broker.brokerInstanceId, launchNonce: broker.launchNonce,
               launchSecret: input.launchSecret, sidecarPid: process.pid });
             brokerClient = client;
-            client.onCommand(async request => {
+            client.onCommand(async (request, signal) => {
               if (request.t === 'resume') {
                 const session = sessions.get(request.sessionIdentifier);
                 if (!session) throw new Error('Native session is missing');
@@ -597,7 +604,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
                   throw new BrokerProtocolError('engine_unavailable', 'Native command failed');
                 }
               }
-              return await command(request);
+              return await command(request, signal);
             });
             return broker;
           } });

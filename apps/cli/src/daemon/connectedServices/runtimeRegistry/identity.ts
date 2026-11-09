@@ -69,15 +69,23 @@ export function normalizeConnectedServicesBindingsRaw(raw: unknown): Readonly<{
   bindingsByServiceId?: Record<string, unknown>;
 }> {
   const compatible = createStoredReadSchema(ConnectedServiceBindingsV2IngressSchema).safeParse(raw);
-  if (compatible.success) return compatible.data;
+  if (compatible.success) return stripAppliedAccountEvidence(compatible.data);
   if (!isRecord(raw)) return {};
   const bindings = isRecord(raw.bindingsByServiceId)
     ? raw.bindingsByServiceId
     : {};
   return {
     ...(raw.v !== undefined ? { v: raw.v } : {}),
-    bindingsByServiceId: { ...bindings },
+    bindingsByServiceId: stripAppliedAccountEvidence({ bindingsByServiceId: bindings }).bindingsByServiceId,
   };
+}
+
+function stripAppliedAccountEvidence<T extends { bindingsByServiceId: Record<string, unknown> }>(raw: T): T {
+  return { ...raw, bindingsByServiceId: Object.fromEntries(Object.entries(raw.bindingsByServiceId).map(([key, binding]) => {
+    if (!isRecord(binding) || binding.selection !== 'group') return [key, binding];
+    const { appliedProfileId: _observation, ...selection } = binding;
+    return [key, selection];
+  })) };
 }
 
 export function readRuntimeChildSelections(

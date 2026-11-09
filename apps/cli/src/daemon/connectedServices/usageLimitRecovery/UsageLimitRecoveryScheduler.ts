@@ -2,10 +2,6 @@ import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, SESSION_USAGE_LIMIT_RECOVERY
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { SessionUsageLimitRecoveryAuthSelectionV1, SessionUsageLimitRecoveryResumePromptModeV1, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import {
-  UsageLimitCheckNowRateLimiter,
-  USAGE_LIMIT_CHECK_NOW_RATE_LIMITED_CODE,
-} from '@/session/usageLimitRecoveryControls/usageLimitCheckNowRateLimiter';
-import {
   hasSameUsageLimitRecoveryIdentity,
   isPendingUsageLimitRecoveryStatus,
   mergeUsageLimitRecoveryRearm,
@@ -20,25 +16,9 @@ import {
   type DurableBackoffRecoveryStore,
   type DurableRecoveryGateResult,
 } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
-import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from '@/session/usageLimitRecoveryControls/createBackoffSessionUsageLimitRecoveryControlAdapter';
 import { deterministicStringify } from '@/utils/deterministicJson';
-import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
-import type { PendingResetStartBindingV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
-import { evaluatePendingResetStartReadinessV1 } from '@happier-dev/protocol/sessions/pending/pendingResetStartReadinessV1';
-
-export type PendingResetStartDemand = Readonly<{ localId: string; reset: PendingResetStartBindingV1 }>;
-export type PendingResetStartSessionPorts = Readonly<{
-  read: () => Promise<readonly PendingResetStartDemand[]>;
-  readAuthority: (demand: PendingResetStartDemand) => Promise<boolean>;
-  isCurrent: () => Promise<boolean>;
-  readWitness: (reset: PendingResetStartBindingV1) => Promise<ProviderAccountUsageSnapshotV1 | null>;
-  readCurrent: (reset: PendingResetStartBindingV1) => Promise<ProviderAccountUsageSnapshotV1 | null>;
-  release: (input: PendingResetStartDemand) => Promise<void>;
-}>;
-export type PendingResetStartRecoveryPorts = Readonly<{
-  withSession: (sessionId: string, run: (ports: PendingResetStartSessionPorts) => Promise<void>) => Promise<void>;
-  onError?: (error: unknown) => void;
-}>;
+import { PendingResetReconciliation, type PendingResetStartRecoveryPorts } from './pendingResetReconciliation';
+export type { PendingResetStartDemand, PendingResetStartSessionPorts, PendingResetStartRecoveryPorts } from './pendingResetReconciliation';
 
 export const RUNTIME_USAGE_LIMIT_RECOVERY_FIELD = SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID;
 export const METADATA_SESSION_USAGE_LIMIT_RECOVERY_V1_KEY = SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY;
@@ -49,7 +29,7 @@ export type UsageLimitRecoverySchedulerRecoveryResult =
   | Readonly<{ status: 'ready'; selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1 }>
   | Readonly<{ status: 'resumed'; selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1 }>
   | Readonly<{ status: 'pause'; selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1 }>
-  | Readonly<{ status: 'wait'; nextCheckAtMs: number; selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1; lastProbeError?: string | null }>
+  | Readonly<{ status: 'wait'; nextCheckAtMs: number | null; selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1; lastProbeError?: string | null }>
   | Readonly<{ status: 'exhausted'; lastProbeError?: string | null }>
   /**
    * The probe proved the intent is stale (e.g. the interrupted turn later
@@ -71,7 +51,7 @@ export type UsageLimitRecoveryCancelExactResult =
 
 function readUsageLimitRecoveryIntent(value: unknown): UsageLimitRecoveryIntent | null {
   const parsed = createStoredReadSchema(SessionUsageLimitRecoveryV1Schema).safeParse(value);
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? { ...parsed.data, maxAttempts: 0 } : null;
 }
 
 function readUsageLimitRecoveryServiceId(
@@ -97,20 +77,7 @@ function normalizeScheduledUsageLimitRecoveryIntent(intent: UsageLimitRecoveryIn
   return {
     ...intent,
     status: intent.status === 'checking' ? 'waiting' : intent.status,
-    nextCheckAtMs: intent.nextCheckAtMs ?? intent.resetAtMs
-      ?? intent.armedAtMs + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
   };
-}
-
-const DEFAULT_USAGE_LIMIT_RECOVERY_MAX_ATTEMPTS = 3;
-const DEFAULT_USAGE_LIMIT_RECOVERY_TERMINAL_RECORD_RETENTION_MS = 7 * 24 * 60 * 60_000;
-
-function resolveUsageLimitRecoveryPruneReferenceMs(intent: UsageLimitRecoveryIntent): number {
-  return Math.max(
-    intent.armedAtMs,
-    intent.resetAtMs ?? 0,
-    intent.nextCheckAtMs ?? 0,
-  );
 }
 
 function readResumePromptMode(value: unknown): SessionUsageLimitRecoveryResumePromptModeV1 {
@@ -126,11 +93,8 @@ function readResumePromptMode(value: unknown): SessionUsageLimitRecoveryResumePr
  * prior intent) starts fresh.
  */
 export class UsageLimitRecoveryScheduler {
-  private readonly checkNowRateLimiter: UsageLimitCheckNowRateLimiter;
   private readonly scheduler: DurableBackoffRecoveryScheduler<UsageLimitRecoveryIntent>;
-  private disposed = false;
-  private readonly pendingResetDemandKeys = new Map<string, Readonly<{ sessionId: string; localId: string }>>();
-  private readonly pendingResetReconciliations = new Map<string, Promise<void>>();
+  private readonly pendingReset: PendingResetReconciliation;
 
   constructor(private readonly deps: Readonly<{
     nowMs: () => number;
@@ -138,7 +102,6 @@ export class UsageLimitRecoveryScheduler {
     recover?: (intent: UsageLimitRecoveryIntent, context: Readonly<{ sessionId: string; reason: string }>) => Promise<UsageLimitRecoverySchedulerRecoveryResult>;
     resume?: (intent: UsageLimitRecoveryIntent) => Promise<void>;
     recordRestartDiagnostic?: ConnectedServiceDaemonRestartDiagnosticRecorder;
-    checkNowThrottleMs?: number;
     gate?: (input: Readonly<{ sessionId: string; intent: UsageLimitRecoveryIntent }>) => DurableRecoveryGateResult;
     /**
      * O4: optional resolver so callers with a known agent id (e.g. codex app-server) can
@@ -147,10 +110,6 @@ export class UsageLimitRecoveryScheduler {
     resolveAgentId?: (sessionId: string) => string | null;
     pendingResetStarts?: PendingResetStartRecoveryPorts;
   }>) {
-    this.checkNowRateLimiter = new UsageLimitCheckNowRateLimiter({
-      nowMs: deps.nowMs,
-      throttleMs: deps.checkNowThrottleMs,
-    });
     this.scheduler = new DurableBackoffRecoveryScheduler<UsageLimitRecoveryIntent>({
       nowMs: deps.nowMs,
       store: deps.store,
@@ -167,11 +126,9 @@ export class UsageLimitRecoveryScheduler {
           ? intent.status
           : 'cancelled'
       ),
-      getNextRetryAtMs: (intent) => intent.nextCheckAtMs ?? intent.resetAtMs,
+      getNextRetryAtMs: (intent) => intent.nextCheckAtMs,
       getAttemptCount: (intent) => intent.attemptCount,
-      getMaxAttempts: (intent) => intent.maxAttempts,
-      terminalRecordRetentionMs: DEFAULT_USAGE_LIMIT_RECOVERY_TERMINAL_RECORD_RETENTION_MS,
-      getTerminalPruneReferenceMs: resolveUsageLimitRecoveryPruneReferenceMs,
+      getMaxAttempts: () => 0,
       // A readiness probe does not spend the continuation-attempt budget.
       markChecking: (intent) => ({
         ...intent,
@@ -198,6 +155,7 @@ export class UsageLimitRecoveryScheduler {
       exhaustAfterWait: false,
       honorTimerNotBefore: true,
     });
+    this.pendingReset = new PendingResetReconciliation({ nowMs: deps.nowMs, ports: deps.pendingResetStarts, scheduler: this.scheduler });
   }
 
   read(sessionId: string): UsageLimitRecoveryIntent | null {
@@ -250,9 +208,6 @@ export class UsageLimitRecoveryScheduler {
     resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
   }>): Promise<UsageLimitRecoveryIntent> {
     const nowMs = this.deps.nowMs();
-    const maxAttempts = typeof input.maxAttempts === 'number' && Number.isFinite(input.maxAttempts)
-      ? Math.max(0, Math.trunc(input.maxAttempts))
-      : DEFAULT_USAGE_LIMIT_RECOVERY_MAX_ATTEMPTS;
     const intent: UsageLimitRecoveryIntent = {
       v: 1,
       issueFingerprint: input.issueFingerprint,
@@ -260,9 +215,9 @@ export class UsageLimitRecoveryScheduler {
       resumePromptMode: readResumePromptMode(input.resumePromptMode),
       armedAtMs: nowMs,
       resetAtMs: input.resetAtMs,
-      nextCheckAtMs: input.nextCheckAtMs ?? input.resetAtMs,
+      nextCheckAtMs: input.nextCheckAtMs === undefined ? input.resetAtMs : input.nextCheckAtMs,
       attemptCount: 0,
-      maxAttempts,
+      maxAttempts: 0,
       lastProbeError: null,
       selectedAuth: input.selectedAuth,
     };
@@ -309,14 +264,6 @@ export class UsageLimitRecoveryScheduler {
   }>> {
     const current = this.read(input.sessionId);
     if (!current) return { status: 'inactive' };
-    const rateLimit = this.checkNowRateLimiter.check(input.sessionId);
-    if (!rateLimit.allowed) {
-      return {
-        status: 'rate_limited',
-        errorCode: USAGE_LIMIT_CHECK_NOW_RATE_LIMITED_CODE,
-        retryAfterMs: rateLimit.retryAfterMs,
-      };
-    }
     if (current.status === 'cancelled') return { status: 'inactive' };
     if (current.status === 'exhausted') return { status: 'exhausted' };
     if (current.status === 'paused') {
@@ -343,79 +290,32 @@ export class UsageLimitRecoveryScheduler {
    * hands its scheduler here before a replacement attempt hydrates the same durable store.
    */
   dispose(): void {
-    this.disposed = true;
-    this.pendingResetDemandKeys.clear();
+    this.pendingReset.dispose();
     this.scheduler.dispose();
   }
 
   /** Pending owns persistence; restart and every wake re-read the exact held rows. */
-  async reconcilePendingResetStarts(sessionId: string): Promise<void> {
-    if (this.disposed || !this.deps.pendingResetStarts) return;
-    const existing = this.pendingResetReconciliations.get(sessionId);
-    if (existing) {
-      await existing;
-      return await this.reconcilePendingResetStarts(sessionId);
-    }
-    const operation = this.reconcilePendingResetStartsOnce(sessionId);
-    this.pendingResetReconciliations.set(sessionId, operation);
-    try { await operation; }
-    finally {
-      if (this.pendingResetReconciliations.get(sessionId) === operation) this.pendingResetReconciliations.delete(sessionId);
-    }
+  async reconcilePendingResetStarts(sessionId: string, signal?: AbortSignal): Promise<void> {
+    await this.pendingReset.reconcile(sessionId, signal);
   }
 
-  async reconcilePendingResetStartsForTrackedSessions(): Promise<void> {
-    const sessionIds = new Set([...this.pendingResetDemandKeys.values()].map(key => key.sessionId));
-    await Promise.all([...sessionIds].map(sessionId => this.reconcilePendingResetStarts(sessionId)));
-  }
-
-  private async reconcilePendingResetStartsOnce(sessionId: string): Promise<void> {
-    const ports = this.deps.pendingResetStarts;
-    if (!ports || this.disposed) return;
-    await ports.withSession(sessionId, async session => {
-      const rows = await session.read();
-      if (this.disposed || !await session.isCurrent()) return;
-      const localIds = new Set(rows.map(row => row.localId));
-      for (const [id, key] of this.pendingResetDemandKeys) {
-        if (key.sessionId === sessionId && !localIds.has(key.localId)) {
-          this.scheduler.clearDemand(key);
-          this.pendingResetDemandKeys.delete(id);
-        }
-      }
-      for (const row of rows) {
-        if (this.disposed) return;
-        const id = JSON.stringify([sessionId, row.localId]);
-        const key = this.pendingResetDemandKeys.get(id) ?? { sessionId, localId: row.localId };
-        this.pendingResetDemandKeys.set(id, key);
-        this.scheduler.clearDemand(key);
-        const authorityCurrent = await session.readAuthority(row);
-        if (!authorityCurrent || this.disposed || !await session.isCurrent()) continue;
-        const previous = await session.readWitness(row.reset);
-        const current = await session.readCurrent(row.reset);
-        const authorityCurrentAtDecision = !this.disposed && await session.isCurrent() && !this.disposed;
-        const readiness = evaluatePendingResetStartReadinessV1({ reset: row.reset, witness: previous, current,
-          nowMs: this.deps.nowMs(), authorityCurrent: authorityCurrentAtDecision });
-        if (readiness.status === 'waiting' && readiness.nextCheckAtMs !== undefined) {
-          this.scheduler.scheduleDemand({ key, notBeforeMs: readiness.nextCheckAtMs, wake: () => {
-            void this.reconcilePendingResetStarts(sessionId).catch(error => ports.onError?.(error));
-          } });
-          continue;
-        }
-        if (readiness.status !== 'ready') continue;
-        await session.release(row);
-        if (this.disposed) return;
-        this.pendingResetDemandKeys.delete(id);
-      }
-    });
+  async reconcilePendingResetStartsForTrackedSessions(signal?: AbortSignal): Promise<void> {
+    await this.pendingReset.reconcileTracked(signal);
   }
 
   private async recoverUsageLimitIntent(
     checking: UsageLimitRecoveryIntent,
     context: Readonly<{ sessionId: string; reason: string }>,
   ) {
-    const recovery = this.deps.recover
-      ? await this.deps.recover(checking, context)
-      : { status: 'wait' as const, nextCheckAtMs: checking.nextCheckAtMs ?? checking.resetAtMs ?? this.deps.nowMs() };
+    let recovery: UsageLimitRecoverySchedulerRecoveryResult;
+    try {
+      recovery = this.deps.recover
+        ? await this.deps.recover(checking, context)
+        : { status: 'wait', nextCheckAtMs: checking.nextCheckAtMs };
+    } catch {
+      recovery = { status: 'wait', nextCheckAtMs: null,
+        lastProbeError: 'usage_limit_recovery_readiness_probe_failed' };
+    }
 
     if (recovery.status === 'pause' || (recovery.status === 'ready'
       && (readResumePromptMode(checking.resumePromptMode) === 'off' || !this.deps.resume))) {
@@ -461,11 +361,12 @@ export class UsageLimitRecoveryScheduler {
       });
       try {
         if (recovery.status === 'ready') await this.deps.resume?.(succeeded);
-      } catch (error) {
+      } catch {
         return {
-          status: 'wait' as const,
-          intent: succeeded,
-          lastError: error instanceof Error ? error.message : String(error),
+          status: 'pending' as const,
+          intent: { ...succeeded, status: 'waiting' as const, nextCheckAtMs: null,
+            lastProbeError: 'session_usage_limit_recovery_resume_failed' },
+          wakeResult: { status: 'waiting' },
         };
       }
       return {
@@ -504,9 +405,16 @@ export class UsageLimitRecoveryScheduler {
       };
     }
 
-    const nextCheckAtMs = recovery.nextCheckAtMs > this.deps.nowMs()
-      ? recovery.nextCheckAtMs
-      : this.deps.nowMs() + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS;
+    const nextCheckAtMs = recovery.nextCheckAtMs;
+    if (nextCheckAtMs === null || nextCheckAtMs <= this.deps.nowMs()) {
+      return {
+        status: 'pending' as const,
+        intent: { ...checking, status: 'waiting' as const, nextCheckAtMs: null,
+          selectedAuth: recovery.selectedAuth ?? checking.selectedAuth,
+          lastProbeError: recovery.lastProbeError ?? null },
+        wakeResult: { status: 'waiting' },
+      };
+    }
     return {
       status: 'wait' as const,
       nextRetryAtMs: nextCheckAtMs,

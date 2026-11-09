@@ -502,8 +502,11 @@ describe('admitted finite Compose command', () => {
             }
         });
     });
-    it.each([RPC_METHODS.DAEMON_TERMINAL_ENSURE, RPC_METHODS.DAEMON_TERMINAL_RESTART])(
-        'consumes the admitted person service shell through installed terminal composition: %s', async method => {
+    it.each([
+        [RPC_METHODS.DAEMON_TERMINAL_ENSURE, 'present_user'],
+        [RPC_METHODS.DAEMON_TERMINAL_RESTART, 'account_automation'],
+    ] as const)(
+        'consumes the admitted service shell through installed terminal composition: %s %s', async (method, callerAuthority) => {
         let phase = 'fixture';
         onTestFinished(() => { console.info('[C-P30 registered shell phase]', { method, phase }); });
         await withFiniteComposeFixture(async ({ project, source, io, root }) => {
@@ -591,7 +594,7 @@ describe('admitted finite Compose command', () => {
             });
             const machineAdmission = { actorAccountId: 'finite-owner', custodianAccountId: 'finite-owner', machineId: source.machineId,
                 installationId: source.installationId, role: 'manage' as const, encryptionMode: 'plain' as const };
-            const owner = { callerAuthority: 'present_user' as const,
+            const owner = { callerAuthority,
                 machineAdmission, verifyMachineAdmissionCurrent: () => admissionBoundary.verifyMachineAdmission({
                     context: machineAdmission, method: `${source.machineId}:${method}` }) };
             const request = { terminalKey: 'service-shell', launch: {
@@ -608,8 +611,6 @@ describe('admitted finite Compose command', () => {
                 if (!ordinary.ok) throw new Error('Expected ordinary terminal');
                 await rpc.invokeLocal(RPC_METHODS.DAEMON_TERMINAL_CLOSE, { terminalId: ordinary.terminalId }, { rpcContext: owner });
                 clients.length = 0;
-                await expect(rpc.invokeLocal(method, request, { rpcContext: { ...owner, callerAuthority: 'account_automation' } }))
-                    .rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN });
                 expect(await rpc.invokeLocal(method, request, { rpcContext: { ...owner,
                     machineAdmission: { ...owner.machineAdmission, actorAccountId: 'member', role: 'use' } } }))
                     .toMatchObject({ ok: false, errorCode: 'terminal_unavailable', error: 'agent_isolation_unavailable' });
@@ -735,6 +736,16 @@ describe('admitted finite Compose command', () => {
                 lostClient.events.emit('exit', { exitCode: 0 });
                 await machineNativeEffectAdmission.reconcileUnknown({ keys: rendered.keys,
                     observeSettled: async operation => operation.operationId === unknownOperation.operationId && lostClient.exited });
+                phase = 'lost-original-masking';
+                const observer = activated.authorizeServiceObserver();
+                observer.secretRedactionLease!.close();
+                await observer.release();
+                const clientsBeforeRefusal = clients.length;
+                const refusal = DaemonTerminalEnsureResponseSchema.parse(await rpc.invokeLocal(method,
+                    { ...request, terminalKey: 'service-shell-needs-redeploy' }, { rpcContext: owner }));
+                expect(refusal).toMatchObject({ ok: false, error: 'secret_redaction_redeploy_required' });
+                expect(refusal).not.toHaveProperty('terminalId');
+                expect(clients).toHaveLength(clientsBeforeRefusal);
             } finally {
                 phase = 'registration-cleanup';
                 for (const client of clients) client.events.emit('exit', { exitCode: 0 });
@@ -788,7 +799,7 @@ describe('admitted finite Compose command', () => {
             const tool = await exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-native-compose', cwd: source.rootPath });
             phase = 'ordinary-authorize';
             const ordinary = await authorizePluginExecLaunchForHost(exec, { executable: tool.executable,
-                cwd: source.rootPath, args: ['version'], deploymentEnv: attachment });
+                cwd: source.rootPath, args: ['version'], deploymentEnv: attachment }, { agentIsolation: null });
             try {
                 phase = 'ordinary-environment';
                 expect(ordinary.env.DATABASE_URL).toBe(pooled);

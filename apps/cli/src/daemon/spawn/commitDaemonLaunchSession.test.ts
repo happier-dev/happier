@@ -7,6 +7,7 @@ import { deriveSessionCreationTagV1, SessionCreationCorrespondenceV1Schema, Sess
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 
 // The Session row, Account currentness/settings reads and archive mutation are
 // HTTP boundaries. Settings bootstrap and attach-context building stay real.
@@ -79,6 +80,54 @@ function plainSessionRow(id: string, metadata: Record<string, unknown>) {
 }
 
 describe('commitDaemonLaunchSession', () => {
+  it('offers committed progress after authenticated attach and before physical launch completion', async () => {
+    const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: 'machine',
+      resolveAccountId: async () => 'account', generateOperationId: () => 'commit-operation' });
+    const input = { creationKey: 'commit-once', observeSessionCommit: true, executionTarget: { serverId: 'home', machineId: 'machine' },
+      directory: { kind: 'path' as const, path: '/repo' }, agentTarget: { kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
+    let releaseAttach!: () => void;
+    const attaching = new Promise<void>(resolve => { releaseAttach = resolve; });
+    let releaseNative!: () => void;
+    const native = new Promise<void>(resolve => { releaseNative = resolve; });
+    const getOrCreateSession = vi.fn(async (request: { metadata: Record<string, unknown> }) => ({
+      id: 'session-committed', metadata: request.metadata,
+      sessionCreationOutcome: { disposition: 'created' as const, organizationPlacement: { folderId: null, tagIds: [] } },
+    }));
+    network.fetchSessionByIdCompat.mockImplementation(async () => {
+      await attaching;
+      return plainSessionRow('session-committed', getOrCreateSession.mock.calls[0]![0].metadata);
+    });
+    let offered: unknown;
+    let admissions = 0;
+    const observed = operations.observeExecution({ actionId: 'session.spawn_new', input, execute: async operation => {
+      // This is the Home create transport; commit, authenticated attach,
+      // acceptance and retained operation observation all use their real owners.
+      const result = await commitDaemonLaunchSession({ api: { getOrCreateSession } as never, credentials,
+        directory: '/repo', accountSettings: {}, options: { directory: '/repo', projectSetupOperation: operation } });
+      if (!result.ok) throw new Error('Fixture commit refused');
+      await native;
+      admissions += 1;
+      return { ok: true, result: { type: 'success', disposition: 'created', sessionId: result.session.sessionId,
+        executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
+        initialInput: { status: 'accepted', localId: 'original-input' } } };
+    } }).then(value => { offered = value; return value; });
+    try {
+      await vi.waitFor(() => expect(getOrCreateSession).toHaveBeenCalledTimes(1));
+      expect(offered).toBeUndefined();
+      releaseAttach();
+      await vi.waitFor(() => expect(offered).toMatchObject({ ok: true, result: { type: 'pending', outcome: 'accepted',
+        sessionId: 'session-committed' } }));
+      expect(admissions).toBe(0);
+      const { observeSessionCommit: _observer, ...terminalInput } = input;
+      const terminal = operations.observeExecution({ actionId: 'session.spawn_new', input: terminalInput,
+        execute: async () => { throw new Error('The held startup must not execute twice'); } });
+      releaseNative();
+      await expect(terminal).resolves.toMatchObject({ ok: true, result: { type: 'success',
+        initialInput: { status: 'accepted', localId: 'original-input' } } });
+      expect(admissions).toBe(1);
+    } finally { releaseAttach(); releaseNative(); await observed; }
+  });
   it('commits a brokered Provider-model slot and carries only the Home witness through attach', async () => {
     const binding = { v: 1 as const, slot: { kind: 'provider_model' as const }, resourceId: 'accepted-resource',
       expectedResourceRevision: 3, deliveryMode: 'brokered' as const, teamId: 'team-1' };
@@ -100,15 +149,24 @@ describe('commitDaemonLaunchSession', () => {
     if (result.ok) expect(withoutFreshSessionCreationFields(result.session.options)).not.toHaveProperty('teamCredentialBindings');
   });
   it('refuses a Team model launch when the Home supplies no accepted inference witness', async () => {
+    const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: 'machine',
+      resolveAccountId: async () => 'account' });
     const getOrCreateSession = vi.fn(async (input: { metadata: Record<string, unknown> }) => ({
       id: 'session-no-witness', metadata: input.metadata,
       sessionCreationOutcome: { disposition: 'rejoined' as const, organizationPlacement: { folderId: null, tagIds: [] } },
     }));
     network.fetchSessionByIdCompat.mockImplementation(async () => plainSessionRow('session-no-witness', getOrCreateSession.mock.calls[0]![0].metadata));
-    const result = await commitDaemonLaunchSession({ api: { getOrCreateSession } as never, credentials, directory: '/repo', accountSettings: {},
-      options: { directory: '/repo', teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'unaccepted',
-        expectedResourceRevision: 1, deliveryMode: 'brokered', teamId: 'team-1' }] } });
-    expect(result).toMatchObject({ ok: false, result: { errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED } });
+    const result = await operations.observeExecution({ actionId: 'session.spawn_new', input: {
+      creationKey: 'unaccepted-team-model', observeSessionCommit: true, executionTarget: { serverId: 'home', machineId: 'machine' },
+      directory: { kind: 'path', path: '/repo' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    }, execute: async operation => {
+      const committed = await commitDaemonLaunchSession({ api: { getOrCreateSession } as never, credentials, directory: '/repo', accountSettings: {},
+        options: { directory: '/repo', projectSetupOperation: operation, teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'unaccepted',
+          expectedResourceRevision: 1, deliveryMode: 'brokered', teamId: 'team-1' }] } });
+      if (committed.ok) throw new Error('Unaccepted Team model must refuse before progress');
+      return { ok: false, errorCode: committed.result.errorCode ?? 'spawn_failed', error: committed.result.errorMessage };
+    } });
+    expect(result).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED });
   });
   it('requires server birth admission for Discussion participants before a native runner is started', () => {
     const discussionParticipant = { discussionId: 'discussion', participantSlotId: 'slot' };
@@ -225,7 +283,7 @@ describe('commitDaemonLaunchSession', () => {
     expect(committed.session.attachPayload).not.toHaveProperty('promptStack');
   });
 
-  it('commits initial triggers at birth and consumes them before the runner attaches', async () => {
+  it.each([true, false])('commits the profile before the runner attaches (with triggers: %s)', async withTriggers => {
     const initialTriggers = [SessionInitialTriggerAdmissionV1Schema.parse({
       automationId: 'automation-initial', name: 'Prepare workspace', enabled: true,
       workflowDefinitionId: 'builtin:review-and-converge',
@@ -236,7 +294,7 @@ describe('commitDaemonLaunchSession', () => {
         events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }],
     })];
     const identity = { bot: { kind: 'bot' as const }, createdAsBot: true as const };
-    const options = { directory: '/repo', initialTriggers, identity, memoryEnabled: false };
+    const options = { directory: '/repo', ...(withTriggers ? { initialTriggers, identity, memoryEnabled: false } : {}), approvalProfileId: 'builtin:read-propose' };
     expect(daemonLaunchRequiresCommittedSession(options)).toBe(true);
     const getOrCreateSession = vi.fn(async (input: { metadata: Record<string, unknown> }) => ({
       id: 'session-initial-trigger', metadata: input.metadata,
@@ -246,13 +304,15 @@ describe('commitDaemonLaunchSession', () => {
       plainSessionRow('session-initial-trigger', getOrCreateSession.mock.calls[0]![0].metadata));
     const committed = await commitDaemonLaunchSession({ api: { getOrCreateSession } as never, credentials, options, directory: '/repo' });
     expect(committed.ok).toBe(true);
-    expect(getOrCreateSession.mock.calls[0]![0]).toMatchObject({ initialTriggers });
+    if (withTriggers) expect(getOrCreateSession.mock.calls[0]![0]).toMatchObject({ initialTriggers });
     expect(getOrCreateSession.mock.calls[0]![0].metadata).not.toHaveProperty('summary');
-    expect(getOrCreateSession.mock.calls[0]![0].metadata).toMatchObject({ ...identity, work: { memoryEnabled: false } });
+    expect(getOrCreateSession.mock.calls[0]![0].metadata).toMatchObject({
+      ...(withTriggers ? { ...identity, work: { memoryEnabled: false } } : {}), approvalProfileId: 'builtin:read-propose' });
     if (!committed.ok) return;
     expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('initialTriggers');
     expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('identity');
     expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('memoryEnabled');
+    expect(withoutFreshSessionCreationFields(committed.session.options)).not.toHaveProperty('approvalProfileId');
     expect(committed.session.attachPayload).not.toHaveProperty('initialTriggers');
   });
 

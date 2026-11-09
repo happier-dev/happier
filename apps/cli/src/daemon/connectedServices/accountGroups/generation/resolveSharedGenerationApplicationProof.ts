@@ -11,6 +11,7 @@ import type {
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { resolveConnectedServiceTargetMaterializedRoot } from '../../materialize/resolveConnectedServiceTargetMaterializedRoot';
 import { createConnectedServiceRuntimeAuthNativeHome } from '../../runtimeAuth/createRuntimeAuthNativeHome';
+import { logger } from '@/ui/logger';
 
 export async function resolveSharedGenerationApplicationProof(input: Readonly<{
   agentId: CatalogAgentId;
@@ -26,7 +27,6 @@ export async function resolveSharedGenerationApplicationProof(input: Readonly<{
   resolveRuntimeAuthAdapter(agentId: string): Promise<ConnectedServiceProviderRuntimeAuthAdapter | null>;
 }>): Promise<ConnectedServiceProviderAdoptedGenerationTarget | null> {
   const target = input.committedGeneration.decisionCommittedTarget;
-  if (target.credentialRevision === null) return null;
 
   let resolution: Awaited<ReturnType<typeof input.resolveCredentialResolution>>;
   try {
@@ -35,14 +35,16 @@ export async function resolveSharedGenerationApplicationProof(input: Readonly<{
       profileId: target.profileId,
     });
   } catch {
+    logger.warn('[Connected Services] credential_revision_read_failed');
     return null;
   }
-  if (!resolution || resolution.credentialRevision !== target.credentialRevision) return null;
+  if (!resolution) return null;
 
   let adapter: Awaited<ReturnType<typeof input.resolveRuntimeAuthAdapter>>;
   try {
     adapter = await input.resolveRuntimeAuthAdapter(input.agentId);
   } catch {
+    logger.warn('[Connected Services] runtime_auth_adapter_unavailable');
     return null;
   }
   if (!adapter?.verifyActiveAccount) return null;
@@ -66,12 +68,13 @@ export async function resolveSharedGenerationApplicationProof(input: Readonly<{
         activeProfileId: target.profileId,
         profileId: target.profileId,
         groupGeneration: target.generation,
-        credentialRevision: target.credentialRevision,
+        credentialRevision: resolution.credentialRevision,
       },
       credential: resolution.record,
       ...(nativeHome ? { nativeHome } : {}),
     });
   } catch {
+    logger.warn('[Connected Services] shared_application_verification_failed');
     return null;
   }
   if (
@@ -82,13 +85,14 @@ export async function resolveSharedGenerationApplicationProof(input: Readonly<{
     || verification.generationApplication.groupId !== target.groupId
     || verification.generationApplication.profileId !== target.profileId
     || verification.generationApplication.generation !== target.generation
-    || verification.generationApplication.credentialRevision !== target.credentialRevision
+    || verification.generationApplication.credentialRevision !== resolution.credentialRevision
   ) {
     return null;
   }
 
   return {
     ...target,
+    credentialRevision: resolution.credentialRevision,
     proof: {
       status: 'verified',
       source: verification.source,

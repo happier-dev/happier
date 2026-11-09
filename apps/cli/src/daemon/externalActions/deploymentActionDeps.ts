@@ -1,13 +1,14 @@
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 type DeploymentDeps = ReturnType<typeof createDaemonDeploymentActionDeps>;
 type DaemonDeploymentDeps = Pick<DeploymentDeps,
-  | 'deploymentAction' | 'deploymentRestore' | 'deploymentBackupAction' | 'projectReadinessRead' | 'prepareDeploymentEnvironmentCreate'
+  | 'deploymentAction' | 'deploymentRestore' | 'deploymentBackupAction' | 'projectReadinessRead'
   | 'deploymentTemplateInstantiate' | 'prepareDeploymentTemplateInstantiation' | 'resolveEnvironmentApprovalScope'
   | 'prepareDeploymentAction' | 'prepareDeploymentTeardown' | 'prepareHostReviewedChildren'
-  | 'readSetupAppArtifact' | 'readPendingDeploymentRecovery'>;
+  | 'readSetupAppArtifact' | 'readPendingDeploymentRecovery'>
+  & Required<Pick<ActionExecutorDeps, 'prepareDeploymentEnvironmentCreate'>>;
 
 /** Bind content custody when the effect runs: detached approval replay restores its root after executor construction. */
 export function createRequesterBoundDeploymentActionDeps(

@@ -17,7 +17,6 @@ import { configuration } from '@/configuration';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import type { PrepareForegroundAgentRuntimeAdmissionDependencies } from './prepareForegroundAdmission';
 import { createForegroundPurposeOwnerFixture } from './prepareForegroundAdmission.connectedServices.testkit';
 
@@ -126,14 +125,11 @@ async function createForegroundConnectedAccountFixture(accountIds: readonly stri
     async dependenciesFor(applied: ResolvedExecutablePluginRuntimeRegistry, directory: string): Promise<PrepareForegroundAgentRuntimeAdmissionDependencies> {
       registry = applied;
       return {
+        activatePurposeBindings: account.owner.activatePurposeBindings,
         activateSessionPurposeBindings: account.owner.activateSessionPurposeBindings,
         resolveConnectedServiceAuthForSpawn: async (input) => {
           const materialized = await resolveConnectedServiceAuthForSpawn({
             ...input, credentials, api, activeServerDir: configuration.activeServerDir, baseDir: join(directory, 'materialized'),
-            activateQualifiedPurposeBindings: (snapshot) => account.owner.activatePurposeBindings({
-              subject: { kind: 'operation', operationId: 'foreground-materialize', consumer: account.purpose.consumer, isCurrent: () => pluginReloadController.isRuntimeRegistryCurrent(applied) },
-              purposes: snapshot.purposes, bindings: snapshot.bindings,
-            }),
           });
           if (materialized) materializations.push(materialized);
           return materialized;

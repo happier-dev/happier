@@ -48,6 +48,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     exit: Readonly<{ reason: string; code: number | null; signal: string | null }>,
   ) => void | Promise<void>;
   onTrackedSessionHealthy?: (tracked: TrackedSession) => Promise<void>;
+  retryOrphanedManagedServices?: () => Promise<void>;
   allocatorMaintenance?: Readonly<{
     activity: Pick<ManagedActivityInventory, 'readDecision'>;
     trim: () => Promise<boolean>;
@@ -246,6 +247,13 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           code: null,
           signal: null,
         });
+      }
+
+      if (isShuttingDown?.() === true) return;
+      try {
+        await params.retryOrphanedManagedServices?.();
+      } catch (error) {
+        logger.warn('[DAEMON RUN] Retained managed-service cleanup unavailable; retrying on a later heartbeat', { error });
       }
 
       try {

@@ -18,6 +18,23 @@ function deferred<T>() {
 }
 
 describe.skipIf(process.platform !== 'linux')('computer source status projection', () => {
+  it('preserves viewer key modifiers through the real source and pinned native driver', async () => {
+    native.call.mockImplementation(async ({ name }) => name === 'get_window_state' ? observation()
+      : name === 'check_permissions' ? { structuredContent: { x11: true, xsend_event: true } }
+        : { structuredContent: { effect: 'unverifiable' } });
+    const source = createComputerCaptureSource({ sessionId: 'viewer-modifiers', target, executablePath: '/managed/cua-driver' });
+    const stream = await source.adapter.start({ streamId: 'modifiers', streamFamily: 'screen', sourceMachineId: 'machine', targetMachineId: 'machine', caps: {},
+      startRequest: { v: 1, streamId: 'modifiers', streamFamily: 'screen', sourceId: source.sourceId, codecId: 'image.frame.v1',
+        routeKind: 'loopback_direct', sourceMachineId: 'machine', targetMachineId: 'machine' },
+      startedAtMs: 0, expiresAtMs: 60_000, nowMs: () => 0, offerFrame: () => ({ ok: true }), applyControl: () => ({ ok: true }), emitReceipt: () => {} });
+    if (!stream.ok) throw new Error(stream.reasonCode);
+    try {
+      await source.interrupt();
+      stream.session.applySidebandControl?.({ v: 1, streamId: 'modifiers', sourceId: source.sourceId, eventId: 'key', kind: 'keyboard_key', key: 'Tab', modifiers: ['control', 'shift'] });
+      await vi.waitFor(() => expect(native.tools.find(tool => tool.name === 'press_key')?.arguments)
+        .toMatchObject({ key: 'Tab', modifiers: ['control', 'shift'] }));
+    } finally { await stream.session.stop(); await source.close(); }
+  });
   it('binds an element snapshot to its immutable provider and refuses another snapshot before native input', async () => {
     native.call.mockImplementation(async ({ name }) => name === 'get_window_state' ? observation()
       : { structuredContent: { x11: true, xsend_event: true } });

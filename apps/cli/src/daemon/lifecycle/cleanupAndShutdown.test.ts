@@ -35,7 +35,7 @@ describe('cleanupAndShutdown', () => {
         const transportRetired: boolean[] = [];
         const handle = startPublicProfileRefresh({
             scheduler: createDaemonServerWorkScheduler({ budget: createDaemonServerWorkBudget({ maxConcurrentWrites: 1 }) }),
-            signal: lifetime.signal, isCurrent: account.isCurrent, actions: account.actions,
+            signal: lifetime.signal, actions: account.actions,
         });
         await pending.accepted;
         const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);

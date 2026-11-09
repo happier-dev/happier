@@ -64,7 +64,7 @@ vi.mock('@happier-dev/cli-common/process', async importOriginal => {
   } };
 });
 
-describe.skipIf(process.platform !== 'linux')('member setup → selected material → Session → Exec composition', () => {
+describe.skipIf(process.platform !== 'linux')('member setup → selected material → Session → Exec composition (simulated UIDs and RunAs)', () => {
   let activeServerDir: string;
   beforeEach(async () => {
     activeServerDir = await mkdtemp(join(tmpdir(), 'happier-member-composed-'));

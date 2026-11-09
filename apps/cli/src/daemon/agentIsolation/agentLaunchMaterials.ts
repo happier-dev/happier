@@ -10,7 +10,7 @@ import { agentLaunchOperationRuntimeHome } from './agentLaunchRuntime';
 
 /** The incumbent materialization lease supplies its admitted Agent-owned destination. */
 export type AgentLaunchMaterialization = Pick<AgentLaunchPayload,
-  'runtimeHome' | 'environment' | 'selectedMaterials'> & Readonly<{ memberIdentity?: AgentIsolationMemberNativeIdentity }>;
+  'runtimeHome' | 'environment' | 'selectedMaterials' | 'accountSettingsApplication'> & Readonly<{ memberIdentity?: AgentIsolationMemberNativeIdentity }>;
 export type AgentLaunchMaterializationTarget = Pick<AgentLaunchMaterialization, 'runtimeHome' | 'memberIdentity'>;
 
 /** Qualify the existing parent native observation without another OS/Home read. */
@@ -30,6 +30,7 @@ export function requireAgentIsolationMaterialNativeIdentity(identity: AgentIsola
 export type AgentLaunchOperationMaterialization = Readonly<{
   materializationKey: string;
   environment: AgentLaunchMaterialization['environment'];
+  accountSettingsApplication?: AgentLaunchMaterialization['accountSettingsApplication'];
   selectedMaterials: AgentLaunchMaterialization['selectedMaterials'];
 }>;
 
@@ -42,6 +43,7 @@ export function projectAgentIsolationOperationMaterial(identity: AgentIsolationM
   return Object.freeze({ ...('digest' in identity ? { memberIdentity: identity } : {}),
     runtimeHome: agentLaunchOperationRuntimeHome(identity.home, input.materializationKey),
     environment: Object.freeze({ ...input.environment }),
+    ...(input.accountSettingsApplication ? { accountSettingsApplication: input.accountSettingsApplication } : {}),
     selectedMaterials: Object.freeze(input.selectedMaterials.map(file => Object.freeze({ ...file }))) });
 }
 

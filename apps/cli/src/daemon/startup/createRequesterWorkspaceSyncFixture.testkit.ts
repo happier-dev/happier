@@ -104,6 +104,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   targetCustodianAccountId?: string;
   targetResourceMode?: 'plain' | 'e2ee';
   workerCleanCopy?: boolean;
+  allowRelationshipAction?: boolean;
   remoteSeed?: boolean;
   nativeCarrierHome?: Parameters<typeof composeBindChildSourcePhaseTestRuntime>[0]['nativeCarrierHome'];
   originalActionHomeHttp?: boolean;
@@ -234,7 +235,9 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     if (!row.content || row.content.t !== 'plain') throw new Error('Expected initial plain fixture row');
     return { ...row, content: rowCipher.seal(row.content.v) };
   };
-  const settings = prepareAccountSettingsV2Content({ credentials, raw: {}, envelopeKind: accountMode === 'e2ee' ? 'encrypted' : 'plain' });
+  const settings = prepareAccountSettingsV2Content({ credentials, raw: options.allowRelationshipAction
+    ? { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'workspace.sync.relationship.create': ['ui'] } } }
+    : {}, envelopeKind: accountMode === 'e2ee' ? 'encrypted' : 'plain' });
   const originalHomePost = vi.mocked(axios.post).getMockImplementation();
   const selectedRoot = role === 'use' ? member.workspaceRoot : installed.directory;
   const sourcePath = join(selectedRoot, 'source-parent-ref');

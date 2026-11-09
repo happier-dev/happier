@@ -35,7 +35,7 @@ describe('native browser cookie source', () => {
       expect(await readFile(file)).toEqual(before);
       expect(await listBrowserCookieSources({ homeDirectory: home, platform, appDataDirectory: join(home, 'AppData', 'Roaming') }))
         .toMatchObject({ sources: [{ label: 'Chosen', browser: 'firefox' }, { label: 'Other', browser: 'firefox' }],
-          unsupported: [{ browser: 'chromium', code: 'source_format_unsupported' }, { browser: 'safari', code: 'source_format_unsupported' }] });
+          unsupported: [{ browser: 'chromium', code: 'source_unavailable' }, { browser: 'safari', code: 'source_format_unsupported' }] });
     } finally { await rm(home, { recursive: true, force: true }); }
   });
   it('preserves modern Firefox millisecond expiry and unset SameSite and skips explicit partition cookies', async () => {
@@ -62,8 +62,8 @@ describe('native browser cookie source', () => {
     } finally { await rm(home, { recursive: true, force: true }); }
   });
   it('returns closed unavailable outcomes for protected formats, cancellation and unknown profiles', async () => {
-    expect(await readBrowserCookieSource({ browser: 'chromium', profileId: 'x', sites: [] }))
-      .toEqual({ status: 'unavailable', code: 'source_format_unsupported' });
+    expect(await readBrowserCookieSource({ browser: 'chromium', homeDirectory: '/no-cookie-source-fixture', profileId: 'x', sites: [] }))
+      .toEqual({ status: 'unavailable', code: 'source_unavailable' });
     expect(await readBrowserCookieSource({ browser: 'safari', profileId: 'x', sites: [] }))
       .toEqual({ status: 'unavailable', code: 'source_format_unsupported' });
     expect(await readBrowserCookieSource({ profileId: 'x', sites: [], signal: AbortSignal.abort() }))

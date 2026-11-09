@@ -24,7 +24,6 @@ import {
 } from './onHappySessionWebhook';
 import {
   armSessionWebhookStartupCustody,
-  markSessionWebhookPidTimedOut,
   waitForSessionWebhook,
 } from '../spawn/waitForSessionWebhook';
 import { hashProcessCommand } from '../sessionRegistry';
@@ -130,6 +129,50 @@ describe('createOnHappySessionWebhook', () => {
       }
       expect(awaiter).toHaveBeenCalledOnce();
       expect((await readSessionMarkerForPid(wrapperPid))?.happySessionId).toBe(sessionId);
+    } finally {
+      Object.defineProperty(configuration, 'happyHomeDir', originalHome);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the Session materialized-state observation binding on an existing-Session runner marker', async () => {
+    // A reattaching daemon reads only the runner marker. Losing the binding there
+    // makes every shared-state transcript follow fail after a daemon replacement.
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'happier-runner-marker-binding-'));
+    const originalHome = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
+    Object.defineProperty(configuration, 'happyHomeDir', { ...originalHome, value: dir });
+    try {
+      const wrapperPid = 649131;
+      const runnerPid = 649132;
+      const sessionId = 'session-existing-runner-binding';
+      const binding = {
+        agentId: 'claude', pluginId: 'happier.agent.claude',
+        sourceCustody: { kind: 'development' as const, registeredRootId: path.join(dir, 'plugins', 'claude') },
+        nativeHomeRoot: path.join(dir, 'home', 'claude-config'),
+        entries: [{ entryPath: 'projects', sourceEntryRoot: path.join(dir, 'native', 'projects'),
+          materializedEntryPath: path.join(dir, 'home', 'claude-config', 'projects') }],
+      };
+      const tracked: TrackedSession = {
+        pid: wrapperPid, startedBy: 'daemon', happySessionId: sessionId,
+        agentRuntimeDaemonServiceAuthorityFilePath: path.join(dir, 'authority.json'),
+        materializedStateObservationBinding: binding,
+        spawnOptions: { directory: dir, backendTarget: { kind: 'backend', backendId: 'claude' },
+          spawnNonce: 'existing-launch', existingSessionId: sessionId },
+      };
+      const sessions = new Map([[wrapperPid, tracked]]);
+      const report = createOnHappySessionWebhook({
+        pidToTrackedSession: sessions, pidToAwaiter: new Map([[wrapperPid, vi.fn()]]),
+        getParentPidFn: () => wrapperPid,
+        // The OS identity read is the boundary; marker persistence stays real.
+        readProcessIdentityByPidFn: async (pid) => ({ pid, processStartTimeMs: pid === wrapperPid ? 1_000 : 2_000,
+          command: pid === wrapperPid ? '/runtime/scope-exit' : '/runtime/bin/happier claude --started-by daemon' }),
+        readCredentialsFn: async () => null,
+      });
+      await report(sessionId, createMetadata(runnerPid, 'daemon', dir));
+      await tracked.reportMarkerCustody?.pending;
+      expect(await readSessionMarkerForPid(runnerPid)).toMatchObject({
+        pid: runnerPid, happySessionId: sessionId, materializedStateObservationBinding: binding,
+      });
     } finally {
       Object.defineProperty(configuration, 'happyHomeDir', originalHome);
       await rm(dir, { recursive: true, force: true });
@@ -1707,29 +1750,7 @@ describe('createOnHappySessionWebhook', () => {
     expect(writeSessionMarkerFn).not.toHaveBeenCalled();
   });
 
-  it('ignores a late webhook from an unknown daemon PID that already timed out and exited', async () => {
-    markSessionWebhookPidTimedOut(792);
-    const pidToTrackedSession = new Map<number, TrackedSession>();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
-    const writeSessionMarkerFn = vi.fn(async () => {});
-
-    const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
-      getParentPidFn: () => null,
-      findHappyProcessByPidFn: async () => null,
-      writeSessionMarkerFn,
-    });
-
-    onWebhook('session-daemon-792', createMetadata(792, 'daemon'));
-    await Promise.resolve();
-
-    expect(pidToTrackedSession.has(792)).toBe(false);
-    expect(writeSessionMarkerFn).not.toHaveBeenCalled();
-  });
-
-  it('allows a fresh daemon retry that reuses a previously timed-out PID', async () => {
-    markSessionWebhookPidTimedOut(795);
+  it('allows a fresh daemon retry through its current PID owner', async () => {
     const tracked: TrackedSession = {
       pid: 795,
       startedBy: 'daemon',
@@ -1768,29 +1789,7 @@ describe('createOnHappySessionWebhook', () => {
     expect(writeSessionMarkerFn).toHaveBeenCalledTimes(1);
   });
 
-  it('ignores a late wrapper-child webhook after the daemon wrapper PID timed out and exited', async () => {
-    markSessionWebhookPidTimedOut(793);
-    const pidToTrackedSession = new Map<number, TrackedSession>();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
-    const writeSessionMarkerFn = vi.fn(async () => {});
-
-    const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
-      getParentPidFn: () => 793,
-      findHappyProcessByPidFn: async () => null,
-      writeSessionMarkerFn,
-    });
-
-    onWebhook('session-daemon-794', createMetadata(794, 'daemon'));
-    await Promise.resolve();
-
-    expect(pidToTrackedSession.has(794)).toBe(false);
-    expect(writeSessionMarkerFn).not.toHaveBeenCalled();
-  });
-
-  it('allows a fresh wrapper retry whose parent PID reuses a timed-out PID', async () => {
-    markSessionWebhookPidTimedOut(796);
+  it('allows a fresh wrapper retry through its current parent PID owner', async () => {
     const tracked: TrackedSession = {
       pid: 796,
       startedBy: 'daemon',

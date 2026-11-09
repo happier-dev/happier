@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { onTestFinished, vi } from 'vitest';
-import { AGENT_RUNTIME_DAEMON_SERVICES_PATH, AgentRuntimeDaemonServiceRequestV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { AGENT_RUNTIME_DAEMON_SERVICES_PATH, AgentRuntimeDaemonServiceRequestV1Schema, type AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { createDaemonControlApp, type startDaemonControlServer } from '@/daemon/controlServer';
 import type { notifyDaemonConnectedServiceTurnLifecycle } from '@/daemon/controlClient';
 import { ConnectedServiceTurnLifecycleResultSchema } from '@/daemon/connectedServices/connectedServiceTurnLifecycleContract';
@@ -30,6 +30,7 @@ export async function runInstalledFirstConversationRuntime(input: Readonly<{
   control?: Parameters<typeof startDaemonControlServer>[0];
   initialMessage?: UserMessage;
   persistTurnMutation?: (mutation: SessionTurnMutationV1) => Promise<void>;
+  beforeDaemonHttpRequest?: (operation: AgentRuntimeDaemonServiceRequestV1['operation']) => Promise<void>;
 }>) {
   const { fixture: h, homeServerIdentityId: home, initialMessage } = input;
   const credentials = h.installedCredentials;
@@ -52,8 +53,9 @@ export async function runInstalledFirstConversationRuntime(input: Readonly<{
   if (app) onTestFinished(() => app.close());
   vi.stubGlobal('fetch', async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
     if (new URL(String(url)).pathname !== AGENT_RUNTIME_DAEMON_SERVICES_PATH) return await homeFetch(url, init);
+    const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
+    await input.beforeDaemonHttpRequest?.(request.operation);
     if (!app) {
-      const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
       return Response.json(await h.dispatch(request.operation, request.context.executionRunSnapshotId));
     }
     const response = await app.inject({ method: 'POST', url: AGENT_RUNTIME_DAEMON_SERVICES_PATH,
@@ -77,7 +79,6 @@ export async function runInstalledFirstConversationRuntime(input: Readonly<{
   const completed = createDeferred<void>();
   const failed = createDeferred<void>();
   const turns: SessionTurnMutationV1[] = [];
-  let deliver: ((message: UserMessage) => boolean | void) | undefined;
   let stop: (() => Promise<void>) | undefined;
   const assistant: string[] = [];
   const transcriptSequences = new Map<string, number>();
@@ -112,7 +113,11 @@ export async function runInstalledFirstConversationRuntime(input: Readonly<{
         }
         return { persisted: true, delivered: true, committedSequence };
       },
-      onUserMessage: handler => { deliver = handler; },
+      onUserMessage: handler => {
+        // A real first Send is already pending when the lazy parent installs
+        // its input consumer; it does not wait for native startup to deliver it.
+        if (initialMessage) handler(initialMessage);
+      },
       hasPendingProviderInput: localId => initialMessage !== undefined && localId === initialMessage.localId,
       getCommittedUserMessageSeq: localId => initialMessage !== undefined && localId === initialMessage.localId ? 1 : null,
       getPendingQueueState: () => ({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0 }),
@@ -124,14 +129,11 @@ export async function runInstalledFirstConversationRuntime(input: Readonly<{
   const api = await ApiClient.create(credentials);
   const outcome = runHostSessionRuntime({ ...plan.opts, accountSettingsContext: { ...snapshot, whenRefreshed: null } }, {
     ...plan.config, pluginRuntimeRegistryLease: h.plugin.lease,
-    processLifecycleOwnership: 'caller', startRuntimeBeforeFirstPrompt: true,
+    processLifecycleOwnership: 'caller',
+    // The inputless startup-refusal probe explicitly opens the native runtime.
+    ...(initialMessage ? {} : { startRuntimeBeforeFirstPrompt: true }),
     loadTerminalDisplay: async () => () => null, shouldRenderTerminalDisplay: () => false,
     onRuntimeStopReady: requestStop => { stop = requestStop; },
-    onAfterStart: () => {
-      if (!initialMessage) return;
-      if (!deliver) throw new Error('Real parent queue did not install its Session input consumer');
-      deliver(initialMessage);
-    },
   }, { ...plan.deps,
     ...(app ? { sessionLoopLifecycleDeps: { ...plan.deps?.sessionLoopLifecycleDeps, notifyDaemonConnectedServiceTurnLifecycleFn: (async body => {
       const response = await app.inject({ method: 'POST', url: '/connected-service-turn-lifecycle',

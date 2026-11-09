@@ -8,6 +8,7 @@ import {
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
   serializeConnectedServiceChildSelectionValues,
 } from '../connectedServiceChildEnvironment';
+import { parseConnectedServiceBindingSelections } from '../parseConnectedServicesBindings';
 
 import {
   buildConnectedServiceRuntimeIdentityKey,
@@ -54,6 +55,7 @@ type ConnectedServiceRuntimeTargetRegistrationListener = (
 
 type ConnectedServiceRuntimeTargetRegistrationOptions = Readonly<{
   source?: 'bootstrap';
+  groupApplicationTarget?: ConnectedServiceRuntimeTarget;
 }>;
 
 function normalizePid(pidRaw: number): number | null {
@@ -66,7 +68,10 @@ function normalizeString(value: unknown): string | null {
 }
 
 function buildTargetFingerprint(target: Omit<ConnectedServiceRuntimeTarget, 'revision'>): string {
-  return stableRuntimeRegistryFingerprint(target);
+  // Selected bytes follow the materialization lease by reference. Do not
+  // serialize credentials again on every passive process/metadata arrival.
+  const { agentLaunchMaterials: _materials, ...identity } = target;
+  return stableRuntimeRegistryFingerprint(identity);
 }
 
 function omitRevision(target: ConnectedServiceRuntimeTarget): Omit<ConnectedServiceRuntimeTarget, 'revision'> {
@@ -104,7 +109,24 @@ function buildExactGroupApplicationSelectionEnv(
       credentialRevision: input.credentialRevision,
     };
   });
-  if (!matched) return null;
+  if (!matched) {
+    const declared = parseConnectedServiceBindingSelections(target.connectedServicesBindingsRaw).find((selection) => (
+      selection.kind === 'group'
+      && selection.serviceId === input.serviceId
+      && selection.groupId === input.groupId
+    ));
+    if (declared?.kind !== 'group') return null;
+    // Recovered metadata can declare a pool without a previously materialized selection.
+    selections.push({
+      kind: 'group',
+      serviceId: input.serviceId,
+      groupId: input.groupId,
+      activeProfileId: input.profileId,
+      fallbackProfileId: declared.fallbackProfileId ?? input.profileId,
+      generation: input.generation,
+      credentialRevision: input.credentialRevision,
+    });
+  }
   const serialized = serializeConnectedServiceChildSelectionValues(selections);
   if (!serialized) return null;
   return {
@@ -115,6 +137,9 @@ function buildExactGroupApplicationSelectionEnv(
 
 export class ConnectedServiceRuntimeRegistry {
   private readonly targetsByPid: Map<number, IndexedTarget>;
+  // Only an owned group application carries recipient lineage across its bookkeeping.
+  private readonly exactApplicationLineageByTarget: WeakMap<ConnectedServiceRuntimeTarget, object>;
+  private readonly providerObservationTimes: WeakMap<ConnectedServiceRuntimeTarget, ReadonlyMap<string, number>>;
   private readonly pidBySessionId: Map<string, number>;
   private readonly targetRegistrationListeners: Set<ConnectedServiceRuntimeTargetRegistrationListener>;
   // Execution-run targets live in a SEPARATE keyspace: a run shares its RUNNER's pid with the
@@ -131,6 +156,8 @@ export class ConnectedServiceRuntimeRegistry {
     private readonly requesterScope?: Pick<RequesterWorkAttributionV1, 'serverId' | 'accountId'>,
   ) {
     this.targetsByPid = backing?.targetsByPid ?? new Map();
+    this.exactApplicationLineageByTarget = backing?.exactApplicationLineageByTarget ?? new WeakMap();
+    this.providerObservationTimes = backing?.providerObservationTimes ?? new WeakMap();
     this.pidBySessionId = backing?.pidBySessionId ?? new Map();
     this.targetRegistrationListeners = backing?.targetRegistrationListeners ?? new Set();
     this.runTargetsByRunKey = backing?.runTargetsByRunKey ?? new Map();
@@ -162,6 +189,11 @@ export class ConnectedServiceRuntimeRegistry {
     options?: ConnectedServiceRuntimeTargetRegistrationOptions,
   ): ConnectedServiceRuntimeRegisteredTarget {
     const existing = this.getIndexedByPid(input.pid);
+    const applicationTarget = options?.groupApplicationTarget;
+    if (applicationTarget && (!this.exactApplicationLineageByTarget.has(applicationTarget) || existing?.target !== applicationTarget
+      || input.sessionId !== applicationTarget.sessionId || input.agentId !== applicationTarget.agentId)) {
+      throw new Error('credential_revision_superseded');
+    }
     const sessionId = normalizeString(input.sessionId);
     const currentForSession = sessionId ? this.getBySessionId(sessionId) : null;
     const patch = options?.source === 'bootstrap' && currentForSession
@@ -171,13 +203,15 @@ export class ConnectedServiceRuntimeRegistry {
           // current runtime truth it cannot replace the applied Connected Services identity.
           connectedServicesBindingsRaw: currentForSession.connectedServicesBindingsRaw,
           connectedServiceSelectionsEnv: currentForSession.connectedServiceSelectionsEnv,
+          agentLaunchMaterials: currentForSession.agentLaunchMaterials,
           materializationKey: currentForSession.materializationKey,
           connectedServiceMaterializationIdentityV1:
             currentForSession.connectedServiceMaterializationIdentityV1,
         }
       : input;
     const target = this.writeTarget(input.pid, patch, existing?.target ?? null);
-    this.notifyTargetRegistration(target);
+    if (applicationTarget) this.carryGroupApplicationLineage(applicationTarget, target);
+    if (target !== existing?.target) this.notifyTargetRegistration(target);
     return this.withRegisteredBindings(target);
   }
 
@@ -215,7 +249,7 @@ export class ConnectedServiceRuntimeRegistry {
     const next = this.buildStandaloneTarget(targetInput, previous);
     this.assertRequesterScope(next.target);
     this.runTargetsByRunKey.set(runKey, next);
-    this.notifyTargetRegistration(next.target);
+    if (next.target !== previous) this.notifyTargetRegistration(next.target);
     return this.withRegisteredBindings(next.target);
   }
 
@@ -244,8 +278,24 @@ export class ConnectedServiceRuntimeRegistry {
     const existing = this.getIndexedByPid(input.pid);
     if (!existing) return null;
     const target = this.writeTarget(input.pid, input, existing.target);
-    this.notifyTargetRegistration(target);
+    if (input.connectedServicesBindingsRaw === null) this.exactApplicationLineageByTarget.delete(target);
+    if (target !== existing.target) this.notifyTargetRegistration(target);
     return target;
+  }
+
+  /** Refresh commits only to the current lease, never another Run at its PID. */
+  public replaceAgentLaunchMaterials(target: ConnectedServiceRuntimeTarget,
+    material: ConnectedServiceRuntimeTarget['agentLaunchMaterials'] | null): ConnectedServiceRuntimeTarget | null {
+    if (!this.isInRequesterScope(target)) return null;
+    const runEntry = [...this.runTargetsByRunKey.entries()].find(([, entry]) => this.isInRequesterScope(entry.target)
+      && this.matchesCurrentTargetProjection(entry.target, target));
+    const indexed = runEntry?.[1] ?? this.getIndexedByPid(target.pid);
+    if (!indexed || !this.matchesCurrentTargetProjection(indexed.target, target)) return null;
+    const patch = { pid: target.pid, agentLaunchMaterials: material ?? null };
+    const next = runEntry ? this.buildStandaloneTarget(patch, indexed.target).target : this.writeTarget(target.pid, patch, indexed.target);
+    if (runEntry) this.runTargetsByRunKey.set(runEntry[0], { target: next, fingerprint: buildTargetFingerprint(omitRevision(next)) });
+    if (next !== indexed.target) this.notifyTargetRegistration(next);
+    return next;
   }
 
   public adoptSessionId(input: Readonly<{ pid: number; sessionId?: string | null }>): ConnectedServiceRuntimeTarget | null {
@@ -253,6 +303,20 @@ export class ConnectedServiceRuntimeRegistry {
       pid: input.pid,
       sessionId: input.sessionId ?? null,
     });
+  }
+
+  private carryGroupApplicationLineage(previous: ConnectedServiceRuntimeTarget, current: ConnectedServiceRuntimeTarget): void {
+    const lineage = this.exactApplicationLineageByTarget.get(previous) ?? {};
+    this.exactApplicationLineageByTarget.set(previous, lineage);
+    this.exactApplicationLineageByTarget.set(current, lineage);
+  }
+
+  public withdrawSessionGroupApplicationBindings(target: ConnectedServiceRuntimeTarget): ConnectedServiceRuntimeTarget | null {
+    if (this.getByPid(target.pid) !== target || !target.sessionId) return null;
+    const withdrawn = this.writeTarget(target.pid, { pid: target.pid, connectedServicesBindingsRaw: null }, target);
+    this.carryGroupApplicationLineage(target, withdrawn);
+    if (withdrawn !== target) this.notifyTargetRegistration(withdrawn);
+    return withdrawn;
   }
 
   public adoptExactGroupApplicationForSession(input: Readonly<{
@@ -279,6 +343,10 @@ export class ConnectedServiceRuntimeRegistry {
       && binding.groupGeneration === generation
       && binding.credentialRevision === input.credentialRevision
     ))) {
+      const observations = new Map(this.providerObservationTimes.get(target));
+      const key = `${input.serviceId}\0${groupId}`;
+      observations.set(key, Math.max(observations.get(key) ?? 0, Date.now()));
+      this.providerObservationTimes.set(target, observations);
       return target;
     }
     const connectedServiceSelectionsEnv = buildExactGroupApplicationSelectionEnv(target, {
@@ -289,10 +357,63 @@ export class ConnectedServiceRuntimeRegistry {
       credentialRevision: input.credentialRevision,
     });
     if (!connectedServiceSelectionsEnv) return null;
-    return this.updateTarget({
+    const updated = this.writeTarget(target.pid, {
       pid: target.pid,
       connectedServiceSelectionsEnv,
+    }, target, { preserveObservedBindings: false });
+    const observations = new Map(this.providerObservationTimes.get(updated));
+    const key = `${input.serviceId}\0${groupId}`;
+    observations.set(key, Math.max(observations.get(key) ?? 0, Date.now()));
+    this.providerObservationTimes.set(updated, observations);
+    this.carryGroupApplicationLineage(target, updated);
+    if (updated !== target) this.notifyTargetRegistration(updated);
+    return updated;
+  }
+
+  /** Provider identity proves the account, independently of desired child materialization. */
+  public adoptProviderObservedGroupAccountForSession(input: Readonly<{
+    sessionId: string;
+    serviceId: ConnectedAccountServiceKey;
+    groupId: string;
+    profileId: string;
+    observedAtMs: number;
+  }>): ConnectedServiceRuntimeTarget | null {
+    const existing = this.getBySessionId(input.sessionId);
+    const profileId = normalizeString(input.profileId);
+    const groupId = normalizeString(input.groupId);
+    if (!existing || !profileId || !groupId || !Number.isFinite(input.observedAtMs) || input.observedAtMs < 0) return null;
+    const binding = existing.activeBindings.find((candidate) => (
+      candidate.serviceId === input.serviceId && candidate.groupId === groupId
+    ));
+    if (!binding) return null;
+    const key = `${input.serviceId}\0${groupId}`;
+    const observations = new Map(this.providerObservationTimes.get(existing));
+    if (input.observedAtMs <= (observations.get(key) ?? -1)) return null;
+    observations.set(key, input.observedAtMs);
+    if (binding.profileId === profileId) {
+      this.providerObservationTimes.set(existing, observations);
+      return existing;
+    }
+    const updated = this.writeTarget(existing.pid, {
+      pid: existing.pid,
+    }, existing, {
+      activeBindings: existing.activeBindings.map((candidate) => candidate === binding ? {
+        ...candidate, profileId, groupGeneration: null, credentialRevision: null,
+      } : candidate),
     });
+    this.providerObservationTimes.set(updated, observations);
+    return updated;
+  }
+
+  public resolveExactSessionGroupApplicationTarget(target: ConnectedServiceRuntimeTarget): ConnectedServiceRuntimeTarget | null {
+    if (!this.isInRequesterScope(target)) return null;
+    const current = this.getByPid(target.pid);
+    if (!current || current.sessionId !== target.sessionId) return null;
+    if (current === target) return current;
+    const lineage = this.exactApplicationLineageByTarget.get(target);
+    return lineage !== undefined && lineage === this.exactApplicationLineageByTarget.get(current)
+      ? current
+      : null;
   }
 
   public unregisterPid(pidRaw: number): ConnectedServiceRuntimeTarget | null {
@@ -334,6 +455,8 @@ export class ConnectedServiceRuntimeRegistry {
     this.targetsByPid.delete(fromPid);
     this.deleteSessionIndex(existing.target);
     const next = nextBase as ConnectedServiceRuntimeTarget;
+    const observations = this.providerObservationTimes.get(existing.target);
+    if (observations) this.providerObservationTimes.set(next, observations);
     this.targetsByPid.set(toPid, { target: next, fingerprint });
     this.indexSession(next);
     this.notifyTargetRegistration(next);
@@ -419,6 +542,7 @@ export class ConnectedServiceRuntimeRegistry {
   }>): ConnectedServiceRuntimeTarget | null {
     const expected = this.buildExactCredentialRevisionTarget(input);
     if (!expected || current.revision !== expected.target.revision
+      || current.agentLaunchMaterials !== expected.target.agentLaunchMaterials
       || buildTargetFingerprint(omitRevision(current)) !== expected.fingerprint) return null;
     return current;
   }
@@ -526,6 +650,7 @@ export class ConnectedServiceRuntimeRegistry {
     pid: number,
     patch: ConnectedServiceRuntimeTargetInput | ConnectedServiceRuntimeTargetUpdate,
     previous: ConnectedServiceRuntimeTarget | null,
+    options: Readonly<{ activeBindings?: ConnectedServiceRuntimeTarget['activeBindings']; preserveObservedBindings?: boolean }> = {},
   ): Readonly<{ base: Omit<ConnectedServiceRuntimeTarget, 'revision'>; fingerprint: string }> {
     const connectedServiceSelectionsEnv = patch.connectedServiceSelectionsEnv !== undefined
       ? normalizeRuntimeRegistryEnv(patch.connectedServiceSelectionsEnv)
@@ -552,14 +677,27 @@ export class ConnectedServiceRuntimeRegistry {
     const requesterWorkAttributionV1 = patch.requesterWorkAttributionV1 !== undefined
       ? RequesterWorkAttributionV1Schema.parse(patch.requesterWorkAttributionV1)
       : previous?.requesterWorkAttributionV1;
-    const boundProfiles = buildRuntimeBoundProfiles({
+    let boundProfiles = buildRuntimeBoundProfiles({
       connectedServicesBindingsRaw,
       connectedServiceSelections,
     });
-    const activeBindings = buildRuntimeActiveBindings({
+    let activeBindings = buildRuntimeActiveBindings({
       connectedServicesBindingsRaw,
       connectedServiceSelections,
     });
+    if (options.activeBindings) {
+      activeBindings = [...options.activeBindings];
+    } else if (options.preserveObservedBindings !== false && previous?.sessionId === sessionId
+      && stableRuntimeRegistryFingerprint(previous.connectedServiceSelectionsEnv) === stableRuntimeRegistryFingerprint(connectedServiceSelectionsEnv)
+      && stableRuntimeRegistryFingerprint(previous.connectedServicesBindingsRaw) === stableRuntimeRegistryFingerprint(connectedServicesBindingsRaw)) {
+      activeBindings = activeBindings.map((binding) => previous.activeBindings.find((observed) => (
+        observed.serviceId === binding.serviceId && observed.groupId !== null
+        && observed.groupId === binding.groupId && observed.groupGeneration === null
+      )) ?? binding);
+    }
+    if (options.activeBindings || activeBindings.some((binding) => binding.groupId !== null && binding.groupGeneration === null)) {
+      boundProfiles = activeBindings.map(({ serviceId, profileId }) => ({ serviceId, profileId }));
+    }
     const identity = readConnectedServiceRuntimeTargetIdentity({
       pid,
       sessionId,
@@ -567,6 +705,14 @@ export class ConnectedServiceRuntimeRegistry {
       materializationKey,
       activeBindings,
     });
+    const runtimeIdentityKey = buildConnectedServiceRuntimeIdentityKey(identity);
+    // Process metadata can arrive without another materialization. A changed
+    // credential/Agent/key cannot carry the previous selected credential bytes.
+    const agentLaunchMaterials = patch.agentLaunchMaterials !== undefined ? patch.agentLaunchMaterials ?? undefined
+      : previous?.runtimeIdentityKey === runtimeIdentityKey ? previous.agentLaunchMaterials : undefined;
+    const agentLaunchTarget = patch.agentLaunchMaterials ? { runtimeHome: patch.agentLaunchMaterials.runtimeHome,
+      ...(patch.agentLaunchMaterials.memberIdentity ? { memberIdentity: patch.agentLaunchMaterials.memberIdentity } : {}) }
+      : previous?.agentId === agentId && previous.materializationKey === materializationKey ? previous.agentLaunchTarget : undefined;
     const base = {
       pid,
       agentId,
@@ -575,6 +721,8 @@ export class ConnectedServiceRuntimeRegistry {
       connectedServiceSelectionsEnv,
       connectedServiceSelections,
       materializationKey,
+      ...(agentLaunchMaterials ? { agentLaunchMaterials } : {}),
+      ...(agentLaunchTarget ? { agentLaunchTarget } : {}),
       connectedServiceMaterializationIdentityV1,
       sessionDirectory,
       ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
@@ -583,7 +731,7 @@ export class ConnectedServiceRuntimeRegistry {
         : {}),
       boundProfiles,
       activeBindings,
-      runtimeIdentityKey: buildConnectedServiceRuntimeIdentityKey(identity),
+      runtimeIdentityKey,
     };
     return { base, fingerprint: buildTargetFingerprint(base) };
   }
@@ -595,6 +743,10 @@ export class ConnectedServiceRuntimeRegistry {
   ): IndexedTarget {
     const pid = normalizePid(patch.pid) ?? 0;
     const { base, fingerprint } = this.composeTargetBase(pid, patch, previous);
+    // Re-observing the same run is not a new target or credential authority.
+    if (previous && previous.agentLaunchMaterials === base.agentLaunchMaterials && buildTargetFingerprint(omitRevision(previous)) === fingerprint) {
+      return { target: previous, fingerprint };
+    }
     const target: ConnectedServiceRuntimeTarget = {
       ...base,
       revision: (previous?.revision ?? 0) + 1,
@@ -606,6 +758,7 @@ export class ConnectedServiceRuntimeRegistry {
     pidRaw: number,
     patch: ConnectedServiceRuntimeTargetInput | ConnectedServiceRuntimeTargetUpdate,
     previousAtPid: ConnectedServiceRuntimeTarget | null,
+    options: Readonly<{ activeBindings?: ConnectedServiceRuntimeTarget['activeBindings']; preserveObservedBindings?: boolean }> = {},
   ): ConnectedServiceRuntimeTarget {
     const pid = normalizePid(pidRaw) ?? 0;
     const incumbent = this.targetsByPid.get(pid);
@@ -619,11 +772,11 @@ export class ConnectedServiceRuntimeRegistry {
       : null;
     const previous = previousAtPid ?? previousForSameSession;
     if (previousForSameSession) this.assertRequesterScope(previousForSameSession);
-    const { base, fingerprint } = this.composeTargetBase(pid, patch, previous);
+    const { base, fingerprint } = this.composeTargetBase(pid, patch, previous, options);
     this.assertRequesterScope({ ...base, revision: (previous?.revision ?? 0) + 1 });
     if (previous) {
       const previousIndexed = this.targetsByPid.get(previous.pid);
-      if (previousIndexed?.fingerprint === fingerprint) {
+      if (previousIndexed?.fingerprint === fingerprint && previous.agentLaunchMaterials === base.agentLaunchMaterials) {
         return previous;
       }
     }
@@ -632,6 +785,7 @@ export class ConnectedServiceRuntimeRegistry {
       ...base,
       revision: (previous?.revision ?? 0) + 1,
     };
+    this.providerObservationTimes.set(next, new Map(previous ? this.providerObservationTimes.get(previous) : undefined));
     if (previousAtPid) {
       this.deleteSessionIndex(previousAtPid);
     }

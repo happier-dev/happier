@@ -11,7 +11,6 @@ import {
     type PeerMachineRpcDirectRequestV2,
 } from '@happier-dev/protocol';
 
-import { createPeerMachineRpcReplayKeyCache } from './replayKeys';
 import { validatePeerMachineRpcDirectRequest } from './validateRequest';
 
 const grantPayload: DirectRouteGrantPayloadV1 = {
@@ -96,7 +95,6 @@ describe('validatePeerMachineRpcDirectRequest', () => {
             },
             trustRoots: [{ keyId: 'key_1', publicKey: Buffer.alloc(32, 4).toString('base64url') }],
             nowMs,
-            replayKeyCache: createPeerMachineRpcReplayKeyCache({ nowMs: () => nowMs }),
         });
         expect(result).toMatchObject({ ok: false, response: { v: 2, reasonCode: 'invalid_request' } });
     });
@@ -135,7 +133,6 @@ describe('validatePeerMachineRpcDirectRequest', () => {
             proof: handle.sign(grant),
         };
         const nowMs = 2_000;
-        const replayKeyCache = createPeerMachineRpcReplayKeyCache({ nowMs: () => nowMs });
         const options = {
             body: request,
             expected: {
@@ -144,7 +141,6 @@ describe('validatePeerMachineRpcDirectRequest', () => {
             },
             trustRoots: [{ keyId: 'key_1', publicKey: Buffer.from(serverKeyPair.publicKey).toString('base64url') }],
             nowMs,
-            replayKeyCache,
         };
         // Validation authenticates each request; the route's atomic reservation owns one-use consumption.
         for (let index = 0; index < 3; index++) {
@@ -157,7 +153,6 @@ describe('validatePeerMachineRpcDirectRequest', () => {
 
     it('keeps authenticating each request after repeated invalid signatures', () => {
         let nowMs = 2_000;
-        const replayKeyCache = createPeerMachineRpcReplayKeyCache({ nowMs: () => nowMs });
         const baseOptions = {
             expected: {
                 accountId: 'account_1',
@@ -167,7 +162,6 @@ describe('validatePeerMachineRpcDirectRequest', () => {
                 endpointFingerprint: 'endpoint_1',
             },
             trustRoots: [{ keyId: 'key_1', publicKey: Buffer.alloc(32, 4).toString('base64url') }],
-            replayKeyCache,
         };
 
         for (let index = 0; index < 5; index += 1) {

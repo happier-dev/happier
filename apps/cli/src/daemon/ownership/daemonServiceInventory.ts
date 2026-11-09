@@ -23,6 +23,7 @@ function resolveDiscoveryModes(platform: DaemonServiceCliRuntime['platform']): r
 async function discoverInstalledEntriesForMode(
   runtime: DaemonServiceCliRuntime,
   mode: DaemonServiceMode,
+  deadlineMs?: number,
 ): Promise<readonly InstalledDaemonServiceEntry[]> {
   const settings = await readSettings();
   return await discoverInstalledDaemonServiceEntries({
@@ -30,6 +31,7 @@ async function discoverInstalledEntriesForMode(
     userHomeDir: runtime.userHomeDir,
     happierHomeDir: runtime.happierHomeDir,
     mode,
+    deadlineMs,
     serversById: (settings.servers ?? {}) as Readonly<Record<string, unknown>>,
   });
 }
@@ -159,9 +161,10 @@ async function resolveDefaultFollowingRelayMatchForInstalledService(
 
 export async function resolveInstalledDaemonServiceInventoryForCurrentRelay(
   runtime: DaemonServiceCliRuntime,
+  deadlineMs?: number,
 ): Promise<readonly DaemonServiceListEntry[]> {
   const entries = await Promise.all(
-    resolveDiscoveryModes(runtime.platform).map(async (mode) => await discoverInstalledEntriesForMode(runtime, mode)),
+    resolveDiscoveryModes(runtime.platform).map(async (mode) => await discoverInstalledEntriesForMode(runtime, mode, deadlineMs)),
   );
   const matchingEntries: InstalledDaemonServiceEntry[] = [];
   for (const entry of entries.flat()) {
@@ -264,12 +267,14 @@ export function selectPinnedServicesServingServer(params: Readonly<{
   runtime: DaemonServiceCliRuntime;
   serverId: string;
   readActivity?: (service: DaemonServiceListEntry) => BackgroundServiceActivity;
+  deadlineMs?: number;
 }>): readonly DaemonServiceListEntry[] {
   const readActivity = params.readActivity ?? ((service: DaemonServiceListEntry) => readBackgroundServiceActivity({
     platform: service.platform,
     uid: params.runtime.uid,
     label: service.label,
     mode: service.mode ?? null,
+    deadlineMs: params.deadlineMs,
   }));
   return params.services.filter((service) => (
     service.targetMode === 'pinned'
@@ -282,12 +287,14 @@ export function selectPinnedServicesServingServer(params: Readonly<{
 /** The pinned services the default-following service stands by for (none for any other service). */
 export async function resolveDefaultFollowingStandBy(
   runtime: DaemonServiceCliRuntime,
+  deadlineMs?: number,
 ): Promise<readonly DaemonServiceListEntry[]> {
   if (runtime.targetMode !== 'default-following') return [];
   return selectPinnedServicesServingServer({
-    services: await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime),
+    services: await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime, deadlineMs),
     runtime,
     serverId: runtime.instanceId,
+    deadlineMs,
   });
 }
 

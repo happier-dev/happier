@@ -5,6 +5,8 @@ import {
 } from '@happier-dev/protocol';
 
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { createConnectedAccountAttemptTransactionApiBoundary } from '@/testkit/connectedAccountAttemptTransactionApi';
+import { createQualifiedConnectedAccountAttemptTransactionAdapters } from './qualifiedConnectedAccountAttemptTransactionAdapters';
 
 import { createPluginReloadController, type PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -12,7 +14,7 @@ import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots'
 import { logger } from '@/ui/logger';
 import { createConnectedAccountHostRuntimeInvoker } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
 import type { ConnectedAccountOAuthCallbackCompletion } from '@happier-dev/cli-common/connectedAccounts';
-import { createLoggerAndEventsAvailablePluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
+import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import {
   createConnectedAccountContributionRegistry,
@@ -40,6 +42,12 @@ type ConfigurationConsequenceApply = Parameters<
 
 const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'work' });
 const account = Object.freeze({ service, accountId: 'account-1' });
+function createAttemptAddresses(now?: () => number) {
+  return createQualifiedConnectedAccountAttemptTransactionAdapters({
+    credentials: { token: 'fixture', encryption: null }, getAccountEncryptionMode: async () => 'plain',
+    api: createConnectedAccountAttemptTransactionApiBoundary(), ...(now ? { now } : {}),
+  }).address;
+}
 const runtimeIdentity = Object.freeze({
   occurrenceId: createPluginRuntimeOccurrenceId(service.pluginId),
   sourceCustody: Object.freeze({
@@ -149,7 +157,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       });
       const invoker = createConnectedAccountHostRuntimeInvoker({
         resolveRuntime: contributions.resolve, resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
-        resolveHostPolicy: () => ({ hostAccess: [], serviceBinding: createLoggerAndEventsAvailablePluginInvocationServiceBinding(identity.occurrenceId, 'producer', []) }),
+        resolveHostPolicy: () => ({ hostAccess: [], serviceBinding: createPluginInvocationServiceBinding(identity.occurrenceId, 'producer') }),
         createServices: () => createUnavailablePluginServices(), registerRawForRedaction: () => {},
       });
       // Unrelated registry catalogs are inert fixture data; publication, leases,
@@ -179,6 +187,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
           return null;
         }, replace: async () => ({ status: 'conflict' }), destroyAttempt: async () => {}, secrets: { admit: async () => {}, has: async () => false, read: async () => null } },
         attempts: {
+          attemptAddresses: createAttemptAddresses(() => now),
           accounts: { readExact: async () => null },
           oauth: { create: async () => {
             transactionCreateEntered = true;
@@ -393,6 +402,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
         },
         attempts: {
           assertAuthenticationActionAllowed,
+          attemptAddresses: createAttemptAddresses(),
           accounts: { readExact: vi.fn(async () => null) },
           oauth: { create: vi.fn() },
           settlement: { settle: vi.fn() },
@@ -1409,6 +1419,7 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
             },
           },
           attempts: {
+            listPending: async () => [],
             accounts: { readExact: vi.fn(async () => null) },
             oauth: { create: vi.fn() },
             settlement: { settle: vi.fn() },
@@ -1422,6 +1433,19 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       });
       return { daemon, activations };
     }
+
+    it('returns resolved pending attempts through daemon control', async () => {
+      const { daemon, activations } = createDaemonOverRealRegistry({
+        published: false, generationCurrent: () => true,
+      });
+      try {
+        await expect(daemon.control({ operation: 'listPendingAttempts', service }))
+          .resolves.toEqual({ status: 'pendingAttempts', attempts: [] });
+        expect(activations).toEqual([]);
+      } finally {
+        daemon.dispose();
+      }
+    });
 
     it.each([false, true])('resolves the current runtime after lazy activation publishes a successor (source changed: %s)', async (changed) => {
       const { daemon } = createDaemonOverRealRegistry({

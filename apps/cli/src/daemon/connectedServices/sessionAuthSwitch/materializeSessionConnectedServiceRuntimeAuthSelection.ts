@@ -1,3 +1,4 @@
+import type { AgentPluginAccountSettingsSource } from '@/plugins/runtime/agentPluginSettings';
 import { randomUUID } from 'node:crypto';
 
 import type { ApiClient } from '@/api/api';
@@ -49,6 +50,7 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   accountSettings?: AccountSettings | null;
   processEnv?: NodeJS.ProcessEnv;
   allowNativeAccountState?: boolean;
+  accountPluginSettingsSource?: AgentPluginAccountSettingsSource;
 }>): Promise<unknown | null> {
   if (params.input.next.source !== 'connected') return null;
   const legacyServiceId =
@@ -231,6 +233,7 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
               candidatePersistedSessionFile: continuity.candidatePersistedSessionFile,
               accountSettings: params.accountSettings, processEnv: params.processEnv,
               allowNativeAccountState: params.allowNativeAccountState === true,
+              accountPluginSettingsSource: params.accountPluginSettingsSource,
               isAccountRuntimeCurrent: async () => purposeLease.isCurrent() && await isMaterializationCurrent(),
             });
             try {
@@ -238,7 +241,7 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
               diagnostics = materialized.diagnostics ?? [];
               targetMaterializedRoot = materialized?.targetMaterializedRoot ?? targetMaterializedRoot;
               if (nativeHomeDeclaration && targetMaterializedRoot) {
-                targetMaterializedEnv = { [nativeHomeDeclaration.environmentKey]: targetMaterializedRoot };
+                targetMaterializedEnv = { ...materialized.env, [nativeHomeDeclaration.environmentKey]: targetMaterializedRoot };
               }
             } finally {
               await materialized?.cleanupOnExit?.();

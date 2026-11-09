@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import type {
     DaemonLocalServicePreviewOpenOrCreateRequestV1,
     DaemonLocalServicePreviewOpenOrCreateResponseV1,
@@ -14,6 +14,7 @@ import {
     listLocalServicePreviewResources,
     previewIdForInventoryEntry,
     registerLocalServicePreview,
+    resolveLocalServicePreviewApplication,
     selectLocalServicePreviewForInventoryEntry,
     unregisterLocalServicePreview,
     type LocalServicePreviewRegistry,
@@ -26,16 +27,20 @@ import { localServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/
 import type { LocalServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { startLocalServicePreviewNativeAdapter } from './nativeAdapter';
 import type { RpcHandlerContext } from '@/api/rpc/types';
-import { assertLocalServiceCredentialAdmission } from '../credentialAdmission';
+import { assertLocalServiceCredentialAdmission, assertLocalServiceReadCustody } from '../credentialAdmission';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { readProjectManagedServicePreviewEndpoint } from './projectEndpoint';
 import { formatLocalServiceLauncherTitle } from '../launch/suggestions';
+import { readProcessCensus } from '@/processes/census/processCensus';
+import { scanPlatformLocalServices } from '../inventory/platform/scan';
+import { normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 
 export type LocalServicePreviewLifecycleResult<TResponse> =
     | Readonly<{ ok: true; response: TResponse }>
     | Readonly<{ ok: false; reasonCode: string }>;
 
 export type LocalServicePreviewRoutes = Readonly<{
+    resolveApplication(binding: LocalServicePreviewDirectBindingV1): Promise<LocalServicePreviewResourceV1>;
     acquireNativeApplication(binding: LocalServicePreviewDirectBindingV1, grantId: string, signal?: AbortSignal): Promise<Readonly<{
         destination: Readonly<{ host: string; port: number }>; signal: AbortSignal; close: () => Promise<void>;
     }>>;
@@ -111,19 +116,30 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
     }
 
     async function publish(resource: LocalServicePreviewResourceV1, signal?: AbortSignal, context?: RpcHandlerContext, isCurrent?: () => boolean) {
+        const registration = input.registry.previewsById.get(resource.previewId);
+        const occurrence = registration?.occurrence;
+        // A server reply belongs to the registration that requested it. Revoke or
+        // replacement during either await must not resurrect or overwrite a row.
+        const stillRegistered = () => registration !== undefined
+            && input.registry.previewsById.get(resource.previewId) === registration
+            && registration.occurrence === occurrence;
         try {
             if (!server) throw new Error('preview_server_unavailable');
             signal?.throwIfAborted();
-            if (isCurrent && !isCurrent()) throw new Error('preview_target_unresolved');
+            if (!stillRegistered() || occurrence?.ended || isCurrent && !isCurrent()) throw new Error('preview_target_unresolved');
             const preview = await server.registerPreview(resource, signal);
-            await assertCredentialAdmission(context);
-            if (isCurrent && !isCurrent()) throw new Error('preview_target_unresolved');
-            input.registry.previewsById.set(resource.previewId, preview);
+            signal?.throwIfAborted();
+            context?.signal.throwIfAborted();
+            if (!stillRegistered() || occurrence?.ended || isCurrent && !isCurrent()) throw new Error('preview_target_unresolved');
+            input.registry.previewsById.set(resource.previewId, { ...preview, ...(occurrence ? { occurrence } : {}) });
             return { ok: true as const, preview };
         } catch (error) {
             signal?.throwIfAborted();
+            context?.signal.throwIfAborted();
+            if (!stillRegistered() || occurrence?.ended) return { ok: false as const, reasonCode: 'preview_target_unresolved' };
             const reasonCode = server ? failureReason(error) : 'preview_server_unavailable';
             input.registry.previewsById.set(resource.previewId, {
+                ...(occurrence ? { occurrence } : {}),
                 previewId: resource.previewId,
                 resource,
                 accessUrl: null,
@@ -143,25 +159,30 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             generatedAt: now(),
             refreshState: 'idle',
             resources,
-            previews: resources.map((resource) => input.registry.previewsById.get(resource.previewId)!),
+            previews: resources.map((resource) => {
+                const { occurrence: _occurrence, ...row } = input.registry.previewsById.get(resource.previewId)!;
+                return row;
+            }),
             diagnostics: [],
         };
     }
 
     return {
+        resolveApplication: binding => resolveLocalServicePreviewApplication(input.registry, binding),
         async acquireNativeApplication(binding, grantId, signal) {
-            const resource = input.registry.previewsById.get(binding.previewId)?.resource;
+            const resource = await resolveLocalServicePreviewApplication(input.registry, binding);
             if (!server || !resource || binding.machineId !== input.machineId
                 || !isDeepStrictEqual(localServicePreviewDirectBindingV1(resource), binding)) {
                 throw new Error('preview_registration_unavailable');
             }
             const registration = await server.acquireNativeRegistration(binding, grantId, signal);
             try {
-                const current = input.registry.previewsById.get(binding.previewId)?.resource;
+                const current = await resolveLocalServicePreviewApplication(input.registry, binding);
                 if (!current || !isDeepStrictEqual(localServicePreviewDirectBindingV1(current), binding)) {
                     throw new Error('preview_registration_changed');
                 }
-                const adapter = await startLocalServicePreviewNativeAdapter({ preview: resource, signal: registration.signal });
+                const adapter = await startLocalServicePreviewNativeAdapter({ preview: resource, signal: registration.signal,
+                    resolvePreview: () => resolveLocalServicePreviewApplication(input.registry, binding) });
                 return {
                     destination: { host: '127.0.0.1', port: adapter.port }, signal: registration.signal,
                     close: async () => { registration.close(); await adapter.close(); },
@@ -170,7 +191,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
         },
 
         async getSnapshot(context) {
-            await assertCredentialAdmission(context);
+            await assertLocalServiceReadCustody({ accountId: input.accountId, machineId: input.machineId, context });
             // Reads project registration state. Each explicit Open requests its own one-use
             // admission through openOrCreate; observing metadata must not mint credentials.
             return buildSnapshot();
@@ -196,7 +217,13 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                 const endpoint = readProjectManagedServicePreviewEndpoint(handle);
                 if (!endpoint) return { ok: false, reasonCode: 'preview_target_unresolved' };
                 const existing = listLocalServicePreviewResources(input.registry).find(resource =>
-                    resource.machineId === input.machineId && isDeepStrictEqual(resource.serviceTarget, serviceTarget));
+                    resource.machineId === input.machineId && resource.previewId === handle.instanceId
+                    && isDeepStrictEqual(resource.serviceTarget, serviceTarget));
+                const current = () => {
+                    const latest = input.projectManagedServices?.resolveProjectService(serviceTarget);
+                    return latest?.status === 'found' && latest.handle === handle
+                        && isDeepStrictEqual(readProjectManagedServicePreviewEndpoint(handle), endpoint);
+                };
                 const selection = handle.declaration.selection;
                 const registration = registerLocalServicePreview(input.registry, {
                     previewId: existing?.previewId ?? handle.instanceId,
@@ -206,13 +233,19 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
                     display: existing?.display ?? { title: formatLocalServiceLauncherTitle(selection.kind === 'manifest' ? selection.name : selection.source.target),
                         addressLabel: `${endpoint.host === '::1' ? '[::1]' : endpoint.host}:${endpoint.port}` },
                     originMode: 'host', ...(existing?.policy ? { policy: existing.policy } : {}),
-                });
+                }, { async isCurrent(observation) {
+                    if (!handle.isCurrent() || handle.retirementSignal.aborted) return false;
+                    // Native adapters (including external plugins) supply lifecycle
+                    // evidence through the existing managed-process owner, not HTTP
+                    // health or endpoint equality. Unknown inspection fails closed.
+                    const snapshot = observation === 'retained' ? handle.snapshot() : await handle.inspectCurrentOccurrence();
+                    if (snapshot.mode === 'native' && snapshot.nativePhase === 'unknown') {
+                        throw Object.assign(new Error('preview_target_unresolved'), { reasonCode: 'preview_target_unresolved' });
+                    }
+                    if (!handle.isServing()) return false;
+                    return current();
+                } });
                 if (!registration.ok) return { ok: false, reasonCode: registration.reasonCode };
-                const current = () => {
-                    const latest = input.projectManagedServices?.resolveProjectService(serviceTarget);
-                    return latest?.status === 'found' && latest.handle === handle
-                        && isDeepStrictEqual(readProjectManagedServicePreviewEndpoint(handle), endpoint);
-                };
                 const published = await publish(registration.resource, signal, context, current);
                 if (!published.ok) return published;
                 return { ok: true, response: { protocolVersion: 1, status: existing ? 'existing' : 'created', preview: published.preview, snapshot: buildSnapshot() } };
@@ -253,25 +286,23 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             if (!entry) {
                 return { ok: false, reasonCode: 'unknown_inventory_entry' };
             }
-            if (!entry.endpoint || !buildLocalServiceEndpointUrl(entry.endpoint)) {
+            if (input.endpointEnricher || !entry.endpoint || !buildLocalServiceEndpointUrl(entry.endpoint)) {
                 const endpoint = await input.endpointEnricher?.resolve(entry, signal);
                 signal?.throwIfAborted();
-                // Resolution may outlive a scan, label edit, or Forget. Merge into the current
-                // listener rather than republishing the snapshot captured before the network await.
+                // Resolution may outlive a scan, label edit, or Forget. Use the
+                // current listener, but keep this selected Open's HTTP fact local:
+                // native inventory scans must not erase it and wake idle viewers.
                 const current = input.inventoryRegistry.getSnapshot();
                 const latest = current.entries.find((candidate) => candidate.id === entry?.id);
                 if (!latest || latest.state !== 'listening') return { ok: false, reasonCode: 'unknown_inventory_entry' };
                 const resolvedEntry = endpoint ? { ...latest, endpoint } : latest;
                 entry = resolvedEntry;
-                if (endpoint) {
-                    input.inventoryRegistry.replaceSnapshot({ ...current, entries: current.entries.map((candidate) => candidate.id === resolvedEntry.id ? resolvedEntry : candidate) });
-                }
             }
             if (
                 (entry.address.kind === 'loopback' || entry.address.kind === 'wildcard')
                 && (!entry.endpoint || !buildLocalServiceEndpointUrl(entry.endpoint))
             ) {
-                return { ok: false, reasonCode: 'endpoint_scheme_unknown' };
+                return { ok: false, reasonCode: entry.endpoint?.reasonCode ?? 'endpoint_scheme_unknown' };
             }
             const existing = selectLocalServicePreviewForInventoryEntry(
                 listLocalServicePreviewResources(input.registry), entry, input.accountId, request.sessionId,
@@ -293,7 +324,29 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             }
             if (!input.accountId) return { ok: false, reasonCode: 'preview_account_unavailable' };
             const status = input.registry.previewsById.has(previewInput.previewId) ? 'existing' : 'created';
-            const registration = registerLocalServicePreview(input.registry, previewInput);
+            const registeredEntry = entry;
+            const registration = registerLocalServicePreview(input.registry, previewInput, { async isCurrent() {
+                const unavailable = () => Object.assign(new Error('preview_target_unresolved'), { reasonCode: 'preview_target_unresolved' });
+                // Inventory is presentation: Forget hides rows and scan deadlines can
+                // mark them stale/gone. Only fresh native evidence can end this binding.
+                const process = registeredEntry.provenance?.process;
+                if (!process || process.processStartTimeMs === undefined) throw unavailable();
+                const census = await readProcessCensus({ freshness: 'fresh', scope: 'all', pids: [process.pid], fields: [], includeAncestors: false });
+                if (census.status !== 'ok' || census.partial?.some(row => row.pid === process.pid)) throw unavailable();
+                const observed = census.rows.find(row => row.pid === process.pid);
+                if (!observed || observed.state === 'zombie' || observed.start.startTimeMs !== process.processStartTimeMs) return false;
+                // A live process can close its listener without exiting. Reuse the
+                // socket owner with only this PID's FDs, never a machine process walk.
+                const sockets = await scanPlatformLocalServices({ includeProcessFacts: false, listenerOwnerPids: [process.pid] });
+                if (sockets.diagnostics.length || sockets.socketOwnerReadFailures?.includes(process.pid)) throw unavailable();
+                if (!sockets.listeners.some(listener => listener.pid === process.pid && listener.port === registeredEntry.port
+                    && normalizeHostnameForLoopbackCheck(listener.address) === normalizeHostnameForLoopbackCheck(registeredEntry.address.host))) {
+                    // The same live process can reopen its listener. Refuse bytes while it is down,
+                    // without permanently retiring the registration (QA-R88-MAC origin outage).
+                    throw Object.assign(new Error('preview_transport_unavailable'), { reasonCode: 'preview_transport_unavailable' });
+                }
+                return true;
+            } });
             if (!registration.ok) {
                 return { ok: false, reasonCode: registration.reasonCode };
             }

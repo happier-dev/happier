@@ -28,7 +28,7 @@ function sameRoot(expected: HappierProcessRoot, actual: HappierProcessRootSource
 }
 
 async function isCurrent(execution: ProcessActionExecution): Promise<boolean> {
-    return !execution.signal?.aborted && (!execution.verifyCurrent || await execution.verifyCurrent()) && !execution.signal?.aborted;
+    return !execution.signal?.aborted;
 }
 
 /** Consumes retained native owners after Process Action approval; never enters another Action ingress. */
@@ -44,11 +44,8 @@ export function createProcessActionOwnerAdapters(input: ProcessActionOwnerAdapte
             if (!input.startService) return { status: 'refused', reasonCode: 'original_start_unavailable' };
             if (!execution.rpcContext) return { status: 'refused', reasonCode: 'machine_admission_required' };
             const originalIngress = execution.rpcContext;
-            const verifyAdmission = originalIngress.verifyMachineAdmissionCurrent;
             const ingress = { ...originalIngress,
                 signal: execution.signal ? AbortSignal.any([originalIngress.signal, execution.signal]) : originalIngress.signal,
-                ...(verifyAdmission ? { verifyMachineAdmissionCurrent: async () =>
-                    await isCurrent(execution) && await verifyAdmission() } : {}),
             };
             const originalContext = execution.actionContext ?? buildActionExecutorContextForRpc({ ...ingress,
                 serverId: start.input.workspace?.serverId });
@@ -105,8 +102,8 @@ export function createProcessActionOwnerAdapters(input: ProcessActionOwnerAdapte
                 execution: { tree: execution.tree, signal: execution.signal,
                     authorizeSignal: async () => await isCurrent(execution)
                         && (!execution.authorizeSignal || await execution.authorizeSignal()),
-                    authorizeSnapshot: async snapshot => await isCurrent(execution)
-                        && (!execution.authorizeSnapshot || await execution.authorizeSnapshot(snapshot)) },
+                    authorizeSnapshot: async (snapshot, targets) => await isCurrent(execution)
+                        && (!execution.authorizeSnapshot || await execution.authorizeSnapshot(snapshot, targets)) },
             });
         },
         async startOwner(root, execution) {

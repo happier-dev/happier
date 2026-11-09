@@ -217,6 +217,27 @@ describe('accepted Session workspace registration', () => {
       await register(createTestMetadata({ path: tmpdir() }), 'accepted-session');
       expect(requests).toHaveLength(2);
 
+      // Open can accept an ordinary directory without SCM or an existing metadata workspaceId.
+      const plainRoot = await realpath(await mkdtemp(join(tmpdir(), 'happier-accepted-plain-workspace-')));
+      try {
+        const plainRef = materializeWorkspaceRefForMachineRoot([], { serverId: 'srv_rf10_home', machineId: 'machine-a',
+          rootPath: plainRoot, nowMs: 1, createId: () => 'accepted-plain-checkout' }).workspaceRef;
+        const key = { kind: 'workspace-ref' as const, serverId: plainRef.serverId, id: plainRef.id };
+        rows.push({ key, revision: 0, content: { t: 'plain', v: { key, value: plainRef } } });
+        // New Sessions lack a key; Handoff can retain the previous accepted
+        // anchor until this same target-acceptance callback publishes its ref.
+        for (const previousKey of [null, project.projectKey]) {
+          publishedProjectKey = previousKey;
+          const before = metadataPatches.length;
+          await register(createTestMetadata({ path: plainRoot, machineId: 'machine-a' }), 'accepted-session');
+          expect(metadataPatches).toHaveLength(before + 1);
+          expect(metadataPatches.at(-1)).toMatchObject({ projectKey: plainRef.projectKey,
+            ownerMetadata: { t: 'plain', v: { workspace: { workspaceId: plainRef.id, projectId: plainRef.projectKey } } } });
+          expect(requests).toHaveLength(2);
+        }
+      } finally { await rm(plainRoot, { recursive: true, force: true }); }
+      publishedProjectKey = project.projectKey;
+
       const registrationElsewhere = createAcceptedSessionWorkspaceRegistration({
         credentials: { token: 'project-token', encryption: null }, serverId: profile.id, machineId: 'machine-b', inspectLocation,
       });
@@ -270,6 +291,31 @@ describe('accepted Session workspace registration', () => {
         && row.key.serverId === project.serverId && row.key.projectKey === project.projectKey)).toEqual(acceptedOrganization);
       expect(rows.find(row => row.key.kind === 'project-organization' && row.key.projectKey === 'hidden-project')).toEqual(organization);
       expect(requests).toHaveLength(beforeAmbiguous + 1);
+
+      // A linked checkout observed first has the main checkout's one local anchor.
+      const mainRoot = await checkout('z-local-main');
+      await execFileAsync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial'], { cwd: mainRoot });
+      const linkedRoot = join(root, 'a-local-linked');
+      await execFileAsync('git', ['worktree', 'add', '-b', 'local-feature', linkedRoot], { cwd: mainRoot });
+      await registerElsewhere(createTestMetadata({ path: linkedRoot }), 'accepted-session');
+      expect(refAt(mainRoot)).toBeDefined();
+      expect(refAt(linkedRoot)?.projectKey).toBe(refAt(mainRoot)?.projectKey);
+      const familyAnchor = refAt(linkedRoot)!.projectKey;
+      await registerElsewhere(createTestMetadata({ path: mainRoot }), 'accepted-session');
+      expect(refAt(mainRoot)?.projectKey).toBe(familyAnchor);
+      const localClone = join(root, 'independent-local-clone');
+      await execFileAsync('git', ['clone', mainRoot, localClone], { cwd: root });
+      await registerElsewhere(createTestMetadata({ path: localClone }), 'accepted-session');
+      expect(refAt(localClone)?.projectKey).not.toBe(familyAnchor);
+      // Existing accepted anchors win before discovering an absent main ref.
+      const mainIndex = rows.findIndex(row => row.key.kind === 'workspace-ref' && row.key.id === refAt(mainRoot)!.id);
+      rows.splice(mainIndex, 1);
+      const hiddenLinked = refAt(linkedRoot)!;
+      const beforeAccepted = requests.length;
+      await registerElsewhere(createTestMetadata({ path: linkedRoot, workspaceId: hiddenLinked.id, projectId: hiddenLinked.projectKey }), 'accepted-session');
+      expect(refAt(mainRoot)).toBeUndefined();
+      expect(refAt(linkedRoot)?.projectKey).toBe(familyAnchor);
+      expect(requests).toHaveLength(beforeAccepted);
 
       const custodianRows = structuredClone(rows);
       const daemonSnapshot = getActiveProjectAccountRowsSnapshot();

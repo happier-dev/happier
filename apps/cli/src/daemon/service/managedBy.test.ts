@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,7 +8,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 
 import { discoverInstalledDaemonServiceEntries, readInstalledDaemonServiceManagedBy } from './discoverInstalledDaemonServiceEntries';
-import { previewDaemonServiceInstall } from './installer';
+import { installDaemonService, previewDaemonServiceInstall } from './installer';
 import { planDaemonServiceInstall, parseDaemonServiceBundleId } from './plan';
 import { readInstalledDaemonServiceBundleId, readInstalledDaemonServiceAutostartMode } from './discoverInstalledDaemonServiceEntries';
 
@@ -68,6 +68,33 @@ function previewPinned(homeDir: string, managedBy?: 'desktop') {
 }
 
 describe('daemon service management marker', () => {
+  it('records actual Desktop creation and shared consumers independently from attribution, then relinquishes on terminal install', async () => {
+    await withTempDir('happier-desktop-service-ownership-', async (homeDir) => {
+      const options = {
+        platform: 'linux' as const, mode: 'user' as const, uid: 501,
+        channel: 'stable' as const, targetMode: 'pinned' as const,
+        instanceId: 'company', activeServerId: 'company',
+        userHomeDir: homeDir, happierHomeDir: `${homeDir}/.happier`,
+        serverUrl: 'https://company.example.test', webappUrl: 'https://company.example.test',
+        publicServerUrl: 'https://company.example.test', nodePath: '/usr/local/bin/happier', entryPath: '',
+        runCommands: false,
+      };
+      const definitionPath = planPinned({ platform: 'linux', homeDir }).files[0]!.path;
+      const ownershipPath = `${definitionPath}.desktop-ownership.json`;
+      await installDaemonService({ ...options, desktopBundleId: 'dev.happier.desktop' });
+      expect(JSON.parse(readFileSync(ownershipPath, 'utf8'))).toMatchObject({
+        version: 1, createdByDesktop: true, consumers: ['dev.happier.desktop'],
+      });
+      await installDaemonService({ ...options, desktopBundleId: 'dev.happier.desktop.preview' });
+      expect(JSON.parse(readFileSync(ownershipPath, 'utf8')).consumers).toEqual([
+        'dev.happier.desktop', 'dev.happier.desktop.preview',
+      ]);
+      await installDaemonService(options);
+      expect(existsSync(ownershipPath)).toBe(false);
+      expect(existsSync(definitionPath)).toBe(true);
+    });
+  });
+
   const envScope = createEnvKeyScope([
     'HAPPIER_DAEMON_SERVICE_MANAGED_BY',
     'HAPPIER_DAEMON_SERVICE_BUNDLE_ID',
@@ -76,7 +103,7 @@ describe('daemon service management marker', () => {
     'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
     'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
   ]);
-  afterEach(() => envScope.restore());
+  afterEach(() => { envScope.restore(); process.exitCode = undefined; });
 
   it('associates pinned and default-following desktop installs independently of management, preserving terminal bytes', async () => {
     await withTempDir('happier-bundle-id-', async (homeDir) => {
@@ -123,7 +150,12 @@ describe('daemon service management marker', () => {
         expect(output.json().plan.files[0]!.content).toContain('<key>AssociatedBundleIdentifiers</key>');
       } finally { output.restore(); }
       envScope.patch({ HAPPIER_DAEMON_SERVICE_BUNDLE_ID: 'bad value' });
-      await expect(runDaemonServiceCliCommand({ argv: ['install', '--dry-run', '--json'] })).rejects.toThrow(/invalid HAPPIER_DAEMON_SERVICE_BUNDLE_ID/);
+      const failure = captureStdoutJsonOutput<{ ok: boolean; error: string; serviceStepStatus: string }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['install', '--dry-run', '--json'] });
+        expect(failure.json()).toMatchObject({ ok: false, error: 'service_preflight_failed', serviceStepStatus: 'failed' });
+        expect(process.exitCode).toBe(1);
+      } finally { failure.restore(); }
     });
   });
 
@@ -150,7 +182,12 @@ describe('daemon service management marker', () => {
         expect(preview.plan.files[0]!.content).toMatch(/<key>RunAtLoad<\/key>\s*<false\/>/);
         expect(preview.plan.files[0]!.content).not.toContain('KeepAlive');
       } finally { output.restore(); }
-      await expect(runDaemonServiceCliCommand({ argv: ['install', '--autostart', 'wrong', '--dry-run', '--json'] })).rejects.toThrow(/autostart/);
+      const failure = captureStdoutJsonOutput<{ ok: boolean; error: string; serviceStepStatus: string }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['install', '--autostart', 'wrong', '--dry-run', '--json'] });
+        expect(failure.json()).toMatchObject({ ok: false, error: 'service_invalid_arguments', serviceStepStatus: 'failed' });
+        expect(process.exitCode).toBe(1);
+      } finally { failure.restore(); }
     });
   });
 
@@ -207,8 +244,12 @@ describe('daemon service management marker', () => {
       }
 
       envScope.patch({ HAPPIER_DAEMON_SERVICE_MANAGED_BY: 'bogus' });
-      await expect(runDaemonServiceCliCommand({ argv: ['install', '--instance', 'company', '--dry-run', '--json'] }))
-        .rejects.toThrow(/invalid HAPPIER_DAEMON_SERVICE_MANAGED_BY/);
+      const failure = captureStdoutJsonOutput<{ ok: boolean; error: string; serviceStepStatus: string }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['install', '--instance', 'company', '--dry-run', '--json'] });
+        expect(failure.json()).toMatchObject({ ok: false, error: 'service_preflight_failed', serviceStepStatus: 'failed' });
+        expect(process.exitCode).toBe(1);
+      } finally { failure.restore(); }
     });
   });
 

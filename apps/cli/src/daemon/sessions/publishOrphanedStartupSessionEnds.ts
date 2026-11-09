@@ -12,6 +12,7 @@ import {
 } from '../sessionRegistry';
 import { stageObservedExit } from './stageObservedExit';
 import type { OrphanedDeadDaemonSession } from './reattachFromMarkers';
+import { isSessionTerminalPermanentlyUnavailable } from './sessionTerminalSettlement';
 
 export async function publishOrphanedStartupSessionEnds(params: Readonly<{
   apiMachine: {
@@ -95,9 +96,9 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
       if (isShuttingDown()) return;
       const captured = await params.apiMachine.captureMachineSessionTerminal(sessionId);
       if (captured.status === 'rejected') {
-        if (captured.reason === 'not_found' || captured.reason === 'archived') {
-          // No Session remains that can accept turn or control-serviceability
-          // retirement, so the dead runner marker is the last stale projection.
+        if (isSessionTerminalPermanentlyUnavailable(captured.reason)) {
+          // The Session or peer cannot accept terminal retirement; repeating it
+          // cannot acquire authority. Only the dead runner's marker is released.
           if (await removeEvidence(evidence)) settledSessionIds.add(sessionId);
           return;
         }
@@ -126,6 +127,10 @@ export async function publishOrphanedStartupSessionEnds(params: Readonly<{
         authority: captured.authority,
       });
       if (finalized.status === 'rejected') {
+        if (isSessionTerminalPermanentlyUnavailable(finalized.reason)) {
+          if (await removeEvidence(evidence)) settledSessionIds.add(sessionId);
+          return;
+        }
         logger.debug('[DAEMON] Startup orphan terminal finalize was not accepted; retaining marker evidence', {
           sessionId,
           markerPids: evidence.map((marker) => marker.pid),

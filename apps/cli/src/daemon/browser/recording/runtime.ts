@@ -5,11 +5,11 @@ import type { BrowserRecordingCapabilities } from '@happier-dev/protocol';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 
-import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from './adapters/ffmpegStreamEncoder';
+import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from '../../recording/ffmpegStreamEncoder';
 import {
   createBrowserRecordingStreamFrameCaptureAdapter,
   type BrowserRecordingStreamFrameEncoderFactory,
-} from './adapters/stream';
+} from '../../recording/stream';
 import {
   createBrowserRecordingNativeViewCaptureAdapter,
   type BrowserRecordingNativeViewCaptureCommand,
@@ -23,18 +23,13 @@ import {
   type BrowserRecordingRoutes,
   type BrowserRecordingStartContext,
 } from './routes';
-import {
-  createBrowserRecordingDaemonService,
-  type BrowserRecordingCaptureAdapter,
-  type BrowserRecordingDaemonService,
-  type BrowserRecordingMediaWriter,
-  type BrowserRecordingInputControlResolver,
-} from './service';
+import { createBrowserRecordingDaemonService } from './service';
+import { type BrowserRecordingCaptureAdapter, type BrowserRecordingDaemonService, type BrowserRecordingMediaWriter, type BrowserRecordingInputControlResolver } from '../../recording/service';
 import {
   createBrowserRecordingSessionMediaWriter,
   type BrowserRecordingSessionMediaTarget,
   type BrowserRecordingSessionMediaWriterOptions,
-} from './sessionMediaWriter';
+} from '../../recording/sessionMediaWriter';
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
 
 const STARTUP_DISABLED_RECORDING_CAPABILITIES = {
@@ -44,17 +39,10 @@ const STARTUP_DISABLED_RECORDING_CAPABILITIES = {
   ],
 } satisfies BrowserRecordingCapabilities;
 
-const PERSISTENCE_DISABLED_RECORDING_CAPABILITIES = {
-  ...DEFAULT_BROWSER_RECORDING_CAPABILITIES,
-  disabledReasons: [
-    'Browser recording session-media target policy is not configured for this daemon runtime.',
-  ],
-} satisfies BrowserRecordingCapabilities;
-
 export type BrowserRecordingDaemonRuntime = Readonly<{
   service: BrowserRecordingDaemonService;
   routes: BrowserRecordingRoutes;
-  stop: () => void;
+  stop: () => Promise<void>;
 }>;
 
 export type BrowserRecordingDaemonRuntimeOptions = Readonly<{
@@ -186,12 +174,6 @@ export function createBrowserRecordingDaemonRuntime(
   const baseRoutes = createBrowserRecordingRoutes({
     service,
     resolveStartContext: async (startInput) => {
-      if (!hasConfiguredDurableMediaTarget && !startInput.mediaTarget) {
-        return {
-          browserRecordingEnabled: false,
-          recordingCapabilities: PERSISTENCE_DISABLED_RECORDING_CAPABILITIES,
-        };
-      }
       return await (
         options.resolveStartContext?.(startInput)
         ?? {
@@ -203,11 +185,14 @@ export function createBrowserRecordingDaemonRuntime(
     now: options.now,
   });
   const routes: BrowserRecordingRoutes = {
-    async startRecording(rawStartInput) {
+    async startRecording(rawStartInput, context) {
       const startInput = DaemonBrowserRecordingStartInputV1Schema.parse(rawStartInput);
-      const result = await baseRoutes.startRecording(startInput);
-      if (result.status === 'started' && startInput.mediaTarget) {
-        commandMediaTargetsByRecordingId?.set(result.recording.recordingId, startInput.mediaTarget);
+      const result = await baseRoutes.startRecording(startInput, context);
+      if (result.status === 'started') {
+        commandMediaTargetsByRecordingId?.set(result.recording.recordingId, startInput.mediaTarget ?? {
+          sessionId: context?.defaultSessionId ?? startInput.browserSessionId,
+          messageLocalId: result.recording.recordingId,
+        });
       }
       return result;
     },
@@ -248,6 +233,9 @@ export function createBrowserRecordingDaemonRuntime(
   return {
     service,
     routes,
-    stop: () => {},
+    async stop() {
+      await service.dispose();
+      commandMediaTargetsByRecordingId?.clear();
+    },
   };
 }

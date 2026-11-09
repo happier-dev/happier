@@ -11,14 +11,13 @@ import { compareProcessPrincipals } from '@/processes/ownership/principal';
 import { classifyProcessRole } from '@/processes/classification/classifyProcessRole';
 import type { ProcessCensusRow, ProcessStartIdentity } from '@/processes/census/processCensus';
 import type { createProcessOwnershipRuntime } from '../ownership/processOwnershipRuntime';
-import { equalProcessStart, processOwnerKey, type HappierProcessRoot, type ProcessOwnerRef, type ResolvedProcessOwnership } from '../ownership/types';
+import { equalProcessStart, processOwnerKey, resolveRawProcessControlRefusal, type HappierProcessRoot, type ProcessOwnerRef, type ResolvedProcessOwnership } from '../ownership/types';
 import type { LeftBehindItem } from '../leftBehind/leftBehindTracker';
 import { decodeProcessRef } from '../view/processRef';
 
 export type ProcessActionRequester = Readonly<{ accountId: string; isCustodian: boolean }>;
 export type ProcessActionExecution = Readonly<{
     signal?: AbortSignal;
-    verifyCurrent?: () => Promise<boolean>;
     rpcContext?: RpcHandlerContext;
     actionContext?: RuntimeActionExecuteArgs['context'];
     /** Executor-owned native-effect lifetime and once-per-Session producer witness. Never transported. */
@@ -56,8 +55,7 @@ export type ProcessActionExecutorInput = Readonly<{
 export function createProcessActionExecutor(input: ProcessActionExecutorInput) {
     const selfPid = input.selfPid ?? process.pid;
     const terminate = input.systemBoundary ? createProcessTreeTerminator(input.systemBoundary) : terminateProcessTree;
-    const isCurrent = async (execution: ProcessActionExecution) => !execution.signal?.aborted
-        && (!execution.verifyCurrent || await execution.verifyCurrent()) && !execution.signal?.aborted;
+    const isCurrent = async (execution: ProcessActionExecution) => !execution.signal?.aborted;
     const withPhysicalStopEffect = async <T>(execution: ProcessActionExecution,
         operation: (execution: ProcessActionExecution) => Promise<T>): Promise<T> => {
         let complete!: () => void;
@@ -104,6 +102,8 @@ export function createProcessActionExecutor(input: ProcessActionExecutorInput) {
         if (!ownership || ownership.level === 'unknown') return { outcome: refused(target.ref, 'ownership_unavailable') };
         if (!expectEqual(target, ownership)) return { outcome: refused(target.ref, 'expectation_changed') };
         if (!allowedOwner(ownership.owner, requester, view.roots)) return { outcome: refused(target.ref, 'access_denied') };
+        const nativeControl = resolveRawProcessControlRefusal(ownership.owner);
+        if (nativeControl) return { outcome: refused(target.ref, nativeControl) };
         const self = nativeRow(view, selfPid);
         if (!self || compareProcessPrincipals(row.principal, self.principal) !== 'self') return { outcome: refused(target.ref, 'other_principal') };
         if (ownership.level === 'not_happier'
@@ -134,6 +134,8 @@ export function createProcessActionExecutor(input: ProcessActionExecutorInput) {
                 const owner = resolvedRow(view, member.pid);
                 if (!owner || owner.level === 'unknown' || owner.level === 'not_happier' && member.pid !== current.native.pid) { failure = 'ownership_unavailable'; break; }
                 if (!allowedOwner(owner.owner, requester, view.roots)) { failure = 'access_denied'; break; }
+                const nativeControl = resolveRawProcessControlRefusal(owner.owner);
+                if (nativeControl) { failure = nativeControl; break; }
                 if (compareProcessPrincipals(member.principal, current.native.principal) !== 'self') { failure = 'other_principal'; break; }
                 if (protectedSet(index, selfPid, { signalExtent: 'process' }).has(member.pid)) { failure = 'protected_process'; break; }
                 authorized.set(member.pid, { native: member, ownership: owner });
@@ -176,6 +178,7 @@ export function createProcessActionExecutor(input: ProcessActionExecutorInput) {
                 for (const member of discovered) {
                     const actual = resolvedRow(fresh, member.pid);
                     if (!actual || actual.level === 'unknown' || actual.level === 'not_happier'
+                        || resolveRawProcessControlRefusal(actual.owner)
                         || !allowedOwner(actual.owner, requester, fresh.roots)
                         || !self || compareProcessPrincipals(member.principal, self.principal) !== 'self'
                         || protectedRows.has(member.pid)) return false;
@@ -291,6 +294,10 @@ export function createProcessActionExecutor(input: ProcessActionExecutorInput) {
                     if (before.status !== 'ok') { outcomes.push(refused(target.ref, 'ownership_unavailable')); continue; }
                     const fresh = validate(target, before, requester, false, request.targets.length, false);
                     if ('outcome' in fresh) { outcomes.push(fresh.outcome); continue; }
+                    const ownershipByPid = new Map(before.rows.map(row => [row.pid, row]));
+                    const nativeDescendant = descendantsOf(indexCensus(before.snapshot.rows), [fresh.native.pid])
+                        .some(row => resolveRawProcessControlRefusal(ownershipByPid.get(row.pid)?.owner ?? null));
+                    if (nativeDescendant) { outcomes.push(refused(target.ref, 'native_service_control_required')); continue; }
                     const activeRoot = before.roots.find(root => root.pid === fresh.native.pid && equalProcessStart(root.start, fresh.native.start)
                         && fresh.ownership.owner && processOwnerKey(root.owner) === processOwnerKey(fresh.ownership.owner));
                     if (!activeRoot || !['session', 'service', 'browser_sidecar'].includes(activeRoot.owner.kind) || !activeRoot.stop && !input.stopOwner) {
@@ -344,9 +351,19 @@ export function createProcessActionExecutor(input: ProcessActionExecutorInput) {
             if (!await isCurrent(execution)) return { status: 'refused', reasonCode: 'access_denied' };
             const decoded = decodeProcessRef(request.ref);
             if (!decoded) return { status: 'refused', reasonCode: 'invalid_ref' };
-            const view = await input.ownership.readOwners({ freshness: 'fresh' });
+            // Session roots already have exact lifecycle custody. Their no-op
+            // needs native identity, not command/environment/resource enrichment.
+            let view = await input.ownership.readOwners({ freshness: 'fresh', fields: [] });
             if (view.status !== 'ok') return { status: 'refused', reasonCode: 'ownership_unavailable' };
-            const root = view.roots.find(root => root.pid === decoded.pid && equalProcessStart(root.start, decoded.start));
+            let root = view.roots.find(root => root.pid === decoded.pid && equalProcessStart(root.start, decoded.start));
+            // A lifecycle source without retained birth may need its native
+            // marker to establish the root. Existing exact roots already carry
+            // their reviewed restart declaration and need no second census.
+            if (!root) {
+                view = await input.ownership.readOwners({ freshness: 'fresh' });
+                if (view.status !== 'ok') return { status: 'refused', reasonCode: 'ownership_unavailable' };
+                root = view.roots.find(root => root.pid === decoded.pid && equalProcessStart(root.start, decoded.start));
+            }
             if (!root || !allowedOwner(root.owner, requester, view.roots)) return { status: 'refused', reasonCode: 'access_denied' };
             if (root.owner.kind === 'session') return { status: 'already_wakes_on_next_message' };
             if (root.owner.kind !== 'service' && root.owner.kind !== 'browser_sidecar' || !input.startOwner) return { status: 'refused', reasonCode: 'not_restartable' };

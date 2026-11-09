@@ -1,4 +1,6 @@
 import type { ConnectedServiceSessionAuthSwitchReason } from '../runtimeAuth/connectedServiceSessionAuthSwitchCore';
+import { readConnectedServiceAuthGenerationApplyFailure } from '../runtimeAuth/connectedServiceAuthGenerationApplyFailure';
+import { hasConnectedServiceAccountApplicationProof, readConnectedServiceAccountApplicationCredentialError } from './connectedServiceAuthSwitchOutcome';
 import type {
   ConnectedServiceAuthGenerationReconciliationDisposition,
   ConnectedServiceAuthGroupCommittedGenerationFact,
@@ -12,6 +14,7 @@ export type ApplyAuthGroupGenerationSessionTarget = Readonly<{
   skipInitialApply?: boolean;
   applicationScope?: 'per_session_runtime' | 'shared_group_auth_surface';
   applicationOwnerId?: string;
+  isCurrent?: () => boolean;
 }>;
 
 export type ApplyAuthGroupGenerationToSessionsResult = Readonly<{
@@ -28,16 +31,6 @@ export type ApplyAuthGroupGenerationToSessionsResult = Readonly<{
     restartRequested?: boolean;
   }>>>;
 }>;
-
-/**
- * Sessions are independent (the switch FSM serializes per session, and the shared-home
- * materializer owns its own write locks), but each apply can legitimately wait a full
- * turn-boundary deferral window before it may restart. Bounded parallelism keeps the fan-out's
- * wall-clock at ~one deferral window instead of the sum across sessions (the sequential shape
- * guaranteed the manual-apply ack timed out on every pool with active sessions — live incident
- * 2026-07-10), while the cap prevents a large pool from thundering-herd restarting the machine.
- */
-const APPLY_FANOUT_CONCURRENCY = 4;
 
 /**
  * Fan a server-committed auth-group generation out to the live sessions bound to the group.
@@ -125,16 +118,9 @@ function isExactSharedApplicationProof(input: Readonly<{
   committedGeneration: ConnectedServiceAuthGroupCommittedGenerationFact;
   providerAdoptedTarget: ConnectedServiceProviderAdoptedGenerationTarget;
 }>): boolean {
-  const desired = input.committedGeneration.decisionCommittedTarget;
-  const adopted = input.providerAdoptedTarget;
-  return desired.credentialRevision !== null
-    && adopted.serviceId === desired.serviceId
-    && adopted.groupId === desired.groupId
-    && adopted.profileId === desired.profileId
-    && adopted.generation === desired.generation
-    && adopted.credentialRevision === desired.credentialRevision
-    && adopted.proof.status === 'verified'
-    && adopted.proof.credentialRevision === desired.credentialRevision;
+  return hasConnectedServiceAccountApplicationProof({
+    target: input.committedGeneration.decisionCommittedTarget, adopted: input.providerAdoptedTarget,
+  });
 }
 
 async function runSharedApplicationEffect(input: Readonly<{
@@ -144,10 +130,6 @@ async function runSharedApplicationEffect(input: Readonly<{
   committedGeneration: ConnectedServiceAuthGroupCommittedGenerationFact;
   apply: () => Promise<GenerationApplyResult>;
 }>): Promise<GenerationApplyResult> {
-  const desired = input.committedGeneration.decisionCommittedTarget;
-  if (desired.credentialRevision === null) {
-    return { reconciliationDisposition: 'failed', errorCode: 'shared_application_epoch_revision_missing' };
-  }
   const verify = input.orchestration.verifySharedGenerationApplication;
   if (!verify) {
     return { reconciliationDisposition: 'failed', errorCode: 'shared_application_verification_wiring_missing' };
@@ -181,7 +163,8 @@ async function runSharedApplicationEffect(input: Readonly<{
       committedGeneration: input.committedGeneration,
       providerAdoptedTarget: verified,
     })) {
-      return { reconciliationDisposition: 'failed', errorCode: 'shared_application_verification_invalid' };
+      return { reconciliationDisposition: 'failed',
+        errorCode: readConnectedServiceAccountApplicationCredentialError(verified) ?? 'shared_application_verification_invalid' };
     }
 
     const result = verified
@@ -215,6 +198,7 @@ export async function applyConnectedServiceAuthGroupGenerationToSessions(
   const sharedTargetsByOwner = new Map<string, ApplyAuthGroupGenerationSessionTarget[]>();
   const reducedTargets: ApplyAuthGroupGenerationSessionTarget[] = [];
   for (const target of input.targets) {
+    if (target.isCurrent?.() === false) continue;
     if (target.applicationScope !== 'shared_group_auth_surface' || !target.applicationOwnerId) {
       reducedTargets.push(target);
       continue;
@@ -292,6 +276,7 @@ export async function applyConnectedServiceAuthGroupGenerationToSessions(
     if (!representativeResult) continue;
     for (const sibling of targets.slice(1)) {
       throwIfFanoutAborted(input.signal);
+      if (sibling.isCurrent?.() === false) continue;
       const adopted = adoptedByRepresentative.get(representative.sessionId);
       try {
         if (adopted) {
@@ -342,183 +327,135 @@ export async function applyConnectedServiceAuthGroupGenerationToSessions(
   };
 }
 
-function isNewerGenerationFact(input: Readonly<{
-  current: ConnectedServiceAuthGroupCommittedGenerationFact;
-  candidate: ConnectedServiceAuthGroupCommittedGenerationFact | undefined;
-}>): input is Readonly<{
-  current: ConnectedServiceAuthGroupCommittedGenerationFact;
-  candidate: ConnectedServiceAuthGroupCommittedGenerationFact;
-}> {
-  if (!input.candidate) return false;
-  const current = input.current.decisionCommittedTarget;
-  const candidate = input.candidate.decisionCommittedTarget;
-  return candidate.serviceId === current.serviceId
-    && candidate.groupId === current.groupId
-    && (candidate.generation > current.generation
-      || (
-        candidate.generation === current.generation
-        && candidate.profileId === current.profileId
-        && candidate.credentialRevision !== current.credentialRevision
-      ));
-}
-
 async function applyImmutableGenerationToSessions(
   input: ImmutableGenerationApplyInput,
 ): Promise<ApplyAuthGroupGenerationToSessionsResult> {
   throwIfFanoutAborted(input.signal);
-  let committedGeneration = input.committedGeneration;
-  for (let redistribution = 0; ; redistribution += 1) {
-    let appliedSessionCount = 0;
-    let restartRequestedSessionCount = 0;
-    let deferredPersistedSessionCount = 0;
-    const failures: Array<Readonly<{ sessionId: string; errorCode: string | null }>> = [];
-    const resultsBySessionId: Record<string, {
-      reconciliationDisposition: ConnectedServiceAuthGenerationReconciliationDisposition;
-      errorCode: string | null;
-      pendingRecorded: boolean;
-      restartRequested?: boolean;
-    }> = {};
-    const supersedingGenerations: ConnectedServiceAuthGroupCommittedGenerationFact[] = [];
-    const queue = redistribution === 0
-      ? input.targets.filter((target) => target.skipInitialApply !== true)
-      : [...input.targets];
-    const runWorker = async (): Promise<void> => {
-      for (let target = queue.shift(); target !== undefined; target = queue.shift()) {
-        const recordNonConvergence = (
-          disposition: Exclude<ConnectedServiceAuthGenerationReconciliationDisposition, 'converged'>,
-          errorCode: string | null,
-        ): void => {
-          resultsBySessionId[target.sessionId] = {
-            reconciliationDisposition: disposition,
-            errorCode,
-            pendingRecorded: false,
-          };
-          if (disposition !== 'deferred_restart') {
-            failures.push({ sessionId: target.sessionId, errorCode });
-          }
-        };
-
-        throwIfFanoutAborted(input.signal);
-
-        let result: Awaited<ReturnType<ImmutableGenerationApplyInput['applyCommittedGeneration']>>;
-        try {
-          result = await input.applyCommittedGeneration({
-            sessionId: target.sessionId,
-            fromProfileId: target.fromProfileId,
-            committedGeneration,
-            switchReason: input.switchReason,
-            executionAuthority: input.executionAuthority,
-            ...(target.applicationOwnerId ? { applicationOwnerId: target.applicationOwnerId } : {}),
-            ...(input.signal ? { signal: input.signal } : {}),
-          });
-        } catch {
-          throwIfFanoutAborted(input.signal);
-          const errorCode = 'apply_generation_threw';
-          recordNonConvergence('failed', errorCode);
-          continue;
-        }
-        throwIfFanoutAborted(input.signal);
-
-        if (result.reconciliationDisposition === 'superseded_after_apply') {
-          const authoritativeGeneration = result.authoritativeGeneration;
-          if (authoritativeGeneration && isNewerGenerationFact({ current: committedGeneration, candidate: authoritativeGeneration })) {
-            supersedingGenerations.push(authoritativeGeneration);
-            resultsBySessionId[target.sessionId] = { ...result, pendingRecorded: false };
-          } else {
-            const errorCode = 'superseded_authoritative_generation_missing';
-            resultsBySessionId[target.sessionId] = {
-              reconciliationDisposition: 'failed',
-              errorCode,
-              pendingRecorded: false,
-            };
-            failures.push({ sessionId: target.sessionId, errorCode });
-          }
-          continue;
-        }
-
-        if (result.reconciliationDisposition === 'converged') {
-          const providerAdoptedTarget = result.providerAdoptedTarget;
-          if (!providerAdoptedTarget) {
-            const errorCode = 'provider_adoption_proof_missing';
-            recordNonConvergence('failed', errorCode);
-            continue;
-          }
-          const desiredCredentialRevision = committedGeneration.decisionCommittedTarget.credentialRevision;
-          const proofCredentialRevision = providerAdoptedTarget.proof.credentialRevision ?? null;
-          if (
-            desiredCredentialRevision === null
-            || providerAdoptedTarget.credentialRevision !== desiredCredentialRevision
-            || proofCredentialRevision !== desiredCredentialRevision
-          ) {
-            const errorCode = desiredCredentialRevision === null || proofCredentialRevision === null
-              ? 'credential_revision_unproven'
-              : 'credential_revision_mismatch';
-            recordNonConvergence('failed', errorCode);
-            continue;
-          }
-          try {
-            throwIfFanoutAborted(input.signal);
-            const clear = await input.clearAdoptedGeneration({ sessionId: target.sessionId, providerAdoptedTarget });
-            throwIfFanoutAborted(input.signal);
-            if (clear?.status === 'superseded') {
-              const errorCode = 'provider_adoption_clear_superseded';
-              resultsBySessionId[target.sessionId] = {
-                reconciliationDisposition: 'superseded_after_apply',
-                errorCode,
-                pendingRecorded: true,
-              };
-              failures.push({ sessionId: target.sessionId, errorCode });
-              continue;
-            }
-          } catch (error) {
-            throwIfFanoutAborted(input.signal);
-            const errorCode = error instanceof Error && /^[a-z0-9_]+$/.test(error.message)
-              ? error.message
-              : 'provider_adoption_clear_failed';
-            recordNonConvergence('failed', errorCode);
-            continue;
-          }
-        }
-
-        if (result.reconciliationDisposition !== 'converged') {
-          recordNonConvergence(result.reconciliationDisposition, result.errorCode);
-        } else {
-          resultsBySessionId[target.sessionId] = { ...result, pendingRecorded: false };
-        }
-        if (result.reconciliationDisposition === 'converged') {
-          appliedSessionCount += 1;
-        } else if (result.reconciliationDisposition === 'deferred_restart') {
-          if (result.restartRequested === true) {
-            restartRequestedSessionCount += 1;
-          } else {
-            deferredPersistedSessionCount += 1;
-          }
-        }
+  const committedGeneration = input.committedGeneration;
+  let appliedSessionCount = 0;
+  let restartRequestedSessionCount = 0;
+  let deferredPersistedSessionCount = 0;
+  const failures: Array<Readonly<{ sessionId: string; errorCode: string | null }>> = [];
+  const resultsBySessionId: Record<string, {
+    reconciliationDisposition: ConnectedServiceAuthGenerationReconciliationDisposition;
+    errorCode: string | null;
+    pendingRecorded: boolean;
+    restartRequested?: boolean;
+  }> = {};
+  const applyTarget = async (target: ApplyAuthGroupGenerationSessionTarget): Promise<void> => {
+    if (target.isCurrent?.() === false) return;
+    const recordNonConvergence = (
+      disposition: Exclude<ConnectedServiceAuthGenerationReconciliationDisposition, 'converged'>,
+      errorCode: string | null,
+    ): void => {
+      resultsBySessionId[target.sessionId] = {
+        reconciliationDisposition: disposition,
+        errorCode,
+        pendingRecorded: false,
+      };
+      if (disposition !== 'deferred_restart') {
+        failures.push({ sessionId: target.sessionId, errorCode });
       }
     };
-    const workerResults = await Promise.allSettled(Array.from({
-      length: Math.min(APPLY_FANOUT_CONCURRENCY, Math.max(1, input.targets.length)),
-    }, runWorker));
-    throwIfFanoutAborted(input.signal);
-    const rejectedWorker = workerResults.find((result): result is PromiseRejectedResult => result.status === 'rejected');
-    if (rejectedWorker) throw rejectedWorker.reason;
 
-    const authoritativeGeneration = supersedingGenerations.sort((left, right) => (
-      right.decisionCommittedTarget.generation - left.decisionCommittedTarget.generation
-    ))[0];
-    if (authoritativeGeneration) {
-      committedGeneration = authoritativeGeneration;
-      continue;
+    throwIfFanoutAborted(input.signal);
+
+    let result: Awaited<ReturnType<ImmutableGenerationApplyInput['applyCommittedGeneration']>>;
+    try {
+      result = await input.applyCommittedGeneration({
+        sessionId: target.sessionId,
+        fromProfileId: target.fromProfileId,
+        committedGeneration,
+        switchReason: input.switchReason,
+        executionAuthority: input.executionAuthority,
+        ...(target.applicationOwnerId ? { applicationOwnerId: target.applicationOwnerId } : {}),
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+    } catch (error) {
+      throwIfFanoutAborted(input.signal);
+      const errorCode = readConnectedServiceAuthGenerationApplyFailure(error)?.errorCode ?? 'apply_generation_threw';
+      recordNonConvergence('failed', errorCode);
+      return;
     }
     throwIfFanoutAborted(input.signal);
-    return {
-      ok: failures.length === 0,
-      appliedSessionCount,
-      restartRequestedSessionCount,
-      skippedIdleSessionCount: deferredPersistedSessionCount,
-      failedSessionCount: failures.length,
-      failures,
-      resultsBySessionId,
-    };
-  }
+
+    if (target.isCurrent?.() === false) return;
+    if (result.reconciliationDisposition === 'superseded_after_apply') {
+      recordNonConvergence(result.reconciliationDisposition, result.errorCode);
+      return;
+    }
+
+    if (result.reconciliationDisposition === 'converged') {
+      const providerAdoptedTarget = result.providerAdoptedTarget;
+      if (!providerAdoptedTarget) {
+        const errorCode = 'provider_adoption_proof_missing';
+        recordNonConvergence('failed', errorCode);
+        return;
+      }
+      if (!hasConnectedServiceAccountApplicationProof({
+        target: committedGeneration.decisionCommittedTarget, adopted: providerAdoptedTarget,
+      })) {
+        const errorCode = readConnectedServiceAccountApplicationCredentialError(providerAdoptedTarget) ?? 'provider_adoption_unproven';
+        recordNonConvergence('failed', errorCode);
+        return;
+      }
+      try {
+        throwIfFanoutAborted(input.signal);
+        if (target.isCurrent?.() === false) return;
+        const clear = await input.clearAdoptedGeneration({ sessionId: target.sessionId, providerAdoptedTarget });
+        throwIfFanoutAborted(input.signal);
+        if (target.isCurrent?.() === false) return;
+        if (clear?.status === 'superseded') {
+          const errorCode = 'provider_adoption_clear_superseded';
+          resultsBySessionId[target.sessionId] = {
+            reconciliationDisposition: 'superseded_after_apply',
+            errorCode,
+            pendingRecorded: true,
+          };
+          failures.push({ sessionId: target.sessionId, errorCode });
+          return;
+        }
+      } catch (error) {
+        throwIfFanoutAborted(input.signal);
+        const errorCode = error instanceof Error && /^[a-z0-9_]+$/.test(error.message)
+          ? error.message
+          : 'provider_adoption_clear_failed';
+        recordNonConvergence('failed', errorCode);
+        return;
+      }
+    }
+
+    if (result.reconciliationDisposition !== 'converged') {
+      recordNonConvergence(result.reconciliationDisposition, result.errorCode);
+    } else {
+      resultsBySessionId[target.sessionId] = { ...result, pendingRecorded: false };
+    }
+    if (result.reconciliationDisposition === 'converged') {
+      appliedSessionCount += 1;
+    } else if (result.reconciliationDisposition === 'deferred_restart') {
+      if (result.restartRequested === true) {
+        restartRequestedSessionCount += 1;
+      } else {
+        deferredPersistedSessionCount += 1;
+      }
+    }
+  };
+  // Each delivery applies once per recipient. Newer truth belongs to the projection owner.
+  const workerResults = await Promise.allSettled(
+    input.targets.filter((target) => target.skipInitialApply !== true).map(applyTarget),
+  );
+  throwIfFanoutAborted(input.signal);
+  const rejectedWorker = workerResults.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (rejectedWorker) throw rejectedWorker.reason;
+
+  throwIfFanoutAborted(input.signal);
+  return {
+    ok: failures.length === 0,
+    appliedSessionCount,
+    restartRequestedSessionCount,
+    skippedIdleSessionCount: deferredPersistedSessionCount,
+    failedSessionCount: failures.length,
+    failures,
+    resultsBySessionId,
+  };
 }

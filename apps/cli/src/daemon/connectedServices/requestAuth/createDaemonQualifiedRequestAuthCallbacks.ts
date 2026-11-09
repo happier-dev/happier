@@ -78,8 +78,7 @@ export function createDaemonQualifiedRequestAuthCallbacks<T extends RequestAuthA
                     requiredScopes: failure.requiredScopes, signal });
                 const result = await (context ? runWithServerHttpBaseUrl(context.bootstrap.serverHttpBaseUrl, write) : write());
                 signal.throwIfAborted();
-                if (subject.parentSessionId) await params.assertSessionAccountCurrent?.(subject.parentSessionId, context);
-                if (!subject.isCurrent() || (context && !params.assertSessionAccountCurrent && !await context.isCurrent())) return { status: 'stale_context' as const };
+                if (!subject.isCurrent()) return { status: 'stale_context' as const };
                 return result;
             });
         },
@@ -103,8 +102,6 @@ export function createDaemonQualifiedRequestAuthCallbacks<T extends RequestAuthA
                     const resolved = await (context ? runWithServerHttpBaseUrl(context.bootstrap.serverHttpBaseUrl, read) : read());
                     signal.throwIfAborted();
                     phase = 'requester';
-                    if (subject.parentSessionId) await params.assertSessionAccountCurrent?.(subject.parentSessionId, context);
-                    if (context && !params.assertSessionAccountCurrent && !await context.isCurrent()) throw new Error('requester_session_not_current');
                     if (!subject.isCurrent() || !resolved) return null;
                     return Object.freeze({ account: resolved.account, credentialRevision: resolved.credentialRevision,
                         ...(resolved.group ? { group: resolved.group } : {}) });
@@ -132,8 +129,6 @@ export function createDaemonQualifiedRequestAuthCallbacks<T extends RequestAuthA
                     const result = await (context ? runWithServerHttpBaseUrl(context.bootstrap.serverHttpBaseUrl, read) : read());
                     signal.throwIfAborted();
                     phase = 'requester';
-                    if (subject.parentSessionId) await params.assertSessionAccountCurrent?.(subject.parentSessionId, context);
-                    if (context && !params.assertSessionAccountCurrent && !await context.isCurrent()) throw new ConnectedAccountRequestAuthError('request_auth_not_active');
                     if (!subject.isCurrent()) throw new ConnectedAccountRequestAuthError('request_auth_not_active');
                     return result;
                 });

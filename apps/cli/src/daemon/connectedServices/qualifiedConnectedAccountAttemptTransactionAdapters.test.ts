@@ -243,6 +243,31 @@ describe('qualified Connected Account attempt transaction adapters', () => {
     expect(api.records.size).toBe(0);
   });
 
+  it.each(['plain', 'e2ee'] as const)('restores a manual draft through the %s Account envelope and removes it on submission', async accountMode => {
+    const api = createTransactionApi();
+    const createHost = () => createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: accountMode === 'plain' ? tokenOnlyCredentials() : credentials(7),
+      getAccountEncryptionMode: async () => accountMode, api, now: () => 5_000,
+    });
+    const first = createHost();
+    const manual = { account: null, sourceCustody: managedCustody,
+      expectedCredentialRevision: null, expectedCredentialConfigurationRevision: null,
+      expectedConfigurationRevision: 'configuration-1' };
+    const snapshot = { attemptId: 'manual-handoff', kind: 'manual' as const,
+      phase: 'awaitingManual' as const, createdAtMs: 5_000,
+      intent: 'connect' as const, service, modeId: 'manual', manual };
+    const acknowledged = await first.address.acknowledge(snapshot);
+    const record = await api.read({ attemptId: snapshot.attemptId });
+    expect(record?.content.t).toBe(accountMode === 'plain' ? 'plain' : 'encrypted');
+    const next = createHost();
+    expect(await next.address.readManualDraft!(record!)).toEqual(manual);
+    expect(await next.address.acknowledge({ ...snapshot, phase: 'starting', manual: undefined })).toEqual(acknowledged);
+    const submitted = await api.read({ attemptId: snapshot.attemptId });
+    expect(submitted?.scope.phase).toBe('starting');
+    expect(await first.address.readManualDraft!(submitted!)).toBeNull();
+    expect(submitted?.scope).not.toHaveProperty('machineId');
+  });
+
   it('persists and restores an Account-scoped attempt without a Machine', async () => {
     const api = createTransactionApi();
     const owner = createQualifiedConnectedAccountAttemptTransactionAdapters({

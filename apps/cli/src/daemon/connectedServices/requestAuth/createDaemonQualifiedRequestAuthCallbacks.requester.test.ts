@@ -55,7 +55,8 @@ describe('daemon requester request-auth Account callbacks', () => {
                 allowNativeAccountCredentials: false,
                 store: { read: async () => ({ v: 1, bindings: host ? [binding] : [] }), update: async mutate => mutate({ v: 1, bindings: host ? [binding] : [] }),
                     subscribe: () => ({ dispose() {} }) },
-                qualifiedApi: { listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, service, signal }),
+                qualifiedApi: { listAccountsForServices: (services, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, services, signal }),
+                    listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, service, signal }),
                     listGroups: async () => ({ groups: [] }), readGroup: async () => null } });
             return [accountId, purposes] as const;
         }));
@@ -209,7 +210,7 @@ describe('daemon requester request-auth Account callbacks', () => {
                             executionRunId: 'run-one', occurrenceId: runOccurrence, parentSessionId: runParent,
                             intent: 'delegate', runtimeState: 'idle', teamCredentialProviderModel: null }));
                     });
-                    await new Promise<void>(resolve => broker.listen(0, '127.0.0.1', resolve));
+                    await new Promise<void>(resolve => broker.listen(0, '127.0.0.1', () => resolve()));
                     const brokerAddress = broker.address();
                     if (!brokerAddress || typeof brokerAddress === 'string') throw new Error('Broker RPC fixture unavailable');
                     const runContext = { ...issuanceContext, readExecutionRunAuthority: async (request: ReturnType<typeof SessionExecutionRunBrokerAuthorityRequestV1Schema.parse>, signal: AbortSignal) => {

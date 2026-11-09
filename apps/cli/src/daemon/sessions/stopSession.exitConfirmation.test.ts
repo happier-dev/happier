@@ -1,4 +1,3 @@
-import { logger } from '@/ui/logger';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -10,6 +9,8 @@ import type { TrackedSession } from '../types';
 import { createSessionProcessActionLifecycle } from './sessionProcessActionLifecycle';
 import { createSessionRunnerRespawnManager } from '../processSupervision/sessionRunnerRespawn';
 import { createSessionStopOperationBarrier } from './sessionStopOperationBarrier';
+import { createOnChildExited } from './onChildExited';
+import { logger } from '@/ui/logger';
 
 const procfsGate = vi.hoisted(() => ({
   beforeRead: null as ((path: unknown) => Promise<void>) | null,
@@ -29,6 +30,97 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 afterEach(() => { procfsGate.beforeRead = null; });
 
 describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
+  it.each([true, false])('distinguishes pending PID cleanup from requester retirement only for explicit Stop (%s)', async explicitStop => {
+    const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    await once(child, 'spawn');
+    const pid = child.pid!;
+    await once(child, 'exit');
+    const sessionId = `PID-${pid}`;
+    const tracked: TrackedSession = { pid, startedBy: 'terminal', happySessionId: sessionId,
+      processCommand: 'private-launch-credential', ...(explicitStop ? { stopRequestedAtMs: Date.now() } : {}) };
+    const sessions = new Map([[pid, tracked]]);
+    let beginCleanup!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>(resolve => { beginCleanup = resolve; });
+    const cleanupPending = new Promise<void>(resolve => { releaseCleanup = resolve; });
+    // Attach persistence is the OS boundary; the exit and resource owners stay real.
+    const onExit = createOnChildExited({ pidToTrackedSession: sessions,
+      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map([[pid, async () => {
+        beginCleanup(); await cleanupPending;
+      }]]), getApiMachineForSessions: () => null, removeSessionMarkerFn: async () => {} });
+    const diagnostic = vi.spyOn(logger, 'infoFile');
+    const phases = () => diagnostic.mock.calls.flatMap(([event, data]) => {
+      if (event !== '[DAEMON STOP] Runner exit phase started' && event !== '[DAEMON STOP] Runner exit phase settled') return [];
+      return [{ event, data }];
+    });
+    const exiting = onExit(pid, { reason: 'process-exited', code: 0, signal: null });
+    try {
+      await cleanupStarted;
+      expect(phases()).toEqual(explicitStop ? [{ event: '[DAEMON STOP] Runner exit phase started',
+        data: { sessionId, pid, phase: 'pid_resources' } }] : []);
+      expect(sessions.get(pid)).toBe(tracked);
+      releaseCleanup();
+      await exiting;
+      expect(phases()).toEqual(explicitStop ? ['pid_resources', 'requester_release'].flatMap(phase => [
+        { event: '[DAEMON STOP] Runner exit phase started', data: { sessionId, pid, phase } },
+        { event: '[DAEMON STOP] Runner exit phase settled', data: { sessionId, pid, phase, elapsedMs: expect.any(Number) } },
+      ]) : []);
+      expect(sessions.size).toBe(0);
+    } finally {
+      releaseCleanup();
+      await exiting;
+      diagnostic.mockRestore();
+    }
+  });
+
+  it('returns the original Stop result after dead-runner retirement exceeds the physical-exit grace', async () => {
+    const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+    await once(child, 'spawn');
+    const pid = child.pid!;
+    await once(child, 'exit');
+    const sessionId = `PID-${pid}`;
+    const tracked: TrackedSession = { pid, startedBy: 'terminal', happySessionId: sessionId };
+    const sessions = new Map([[pid, tracked]]);
+    let beginRetirement!: () => void;
+    let releaseRetirement!: () => void;
+    const retiring = new Promise<void>(resolve => { beginRetirement = resolve; });
+    const retired = new Promise<void>(resolve => { releaseRetirement = resolve; });
+    const onChildExited = createOnChildExited({ pidToTrackedSession: sessions,
+      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      getApiMachineForSessions: () => null,
+      // Marker persistence is the genuine system boundary held unavailable here.
+      removeSessionMarkerFn: async () => { beginRetirement(); await retired; },
+    });
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const stop = createStopSession({ pidToTrackedSession: sessions,
+      readHostAttachmentState: async () => ({ status: 'absent' }),
+      areTrackedRunnersExited: async ({ trackedPids }) => await waitForTrackedRunnerProcessesExit({
+        runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0,
+      }),
+      waitForTrackedRunnersExit: async ({ trackedPids }) => await waitForTrackedRunnerProcessesExit({
+        runners: trackedPids.map(pid => ({ pid })), timeoutMs: 1_000, pollIntervalMs: 0, onExitObserved: onChildExited,
+      }),
+    });
+    let settled = false;
+    const stopping = stop(sessionId).then(result => { settled = true; return result; });
+    try {
+      await retiring;
+      await vi.advanceTimersByTimeAsync(1_000);
+      // stop-runner-exit-latency-1028 brief Task 2: required retirement must
+      // settle this caller, rather than expire under a competing phase cutoff.
+      expect(settled, 'Physical-exit grace must not time out proven-dead retirement').toBe(false);
+      expect(sessions.get(pid)).toBe(tracked);
+      releaseRetirement();
+      expect(await stopping).toEqual({ status: 'stopped' });
+    } finally {
+      releaseRetirement();
+      await stopping;
+      await onChildExited(pid, { reason: 'process-missing', code: null, signal: null });
+      vi.useRealTimers();
+    }
+    expect(sessions.size).toBe(0);
+  });
+
   it('publishes the existing stopping fact before the first native signal', async () => {
     const child = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => setTimeout(() => process.exit(0), 100)); process.send('ready'); setInterval(() => {}, 1000)"],
       { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
@@ -42,14 +134,14 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
       vendorResumeId: 'native-resume', spawnOptions: { directory: '/fixture' } };
     const sessions = new Map([[pid, tracked]]);
     let timestampAtSignal: number | undefined;
-    let durableIntentAtSignal = false;
-    let durableIntentRecorded = false;
+    let intentPreparedAtSignal = false;
+    let intentPrepared = false;
     const diagnostic = vi.spyOn(logger, 'infoFile');
     const originalKill = process.kill.bind(process);
     const kill = vi.spyOn(process, 'kill').mockImplementation((targetPid, signal) => {
       if (targetPid === pid && signal === 'SIGTERM') {
         timestampAtSignal = tracked.stopRequestedAtMs;
-        durableIntentAtSignal = durableIntentRecorded;
+        intentPreparedAtSignal = intentPrepared;
       }
       return originalKill(targetPid, signal);
     });
@@ -64,7 +156,7 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
       const lifecycle = createSessionProcessActionLifecycle({ pidToTrackedSession: sessions,
         markStopRequested: respawn.markStopRequested,
         registerPhysicalStopEffect: createSessionStopOperationBarrier().registerPhysicalStopEffect,
-        recordExplicitStopIntent: async () => { durableIntentRecorded = true; }, stopSession: stop });
+        prepareStopIntent: async () => { intentPrepared = true; }, stopSession: stop });
       await expect(lifecycle.stopExactSession({ sessionId: tracked.happySessionId!, pid,
         start: { startTimeMs: identity.processStartTimeMs }, actionContext: { surface: 'cli', authority: 'present_user',
           actionCaller: { kind: 'host' }, defaultSessionId: 'not-the-caller' } })).resolves.toEqual({ status: 'stopped' });
@@ -72,7 +164,7 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
         phase: 'signal_request', requestTransport: 'process_action', requestSource: { surface: 'cli', callerKind: 'host' },
       })]);
       expect(timestampAtSignal).toEqual(expect.any(Number));
-      expect(durableIntentAtSignal).toBe(true);
+      expect(intentPreparedAtSignal).toBe(true);
       expect(respawn.handleUnexpectedExit(tracked, { reason: 'process-exited', code: null, signal: 'SIGTERM' })).toBe('ignored');
     } finally {
       diagnostic.mockRestore();

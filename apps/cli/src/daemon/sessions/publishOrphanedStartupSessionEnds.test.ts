@@ -330,7 +330,7 @@ describe('publishOrphanedStartupSessionEnds', () => {
     expect(removeSessionMarkerFn).toHaveBeenCalledWith(6485);
   });
 
-  it.each(['not_found', 'archived'] as const)(
+  it.each(['not_found', 'archived', 'unsupported'] as const)(
     'releases orphan evidence when terminal capture definitively reports %s',
     async reason => {
       const enqueueDaemonTerminalExactTurnEnd = vi.fn(async () => undefined);

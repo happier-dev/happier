@@ -42,6 +42,134 @@ function connectedSelectionsWithCredentialRevision(credentialRevision: string): 
 }
 
 describe('ConnectedServiceRuntimeRegistry', () => {
+  it('records fresh provider accounts without inventing generation proof and preserves exact application ownership', () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(100);
+    try {
+      const registry = new ConnectedServiceRuntimeRegistry();
+      const input = { pid: 123, sessionId: 'observed', agentId: 'codex', connectedServicesBindingsRaw: connectedBindings,
+        connectedServiceSelectionsEnvRaw: connectedSelections };
+      registry.registerTarget(input);
+      const scoped = registry.scopeToRequester(target => target.sessionId === 'observed');
+      const observed = scoped.adoptProviderObservedGroupAccountForSession({ sessionId: 'observed',
+        serviceId: 'acme.accounts/session-auth', groupId: 'codex-team', profileId: 'other-profile', observedAtMs: 50 });
+      expect(observed?.activeBindings).toEqual([{ serviceId: 'acme.accounts/session-auth', groupId: 'codex-team',
+        profileId: 'other-profile', groupGeneration: null, credentialRevision: null }]);
+      expect(observed?.connectedServiceSelectionsEnv).toEqual({ [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: connectedSelections });
+      registry.registerTarget({ ...input, connectedServicesBindingsRaw: { ...connectedBindings, bindingsByServiceId: {
+        'acme.accounts/session-auth': { ...connectedBindings.bindingsByServiceId['acme.accounts/session-auth'], appliedProfileId: 'other-profile' },
+      } } });
+      expect(registry.getBySessionId('observed')).toBe(observed);
+      expect(scoped.adoptProviderObservedGroupAccountForSession({ sessionId: 'observed',
+        serviceId: 'acme.accounts/session-auth', groupId: 'codex-team', profileId: 'active-profile', observedAtMs: 49 })).toBeNull();
+      clock.mockReturnValue(300);
+      const applied = registry.adoptExactGroupApplicationForSession({ sessionId: 'observed', serviceId: 'acme.accounts/session-auth',
+        groupId: 'codex-team', profileId: 'active-profile', generation: 5, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' });
+      expect(applied?.activeBindings[0]).toMatchObject({ profileId: 'active-profile', groupGeneration: 5, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' });
+      expect(scoped.adoptProviderObservedGroupAccountForSession({ sessionId: 'observed',
+        serviceId: 'acme.accounts/session-auth', groupId: 'codex-team', profileId: 'other-profile', observedAtMs: 250 })).toBeNull();
+      expect(registry.getBySessionId('observed')).toBe(applied);
+      const foreign = registry.scopeToRequester(() => false);
+      expect(foreign.adoptProviderObservedGroupAccountForSession({ sessionId: 'observed', serviceId: 'acme.accounts/session-auth',
+        groupId: 'codex-team', profileId: 'other-profile', observedAtMs: 400 })).toBeNull();
+      const fresh = scoped.adoptProviderObservedGroupAccountForSession({ sessionId: 'observed', serviceId: 'acme.accounts/session-auth',
+        groupId: 'codex-team', profileId: 'other-profile', observedAtMs: 400 });
+      expect(fresh?.activeBindings[0]).toMatchObject({ profileId: 'other-profile', groupGeneration: null, credentialRevision: null });
+    } finally { clock.mockRestore(); }
+  });
+
+  it('keeps only an owned group application recipient across binding withdrawal and success registration', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const input = { pid: 123, sessionId: 'applying', agentId: 'codex',
+      connectedServicesBindingsRaw: connectedBindings, connectedServiceSelectionsEnvRaw: connectedSelections };
+    registry.registerTarget(input);
+    const recipient = registry.getByPid(input.pid)!;
+    const withdrawn = registry.withdrawSessionGroupApplicationBindings(recipient)!;
+    expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'applying', agentId: 'codex' })).toEqual({ status: 'unavailable' });
+    expect(registry.resolveExactSessionGroupApplicationTarget(recipient)).toBe(withdrawn);
+    registry.registerTarget(input, { groupApplicationTarget: withdrawn });
+    const settled = registry.getByPid(input.pid)!;
+    expect(registry.resolveExactSessionGroupApplicationTarget(recipient)).toBe(settled);
+    registry.updateTarget({ pid: input.pid, connectedServicesBindingsRaw: null });
+    const unbound = registry.getByPid(input.pid);
+    expect(registry.resolveExactSessionGroupApplicationTarget(recipient)).toBeNull();
+    expect(() => registry.registerTarget(input, { groupApplicationTarget: settled })).toThrow('credential_revision_superseded');
+    expect(registry.getByPid(input.pid)).toBe(unbound);
+  });
+  it('invalidates an in-flight application when an explicit unbind repeats its withdrawn binding', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const input = { pid: 123, sessionId: 'applying', agentId: 'codex', connectedServicesBindingsRaw: connectedBindings };
+    registry.registerTarget(input);
+    const recipient = registry.getByPid(123)!;
+    const applying = registry.withdrawSessionGroupApplicationBindings(recipient)!;
+    registry.updateTarget({ pid: 123, connectedServicesBindingsRaw: null });
+    expect(registry.resolveExactSessionGroupApplicationTarget(recipient)).toBeNull();
+    expect(() => registry.registerTarget(input, { groupApplicationTarget: applying })).toThrow('credential_revision_superseded');
+    expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'applying', agentId: 'codex' })).toEqual({ status: 'unavailable' });
+  });
+  it('retires selected Agent launch bytes when the applied credential identity changes, without borrowing Session material for a Run', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const material = { runtimeHome: '/var/lib/happier-agent/session', environment: { SELECTED: 'old' }, selectedMaterials: [] };
+    const input = { pid: 123, sessionId: 'isolated', agentId: 'codex', materializationKey: 'isolated',
+      connectedServicesBindingsRaw: connectedBindings, connectedServiceSelectionsEnvRaw: connectedSelections, agentLaunchMaterials: material };
+    registry.registerTarget(input);
+    const refreshedMaterial = { ...material };
+    registry.updateTarget({ pid: input.pid, agentLaunchMaterials: refreshedMaterial });
+    expect(registry.getBySessionId(input.sessionId)?.agentLaunchMaterials).toBe(refreshedMaterial);
+    registry.updateTarget({ pid: input.pid, sessionDirectory: '/checkout' });
+    expect(registry.getBySessionId(input.sessionId)?.agentLaunchMaterials).toBe(refreshedMaterial);
+    registry.registerRunTarget({ ...input, agentLaunchMaterials: undefined, runKey: 'isolated-run' });
+    expect(registry.getRunTargetByRunKey('isolated-run')?.agentLaunchMaterials).toBeUndefined();
+    registry.updateTarget({ pid: input.pid, connectedServiceSelectionsEnvRaw: connectedSelectionsWithCredentialRevision('csr_bbbbbbbbbbbbbbbbbbbbbb') });
+    expect(registry.getBySessionId(input.sessionId)?.agentLaunchMaterials).toBeUndefined();
+  });
+  it('publishes refreshed Agent material only to the exact current Session or Run lease', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const material = { runtimeHome: '/var/lib/happier-agent/session', environment: { SELECTED: 'old' }, selectedMaterials: [] };
+    const input = { pid: 123, sessionId: 'isolated', agentId: 'codex', materializationKey: 'isolated', agentLaunchMaterials: material,
+      connectedServicesBindingsRaw: connectedBindings, connectedServiceSelectionsEnvRaw: connectedSelections };
+    registry.registerTarget(input);
+    registry.registerRunTarget({ ...input, materializationKey: 'isolated-run', runKey: 'isolated-run' });
+    // The real refresh owner consumes these current registry projections, not
+    // the backing target object returned by the Session/Run lookup API.
+    const session = registry.listRefreshTargets().find(target => registry.isSessionTarget(target))!;
+    const run = registry.listRefreshTargets().find(target => registry.isRunTarget(target))!;
+    const refreshed = { ...material, environment: { SELECTED: 'refreshed' } };
+    expect(registry.replaceAgentLaunchMaterials(run, refreshed)?.agentLaunchMaterials).toBe(refreshed);
+    expect(registry.getBySessionId(input.sessionId)?.agentLaunchMaterials).toBe(material);
+    expect(registry.replaceAgentLaunchMaterials(run, material)).toBeNull();
+    expect(registry.replaceAgentLaunchMaterials(session, refreshed)?.agentLaunchMaterials).toBe(refreshed);
+  });
+  it('publishes only changed Session and Run targets to background inventory subscribers', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const publish = vi.fn();
+    const unsubscribe = registry.subscribeTargetRegistrations(publish);
+    const input = { pid: 123, sessionId: 'settled', agentId: 'codex', materializationKey: 'settled',
+      connectedServicesBindingsRaw: connectedBindings, connectedServiceSelectionsEnvRaw: connectedSelections };
+    try {
+      registry.registerTarget(input);
+      registry.registerRunTarget({ ...input, runKey: 'settled-run' });
+      publish.mockClear();
+      const session = registry.getByPid(input.pid);
+      const run = registry.getRunTargetByRunKey('settled-run');
+      for (let arrival = 0; arrival < 60; arrival++) {
+        registry.registerTarget({ ...input });
+        registry.updateTarget({ pid: input.pid, sessionId: input.sessionId });
+        registry.registerRunTarget({ ...input, runKey: 'settled-run' });
+      }
+      expect(publish).not.toHaveBeenCalled();
+      expect(registry.getByPid(input.pid)).toBe(session);
+      expect(registry.getRunTargetByRunKey('settled-run')).toBe(run);
+      const connectedServiceSelectionsEnvRaw = connectedSelectionsWithCredentialRevision('csr_bbbbbbbbbbbbbbbbbbbbbb');
+      registry.updateTarget({ pid: input.pid, connectedServiceSelectionsEnvRaw });
+      expect(publish).toHaveBeenCalledOnce();
+      registry.registerRunTarget({ ...input, runKey: 'settled-run', connectedServiceSelectionsEnvRaw });
+      expect(publish).toHaveBeenCalledTimes(2);
+      unsubscribe();
+      registry.updateTarget({ pid: input.pid, sessionId: 'later' });
+      expect(publish).toHaveBeenCalledTimes(2);
+    } finally { unsubscribe(); }
+  });
+
   it('reads a wrapper target from its witnessed runner identity and refuses a replaced runner', () => {
     const registry = new ConnectedServiceRuntimeRegistry();
     registry.registerTarget({ pid: 123, sessionId: 'parent', agentId: 'codex',
@@ -301,6 +429,43 @@ describe('ConnectedServiceRuntimeRegistry', () => {
     expect(registry.getBySessionId('session-1')).toBe(settled);
   });
 
+  it('adopts a verified exact application for a metadata-only declared pool member', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    registry.registerTarget({ pid: 123, agentId: 'codex', sessionId: 'metadata-only',
+      connectedServicesBindingsRaw: connectedBindings });
+    const settled = registry.adoptExactGroupApplicationForSession({
+      sessionId: 'metadata-only', serviceId: 'acme.accounts/session-auth', groupId: 'codex-team',
+      profileId: 'replacement-profile', generation: 5, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+    });
+    expect(settled?.activeBindings).toEqual([expect.objectContaining({ profileId: 'replacement-profile',
+      groupId: 'codex-team', groupGeneration: 5, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' })]);
+    expect(registry.adoptExactGroupApplicationForSession({
+      sessionId: 'metadata-only', serviceId: 'acme.accounts/session-auth', groupId: 'foreign-pool',
+      profileId: 'foreign', generation: 6, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+    })).toBeNull();
+  });
+
+  it('resolves only the same Session lineage after its own application, across requester views', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const scoped = registry.scopeToRequester(target => target.sessionId === 'lineage');
+    registry.registerTarget({ pid: 123, agentId: 'codex', sessionId: 'lineage',
+      connectedServicesBindingsRaw: connectedBindings, connectedServiceSelectionsEnvRaw: connectedSelections });
+    const original = registry.getBySessionId('lineage')!;
+    const adopted = scoped.adoptExactGroupApplicationForSession({ sessionId: 'lineage', serviceId: 'acme.accounts/session-auth',
+      groupId: 'codex-team', profileId: 'replacement', generation: 5, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' });
+    expect(registry.resolveExactSessionGroupApplicationTarget(original)).toBe(adopted);
+    expect(registry.isSessionTarget(original)).toBe(false); // Refresh still needs its exact current snapshot.
+    registry.unregisterPid(123);
+    registry.registerTarget({ ...adopted!, pid: 123 });
+    expect(registry.resolveExactSessionGroupApplicationTarget(original)).toBeNull();
+    const replacement = registry.getBySessionId('lineage')!;
+    registry.updateTarget({ pid: 123, connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {} },
+      connectedServiceSelectionsEnvRaw: '[]' });
+    expect(registry.resolveExactSessionGroupApplicationTarget(replacement)).toBeNull();
+    registry.registerRunTarget({ ...original, runKey: 'run' });
+    expect(registry.resolveExactSessionGroupApplicationTarget(registry.getRunTargetByRunKey('run')!)).toBeNull();
+  });
+
   it('does not let passive bootstrap registration overwrite a newer accepted runtime selection', () => {
     const registry = new ConnectedServiceRuntimeRegistry();
     const bootstrapRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
@@ -338,33 +503,6 @@ describe('ConnectedServiceRuntimeRegistry', () => {
       expect.objectContaining({ credentialRevision: acceptedRevision }),
     ]);
     expect(registry.getByPid(123)?.sessionDirectory).toBe('/reattached');
-  });
-
-  it('offers every target registration to current-truth consumers even when the target is unchanged', () => {
-    const registry = new ConnectedServiceRuntimeRegistry();
-    const onTargetRegistered = vi.fn();
-    const unsubscribe = registry.subscribeTargetRegistrations(onTargetRegistered);
-    const registration = {
-      pid: 123,
-      agentId: 'codex' as const,
-      sessionId: 'session-1',
-      materializationKey: 'mat-1',
-      connectedServicesBindingsRaw: connectedBindings,
-      connectedServiceSelectionsEnvRaw: connectedSelections,
-    };
-
-    const first = registry.registerTarget(registration);
-    const second = registry.registerTarget(registration);
-    registry.registerRunTarget({ ...registration, runKey: 'run-1' });
-    unsubscribe();
-    registry.registerTarget(registration);
-
-    expect(second.runtimeIdentityKey).toBe(first.runtimeIdentityKey);
-    expect(second.revision).toBe(first.revision);
-    expect(onTargetRegistered).toHaveBeenCalledTimes(3);
-    expect(onTargetRegistered).toHaveBeenNthCalledWith(1, expect.objectContaining({ pid: 123 }));
-    expect(onTargetRegistered).toHaveBeenNthCalledWith(2, expect.objectContaining({ pid: 123 }));
-    expect(onTargetRegistered).toHaveBeenNthCalledWith(3, expect.objectContaining({ pid: 123 }));
   });
 
   it('shares transfer, session adoption, and unregister state across views', () => {

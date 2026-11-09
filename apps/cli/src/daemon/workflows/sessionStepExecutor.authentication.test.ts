@@ -81,7 +81,7 @@ it.each(['profile', 'group', 'override', 'native', 'explicit_native'] as const)(
       creationKey: `workflow:auth:${authentication}`,
     }));
     if (authentication === 'native' || authentication === 'explicit_native') {
-      await expect(result).rejects.toMatchObject({ code: 'target_unavailable' });
+      await expect(result).rejects.toMatchObject({ code: 'agent_signed_out' });
       expect(admitted).toEqual([expect.not.objectContaining({ connectedServices: expect.anything() })]);
     } else {
       await expect(result).resolves.toMatchObject({ sessionId: 'connected-child' });

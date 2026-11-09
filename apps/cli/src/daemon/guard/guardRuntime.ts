@@ -183,16 +183,14 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
         idleBlocked.set(id, { signature: decision.signature, failed: true }); await clearSessionWarning(id);
         return { acted: true };
       }
-      const fireFacts = observeFacts(await input.readFacts(signal));
       const firePolicy = input.readPolicy();
-      const fire = planIdleSessions({ ...fireFacts, policy: firePolicy.idleSessions, now: now(), keepRunningAnchors,
-        blocked: idleBlocked }).items.find(item => sessionId(item.candidate) === id);
-      // Fresh target admission, not an unrelated inventory edge, owns this intent.
-      if (signal.aborted || sessionWarnings.get(id) !== current || !fire || fire.signature !== decision.signature
+      // SessionStop owns fresh exact-runner eligibility after the notice ACK;
+      // re-reading the fleet here repeats that admission for unrelated Sessions.
+      if (signal.aborted || sessionWarnings.get(id) !== current
         || JSON.stringify(firePolicy.idleSessions) !== JSON.stringify(policy.idleSessions)) {
         await clearSessionWarning(id); return { acted: true };
       }
-      const result = await input.stop(fire.candidate, signal).catch((error: unknown) => {
+      const result = await input.stop(candidate, signal).catch((error: unknown) => {
         if (signal.aborted && error === signal.reason) throw error;
         input.onError(error);
         return { status: 'failed' as const, reason: 'native_stop_failed' };
@@ -204,7 +202,7 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
       } else {
         sessionWarnings.delete(id); if (warning === current) warning = undefined; emit();
         await input.activity.append({ ...idleEntryFor(candidate, 'stopped_session', 'done'),
-          ...(fire.candidate.footprintBytes === undefined ? {} : { freedBytes: fire.candidate.footprintBytes }) });
+          ...(candidate.footprintBytes === undefined ? {} : { freedBytes: candidate.footprintBytes }) });
         await input.onSessionStopRecorded?.(candidate);
       }
       return { acted: true };
@@ -394,12 +392,12 @@ export function createGuardRuntime(input: GuardRuntimeInput) {
                   if (candidate.kind === 'session' && !await input.notice(candidate, { kind: 'stopped', at: now(), rule: 'memory_guard', idleMs: now() - candidate.settledAt }, signal)) {
                     await clearWarning(); await fail(candidate, 'stop_marker_unavailable'); changed(); continue;
                   }
-                  // Reads may await Session transport while a browser gains control
-                  // or a service gains a visitor. Re-admit every rung at the owner.
-                  const fireFacts = observeFacts(await input.readFacts(signal));
+                  // SessionStop owns the final exact-runner admission. Browser
+                  // control and service visitors still need their fresh rung facts.
+                  const fireFacts = candidate.kind === 'session' ? undefined : observeFacts(await input.readFacts(signal));
                   const fireGuardPolicy = input.readPolicy();
                   const firePolicy = fireGuardPolicy.memoryGuard;
-                  const fireCandidate = planMemory(fireFacts, firePolicy, now()).candidate;
+                  const fireCandidate = fireFacts ? planMemory(fireFacts, firePolicy, now()).candidate : candidate;
                   const fireSample = input.vitals.latest();
                   const fireMemory = input.vitals.state().state === 'reporting' && fireSample
                     && fireSample.sampledAt >= Math.floor(now() / 60000) * 60000 && fireSample.memory.reported ? fireSample.memory : null;

@@ -2,8 +2,7 @@ import { expect, it } from 'vitest';
 import { accountSettingsParse, ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { createExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
 import { createExternalSessionFollowTargetHostOperation } from '@/session/external/followTargetHostOperation';
-import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
-  resolveActiveAccountConfiguredExternalSessionSourceRevision } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-claude/manifest';
 import { createRunnerAgentDaemonFacetService } from './runnerAgentDaemonFacetService';
@@ -21,7 +20,7 @@ it('admits provider source following through the daemon facet with the configure
   if(!definition)throw Error('Agent unavailable');
   const agent={id:'claude',identity:{pluginId:PLUGIN_MANIFEST.id,localId:'claude'},richDefinition:{provenance:'first_party' as const,definition}};
   const target=createExternalSessionFollowTargetHostOperation({machineId:'machine',dependencies:{
-    readAccount:async()=>({connectedServicesV2:[]}),readAccountRevision:()=>resolveActiveAccountConfiguredExternalSessionSourceRevision(getActiveAccountSettingsSnapshot()),
+    readAccount:async()=>({connectedServicesV2:[]}),
     readAgentSettings:()=>getActiveAccountSettingsSnapshot()?.settings,readActiveServerId:()=>null}});
   await owner.install({followTargetOperation:target,followOperation:{execute:async()=>({status:'following',startingCursor:'native-tail',subscription:{dispose(){}}})}});
   const service=createRunnerAgentDaemonFacetService({machineId:'machine',externalSessionHostOperationOwner:owner,

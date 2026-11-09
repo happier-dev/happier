@@ -11,6 +11,8 @@ import {
 import { tmpdir, userInfo } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createComputerRoutes } from './routes';
+import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 
 const spawned: Array<
   Readonly<{ name: string; args: readonly string[]; child: ChildProcess }>
@@ -56,7 +58,34 @@ describe('managed desktop X authority', () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     spawned.length = 0;
+    xConnections.length = 0;
     if (bin) await rm(bin, { recursive: true, force: true });
+  });
+
+  it.skipIf(process.platform !== 'linux')('initializes the lazy desktop from a cold Machine selection read without creating a share', async () => {
+    bin = await mkdtemp(join(tmpdir(), 'happier-desktop-bin-'));
+    for (const name of ['Xvfb', 'dbus-daemon', 'gdbus', 'openbox']) {
+      await writeFile(join(bin, name), '');
+      await chmod(join(bin, name), 0o755);
+    }
+    vi.stubEnv('PATH', bin);
+    vi.stubEnv('DISPLAY', '');
+    vi.stubEnv('WAYLAND_DISPLAY', '');
+    const registry = createMachineLiveStreamCaptureRegistry();
+    const routes = createComputerRoutes({ machineId: 'machine', registry });
+    const context = { authority: 'present_user' as const, machineAdmission: {
+      actorAccountId: 'owner', custodianAccountId: 'owner', role: 'manage' as const,
+      machineId: 'machine', installationId: 'installation', encryptionMode: 'plain' as const,
+    } };
+    try {
+      for (let read = 0; read < 2; read += 1) {
+        expect(await routes.dispatch('computer.target.get', { machineId: 'machine' }, context))
+          .toMatchObject({ consentGranted: false, approvalDisplay: { requiresTargetSelection: true } });
+      }
+      expect(spawned.filter(entry => entry.name === 'Xvfb')).toHaveLength(1);
+      expect(registry.list()).toHaveLength(0);
+      expect(process.env.DISPLAY).toBe('');
+    } finally { await routes.dispose(); }
   });
 
   it.skipIf(process.platform !== 'linux')(

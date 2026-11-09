@@ -50,7 +50,7 @@ function recordingWithId(recordingId: string): BrowserRecordingSessionV1 {
 
 describe('browser recording session-media writer', () => {
   it('refuses held recording bytes before persistence or transcript attachment', async () => {
-    const { createBrowserRecordingSessionMediaWriter } = await import('./sessionMediaWriter');
+    const { createBrowserRecordingSessionMediaWriter } = await import('../../recording/sessionMediaWriter');
     const control = createSurfaceInputControl();
     await control.beginConfidentialityHold();
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-held-'));
@@ -77,7 +77,7 @@ describe('browser recording session-media writer', () => {
   });
 
   it('awaits the Session workspace before persisting captured video and discards it durably', async () => {
-    const { createBrowserRecordingSessionMediaWriter } = await import('./sessionMediaWriter');
+    const { createBrowserRecordingSessionMediaWriter } = await import('../../recording/sessionMediaWriter');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-writer-'));
     const captureDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-capture-'));
 
@@ -168,7 +168,7 @@ describe('browser recording session-media writer', () => {
   });
 
   it('tracks duplicate-content recording files by recording identity, not shared media hash', async () => {
-    const { createBrowserRecordingSessionMediaWriter } = await import('./sessionMediaWriter');
+    const { createBrowserRecordingSessionMediaWriter } = await import('../../recording/sessionMediaWriter');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-writer-dupe-'));
     const captureDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-capture-dupe-'));
 

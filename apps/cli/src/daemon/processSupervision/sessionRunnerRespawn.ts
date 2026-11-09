@@ -8,6 +8,7 @@
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readSessionAutoResumeRefusalV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 
 import {
   SESSION_RUNNER_EXIT_CODES,
@@ -87,7 +88,13 @@ function readPermanentSpawnRefusal(result: unknown): Readonly<{
     error?: unknown;
     errorCode?: unknown;
     errorMessage?: unknown;
+    errorDetail?: unknown;
   }>;
+  // Automatic launch admission refused on persisted Session state: a person's
+  // Stop hold or archive. Only a person's Resume/unarchive changes that state,
+  // so retrying the same automatic launch can only be refused again.
+  const admission = readSessionAutoResumeRefusalV1(value.errorDetail);
+  if (admission === 'held_by_person' || admission === 'archived') return { reason: 'stop_requested', code: admission };
   // These refusals require a person to repair launch prerequisites. Retrying
   // the same replacement cannot sign in, install/enable an Agent, approve a
   // directory, or add resume support. Transport and child failures still retry.
@@ -324,6 +331,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
     if (!existing) return;
     clearTimer(sessionId);
     delete existing.retire;
+    if (existing.terminalSettlement) return;
     if (existing.controller.hasRecentIntendedRestarts()) {
       existing.controller.resetCrashBudget();
       existing.intended = false;
@@ -495,8 +503,10 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
               // Launch preparation can outlive Stop. Keep the existing cycle's
               // custody through the physical launch, including an awaited caller hook.
               if (finishIfCycleRetired()) return false;
-              if (respawnOptions.beforeSessionRunnerLaunch
-                && !await respawnOptions.beforeSessionRunnerLaunch()) return false;
+              if (respawnOptions.beforeSessionRunnerLaunch) {
+                const admission = await respawnOptions.beforeSessionRunnerLaunch();
+                if (admission !== true) return admission;
+              }
               return !finishIfCycleRetired();
             },
           }, { sessionId, previousPid, trackedSession, intended: existing.intended })

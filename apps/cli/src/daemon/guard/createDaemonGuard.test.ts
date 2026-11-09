@@ -22,7 +22,7 @@ import { createMinuteHistoryStore } from '../vitals/history/minuteHistoryStore';
 import { createKeepAwake } from '@/integrations/keepAwake';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
-import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import * as nativeTermination from '@/processes/terminate/terminateProcessTree';
 import { listHappierProcessRoots } from '../processes/roots/listHappierProcessRoots';
 import { parseProcessOwnerTag, PROCESS_OWNER_ENV_KEY } from '@/processes/ownerTag';
@@ -43,6 +43,11 @@ import type { TrackedSession } from '../types';
 import { SessionGuardNoticeStateV1Schema, type SessionGuardNoticeStateV1 } from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import { registerDaemonMachineGuardRpcHandlers } from '@/rpc/handlers/daemonMachineGuard';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -73,7 +78,7 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
         readPolicy(): MachineGuardPolicyV1;
         ownership: ReturnType<typeof createProcessOwnershipRuntime>;
         createPolicyWork(activityLog: ActivityLog): GuardPolicyWork & Readonly<{ refreshOnTick(): void; stop(): void }>;
-    }>, idleSession = false) {
+    }>, idleSession: boolean | 'memory' = false, recipientAccountId?: string, monitoringIntervalMs = 60_000) {
         let guard: DaemonGuard | undefined;
         let pressure: 'critical' | 'calm' = projectService ? 'calm' : 'critical';
         let available = 100;
@@ -117,15 +122,30 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
                 processSpec: { mode: { kind: 'managedSpawn', endpointNone: true } },
                 authorizeLaunch: ({ signal: launchSignal }) => authorizeResolvedProjectExecLaunchForHost({
                     signal: launchSignal, assertCurrent() {}, projectLaunch: { status: 'ready', reviewedEffectDigest: 'original-reviewed-declaration',
-                        environment: { selection: { kind: 'host' }, root: workspace.rootPath, platform: 'linux',
-                            io: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }) } },
+                        toolchain: { selection: { kind: 'host' }, root: workspace.rootPath, platform: 'linux',
+                            io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) } },
                     launch: { command: '/native/dev-server', args: [], cwd: '/project/nested', env: {}, release() {} },
                 }),
             }); cleanup.push(() => serviceOwner.dispose());
         }
+        let metadataVersion = 1;
+        let metadata: Record<string, unknown> = policyAvailable ? { resourcesPolicyV1: { v: 1,
+            monitoring: { mode: 'always', intervalMs: monitoringIntervalMs },
+            guard: auxiliary?.readPolicy() ?? { memoryGuard: { enabled: !idleSession || idleSession === 'memory', sustainMs: 60000 } } } }
+            : { resourcesPolicyV1: { v: 2 } };
+        const policy = createMachineResourcesPolicyRuntime({ port: {
+            read: async () => ({ status: 'ready', metadataVersion, metadata: auxiliary
+                ? { resourcesPolicyV1: { v: 1, monitoring: { mode: 'always', intervalMs: monitoringIntervalMs }, guard: auxiliary.readPolicy() } } : metadata }),
+            compareAndSwap: async input => {
+                if (!idleSession) return { status: 'unavailable' };
+                metadata = input.metadata; metadataVersion++;
+                return { status: 'applied', metadata, metadataVersion };
+            },
+        } }); await policy.reload(); cleanup.push(() => policy.stop());
         const intervals: number[] = [];
         const sampler = createMachineVitalsSampler({ nowMs: Date.now, monotonicMs: Date.now,
             historyStore: await createMinuteHistoryStore({ directory: join(directory, 'minutes'), nowMs: Date.now }),
+            readPolicy: () => { const current = policy.read(); return current.status === 'ready' ? current.policy : null; },
             // OS counter boundary; all minute aggregation and execution logic beneath it are real.
             readers: { read: async input => {
                 intervals.push(input.intervalMs);
@@ -140,21 +160,9 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
         }); await sampler.start(); cleanup.push(() => sampler.stop());
         const summary = createMachineResourceSummary({ sampler, nowMs: Date.now, readNearlyFull: () => null,
             onError: error => { throw error; } }); cleanup.push(() => summary.stop());
-        let metadataVersion = 1;
-        let metadata: Record<string, unknown> = policyAvailable ? { resourcesPolicyV1: { v: 1,
-            guard: auxiliary?.readPolicy() ?? { memoryGuard: { enabled: !idleSession, sustainMs: 60000 } } } }
-            : { resourcesPolicyV1: { v: 2 } };
-        const policy = createMachineResourcesPolicyRuntime({ port: {
-            read: async () => ({ status: 'ready', metadataVersion, metadata: auxiliary
-                ? { resourcesPolicyV1: { v: 1, guard: auxiliary.readPolicy() } } : metadata }),
-            compareAndSwap: async input => {
-                if (!idleSession) return { status: 'unavailable' };
-                metadata = input.metadata; metadataVersion++;
-                return { status: 'applied', metadata, metadataVersion };
-            },
-        } }); await policy.reload(); cleanup.push(() => policy.stop());
         const workspaceSession: TrackedSession = { pid: idleSession ? 1001 : 2001, happySessionId: 'workspace-session',
-            processStartTimeMs: 123450, startedBy: 'daemon', spawnOptions: { directory: '/project/nested' } };
+            processStartTimeMs: 123450, startedBy: 'daemon', spawnOptions: { directory: '/project/nested' },
+            ...(recipientAccountId ? { requesterWorkAttributionV1: { ...target, accountId: recipientAccountId } } : {}) };
         const sessionProducer = createSessionLiveWorkProducer({
             readSessions: () => projectService || idleSession ? [workspaceSession] : [],
             // Session activity RPC is a network boundary, reconciled by the real inventory producer.
@@ -285,7 +293,7 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
                     stop() { listeners.clear(); },
                 };
             },
-        });
+        }, false, undefined, 2_000);
         f.pressure('calm');
         const release = f.sampler.demandOverview(); cleanup.push(release);
         await vi.advanceTimersByTimeAsync(0); await f.drain();
@@ -361,6 +369,57 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
             .toMatchObject({ status: 'applied' });
         await f.drain();
         expect(f.guard.runtime.readSessionWarning('workspace-session')).toBeUndefined();
+    });
+
+    it.each([
+        ['idle', 'alice'], ['idle', 'owner'], ['memory', 'alice'], ['memory', 'owner'],
+    ] as const)('cancels an attributed %s Session warning for %s through admitted RPC, without cancelling another recipient warning', async (rule, actor) => {
+        const f = await setup(undefined, true, false, undefined, rule === 'idle' ? true : 'memory', 'alice');
+        const current = f.policy.read();
+        if (current.status !== 'ready') throw new Error('Policy unavailable');
+        await f.policy.set({ expectedRevision: current.revision, patch: { guard: {
+            idleSessions: { enabled: rule === 'idle', afterMs: 120_000, warnBeforeMs: 30_000 },
+        } } });
+        await f.drain();
+        await vi.advanceTimersByTimeAsync(rule === 'idle' ? 90_000 : 60_000); await f.drain();
+        const warning = f.guard.runtime.readSessionWarning('workspace-session');
+        expect(warning).toBeDefined();
+        expect(f.notices).toContainEqual({ kind: 'stopping', rule: rule === 'idle' ? 'idle_sessions' : 'memory_guard', stopAt: warning?.stopAt });
+        const machine = { ...target, custodianAccountId: 'owner' };
+        const manager = new RpcHandlerManager({ scopePrefix: target.machineId, localMachineId: target.machineId,
+            encryptionMode: 'plain', logger: () => {},
+            authorizeRequest: request => authorizeMachineRpcRequest(request, {
+                machineId: target.machineId, resolveInstallationId: () => target.installationId,
+                resolveCustodianAccountId: async () => machine.custodianAccountId,
+                resolveHomeServerIdentityId: async () => target.serverId,
+                // Home admission verification is the network boundary; Guard composition remains real.
+                verifyMachineAdmission: async () => true,
+            }) });
+        registerDaemonMachineGuardRpcHandlers(manager, { target: () => machine, guard: f.guard.watch,
+            activity: f.guard.activityLog, keepRunning: f.guard.keepRunning });
+        const call = (accountId: string) => manager.handleRequest({
+            method: `${target.machineId}:${RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING}`,
+            params: { machineId: target.machineId, sessionId: 'workspace-session' }, callerAuthority: 'present_user',
+            machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ machineId: target.machineId,
+                installationId: target.installationId, custodianAccountId: machine.custodianAccountId, actorAccountId: accountId,
+                role: accountId === 'owner' ? 'manage' : 'use', encryptionMode: 'plain' }),
+        });
+        const before = (await f.guard.activityLog.list({ range: 'today' })).entries;
+        const cancelled = new AbortController(); cancelled.abort();
+        expect(await f.guard.keepRunning({ sessionId: 'workspace-session' }, requester, cancelled.signal))
+            .toEqual({ status: 'not_pending' });
+        expect(f.guard.runtime.readSessionWarning('workspace-session')).toEqual(warning);
+        const otherRecipientResult = await call('bob');
+        expect(f.guard.runtime.readSessionWarning('workspace-session')).toEqual(warning);
+        expect((await f.guard.activityLog.list({ range: 'today' })).entries).toEqual(before);
+        expect(await call(actor)).toEqual({ status: 'kept' });
+        expect(otherRecipientResult).toEqual({ status: 'not_pending' });
+        expect(f.guard.runtime.readKeepRunningAnchor('workspace-session')).toBe(Date.now());
+        expect((await f.guard.activityLog.list({ range: 'today' })).entries).toContainEqual(expect.objectContaining({
+            kind: 'kept_running', rule: rule === 'idle' ? 'idle_sessions' : 'memory_guard',
+            attribution: { ...target, accountId: 'alice' }, subject: expect.objectContaining({ sessionId: 'workspace-session' }),
+        }));
+        expect(f.stops).toBe(0);
     });
 
     it('runs confirmed left-behind policy work through the same factory Activity and summary, with no Off reads or subscriptions', async () => {
@@ -573,12 +632,14 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
         }
     });
 
-    it('uses canonical disabled defaults while retained policy is invalid, with no census or faster sampling', async () => {
+    it('uses canonical disabled Guard defaults and does not sample while retained resources policy is invalid', async () => {
         const f = await setup(undefined, false);
         expect(f.policy.read().status).toBe('invalid');
         await vi.advanceTimersByTimeAsync(120000); await f.drain();
         expect(f.stops).toBe(0); expect(f.nativeReads).toBe(0);
-        expect(f.summary.getSummary()?.guard).not.toHaveProperty('episode');
-        expect(new Set(f.intervals)).toEqual(new Set([60000]));
+        expect(f.guard.state.read()).not.toHaveProperty('episode');
+        expect(f.summary.getSummary()).toBeNull();
+        expect(f.intervals).toEqual([]);
+        expect(f.sampler.latest()).toBeNull();
     });
 });

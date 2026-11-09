@@ -156,6 +156,53 @@ async function createHarness(idToken = 'id-old', accountMode: 'plain' | 'e2ee' =
 }
 
 describe('refreshQualifiedConnectedAccount', () => {
+  it.each([
+    ['plain', 'provider_response'], ['plain', 'after_exchange'], ['plain', 'before_persist'], ['plain', 'during_persist'],
+    ['e2ee', 'provider_response'], ['e2ee', 'after_exchange'], ['e2ee', 'before_persist'], ['e2ee', 'during_persist'],
+  ] as const)(
+    'settles the rotated token in %s mode after registry retirement %s adopts a successor publication', async (mode, timing) => {
+    const harness = await createHarness('id-old', mode);
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      if (timing === 'provider_response') await harness.retireRegistry();
+      return new Response(JSON.stringify({
+        access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }));
+    if (timing === 'after_exchange') {
+      harness.retireAfterExchange();
+    } else if (timing === 'before_persist') {
+      harness.getAccountEncryptionMode.mockImplementation(async () => {
+        if (vi.mocked(fetch).mock.calls.length > 0) await harness.retireRegistry();
+        return mode;
+      });
+    } else if (timing === 'during_persist') {
+      harness.mutateCredential.mockImplementationOnce(async () => {
+        await harness.retireRegistry();
+        return { success: true, credentialRevision: nextCredentialRevision, configurationRevision: null };
+      });
+    }
+    await expect(refreshQualifiedConnectedAccount({
+      account, token: harness.credentials.token, ownerId: 'machine-1:runtime-1',
+      leaseMs: 60_000, operationId: 'rotate-across-reload', expectedCredential: harness.credentialSnapshot,
+      resolveV4Support: () => 'advertised', establishedRuntimeOwner: harness.owner,
+      acquireRefreshLease: harness.acquireRefreshLease, mutateCredential: harness.mutateCredential,
+    })).resolves.toMatchObject({ status: 'refreshed', credentialRevision: nextCredentialRevision });
+    expect(harness.isRegistryCurrent()).toBe(false);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(harness.mutateCredential).toHaveBeenCalledOnce();
+    const mutation = harness.mutateCredential.mock.calls[0]![0].mutation as {
+      content: Parameters<typeof openQualifiedConnectedAccountContentEnvelope>[0]['envelope'];
+      metadata: Parameters<typeof parseQualifiedConnectedAccountCredentialPlaintextV1>[0]['metadata'];
+    };
+    expect(parseQualifiedConnectedAccountCredentialPlaintextV1({
+      ref: account,
+      authenticationModeId: 'oauth',
+      plaintext: openQualifiedConnectedAccountContentEnvelope({
+        kind: 'credential', ...harness.contentMode, envelope: mutation.content,
+      }),
+      metadata: mutation.metadata,
+    })).toMatchObject({ v: 1, values: { accessToken: 'access-new', refreshToken: 'refresh-new' } });
+  });
   it.each(['before_persist', 'during_persist'] as const)(
     'persists the rotated replacement when the caller cancels %s', async timing => {
       const harness = await createHarness();
@@ -258,53 +305,29 @@ describe('refreshQualifiedConnectedAccount', () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
-  it.each([
-    ['plain', 'provider_response'], ['plain', 'after_exchange'], ['plain', 'before_persist'], ['plain', 'during_persist'],
-    ['e2ee', 'provider_response'], ['e2ee', 'after_exchange'], ['e2ee', 'before_persist'], ['e2ee', 'during_persist'],
-  ] as const)(
-    'settles the rotated token in %s mode after registry retirement %s adopts a successor publication', async (mode, timing) => {
-    const harness = await createHarness('id-old', mode);
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      if (timing === 'provider_response') await harness.retireRegistry();
-      return new Response(JSON.stringify({
-        access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
-    }));
-    if (timing === 'after_exchange') {
-      harness.retireAfterExchange();
-    } else if (timing === 'before_persist') {
-      harness.getAccountEncryptionMode.mockImplementation(async () => {
-        if (vi.mocked(fetch).mock.calls.length > 0) await harness.retireRegistry();
-        return mode;
-      });
-    } else if (timing === 'during_persist') {
-      harness.mutateCredential.mockImplementationOnce(async () => {
-        await harness.retireRegistry();
-        return { success: true, credentialRevision: nextCredentialRevision, configurationRevision: null };
-      });
-    }
+  it('backfills a retained account email on normal refresh even when OpenAI returns no new ID token', async () => {
+    const idToken = `header.${Buffer.from(JSON.stringify({
+      'https://api.openai.com/profile': { email: 'retained@example.test' },
+    })).toString('base64url')}.signature`;
+    const harness = await createHarness(idToken);
+    expect(harness.credentialSnapshot.metadata.providerIdentity).toEqual({ accountId: 'account-1' });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      access_token: 'access-new', refresh_token: 'refresh-new', expires_in: 3600,
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+
     await expect(refreshQualifiedConnectedAccount({
       account, token: harness.credentials.token, ownerId: 'machine-1:runtime-1',
-      leaseMs: 60_000, operationId: 'rotate-across-reload', expectedCredential: harness.credentialSnapshot,
+      leaseMs: 60_000, operationId: 'retained-email-refresh', expectedCredential: harness.credentialSnapshot,
       resolveV4Support: () => 'advertised', establishedRuntimeOwner: harness.owner,
       acquireRefreshLease: harness.acquireRefreshLease, mutateCredential: harness.mutateCredential,
-    })).resolves.toMatchObject({ status: 'refreshed', credentialRevision: nextCredentialRevision });
-    expect(harness.isRegistryCurrent()).toBe(false);
-    expect(fetch).toHaveBeenCalledOnce();
-    expect(harness.mutateCredential).toHaveBeenCalledOnce();
-    const mutation = harness.mutateCredential.mock.calls[0]![0].mutation as {
-      content: Parameters<typeof openQualifiedConnectedAccountContentEnvelope>[0]['envelope'];
-      metadata: Parameters<typeof parseQualifiedConnectedAccountCredentialPlaintextV1>[0]['metadata'];
-    };
-    expect(parseQualifiedConnectedAccountCredentialPlaintextV1({
-      ref: account,
-      authenticationModeId: 'oauth',
-      plaintext: openQualifiedConnectedAccountContentEnvelope({
-        kind: 'credential', ...harness.contentMode, envelope: mutation.content,
-      }),
-      metadata: mutation.metadata,
-    })).toMatchObject({ v: 1, values: { accessToken: 'access-new', refreshToken: 'refresh-new' } });
+    })).resolves.toMatchObject({ status: 'refreshed', result: {
+      providerIdentity: { accountId: 'account-1', email: 'retained@example.test' },
+    } });
+    expect(harness.mutateCredential).toHaveBeenCalledWith(expect.objectContaining({ mutation: expect.objectContaining({
+      metadata: expect.objectContaining({ providerIdentity: { accountId: 'account-1', email: 'retained@example.test' } }),
+    }) }));
   });
+
   it.each([
     ['busy', 'connected_account_refresh_lease_not_acquired'],
     ['owner', 'connected_account_refresh_lease_owner_mismatch'],

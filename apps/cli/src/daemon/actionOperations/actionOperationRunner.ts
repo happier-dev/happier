@@ -238,9 +238,14 @@ export function createActionOperationRunner(deps: Readonly<{
     const reviewedReentry = existing?.observation?.kind === 'review_required' && !active.has(existing.operationId)
       && action.operationReentry?.(existing, request.input) === 'resume';
     const hasMatchingInputIdentity = existing ? deps.store.hasMatchingInputIdentity(existing.operationId, inputIdentity) : false;
-    if (existing && (!deps.store.hasMatchingDeploymentChildIdentity(existing.operationId, request.deploymentChildIdentity)
-      || !deps.store.hasMatchingDeploymentTokenOrigin(existing.operationId, request.deploymentTokenOrigin)
-      || !hasMatchingInputIdentity && !reviewedReentry)) {
+    const hasMatchingOrigin = !existing || deps.store.hasMatchingDeploymentChildIdentity(existing.operationId, request.deploymentChildIdentity)
+      && deps.store.hasMatchingDeploymentTokenOrigin(existing.operationId, request.deploymentTokenOrigin);
+    // Only the domain's fresh-admission policy can replace failed prepared input,
+    // and only after the owner positively recorded that no effect was attempted.
+    const noEffectFreshReentry = existing && hasMatchingOrigin && !hasMatchingInputIdentity
+      && existing.state === 'failed' && existing.error?.effectAttempted === false && !active.has(existing.operationId)
+      && action.operationReentry?.(existing, request.input) === 'fresh';
+    if (existing && (!hasMatchingOrigin || !hasMatchingInputIdentity && !reviewedReentry && !noEffectFreshReentry)) {
       return await timeWebLatencyPhase('action.operation.input_conflict', () => ({
         ok: false as const, errorCode: 'action_request_input_conflict', error: 'action_request_input_conflict',
       }), undefined, () => ({ operationId: existing.operationId,
@@ -591,7 +596,7 @@ export function createActionOperationRunner(deps: Readonly<{
         ...(existing.operationCredentialUses ? { operationCredentialUses: existing.operationCredentialUses } : {}) } : null);
       const reentry = pendingApproval
         ? request.rejoinPendingApproval && hasMatchingInputIdentity ? 'replay' : reviewedPendingApproval ? 'resume' : 'fresh'
-        : action.operationReentry?.(existing, request.input) ?? (settled ? 'replay' : 'refuse');
+        : noEffectFreshReentry ? 'fresh' : action.operationReentry?.(existing, request.input) ?? (settled ? 'replay' : 'refuse');
       if (reentry === 'replay' && settled) return settled;
       if (reentry === 'reinvoke') {
         const resumed = deps.store.reenter(existing.operationId);

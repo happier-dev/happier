@@ -552,10 +552,6 @@ vi.mock('./sessions/stopSession', async (importOriginal) => {
   };
 });
 
-vi.mock('./sessions/resolveSpawnWebhookResult', () => ({
-  resolveSpawnWebhookResult: vi.fn(({ result }: { result: any }) => result),
-}));
-
 vi.mock('./lifecycle/heartbeat', () => ({
   startDaemonHeartbeatLoop: vi.fn(() => setInterval(() => {}, 60_000)),
 }));
@@ -606,6 +602,7 @@ vi.mock('./automation/automationWorker', () => ({
   startAutomationWorker: vi.fn(() => ({
     stop: vi.fn(),
     refreshAssignments: vi.fn(async () => {}),
+    catchUp: vi.fn(async () => {}),
     handleServerUpdate: vi.fn(),
   })),
 }));

@@ -1,7 +1,8 @@
 import { DaemonBrowserRecordingCancelInputV1Schema, DaemonBrowserRecordingCleanupInputV1Schema, DaemonBrowserRecordingCleanupResultV1Schema, DaemonBrowserRecordingListInputV1Schema, DaemonBrowserRecordingListResponseV1Schema, DaemonBrowserRecordingStartInputV1Schema, DaemonBrowserRecordingStartResultV1Schema, DaemonBrowserRecordingStatusInputV1Schema, DaemonBrowserRecordingStatusResponseV1Schema, DaemonBrowserRecordingStopInputV1Schema, DaemonBrowserRecordingStopResultV1Schema, DaemonBrowserRecordingTerminalResultV1Schema } from '@happier-dev/protocol/browser/recording/v1';
 import type { BrowserRecordingCapabilities, BrowserRecordingSessionV1, DaemonBrowserRecordingCancelInputV1, DaemonBrowserRecordingCleanupInputV1, DaemonBrowserRecordingCleanupResultV1, DaemonBrowserRecordingListInputV1, DaemonBrowserRecordingStartInputV1, DaemonBrowserRecordingStartResultV1, DaemonBrowserRecordingStatusInputV1, DaemonBrowserRecordingStopInputV1, DaemonBrowserRecordingStopResultV1, DaemonBrowserRecordingTerminalResultV1 } from '@happier-dev/protocol';
 
-import type { BrowserRecordingDaemonService } from './service';
+import type { BrowserRecordingDaemonService } from '../../recording/service';
+import type { RecordingOperationContext } from '../../recording/sessionMediaHost';
 
 export type BrowserRecordingStartContext = Readonly<{
   browserRecordingEnabled: boolean;
@@ -9,15 +10,20 @@ export type BrowserRecordingStartContext = Readonly<{
   captureSourceAvailable?: boolean;
 }>;
 
+export type BrowserRecordingCleanupOptions = Readonly<{
+  beforeEffect?: () => Promise<void>;
+  includeRecording?: (recording: BrowserRecordingSessionV1) => boolean;
+}>;
+
 export type BrowserRecordingRoutes = Readonly<{
-  startRecording(input: DaemonBrowserRecordingStartInputV1): Promise<DaemonBrowserRecordingStartResultV1>;
+  startRecording(input: DaemonBrowserRecordingStartInputV1, context?: RecordingOperationContext): Promise<DaemonBrowserRecordingStartResultV1>;
   stopRecording(input: DaemonBrowserRecordingStopInputV1): Promise<DaemonBrowserRecordingStopResultV1>;
   cancelRecording(input: DaemonBrowserRecordingCancelInputV1): Promise<DaemonBrowserRecordingTerminalResultV1>;
   getRecordingStatus(input: DaemonBrowserRecordingStatusInputV1): Promise<BrowserRecordingSessionV1 | null>;
   listRecordingsForView(input: DaemonBrowserRecordingListInputV1): Promise<readonly BrowserRecordingSessionV1[]>;
   cleanupExpiredRecordings(
     input: DaemonBrowserRecordingCleanupInputV1,
-    options?: Readonly<{ beforeEffect?: () => Promise<void> }>,
+    options?: BrowserRecordingCleanupOptions,
   ): Promise<DaemonBrowserRecordingCleanupResultV1>;
 }>;
 
@@ -31,7 +37,7 @@ export function createBrowserRecordingRoutes(input: Readonly<{
   const now = input.now ?? (() => Date.now());
 
   return {
-    async startRecording(rawStartInput) {
+    async startRecording(rawStartInput, context) {
       const startInput = DaemonBrowserRecordingStartInputV1Schema.parse(rawStartInput);
       const startContext = await input.resolveStartContext(startInput);
       const result = await input.service.startRecording({
@@ -39,7 +45,7 @@ export function createBrowserRecordingRoutes(input: Readonly<{
         browserRecordingEnabled: startContext.browserRecordingEnabled,
         recordingCapabilities: startContext.recordingCapabilities,
         ...(startContext.captureSourceAvailable === true ? { captureSourceAvailable: true } : {}),
-      });
+      }, context);
       return DaemonBrowserRecordingStartResultV1Schema.parse(result);
     },
 
@@ -79,6 +85,7 @@ export function createBrowserRecordingRoutes(input: Readonly<{
       const result = await input.service.cleanupExpiredRecordings({
         nowMs: cleanupInput.nowMs ?? now(),
         ...(options?.beforeEffect ? { beforeEffect: options.beforeEffect } : {}),
+        ...(options?.includeRecording ? { includeRecording: options.includeRecording } : {}),
       });
       return DaemonBrowserRecordingCleanupResultV1Schema.parse(result);
     },

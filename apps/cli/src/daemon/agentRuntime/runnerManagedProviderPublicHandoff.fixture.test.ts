@@ -1,3 +1,4 @@
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -381,6 +382,7 @@ describe('external Agent and managed Provider archive generations', () => {
             dispose: async () => undefined,
         });
         const managedServices: ManagedServices = Object.freeze({
+            ...createUnavailableManagedServices(),
             dependencies: {} as ManagedServices['dependencies'],
             supervise: async (spec: ManagedServiceSpec) => {
                 supervisedSpec = spec;

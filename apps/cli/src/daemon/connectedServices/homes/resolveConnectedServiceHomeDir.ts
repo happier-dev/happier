@@ -10,7 +10,12 @@ import { normalizeMaterializationKeyForPath } from '../materialize/normalizeMate
 
 type JoinPath = (...paths: string[]) => string;
 
-const CONNECTED_SERVICE_GROUPS_HOME_SEGMENT = '__groups';
+export const CONNECTED_SERVICE_GROUPS_HOME_SEGMENT = '__groups';
+
+
+export function resolveConnectedServiceHomesDir(activeServerDir: string, pathJoin: JoinPath = join): string {
+  return pathJoin(activeServerDir, 'daemon', 'connected-services', 'homes');
+}
 
 function serviceHomeSegment(serviceId: ConnectedAccountServiceKey): string {
   const qualified = parseQualifiedPluginContributionKey(serviceId);
@@ -29,10 +34,7 @@ export function resolveConnectedServiceHomeDir(params: Readonly<{
 }>): string {
   const pathJoin = params.pathJoin ?? join;
   const base = pathJoin(
-    params.activeServerDir,
-    'daemon',
-    'connected-services',
-    'homes',
+    resolveConnectedServiceHomesDir(params.activeServerDir, pathJoin),
     serviceHomeSegment(params.serviceId),
     ConnectedServiceProfileIdSchema.safeParse(params.profileId).success
       ? params.profileId : normalizeMaterializationKeyForPath(params.profileId),
@@ -53,10 +55,7 @@ export function resolveConnectedServiceGroupHomeDir(params: Readonly<{
 }>): string {
   const pathJoin = params.pathJoin ?? join;
   const base = pathJoin(
-    params.activeServerDir,
-    'daemon',
-    'connected-services',
-    'homes',
+    resolveConnectedServiceHomesDir(params.activeServerDir, pathJoin),
     serviceHomeSegment(params.serviceId),
     CONNECTED_SERVICE_GROUPS_HOME_SEGMENT,
     ConnectedServiceAuthGroupIdSchema.safeParse(params.groupId).success

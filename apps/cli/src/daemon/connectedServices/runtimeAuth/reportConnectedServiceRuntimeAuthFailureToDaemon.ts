@@ -1,4 +1,3 @@
-import { isConnectedServiceRuntimeFailureReportApplicable } from './sanitizeConnectedServiceRuntimeFailureClassification';
 import { randomUUID } from 'node:crypto';
 
 import { SessionUsageLimitRecoveryResumePromptModeV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
@@ -76,22 +75,12 @@ export type ConnectedServiceRuntimeAuthFailureDaemonReport = Readonly<{
 // settles the underlying local transport.
 export const CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS = null;
 
-// Incident Jun-11 H-C / FIX-2: one failed turn can be observed by multiple independent
-// triggers, each of which calls this shared report path. Dedupe lives HERE — the single
-// owner in front of the daemon — keyed on STABLE identity only (no Date.now-derived
-// retryAfterMs), with a short TTL window. Concurrent duplicates coalesce onto the
-// in-flight daemon call.
-const RUNTIME_AUTH_FAILURE_REPORT_DEDUPE_WINDOW_MS = 15_000;
-
-type RuntimeAuthFailureReportDedupeEntry = Readonly<{
-  reportedAtMs: number;
-  result: Promise<ConnectedServiceRuntimeAuthFailureDaemonReport>;
-}>;
-
-const recentRuntimeAuthFailureReportsByStableKey = new Map<string, RuntimeAuthFailureReportDedupeEntry>();
+// Join concurrent observations only. A settled report must never suppress a new
+// failed Retry, even when the provider returns the same failure classification.
+const inFlightRuntimeAuthFailureReportsByStableKey = new Map<string, Promise<ConnectedServiceRuntimeAuthFailureDaemonReport>>();
 
 export function resetConnectedServiceRuntimeAuthFailureReportDedupeForTests(): void {
-  recentRuntimeAuthFailureReportsByStableKey.clear();
+  inFlightRuntimeAuthFailureReportsByStableKey.clear();
 }
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -147,20 +136,11 @@ function buildStableRuntimeAuthFailureReportDedupeKey(input: Readonly<{
     ...readRuntimeAuthFailureReportSourceIdentity(classification),
     limitCategory: classification.limitCategory ?? null,
     providerLimitId: classification.providerLimitId ?? null,
-    sourceProviderAccountId: classification.sourceProviderAccountId ?? null,
     failingAccessTokenFingerprint: classification.failingAccessTokenFingerprint ?? null,
     recoveryActionKind: classification.recoveryAction?.kind ?? null,
     resumePromptMode: input.resumePromptMode ?? null,
     resetsAtMsBucket,
   });
-}
-
-function pruneStaleRuntimeAuthFailureReportDedupeEntries(nowMs: number): void {
-  for (const [key, entry] of recentRuntimeAuthFailureReportsByStableKey.entries()) {
-    if (nowMs - entry.reportedAtMs > RUNTIME_AUTH_FAILURE_REPORT_DEDUPE_WINDOW_MS) {
-      recentRuntimeAuthFailureReportsByStableKey.delete(key);
-    }
-  }
 }
 
 export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Readonly<{
@@ -176,9 +156,6 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
   nowMs?: () => number;
   createReportId?: () => string;
 }>): Promise<ConnectedServiceRuntimeAuthFailureDaemonReport> {
-  if (!isConnectedServiceRuntimeFailureReportApplicable(input.classification)) {
-    return { handled: false, report: null, statusCode: null, statusMessage: null };
-  }
   const notify = input.notify ?? notifyDaemonConnectedServiceRuntimeAuthFailure;
   const logger = input.logger ?? defaultLogger;
   const logPrefix = input.logPrefix ?? '[connected-services]';
@@ -323,7 +300,6 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
     }
   }
 
-  const nowMs = (input.nowMs ?? Date.now)();
   const stableDedupeKey = buildStableRuntimeAuthFailureReportDedupeKey({
     sessionId: input.sessionId,
     switchesThisTurn: input.switchesThisTurn ?? 0,
@@ -333,27 +309,18 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
   if (!stableDedupeKey) {
     return await performReport();
   }
-  const dedupeKey = stableDedupeKey;
-  pruneStaleRuntimeAuthFailureReportDedupeEntries(nowMs);
-  const recent = recentRuntimeAuthFailureReportsByStableKey.get(dedupeKey);
-  if (recent && nowMs - recent.reportedAtMs <= RUNTIME_AUTH_FAILURE_REPORT_DEDUPE_WINDOW_MS) {
-    logger.debug(`${logPrefix} Suppressed duplicate connected-service runtime auth failure report (stable-key dedupe)`);
-    return await recent.result;
+  const inFlight = inFlightRuntimeAuthFailureReportsByStableKey.get(stableDedupeKey);
+  if (inFlight) {
+    logger.debug(`${logPrefix} Joined in-flight connected-service runtime auth failure report`);
+    return await inFlight;
   }
   const result = performReport();
-  recentRuntimeAuthFailureReportsByStableKey.set(dedupeKey, {
-    reportedAtMs: nowMs,
-    result,
-  });
-  // A FAILED delivery (notify threw → report:null) must not hold the window: concurrent
-  // duplicates coalesce onto the in-flight call, but once it settles unreported the next
-  // trigger is a legitimate retry (the outbox replay/clear flow depends on it).
-  void result.then((report) => {
-    if (report.report !== null) return;
-    const current = recentRuntimeAuthFailureReportsByStableKey.get(dedupeKey);
-    if (current?.result === result) {
-      recentRuntimeAuthFailureReportsByStableKey.delete(dedupeKey);
+  inFlightRuntimeAuthFailureReportsByStableKey.set(stableDedupeKey, result);
+  try {
+    return await result;
+  } finally {
+    if (inFlightRuntimeAuthFailureReportsByStableKey.get(stableDedupeKey) === result) {
+      inFlightRuntimeAuthFailureReportsByStableKey.delete(stableDedupeKey);
     }
-  });
-  return await result;
+  }
 }

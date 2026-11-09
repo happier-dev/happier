@@ -13,6 +13,7 @@ import type {
   MachineCarrierTransportOpenInput,
   ProviderBrokerMachineCarrierTransportOpenInput,
   RunnerBrokerReadinessMachineCarrierTransportOpenInput,
+  MachineCarrierFailureDiagnostic,
 } from './machineCarrier';
 
 type MachineHttpTunnelOpenInput = (MachineCarrierTransportOpenInput
@@ -30,6 +31,7 @@ type MachineIrohTunnelLifecycle = Readonly<{
   remoteEndpointId: string;
   observedPath: 'direct' | 'relay' | 'unknown';
   close(): Promise<void>;
+  readFailureDiagnostic?(): Promise<MachineCarrierFailureDiagnostic | undefined>;
 }>;
 
 export type DaemonFiniteTransferIrohTunnel = MachineIrohTunnelLifecycle & Readonly<{
@@ -313,6 +315,23 @@ export async function createDaemonMachineIrohRuntime(input: Readonly<{
       ...(tunnel.localCapability === undefined ? {} : { localCapability: tunnel.localCapability }),
       remoteEndpointId: tunnel.remoteEndpointId,
       observedPath: tunnel.observedPath,
+      // One explicit failure read, never a poll or a native status exposure.
+      async readFailureDiagnostic(): Promise<MachineCarrierFailureDiagnostic | undefined> {
+        const status = await native.getMachineTunnelStatus(tunnel.machineTunnelId);
+        if (!status) return undefined;
+        switch (status.lastErrorCode) {
+          case 'local-http-head-timeout': return { closingSide: 'initiator', closingStage: 'local_http_head' };
+          case 'local-capability-timeout':
+          case 'local-capability-rejected': return { closingSide: 'initiator', closingStage: 'local_capability' };
+          case 'machine-stream-decision-timeout': return { closingSide: 'initiator', closingStage: 'stream_decision' };
+          case 'machine-stream-decision-closed': return { closingSide: 'peer_or_transport', closingStage: 'stream_decision' };
+          case 'machine-admission-rejected':
+          case 'machine-admission-timeout': return { closingSide: 'broker', closingStage: 'stream_admission' };
+          case 'no-application-stream': return { closingSide: 'broker', closingStage: 'pre_application_custody' };
+          case 'transport-unavailable': return { closingSide: 'unknown', closingStage: 'transport' };
+          default: return { closingSide: 'unknown', closingStage: 'unknown' };
+        }
+      },
       close,
     };
   };

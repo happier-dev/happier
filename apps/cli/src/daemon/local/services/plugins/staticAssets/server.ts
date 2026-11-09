@@ -46,6 +46,7 @@ export type StartHostedWebStaticAssetServerInput =
         }>;
         registerPreview?: (
             resource: Omit<LocalServicePreviewResourceV1, 'browserTarget'>,
+            occurrence: Readonly<{ isCurrent(): boolean }>,
         ) => unknown | Promise<unknown>;
         unregisterPreview?: (
             previewId: string,
@@ -234,15 +235,15 @@ export async function startHostedWebStaticAssetServer(
         frameAncestorToken,
     });
     let previewRegistration: unknown = null;
+    let stopPromise: Promise<void> | null = null;
     try {
         previewRegistration = input.registerPreview
-            ? await input.registerPreview(previewResource)
+            ? await input.registerPreview(previewResource, { isCurrent: () => server.listening && stopPromise === null })
             : null;
     } catch (error) {
         await stopServer(server).catch(() => undefined);
         throw error;
     }
-    let stopPromise: Promise<void> | null = null;
     const stopOnce = async (): Promise<void> => {
         let unregisterError: unknown = null;
         try {

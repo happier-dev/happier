@@ -143,7 +143,6 @@ describe('foreground Connected Account admission through the applied plugin runt
           happyHomeDir: home, controller: pluginReloadController,
           runtimeOptions: {
             pluginIds: ['happier.agent.codex'], connectedAccounts: owner,
-            networkDependencies: { resolveNetworkAddresses: async () => ['1.1.1.1'] },
           },
         });
         restoreAgentCliEnvironment = await installForegroundAgentCliFixture(runtime.registry, root);

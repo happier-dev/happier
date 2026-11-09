@@ -1,4 +1,4 @@
-import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily, isRuntimeActionExecutorReal } from '@happier-dev/protocol/actions/executor/dispatch';
 import type { RuntimeActionExecute } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { BrowserCommandDispatchResultV1Schema } from '@happier-dev/protocol/browser/control/v1';
@@ -20,7 +20,7 @@ import {
   createBrowserRecordingAttachToComposer,
   type BrowserRecordingComposerAttachInput,
   type BrowserRecordingComposerAttachResult,
-} from './browser/recording/attachToComposer';
+} from './recording/attachToComposer';
 import type { BrowserRecordingRoutes } from './browser/recording/routes';
 import { createSimulatorDaemonRuntimeActionExecutor } from './devices/simulator/actions/runtimeActionExecutor';
 import { createSimulatorDaemonFeatureGate } from './devices/simulator/featureGate';
@@ -102,7 +102,7 @@ export function createDaemonRuntimeActionExecutor(
     // Native target availability/OS grants and consent have their own canonical owners;
     // browser/server feature bits do not decide native computer-use admission.
     if (resolveRuntimeActionExecutionFamily(args.actionId) === 'computer') {
-      const routes = input.resolveRouteOwners().computer;
+      const routes = isRuntimeActionExecutorReal(args.actionId) ? input.resolveRouteOwners().computer : undefined;
       return routes ? await routes.dispatch(args.actionId, args.input, args.context) : unavailableRuntimeActionExecutor(args);
     }
     // The browser executor falls back to local services, simulator, and peer mediation. Refresh all

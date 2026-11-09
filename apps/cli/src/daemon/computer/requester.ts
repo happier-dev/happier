@@ -11,8 +11,8 @@ export type ComputerRequesterHost = Readonly<{
   custodianAccountId: string | null;
   installationId: string | null;
   readHomeServerIdentityId(signal?: AbortSignal): Promise<string | null>;
-  readSessionBootstrap?(sessionId: string, signal?: AbortSignal): AdmittedRequesterSessionBootstrap | undefined
-    | Promise<AdmittedRequesterSessionBootstrap | undefined>;
+  readSessionRequester?(sessionId: string, signal?: AbortSignal): AdmittedRequesterSessionBootstrap | HostRequesterExecutionIdentity | undefined
+    | Promise<AdmittedRequesterSessionBootstrap | HostRequesterExecutionIdentity | undefined>;
   agentIsolation?: HostAgentIsolationLaunchContext;
   prepareNativeOperation: ApiMachineClient['prepareNativeOperation'];
 }>;
@@ -30,10 +30,15 @@ export async function resolveComputerRequesterScope(input: Readonly<{
   const isUnrestricted = (admission: AdmittedRequesterSessionBootstrap['savedSecretOperationContext']['machineAdmission']) =>
     !!admission && (admission.actorAccountId === admission.custodianAccountId || admission.role === 'manage');
   const directlyUnrestricted = isUnrestricted(context.machineAdmission);
-  // Personal viewer authority belongs to its verified caller. Its supplied
-  // Session id cannot select another person's immutable Session birth.
-  const bootstrap = context.ownDesktopOnly || directlyUnrestricted ? undefined : context.requesterSessionBootstrap
-    ?? (context.defaultSessionId ? await host?.readSessionBootstrap?.(context.defaultSessionId, context.signal) : undefined);
+  // Machine admission identifies this caller. A supplied Session id or birth
+  // cannot replace it with the Session owner's desktop identity.
+  const sessionRequester = context.machineAdmission || context.ownDesktopOnly ? undefined : context.requesterSessionBootstrap
+    // Standalone saved-profile MCP uses this host-local lifetime, not a
+    // persisted Session. Explicit requester custody above still takes priority.
+    ?? (context.defaultSessionId && context.defaultSessionId !== 'cli-global'
+      ? await host?.readSessionRequester?.(context.defaultSessionId, context.signal) : undefined);
+  const recoveredIdentity = sessionRequester && 'kind' in sessionRequester ? sessionRequester : undefined;
+  const bootstrap = sessionRequester && !('kind' in sessionRequester) ? sessionRequester : undefined;
   const admission = context.machineAdmission ?? bootstrap?.savedSecretOperationContext.machineAdmission;
   const unrestricted = directlyUnrestricted || (!context.machineAdmission && isUnrestricted(admission));
   if (unrestricted) {
@@ -41,7 +46,7 @@ export async function resolveComputerRequesterScope(input: Readonly<{
     return { kind: 'owner' };
   }
   if (admission && admission.role !== 'use') throw new PluginError({ code: 'access_denied', message: 'access_denied' });
-  const requesterBearing = !!(admission || bootstrap || context.ownDesktopOnly || context.sessionActionOrigin
+  const requesterBearing = !!(admission || sessionRequester || context.ownDesktopOnly || context.sessionActionOrigin
     || context.callerInputAuthorization || context.externalActionExecutionAuthorization
     || context.requesterWorkAttributionV1 || context.authenticatedLocalRootCustody);
   // Ordinary custodian Sessions retain their existing local desktop path. All
@@ -52,12 +57,12 @@ export async function resolveComputerRequesterScope(input: Readonly<{
   if (!host?.custodianAccountId || !host.installationId) return unavailable('requester_authority_unavailable');
   const homeServerIdentityId = await host.readHomeServerIdentityId(context.signal);
   if (!homeServerIdentityId) return unavailable('requester_authority_unavailable');
-  const identity = selectHostRequesterExecutionIdentity({
+  const identity = recoveredIdentity ?? selectHostRequesterExecutionIdentity({
     hostHomeServerIdentityId: homeServerIdentityId, hostCustodianAccountId: host.custodianAccountId,
     hostExecutionTarget: { machineId: input.machineId, installationId: host.installationId },
     ...(bootstrap ? { sessionRequester: bootstrap.attribution,
       sessionRequesterHomeServerIdentityId: bootstrap.homeServerIdentityId ?? null,
-      sessionCustodianAccountId: bootstrap.savedSecretOperationContext.machineAdmission?.custodianAccountId ?? null }
+      sessionCustodianAccountId: bootstrap.savedSecretOperationContext.machineAdmission?.custodianAccountId ?? host.custodianAccountId }
       : { actionContext: context }),
   });
   if (identity.kind === 'unknown') return unavailable(identity.reason);

@@ -1,7 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import fastify from 'fastify';
 import { mkdtemp, open, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { configuration } from '@/configuration';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { artifactKindListResponse } from '@/testkit/http/artifactHome';
 
 const mocks = vi.hoisted(() => ({
   authAndSetupMachineIfNeeded: vi.fn(),
@@ -41,6 +45,9 @@ vi.mock('@/persistence', () => ({
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: mocks.loggerDebug,
+    // The background approval passes report on the default info/warn file paths.
+    infoFile: vi.fn(),
+    warn: vi.fn(),
   },
 }));
 
@@ -59,8 +66,15 @@ vi.mock('../deviceLocalSecretStorage', () => ({
 }));
 
 describe('prepareDaemonBootstrapContext', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // Recovery's real Artifact owner sees an empty remote queue. Only HTTP is
+    // substituted; these startup tests must never contact an ambient Home.
+    const app = fastify();
+    app.get('/v1/artifacts', async () => artifactKindListResponse([]));
+    await app.ready();
+    const restoreHttp = installAxiosFastifyAdapter({ app, origin: new URL(configuration.apiServerUrl).origin });
+    onTestFinished(async () => { restoreHttp(); await app.close(); });
     mocks.authAndPrepareDaemonMachineIfNeeded.mockResolvedValue({
       credentials: { token: 'token', encryption: { key: 'enc' } },
       machineId: 'machine-1',

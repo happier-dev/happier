@@ -58,7 +58,7 @@ describe('Workflow reply capability through the real HTTP and Session admission 
           const send = () => enqueueWorkflowSessionInput({ credentials: { token: 'test-token', encryption: null },
             sessionId, workflow, text: 'Review', machineAdmissionTransport: async raw => {
               const request = SessionPendingEnqueueByMachineRequestV1Schema.parse(raw);
-              expect(request.reply).toEqual({ mode: 'wait' });
+              expect(request.reply).toEqual({ mode: 'wait', workflow });
               if (request.content.t !== 'plain') throw new Error('Expected plain Workflow input');
               expect(readSessionInputRequest(UserMessageSchema.parse(request.content.v).meta)).toMatchObject({ v: 2, producer: 'workflow', workflow });
               const existing = admitted.has(request.localId);

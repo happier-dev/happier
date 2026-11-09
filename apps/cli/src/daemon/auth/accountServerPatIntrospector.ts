@@ -25,9 +25,6 @@ export function createAccountServerPatIntrospector(
         throw new Error("Account-server PAT introspection requires a daemon connection token");
     }
 
-    const serverBaseUrl = normalizeServerHttpBaseUrl(options.serverBaseUrl);
-    const url = `${serverBaseUrl}${ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1}`;
-
     return async (token, signal) => {
         try {
             signal?.throwIfAborted();
@@ -35,6 +32,7 @@ export function createAccountServerPatIntrospector(
                 return { ok: false, code: "invalid_token" };
             }
             const requestBody = { token } satisfies AccountApiTokenIntrospectionRequestV1;
+            const url = `${normalizeServerHttpBaseUrl(options.serverBaseUrl)}${ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1}`;
             const response = await axios.post<unknown>(
                 url,
                 requestBody,

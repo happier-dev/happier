@@ -40,6 +40,7 @@ export type BrowserAutomationCdpInputResult =
  */
 export type BrowserAutomationCdpTransport = Readonly<{
   ownsView(view: BrowserAutomationViewRef): boolean;
+  releaseInput?(view: BrowserAutomationViewRef): Promise<void>;
   getNavigationGeneration?(view: BrowserAutomationViewRef): number | null;
   prepareConfidentialFill?(request: BrowserAutomationSecretFillRequestV1): Promise<BrowserConfidentialFillPreparation>;
   readFocusedCredentialTarget?(view: BrowserAutomationViewRef): Promise<BrowserFocusedCredentialTargetV1 | undefined>;
@@ -164,7 +165,8 @@ export function createBrowserAutomationCdpAdapter(input: Readonly<{
     request: BrowserAutomationActionRequestV1,
     context: BrowserAutomationAdapterExecutionContext = {},
   ): Promise<BrowserAutomationAdapterExecuteResult> {
-    const executionContext = { ...context, deadlineMs: context.deadlineMs ?? Date.now() + request.timeoutMs };
+    const executionContext = { ...context, deadlineMs: context.deadlineMs
+      ?? (request.timeoutMs === undefined ? undefined : Date.now() + request.timeoutMs) };
     const view = { browserSessionId: request.browserSessionId, viewId: request.viewId };
     const trustedInput = !isBrowserAutomationMutatingActionKind(request.actionKind);
 
@@ -264,11 +266,13 @@ export function createBrowserAutomationCdpAdapter(input: Readonly<{
 
   return {
     adapterKind: 'chromiumSidecar',
+    ...(input.transport.releaseInput ? { releaseInput: input.transport.releaseInput } : {}),
     supportedOperations: resolveCdpSupportedOperations(input.transport),
     getNavigationGeneration: input.transport.getNavigationGeneration,
     ...(input.transport.prepareConfidentialFill ? { prepareConfidentialFill: input.transport.prepareConfidentialFill } : {}),
     execute: (request, context = {}) => {
-      const executionContext = { ...context, deadlineMs: context.deadlineMs ?? Date.now() + request.timeoutMs };
+      const executionContext = { ...context, deadlineMs: context.deadlineMs
+        ?? (request.timeoutMs === undefined ? undefined : Date.now() + request.timeoutMs) };
       // Manual answers use the pending-dialog owner. Automatic handling remains scoped to
       // other running actions, so answering cannot also dismiss a dialog it immediately opens.
       return input.transport.executePageOperation && request.actionKind !== 'answerDialog'

@@ -2194,6 +2194,15 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         operationOptions,
                     ),
                 );
+            case 'plugin_fs.prepare_download_v1':
+                return result(
+                    operation,
+                    await services.fs.prepareDownload({
+                        name: operation.name,
+                        bytes: new Uint8Array(Buffer.from(operation.bytes, 'base64')),
+                        destination: operation.destination,
+                    }, operationOptions),
+                );
             case 'plugin_fs.read_file_v1':
                 return result(
                     operation,

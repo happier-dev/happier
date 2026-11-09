@@ -17,6 +17,7 @@ import {
     selectConnectedServiceAuthGroupCandidate,
     resolveConnectedServiceAuthGroupQuotaResetCandidates,
     type ConnectedServiceAuthGroupCandidateDecisionTrace,
+    type ConnectedServiceAuthGroupCandidateSelection,
     type ConnectedServiceAuthGroupMember,
     type ConnectedServiceAuthGroupMemberRuntimeState,
     type ConnectedServiceAuthGroupPolicyV1,
@@ -287,11 +288,7 @@ export type ConnectedServiceAuthGroupSwitchResult =
         generation: number;
         groupExhausted: true;
         retryAtMs: number | null;
-        excluded: ReadonlyArray<Readonly<{
-            profileId: string;
-            reason: string;
-            retryAtMs?: number | null;
-        }>>;
+        excluded: ConnectedServiceAuthGroupCandidateSelection['excluded'];
         diagnostics?: ConnectedServiceAuthGroupSwitchDecisionDiagnostics;
     }>
     | Readonly<{ status: 'manual_strategy'; generation: number }>

@@ -57,7 +57,7 @@ async function startRequesterWorker(
       assertCurrent() {},
       projectLaunch: {
         status: 'ready', reviewedEffectDigest: 'reviewed-worker-effect',
-        environment: { selection: { kind: 'host' }, root, platform: process.platform,
+        toolchain: { selection: { kind: 'host' }, root, platform: process.platform,
           io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) },
       },
       launch: { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], cwd: root, env: {}, release() {} },

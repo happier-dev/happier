@@ -5,6 +5,7 @@ import type { TerminalProcessExitObservation } from '@/terminal/pty/sessions';
 import { spawnAuthorizedHostExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { machineNativeEffectAdmission, type MachineNativeEffectContext } from './machineNativeEffectAdmission';
 import { executeServiceCommandStream } from './serviceCommandStream';
+import { assertServiceOutputRedactionForHost } from './serviceOutputRedaction';
 
 export type ServiceCommandV1 = Readonly<{ mode: 'exec' | 'run'; argv: readonly string[] }>;
 export type ServiceCommandResultV1 = Readonly<{ kind: 'completed'; exitCode: number; stdout: string; stderr: string;
@@ -45,7 +46,7 @@ export async function withAdmittedServiceShellForHost<TTerminal>(capture: Comman
         await launch.recheckInputs?.();
         await capture.assertCurrent();
         capture.signal?.throwIfAborted();
-        if (!launch.secretRedactionLease?.isActive()) throw new PluginError({ code: 'secret_redaction_unavailable', message: 'Service shell redaction is unavailable' });
+        assertServiceOutputRedactionForHost(launch);
         handedOff = true;
         const observed = await consume(Object.freeze({ ...launch, recheckInputs: async () => {
             capture.signal?.throwIfAborted();
@@ -150,7 +151,7 @@ async function execute(capture: CommandCapture): Promise<ServiceCommandResultV1>
         await launch.recheckInputs?.();
         await capture.assertCurrent();
         signal?.throwIfAborted();
-        if (!launch.secretRedactionLease?.isActive()) throw new PluginError({ code: 'secret_redaction_unavailable', message: 'Service command redaction is unavailable' });
+        assertServiceOutputRedactionForHost(launch);
         process = spawnAuthorizedHostExecLaunchForHost(launch, { ...(!capture.stopNative ? { signal } : {}),
             ...(capture.rawStdout ? { pipeStdout: true } : {}),
             retainLaunch(value) { release = value; } });

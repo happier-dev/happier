@@ -9,6 +9,7 @@ type MaterializationPhase =
   | 'credential_binding_resolution'
   | 'binding_group_read'
   | 'binding_account_list'
+  | 'group_selection'
   | 'group_state_read'
   | 'group_lease_wait'
   | 'group_generation_apply'
@@ -32,6 +33,7 @@ type MaterializationPhase =
   | 'native_home_prepare'
   | 'native_home_state'
   | 'native_home_import'
+  | 'native_home_account_settings'
   | 'native_home_manifest'
   | 'native_home_credentials'
   | 'materialization_binding_before'
@@ -64,10 +66,11 @@ type MaterializationContext = Readonly<{
 }>;
 
 // Diagnostic correlation only: no authority or credential material crosses this scope.
-const activePhase = new AsyncLocalStorage<Readonly<{
-  context: MaterializationContext;
-  phaseId: string;
-}>>();
+const activePhase = new AsyncLocalStorage<{
+  readonly context: MaterializationContext;
+  readonly phaseId: string;
+  active: boolean;
+}>();
 
 /** File-only, allowlisted diagnostics: never include roots, credentials or exception contents. */
 function createPhase(
@@ -76,7 +79,7 @@ function createPhase(
 ) {
   const phaseId = randomUUID();
   const parent = activePhase.getStore();
-  const parentPhaseId = parent?.context.agentId === context.agentId
+  const parentPhaseId = parent?.active && parent.context.agentId === context.agentId
     && parent.context.materializationKey === context.materializationKey ? parent.phaseId : undefined;
   const startedAt = performance.now();
   const log = (status: 'started' | 'completed' | 'failed') => logger.infoFile('[CONNECTED ACCOUNT] Materialization phase', {
@@ -109,13 +112,18 @@ export async function observeConnectedServiceMaterializationPhase<T>(
   work: () => Promise<T>,
 ): Promise<T> {
   const { phaseId, finish } = createPhase(context, phase);
+  const scope = { context, phaseId, active: true };
   try {
-    const result = await activePhase.run({ context, phaseId }, work);
+    const result = await activePhase.run(scope, work);
     finish('completed');
     return result;
   } catch (error) {
     finish('failed');
     throw error;
+  } finally {
+    // Async descendants retain the store after run() settles. Their later
+    // Account work must not borrow this completed operation's diagnostic root.
+    scope.active = false;
   }
 }
 
@@ -125,7 +133,7 @@ export async function observeCurrentConnectedServiceMaterializationPhase<T>(
   work: () => T | Promise<T>,
 ): Promise<T> {
   const current = activePhase.getStore();
-  return current
+  return current?.active
     ? observeConnectedServiceMaterializationPhase(current.context, phase, async () => work())
     : work();
 }

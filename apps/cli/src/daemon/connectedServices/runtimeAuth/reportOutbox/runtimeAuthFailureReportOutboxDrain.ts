@@ -1,4 +1,3 @@
-import { isConnectedServiceRuntimeFailureReportApplicable } from '../sanitizeConnectedServiceRuntimeFailureClassification';
 import { notifyDaemonConnectedServiceRuntimeAuthFailure } from '@/daemon/controlClient';
 
 import {
@@ -28,7 +27,6 @@ export async function drainRuntimeAuthFailureReportOutboxToDaemon(input: Readonl
     ...(input.outboxDir ? { outboxDir: input.outboxDir } : {}),
     ...(input.limit === undefined ? {} : { limit: input.limit }),
     deliver: async (item) => {
-      if (!isConnectedServiceRuntimeFailureReportApplicable(item.classification)) return { status: 'drop' };
       const response = await notify({
         reportId: item.reportId,
         sessionId: item.sessionId,

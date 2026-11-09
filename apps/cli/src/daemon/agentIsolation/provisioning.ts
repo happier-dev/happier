@@ -4,8 +4,8 @@ import { assertAgentIsolationLaunchPrincipal as assertLaunchPrincipal, buildAgen
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { MachineRecipeStepV1Schema, type MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol';
-import { MACHINE_MEMBER_WORKSPACES_ROOT_V1 } from '@happier-dev/protocol/machines/agentIsolationV1';
-import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
+import { MACHINE_MEMBER_HOMES_ROOT_V1, MACHINE_MEMBER_WORKSPACES_ROOT_V1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import { resolveSeparateUserToolsLayout } from '@happier-dev/cli-common/firstPartyRuntime';
 import { machineStateRootStep } from '@happier-dev/cli-common/machineSetup';
 import type { HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
 
@@ -38,7 +38,7 @@ export function deriveAgentIsolationMemberIdentity(identity: Pick<AgentIsolation
   ]), 'utf8').digest('hex');
   const username = `hpm-${digest.slice(0, 24)}`;
   return { requester, homeServerIdentityId, digest, username, primaryGroup: username,
-    home: `/var/lib/happier/members/${digest}`, workspaceRoot: `${MACHINE_MEMBER_WORKSPACES_ROOT_V1}/${digest}`,
+    home: `${MACHINE_MEMBER_HOMES_ROOT_V1}/${digest}`, workspaceRoot: `${MACHINE_MEMBER_WORKSPACES_ROOT_V1}/${digest}`,
     ownershipMarker: `happier-member-${digest}` };
 }
 
@@ -75,6 +75,12 @@ export function buildAgentIsolationProvisioningSteps(input: Readonly<{
   /** Retire named-user ancestry grants left by the former private plugin code root. */
   legacyPluginCodeRoot?: string;
 }>): MachineRecipeStepV1[] {
+  const tools = resolveSeparateUserToolsLayout({ machineStateRoot: machineStateRootStep.path });
+  const toolsParent: MachineRecipeStepV1[] = tools.persistence ? [{ id: 'tools-parent', kind: 'directory',
+    path: dirname(tools.toolsRoot), owner: 'root', group: 'root', mode: 0o711, preserveExistingOwnership: true }] : [];
+  const toolsLayout: MachineRecipeStepV1[] = tools.persistence && input.daemonPrimaryGroup ? [{ id: 'tools-layout', kind: 'file',
+    path: tools.persistence.path, owner: input.daemonUsername, group: input.daemonPrimaryGroup, mode: 0o600,
+    content: { kind: 'literal', value: tools.persistence.content } }] : [];
   const retirePluginTraversal = (agentUsername: string): MachineRecipeStepV1[] => {
     const steps: MachineRecipeStepV1[] = [];
     if (input.legacyPluginCodeRoot) for (let path = dirname(input.legacyPluginCodeRoot); path !== dirname(path); path = dirname(path)) {
@@ -83,7 +89,9 @@ export function buildAgentIsolationProvisioningSteps(input: Readonly<{
     return steps;
   };
   if (!input.requesterIdentity && input.daemonPrimaryGroup) {
-    return [...buildAgentIsolationBootstrapSteps({ ...input, daemonPrimaryGroup: input.daemonPrimaryGroup, toolsRoot: resolveManagedToolsRoot() }),
+    return [...(tools.persistence ? [machineStateRootStep, ...toolsParent] : []),
+      ...buildAgentIsolationBootstrapSteps({ ...input, daemonPrimaryGroup: input.daemonPrimaryGroup, toolsRoot: tools.toolsRoot }),
+      ...toolsLayout,
       ...retirePluginTraversal('happier-agent')];
   }
   // The install owner selects the managed payload; the shared owner validates
@@ -97,7 +105,8 @@ export function buildAgentIsolationProvisioningSteps(input: Readonly<{
   return [
     buildAgentIsolationMemberAccountStep(member, input.retainedMemberUid),
     machineStateRootStep,
-    { id: 'member-homes', kind: 'directory', path: '/var/lib/happier/members', owner: 'root', group: 'root',
+    ...toolsParent,
+    { id: 'member-homes', kind: 'directory', path: MACHINE_MEMBER_HOMES_ROOT_V1, owner: 'root', group: 'root',
       mode: 0o711, preserveExistingOwnership: true },
     { id: 'member-home-traversal', kind: 'pathTraversal', path: '/var/lib/happier', agentUsername: member.username },
     { id: 'agent-home', kind: 'directory', path: member.home, owner: member.username, group: member.primaryGroup,
@@ -106,8 +115,9 @@ export function buildAgentIsolationProvisioningSteps(input: Readonly<{
       mode: 0o711, preserveExistingOwnership: true },
     { id: 'member-workspace-traversal', kind: 'pathTraversal', path: '/srv/happier', agentUsername: member.username },
     buildAgentIsolationMemberWorkspaceStep(member, input.daemonPrimaryGroup),
-    buildAgentIsolationToolsRootStep({ daemonUsername: input.daemonUsername, daemonPrimaryGroup: input.daemonPrimaryGroup, toolsRoot: resolveManagedToolsRoot() }),
+    buildAgentIsolationToolsRootStep({ daemonUsername: input.daemonUsername, daemonPrimaryGroup: input.daemonPrimaryGroup, toolsRoot: tools.toolsRoot }),
     buildMemberRunAsStep(input, member),
+    ...toolsLayout,
     ...retirePluginTraversal(member.username),
   ];
 }

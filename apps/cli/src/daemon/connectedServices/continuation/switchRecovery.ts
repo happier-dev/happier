@@ -7,7 +7,7 @@ import { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import type { ConnectedServiceRuntimeFailureClassification } from "@/daemon/connectedServices/runtimeAuth/types";
 import { createConnectedServiceSwitchDeferralQueue } from "@/daemon/connectedServices/sessionAuthSwitch/connectedServiceSwitchDeferralQueue";
 import { runSelectionPostSwitchRecovery } from "@/daemon/connectedServices/sessionAuthSwitch/runSelectionPostSwitchRecovery";
-import { createConnectedServiceContinuationMessageDispatcher, type ConnectedServiceContinuationInterruption } from "@/daemon/connectedServices/continuation/createConnectedServiceContinuationMessageDispatcher";
+import { createConnectedServiceContinuationMessageDispatcher, type ConnectedServiceContinuationInterruption, type RuntimeAuthRecoveryContinuationAdmission } from "@/daemon/connectedServices/continuation/createConnectedServiceContinuationMessageDispatcher";
 import type { ConnectedServiceSessionAuthSwitchReason } from "@/daemon/connectedServices/runtimeAuth/connectedServiceSessionAuthSwitchCore";
 
 export async function resolveContinuationResumePromptMode(
@@ -36,9 +36,7 @@ export function resolveConnectedServiceContinuationOriginId(
     reportId?: string | null;
   }>,
 ): string | null {
-  if (input.source === 'scheduler_retry') return null;
-  const activeTurnId = input.activeTurnId?.trim() ?? '';
-  if (activeTurnId) return activeTurnId;
+  // Intake and replay supply the persisted attempt identity. A live user turn is not that identity.
   const reportId = input.reportId?.trim() ?? '';
   return reportId || null;
 }
@@ -57,8 +55,10 @@ export function createConnectedServiceContinuationHandler(
     isCurrent?: () => Promise<boolean>;
     interruptedOriginId?: string | null;
     resumePromptMode: SessionContinuationResumePromptModeV1;
+    resolveResumePromptMode?: () => Promise<SessionContinuationResumePromptModeV1>;
     customResumePrompt?: string | null;
     recoveryKind?: ConnectedServiceRuntimeFailureClassification['kind'] | null;
+    runtimeAuthRecovery?: RuntimeAuthRecoveryContinuationAdmission;
     resolveInterruption: (
       input: Readonly<{
         sessionId: string;
@@ -101,9 +101,10 @@ export function createConnectedServiceContinuationHandler(
         action: input.action,
         switchReason: input.switchReason,
       }),
-      resumePromptMode: params.resumePromptMode,
+      resumePromptMode: await params.resolveResumePromptMode?.() ?? params.resumePromptMode,
       customResumePrompt: params.customResumePrompt,
       recoveryKind: params.recoveryKind,
+      runtimeAuthRecovery: params.runtimeAuthRecovery,
     });
   };
 }
@@ -173,8 +174,5 @@ export function resolveConnectedServiceContinuationInterruptionForSwitch(
   ) {
     return 'none';
   }
-  return input.turnDeferralQueue.getTurnLifecycleState(input.sessionId)
-    .forcedSwitchInterruptedLiveTurn
-    ? 'forced_turn_cancelled'
-    : 'clean_boundary';
+  return 'clean_boundary';
 }

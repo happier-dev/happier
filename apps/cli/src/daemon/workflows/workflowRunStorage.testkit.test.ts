@@ -7,6 +7,9 @@ import {
 
 import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 import type { WorkflowRunStorageOperation } from './workflowRunStorageClient';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { prepareWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows';
 
 const runId = 'run-current-slot';
 const parentRecordId = 'root-current-slot';
@@ -31,6 +34,21 @@ function sealProgress(index: WorkflowRunInvocationIndexV1): string {
 }
 
 describe('Workflow storage boundary current slot', () => {
+  it('retains the direct admission owner key in the opaque Run census', async () => {
+    const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+      material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } });
+    const witness = { mode: 'e2ee' as const, version: 1,
+      contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint) };
+    const prepared = prepareWorkflowRunDataKeyV1({ accountId: 'account-1',
+      encryption: { kind: 'available', witness, material }, randomBytes: length => new Uint8Array(length).fill(3) });
+    const storage = createWorkflowRunStorageTestkit({ runId, machineId: 'machine-1', origin: { kind: 'direct' } });
+    await storage.execute({ operation: 'admit', runId, machineId: 'machine-1', origin: { kind: 'direct' },
+      accountCurrentness: witness, acceptedEnvelope: 'opaque-accepted', recipientKeyEnvelopes: prepared.recipientKeyEnvelopes });
+    const ownerKey = prepared.recipientKeyEnvelopes[0]!.encryptedDataKey;
+    await expect(storage.execute({ operation: 'run-key.census', runId })).resolves.toMatchObject({
+      encryptionMode: 'e2ee', ownerAccountCurrentness: witness,
+      dataEncryptionKey: ownerKey, callerDataEncryptionKey: ownerKey });
+  });
   it.each(['pause_requested', 'cancel_requested'] as const)('fences input admission and new slots after %s without blocking an owned completion fact', async (control) => {
     const storage = createWorkflowRunStorageTestkit({ runId, machineId: 'machine-1', origin: { kind: 'direct' }, acceptedEnvelope: 'accepted' });
     await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope: 'checkpoint',

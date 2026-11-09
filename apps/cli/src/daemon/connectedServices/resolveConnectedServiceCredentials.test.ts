@@ -61,6 +61,28 @@ describe('current qualified credential resolution of retained 0.2 data', () => {
     });
   });
 
+  it.each(['native-import', 'device'])('projects admitted OAuth material independently of its %s acquisition mode', async authenticationModeId => {
+    const qualified = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ...snapshot({ t: 'plain', v: { v: 1, values: {
+        accessToken: 'imported-access', refreshToken: 'imported-refresh', idToken: 'imported-id',
+        providerAccountId: 'imported-provider-account', expiresAtMs: '9000000',
+      } } }), authenticationModeId,
+    });
+    const result = (await resolve(qualified)).get('openai-codex');
+    expect(result).toMatchObject({ credentialRevision: revision, record: {
+      serviceId: 'openai-codex', profileId: 'work', kind: 'oauth', expiresAt: 9000000,
+      oauth: { accessToken: 'imported-access', refreshToken: 'imported-refresh', idToken: 'imported-id',
+        raw: { happierQualifiedConnectedAccountCredentialV1: { ref, authenticationModeId } } },
+    } });
+  });
+
+  it('refuses an imported payload that cannot produce native OAuth credentials', async () => {
+    const qualified = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ...snapshot({ t: 'plain', v: { v: 1, values: { unrelated: 'not-oauth' } } }), authenticationModeId: 'native-import',
+    });
+    await expect(resolve(qualified)).rejects.toThrow();
+  });
+
   it('rejects a retained payload whose profile assertion disagrees with the qualified row', async () => {
     await expect(resolve(snapshot({ t: 'plain', v: { ...record, profileId: 'other' } })))
       .rejects.toMatchObject({ code: 'connected_account_credential_legacy_assertion_mismatch' });

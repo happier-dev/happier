@@ -41,17 +41,28 @@ describe('resolveQuotaProbeFreshProof', () => {
 
     it('produces quota_probe_fresh only for fresh matching usable normalized quota evidence', () => {
         expect(resolveQuotaProbeFreshProof({
-            nowMs: 12_000,
-            maxAgeMs: 30_000,
+            nowMs: 400_000,
             serviceId: 'openai-codex',
             profileId: 'backup',
             expectedAppliedIdentity: appliedIdentity,
             snapshotAppliedIdentity: appliedIdentity,
-            snapshot: quotaSnapshot(),
+            snapshot: quotaSnapshot({ staleAfterMs: 10 * 60_000 }),
         })).toEqual({
             status: 'proof',
             proofKind: 'quota_probe_fresh',
         });
+    });
+
+    it('does not prove recovery from an estimated meter even when it carries a remaining percentage', () => {
+        const snapshot = quotaSnapshot();
+        expect(resolveQuotaProbeFreshProof({
+            nowMs: 12_000,
+            serviceId: 'openai-codex',
+            profileId: 'backup',
+            expectedAppliedIdentity: appliedIdentity,
+            snapshotAppliedIdentity: appliedIdentity,
+            snapshot: { ...snapshot, meters: snapshot.meters.map((meter) => ({ ...meter, confidence: 'estimated' })) },
+        })).toEqual({ status: 'no_proof', reason: 'no_reliable_quota_meter' });
     });
 
     it.each([
@@ -72,7 +83,6 @@ describe('resolveQuotaProbeFreshProof', () => {
     ])('refuses provider proof when $name', ({ expectedAppliedIdentity, snapshotAppliedIdentity }) => {
         expect(resolveQuotaProbeFreshProof({
             nowMs: 12_000,
-            maxAgeMs: 30_000,
             serviceId: 'openai-codex',
             profileId: 'backup',
             expectedAppliedIdentity,
@@ -91,7 +101,6 @@ describe('resolveQuotaProbeFreshProof', () => {
     ])('refuses a provider-operation tuple with mismatched %s', (_field, override) => {
         expect(resolveQuotaProbeFreshProof({
             nowMs: 12_000,
-            maxAgeMs: 30_000,
             serviceId: 'openai-codex',
             profileId: 'backup',
             expectedAppliedIdentity: appliedIdentity,
@@ -103,31 +112,22 @@ describe('resolveQuotaProbeFreshProof', () => {
     it('refuses stale, exhausted, disabled, mismatched, and generation-stale snapshots', () => {
         const base = {
             nowMs: 12_000,
-            maxAgeMs: 1_000,
             serviceId: 'openai-codex' as const,
             profileId: 'backup',
             expectedAppliedIdentity: appliedIdentity,
             snapshotAppliedIdentity: appliedIdentity,
-            snapshot: quotaSnapshot(),
+            snapshot: quotaSnapshot({ staleAfterMs: 1_000 }),
         };
 
         expect(resolveQuotaProbeFreshProof(base)).toEqual({ status: 'no_proof', reason: 'stale_snapshot' });
         expect(resolveQuotaProbeFreshProof({
             ...base,
             nowMs: 12_000,
-            maxAgeMs: 30_000,
             snapshot: quotaSnapshot({ fetchedAt: 12_001 }),
         })).toEqual({ status: 'no_proof', reason: 'stale_snapshot' });
         expect(resolveQuotaProbeFreshProof({
             ...base,
             nowMs: 12_000,
-            maxAgeMs: 30_000,
-            snapshot: quotaSnapshot({ staleAfterMs: 1_000 }),
-        })).toEqual({ status: 'no_proof', reason: 'stale_snapshot' });
-        expect(resolveQuotaProbeFreshProof({
-            ...base,
-            nowMs: 12_000,
-            maxAgeMs: 30_000,
             snapshot: quotaSnapshot({
                 meters: [{
                     meterId: 'weekly',
@@ -146,7 +146,6 @@ describe('resolveQuotaProbeFreshProof', () => {
         expect(resolveQuotaProbeFreshProof({
             ...base,
             nowMs: 12_000,
-            maxAgeMs: 30_000,
             snapshot: quotaSnapshot({
                 meters: [{
                     meterId: 'weekly',
@@ -166,19 +165,16 @@ describe('resolveQuotaProbeFreshProof', () => {
         expect(resolveQuotaProbeFreshProof({
             ...base,
             nowMs: 12_000,
-            maxAgeMs: 30_000,
             profileId: 'other',
         })).toEqual({ status: 'no_proof', reason: 'profile_mismatch' });
         expect(resolveQuotaProbeFreshProof({
             ...base,
             nowMs: 12_000,
-            maxAgeMs: 30_000,
             snapshotAppliedIdentity: { ...appliedIdentity, groupGeneration: 4 },
         })).toEqual({ status: 'no_proof', reason: 'provider_operation_identity_mismatch' });
         expect(resolveQuotaProbeFreshProof({
             ...base,
             nowMs: 12_000,
-            maxAgeMs: 30_000,
             snapshotAppliedIdentity: { ...appliedIdentity, materialFingerprint: 'fingerprint-b' },
         })).toEqual({ status: 'no_proof', reason: 'provider_operation_identity_mismatch' });
     });

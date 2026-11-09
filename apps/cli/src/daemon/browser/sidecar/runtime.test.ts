@@ -28,6 +28,44 @@ describe('daemon browser sidecar runtime planning', () => {
         }
     });
 
+    it.each(['darwin', 'linux', 'win32'] as const)('isolates windowed managed profiles from the login Keychain on %s without changing other platforms', (platform) => {
+        const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+        Object.defineProperty(process, 'platform', { configurable: true, value: platform });
+        try {
+            for (const storageMode of ['ephemeral', 'session', 'user', 'plugin'] as const) {
+                const plan = runtime.createSidecarLaunchPlan({
+                    sidecarId: 'keychain-isolation', nowMs: 2_000, presentation: 'window',
+                    profile: { profileId: 'managed', storageMode,
+                        owner: { kind: storageMode === 'ephemeral' ? 'session' : storageMode, id: 'owner' }, cleanupOnSessionClose: storageMode === 'ephemeral' },
+                    profileDirectory: '/profiles/managed',
+                    binaryResolution: { ok: true, source: 'managedBrowserPackage', executablePath: '/managed/chrome', discoveryKind: 'managedRuntime', diagnostics: [] },
+                });
+                expect(plan.publicResult.accepted).toBe(true);
+                expect(new Set(plan.privateLaunch?.args)).toEqual(new Set([
+                    '--user-data-dir=/profiles/managed', '--remote-debugging-pipe',
+                    '--no-first-run', '--no-default-browser-check',
+                    ...(platform === 'darwin' ? ['--use-mock-keychain'] : []),
+                ]));
+            }
+        } finally {
+            Object.defineProperty(process, 'platform', originalPlatform);
+        }
+    });
+
+    it('keeps the same managed profile and CDP flags when an admitted local view requests a window', () => {
+        const plan = runtime.createSidecarLaunchPlan({
+            sidecarId: 'local-window', nowMs: 2_000,
+            presentation: 'window',
+            profile: { profileId: 'temporary', storageMode: 'ephemeral', owner: { kind: 'session', id: 'local' }, cleanupOnSessionClose: true },
+            profileDirectory: '/profiles/temporary',
+            binaryResolution: { ok: true, source: 'managedBrowserPackage', executablePath: '/managed/chrome', discoveryKind: 'managedRuntime', diagnostics: [] },
+        });
+        expect(plan.publicResult.accepted).toBe(true);
+        expect(plan.privateLaunch?.args.some(arg => arg.startsWith('--remote-debugging-port'))).toBe(false);
+        expect(plan.privateLaunch?.args).not.toContain('--headless=new');
+        expect(plan.privateLaunch?.args).toEqual(expect.arrayContaining(['--user-data-dir=/profiles/temporary', '--remote-debugging-pipe']));
+        expect(plan.privateLaunch?.cleanupOnStop).toBe(true);
+    });
     it('loads only selected extension directories for a persistent profile', () => {
         const input = {
             sidecarId: 'sidecar', nowMs: 2_000,

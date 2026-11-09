@@ -1,8 +1,4 @@
-import type { AgentIsolationEffectDependencies } from './agentIsolation/agentIsolationProvisioner';
-
-import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import type { ApiMachineClient } from '@/api/apiMachine';
-import type { DaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 
 import type { BrowserDaemonControlRoutes } from './browser/control/routes';
 import type { BrowserContextRoutes } from './browser/context/routes';
@@ -14,6 +10,9 @@ import type { DaemonLocalServicesMachineRpcRoutes } from '@/rpc/handlers/daemonL
 import type { DaemonMachineVitalsRoutes } from '@/rpc/handlers/daemonMachineVitals';
 import type { DaemonProcessesRoutes } from '@/rpc/handlers/daemonProcesses';
 import type { DaemonMachineResourcesPolicyRoutes } from '@/rpc/handlers/daemonMachineResourcesPolicy';
+import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
+import type { DaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
+import type { AgentIsolationEffectDependencies } from './agentIsolation/agentIsolationProvisioner';
 import type { DaemonMachineGuardRoutes } from '@/rpc/handlers/daemonMachineGuard';
 import type { DaemonStorageRoutes } from '@/rpc/handlers/storage';
 import type { LocalServicePreviewRoutes } from './local/services/preview/routes';
@@ -75,15 +74,13 @@ export type DaemonMachineRpcRouteAttachmentCache = Readonly<{
   ): void;
   prepareApiMachineForSessions(apiMachineForSessions: DaemonMachineRpcRouteRegistrar): void;
   attachApiMachineForSessions(apiMachineForSessions: DaemonMachineRpcRouteRegistrar | null): void;
-
-
 }>;
 
 export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
   getApiMachineForSessions: () => DaemonMachineRpcRouteRegistrar | null;
 }>): DaemonMachineRpcRouteAttachmentCache {
-  let machineAccessLossReceiver: MachineAccessLossReceiverOptions | null = null;
   let localServicesPreviewRoutes: LocalServicePreviewRoutes | null = null;
+  let machineAccessLossReceiver: MachineAccessLossReceiverOptions | null = null;
   let localServicesRoutes: DaemonLocalServicesMachineRpcRoutes | null = null;
   let machineVitalsRoutes: DaemonMachineVitalsRoutes | null = null;
   let machineProcessesRoutes: DaemonProcessesRoutes | null = null;
@@ -91,7 +88,6 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
   let machineAdminAccessRoutes: DaemonMachineAdminAccessRoutes | null = null;
   let machineReachabilityRoutes: DaemonMachineReachabilityRoutes | null = null;
   let machineAgentIsolationRoutes: AgentIsolationEffectDependencies | null = null;
-
   let machineGuardRoutes: DaemonMachineGuardRoutes | null = null;
   let storageRoutes: DaemonStorageRoutes | null = null;
   let resolveComputer: (() => ComputerRoutes | null) | null = null;
@@ -187,7 +183,6 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       machineAdminAccessRoutes = routes;
       input.getApiMachineForSessions()?.registerMachineAdminAccessRoutes(routes);
     },
-
     attachMachineAgentIsolationRoutes(routes) {
       machineAgentIsolationRoutes = routes;
       input.getApiMachineForSessions()?.registerMachineAgentIsolationRoutes(routes);
@@ -225,17 +220,17 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
 
     attachBrowserContextRoutes(routes) {
       browserContextRoutes = routes;
-      input.getApiMachineForSessions()?.registerBrowserContextRoutes?.(routes);
+      input.getApiMachineForSessions()?.registerBrowserContextRoutes?.(routes, () => browserControlRoutes);
     },
 
     attachBrowserDiagnosticsRoutes(routes) {
       browserDiagnosticsRoutes = routes;
-      input.getApiMachineForSessions()?.registerBrowserDiagnosticsRoutes(routes);
+      input.getApiMachineForSessions()?.registerBrowserDiagnosticsRoutes(routes, () => browserControlRoutes);
     },
 
     attachBrowserRecordingRoutes(routes) {
       browserRecordingRoutes = routes;
-      input.getApiMachineForSessions()?.registerBrowserRecordingRoutes(routes);
+      input.getApiMachineForSessions()?.registerBrowserRecordingRoutes(routes, () => browserControlRoutes);
     },
 
     attachSimulatorPreviewRoutes(routes) {
@@ -303,7 +298,6 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       if (machineAdminAccessRoutes) {
         apiMachineForSessions.registerMachineAdminAccessRoutes(machineAdminAccessRoutes);
       }
-
       if (machineAgentIsolationRoutes) {
         apiMachineForSessions.registerMachineAgentIsolationRoutes(machineAgentIsolationRoutes);
       }
@@ -320,13 +314,13 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
         apiMachineForSessions.registerBrowserControlRoutes(browserControlRoutes);
       }
       if (browserContextRoutes) {
-        apiMachineForSessions.registerBrowserContextRoutes?.(browserContextRoutes);
+        apiMachineForSessions.registerBrowserContextRoutes?.(browserContextRoutes, () => browserControlRoutes);
       }
       if (browserDiagnosticsRoutes) {
-        apiMachineForSessions.registerBrowserDiagnosticsRoutes(browserDiagnosticsRoutes);
+        apiMachineForSessions.registerBrowserDiagnosticsRoutes(browserDiagnosticsRoutes, () => browserControlRoutes);
       }
       if (browserRecordingRoutes) {
-        apiMachineForSessions.registerBrowserRecordingRoutes(browserRecordingRoutes);
+        apiMachineForSessions.registerBrowserRecordingRoutes(browserRecordingRoutes, () => browserControlRoutes);
       }
       if (simulatorPreviewRoutes) {
         apiMachineForSessions.registerSimulatorPreviewRoutes(simulatorPreviewRoutes);

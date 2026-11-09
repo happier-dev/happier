@@ -15,7 +15,12 @@ import type { NormalizedLocalServiceInventorySnapshot } from '@/daemon/local/ser
 import { processRef } from './processRef';
 import type { ProcessMetrics, ProcessMetricSample } from './processMetrics';
 
-export type ProcessRequester = Readonly<{ accountId: string; custodianAccountId: string }>;
+export type ProcessEnvironmentReadTarget = Readonly<{ serverId: string; environmentId: string }>;
+export type ProcessRequester = Readonly<{ accountId: string; custodianAccountId: string;
+    /** Captured Account read authority, never supplied by a Process request DTO. */
+    canReadEnvironment?(target: ProcessEnvironmentReadTarget): Promise<boolean>;
+}>;
+export const processEnvironmentReadKey = (target: ProcessEnvironmentReadTarget): string => JSON.stringify([target.serverId, target.environmentId]);
 export type ProcessRequesterIdentity = Readonly<{ accountId: string; displayName?: string }>;
 export type ProcessRequesterEvidenceFailure = Readonly<{
     owner: ProcessOwnerRef;
@@ -29,6 +34,7 @@ export type ProcessesProjectionOptions = Readonly<{
     platform: 'linux' | 'darwin' | 'win32'; selfPid?: number; bootTimeMs?: number; allProcessesVisible: boolean;
     requesterForOwner(owner: ProcessOwnerRef, roots: readonly HappierProcessRoot[]): ProcessRequesterIdentity | null;
     requesterIdentities?: ReadonlyMap<string, Readonly<{ accountId: string; displayName: string }>>;
+    readableEnvironments?: ReadonlySet<string>;
     onRequesterEvidenceUnavailable?(failure: ProcessRequesterEvidenceFailure): void;
     confirmed: readonly LeftBehindItem[]; metrics?: ReadonlyMap<number, ProcessMetrics>;
     history?(ref: string): readonly ProcessMetricSample[] | undefined;
@@ -111,12 +117,16 @@ export function projectMachineProcesses(read: ProcessOwnershipRead, request: Pro
             continue;
         }
         const ownerKey = processOwnerKey(resolved.owner);
-        const identity = options.requesterForOwner(resolved.owner, read.roots);
-        if (!custodian && identity?.accountId !== requester.accountId) { othersWork.add(ownerKey); continue; }
+        const environmentOwner = resolved.owner.kind === 'container' && resolved.owner.environmentId !== undefined;
+        if (resolved.owner.kind === 'container' && resolved.owner.machineId !== request.machineId) continue;
+        if (environmentOwner && !options.readableEnvironments?.has(processEnvironmentReadKey({
+            serverId: resolved.owner.serverId, environmentId: resolved.owner.environmentId! }))) continue;
+        const identity = environmentOwner ? null : options.requesterForOwner(resolved.owner, read.roots);
+        if (!environmentOwner && !custodian && identity?.accountId !== requester.accountId) { othersWork.add(ownerKey); continue; }
         if (request.sessionId && !belongsToSession(resolved.owner, request.sessionId)) continue;
         const displayIdentity = identity?.displayName ? { accountId: identity.accountId, displayName: identity.displayName }
             : identity ? options.requesterIdentities?.get(identity.accountId) : undefined;
-        if (custodian && (!identity || identity.accountId !== requester.custodianAccountId && !displayIdentity)) {
+        if (!environmentOwner && custodian && (!identity || identity.accountId !== requester.custodianAccountId && !displayIdentity)) {
             options.onRequesterEvidenceUnavailable?.({ owner: resolved.owner,
                 reason: identity ? 'display_identity_unavailable' : 'requester_unavailable' });
             if (!request.sessionId) unverifiableCount++;
@@ -125,10 +135,16 @@ export function projectMachineProcesses(read: ProcessOwnershipRead, request: Pro
         const command = row.argv ? redactProcessCommand(row.argv) : row.commandLine ? redactProcessCommand(row.commandLine) : undefined;
         const ownerRole = serviceOwnerRole(resolved.owner);
         const ownerDisplayName = ownerRole ? serviceOwnerDisplayName(resolved.owner, readLanguageServerDefinitions()) : undefined;
+        const ancestors = ancestorsOf(index, row.pid);
+        const outsideNativeOwner = resolved.owner.kind === 'container' ? ancestors.findIndex(ancestor => {
+            const claim = ownership.get(ancestor.pid);
+            return !claim?.owner || processOwnerKey(claim.owner) !== ownerKey || !equalProcessStart(claim.start, ancestor.start);
+        }) : -1;
         const classification: LocalServiceProcessClassification = ownerRole
             ? { role: ownerRole, ...(ownerDisplayName ? { displayName: ownerDisplayName } : {}), signals: [] }
             : classifyProcessRole({ command: command ?? row.name, cwd: row.cwd,
-            ...options.roleCatalog, ancestors: ancestorsOf(index, row.pid).map(ancestor => ({ command: ancestor.argv ? redactProcessCommand(ancestor.argv) : redactProcessCommand(ancestor.commandLine ?? ancestor.name) })) });
+            ...options.roleCatalog, ancestors: (outsideNativeOwner < 0 ? ancestors : ancestors.slice(0, outsideNativeOwner))
+                .map(ancestor => ({ command: ancestor.argv ? redactProcessCommand(ancestor.argv) : redactProcessCommand(ancestor.commandLine ?? ancestor.name) })) });
         const parent = row.ppid === null ? undefined : index.byPid.get(row.ppid);
         const parentOwner = parent ? ownership.get(parent.pid) : undefined;
         const ports = options.ports?.entries.filter(entry => entry.state === 'listening' && entry.provenance?.process?.pid === row.pid
@@ -167,7 +183,7 @@ export function projectMachineProcesses(read: ProcessOwnershipRead, request: Pro
                     state: roots.some(root => root.state === 'stopping') ? 'stopping' : 'running',
                     // Sessions use the executor's next-message resume path, not a service launch callback.
                     canStartAgain: roots.some(root => root.owner.kind === 'session' || !!root.startAgain),
-                    ...(root && rootClaim && (rootClaim.level === 'proven' || rootClaim.level === 'likely')
+                    ...(resolved.owner.kind !== 'container' && root && rootClaim && (rootClaim.level === 'proven' || rootClaim.level === 'likely')
                         ? { root: { ref: processRef(root.pid, rootClaim.start), level: rootClaim.level } } : {}),
                     members: [], totals: zero,
                     ...(displayIdentity && displayIdentity.accountId !== requester.custodianAccountId ? { requester: displayIdentity } : {}) };

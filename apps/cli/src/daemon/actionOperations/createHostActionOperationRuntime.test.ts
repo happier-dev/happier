@@ -96,6 +96,28 @@ describe('finite host operation custody', () => {
       errorCode: 'outcome_unknown', details: { requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/) } } } });
   });
 
+  it('retries a no-effect deployment with a regenerated candidate, preserving authored-input conflicts and settled effects', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home', resolveAccountId: async () => 'owner' });
+    const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target', expectedRevision: 2,
+      expectedTargetLinkRevision: 1, requestKey: 'retry-deploy', contentArtifactId: 'first-candidate',
+      contentHeaderVersion: 3, contentBodyVersion: 3 };
+    const request = { actionId: 'deployments.deploy', input, context: { actionRequestId: 'first-request' },
+      execute: async () => ({ ok: false as const, errorCode: 'database_transaction_conflict_exhausted',
+        error: 'database_transaction_conflict_exhausted', effectAttempted: false }) };
+    expect(await runtime.runActionOperation(request)).toMatchObject({ ok: false, effectAttempted: false });
+    let effects = 0;
+    const retry = { ...request, input: { ...input, contentArtifactId: 'regenerated-candidate' },
+      context: { actionRequestId: 'newly-approved-request' },
+      execute: async () => { effects++; return { ok: true as const, result: { deploymentId: 'receipt' } }; } };
+    expect(await runtime.runActionOperation({ ...retry, input: { ...retry.input, whenBusy: 'supersede' } }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    expect(await runtime.runActionOperation(retry)).toMatchObject({ ok: true, result: { deploymentId: 'receipt' } });
+    expect(await runtime.runActionOperation(retry)).toMatchObject({ ok: true, result: { deploymentId: 'receipt' } });
+    expect(await runtime.runActionOperation({ ...retry, input: { ...retry.input, contentArtifactId: 'third-candidate' } }))
+      .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+    expect(effects).toBe(1);
+  });
+
   it('rejoins teardown when signed receipt head versions advance, preserving intent conflicts', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'owner' });
     const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target',

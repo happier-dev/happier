@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BrowserOpenViewCommandV1Schema } from '@happier-dev/protocol/browser/control/v1';
 import { installLocalServiceCensusFixture } from '../../local/services/inventory/platform/censusFixture.testkit';
+import { createSidecarCdpDiagnosticsRuntime } from './diagnostics/runtime';
+import { createBrowserDiagnosticsDaemonStore } from '../diagnostics/store';
+import { createBrowserDiagnosticsRoutes } from '../diagnostics/routes';
 import { createBrowserAutomationOwnerRegistry } from '../automation/owners';
+import { createBrowserAutomationDaemonService } from '../automation/service';
+import { createBrowserAutomationCdpAdapter } from '../automation/adapters/cdp';
+import { createControlAdapterAutomationTransport } from '../automation/adapters/controlBridge';
+import type { BrowserSidecarCdpEventSubscriber } from './controlAdapter';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
@@ -38,6 +45,136 @@ function managedCandidate(): SidecarBrowserBinaryCandidate {
 }
 
 describe('browser sidecar product source owner', () => {
+    it('routes interaction and current-generation diagnostics to the owning Session through the product source', async () => {
+        class OwnedProcess extends EventEmitter {
+            pid = 42;
+            stderr = new PassThrough();
+            stdio = [null, null, this.stderr, new PassThrough(), new PassThrough()];
+            kill() { queueMicrotask(() => this.emit('exit', 0, 'SIGTERM')); return true; }
+        }
+        const profileStore = createBrowserProfileStore({
+            storageRootDirectory: '/unused',
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: '/unused' }),
+            removeDirectory: async () => undefined,
+        });
+        const connections = new Map<string, { emit: BrowserSidecarCdpEventSubscriber; pasted: string[] }>();
+        const factory = productSource.createProductBrowserSidecarControlAdapterFactory({
+            platform: 'linux', profileStore,
+            resolveManagedCandidate: async () => managedCandidate(),
+            createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({
+                ...input,
+                // Only OS processes and the CDP network are substituted; Session routing,
+                // launch/control/interaction owners and Action settlement remain real.
+                spawnProcess: () => {
+                    const child = new OwnedProcess();
+                    return child;
+                },
+                connectTransport: async () => {
+                    const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
+                    const pasted: string[] = [];
+                    connections.set(input.browserSessionId, {
+                        pasted, emit: event => { for (const listener of [...listeners]) listener(event); },
+                    });
+                    return { transport: {
+                        openPage: async () => ({ targetId: 'target', sessionId: 'cdp' }),
+                        dispatchPageCommand: async command => {
+                            if (command.method === 'Runtime.evaluate') return { result: { value: `selected:${input.browserSessionId}` } };
+                            if (command.method === 'Input.insertText') pasted.push(String(command.params?.text));
+                            return {};
+                        },
+                        dispatchBrowserCommand: async () => ({ success: true }),
+                        subscribeCdpEvents: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+                    } };
+                },
+            }),
+        });
+        const runtime = await factory({ machineId: 'machine', readMachineMemory: () => ({ reported: true,
+            totalBytes: 8 * 1024 ** 3, availableBytes: 8 * 1024 ** 3, usedBytes: 0,
+            pressure: { level: 'calm', source: 'none' } }) });
+        if (!runtime.ok) throw new Error(runtime.errorCode);
+        const capture = runtime.contextCapture;
+        if (!capture?.subscribeCdpEvents || !capture.subscribeViewLifecycle || !capture.getNavigationState) throw new Error('live capture missing');
+        const diagnosticsStore = createBrowserDiagnosticsDaemonStore({ machineId: 'machine' });
+        const diagnostics = createSidecarCdpDiagnosticsRuntime({ ownerAccountId: 'machine', store: diagnosticsStore,
+            contextCapture: { ...capture, getNavigationState: capture.getNavigationState, subscribeCdpEvents: capture.subscribeCdpEvents,
+                subscribeViewLifecycle: capture.subscribeViewLifecycle }, isEnabled: () => true });
+        const diagnosticsRoutes = createBrowserDiagnosticsRoutes({ store: diagnosticsStore });
+        const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({
+            transport: createControlAdapterAutomationTransport({ adapter: runtime.adapter, contextCapture: capture }),
+        }) });
+        let requestId = 0;
+        const execute = (browserSessionId: string, actionKind: 'clipboardRead' | 'clipboardWrite' | 'getInteractionState', payload = {}) => service.execute({
+            v: 1, browserSessionId, viewId: 'view', automationRequestId: `clipboard:${++requestId}`,
+            navigationGeneration: capture?.getNavigationState?.({ browserSessionId, viewId: 'view' })?.navigationGeneration ?? 0,
+            requestedBy: 'agent', requesterRef: { kind: 'agent', id: 'fixture' }, actionKind, payload, timeoutMs: 10_000,
+        });
+        const changed: string[] = [];
+        const unsubscribe = capture?.interactions?.subscribe(view => changed.push(view.browserSessionId));
+        try {
+            for (const browserSessionId of ['session-a', 'session-b']) {
+                expect(await runtime.adapter.dispatchCommand({ kind: 'openView', commandId: `open:${browserSessionId}`,
+                    browserSessionId, viewId: 'view', platform: 'web',
+                    target: { kind: 'externalUrl', targetId: 'fixture', url: 'https://example.test' },
+                })).toMatchObject({ status: 'dispatched' });
+                expect(await execute(browserSessionId, 'clipboardRead')).toMatchObject({ status: 'succeeded',
+                    interactionResult: { kind: 'clipboard', text: `selected:${browserSessionId}` }, resultSummary: {} });
+                expect(await execute(browserSessionId, 'clipboardWrite', { text: `paste:${browserSessionId}` }))
+                    .toMatchObject({ status: 'succeeded' });
+                expect(connections.get(browserSessionId)?.pasted).toEqual([`paste:${browserSessionId}`]);
+            }
+            const view = { browserSessionId: 'session-a', viewId: 'view' };
+            const emit = (method: string, params: Record<string, unknown>) => connections.get('session-a')?.emit({ method, params, sessionId: 'cdp' });
+            emit('Page.frameNavigated', { frame: { id: 'main', loaderId: 'document-1', url: 'https://example.test/next' } });
+            const navigationGeneration = capture.getNavigationState?.(view)?.navigationGeneration;
+            expect(navigationGeneration).toBe(1);
+            emit('Runtime.consoleAPICalled', { type: 'log', args: [{ type: 'string', value: 'current page' }] });
+            const read = { ...view, navigationGeneration: navigationGeneration! };
+            const initial = await diagnosticsRoutes.readViewSnapshot(read);
+            expect(initial.revision).toBeGreaterThan(0);
+            expect(initial.snapshot.events).toEqual(expect.arrayContaining([expect.objectContaining({
+                family: 'console', fidelity: 'cdp', navigationGeneration: 1,
+            })]));
+            const delta = diagnosticsRoutes.readViewSnapshot({ ...read, sinceRevision: initial.revision });
+            emit('Network.requestWillBeSent', { requestId: 'next', request: { method: 'GET', url: 'https://example.test/api' } });
+            emit('Network.loadingFinished', { requestId: 'next', timestamp: 2, encodedDataLength: 7 });
+            const diagnosticsDelta = await delta;
+            expect(diagnosticsDelta.snapshot.events).toEqual([expect.objectContaining({ family: 'network', navigationGeneration: 1 })]);
+            const reconnected = await diagnosticsRoutes.readViewSnapshot(read);
+            expect(reconnected.snapshot.events).toEqual(expect.arrayContaining([
+                expect.objectContaining({ family: 'console', navigationGeneration: 1 }),
+                expect.objectContaining({ family: 'network', navigationGeneration: 1 }),
+            ]));
+            expect((await diagnosticsRoutes.readViewSnapshot({ browserSessionId: 'session-b', viewId: 'view', navigationGeneration: 0 })).snapshot.events)
+                .not.toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'network.finished' })]));
+            connections.get('session-a')?.emit({ method: 'Page.javascriptDialogOpening', sessionId: 'cdp',
+                params: { type: 'prompt', message: 'private dialog', defaultPrompt: 'private default' } });
+            expect(changed).toContain('session-a');
+            expect(await execute('session-a', 'getInteractionState')).toMatchObject({ status: 'succeeded',
+                resultSummary: { dialog: { type: 'prompt', message: 'private dialog' } } });
+            expect(await execute('session-b', 'getInteractionState')).toMatchObject({ status: 'succeeded',
+                resultSummary: { dialog: null } });
+            expect(capture?.interactions?.getState({ browserSessionId: 'session-a', viewId: 'view' })?.dialog?.message).toBe('private dialog');
+            const timeline = JSON.stringify(service.getTimeline({ browserSessionId: 'session-a', viewId: 'view' }));
+            for (const privateValue of ['selected:session-a', 'paste:session-a', 'private dialog', 'private default']) {
+                expect(timeline).not.toContain(privateValue);
+            }
+            expect(await runtime.adapter.dispatchCommand({ kind: 'closeView', commandId: 'close-a', browserSessionId: 'session-a', viewId: 'view' }))
+                .toMatchObject({ status: 'dispatched' });
+            expect(capture?.interactions?.getState({ browserSessionId: 'session-a', viewId: 'view' })).toBeNull();
+            const changesAfterClose = [...changed];
+            connections.get('session-a')?.emit({ method: 'Page.javascriptDialogOpening', sessionId: 'cdp',
+                params: { type: 'alert', message: 'retired dialog' } });
+            expect(changed).toEqual(changesAfterClose);
+            expect(await execute('session-b', 'clipboardRead')).toMatchObject({ status: 'succeeded',
+                interactionResult: { kind: 'clipboard', text: 'selected:session-b' } });
+        } finally {
+            unsubscribe?.();
+            service.dispose();
+            diagnostics.dispose();
+            await runtime.dispose?.();
+        }
+    });
+
     it('qualifies native observation only for the exact owned headless Session view', async () => {
         class OwnedProcess extends EventEmitter {
             pid = 42;
@@ -172,7 +309,7 @@ describe('browser sidecar product source owner', () => {
 
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
-
+            
             resolveManagedCandidate: vi.fn(async () => null),
         });
 
@@ -205,7 +342,7 @@ describe('browser sidecar product source owner', () => {
 
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
-
+            
             resolveManagedCandidate: missingThenInstalled,
         });
 
@@ -225,7 +362,7 @@ describe('browser sidecar product source owner', () => {
 
         const factory = mod.createProductBrowserSidecarControlAdapterFactory({
             platform: 'linux',
-
+            
             resolveManagedCandidate: vi.fn(async () => ({
                 source: 'managedBrowserPackage' as const,
                 executablePath: '/home/u/.happier/tools/browser-chromium/current/chrome',

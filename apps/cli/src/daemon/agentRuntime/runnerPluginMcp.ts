@@ -89,8 +89,7 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
           const projectItems = lease.registry.projectMcpServerItems;
           const projecting = (async () => {
             const items = await projectItems({ v: 1, servers: [], ...operation.catalog });
-            const detected = await detectProviderMcpServers({ directory: operation.directory, providers: [context.agentId], runtimeRegistry: lease.registry });
-            return { items, detectedServers: detected.servers };
+            return { items };
           })();
           pending.value = projecting;
           const projected = await projecting.finally(() => { pending.value = null; });
@@ -108,6 +107,15 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
       const onRequestAbort = () => preparation.lifetime.abort();
       context.signal?.addEventListener('abort', onRequestAbort, { once: true });
       try {
+        if (operation.kind === 'mcp.plugin.discover') {
+          const discovering = detectProviderMcpServers({ directory: preparation.directory, providers: [context.agentId],
+            sessionId: context.sessionId, signal, runtimeRegistry: preparation.lease.registry });
+          preparation.pending.value = discovering;
+          const detected = await discovering.finally(() => { preparation.pending.value = null; });
+          await active(context);
+          signal.throwIfAborted();
+          return RunnerPluginMcpResultSchema.parse({ kind: 'mcp.plugin.discovered', detectedServers: detected.servers });
+        }
         if (!preparation.lease.registry.materializePluginMcpServers) throw unavailable();
         const materializing = preparation.lease.registry.materializePluginMcpServers({
           scope: { kind: 'session', sessionId: context.sessionId }, directory: preparation.directory, signal,

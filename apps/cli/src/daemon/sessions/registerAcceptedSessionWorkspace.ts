@@ -9,8 +9,7 @@ import type { StoredCredentials } from '@/persistence';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { materializeWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
-import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
-import { hasSameSessionCheckout } from '@/session/metadata/sessionCheckoutIdentity';
+import { publishAcceptedSessionProject } from '@/session/metadata/publishAcceptedSessionProject';
 import { createProjectAccountSnapshotMutation, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -65,8 +64,7 @@ export function createAcceptedSessionWorkspaceRegistration(input: Readonly<{
         includeRepositoryIdentity: true, signal: input.signal,
       });
       // Automatic Projects come from positive SCM evidence, not arbitrary folders.
-      // An explicit accepted checkout is already authoritative, including in a sandbox.
-      if (!inspected && metadata.workspaceId == null) return;
+      // An already accepted exact checkout also remains authoritative without SCM.
       for (;;) {
         let acceptedWorkspaceId: string | null = null;
         const result = await mutate(snapshot => {
@@ -79,12 +77,17 @@ export function createAcceptedSessionWorkspaceRegistration(input: Readonly<{
             if (!inspected || resolveWorkspaceRefV1([existing.ref], { serverId, machineId: input.machineId,
               rootPath: inspected.inspection.rootPath }).kind !== 'resolved') return snapshot;
           }
-          if (!inspected) return snapshot;
+          if (!inspected) {
+            const existing = resolveSessionProjectKeyV1(observedPlacement, serverId, snapshot.workspaceRefs);
+            if (existing.kind === 'resolved' && existing.ref) acceptedWorkspaceId = existing.ref.id;
+            return snapshot;
+          }
           const accepted = materializeWorkspaceRefForMachineRoot(snapshot.workspaceRefs, {
             serverId,
             machineId: input.machineId,
             rootPath: inspected.inspection.rootPath,
             ...(inspected.repositoryIdentity ? { repositoryIdentity: inspected.repositoryIdentity } : {}),
+            ...(inspected.parentRootPath ? { parentRootPath: inspected.parentRootPath } : {}),
             nowMs: Date.now(),
             createId: randomUUID,
           });
@@ -93,28 +96,9 @@ export function createAcceptedSessionWorkspaceRegistration(input: Readonly<{
         }, input.signal);
         if (result.status === 'applied' || result.status === 'unchanged') {
           if (!acceptedWorkspaceId) return;
-          const accepted = resolveSessionProjectKeyV1({ workspaceId: acceptedWorkspaceId }, serverId, result.snapshot.workspaceRefs);
-          if (accepted.kind !== 'resolved' || !accepted.ref) return;
-          const projectKey = accepted.projectKey.projectKey;
-          const keyChanged = session.projectKey !== projectKey;
-          if (!keyChanged && metadata.workspaceId === accepted.ref.id && metadata.projectId === projectKey) return;
-          const workspaceId = accepted.ref.id;
-          await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => updateSessionMetadataWithRetry({
-            token: credentials.token, credentials, sessionId, rawSession: session,
-            ...(keyChanged ? { projectKey } : {}),
-            updater: current => {
-              const currentAssociation = current.workspaceId != null
-                ? resolveSessionProjectKeyV1(current, serverId, result.snapshot.workspaceRefs) : null;
-              const stillAccepted = current.workspaceId != null
-                ? currentAssociation?.kind === 'resolved' && currentAssociation.ref?.id === workspaceId
-                : hasSameSessionCheckout(current, observedPlacement);
-              if (!stillAccepted) {
-                throw Object.assign(new Error('Session checkout changed before Project publication'), {
-                  code: 'session_publisher_authority_lost' as const, retryable: false as const,
-                });
-              }
-              return { ...current, workspaceId, projectId: projectKey };
-            },
+          await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => publishAcceptedSessionProject({
+            credentials, sessionId, rawSession: session, observedMetadata: observedPlacement,
+            serverId, workspaceRefs: result.snapshot.workspaceRefs, workspaceId: acceptedWorkspaceId,
             currentness: { signal: input.signal, ...(custody ? { verifyCurrent: custody.isCurrent } : {}) },
           }));
           return;

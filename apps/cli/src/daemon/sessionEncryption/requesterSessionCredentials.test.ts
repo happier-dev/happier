@@ -317,6 +317,7 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   let installationId = 'installation';
   let accountId = 'bob';
   let access = true;
+  let signedAdmissionAvailable = true;
   let accountMode: 'plain' | 'e2ee' = options.encryptionSecret ? 'e2ee' : 'plain';
   let sessionRole: 'owner' | 'view' = 'owner';
   let loseDuringVerification = false;
@@ -419,7 +420,7 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
         rpcAdmission: { context: body.context, ...purpose } } });
     expect(body.context.actorAccountId).toBe(accountId);
     if (loseDuringVerification) installationId = 'replacement';
-    return valid && access ? { v: 1, ok: true } : reply.code(403).send({ error: 'access_denied' });
+    return valid && access && signedAdmissionAvailable ? { v: 1, ok: true } : reply.code(403).send({ error: 'access_denied' });
   });
   const correspondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag: `create:v1:${'a'.repeat(43)}`,
     recipe: { execution: { machineId: options.creationMachineId ?? 'machine', directory: { kind: 'path', path: '/workspace' } },
@@ -447,6 +448,7 @@ async function home(options: Readonly<{ sessionId?: string; creationMachineId?: 
   const boundary: RequesterSessionMachineAdmissionBoundary = { machineId: 'machine', daemonToken: 'alice-daemon',
     isHomeCurrent: () => true, readInstallation: () => ({ installationId, privateKey: keyPair.secretKey }) };
   return { boundary, requests, pendingInputs, correspondence, keyPair, setAccess: (value: boolean) => { access = value; },
+    setSignedAdmissionAvailable: (value: boolean) => { signedAdmissionAvailable = value; },
     setMachineRole: (value: 'manage' | 'use') => { machineRole = value; for (const row of machineRows) row.access.role = value; },
     readReturnedRows: () => ({ machine: machineRowsReturned, grants: grantRowsReturned }),
     setSessionActionAuthorization: (value: ExternalActionExecutionAuthorizationV1) => { sessionActionAuthorization = value; },
@@ -661,6 +663,41 @@ describe('requester Session lifecycle custody', () => {
     await expect(access(custody.path)).resolves.toBeUndefined();
     host.setUnavailablePath(null);
     host.setAccess(false);
+    expect(await recover()).toBeNull();
+    await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each(['plain', 'e2ee'] as const)('retains %s requester birth across daemon restart admission refusal and resumes from the same disk custody', async mode => {
+    const encryptionSecret = mode === 'e2ee' ? new Uint8Array(32).fill(23) : undefined;
+    const requesterCredentials = encryptionSecret
+      ? { token: credentials.token, encryption: { type: 'legacy' as const, secret: encryptionSecret } }
+      : credentials;
+    const host = await home({ encryptionSecret, requesterReadsOnly: true });
+    const binding = { happyHomeDir: directory!, sessionId: 'session', attribution };
+    const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials: requesterCredentials,
+      homeServerIdentityId: 'srv_original_home' });
+    const original = await readFile(custody.path, 'utf8');
+    // A restarted daemon has no tracked requester context. Its ordinary cold
+    // discovery must keep the exact birth when Home refuses signed admission
+    // even though the authenticated requester still has Machine access.
+    const recover = () => requesterCredentialOwner.resolveRequesterSessionBootstrapFromCustody({
+      happyHomeDir: directory!, sessionId: binding.sessionId, serverId: attribution.serverId,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary,
+      legacyOwnerCredentials: { token: 'alice-daemon', encryption: null },
+    });
+    const running = await recover();
+    expect(running?.getBoundSessionId()).toBe(binding.sessionId);
+    await running?.dispose();
+    host.setSignedAdmissionAvailable(false);
+    expect(await recover()).toBeNull();
+    expect(await readFile(custody.path, 'utf8')).toBe(original);
+    host.setSignedAdmissionAvailable(true);
+    const resumed = await recover();
+    expect(resumed?.getBoundSessionId()).toBe(binding.sessionId);
+    expect(resumed?.attribution).toEqual(attribution);
+    expect(resumed?.credentials.token).toBe(requesterCredentials.token);
+    await resumed?.dispose();
+    host.setAccountId('another-person');
     expect(await recover()).toBeNull();
     await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
   });

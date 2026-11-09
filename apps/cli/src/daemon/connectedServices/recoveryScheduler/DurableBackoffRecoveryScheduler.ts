@@ -8,7 +8,7 @@ export type DurableBackoffRecoveryStore<TIntent> = Readonly<{
   read: (sessionId: string) => unknown | null;
   readAuthoritative?: (sessionId: string) => unknown | null;
   readAll?: () => ReadonlyArray<readonly [string, unknown]>;
-  write: (sessionId: string, intent: TIntent) => Promise<void> | void;
+  write: (sessionId: string, intent: TIntent, expectedCurrent?: TIntent | null) => Promise<void> | void;
   remove?: (sessionId: string) => Promise<void> | void;
   prune?: (predicate: (entry: Readonly<{ sessionId: string; value: unknown }>) => boolean) => Promise<ReadonlyArray<string>> | ReadonlyArray<string>;
   transact?: <TResult>(
@@ -228,7 +228,7 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
         await this.#remove(input.sessionId);
         this.#clearTimer(input.sessionId);
       } else {
-        await this.#write(input.sessionId, next.intent, { schedule: input.schedule });
+        await this.#write(input.sessionId, next.intent, { schedule: input.schedule, expectedCurrent: current });
       }
       return next.result;
     }
@@ -321,7 +321,7 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     const current = this.read(input.sessionId);
     if (!current || (input.matches && !input.matches(current))) return null;
     const cancelled = this.#markCancelled(current);
-    await this.#write(input.sessionId, cancelled);
+    await this.#write(input.sessionId, cancelled, { expectedCurrent: current });
     this.#clearTimer(input.sessionId);
     return cancelled;
   }
@@ -801,12 +801,12 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
   async #write(
     sessionId: string,
     intent: TIntent,
-    options: Readonly<{ schedule?: boolean }> = {},
+    options: Readonly<{ schedule?: boolean; expectedCurrent?: TIntent | null }> = {},
   ): Promise<void> {
     await this.pruneTerminalRecords();
     this.#intentVersionsBySessionId.set(sessionId, (this.#intentVersionsBySessionId.get(sessionId) ?? 0) + 1);
     this.#intentsBySessionId.set(sessionId, intent);
-    await this.#store?.write(sessionId, intent);
+    await this.#store?.write(sessionId, intent, options.expectedCurrent);
     if (options.schedule !== false) this.#schedule(sessionId, intent);
   }
 

@@ -1,7 +1,7 @@
 import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
-import { createBrowserRecordingAttachToComposer } from './attachToComposer';
+import { createBrowserRecordingAttachToComposer } from '../../recording/attachToComposer';
 import type { BrowserRecordingRoutes } from './routes';
 import { createSurfaceInputControl } from '../../surfaces/inputControl';
 import { createDeferred } from '@/testkit/async/deferred';

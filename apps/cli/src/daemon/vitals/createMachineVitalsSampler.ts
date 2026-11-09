@@ -1,6 +1,7 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { MachineVitalsHistoryV1, MachineVitalsHostFactsV1, MachineVitalsMinuteRecordV1, MachineVitalsSampleV1 } from '@happier-dev/protocol';
 import { effectiveMachineMemoryPressureV1 } from '@happier-dev/protocol/machines/vitals/effectiveMachineMemoryPressureV1';
-import type { MachineResourcesPolicyV1 } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
+import { MachineResourcesPolicyV1Schema, type MachineResourcesPolicyV1 } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import type { MachineVitalsHistoryPointV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 
 import { logger } from '@/ui/logger';
@@ -29,7 +30,8 @@ export interface MachineVitalsSamplerOptions {
     onError?: (error: unknown) => void;
     onStateChange?: (state: MachineVitalsSamplerState) => void;
     readPolicy?: () => MachineResourcesPolicyV1 | null;
-    /** Completed reads, including repeated failures; consumers reuse the sampler clock. */
+    subscribeMonitoring?: (listener: () => void) => () => void;
+    /** Accepted reads, including repeated failures; consumers reuse the sampler clock. */
     onTick?: () => void;
 }
 
@@ -58,27 +60,42 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
     });
     const clearTimeoutFn = input.clearTimeoutFn ?? ((handle) => clearTimeout(handle as NodeJS.Timeout));
     const listeners = new Set<(event: SampleEvent) => void>();
-    const ring: MachineVitalsSampleV1[] = [];
+    const defaultPolicy = input.readPolicy ? null : MachineResourcesPolicyV1Schema.parse({ v: 1 });
+    const readPolicy = input.readPolicy ?? (() => defaultPolicy);
+    const ring: Array<Readonly<{ sample: MachineVitalsSampleV1; monotonicAt: number }>> = [];
     let currentState: MachineVitalsSamplerState = { state: 'reporting' };
     let latest: MachineVitalsSampleV1 | null = null;
     let host: MachineVitalsHostFactsV1 | null = null;
     let timer: TimerHandle | null = null;
     let reading: Promise<void> | null = null;
     let lastReadStartedAt: number | null = null;
+    let lastReadSampledAt = 0;
+    let lastReadIntervalMs: number = MACHINE_VITALS_LIVE_INTERVAL_MS;
+    let viewerDepartedAt: number | null = null;
     let running = false;
     let summaries = 0;
     let lives = 0;
     let overviews = 0;
-    let nextExtrasAt: number | null = null;
-    let extrasSample: MachineVitalsSampleV1 | null = null;
+    let releaseMonitoring: (() => void) | null = null;
     let cpuCounterDelta = createCounterRateReader();
     let networkCounterDelta = createCounterRateReader();
     let boundaryAt: number | null = null;
     let lastBucketMinute: number | null = null;
     let bucket: MachineVitalsSampleV1[] = [];
 
-    const cadence = () => currentState.state === 'unavailable' && currentState.reason === 'helper_failing'
-        ? MINUTE_MS : lives > 0 || overviews > 0 ? MACHINE_VITALS_LIVE_INTERVAL_MS : summaries > 0 ? SUMMARY_MS : MINUTE_MS;
+    const samplingAllowed = () => {
+        const monitoring = readPolicy()?.monitoring;
+        return monitoring !== undefined && monitoring.mode !== 'off'
+            && (monitoring.mode === 'always' || lives + summaries + overviews > 0);
+    };
+    const selectedInterval = () => readPolicy()?.monitoring.intervalMs ?? MACHINE_VITALS_LIVE_INTERVAL_MS;
+    const helperFailing = () => currentState.state === 'unavailable' && currentState.reason === 'helper_failing';
+    // The minute history needs one read per wall-clock minute boundary, so a Machine
+    // nobody is watching live reads exactly that often; the selected interval applies
+    // only while a Live or Overview viewer holds demand, and can never skip a boundary.
+    const followsMinuteBoundaries = () => lives + overviews === 0 || selectedInterval() >= MINUTE_MS;
+    const cadence = () => helperFailing() ? Math.max(MINUTE_MS, selectedInterval())
+        : followsMinuteBoundaries() ? MINUTE_MS : selectedInterval();
 
     const changeState = (state: MachineVitalsSamplerState) => {
         if (state.state === currentState.state && (state.state === 'reporting'
@@ -87,22 +104,25 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
         input.onStateChange?.(state);
     };
 
-    function schedule(immediateExtras = false): void {
+    function schedule(): void {
         if (timer) clearTimeoutFn(timer);
         timer = null;
-        if (!running || reading) return;
-        const now = nowMs();
-        const nextMinute = (Math.floor(now / MINUTE_MS) + 1) * MINUTE_MS;
+        if (!running || reading || !samplingAllowed()) return;
+        const monotonicNow = monotonicMs();
         const interval = cadence();
-        // Read time and a watch's re-arm count toward the nominal start-to-start cadence.
-        const nextCadence = immediateExtras && interval !== MINUTE_MS ? now
-            : interval === MINUTE_MS ? nextMinute : Math.min(Math.max(now, (lastReadStartedAt ?? now) + interval), nextMinute);
-        const next = overviews > 0 && nextExtrasAt !== null && interval !== MINUTE_MS
-            ? Math.min(nextCadence, nextExtrasAt) : nextCadence;
+        let due = lastReadStartedAt === null ? monotonicNow : lastReadStartedAt + interval;
+        if (lastReadStartedAt !== null && !helperFailing() && followsMinuteBoundaries()) {
+            // Measured from the last read, so a read overrunning a boundary cannot skip the next one.
+            // The prior read's own interval lets a departing viewer's last sample settle before it goes stale.
+            const boundaryDelay = (Math.floor(lastReadSampledAt / MINUTE_MS) + 1) * MINUTE_MS - nowMs();
+            due = Math.min(lastReadStartedAt + lastReadIntervalMs, monotonicNow + Math.min(MINUTE_MS, Math.max(0, boundaryDelay)));
+        }
         timer = setTimeoutFn(() => {
             timer = null;
-            void sample(next === nextMinute ? nextMinute : undefined);
-        }, Math.max(0, next - now));
+            // Preserve arbitrarily long selected intervals across Node's signed-32 timer chunks.
+            if (monotonicMs() < due) schedule();
+            else void sample();
+        }, Math.min(2_147_483_647, Math.max(0, due - monotonicNow)));
         timer.unref?.();
     }
 
@@ -149,39 +169,36 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
         };
     }
 
-    function preserveExtras(sample: MachineVitalsSampleV1, readExtras: boolean): MachineVitalsSampleV1 {
-        if (readExtras) extrasSample = sample;
-        if (!overviews || !extrasSample || readExtras) return sample;
-        return {
-            ...sample,
-            ...(extrasSample.gpu ? { gpu: extrasSample.gpu } : {}),
-            ...(extrasSample.battery ? { battery: extrasSample.battery } : {}),
-            ...(extrasSample.thermal ? { thermal: extrasSample.thermal } : {}),
-            ...(extrasSample.sharedMemory ? { sharedMemory: extrasSample.sharedMemory } : {}),
-            ...(extrasSample.limits?.inotify ? { limits: { ...sample.limits, inotify: extrasSample.limits.inotify } } : {}),
-        };
-    }
-
-    function sample(boundary?: number): Promise<void> {
+    function sample(): Promise<void> {
         if (reading) return reading;
+        if (!samplingAllowed()) return Promise.resolve();
         const run = async () => {
             const sampledAt = nowMs();
-            lastReadStartedAt = sampledAt;
-            const observedBoundary = boundary === undefined ? undefined : Math.floor(sampledAt / MINUTE_MS) * MINUTE_MS;
-            const intervalMs = cadence();
-            const readExtras = overviews > 0 && (nextExtrasAt === null || sampledAt >= nextExtrasAt);
+            const monotonicAt = monotonicMs();
+            // A read within one viewer interval of the viewer leaving (a watch re-arm) is still that
+            // viewer's read; a later read settles at the slow cadence once they are really gone.
+            const insideViewerRearm = viewerDepartedAt !== null && monotonicAt < viewerDepartedAt + lastReadIntervalMs;
+            lastReadStartedAt = monotonicAt;
+            const sampledMinute = Math.floor(sampledAt / MINUTE_MS);
+            const observedBoundary = lastBucketMinute === null ? sampledAt % MINUTE_MS === 0 ? sampledAt : undefined
+                : sampledMinute > lastBucketMinute ? sampledMinute * MINUTE_MS : undefined;
+            const intervalMs = insideViewerRearm ? lastReadIntervalMs : cadence();
+            lastReadSampledAt = sampledAt;
+            lastReadIntervalMs = intervalMs;
             let result: MachineVitalsReaderResult;
             try {
-                const policy = input.readPolicy?.();
+                const policy = readPolicy();
                 // Whole-disk scans consume AC for worker sizing as well as scheduled
                 // admission. Maintenance remains the sole owner of due times.
                 const power = overviews > 0 || policy?.guard.keepAwake === 'on_power'
                     || policy?.storage.wholeDiskEnabled === true;
-                result = await input.readers.read({ sampledAt, monotonicMs: monotonicMs(), intervalMs, overview: overviews > 0, power, overviewExtras: readExtras });
+                result = await input.readers.read({ sampledAt, monotonicMs: monotonicAt, intervalMs, overview: overviews > 0, power, overviewExtras: overviews > 0 });
             } catch (error) {
                 onError(error);
                 result = { state: 'unavailable', reason: 'reader_failed' };
             }
+            // An already-started OS call cannot be recalled, but Off publishes/writes nothing from it.
+            if (!samplingAllowed()) return;
             if (result.state === 'unavailable') {
                 changeState(result);
                 if (observedBoundary !== undefined) {
@@ -194,15 +211,13 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
                 return;
             }
             changeState({ state: 'reporting' });
-            if (readExtras) nextExtrasAt = sampledAt + SUMMARY_MS;
-            const point = preserveExtras(result.sample, readExtras);
-            const firstReading = latest === null;
-            if (latest && sampledAt < latest.sampledAt) return;
+            const point = result.sample;
+            const firstReading = lastBucketMinute === null;
             latest = point;
-            host = result.host;
-            if (ring.length && sampledAt - ring[ring.length - 1].sampledAt < MACHINE_VITALS_LIVE_INTERVAL_MS) ring[ring.length - 1] = point;
-            else ring.push(point);
-            while (ring.length && ring[0].sampledAt <= sampledAt - HOUR_MS) ring.shift();
+            // The reader re-observes static facts on every tick; only changed host facts get a new identity.
+            if (!isDeepStrictEqual(host, result.host)) host = result.host;
+            ring.push({ sample: point, monotonicAt });
+            while (ring.length && ring[0].monotonicAt <= monotonicAt - HOUR_MS) ring.shift();
             const currentMinute = Math.floor((observedBoundary ?? sampledAt) / MINUTE_MS);
             if (lastBucketMinute !== null && currentMinute > lastBucketMinute + 1) bucket = [];
             let minute: MachineVitalsMinuteRecordV1 | undefined;
@@ -223,41 +238,60 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
         };
         reading = run().catch(onError).finally(() => {
             reading = null;
-            try { input.onTick?.(); } catch (error) { onError(error); }
-            schedule(overviews > 0 && nextExtrasAt === null);
+            try { if (samplingAllowed()) input.onTick?.(); } catch (error) { onError(error); }
+            schedule();
         });
         return reading;
     }
 
     function demand(view: 'summary' | 'live', overview = false): () => void {
-        const previousCadence = cadence();
+        const wasSampling = samplingAllowed();
         if (overview) overviews++;
         else if (view === 'live') lives++;
         else summaries++;
-        if (cadence() !== previousCadence || (overview && nextExtrasAt === null)) schedule(overview && nextExtrasAt === null);
+        if (lives + overviews > 0) viewerDepartedAt = null;
+        if (samplingAllowed() !== wasSampling) monitoringChanged();
+        else schedule();
         let released = false;
         return () => {
             if (released) return;
             released = true;
-            const previousCadence = cadence();
+            const wasSampling = samplingAllowed();
+            const hadLiveViewer = lives + overviews > 0;
             if (overview) overviews--;
             else if (view === 'live') lives--;
             else summaries--;
-            if (cadence() !== previousCadence) schedule();
+            if (hadLiveViewer && lives + overviews === 0) viewerDepartedAt = monotonicMs();
+            if (samplingAllowed() !== wasSampling) monitoringChanged();
+            else schedule();
         };
+    }
+
+    function monitoringChanged(): void {
+        if (!samplingAllowed()) {
+            lastReadStartedAt = null;
+            boundaryAt = null;
+            lastBucketMinute = null;
+            bucket = [];
+            cpuCounterDelta = createCounterRateReader();
+            networkCounterDelta = createCounterRateReader();
+        }
+        schedule();
     }
 
     return {
         start: (): Promise<void> => {
             if (running) return reading ?? Promise.resolve();
             running = true;
-            const now = nowMs();
-            return sample(now % MINUTE_MS === 0 ? now : undefined);
+            releaseMonitoring = input.subscribeMonitoring?.(monitoringChanged) ?? null;
+            return sample();
         },
         stop: async (): Promise<void> => {
             running = false;
             if (timer) clearTimeoutFn(timer);
             timer = null;
+            releaseMonitoring?.();
+            releaseMonitoring = null;
             await reading;
         },
         latest: (): MachineVitalsSampleV1 | null => latest,
@@ -268,17 +302,21 @@ export function createMachineVitalsSampler(input: MachineVitalsSamplerOptions): 
         demandOverview: () => demand('live', true),
         minutes: (sinceMs: number) => input.historyStore.minutes(sinceMs),
         samplesSince: (cursor: number, view: 'summary' | 'overview' = 'overview'): readonly MachineVitalsSampleV1[] => {
-            if (view === 'overview') return ring.filter((point) => point.sampledAt > cursor);
-            let previous = cursor;
-            return ring.filter((point) => {
-                if (point.sampledAt <= cursor || point.sampledAt - previous < SUMMARY_MS) return false;
-                previous = point.sampledAt;
+            // A retained cursor identifies a position in observation order even after a wall-clock step.
+            let after = ring.length;
+            while (after > 0 && ring[after - 1].sample.sampledAt !== cursor) after--;
+            const points = after > 0 ? ring.slice(after) : ring.filter(point => point.sample.sampledAt > cursor);
+            if (view === 'overview') return points.map(point => point.sample);
+            let previous = after > 0 ? ring[after - 1].monotonicAt : null;
+            return points.filter((point) => {
+                if (previous !== null && point.monotonicAt - previous < SUMMARY_MS) return false;
+                previous = point.monotonicAt;
                 return true;
-            });
+            }).map(point => point.sample);
         },
         history: (range: MachineVitalsHistoryV1['range']) => {
             const now = nowMs();
-            const livePoints: MachineVitalsHistoryPointV1[] = ring.map((point) => ({
+            const livePoints: MachineVitalsHistoryPointV1[] = ring.map(({ sample: point }) => ({
                 t: point.sampledAt, cpu: point.cpu.reported ? point.cpu.busyPct : null,
                 cpuMax: point.cpu.reported ? point.cpu.busyPct : null,
                 mem: point.memory.reported ? point.memory.usedBytes : null,

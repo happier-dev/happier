@@ -95,7 +95,7 @@ describe('listHappierProcessRoots', () => {
             probeProcessGroup: () => 'absent', ptyProvider: { spawn: () => ({ pid: 20, write() {}, resize() {}, kill() {},
                 onData: () => ({ dispose() {} }), onExit: () => ({ dispose() {} }) }) },
             config: { bufferMaxBytes: 1000000, bufferMaxEvents: 1000,
-                bufferRetentionMs: 600000, urlParseBufferLimit: 32768, maxWriteChunkBytes: 16384, defaultCols: 80, defaultRows: 24 } });
+                urlParseBufferLimit: 32768, maxWriteChunkBytes: 16384, defaultCols: 80, defaultRows: 24 } });
         try {
             const opened = await manager.ensure({ terminalKey: 'guest-shell', cwd: '/project', custody: {
                 serverId: 'server', machineId: 'machine', installationId: 'install', requesterAccountId: 'guest',
@@ -115,7 +115,7 @@ describe('listHappierProcessRoots', () => {
     it('keeps original Start on the exact inferred helper generation and retained ended root, never a recycled PID', async () => {
         let running = false;
         const startAgain = async (execution: ProcessActionExecution): Promise<MachineProcessesStartAgainResultV1> => {
-            if (!await execution.verifyCurrent?.()) return { status: 'refused' };
+            if (execution.signal?.aborted) return { status: 'refused' };
             running = true;
             return { status: 'started' };
         };
@@ -126,10 +126,11 @@ describe('listHappierProcessRoots', () => {
         if (!projected) throw new Error('Missing helper root');
         const ended = listHappierProcessRoots({ ...input, snapshot: snapshot([row(10, 1)]), helperProcesses: [],
             endedRoots: [{ ...projected, live: false }] }).find(root => root.pid === 20);
-        expect(await ended?.startAgain?.({ verifyCurrent: async () => true })).toEqual({ status: 'started' });
+        expect(await ended?.startAgain?.({})).toEqual({ status: 'started' });
         expect(running).toBe(true);
         running = false;
-        expect(await projected.startAgain?.({ verifyCurrent: async () => false })).toEqual({ status: 'refused' });
+        const controller = new AbortController(); controller.abort();
+        expect(await projected.startAgain?.({ signal: controller.signal })).toEqual({ status: 'refused' });
         expect(running).toBe(false);
         const recycled = listHappierProcessRoots({ ...input, helperProcesses: [{ ...input.helperProcesses[0]!, start: { startTimeMs: 100 } }] })
             .find(root => root.pid === 20);

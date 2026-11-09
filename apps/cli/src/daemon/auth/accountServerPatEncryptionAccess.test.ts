@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const post = vi.hoisted(() => vi.fn());
-vi.mock('axios', () => ({ default: { post } }));
+vi.mock('axios', () => ({ default: { post, defaults: {} } }));
 
 import { createAccountServerPatEncryptionAccessReader } from './accountServerPatEncryptionAccess';
 
@@ -16,10 +16,14 @@ describe('direct daemon PAT-self wrapping transport', () => {
 
   it('reads from the bound Home with only the caller bearer and preserves the opaque record', async () => {
     post.mockResolvedValue({ status: 200, data: value });
-    const read = createAccountServerPatEncryptionAccessReader({ accountId: 'account-1', serverBaseUrl: 'https://home.example/base/' });
+    let serverBaseUrl = 'https://home.example/base/';
+    const read = createAccountServerPatEncryptionAccessReader({ accountId: 'account-1', get serverBaseUrl() { return serverBaseUrl; } });
     await expect(read(token)).resolves.toEqual({ statusCode: 200, body: value });
     expect(post).toHaveBeenCalledWith('https://home.example/base/v1/auth/api-tokens/encryption-access', {},
       expect.objectContaining({ headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }));
+    serverBaseUrl = 'http://127.0.0.1:43361';
+    await expect(read(token)).resolves.toEqual({ statusCode: 200, body: value });
+    expect(post.mock.calls.at(-1)?.[0]).toBe(`${serverBaseUrl}/v1/auth/api-tokens/encryption-access`);
   });
 
   it('does not cache wrapping records and rejects another token or Account', async () => {

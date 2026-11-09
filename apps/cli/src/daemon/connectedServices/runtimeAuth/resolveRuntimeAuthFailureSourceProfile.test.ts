@@ -18,6 +18,42 @@ const classification = {
 } as const;
 
 describe('resolveRuntimeAuthFailureSourceProfile', () => {
+  it('maps only a unique provider-reported organization without borrowing a current provider account', async () => {
+    await expect(resolveRuntimeAuthFailureSourceProfile({
+      classification: { ...classification, sourceProviderAccountId: null, sourceProviderOrganizationId: null,
+        providerReportedOrganizationId: 'org-live' },
+      getGroupMembers: async () => [{ profileId: 'live-profile' }],
+      resolveProviderAccountIdentity: async () => ({ providerAccountId: 'another-user', providerOrganizationId: 'org-live' }),
+    })).resolves.toMatchObject({ profileId: 'live-profile', groupGeneration: null, expectedCredentialRevision: null });
+  });
+
+  it.each([
+    { reported: 'org-other', captured: 'org-live', organizations: ['org-live', 'org-other'] },
+    { reported: 'org-live', captured: null, organizations: ['org-live', 'org-live'] },
+    { reported: null, captured: 'org-live', organizations: ['org-live'] },
+  ])('leaves contradictory, ambiguous or unknown provider evidence unattributed: $reported/$captured', async ({ reported, captured, organizations }) => {
+    await expect(resolveRuntimeAuthFailureSourceProfile({
+      classification: { ...classification, sourceProviderOrganizationId: captured, providerReportedOrganizationId: reported },
+      getGroupMembers: async () => organizations.map((_, i) => ({ profileId: `member-${i}` })),
+      resolveProviderAccountIdentity: async (profileId) => ({ providerAccountId: 'acct-live',
+        providerOrganizationId: organizations[Number(profileId.split('-')[1])] }),
+    })).resolves.toMatchObject({ profileId: null, groupGeneration: null, expectedCredentialRevision: null });
+  });
+
+  it.each(['missing', 'unreadable'])('requires every sibling identity to prove organization uniqueness: %s', async (state) => {
+    await expect(resolveRuntimeAuthFailureSourceProfile({
+      classification: { ...classification, sourceProviderAccountId: null, providerReportedOrganizationId: 'org-live' },
+      getGroupMembers: async () => [{ profileId: 'launch-profile' }, { profileId: 'unknown' }],
+      resolveProviderAccountIdentity: async (profileId) => {
+        if (profileId === 'unknown') {
+          if (state === 'unreadable') throw new Error('identity unavailable');
+          return null;
+        }
+        return { providerAccountId: 'acct-live', providerOrganizationId: 'org-live' };
+      },
+    })).resolves.toMatchObject({ profileId: null, groupGeneration: null, expectedCredentialRevision: null });
+  });
+
   it('keeps account-only service attribution independent of incidental organization metadata', async () => {
     await expect(resolveRuntimeAuthFailureSourceProfile({
       classification: { ...classification, serviceId: 'happier.agent.codex/openai-codex' },

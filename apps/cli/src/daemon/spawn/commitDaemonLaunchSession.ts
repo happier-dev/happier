@@ -51,6 +51,7 @@ export function daemonLaunchRequiresCommittedSession(options: SpawnSessionOption
     return true;
   }
   if (options.workspaceWrites !== undefined) return true;
+  if (options.approvalProfileId !== undefined) return true;
   if (options.capabilitySelection !== undefined) return true;
   if (options.requesterSessionBootstrap) return true;
   if ((options.promptStack?.length ?? 0) > 0) return true;
@@ -144,8 +145,8 @@ export async function commitDaemonLaunchSession(input: Readonly<{
       result: {
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-        // The API's null result means offline mode, including a pre-create
-        // currentness failure. It is not a negative Session-create receipt.
+        // The API's null result means offline mode at Session creation.
+        // Pre-create currentness failures carry their typed detail above.
         errorMessage: 'Unable to start the Agent because the Happier server is unreachable (offline).',
       },
     };
@@ -226,6 +227,7 @@ export function withoutFreshSessionCreationFields(options: SpawnSessionOptions):
     authoringOrigin: _authoringOrigin,
     identity: _initialIdentity,
     memoryEnabled: _initialMemoryEnabled,
+    approvalProfileId: _initialApprovalProfileId,
     promptStack: _initialPromptStack,
     manager: _manager,
     initialSessionRolesV1: _initialSessionRolesV1,
@@ -238,6 +240,7 @@ export function withoutFreshSessionCreationFields(options: SpawnSessionOptions):
     primaryTeamId: _primaryTeamId,
     teamCredentialBindings: _teamCredentialBindings,
     creationAuthorization: _creationAuthorization,
+    spawnActionContext: _spawnActionContext,
     ...attachOptions
   } = options;
   return attachOptions;

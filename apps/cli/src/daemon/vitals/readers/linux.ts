@@ -8,7 +8,6 @@ import type { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import { readLinuxBatteryFacts } from '@happier-dev/cli-common/process';
 
 import { createCounterRateReader } from './counterRates';
-import { readLinuxInotifyWatches } from './linuxInotify';
 import { NVIDIA_VITALS_ARGS, parseNvidiaVitalsGpu } from './extras/gpu';
 import type { MachineVitalsReader, MachineVitalsReaderInput } from './types';
 
@@ -226,7 +225,7 @@ export function createLinuxMachineVitalsReader(options: LinuxMachineVitalsReader
             counters: { interfaceIds: counted.map((entry) => entry.id), rxBytes: counted.reduce((sum, entry) => sum + entry.rx, 0), txBytes: counted.reduce((sum, entry) => sum + entry.tx, 0) } };
     }
 
-    async function limits(group: Cgroup | undefined, overview: boolean): Promise<MachineVitalsSampleV1['limits']> {
+    async function limits(group: Cgroup | undefined): Promise<MachineVitalsSampleV1['limits']> {
         const result: NonNullable<MachineVitalsSampleV1['limits']> = {};
         const [files, ptyUsed, ptyMax, ownLimits, ownFds] = await Promise.all([text('/proc/sys/fs/file-nr'), text('/proc/sys/kernel/pty/nr'), text('/proc/sys/kernel/pty/max'), text('/proc/self/limits'), list('/proc/self/fd')]);
         const fileValues = files?.trim().split(/\s+/u).map(Number);
@@ -235,13 +234,6 @@ export function createLinuxMachineVitalsReader(options: LinuxMachineVitalsReader
         const soft = /^Max open files\s+(\d+)/mu.exec(ownLimits ?? '');
         if (soft) result.daemonFiles = { used: ownFds.length, max: Number(soft[1]) };
         if (group?.pids) result.processes = group.pids;
-        if (overview) {
-            const max = await text('/proc/sys/fs/inotify/max_user_watches');
-            if (max !== null) {
-                const inotify = await readLinuxInotifyWatches(options.root, Number(max));
-                if (inotify) result.inotify = inotify;
-            }
-        }
         return Object.keys(result).length ? result : undefined;
     }
 
@@ -378,7 +370,7 @@ export function createLinuxMachineVitalsReader(options: LinuxMachineVitalsReader
                 pressure: { level, source: scopedPsi ? 'psi' : 'events' }, ...(isContainer ? { limitSource: 'cgroup' as const } : {}),
                 ...(mem.SwapTotal !== undefined ? { swap: { kind: 'swap' as const, totalBytes: group?.swap?.totalBytes ?? mem.SwapTotal, usedBytes: group?.swap?.usedBytes ?? mem.SwapTotal - (mem.SwapFree ?? mem.SwapTotal), swapping } } : {}) };
             if (!isContainer) {
-                // Composition belongs to this meminfo observation, not the slower extras cache.
+                // Composition belongs to this meminfo observation.
                 // MemAvailable already credits reclaimable cache. Preserve the
                 // resident app/kernel footprint before attributing its remainder.
                 const kernel = Math.min(usedBytes, Math.max(0, (mem.Slab ?? 0) - (mem.SReclaimable ?? 0) + (mem.KernelStack ?? 0) + (mem.PageTables ?? 0)));
@@ -395,7 +387,7 @@ export function createLinuxMachineVitalsReader(options: LinuxMachineVitalsReader
                 topologyCoreCount = logicalCores;
             }
             if (quota === undefined && topology.clusters) cpu.clusters = topology.clusters;
-            const [disk, net, limitFacts, extraFacts, powerFacts] = await Promise.all([volumes(mounts), network(netRaw, input), limits(group, input.overviewExtras), input.overviewExtras ? extras(containerEnvironment) : Promise.resolve({}),
+            const [disk, net, limitFacts, extraFacts, powerFacts] = await Promise.all([volumes(mounts), network(netRaw, input), limits(group), input.overviewExtras ? extras(containerEnvironment) : Promise.resolve({}),
                 readLinuxBatteryFacts({ readText: path => readFile(at(path), 'utf8'), listPowerSupplies: () => readdir(at('/sys/class/power_supply')) }, { powerOnly: true })]);
             const bootedAt = Number(/^btime\s+(\d+)/mu.exec(cpuRaw ?? '')?.[1] ?? 0) * 1000;
             const host: MachineVitalsHostFactsV1 = { logicalCores, effectiveCores, memoryTotalBytes: totalBytes, bootedAt, ...Object.fromEntries(Object.entries(topology).filter(([key]) => key !== 'clusters')) };

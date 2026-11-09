@@ -68,6 +68,33 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     },
   };
 
+  it('awaits actual-revision availability settlement before returning a continuation-ready result', async () => {
+    const order: string[] = [];
+    let releaseClear!: () => void;
+    let markClearStarted!: () => void;
+    const clearStarted = new Promise<void>(resolve => { markClearStarted = resolve; });
+    const clearReleased = new Promise<void>(resolve => { releaseClear = resolve; });
+    const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
+      ...perSessionGenerationApplicationDeps,
+      applyCommittedGeneration: async () => ({ reconciliationDisposition: 'converged', errorCode: null, providerAdoptedTarget }),
+      clearAdoptedGeneration: async ({ providerAdoptedTarget: adopted }) => {
+        markClearStarted();
+        await clearReleased;
+        order.push(`available:${adopted.credentialRevision}`);
+      },
+    });
+    const result = consumer.consume({ committedGeneration: { ...generation,
+      decisionCommittedTarget: { ...generation.decisionCommittedTarget, credentialRevision: null } },
+      switchReason: 'automatic_runtime_failure', executionAuthority: 'runtime_recovery',
+      sessions: [{ sessionId: 'recipient', activity: 'live' }],
+    }).then(consumption => { order.push('continuation'); return consumption; });
+    await clearStarted;
+    expect(order).toEqual([]);
+    releaseClear();
+    await expect(result).resolves.toMatchObject({ acknowledgeable: true, outcome: 'adopted_current' });
+    expect(order).toEqual(['available:csr_2123456789ABCDEFGHJKMNPQRS', 'continuation']);
+  });
+
   it.each([
     ['automatic_runtime_failure', 'same_provider_account_exhausted'],
     ['pre_turn_group_policy', 'soft_threshold'],
@@ -104,8 +131,7 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     }));
   });
 
-  it('invokes the decision owner once for one source plus four siblings', async () => {
-    const decideCommittedGeneration = vi.fn(async () => generation);
+  it('consumes one committed selection for one source plus four siblings', async () => {
     const applyCommittedGeneration = vi.fn(async (_input: ApplyInput) => ({
       reconciliationDisposition: 'converged' as const,
       errorCode: null,
@@ -117,9 +143,9 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       clearAdoptedGeneration: vi.fn(async () => {}),
     });
 
-    const result = await consumer.decideAndConsume({
+    const result = await consumer.consume({
       executionAuthority: 'runtime_recovery',
-      decideCommittedGeneration,
+      committedGeneration: generation,
       switchReason: 'automatic_runtime_failure',
       sessions: Array.from({ length: 5 }, (_, index) => ({
         sessionId: index === 0 ? 'source' : `sibling-${index}`,
@@ -127,7 +153,6 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       })),
     });
 
-    expect(decideCommittedGeneration).toHaveBeenCalledOnce();
     expect(applyCommittedGeneration).toHaveBeenCalledTimes(5);
     expect(new Set(applyCommittedGeneration.mock.calls.map(([input]) => (
       `${input.committedGeneration.decisionId}:${input.committedGeneration.decisionCommittedTarget.generation}`
@@ -190,7 +215,7 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     });
   });
 
-  it('applies one shared provider surface for all-offline members without restart work', async () => {
+  it('does not mutate a shared provider surface for an entirely offline group', async () => {
     const applyCommittedGeneration = vi.fn();
     const applySharedGenerationApplication = vi.fn(async () => ({
       reconciliationDisposition: 'converged' as const,
@@ -218,8 +243,8 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       sessions: ['a', 'b', 'c'].map((sessionId) => ({ sessionId, activity: 'offline' as const })),
     });
     expect(applyCommittedGeneration).not.toHaveBeenCalled();
-    expect(applySharedGenerationApplication).toHaveBeenCalledOnce();
-    expect(result).toMatchObject({ appliedSessionCount: 3, restartRequestedSessionCount: 0, skippedIdleSessionCount: 0 });
+    expect(applySharedGenerationApplication).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ acknowledgeable: true, appliedSessionCount: 0, restartRequestedSessionCount: 0, skippedIdleSessionCount: 3 });
   });
 
   it('settles request-time-auth recipients from installed projection without provider apply or restart work', async () => {
@@ -255,9 +280,9 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       ok: true,
       acknowledgeable: true,
       outcome: 'adopted_current',
-      appliedSessionCount: 3,
+      appliedSessionCount: 1,
       restartRequestedSessionCount: 0,
-      skippedIdleSessionCount: 0,
+      skippedIdleSessionCount: 2,
       resultsBySessionId: {
         live: {
           disposition: 'applied_hot',
@@ -266,14 +291,14 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
           pendingRecorded: false,
         },
         idle: {
-          disposition: 'applied_hot',
-          reconciliationDisposition: 'converged',
+          disposition: 'inactive',
+          reconciliationDisposition: 'deferred_restart',
           errorCode: null,
           pendingRecorded: false,
         },
         offline: {
-          disposition: 'applied_hot',
-          reconciliationDisposition: 'converged',
+          disposition: 'inactive',
+          reconciliationDisposition: 'deferred_restart',
           errorCode: null,
           pendingRecorded: false,
         },
@@ -301,7 +326,7 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     expect(applyCommittedGeneration).not.toHaveBeenCalled();
   });
 
-  it('reports idle/offline exact generation locally and never exposes a selection callback', async () => {
+  it('acknowledges installed truth without fabricating pending writes for idle or offline recipients', async () => {
     const applyCommittedGeneration = vi.fn(async (_input: ApplyInput) => ({
       reconciliationDisposition: 'converged' as const,
       errorCode: null,
@@ -330,12 +355,12 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       sessionId: 'live',
       committedGeneration: { decisionId: 'decision-2', decisionCommittedTarget: { generation: 2 } },
     });
-    expect(result.acknowledgeable).toBe(false);
+    expect(result.acknowledgeable).toBe(true);
     expect(result.skippedIdleSessionCount).toBe(2);
     expect(result.resultsBySessionId).toMatchObject({
       live: { disposition: 'applied_hot' },
-      idle: { disposition: 'deferred_persisted' },
-      offline: { disposition: 'deferred_persisted' },
+      idle: { disposition: 'inactive', pendingRecorded: false },
+      offline: { disposition: 'inactive', pendingRecorded: false },
     });
   });
 
@@ -368,7 +393,7 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
     expect(result.acknowledgeable).toBe(true);
   });
 
-  it('propagates an authoritative C fact and redistributes it to every live recipient', async () => {
+  it('reports supersession without applying another selection to healthy recipients', async () => {
     const generationC = buildConnectedServiceAuthGroupCommittedGenerationFact({
       decisionId: 'decision-3',
       provenance: 'reconciliation',
@@ -421,15 +446,13 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       ],
     });
 
-    expect(applied).toEqual(expect.arrayContaining([
+    expect(applied).toEqual([
       'source:2',
       'sibling:2',
-      'source:3',
-      'sibling:3',
-    ]));
-    expect(result.acknowledgeable).toBe(true);
+    ]);
+    expect(result.acknowledgeable).toBe(false);
     expect(result.resultsBySessionId.source).toMatchObject({
-      reconciliationDisposition: 'converged',
+      reconciliationDisposition: 'superseded_after_apply',
     });
   });
 
@@ -489,7 +512,7 @@ describe('ConnectedServiceAuthGroupGenerationConsumer', () => {
       restartRequestedSessionCount: 0,
       skippedIdleSessionCount: 1,
       resultsBySessionId: {
-        'reattached-live': { disposition: 'deferred_persisted' },
+        'reattached-live': { disposition: 'deferred_restart' },
       },
     });
   });

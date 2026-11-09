@@ -2,23 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   classifyAutomationWorkerError,
-  nextAutomationBackoffMs,
   nextAutomationRetryDelayMs,
 } from './automationBackoffPolicy';
 
-describe('nextAutomationBackoffMs', () => {
-  it('grows backoff with a capped exponential curve', () => {
-    expect(nextAutomationBackoffMs(0)).toBe(500);
-    expect(nextAutomationBackoffMs(1)).toBe(1_000);
-    expect(nextAutomationBackoffMs(2)).toBe(2_000);
-    expect(nextAutomationBackoffMs(10)).toBe(60_000);
-  });
-
-  it('normalizes invalid failure counts', () => {
-    expect(nextAutomationBackoffMs(-10)).toBe(500);
-    expect(nextAutomationBackoffMs(Number.NaN)).toBe(500);
-  });
-
+describe('Automation worker recovery disposition', () => {
   it('classifies server 5xx and timeout errors as transient', () => {
     expect(
       classifyAutomationWorkerError({
@@ -50,51 +37,44 @@ describe('nextAutomationBackoffMs', () => {
   it('classifies a generation conflict through the shared owner instead of treating every 4xx as permanent', () => {
     expect(classifyAutomationWorkerError({ response: { status: 409 } })).toBe('transient');
     expect(nextAutomationRetryDelayMs({
-      failureCount: 3,
       error: { response: { status: 409 } },
-    })).toBe(4_000);
+    })).toBeNull();
   });
 
-  it('honours an authoritative server Retry-After over its own backoff curve', () => {
+  it('uses the authoritative server Retry-After', () => {
     expect(nextAutomationRetryDelayMs({
-      failureCount: 0,
       error: { response: { status: 429, headers: { 'retry-after': '30' } } },
     })).toBe(30_000);
   });
 
-  it('honours a server Retry-After longer than the permanent failure cadence', () => {
+  it('preserves a long server Retry-After', () => {
     expect(nextAutomationRetryDelayMs({
-      failureCount: 0,
       error: { response: { status: 503, headers: { 'retry-after': '86400' } } },
     })).toBe(86_400_000);
   });
 
-  it('keeps the normal backoff floor when the server requests a shorter wait', () => {
+  it('does not impose a competing floor on a short server wait', () => {
     expect(nextAutomationRetryDelayMs({
-      failureCount: 3,
       error: { response: { status: 429, headers: { 'retry-after': '1' } } },
-    })).toBe(4_000);
+    })).toBe(1_000);
   });
 
-  it('keeps unclassifiable failures on the liveness backoff curve', () => {
+  it('retains unknown failures for the next real recovery edge', () => {
     expect(classifyAutomationWorkerError(new Error('something odd happened'))).toBe('transient');
     expect(nextAutomationRetryDelayMs({
-      failureCount: 2,
       error: new Error('something odd happened'),
-    })).toBe(2_000);
+    })).toBeNull();
   });
 
-  it('uses fixed delay for permanent errors and exponential delay for transient errors', () => {
+  it('does not invent a retry deadline for permanent or transient errors', () => {
     const permanentDelay = nextAutomationRetryDelayMs({
-      failureCount: 3,
       error: { response: { status: 401 } },
     });
-    expect(permanentDelay).toBe(300_000);
+    expect(permanentDelay).toBeNull();
 
     const transientDelay = nextAutomationRetryDelayMs({
-      failureCount: 3,
       error: { response: { status: 503 } },
     });
-    expect(transientDelay).toBe(4_000);
+    expect(transientDelay).toBeNull();
   });
 });

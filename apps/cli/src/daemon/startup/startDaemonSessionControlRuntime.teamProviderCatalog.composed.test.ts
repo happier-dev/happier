@@ -7,7 +7,7 @@ import { MACHINE_CONTROL_TIMEOUT_MS } from '@happier-dev/iroh-native';
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { createProviderBrokerRouteGrantSigningInputV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
-import { afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
+import { afterAll, afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { DEFAULT_PROVIDER_SETTINGS_V1, splitProviderSettingsV1 } from '@happier-dev/protocol';
 import { ProviderModelBindingSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
 import type { TeamCredentialProviderModelCatalogEntryV1 } from '@happier-dev/protocol/teams';
@@ -15,6 +15,8 @@ import type { startDaemonControlServer } from '@/daemon/controlServer';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
 import { openSessionTeamCredentialProviderBinding } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import { resolveTeamCredentialModelCompatibility } from '@/providers/broker/teamCredentialModelCompatibility';
+import { projectAgentProviderBrokerApplications } from '@/providers/broker/applicationProjection';
+import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import { PROVIDER_BROKER_APPLICATION_ERROR_CODE_HEADER, PROVIDER_BROKER_ENDPOINT_PATH_HEADER, PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH } from '@/providers/broker/providerBrokerPrivateProtocol';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
@@ -35,7 +37,7 @@ import { createDaemonMachineIrohRuntime, type DaemonMachineIrohRuntime } from '@
 import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
 import { startPeerMediationLoopbackServer } from '@/daemon/peer/mediation/loopback/server';
 import { openDaemonSessionTeamCredentialProviderBinding } from '@/daemon/providers/sessionTeamCredentialProviderBindingComposition';
-import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceReadInputV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { ProviderBrokerOpenRequestV1Schema, type ProviderBrokerOpenRequestV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { TEAM_CREDENTIAL_ACTION_PATHS_V1 } from '@happier-dev/protocol/teams/credentials/actionsV1';
@@ -52,6 +54,13 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { ensureSkillSessionDirHttp } from '@/daemon/controlClient';
 import { computePromptBundleDigestV1 } from '@happier-dev/protocol/prompts/library/promptLibraryDigests';
 import { createSessionBrokerApplicationEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
+import { spawnPublicInstalledProjectAgentSession } from '@/daemon/testkit/publicInstalledProjectAgentSpawn.testkit';
+import { resolveRequesterSessionExecutionIdentityForHost } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import { prepareRunnerDaemonPluginServices } from '@/agent/runtime/session/process/runnerDaemonPluginServices';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { decodeRunnerDaemonPluginServiceWireValueV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
+import { authorizeResolvedAgentNativeExecLaunchForHost, issueAgentNativeLaunchQualifierForHost, spawnAuthorizedHostExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 await vi.hoisted(async () => {
   const path = new URL('../../../../ui/sources/dev/vitestRnShim.ts', import.meta.url).href;
@@ -102,6 +111,7 @@ vi.mock('@/daemon/controlServer', async importOriginal => {
   } };
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); boundary.control = null; });
+afterAll(() => pluginReloadController.shutdown());
 
 it.each(['direct', 'wrapped'] as const)('prepares grantee host input through readiness-issued authority and diagnoses a mis-bound Home (%s)', async mode => {
   const debug = vi.spyOn(logger, 'debug');
@@ -332,13 +342,30 @@ it.each(['before readiness', 'after readiness', 'replacement pid', 'replacement 
       expect(runtime).not.toHaveProperty('hostProcessStartTimeMs');
       expect(runtime).not.toHaveProperty('lifecycleState');
       expect(runtime).not.toHaveProperty('lifecycleStateSince');
+      expect(runtime.terminal).toMatchObject({ mode: 'plain', controlServiceabilityV1: {
+        v: 1, retired: true, state: 'unknown', reason: 'attachment_retired', observedAt: expect.any(Number),
+      } });
       await h.daemon.onChildExited(pid, { reason: 'process-exited', code: 1, signal: null });
       expect(patch).toHaveBeenCalledOnce();
+      // Feed the real exit producer's persisted envelope to the real Stop owner.
+      // Restoring a PID-less fixture by hand would miss this producer/reader seam.
+      const retiredRaw = createSessionRecordFixture({ id: h.sessionId, encryptionMode: 'plain',
+        metadataLayoutVersion: 1, metadataVersion: 2, metadata: JSON.stringify({ v: 1 }),
+        ownerMetadata: request.target.ownerMetadata, share: null });
+      vi.mocked(axios.get).mockImplementation(async (url, options) => String(url).endsWith(`/v2/sessions/${h.sessionId}`)
+        ? { status: 200, data: { session: retiredRaw } } : get(url, options));
+      await expect(h.daemon.stopSession(h.sessionId)).resolves.toEqual({ status: 'stopped' });
     }
   });
 
-it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 'missing declaration', 'non-204', 'typed non-204', 'unknown non-204', 'socket closed', 'refresh refused', 'slow catalog', 'slow refresh'] as const)(
-  'opens the real Codex Team binder with the tracked recipient catalog, never custodian consent (%s)', async metadata => {
+it.each(['fresh owner native', 'fresh member native', 'fresh member native manage', 'ready', 'requester Home', 'reattached requester Home', 'admission refused', 'binding not current', 'missing declaration', 'non-204', 'typed non-204', 'unknown non-204', 'socket closed', 'refresh refused', 'slow catalog', 'slow refresh'] as const)(
+  'opens the real Codex Team binder with the tracked recipient catalog, never custodian consent (%s)', async scenario => {
+  const freshNative = scenario === 'fresh owner native' || scenario === 'fresh member native' || scenario === 'fresh member native manage';
+  const freshActor = scenario === 'fresh member native' || scenario === 'fresh member native manage' ? 'member' : 'owner';
+  const freshRole = scenario === 'fresh member native' ? 'use' as const : 'manage' as const;
+  const freshHome = 'srv_fresh_team_codex';
+  const reattached = scenario === 'reattached requester Home';
+  const metadata = reattached ? 'requester Home' : scenario;
   const httpRefusal = metadata === 'non-204' || metadata === 'typed non-204' || metadata === 'unknown non-204';
   let h: Awaited<ReturnType<typeof createInstalledProjectAgentDaemonFixture>>;
   let model: TeamCredentialProviderModelCatalogEntryV1;
@@ -346,6 +373,8 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
   let catalogReads = 0;
   let consentCatalogReads = 0;
   const consentCatalogReadStacks: string[] = [];
+  let bindingSetupStage = 'installed fixture';
+  const catalogApplications: unknown[] = [];
   let refreshStream: (() => Promise<unknown>) | undefined;
   let nativeTunnelOpen: ReturnType<typeof createProviderBrokerMachineCarrierTunnelOpen> | undefined;
   let workerEndpoint: import('@happier-dev/protocol').IrohEndpointDescriptorV1 | undefined;
@@ -353,6 +382,7 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
   let workerRuntime: DaemonMachineIrohRuntime | undefined;
   let dropRequesterContext = false;
   let laterRefusal = false;
+  let disconnectUpstream = false;
   let holdNextRefresh: (() => Promise<void>) | undefined;
   let daemonAccount: 'custodian' | 'requester' = 'custodian';
   const signingKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(91));
@@ -375,14 +405,24 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
   const cleanup: Array<() => Promise<void>> = [];
   onTestFinished(async () => { for (const close of cleanup.reverse()) await close(); });
   const warnings = vi.spyOn(logger, 'warnLocalFile');
+  const bindingPhaseLog = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+  const recoveryLog = reattached ? vi.spyOn(logger, 'debug') : null;
   if (metadata === 'requester Home') onTestFailed(() => console.error('Later Team broker admission', {
-    brokerOpens, catalogReads, laterRefusal,
+    brokerOpens, catalogReads, consentCatalogReads, catalogApplications, laterRefusal, bindingSetupStage,
   }));
   if (metadata === 'slow catalog') onTestFailed(() => console.error('Team native discovery', {
     catalogReads, brokerOpens, warnings: warnings.mock.calls.filter(([label]) =>
       label === '[ProviderBroker] Endpoint discovery refused' || label === '[ProviderBroker] Machine stream admission refused'),
   }));
-  h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, 'codex', false, undefined, undefined, {
+  h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, 'codex', freshNative, undefined,
+    freshNative ? pluginReloadController : undefined, {
+    ...(freshNative ? { ordinaryAccountSession: true, externalActionAccountId: freshActor === 'owner' ? 'requester' : 'company',
+      homeServerIdentityId: freshHome,
+      machineAccess: { custodianAccountId: freshActor === 'owner' ? 'requester' : 'company', role: freshRole },
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: freshHome, machineId: 'machine' }),
+      agentIsolation: { read: () => ({ enabled: false, status: { kind: 'disabled' as const }, workspaceRoots: [] }) },
+    } : {}),
+    ...(reattached ? { reattachedFromDiskMarker: true as const } : {}),
     openTeamCredentialProviderBinding: async input => {
       if (metadata === 'requester Home' || metadata === 'admission refused') {
         return await openDaemonSessionTeamCredentialProviderBinding({ ...input,
@@ -438,21 +478,49 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
     },
   });
   const identity = h.plugin.registry.contributes.agentDefinitionsById.get('codex')?.identity;
+  if (recoveryLog) {
+    // Connected Account recovery is separate from Team broker authority. This
+    // normal Team Session has no Connected Account materialization to recover.
+    expect(h.tracked.spawnOptions?.connectedServiceMaterializationIdentityV1).toBeUndefined();
+    expect(h.tracked.spawnOptions?.connectedServices).toBeUndefined();
+    // Assert the safe projection so a failed expectation cannot dump unrelated
+    // debug arguments collected while the real daemon composition starts.
+    const recoveryObserved = recoveryLog.mock.calls.some(([label, data]) =>
+      label === '[DAEMON RUN] Reattached Agent request-auth recovery left authority unavailable'
+      && data !== null && typeof data === 'object'
+      && 'sessionId' in data && data.sessionId === h.sessionId
+      && 'agentId' in data && data.agentId === 'codex'
+      && 'reason' in data && data.reason === 'reattached_agent_identity_or_bindings_unavailable');
+    expect(recoveryObserved).toBe(true);
+    recoveryLog.mockRestore();
+  }
+  bindingSetupStage = 'recipient settings';
   if (!identity) throw new Error('Missing admitted Codex identity');
   const agentTargetKey = `agent:${identity.pluginId}/${identity.localId}`;
+  const application = projectAgentProviderBrokerApplications({ registry: h.plugin.registry.contributes,
+    agentTargetKey, acceptedProtocols: ['openai-responses'] }).find(candidate =>
+    candidate.implementationIdentity.pluginId === 'happier.provider.cliproxyapi');
+  if (!application) throw new Error('Missing admitted Codex broker application');
   model = {
     selection: { kind: 'team_credential_provider_model', resourceId: 'resource', teamId: 'team', expectedResourceRevision: 2,
       deliveryMode: 'brokered', agentTargetKey, modelId: 'gpt-5.6-luna' },
     descriptor: { id: 'gpt-5.6-luna', name: 'Luna' }, sourceRevision: 'source-2', availability: 'available',
-    application: { agentTargetKey, implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-      endpointTemplateId: 'responses', protocol: 'openai-responses' },
-    sourceFacts: ProviderModelBindingSourceV1Schema.parse({ endpoint: { id: 'responses', protocol: 'openai-responses',
+    application,
+    sourceFacts: ProviderModelBindingSourceV1Schema.parse({ endpoint: { id: application.endpointTemplateId, protocol: application.protocol,
       capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } },
       compatibilityOverrides: [{ agentTargetKey, protocol: 'openai-responses', status: 'experimental', reason: 'Recipient-only consent' }] }),
   };
   h.tracked.spawnOptions = { ...h.tracked.spawnOptions, teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' },
     resourceId: 'resource', expectedResourceRevision: 2, teamId: 'team', deliveryMode: 'brokered' }],
     modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: null, modelId: model.descriptor.id } } };
+  if (freshNative && !await spawnPublicInstalledProjectAgentSession({ fixture: h, actor: freshActor, memberRole: freshRole, homeServerIdentityId: freshHome,
+    teamCredentialBindings: h.tracked.spawnOptions.teamCredentialBindings, modelSelection: h.tracked.spawnOptions.modelSelection })) {
+    expect(brokerOpens).toBe(0);
+    expect(catalogReads).toBe(0);
+    expect(consentCatalogReads).toBe(0);
+    expect(h.nativeEffects()).toBe(0);
+    return;
+  }
   const compatibility = await resolveTeamCredentialModelCompatibility({ lease: h.plugin.lease, agentId: 'codex',
     model: { ...model, deliveryMode: 'brokered' } });
   expect(compatibility).toMatchObject({ result: { status: 'experimental' }, confirmed: true });
@@ -467,21 +535,24 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
     if (path === '/v1/account/entity-rows/provider-connections') {
       consentCatalogReads++;
       consentCatalogReadStacks.push(new Error('Unexpected personal Provider catalog read for Team binding').stack ?? 'stack unavailable');
-      expect(options?.headers?.Authorization).toBe(`Bearer ${h.requester.bootstrap.credentials.token}`);
-      return { status: 200, data: { status: 'present', revision: 2, content: { t: 'plain', v: splitProviderSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1).catalog } } };
+      expect(options?.headers?.Authorization === `Bearer ${freshNative ? h.installedCredentials?.token : h.requester.bootstrap.credentials.token}`).toBe(true);
+      return { status: 200, data: { status: 'present', revision: 2, content: { t: 'plain',
+        v: splitProviderSettingsV1(DEFAULT_PROVIDER_SETTINGS_V1).catalog } } };
     }
     if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
     const history = emptyAccountSettingsHistoryCaptureResponse(path);
     if (history) return history;
     return get(url, options);
   });
-  const fetchBoundary = vi.mocked(fetch).getMockImplementation()!;
+  const fetchBoundary = fetch;
   if (metadata === 'requester Home' || metadata === 'admission refused') {
     const post = vi.mocked(axios.post).getMockImplementation()!;
     vi.mocked(axios.post).mockImplementation(async (url, data, options) => {
       const path = new URL(String(url)).pathname;
       if (path === TEAM_CREDENTIAL_ACTION_PATHS_V1['teams.credentials.entitled.list']) {
         catalogReads++;
+        const query = TeamCredentialResourceReadInputV1Schema.parse(data);
+        catalogApplications.push(query.application);
         // This real Home HTTP boundary exposes the Team only to its recipient.
         // The strict page/model readers beneath it stay real.
         const recipient = options?.headers?.Authorization === `Bearer ${h.requester.bootstrap.credentials.token}`;
@@ -490,7 +561,8 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
           readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
           directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
           sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
-          connectedServiceSelections: [], providerModels: [model],
+          connectedServiceSelections: [], providerModels: query.application
+            && isSameTeamCredentialBrokerApplication(query.application, model.application) ? [model] : [],
         })] : [], nextCursor: null } };
       }
       if (path === PROVIDER_BROKER_OPEN_HTTP_PATH_V1) {
@@ -513,6 +585,10 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
     // The target HTTP service is the external boundary. Keep real signed
     // cross-Account admission, native Iroh and capability gating in the path.
     const http = createServer((request, response) => {
+      if (disconnectUpstream && request.url !== PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH) {
+        request.socket.destroy();
+        return;
+      }
       if (request.url === PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH) {
         response.writeHead(204, { [PROVIDER_BROKER_ENDPOINT_PATH_HEADER]: '/v1' }).end();
       } else response.writeHead(204).end();
@@ -523,9 +599,11 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
     }));
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Missing broker HTTP target');
+    bindingSetupStage = 'native worker endpoint';
     const worker = await createDaemonMachineIrohRuntime({ happyHomeDir: h.f.directory, identity: 'ephemeral',
       relayConfig: { relayPolicy: 'disabled', relayUrls: [] } });
     cleanup.push(worker.shutdown);
+    bindingSetupStage = 'native broker endpoint';
     const broker = await createDaemonMachineIrohRuntime({ happyHomeDir: h.f.directory, identity: 'ephemeral',
       relayConfig: { relayPolicy: 'disabled', relayUrls: [] } });
     cleanup.push(broker.shutdown);
@@ -534,6 +612,7 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
     workerEndpoint = worker.endpoint;
     brokerEndpoint = broker.endpoint;
     const trustRoots = [{ keyId: 'home', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }];
+    bindingSetupStage = 'native admission';
     const admission = await startPeerMediationLoopbackServer({ nowMs: Date.now,
       expected: { accountId: 'source-owner', machineId: 'broker', flowKind: 'machine_rpc',
         routeKind: 'loopback_direct', endpointFingerprint: broker.endpoint.endpointId },
@@ -547,7 +626,7 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
     nativeTunnelOpen = createProviderBrokerMachineCarrierTunnelOpen({ accountId: 'requester', localMachineId: 'machine',
       runtime: worker, resolveTrustRoots: () => trustRoots, fetchImpl: nativeFetch });
   }
-  vi.mocked(fetch).mockImplementation(async (url, options) => {
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (url, options) => {
     const target = new URL(String(url));
     if (target.pathname === AGENT_RUNTIME_DAEMON_SERVICES_PATH && target.hostname === '127.0.0.1'
       && target.port === String(boundary.port)) return nativeFetch(url, options);
@@ -555,7 +634,7 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
       if (metadata === 'slow catalog' || metadata === 'slow refresh' || metadata === 'requester Home') return nativeFetch(url, options);
       // Native transport is the boundary: a failed fresh handshake closes its
       // local HTTP socket without returning an HTTP response to the real binder.
-      if (metadata === 'refresh refused') await refreshStream?.();
+      if (metadata === 'refresh refused' || metadata === 'socket closed') await refreshStream?.();
       if (metadata === 'socket closed' || metadata === 'refresh refused') {
         throw new TypeError('fetch failed', { cause: Object.assign(new Error('other side closed'), { code: 'UND_ERR_SOCKET' }) });
       }
@@ -567,7 +646,7 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
         } });
     }
     return fetchBoundary(url, options);
-  });
+  }));
   const open = () => h.dispatch({ kind: 'provider_broker.binding.open', requestId: 'recipient-team-open',
     resourceId: 'resource', expectedResourceRevision: 2, agentTargetKey, modelId: model.descriptor.id });
   const path = await createAgentRuntimeDaemonServiceAuthorityPath({ happyHomeDir: configuration.happyHomeDir,
@@ -589,6 +668,50 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
     kind: 'provider_broker.binding.open', resourceId: 'resource', expectedResourceRevision: 2,
     agentTargetKey, modelId: model.descriptor.id } });
   try {
+  if (freshNative) {
+    const opened = await openThroughRunner();
+    expect(opened.kind).toBe('provider_broker.binding');
+    expect(parseCodexProviderBindingEngineConfigV1(opened.providerBinding) !== null).toBe(true);
+    expect(brokerOpens).toBe(1);
+    expect(consentCatalogReads).toBe(0);
+    expect(h.tracked.requesterSessionRuntimeContext).toBeUndefined();
+    if (freshActor === 'owner') {
+      const identity = await resolveRequesterSessionExecutionIdentityForHost({ happyHomeDir: h.f.directory,
+        serverId: h.f.bootstrap.attribution.serverId, serverHttpBaseUrl: 'https://session-home.test', sessionId: h.sessionId,
+        machineId: 'machine', credentials: h.installedCredentials!, attribution: h.tracked.requesterWorkAttributionV1,
+        runtimeContext: h.tracked.requesterSessionRuntimeContext, hostHomeServerIdentityId: freshHome,
+        sessionCustodianAccountId: 'requester', isCurrent: h.f.isHomeCurrent, signal: h.signal });
+      expect(identity).toMatchObject({ kind: 'isolated', separationRequired: false });
+    }
+    const invocationId = `fresh-team-native-${freshActor}`;
+    const services = await prepareRunnerDaemonPluginServices({ invocationId, signal: h.signal,
+      local: createUnavailablePluginServices(), dispatch: async operation => {
+        const response = await h.dispatch(operation);
+        if (!response.ok) throw Object.assign(new Error(response.error.code), { code: response.error.code });
+        if (response.result.kind !== 'plugin_services.result_v1') throw new Error('Missing real Team/native service result');
+        return decodeRunnerDaemonPluginServiceWireValueV1(response.result.value);
+      } });
+    const before = h.nativeEffects();
+    const admission = authorizeResolvedAgentNativeExecLaunchForHost(services.exec,
+      { command: process.execPath, args: ['-e', 'process.stdout.write("public-team-native-ready")'], cwd: h.cwd, env: {} }, h.signal,
+      issueAgentNativeLaunchQualifierForHost(services.exec));
+    if (freshActor === 'owner') {
+      const launch = await admission;
+      const child = spawnAuthorizedHostExecLaunchForHost(launch, { signal: h.signal });
+      try {
+        const result = await child.handle.wait();
+        expect(result.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+        expect(new TextDecoder().decode(result.stdout)).toBe('public-team-native-ready');
+      } finally {
+        await child.dispose();
+        await child.waitForSettlement();
+      }
+    } else await expect(admission).rejects.toMatchObject({ data: { code: 'agent_isolation_unavailable' } });
+    expect(h.nativeEffects()).toBe(before);
+    expect(h.tracked.requesterSessionRuntimeContext).toBeUndefined();
+    await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase(invocationId) });
+    return;
+  }
   if (metadata === 'admission refused') {
     const refusal = await openThroughRunner().then(() => null, (error: unknown) => error);
     expect(refusal).toMatchObject({ code: 'broker_unavailable' });
@@ -596,9 +719,16 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
     expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refusal }))
       .toMatchObject({ source: 'team_credential', code: 'broker_unavailable' });
     expect(brokerOpens).toBe(1);
+    const phases = bindingPhaseLog.mock.calls.flatMap(([label, value]) => label === '[CONNECTED ACCOUNT] Materialization phase'
+      && value && typeof value === 'object' ? [value as Record<string, unknown>] : []);
+    expect(phases.filter(row => row.phase === 'credential_binding_resolution')).toEqual([
+      expect.objectContaining({ materializationKey: h.sessionId, status: 'started' }),
+      expect.objectContaining({ materializationKey: h.sessionId, status: 'failed' }),
+    ]);
     return;
   }
   if (metadata === 'requester Home') {
+    bindingSetupStage = 'runner source';
     const source = await createRunnerAgentSessionRuntimeSource({ happyHomeDir: configuration.happyHomeDir,
       publicReleaseRing: configuration.publicReleaseRing, authorityFilePath: path, expectedSessionId: h.sessionId,
       occurrenceId: 'c165-refusal-runner' });
@@ -607,14 +737,38 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
     }
     const readTeamCredentialDenial = source.daemonTurnContributionsBridge.readTeamCredentialDenial;
     onTestFinished(() => source.retire?.());
+    bindingSetupStage = 'Team binding';
     const opened = await source.prepareTeamCredentialProviderBinding({ sessionId: h.sessionId,
       resourceId: 'resource', expectedResourceRevision: 2, agentTargetKey, modelId: model.descriptor.id,
       signal: h.signal });
     expect(opened.providerBinding).toMatchObject({ source: { kind: 'team_resource', resourceId: 'resource' },
       upstream: { normalizedUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/v1$/u) } });
     expect(parseCodexProviderBindingEngineConfigV1(opened.providerBinding)).not.toBeNull();
-    expect(catalogReads).toBeGreaterThan(0);
-    expect(brokerOpens).toBeGreaterThan(0);
+    const phases = bindingPhaseLog.mock.calls.flatMap(([label, value]) => label === '[CONNECTED ACCOUNT] Materialization phase'
+      && value && typeof value === 'object' ? [value as Record<string, unknown>] : []);
+    const roots = phases.filter(row => row.phase === 'credential_binding_resolution' && row.materializationKey === h.sessionId);
+    expect(roots).toHaveLength(2);
+    expect(roots.map(row => row.status)).toEqual(['started', 'completed']);
+    for (const [phase, count] of [['runtime_registry', 1], ['binding_read', 3], ['launch_credentials', 2]] as const) {
+      const starts = phases.filter(row => row.phase === phase && row.status === 'started');
+      expect(starts, phase).toHaveLength(count);
+      for (const start of starts) {
+        expect(start).toMatchObject({ materializationKey: h.sessionId, parentPhaseId: expect.any(String) });
+        expect(phases.filter(row => row.phaseId === start.phaseId)).toEqual([
+          start, expect.objectContaining({ status: 'completed', durationMs: expect.any(Number) }),
+        ]);
+      }
+    }
+    expect(JSON.stringify(phases)).not.toMatch(/custodian-token|signature|Bearer|endpointId/);
+    for (const row of phases) {
+      expect(Object.keys(row).sort()).toEqual(['agentId', 'materializationKey', 'phase', 'phaseId', 'status', 'durationMs',
+        ...(row.parentPhaseId ? ['parentPhaseId'] : [])].sort());
+    }
+    console.info('Team binding Home read counts', { catalogReads, consentCatalogReads });
+    expect(catalogReads).toBe(4);
+    expect(consentCatalogReads, consentCatalogReadStacks.join('\n')).toBe(0);
+    expect(catalogApplications.slice(-2)).toEqual([model.application, model.application]);
+    expect(brokerOpens).toBe(2);
     const credential = opened.environmentOverlay.find(entry => entry.name === 'HAPPIER_CODEX_PROVIDER_API_KEY')?.value;
     if (!credential) throw new Error('Missing scoped native carrier credential');
     // Fresh admission belongs to each native TCP stream. Never reuse the
@@ -633,11 +787,34 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
       request.end();
     });
     h.tracked.activeTurnId = 'later-refusal-turn';
+    if (reattached) {
+      const accepted = await requestApplication();
+      expect(accepted.status).toBe(204);
+      // A successful broker request also has no refusal evidence. The miss is
+      // a diagnostic read result, not an authorization refusal from the broker.
+      await expect(h.dispatch({ kind: 'provider_broker.refusal.read', requestId: 'reattach-evidence-read',
+        turnId: 'later-refusal-turn' })).resolves.toEqual({ ok: true,
+        result: { kind: 'provider_broker.refusal', denial: null } });
+      expect(bindingPhaseLog).toHaveBeenCalledWith('[provider-broker-application]',
+        expect.objectContaining({ stage: 'evidence_read', outcome: 'miss', reason: 'no_evidence' }));
+      disconnectUpstream = true;
+      try {
+        const failure = await requestApplication().then(() => null, (error: unknown) => error);
+        expect(failure).toMatchObject({ code: 'ECONNRESET' });
+        expect(classifyPrimarySessionRuntimeIssue({ cause: 'stream_error', error: failure }))
+          .toMatchObject({ code: 'stream_error', source: 'stream_error' });
+        await expect(h.dispatch({ kind: 'provider_broker.refusal.read', requestId: 'transport-evidence-read',
+          turnId: 'later-refusal-turn' })).resolves.toEqual({ ok: true,
+          result: { kind: 'provider_broker.refusal', denial: null } });
+        console.info('Reattach broker counterexample', { brokerAccepted: true, transportReset: true, refusalEvidence: 'absent' });
+      } finally { disconnectUpstream = false; }
+    }
     laterRefusal = true;
     const beforeRefusal = brokerOpens;
     const denied = await requestApplication().catch(() => null);
     // Older loaded native addons can collapse this refusal into a socket
     // close. Host evidence must survive either Agent-visible boundary outcome.
+    console.info('Native fresh Team refusal observation', { httpStatus: denied?.status ?? null });
     expect(brokerOpens).toBe(beforeRefusal + 1);
     expect(await readCurrentRunnerTeamCredentialBrokerDenial({ authority, turnId: 'another-turn' })).toBeNull();
     const mutations: SessionTurnMutationV1[] = [];
@@ -713,14 +890,15 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
   }
   if (metadata !== 'ready' && metadata !== 'slow catalog' && metadata !== 'slow refresh') {
     const refused = await openThroughRunner().then(() => null, (error: unknown) => error);
-    expect(brokerOpens).toBe(metadata === 'refresh refused' ? 2 : 1);
+    expect(brokerOpens).toBe(metadata === 'refresh refused' || metadata === 'socket closed' ? 2 : 1);
     expect(warnings.mock.calls).toContainEqual(['[ProviderBroker] Endpoint discovery refused', expect.objectContaining({
       reason: 'endpoint_discovery_failed',
       discoveryCause: metadata === 'refresh refused' ? 'broker_refresh_refused' : metadata === 'socket closed'
         ? 'socket_closed' : metadata === 'missing declaration' ? 'invalid_metadata' : 'http_response',
       discoveryElapsedMs: expect.any(Number),
-      refreshOutcome: metadata === 'refresh refused' ? 'refused' : 'not_requested',
-      ...(metadata === 'refresh refused' ? { refreshElapsedMs: expect.any(Number) } : {}),
+      refreshOutcome: metadata === 'refresh refused' ? 'refused' : metadata === 'socket closed' ? 'accepted' : 'not_requested',
+      ...(metadata === 'refresh refused' || metadata === 'socket closed' ? { refreshElapsedMs: expect.any(Number) } : {}),
+      ...(metadata === 'refresh refused' ? { admissionReasonCode: 'broker_unavailable' } : {}),
       ...(metadata === 'socket closed' || metadata === 'refresh refused' ? {} : { httpStatus: httpRefusal ? 403 : 204 }),
     })]);
     const discoveryRecord = warnings.mock.calls.find(([label]) => label === '[ProviderBroker] Endpoint discovery refused')?.[1];
@@ -729,19 +907,19 @@ it.each(['ready', 'requester Home', 'admission refused', 'binding not current', 
       expect(JSON.stringify(discoveryRecord)).not.toContain(privateValue);
     }
     expect(boundary.responseStatus).toBe(200);
-    // The canonical endpoint reader distinguishes a broker HTTP refusal from
-    // an unavailable endpoint projection (204 without its declaration).
+    // Home's typed refresh refusal survives the socket close. A close after
+    // accepted refresh still has no admission refusal to preserve.
     const expectedCode = metadata === 'typed non-204' ? 'session_not_active'
-      : httpRefusal ? 'broker_unavailable' : 'provider_endpoint_unavailable';
+      : httpRefusal || metadata === 'refresh refused' ? 'broker_unavailable' : 'provider_endpoint_unavailable';
     expect(boundary.responseBody).toEqual({ ok: false,
       error: { code: expectedCode, message: expectedCode } });
     expect(refused).toMatchObject({ code: expectedCode, message: expectedCode });
-    if (httpRefusal) {
+    if (httpRefusal || metadata === 'refresh refused') {
       expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refused }))
         .toMatchObject({ source: 'team_credential', code: expectedCode });
     }
     expect(readSessionPreparationFailureDiagnostic(refused)).toEqual({
-      originalCode: expectedCode, reason: 'unknown', contextSource: 'unknown' });
+      originalCode: expectedCode, reason: expectedCode === 'provider_endpoint_unavailable' ? expectedCode : 'unknown', contextSource: 'unknown' });
     return;
   }
   const opened = await openThroughRunner();

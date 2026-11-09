@@ -25,6 +25,7 @@ export async function resolveDaemonExecutionRunBrokerAuthority(
     isPidAlive: (pid: number) => boolean | Promise<boolean>;
     resolveLiveAuthority: (input: Readonly<{
       sessionId: string | null;
+      requestingAccountId: string;
       executionRunId: string;
       expectedIntent?: ExecutionRunIntent;
       expectedOccurrenceId: string | null;
@@ -39,12 +40,16 @@ export async function resolveDaemonExecutionRunBrokerAuthority(
   });
   if (!deps.currentIdentity
     || deps.currentIdentity.serverIdentityId !== request.serverIdentityId
-    || deps.currentIdentity.accountId !== request.requestingAccountId
     || deps.currentIdentity.machineId !== request.workerMachineId) {
     return deny('identity_mismatch');
   }
   const marker = (await deps.listMarkers()).find(candidate => candidate.runId === request.executionRunId);
   if (!marker) return deny('not_found');
+  // Attached Runs borrow their exact parent Session's admitted requester
+  // context below. Detached Runs belong to this daemon's Account runtime.
+  if (marker.happySessionId === null && deps.currentIdentity.accountId !== request.requestingAccountId) {
+    return deny('identity_mismatch');
+  }
   if (marker.status !== 'running') return deny('terminal');
   if (!await deps.isPidAlive(marker.pid)) return deny('runtime_unavailable');
 
@@ -52,6 +57,7 @@ export async function resolveDaemonExecutionRunBrokerAuthority(
   try {
     live = await deps.resolveLiveAuthority({
       sessionId: marker.happySessionId,
+      requestingAccountId: request.requestingAccountId,
       executionRunId: request.executionRunId,
       ...(request.expectedIntent !== undefined ? { expectedIntent: request.expectedIntent } : {}),
       expectedOccurrenceId: request.expectedOccurrenceId,

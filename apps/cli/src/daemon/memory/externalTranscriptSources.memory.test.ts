@@ -10,7 +10,7 @@ import { normalizeMemorySettings } from '@happier-dev/protocol/memory/memorySett
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import type { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
-import type { createMemoryExternalTranscriptSources } from './externalTranscriptSources';
+import type { createMemoryExternalTranscriptSources } from './testkit/externalTranscriptSources';
 import { openDeepIndexDb } from './deepIndex/deepIndexDb';
 import { externalMemoryStorageId } from './externalTranscriptIndex';
 import type { Disposable } from '@happier-dev/plugin-sdk';
@@ -127,7 +127,7 @@ export function activate(api) {
     const configureExport = runtime.modulesByPluginId.get(pluginId)?.configure;
     if (typeof configureExport !== 'function') throw new Error('Synthetic plugin configuration export unavailable');
     const configure: ConfigureInventory = (next, options) => { configureExport(next, options); };
-    const { createMemoryExternalTranscriptSources: createSources } = await import('./externalTranscriptSources');
+    const { createMemoryExternalTranscriptSources: createSources } = await import('./testkit/externalTranscriptSources');
     let inspectSplit: Parameters<typeof run>[7];
     if (split) {
       const { createMemoryExternalTranscriptObservation, createMemoryExternalTranscriptReader } = await import('./externalTranscriptSources');
@@ -333,21 +333,15 @@ describe('native inventory cursor lifetime', () => {
     });
   });
 
-  it.each([1, 3])('rejects a repeated cursor across a %i-page cycle and recovers on a new crawl', async length => {
-    await withInventory(async (sources, configure, signal, settings, _demands, db, notifyTopology) => {
-      configure(page => cursor(page < length ? page + 1 : 1), { watchedFiles: 1 });
-      await sources.refresh(settings, signal);
-      for (let page = 0; page <= length; page++) {
-        const result = await sources.inventory(signal);
-        expect(result?.completeSources.size).toBe(0);
-      }
-      // The error remains observable, and a restarted crawl may reuse cursors.
-        expect(sources.getIndexSources(db)).toMatchObject([{ state: 'error' }]);
-        configure(page => page < length ? cursor(page + 1) : null, { watchedFiles: 1 });
-        notifyTopology();
-        for (let page = 0; page <= length; page++) await sources.inventory(signal);
-        expect(sources.getIndexSources(db)).toMatchObject([{ state: 'ready' }]);
-        expect(await sources.inventory(signal)).toBeNull();
+  it('leaves opaque inventory continuation to the trusted reader until exhaustion', async () => {
+    await withInventory(async (sources, configure, signal, _settings, _demands, db) => {
+      let inventoryPages = 0;
+      configure(() => ++inventoryPages < 3 ? cursor(1) : null);
+      for (let page = 0; page < 3; page++) await sources.inventory(signal);
+      expect(inventoryPages).toBe(3);
+      expect(sources.getIndexSources(db)).toMatchObject([{ state: 'ready' }]);
+      expect(sources.hasPendingWork()).toBe(false);
+      expect(await sources.inventory(signal)).toBeNull();
     });
   });
 

@@ -9,6 +9,7 @@ import { HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY } from '../.
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '../../runtimeAuth/types';
 import { resolveSharedGenerationApplicationProof } from './resolveSharedGenerationApplicationProof';
+import { logger } from '@/ui/logger';
 
 const targetMaterializedEnv = {
   CLAUDE_CONFIG_DIR: '/tmp/claude-coders',
@@ -156,8 +157,14 @@ describe('resolveSharedGenerationApplicationProof', () => {
     })).resolves.toBeNull();
   });
 
-  it('fails closed before provider verification when the canonical credential revision differs', async () => {
-    const verifyActiveAccount = vi.fn();
+  it('verifies the current selected account revision after credentials refresh past the commit', async () => {
+    const verifyActiveAccount: NonNullable<ConnectedServiceProviderRuntimeAuthAdapter['verifyActiveAccount']> = async () => ({
+      status: 'verified', proofStrength: 'exact', providerAccountId: 'team-account',
+      source: 'shared_group_auth_surface', sharedAuthSurfaceId: 'coders',
+      generationApplication: { serviceId: 'happier.agent.claude/claude-subscription', groupId: 'coders',
+        profileId: 'team', generation: 12, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+        credentialFingerprint: 'sha256:current-account' },
+    });
     await expect(resolveSharedGenerationApplicationProof({
       agentId: 'claude',
       targetMaterializedEnv,
@@ -167,8 +174,8 @@ describe('resolveSharedGenerationApplicationProof', () => {
         credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
       }),
       resolveRuntimeAuthAdapter: async () => runtimeAuthAdapterWithVerification(verifyActiveAccount),
-    })).resolves.toBeNull();
-    expect(verifyActiveAccount).not.toHaveBeenCalled();
+    })).resolves.toMatchObject({ credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+      proof: { credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb', providerAccountId: 'team-account' } });
   });
 
   it('does not upgrade a weak proof from a different source or auth surface', async () => {
@@ -191,6 +198,8 @@ describe('resolveSharedGenerationApplicationProof', () => {
   });
 
   it('treats unavailable canonical or provider verification as no replay proof so a normal apply can proceed', async () => {
+    const warn = vi.spyOn(logger, 'warn');
+    try {
     await expect(resolveSharedGenerationApplicationProof({
       agentId: 'claude',
       targetMaterializedEnv,
@@ -202,5 +211,7 @@ describe('resolveSharedGenerationApplicationProof', () => {
         throw new Error('adapter unavailable');
       },
     })).resolves.toBeNull();
+      expect(warn).toHaveBeenCalledWith('[Connected Services] credential_revision_read_failed');
+    } finally { warn.mockRestore(); }
   });
 });

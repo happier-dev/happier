@@ -211,7 +211,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       readActivity: async () => { activityEntered.resolve(); return await activityReply.promise; } });
     const activity = createManagedActivityInventory({ producers: [sessions] });
     const handlers = new Map<string, RpcHandler<unknown, unknown>>();
-    registerManagedActivityRpcHandlers({ activity, admissionDrain, validateCurrentTarget: async () => true,
+    registerManagedActivityRpcHandlers({ activity, admissionDrain,
       rpcHandlerManager: { registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>) {
         handlers.set(method, (raw, context) => handler(raw as TRequest, context));
       } } });

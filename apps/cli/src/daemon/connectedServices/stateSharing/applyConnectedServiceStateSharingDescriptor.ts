@@ -130,7 +130,13 @@ export function resolveConnectedServiceNativeHomeRoot(input: Readonly<{
   sourceEnvironment: Readonly<Record<string, string | undefined>>;
   homeDir: string;
 }>): string {
-  const explicit = input.sourceEnvironment[input.nativeHome.environmentKey]?.trim();
+  const sourceKey = input.nativeHome.sourceEnvironmentKey;
+  const environmentKeys = [
+    ...(sourceKey ? [sourceKey] : []),
+    input.nativeHome.environmentKey,
+    ...(input.nativeHome.fallbackEnvironmentKeys ?? []),
+  ];
+  const explicit = environmentKeys.map(key => input.sourceEnvironment[key]?.trim()).find(Boolean);
   if (explicit) {
     if (!isAbsolute(explicit)) {
       throw new Error('connected_service_native_home_environment_must_be_absolute');
@@ -533,7 +539,8 @@ export async function applyConnectedServiceStateSharingDescriptor(
   // An already-selected private home has no external configuration source. Preserve config
   // while the normal state owner detaches borrowed entries before private adoption.
   const selfSource = resolvePathForComparison(sourceRoot) === resolvePathForComparison(targetRoot);
-  const envOverrides: Record<string, string> = {};
+  const sourceEnvironmentKey = input.descriptor.nativeHome?.sourceEnvironmentKey;
+  const envOverrides: Record<string, string> = sourceEnvironmentKey ? { [sourceEnvironmentKey]: sourceRoot } : {};
   const diagnostics: ConnectedServicesMaterializationDiagnostic[] = [];
   const descriptorCopyTransformByEntry = selfSource ? {} : await buildDescriptorCopyTransformByEntry(input, diagnostics);
   const previousManifest = input.existingManifest ? {

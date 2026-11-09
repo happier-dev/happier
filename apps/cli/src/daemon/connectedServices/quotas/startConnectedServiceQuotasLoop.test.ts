@@ -5,6 +5,51 @@ import { ConnectedServiceQuotasCoordinator } from './ConnectedServiceQuotasCoord
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 
 describe('startConnectedServiceQuotasLoop', () => {
+  it('aborts awaited account HTTP before stop finishes and does not publish another tick', async () => {
+    let release: () => void = () => {};
+    let requestSignal: AbortSignal | undefined;
+    let requestStarted = false;
+    let stopped = false;
+    const observations: string[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      credentials: { token: 'quota-cancellation-account', encryption: null },
+      quotaFetchers: [], discoveryEnabled: false,
+      now: () => 500, randomBytes: length => new Uint8Array(length),
+      // Account HTTP is the boundary; the coordinator and loop remain real.
+      api: {
+        getAccountEncryptionMode: async options => {
+          requestSignal = options?.signal;
+          requestStarted = true;
+          await new Promise<void>((resolve, reject) => {
+            release = resolve;
+            requestSignal?.addEventListener('abort', () => reject(requestSignal!.reason), { once: true });
+          });
+          return 'plain';
+        },
+        getConnectedServiceQuotaSnapshotSealed: async () => null,
+        getConnectedServiceCredentialSealed: async () => null,
+      },
+    });
+    const handle = startConnectedServiceQuotasLoop({
+      enabled: true, tickMs: 10_000, coordinator, onTickError: () => {},
+      setTimeoutFn: () => 1, clearTimeoutFn: () => {},
+    })!;
+    handle.subscribeAfterTick(() => { observations.push('settled'); });
+    handle.wake();
+    expect(requestStarted).toBe(true);
+    const stopping = handle.stop().then(() => { stopped = true; });
+    try {
+      await vi.waitFor(() => {
+        expect(requestSignal?.aborted).toBe(true);
+        expect(stopped).toBe(true);
+      });
+      expect(observations).toEqual([]);
+    } finally {
+      release();
+      await stopping;
+    }
+  });
+
   it('reconciles a parked owner on runtime registration and releases its subscription on stop', async () => {
     vi.useFakeTimers();
     const registry = new ConnectedServiceRuntimeRegistry();
@@ -69,6 +114,7 @@ describe('startConnectedServiceQuotasLoop', () => {
 
   it('wakes the existing loop after profile changes without overlapping ticks', async () => {
     let ticks = 0;
+    let firstRead = true;
     let release: () => void = () => {};
     // The real coordinator owns discovery; only its clock and account HTTP are controlled.
     const coordinator = new ConnectedServiceQuotasCoordinator({
@@ -77,7 +123,13 @@ describe('startConnectedServiceQuotasLoop', () => {
       now: () => { ticks += 1; return 500; },
       randomBytes: length => new Uint8Array(length),
       api: {
-        getAccountEncryptionMode: async () => { await new Promise<void>(resolve => { release = resolve; }); return 'plain'; },
+        getAccountEncryptionMode: async () => {
+          if (firstRead) {
+            firstRead = false;
+            await new Promise<void>(resolve => { release = resolve; });
+          }
+          return 'plain';
+        },
         getConnectedServiceQuotaSnapshotSealed: async () => null,
         getConnectedServiceCredentialSealed: async () => null,
       },

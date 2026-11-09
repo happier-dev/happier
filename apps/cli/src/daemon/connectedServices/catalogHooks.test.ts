@@ -17,6 +17,7 @@ import {
   resolveConnectedServiceGenerationApplicationScope,
   resolveConnectedServicePredictiveSoftSwitchCapability,
 } from './catalogHooks';
+import { evaluatePredictiveSoftSwitchPolicy } from './accountGroups/switching/predictiveSoftSwitchPolicy';
 import { verifyProviderActivityOutcome } from './recovery/verifyProviderActivityOutcome';
 
 describe('connected-service catalog hooks', () => {
@@ -61,10 +62,30 @@ describe('connected-service catalog hooks', () => {
     ['ohMyPi', 'happier.agent.codex/openai-codex', 'unsupported'],
     ['gemini', 'happier.agent.gemini/gemini-account', 'unsupported'],
     ['pi', 'happier.agent.codex/openai-codex', 'supported'],
+    ['claude', 'happier.agent.claude/claude-subscription', 'supported_in_turn'],
   ] as const)('projects %s predictive capability from live auth application rather than materialization', async (agentId, serviceId, expected) => {
     await expect(resolveConnectedServicePredictiveSoftSwitchCapability(agentId, {
       serviceId, groupId: 'pool', activeProfileId: 'work', profileId: 'work',
     })).resolves.toBe(expected);
+  });
+
+  it.each(['soft_threshold', 'same_provider_account_exhausted'] as const)(
+    'allows Claude %s application during an active turn through the current plugin', async (reason) => {
+      const capability = await resolveConnectedServicePredictiveSoftSwitchCapability('claude', {
+        serviceId: 'happier.agent.claude/claude-subscription', groupId: 'pool', activeProfileId: 'work',
+      });
+      expect(evaluatePredictiveSoftSwitchPolicy({
+        reason, predictiveSoftSwitchMode: capability, turnState: { inFlight: true },
+      })).toEqual({ status: 'allow' });
+    },
+  );
+
+  it.each([
+    { serviceId: 'happier.agent.claude/claude-subscription', profileId: 'work' },
+    { serviceId: 'happier.agent.claude/anthropic', groupId: 'pool', activeProfileId: 'work' },
+  ])('keeps Claude predictive switching unsupported outside subscription pools (%j)', async (selection) => {
+    await expect(resolveConnectedServicePredictiveSoftSwitchCapability('claude', selection))
+      .resolves.toBe('unsupported');
   });
 
   it('loads focused Agent-auth hooks from the authoritative runtime catalog', async () => {

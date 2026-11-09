@@ -27,6 +27,7 @@ import {
 import {
   isPrivateConnectedServiceMaterializedRootStat,
 } from '../materialize/privateMaterializedRoot';
+import { copyConnectedServiceHomeEntry } from '../stateSharing/connectedServiceHomeEntrySync';
 
 export type ConnectedAccountRequestAuthCapabilityDescriptor = Readonly<{
   path: string;
@@ -56,6 +57,22 @@ async function withCapabilityMutationLock<T>(
     staleAfterMs: CAPABILITY_MUTATION_LOCK_STALE_AFTER_MS,
     errorCode: 'connected_account_request_auth_capability_lock_timeout',
   }, operation);
+}
+
+/** Root promotion must retain the live registry's transport until its own retirement. */
+export async function preserveConnectedAccountRequestAuthCapabilityDuringRootReplacement(input: Readonly<{
+  materializedRootDir: string;
+  stagedRootDir: string;
+  replaceRoot(): Promise<void>;
+}>): Promise<void> {
+  await withCapabilityMutationLock(input.materializedRootDir, async () => {
+    await copyConnectedServiceHomeEntry(
+      dirname(resolveConnectedAccountRequestAuthCapabilityPath(input.materializedRootDir)),
+      dirname(resolveConnectedAccountRequestAuthCapabilityPath(input.stagedRootDir)),
+      { localStateOnly: true },
+    );
+    await input.replaceRoot();
+  });
 }
 
 function normalizeNonEmpty(value: unknown): string {

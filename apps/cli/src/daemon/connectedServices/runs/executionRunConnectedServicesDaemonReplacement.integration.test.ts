@@ -33,7 +33,7 @@ const CREDENTIAL_REVISION = 'csr_0123456789ABCDEFGHJKMNPQRS';
 const PROFILE_ID = 'team';
 const SERVICE_KEY = 'happier.agent.codex/openai-codex';
 const RUN_BINDINGS = {
-    v: 1,
+    v: 2,
     bindingsByServiceId: {
         [SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: PROFILE_ID },
     },
@@ -292,11 +292,6 @@ function startReplacementHarness(modules: LoadedModules, input: Readonly<{
                     },
                 }]]),
             },
-            resolveAgentContributionIdentity: async () => Object.freeze({
-                pluginId: 'happier.agent.codex',
-                localId: 'codex',
-                sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'gen-1', installSource: 'npm' as const },
-            }),
             isCurrent: () => true,
             release: async () => undefined,
         }),
@@ -445,6 +440,7 @@ describe('execution-run Connected Services across daemon control-owner replaceme
             connectedServices: RUN_BINDINGS,
             cwd: '/tmp/project',
         }, daemonA.scopedToken());
+        expect(materialize.body).toMatchObject({ ok: true });
         expect(materialize.status).toBe(200);
         const materializeBody = materialize.body as {
             ok: boolean;
@@ -465,11 +461,6 @@ describe('execution-run Connected Services across daemon control-owner replaceme
             materializationKey: RUN_ID,
             agentId: 'codex',
             materializedRoot: runRoot,
-            agentContribution: {
-                pluginId: 'happier.agent.codex',
-                localId: 'codex',
-                sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'gen-1', installSource: 'npm' as const },
-            },
         });
         expect(await assertPathExists(runRoot)).toBe(true);
 
@@ -577,6 +568,13 @@ describe('execution-run Connected Services across daemon control-owner replaceme
             registration as never,
         );
         expect(terminalReceipt).not.toBeNull();
+        // Terminal publication updates retained state before its marker, as finishExecutionRun
+        // does. A still-running retained checkpoint deliberately keeps its materialized home.
+        await modules.markerOwner.retainExecutionRunState({
+            ...runState,
+            status: 'succeeded',
+            finishedAtMs: Date.now(),
+        });
         await modules.markerOwner.writeExecutionRunMarker({
             pid: runner.pid,
             happySessionId: RUNNER_SESSION_ID,

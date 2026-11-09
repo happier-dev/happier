@@ -5,27 +5,36 @@ import { createConnectedServicePredictiveSwitchGuard } from './connectedServiceP
 const SERVICE_ID = 'openai-codex' as const;
 
 describe('createConnectedServicePredictiveSwitchGuard', () => {
-  it.each(['soft_threshold', 'usage_limit', 'auth_expired'] as const)(
-    'suppresses %s after requester admission is lost', async (reason) => {
-      const guard = createConnectedServicePredictiveSwitchGuard({
-        // Current admission is an authenticated Home boundary; capability and policy remain real.
-        isSessionCurrent: async () => false,
-        resolvePredictiveSoftSwitchMode: async () => 'supported_in_turn' as const,
-      });
-
-      await expect(guard({
-        sessionId: 'bob-session', serviceId: SERVICE_ID, groupId: 'bob-group',
-        activeProfileId: 'bob-subscription', reason,
-      })).resolves.toEqual({ status: 'suppress', reason: 'requester_session_not_current' });
-    },
-  );
-
-  it('rechecks requester admission after capability preparation', async () => {
-    let current = true;
+  it('cancels awaited capability preparation without suppressing it as stale admission', async () => {
+    const controller = new AbortController();
+    const cancelled = new Error('quota loop stopped');
+    let requestSignal: AbortSignal | undefined;
+    let requestStarted = false;
+    let release: () => void = () => {};
     const guard = createConnectedServicePredictiveSwitchGuard({
-      isSessionCurrent: async () => current,
+      resolvePredictiveSoftSwitchMode: async ({ signal }) => {
+        if (requestStarted) return 'supported_in_turn' as const;
+        requestStarted = true;
+        requestSignal = signal;
+        await new Promise<void>((resolve, reject) => {
+          release = resolve;
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+        return 'supported_in_turn' as const;
+      },
+    });
+    const result = guard({ sessionId: 'quota-session', serviceId: SERVICE_ID, groupId: 'team',
+      activeProfileId: 'active', reason: 'soft_threshold', ...{ signal: controller.signal } }).catch(error => error);
+    controller.abort(cancelled);
+    try {
+      await vi.waitFor(() => expect(requestSignal?.aborted).toBe(true));
+      expect(await result).toBe(cancelled);
+    } finally { release(); await result; }
+  });
+
+  it('allows admitted predictive capability without a requester permission dependency', async () => {
+    const guard = createConnectedServicePredictiveSwitchGuard({
       resolvePredictiveSoftSwitchMode: async () => {
-        current = false;
         return 'supported_in_turn' as const;
       },
     });
@@ -33,7 +42,7 @@ describe('createConnectedServicePredictiveSwitchGuard', () => {
     await expect(guard({
       sessionId: 'bob-session', serviceId: SERVICE_ID, groupId: 'bob-group',
       activeProfileId: 'bob-subscription', reason: 'soft_threshold',
-    })).resolves.toEqual({ status: 'suppress', reason: 'requester_session_not_current' });
+    })).resolves.toEqual({ status: 'allow' });
   });
 
   it('suppresses predictive soft-threshold switching for restart-only providers', async () => {

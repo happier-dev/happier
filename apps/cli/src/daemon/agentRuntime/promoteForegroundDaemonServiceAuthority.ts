@@ -54,6 +54,7 @@ function clearPromotedAuthorityIfExact(input: Readonly<{
   }
   delete input.tracked.agentRuntimeDaemonServiceAuthorityFilePath;
   delete input.tracked.agentRuntimeDaemonServiceCapabilityHash;
+  delete input.tracked.agentRuntimeDaemonServiceNativeRealtimeAdmission;
   delete input.tracked.materializedStateObservationBinding;
   clearTrackedRunnerAgentDaemonServiceAdmission(input.tracked);
 }

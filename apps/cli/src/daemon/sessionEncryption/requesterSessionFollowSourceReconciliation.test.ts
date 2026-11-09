@@ -1,17 +1,20 @@
 import axios from 'axios';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createAccountSessionFollowRuleCache } from '@/agent/runtime/session/follow/accountSessionFollowRuleCache';
-import { createSessionFollowOccurrenceDispatcher } from '@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher';
+import { createSessionFollowOccurrenceDispatcher } from '@/agent/runtime/session/follow/sessionFollowOccurrenceDispatcher.testkit';
 import { createRequesterSessionFollowSourceReconciliation } from './requesterSessionFollowSourceReconciliation';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
-afterEach(() => vi.restoreAllMocks());
+let channel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>;
+beforeEach(async () => { channel = await createRequesterCurrentnessSocketHarness(); });
+afterEach(async () => { await channel.close(); vi.restoreAllMocks(); });
 
-it('suppresses Account refresh but retains one Run-demand list read per idle recovery, reconnect and Run-only invalidation', async () => {
+it('observes requester Follow only for receiver changes, reconnect and matching source demand', async () => {
   const destinationSessionId = 'c222222222222222222222222';
   const lifetime = new AbortController();
-  let hint: (sourceSessionId: string | null) => void = () => {};
+  let hint: (sourceSessionId: string | null, receiver?: true, availabilityChanged?: boolean, sourceChanged?: false) => void = () => {};
   let invalidate = () => {};
   let enabled = false;
   let runAttached = false;
@@ -68,8 +71,12 @@ it('suppresses Account refresh but retains one Run-demand list read per idle rec
   try {
     expect(await cache.read()).toMatchObject({ status: 'available', rules: [] });
     reads.length = 0;
+    for (let index = 0; index < 100; index++) hint(destinationSessionId);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(completed, 'generic Session changes are not receiver Follow changes').toEqual([]);
+    expect(reads).toEqual([]);
     for (let index = 0; index < 5; index++) {
-      hint(destinationSessionId);
+      hint(destinationSessionId, true);
       await vi.waitFor(() => expect(completed).toHaveLength(index + 1));
     }
     const idleReads = [...reads];
@@ -84,7 +91,7 @@ it('suppresses Account refresh but retains one Run-demand list read per idle rec
     expect(writes).not.toHaveBeenCalled();
     runAttached = true;
     reads.length = 0;
-    hint(destinationSessionId);
+    hint(destinationSessionId, true);
     await vi.waitFor(() => expect(completed).toHaveLength(7));
     expect(reads.filter(path => path.endsWith('/follows/sessions'))).toHaveLength(1);
     expect(reads.filter(path => !path.endsWith('/follows/sessions'))).toEqual([]);
@@ -97,7 +104,7 @@ it('suppresses Account refresh but retains one Run-demand list read per idle rec
     const gate = new Promise<void>(resolve => { release = resolve; });
     let readingSources = false;
     beforeSourceList = async () => { readingSources = true; await gate; };
-    hint(destinationSessionId);
+    hint(destinationSessionId, true);
     try {
       await vi.waitFor(() => expect(readingSources).toBe(true));
       // The idle pass began with a warmed absence. Configuration invalidation
@@ -108,13 +115,53 @@ it('suppresses Account refresh but retains one Run-demand list read per idle rec
     await vi.waitFor(() => expect(completed).toHaveLength(8));
     expect(ruleSourceReads).toBe(1);
     expect(writes).not.toHaveBeenCalled();
+    // A receiver's own generic Session write does not prove availability.
+    hint(destinationSessionId, undefined, false);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(completed).toHaveLength(8);
+    enabled = false;
+    invalidate();
+    expect(await cache.read()).toMatchObject({ status: 'available', rules: [] });
+    const finish = cache.originalWork.start(destinationSessionId, {
+      sourceSessionId: 'ordinary-source', sourceMessage: { seq: 2, localId: 'ordinary-original' },
+    });
+    finish?.('held', 'receiver');
+    for (let index = 0; index < 10; index++) hint(destinationSessionId, undefined, false);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(completed).toHaveLength(8);
+    expect(cache.originalWork.start(destinationSessionId, {
+      sourceSessionId: 'ordinary-source', sourceMessage: { seq: 2, localId: 'ordinary-original' },
+    }), 'an unrelated own-Session change cannot release the failed admission').toBeNull();
+    hint(destinationSessionId, undefined, true);
+    await vi.waitFor(() => expect(completed).toHaveLength(9));
+    expect(completed.at(-1)).toBeNull();
+    const recovered = cache.originalWork.start(destinationSessionId, {
+      sourceSessionId: 'ordinary-source', sourceMessage: { seq: 2, localId: 'ordinary-original' },
+    });
+    expect(recovered, 'availability releases ordinary Follow without a private rule').not.toBeNull();
+    recovered?.('admitted');
+    const legacyOriginal = { sourceSessionId: 'ordinary-source', sourceMessage: { seq: 3, localId: 'legacy-original' } };
+    cache.originalWork.start(destinationSessionId, legacyOriginal)?.('held', 'receiver');
+    // An older server has no qualified availability leaf. Only this held
+    // receiver's own push releases it, once; subsequent passes stay held.
+    const readsBeforeLegacy = reads.length;
+    hint('unrelated-legacy-source', undefined, undefined, false);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(reads).toHaveLength(readsBeforeLegacy);
+    expect(cache.originalWork.start(destinationSessionId, legacyOriginal)).toBeNull();
+    hint(destinationSessionId, undefined, undefined, false);
+    await vi.waitFor(() => expect(completed).toHaveLength(10));
+    const legacyRetry = cache.originalWork.start(destinationSessionId, legacyOriginal);
+    expect(legacyRetry).not.toBeNull();
+    legacyRetry?.('held', 'receiver');
+    expect(cache.originalWork.start(destinationSessionId, legacyOriginal)).toBeNull();
   } finally { recovery.dispose(); dispatcher.dispose(); cache.dispose(); lifetime.abort(); }
 });
 
 it('coalesces overlapping receiver hints into two Run-demand list reads without Account refresh, retaining binding retirement', async () => {
   const destinationSessionId = 'c222222222222222222222222';
   const lifetime = new AbortController();
-  let hint: (sourceSessionId: string | null) => void = () => {};
+  let hint: (sourceSessionId: string | null, receiver?: true) => void = () => {};
   let release!: () => void;
   const blocked = new Promise<void>(resolve => { release = resolve; });
   const reads: string[] = [];
@@ -155,9 +202,9 @@ it('coalesces overlapping receiver hints into two Run-demand list reads without 
   try {
     expect(await cache.read()).toMatchObject({ status: 'available', rules: [] });
     reads.length = 0;
-    hint(destinationSessionId);
+    hint(destinationSessionId, true);
     await vi.waitFor(() => expect(reads.filter(path => path.endsWith('/follows/sessions'))).toHaveLength(1));
-    for (let index = 0; index < 5; index++) hint(destinationSessionId);
+    for (let index = 0; index < 5; index++) hint(destinationSessionId, true);
     hint(null);
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(started).toEqual([null]);
@@ -166,22 +213,23 @@ it('coalesces overlapping receiver hints into two Run-demand list reads without 
     expect(reads.filter(path => path.endsWith('/follows/sessions'))).toHaveLength(2);
     expect(reads.filter(path => !path.endsWith('/follows/sessions'))).toEqual([]);
     lifetime.abort();
-    hint(destinationSessionId);
+    hint(destinationSessionId, true);
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(started).toHaveLength(2);
   } finally { release(); recovery.dispose(); dispatcher.dispose(); cache.dispose(); lifetime.abort(); }
 });
 
-it.each(['complete', 'abort', 'dispose', 'rebind', 'retire'] as const)(
+it.each(['complete', 'failure', 'abort', 'dispose', 'rebind', 'retire'] as const)(
   'preserves merged source hints and withdraws queued work on %s during a recovery', async boundary => {
     const destinationSessionId = 'c222222222222222222222222';
     const lifetime = new AbortController();
     const successor = new AbortController();
-    let hint: (sourceSessionId: string | null) => void = () => {};
+    let hint: (sourceSessionId: string | null, receiver?: true) => void = () => {};
     let current = true;
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     let sourceRangeReads = 0;
+    let receiverWideReads = 0;
     vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/encryption/currentness') return { status: 200,
@@ -190,6 +238,9 @@ it.each(['complete', 'abort', 'dispose', 'rebind', 'retire'] as const)(
         // Exact source recovery waits on its rule-source read, rather than
         // rediscovering unrelated configured Run sources as a test barrier.
         if (options?.params?.destinationSessionId && ++sourceRangeReads === 1) await gate;
+        if (boundary === 'failure' && options?.params?.sourceSessionId === 'source-b') {
+          throw new Error('Source-specific network unavailable');
+        }
         return { status: 200, data: { rules: [{
         ruleId: 'enabled-rule', version: 0, receiver: { kind: 'session', sessionId: destinationSessionId },
         content: { t: 'plain', v: { v: 1, enabled: true,
@@ -199,6 +250,7 @@ it.each(['complete', 'abort', 'dispose', 'rebind', 'retire'] as const)(
       if (path === '/v2/account/session-follow-preferences') return { status: 200,
         data: { assigned: false, direct: false, team: false, group: false } };
       if (path.endsWith('/follows/sessions')) {
+        receiverWideReads++;
         return { status: 200, data: { sources: [] } };
       }
       throw new Error(`Unexpected GET ${path}`);
@@ -238,18 +290,25 @@ it.each(['complete', 'abort', 'dispose', 'rebind', 'retire'] as const)(
       if (boundary === 'retire') current = false;
       if (boundary === 'rebind') {
         recovery.bind(reconcile, successor.signal);
-        hint(destinationSessionId);
+        hint(destinationSessionId, true);
         await vi.waitFor(() => expect(started).toEqual(['source-a', null]));
       }
       release();
-      await vi.waitFor(() => expect(completed).toHaveLength(boundary === 'complete' ? 3 : boundary === 'rebind' ? 2 : 1));
+      await vi.waitFor(() => expect(completed).toHaveLength(boundary === 'complete' ? 4
+        : boundary === 'rebind' || boundary === 'failure' ? 2 : 1));
       await new Promise<void>(resolve => setImmediate(resolve));
-      expect(started).toEqual(boundary === 'complete' ? ['source-a', null, 'source-d']
-        : boundary === 'rebind' ? ['source-a', null] : ['source-a']);
+      expect(started).toEqual(boundary === 'complete' ? ['source-a', 'source-b', 'source-c', 'source-d']
+        : boundary === 'failure' ? ['source-a', 'source-b', 'source-c']
+          : boundary === 'rebind' ? ['source-a', null] : ['source-a']);
+      if (boundary === 'failure') {
+        expect(completed).toEqual(['source-a', 'source-c']);
+        expect(receiverWideReads, 'a failed source neither widens nor drops the other exact source demand').toBe(0);
+      }
       if (boundary === 'complete') {
+        expect(receiverWideReads, 'merging known source hints must not manufacture receiver-wide demand').toBe(0);
         // A hint after the loop has drained starts another pass.
         hint('source-e');
-        await vi.waitFor(() => expect(completed).toEqual(['source-a', null, 'source-d', 'source-e']));
+        await vi.waitFor(() => expect(completed).toEqual(['source-a', 'source-b', 'source-c', 'source-d', 'source-e']));
       }
     } finally { release(); recovery.dispose(); dispatcher.dispose(); cache.dispose(); lifetime.abort(); successor.abort(); }
   });

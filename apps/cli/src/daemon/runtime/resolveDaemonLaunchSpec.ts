@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
 
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanEnv';
+import { assertSourceRuntimeDependenciesCurrent } from '@happier-dev/cli-common/sourceRuntimeEntries';
 
 import { projectPath } from '@/projectPath';
 import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
@@ -174,19 +175,18 @@ function resolveWindowsSiblingPackagedBinary(packagedEntrypoint: string): string
   return siblingBinaryNativeSeparators;
 }
 
-async function resolveSelectedStackSourceRestart(
+async function resolveSelectedStackSourceLaunch(
   cliArgs: readonly string[],
   env: NodeJS.ProcessEnv,
 ): Promise<DaemonLaunchSpec | null> {
   const statePath = String(env.HAPPIER_STACK_RUNTIME_STATE_PATH ?? '').trim();
   if (!statePath || !hasDaemonStackContext(env)
-    || env.HAPPIER_DAEMON_STARTUP_SOURCE !== 'self-restart'
     || cliArgs[0] !== 'daemon' || cliArgs[1] !== 'start-sync'
     || parseOptionalBooleanEnv(env.HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED) === true
     || String(env.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT ?? '').trim()) return null;
 
-  // Stack already owns this retained selection. Read it at successor launch,
-  // rather than letting the incumbent's inherited entrypoint choose its code.
+  // Stack owns both initial startup and restart selection. A promoted managed
+  // payload serves isolation effects and must not choose this daemon's code.
   const state: unknown = JSON.parse(readFileSync(statePath, 'utf8'));
   if (!state || typeof state !== 'object' || !('sourceRuntimeLaunch' in state)
     || state.sourceRuntimeLaunch == null) return null;
@@ -203,6 +203,7 @@ async function resolveSelectedStackSourceRestart(
     || selectedRelativePath.startsWith(`..${sep}`) || isAbsolute(selectedRelativePath)) {
     throw new Error('The selected Stack source daemon launch is unavailable outside its CLI root.');
   }
+  await assertSourceRuntimeDependenciesCurrent({ entrypoint: launch.entrypoint, env });
   const runtimeExecutable = await ensureJavaScriptRuntimeExecutable({
     isBunRuntime: false, processEnv: env, currentExecPath: process.execPath,
   });
@@ -233,8 +234,8 @@ export async function resolveDaemonLaunchSpec(
   cliArgs: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<DaemonLaunchSpec> {
-  const selectedSourceRestart = await resolveSelectedStackSourceRestart(cliArgs, env);
-  if (selectedSourceRestart) return selectedSourceRestart;
+  const selectedSourceLaunch = await resolveSelectedStackSourceLaunch(cliArgs, env);
+  if (selectedSourceLaunch) return selectedSourceLaunch;
   // The Stack-admitted closure decides which code a stack daemon runs. It must win over reusing
   // this process's own entrypoint: a daemon started from a last-green pinned runner would
   // otherwise relaunch that same stale runner on every self-restart, while its environment

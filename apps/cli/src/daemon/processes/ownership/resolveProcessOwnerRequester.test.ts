@@ -38,7 +38,9 @@ describe('resolveProcessOwnerRequester', () => {
     it('fails closed for legacy work, foreign target stamps and conflicting guest accounts; never invents a display name', () => {
         const owner = { kind: 'session', sessionId: 's1' } as const;
         expect(resolveProcessOwnerRequester(owner, [{ ...root(owner), requesterWorkAttributionV1: undefined }], context)).toBeNull();
-        expect(resolveProcessOwnerRequester(owner, [root(owner, { ...attribution, serverId: 'foreign' })], context)).toBeNull();
+        for (const field of ['serverId', 'machineId', 'installationId'] as const) {
+            expect(resolveProcessOwnerRequester(owner, [root(owner, { ...attribution, [field]: 'foreign' })], context)).toBeNull();
+        }
         expect(resolveProcessOwnerRequester(owner, [root(owner), root(owner, { ...attribution, accountId: 'other' })], context)).toBeNull();
         expect(resolveProcessOwnerRequester(owner, [root(owner)], { target, custodianAccountId: 'custodian' }))
             .toEqual({ accountId: 'guest' });

@@ -1,6 +1,7 @@
 import type { GuardCandidate } from '../guardPlanner';
 import type { SessionEligibility } from '../sessionEligibility';
 import type { TrackedSession } from '../../types';
+import { readTrackedSessionProcessIdentity } from '../../processes/roots/listHappierProcessRoots';
 
 export type SessionStopInput = Readonly<{
   candidate: Pick<GuardCandidate, 'kind' | 'target' | 'root' | 'settledAt'>;
@@ -26,15 +27,21 @@ export async function sessionStop(input: SessionStopInput): Promise<
   const id = tracked.happySessionId;
   if (!id || candidate.root.owner.sessionId !== id || input.readCurrentTracked(id) !== tracked)
     return failed('identity_changed');
+  // The notice captured this native root, not whichever runner the same
+  // mutable tracked object might name when its acknowledgement arrives.
+  const identity = readTrackedSessionProcessIdentity(tracked);
+  if (identity.pid !== candidate.root.pid || identity.processStartTimeMs !== undefined
+    && identity.processStartTimeMs !== candidate.root.start.startTimeMs) return failed('identity_changed');
   const witness = { pid: tracked.pid, sessionRunnerPid: tracked.sessionRunnerPid,
-    processStartTimeMs: tracked.processStartTimeMs, processCommandHash: tracked.processCommandHash };
+    processStartTimeMs: tracked.processStartTimeMs, processCommandHash: tracked.processCommandHash,
+    runnerIdentity: tracked.runnerProcessIdentity };
   let eligibility: SessionEligibility;
   try { eligibility = await input.readCurrentEligibility(tracked, signal); }
   catch { return failed('activity_unknown'); }
   if (signal.aborted) return failed('cancelled');
   if (input.readCurrentTracked(id) !== tracked || tracked.pid !== witness.pid
     || tracked.sessionRunnerPid !== witness.sessionRunnerPid || tracked.processStartTimeMs !== witness.processStartTimeMs
-    || tracked.processCommandHash !== witness.processCommandHash) return failed('identity_changed');
+    || tracked.processCommandHash !== witness.processCommandHash || tracked.runnerProcessIdentity !== witness.runnerIdentity) return failed('identity_changed');
   if (!eligibility.eligible) return failed(eligibility.reasons[0]?.kind ?? 'activity_unknown');
   if (eligibility.settledAt !== candidate.settledAt) return failed('activity_changed');
   try {

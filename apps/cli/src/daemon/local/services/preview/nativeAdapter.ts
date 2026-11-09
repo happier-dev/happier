@@ -15,6 +15,7 @@ function requestLocation(target: string | undefined): URL | null {
 export async function startLocalServicePreviewNativeAdapter(input: Readonly<{
     preview: LocalServicePreviewResourceV1;
     signal: AbortSignal;
+    resolvePreview(): Promise<LocalServicePreviewResourceV1>;
 }>): Promise<Readonly<{ port: number; close: () => Promise<void> }>> {
     input.signal.throwIfAborted();
     const sockets = new Set<Socket>();
@@ -26,6 +27,7 @@ export async function startLocalServicePreviewNativeAdapter(input: Readonly<{
     let nextStreamId = 0;
     const openTunnel = async (): Promise<LocalServicePreviewTunnelStream> => {
         input.signal.throwIfAborted();
+        await input.resolvePreview();
         const socket = connect({ host: input.preview.target.host, port: input.preview.target.port, allowHalfOpen: true });
         track(socket);
         await new Promise<void>((resolve, reject) => {
@@ -34,7 +36,10 @@ export async function startLocalServicePreviewNativeAdapter(input: Readonly<{
             socket.once('close', onClose);
             socket.once('connect', () => { socket.off('error', reject); socket.off('close', onClose); resolve(); });
         });
-        input.signal.throwIfAborted();
+        try {
+            input.signal.throwIfAborted();
+            await input.resolvePreview();
+        } catch (error) { socket.destroy(); throw error; }
         const close = () => socket.destroy();
         return {
             tunnelId: input.preview.previewId, substreamId: String(++nextStreamId),

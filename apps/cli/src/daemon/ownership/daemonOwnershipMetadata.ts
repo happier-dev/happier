@@ -1,18 +1,17 @@
-import { z } from 'zod/mini';
-import { MachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import type { z } from 'zod/mini';
+import {
+  MACHINE_DAEMON_PUBLIC_RELEASE_CHANNEL_LABELS,
+  MACHINE_DAEMON_STARTUP_SOURCE_VALUES,
+  MachineDaemonPublicReleaseChannelLabelSchema,
+  MachineDaemonStartupSourceSchema,
+} from '@happier-dev/protocol/machines/ownership/daemonOwnership';
 
-export const DAEMON_PUBLIC_RELEASE_CHANNEL_LABELS = ['stable', 'preview', 'dev'] as const;
-export const DaemonPublicReleaseChannelLabelSchema = z.nonoptional(MachinePublishedDaemonStateV1Schema.shape.publicReleaseChannel);
+export const DAEMON_PUBLIC_RELEASE_CHANNEL_LABELS = MACHINE_DAEMON_PUBLIC_RELEASE_CHANNEL_LABELS;
+export const DaemonPublicReleaseChannelLabelSchema = MachineDaemonPublicReleaseChannelLabelSchema;
 
-export const DAEMON_STARTUP_SOURCE_VALUES = [
-  'manual',
-  'background-service',
-  'self-restart',
-  'installer',
-  'unknown',
-] as const;
+export const DAEMON_STARTUP_SOURCE_VALUES = MACHINE_DAEMON_STARTUP_SOURCE_VALUES;
 
-export const DaemonStartupSourceSchema = z.nonoptional(MachinePublishedDaemonStateV1Schema.shape.startupSource);
+export const DaemonStartupSourceSchema = MachineDaemonStartupSourceSchema;
 
 export type DaemonStartupSource = z.infer<typeof DaemonStartupSourceSchema>;
 

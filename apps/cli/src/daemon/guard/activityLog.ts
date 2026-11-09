@@ -50,9 +50,8 @@ export async function createActivityLog(input: Readonly<{
   const nowMs = input.nowMs ?? Date.now;
   const listeners = new Set<() => void>();
   // Entry timestamps may backdate and deterministic receipt IDs may repeat.
-  // A durable append or a query's real time boundary changes this projection revision.
+  // Only a durable append changes this projection revision.
   let revision = Date.now();
-  const nextChanges: Partial<Record<ActivityLogListInput['range'], number>> = {};
   const journal = await createDayPartitionedJsonl({ directory: join(input.activeServerDir, 'machine-guard'), prefix: 'activity', nowMs,
     timestamp: (row: MachineGuardActivityEntryV1) => row.at,
     parse: value => { const result = MachineGuardActivityStoredReadV1Schema.safeParse(value); return result.success ? portableActivityEntry(result.data) : null; } });
@@ -84,18 +83,16 @@ export async function createActivityLog(input: Readonly<{
       catch { logger.debug('[ActivityLog] Change subscriber failed after durable append'); }
     }
   };
-  const readRows = async (sinceMs: number, asOf: number): Promise<{
-    rows: MachineGuardActivityRowV1[]; nextRecordAt?: number; oldestAt?: number;
-  }> => {
+  const readRows = async (sinceMs: number, asOf: number): Promise<MachineGuardActivityRowV1[]> => {
     await pruneAtDayBoundary();
     const stored = await journal.read(sinceMs);
-    const records: MachineGuardActivityEntryV1[] = [];
-    let nextRecordAt: number | undefined;
-    let oldestAt: number | undefined;
+    const byId = new Map<string, MachineGuardActivityEntryV1>();
     for (const row of stored) {
-      if (row.at > asOf) nextRecordAt = Math.min(nextRecordAt ?? row.at, row.at);
-      else { records.push(row); oldestAt = Math.min(oldestAt ?? row.at, row.at); }
+      if (row.at <= asOf && !byId.has(row.id)) byId.set(row.id, row);
     }
+    // Receipt replay after a crash may append the same logical event again.
+    // Keep its original fact here; writers need not read the retained journal first.
+    const records = [...byId.values()];
     const undone = new Map<string, number>();
     for (const row of records) if (row.kind === 'undone' && row.ref) {
       undone.set(row.ref, Math.min(undone.get(row.ref) ?? row.at, row.at));
@@ -116,48 +113,28 @@ export async function createActivityLog(input: Readonly<{
         ...(note !== undefined && row.kind !== 'start_failed' ? { note } : {}),
         ...(trashEmptied ? { inTrashBytes: 0 } : {}), ...(undoneAt === undefined ? {} : { undoneAt }) };
     }).reverse().sort((a, b) => b.at - a.at);
-    return { rows, nextRecordAt, oldestAt };
+    return rows;
   };
   const stopped = (row: MachineGuardActivityRowV1) => ['stopped_session', 'closed_browser', 'stopped_service', 'stopped_left_behind', 'closed_terminal'].includes(row.kind);
   const cleanedUp = (row: MachineGuardActivityRowV1) => ['trash_moved', 'trash_emptied', 'housekeeping'].includes(row.kind);
   const needsLook = (row: MachineGuardActivityRowV1) => row.outcome !== 'done'
     || ['out_of_steps', 'stop_failed', 'ceiling_near', 'ceiling_reached', 'system_oom_kill', 'start_failed'].includes(row.kind);
-  const readRevision = () => {
-    const at = nowMs();
-    let expired = false;
-    // Only three range deadlines survive a read. No receipt or requester state is retained.
-    // The existing parked-watch window checks these on re-arm; no query timer is needed.
-    for (const range of ['today', '7d', '30d'] as const) {
-      const deadline = nextChanges[range];
-      if (deadline !== undefined && at >= deadline) { delete nextChanges[range]; expired = true; }
-    }
-    if (expired) revision++;
-    return revision;
-  };
   const list = async (request: ActivityLogListInput): Promise<MachineGuardActivityListV1> => {
-    // A direct list read must not overwrite an elapsed boundary before watches observe it.
-    readRevision();
     const asOf = nowMs();
     const since = request.range === 'today' ? Math.floor(asOf / dayMs) * dayMs : asOf - (request.range === '7d' ? 7 : 30) * dayMs;
-    const { rows, oldestAt, nextRecordAt } = await readRows(since, asOf);
+    const rows = await readRows(since, asOf);
     const { entries: visible, others } = projectGuardActivityRowsForRequester(rows, request.requester);
     const counts = { stopped: visible.filter(stopped).length, cleanedUp: visible.filter(cleanedUp).length,
       needsLook: visible.filter(needsLook).length, others };
     const filter = request.filter ?? 'all';
-    const expiry = request.range === 'today' ? since + dayMs : oldestAt === undefined ? undefined
-      // Reads include their lower boundary; Date.now first excludes it on the next millisecond.
-      : Math.floor(oldestAt + (request.range === '7d' ? 7 : 30) * dayMs) + 1;
-    const nextChangeAt = Math.min(expiry ?? Infinity, nextRecordAt === undefined ? Infinity : Math.ceil(nextRecordAt));
-    if (Number.isFinite(nextChangeAt)) nextChanges[request.range] = nextChangeAt;
-    else delete nextChanges[request.range];
     return { entries: filter === 'all' ? visible : visible.filter(filter === 'stopped' ? stopped : filter === 'cleaned_up' ? cleanedUp : needsLook), counts, asOf };
   };
   return {
     append,
-    read: async id => { const at = nowMs(); return (await readRows(at - 30 * dayMs, at)).rows.find(row => row.id === id) ?? null; },
+    read: async id => { const at = nowMs(); return (await readRows(at - 30 * dayMs, at)).find(row => row.id === id) ?? null; },
     list,
     markUndone: entry => append({ ...entry, v: 1, kind: 'undone', rule: 'system', outcome: 'done' }),
-    revision: readRevision,
+    revision: () => revision,
     subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
   };
 }

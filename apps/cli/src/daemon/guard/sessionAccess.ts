@@ -36,7 +36,7 @@ export function createGuardSessionAccess(input: Readonly<{
       if (state.kind === 'stopped') {
         // Retain the admitted requester before publication; even an acknowledgement failure may have committed intent.
         tracked.guardStopReceipt = createGuardSessionStopReceipt({ records: access.systemRecords,
-          at: state.at, isCurrent: access.isRecordCurrent,
+          at: state.at,
           onSettled: async record => {
             const written = await runWithServerHttpBaseUrl(access.serverHttpBaseUrl, () => updateSessionMetadataForTarget({
               credentials: access.credentials, idOrPrefix: access.sessionId, expectedSessionId: access.sessionId,

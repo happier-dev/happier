@@ -22,7 +22,8 @@ function harness() {
     });
     const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine', maxEventsPerView: 1 });
     const runtime = createSidecarCdpDiagnosticsRuntime({ ownerAccountId: 'owner', store, isEnabled: () => true,
-        contextCapture: { transport: { dispatchPageCommand }, resolvePageHandle: () => ({ targetId: 'target', sessionId: 'cdp' }),
+        contextCapture: { getNavigationState: () => ({ navigationGeneration: 0, loadingState: 'ready', canGoBack: false, canGoForward: false }),
+            transport: { dispatchPageCommand }, resolvePageHandle: () => ({ targetId: 'target', sessionId: 'cdp' }),
             subscribeCdpEvents(listener) { cdp = listener; return () => { cdp = () => {}; }; },
             subscribeViewLifecycle(listener) { lifecycle = listener; return () => {}; } } });
     const routes = createBrowserDiagnosticsRoutes({ store, readRequestDetail: runtime.readRequestDetail });

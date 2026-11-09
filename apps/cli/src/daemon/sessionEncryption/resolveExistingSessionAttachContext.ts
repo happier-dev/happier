@@ -19,6 +19,7 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMetadataLayout';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { SessionDetailInvalidResponseError } from '@/session/transport/http/sessionDetailInvalidResponse';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { readPendingExecutionRunIds } from '@/api/session/pendingQueueState';
@@ -55,7 +56,9 @@ export type ExistingSessionAttachContextFailureReason =
 export type ExistingSessionAttachContextFailure = Readonly<{
   ok: false;
   reason: ExistingSessionAttachContextFailureReason;
-  diagnostic?: ReturnType<typeof readUnexpectedActionErrorDiagnosticV1>;
+  diagnostic?: ReturnType<typeof readUnexpectedActionErrorDiagnosticV1> & Readonly<{
+    sessionDetailValidation?: Pick<SessionDetailInvalidResponseError, 'schema' | 'issues'>;
+  }>;
 }>;
 
 function normalizeString(value: unknown): string {
@@ -379,12 +382,21 @@ export async function resolveExistingSessionAttachContext(_params: Readonly<{
   if (!sessionId) return { ok: false, reason: 'missingSessionId' };
   if (!token) return { ok: false, reason: 'missingToken' };
 
+  // Spawn's session_commit phase is mostly this read; separate the shared slot wait from server time.
+  const startedAt = performance.now();
+  const marks: { slotAcquired?: number; detailRead?: number; currentness?: number } = {};
+  const elapsed = (at: number | undefined) => at === undefined ? null : Math.round(at - startedAt);
   try {
     const [raw, accountEncryptionCurrentness] = await Promise.all([
-      withExistingSessionAttachDetailReadSlot(
-        () => fetchSessionByIdCompat({ token, sessionId, reason: 'manual-recovery' }),
-      ),
-      fetchAccountEncryptionCurrentness({ token }),
+      withExistingSessionAttachDetailReadSlot(async () => {
+        marks.slotAcquired = performance.now();
+        try {
+          return await fetchSessionByIdCompat({ token, sessionId, reason: 'manual-recovery' });
+        } finally {
+          marks.detailRead = performance.now();
+        }
+      }),
+      fetchAccountEncryptionCurrentness({ token }).finally(() => { marks.currentness = performance.now(); }),
     ]);
     if (!raw) return { ok: false, reason: 'sessionNotFound' };
 
@@ -394,11 +406,25 @@ export async function resolveExistingSessionAttachContext(_params: Readonly<{
       accountEncryptionCurrentness,
     });
   } catch (error) {
-    const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
+    const diagnostic = {
+      ...readUnexpectedActionErrorDiagnosticV1(error),
+      ...(error instanceof SessionDetailInvalidResponseError
+        ? { sessionDetailValidation: { schema: error.schema, issues: error.issues } }
+        : {}),
+    };
     logger.warn('[DAEMON RUN] Existing Session attach read failed', {
       sessionId,
       ...diagnostic,
     });
     return { ok: false, reason: 'fetchFailed', diagnostic };
+  } finally {
+    logger.debug('[DAEMON RUN] Existing Session attach timing', {
+      sessionId,
+      slotWaitMs: elapsed(marks.slotAcquired),
+      detailReadMs: marks.slotAcquired === undefined || marks.detailRead === undefined
+        ? null : Math.round(marks.detailRead - marks.slotAcquired),
+      currentnessMs: elapsed(marks.currentness),
+      totalMs: elapsed(performance.now()),
+    });
   }
 }

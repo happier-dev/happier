@@ -20,6 +20,16 @@ describe('isAutomationWorkerEnabled', () => {
     expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'yes' })).toBe(true);
   });
 
+  it('uses the canonical Workflow env before its released alias', () => {
+    expect(isAutomationWorkerEnabled({ HAPPIER_FEATURE_WORKFLOWS__ENABLED: '0' })).toBe(false);
+    expect(isAutomationWorkerEnabled({
+      HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '0',
+    })).toBe(true);
+    expect(isAutomationWorkerEnabled({
+      HAPPIER_FEATURE_WORKFLOWS__ENABLED: '0', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
+    })).toBe(false);
+  });
+
   it('respects build policy deny list', () => {
     expect(
       isAutomationWorkerEnabled({ NODE_ENV: 'test',
@@ -37,14 +47,14 @@ describe('Workflow runtime activation', () => {
     expect(isWorkflowRuntimeEnabled({ NODE_ENV: 'test' }, ready({ features: { automations: { enabled: true }, workflows: { enabled: 'yes' } }, capabilities: {} }))).toBe(false);
   });
 
-  it('requires the canonical Workflow bit and its Automations dependency', () => {
+  it('uses the canonical Workflow bit regardless of the released alias value', () => {
     const ready = (automations: boolean, workflows: boolean) => ({
       status: 'ready' as const,
       features: { features: { automations: { enabled: automations }, workflows: { enabled: workflows } }, capabilities: {} } as never,
     });
     expect(isWorkflowRuntimeEnabled({ NODE_ENV: 'test' }, ready(true, true))).toBe(true);
-    expect(isWorkflowRuntimeEnabled({ NODE_ENV: 'test' }, ready(false, true))).toBe(false);
-    expect(getWorkflowRuntimeFeatureDecision({ NODE_ENV: 'test' }, ready(false, true)).blockedBy).toBe('dependency');
+    expect(isWorkflowRuntimeEnabled({ NODE_ENV: 'test' }, ready(false, true))).toBe(true);
+    expect(getWorkflowRuntimeFeatureDecision({ NODE_ENV: 'test' }, ready(true, false)).blockedBy).toBe('server');
   });
 });
 
@@ -55,7 +65,7 @@ describe('getAutomationWorkerFeatureDecision', () => {
       HAPPIER_BUILD_FEATURES_DENY: 'automations',
     });
 
-    expect(decision.featureId).toBe('automations');
+    expect(decision.featureId).toBe('workflows');
     expect(decision.state).toBe('disabled');
     expect(decision.blockedBy).toBe('build_policy');
     expect(decision.blockerCode).toBe('build_disabled');

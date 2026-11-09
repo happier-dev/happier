@@ -7,7 +7,6 @@ import type {
     SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { TeamCredentialProviderModelCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
@@ -25,7 +24,7 @@ import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spaw
 import { resolveAgentNativeSpawnDefinitiveRejection } from '@/providers/spawn/currentDefinitiveRejection';
 import {
     getActiveAccountSettingsSnapshot,
-    subscribeActiveAccountSettingsSnapshot,
+    subscribeActiveAccountSettingsKeys,
     type ActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { validateSpawnProfileEnvironment } from '@/settings/profiles/validateSpawnProfile';
@@ -39,6 +38,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
 import type { SpawnPluginRuntimeLease } from './spawnPluginRuntimeLease';
 import { buildProviderSpawnErrorResult } from './buildProviderSpawnErrorResult';
+import { projectChildEnvironmentFailure } from './projectChildEnvironmentFailure';
 
 type PreparedDaemonProviderLaunch = Readonly<{
     ok: true;
@@ -145,7 +145,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
         backendTarget: input.effectiveBackendTarget,
     };
     const providerSessionId = input.normalizedExistingSessionId || null;
-    const prepared = await prepareProviderLaunch({
+    const prepared = await prepareProviderLaunch<DaemonProviderLaunchRefusal>({
         ...(input.options.callerInputConstraints ? { callerInputConstraints: input.options.callerInputConstraints } : {}),
         permissionMode: input.options.permissionMode ?? 'default',
         ...(input.modelSelection ? { selection: input.modelSelection } : {}),
@@ -190,10 +190,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
                 ? { ok: true as const }
                 : {
                     ok: false as const,
-                    error: createProviderErrorV1('provider_agent_runtime_unsupported', {
-                        connectionId: providerBindingContext.connectionId,
-                        ...(input.options.machineId ? { machineId: input.options.machineId } : {}),
-                    }),
+                    result: projectChildEnvironmentFailure(providerPrerequisites),
                 };
         },
         createAuthorizationAttempt: async ({
@@ -209,13 +206,14 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
                 machineId,
                 agentTargetKey,
                 agentId,
+                sessionConfigOptionOverrides: input.options.sessionConfigOptionOverrides,
                 reobserveProviderCatalog: input.options.providerBindingSecurityChangeConfirmationV1 !== undefined,
                 lease: appliedPluginRuntimeLease,
                 getAccountSettingsSnapshot: input.readAccountSettingsSnapshot ?? (input.accountSettingsSnapshot
                     ? () => input.accountSettingsSnapshot ?? null : getActiveAccountSettingsSnapshot),
                 subscribeAccountSettingsSnapshot: input.accountSettingsSnapshot || input.readAccountSettingsSnapshot
                     ? () => () => undefined
-                    : (listener) => subscribeActiveAccountSettingsSnapshot(() => listener()),
+                    : (listener, keys) => subscribeActiveAccountSettingsKeys(keys, () => listener()),
                 runtimeStateStore: createProviderRuntimeStateStore({
                     happyHomeDir: input.providerRuntimeHomeDir ?? configuration.happyHomeDir,
                     machineId,
@@ -237,7 +235,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
         },
     });
     if (!prepared.ok) {
-        return { ok: false, result: buildProviderSpawnErrorResult(prepared.error) };
+        return 'result' in prepared ? prepared : { ok: false, result: buildProviderSpawnErrorResult(prepared.error) };
     }
     if (prepared.kind === 'native') {
         return {

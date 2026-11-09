@@ -24,9 +24,7 @@ function harness() {
   const effects: string[] = [];
   const target: ConfidentialSecretFillTarget = {
     nativeObservation: 'not_observable',
-    recheck: async () => current,
-    fill: async (bytes, _signal, beforeDelivery) => { expect(held).toBe(true);
-      if (beforeDelivery && !await beforeDelivery()) return { status: 'refused', code: 'approval_changed' };
+    fill: async (bytes) => { expect(held).toBe(true);
       deliveries.push(bytes); effects.push(Buffer.from(bytes).toString()); return { status: 'filled', code: 'filled' }; },
     finish: async () => { effects.push('cleanup'); },
   };

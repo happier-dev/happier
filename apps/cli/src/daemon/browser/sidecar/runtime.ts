@@ -32,9 +32,9 @@ function rejectedLaunchResult(input: Readonly<{
     });
 }
 
-function buildSidecarLaunchArgs(profileDirectory: string, extensionDirectories: readonly string[]): readonly string[] {
+function buildSidecarLaunchArgs(profileDirectory: string, extensionDirectories: readonly string[], presentation: 'headless' | 'window'): readonly string[] {
     return [
-        '--headless=new',
+        ...(presentation === 'headless' ? ['--headless=new'] : []),
         `--user-data-dir=${profileDirectory}`,
         '--remote-debugging-pipe',
         '--no-first-run',
@@ -55,6 +55,8 @@ export function createSidecarLaunchPlan(params: Readonly<{
     profile: BrowserProfileV1;
     profileDirectory: string;
     extensionDirectories?: readonly string[];
+    /** Internal launch intent, admitted by the local-window owner before process creation. */
+    presentation?: 'headless' | 'window';
     binaryResolution: SidecarBrowserBinaryResolution;
 }>): SidecarLaunchPlan {
     if (!params.binaryResolution.ok) {
@@ -95,7 +97,8 @@ export function createSidecarLaunchPlan(params: Readonly<{
             sidecarId: params.sidecarId,
             executablePath: params.binaryResolution.executablePath,
             args: buildSidecarLaunchArgs(profileResolution.cleanup.profileDirectory,
-                params.profile.storageMode === 'user' || params.profile.storageMode === 'plugin' ? params.extensionDirectories ?? [] : []),
+                params.profile.storageMode === 'user' || params.profile.storageMode === 'plugin' ? params.extensionDirectories ?? [] : [],
+                params.presentation ?? 'headless'),
             source: params.binaryResolution.source,
             profileId: profileResolution.binding.profileId,
             profileDirectory: profileResolution.cleanup.profileDirectory,

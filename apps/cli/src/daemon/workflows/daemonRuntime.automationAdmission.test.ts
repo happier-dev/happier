@@ -3,6 +3,9 @@ import axios from 'axios';
 import { tmpdir } from 'node:os';
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, type WorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { socketRpcCodec } from '@happier-dev/sync-client';
+import { bindApiSessionSocketMock, createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot } from '@/testkit/backends/apiSessionSocketHarness';
 import { loadPromptLibraryCatalogV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { configuration } from '@/configuration';
@@ -20,8 +23,9 @@ import { ProfileRecordV1Schema, ProfileRowsListResponseV1Schema, PROFILE_ROWS_RO
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { AUTHORING_MEMORY_ROUTE_V1 } from '@happier-dev/protocol/account/authoringMemory';
 
-const mocks = vi.hoisted(() => ({ fetchSessionById: vi.fn(), fetchAccountEncryptionCurrentness: vi.fn() }));
-// HTTP is the boundary; Session authorization, catalogs and materialization remain real.
+const mocks = vi.hoisted(() => ({ io: vi.fn(), fetchSessionById: vi.fn(), fetchAccountEncryptionCurrentness: vi.fn() }));
+// HTTP and Socket.IO are boundaries; authorization, catalogs and materialization remain real.
+vi.mock('socket.io-client', () => ({ io: mocks.io }));
 vi.mock('@/session/transport/http/sessionsHttp', async importOriginal => ({
   ...await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>(), fetchSessionById: mocks.fetchSessionById,
 }));
@@ -94,6 +98,9 @@ describe('scoped Automation daemon admission', () => {
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
+      if (path === `/v1/machines/${machineId}`) return { status: 200, data: {
+        machine: { ...createAvailableSessionSpawnMachineSnapshot(machineId), storageMode: 'plain' },
+      } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
         mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -133,6 +140,33 @@ describe('scoped Automation daemon admission', () => {
       snapshots.push(opened.content);
       throw captured;
     });
+    bindApiSessionSocketMock(mocks.io, createApiSessionSocketStub({ async emitWithAck(event, payload) {
+      if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object'
+        || !('method' in payload) || typeof payload.method !== 'string' || !('params' in payload)
+        || !payload.method.startsWith(`${machineId}:`)) throw new Error('Unexpected scoped Machine RPC');
+      const method = payload.method.slice(`${machineId}:`.length);
+      const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, payload.params, payload.method);
+      // Answer only the Home network boundary. This fixture captures the
+      // accepted snapshot before any receiving admission or Session effect.
+      let result: unknown;
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) result = {
+        protocolVersion: 1, projection: { v: 2, generation: 1, agentsById: { [agentId]: {
+          id: agentId, identity: target.identity,
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        }, ...(r41d ? { 'custom-acp': { id: 'custom-acp', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1,
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } } : {}) } },
+      };
+      else if (method === RPC_METHODS.CAPABILITIES_DETECT) result = { protocolVersion: 1, results: {
+        [`cli.${agentId}`]: { ok: true, data: { installed: true, version: '1', latestVersion: null,
+          update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'unsupported' },
+          platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] } },
+        'tool.executionRuns': { ok: true, data: { available: true, features: { detachedScope: true },
+          backends: { ['definitionId' in target ? targetKey : agentId]: { available: true },
+            ...(r41d ? { [secondOpinionKey]: { available: true } } : {}) } } },
+      } };
+      else throw new Error(`Unexpected scoped Machine read ${method}`);
+      return { ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, result, decoded.callId) };
+    } }));
     const settings = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force', honorAccountSettingsModeEnv: false });
     if (!settings.scopeKey) throw new Error('Missing scoped Account settings');
     const catalog = await loadPromptLibraryCatalogV1({ mode: 'plain', material: null, readRows: async () =>
@@ -147,23 +181,8 @@ describe('scoped Automation daemon admission', () => {
     const runtime = createProductionDaemonWorkflowRuntime({ credentials, accountId });
     const coordinate = runtime.createCoordinatorForMachine({ machineId,
       machineAdmissionTransport: async () => { throw new Error('No Session effect before accepted snapshot'); },
-      machineActionDirectTargetTransport: { machineId, invoke: async method => {
-        if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
-          protocolVersion: 1, projection: { v: 2, generation: 1, agentsById: { [agentId]: {
-            id: agentId, identity: target.identity,
-            capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
-          }, ...(r41d ? { 'custom-acp': { id: 'custom-acp', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1,
-            capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } } : {}) } },
-        };
-        if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
-          [`cli.${agentId}`]: { ok: true, data: { installed: true, version: '1', latestVersion: null,
-            update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'unsupported' },
-            platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] } },
-          'tool.executionRuns': { ok: true, data: { available: true, features: { detachedScope: true },
-            backends: { ['definitionId' in target ? targetKey : agentId]: { available: true },
-              ...(r41d ? { [secondOpinionKey]: { available: true } } : {}) } } },
-        } };
-        throw new Error(`Unexpected scoped Machine read ${method}`);
+      machineActionDirectTargetTransport: { machineId, invoke: async () => {
+        throw new Error('No local Machine shortcut before accepted snapshot');
       } },
     });
     const admission = coordinate({ runId, automationId: 'automation-1', attempt: 1, expectedRevision: 1,

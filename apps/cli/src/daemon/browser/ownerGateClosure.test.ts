@@ -40,7 +40,7 @@ const browserGateCases: readonly BrowserGateCase[] = [
       browserSessionId: browserViewInput.browserSessionId,
       viewId: browserViewInput.viewId,
     },
-    disabledReason: 'browser_control_route_unavailable',
+    disabledReason: 'browser_sidecar_disabled',
     routeCall: 'control',
   },
   {
@@ -94,6 +94,10 @@ function disabledResult(reason: string) {
     ok: false,
     errorCode: 'runtime_action_disabled',
     error: `runtime_action_disabled:browser:${reason}`,
+    ...(reason === 'browser_sidecar_disabled' ? {
+      details: { cause: reason, phase: 'browser.control.feature_decision', retryable: false },
+      failureCause: { phase: 'browser.control.feature_decision', errorClass: 'Error', errorCode: null, httpStatus: null },
+    } : {}),
   };
 }
 

@@ -8,9 +8,11 @@ import { resolveDaemonSessionScopeBaseRelativePath } from './resolveDaemonSessio
 import { readUnifiedProcessCgroupRelativePath } from './readUnifiedProcessCgroupRelativePath';
 import { configuration } from '@/configuration';
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import {
   buildSystemdUserScopedLaunchSpec,
   isSystemdUserResourceGovernorReady,
+  readSystemdUserManager,
   supportsSystemdRunEnvironmentExpansionOption,
   type SystemdUserResourceGovernorExecFile,
   buildSessionScopeExitLaunchSpec, sessionScopeExitEvidencePath, type SessionScopeExitCapture,
@@ -37,13 +39,16 @@ export async function prepareCgroupProcessLaunchScope(params: Readonly<{
   procfsRootDir?: string;
   cgroupRootDir?: string;
   environment?: NodeJS.ProcessEnv;
+  memoryHighBytes?: number | null;
   systemdUserResourceGovernorExecFile?: SystemdUserResourceGovernorExecFile;
 }> = {}): Promise<LinuxProcessLaunchScope | null> {
   const environment = params.environment ?? process.env;
   if (await isSystemdUserResourceGovernorReady({
     environment,
     execFile: params.systemdUserResourceGovernorExecFile,
-  })) {
+  }) || (await readSystemdUserManager({ environment, execFile: params.systemdUserResourceGovernorExecFile }))?.controlGroup !== undefined) {
+    // All roots need their own scope when a user manager is available. Jobs
+    // policy and memory-controller delegation are separate capabilities.
     // Resolve using the host's PATH, not the admitted target's possibly empty PATH.
     for (const directory of (environment.PATH ?? process.env.PATH ?? '').split(':')) {
       const systemdRunPath = resolve(directory, 'systemd-run');
@@ -63,9 +68,14 @@ export async function prepareCgroupProcessLaunchScope(params: Readonly<{
     }
   }
   const daemonPath = await readUnifiedProcessCgroupRelativePath(normalizePid(params.daemonPid) ?? process.pid, params.procfsRootDir ?? '/proc');
-  if (!daemonPath) return null;
-  const base = resolveDaemonSessionScopeBaseRelativePath(daemonPath);
-  if (!base || base === '.' || base === daemonPath) return null;
+  const base = daemonPath ? resolveDaemonSessionScopeBaseRelativePath(daemonPath) : null;
+  if (!base || base === '.' || base === daemonPath) {
+    if (params.memoryHighBytes !== undefined && params.memoryHighBytes !== null) {
+      throw Object.assign(new Error('The configured Session memory ceiling cannot be enforced: no usable Linux process scope is available.'),
+        { code: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED });
+    }
+    return null;
+  }
   return { kind: 'cgroup', baseDir: join(params.cgroupRootDir ?? '/sys/fs/cgroup', base) };
 }
 

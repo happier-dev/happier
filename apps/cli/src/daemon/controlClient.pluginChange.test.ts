@@ -403,6 +403,48 @@ describe('daemon control client plugin changes', () => {
     }
   });
 
+  it('answers the summary projection of plugins.list without per-plugin contribution detail and keeps the full default', async () => {
+    const contribution = { contribution: { family: 'workflows', kind: 'localId', localId: 'review', qualifiedId: 'acme.summary/review' },
+      detail: 'x'.repeat(4_096) };
+    const entry = {
+      pluginId: 'acme.summary', title: 'Summary', description: null, version: '1.0.0', enabled: true,
+      desiredGeneration: null, appliedGeneration: null, admittedIntegrity: null,
+      source: { kind: 'path', locator: '/plugins/acme.summary', trustPolicy: 'local_trusted', installPolicy: 'link',
+        resolvedPath: '/plugins/acme.summary', manifestPath: '/plugins/acme.summary/plugin.json' },
+      install: { mode: 'link', manifestVersion: '1.0.0' }, compatibility: { status: 'compatible', diagnostics: [] },
+      manifestPath: '/plugins/acme.summary/plugin.json', manifest: null, diagnostics: [],
+      contributionIntrospection: { version: 1, generation: 0, diagnostics: [], contributions: [contribution] },
+    };
+    const server = http.createServer((request, response) => {
+      request.resume();
+      request.on('end', () => {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify(request.url === '/plugins/catalog/read'
+          ? { kind: 'available', plugins: [entry], tools: [] }
+          : request.url === '/plugins/change/list'
+            ? { changes: [] }
+            : { kind: 'unavailable', code: 'unexpected_test_route' }));
+      });
+    });
+    try {
+      const { port } = await listen(server);
+      home = await createTempDir('happier-plugin-list-summary-');
+      envScope.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      writeDaemonState({ pid: process.pid, httpPort: port, startedAt: Date.now(),
+        startedWithCliVersion: 'test', controlToken: 'control-token' });
+      const { executePluginDevLoopAction } = await import('@/plugins/devLoop/actions');
+      const full = await executePluginDevLoopAction({ actionId: 'plugins.list', input: {} }) as { plugins: readonly Record<string, unknown>[] };
+      const summary = await executePluginDevLoopAction({ actionId: 'plugins.list', input: { projection: 'summary' } }) as { plugins: readonly Record<string, unknown>[] };
+      expect(full.plugins[0]).toHaveProperty('contributions');
+      expect(summary.plugins[0]).toMatchObject({ pluginId: 'acme.summary', title: 'Summary', version: '1.0.0', enabled: true, diagnostics: [] });
+      expect(summary.plugins[0]).not.toHaveProperty('contributions');
+      expect(JSON.stringify(summary).length).toBeLessThan(JSON.stringify(full).length - 4_096);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('reads additive tool projections while accepting an older catalog response without tools', async () => {
     let reads = 0;
     const server = http.createServer((request, response) => {

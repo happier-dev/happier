@@ -2,10 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
 import { handleConnectedServiceRuntimeAuthFailure } from './handleConnectedServiceRuntimeAuthFailure';
-import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { handleConnectedServiceRuntimeAuthFailureForSession } from './handleConnectedServiceRuntimeAuthFailureForSession';
+import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry, type ConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { createSessionConnectedServiceRuntimeAuthRefreshHandler } from '../sessionRuntimeAuthRefresh';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from './resolveRuntimeAuthRecoveryResultDisposition';
+import type { RuntimeAuthRecoveryIntent } from './RuntimeAuthRecoveryScheduler';
+import type { RecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
+import { createPredecessorCompatibleRuntimeAuthRecoveryStore } from './predecessorRuntimeAuthRecoveryStore';
 
 type RuntimeAuthRecoveryModule = Readonly<{
   RuntimeAuthRecoveryScheduler: new (deps: {
@@ -13,15 +19,11 @@ type RuntimeAuthRecoveryModule = Readonly<{
     baseBackoffMs?: number;
     maxBackoffMs?: number;
     jitterMs?: () => number;
-    maxAttempts?: number;
-    maxCoalescedReplays?: number;
-    maxDegradedAttempts?: number;
     degradedBackoffMs?: number;
-    providerOutcomePendingWaitMs?: number;
     continueAfterUsageLimitReset?: (intent: unknown) => Promise<unknown>;
     recover: (input: {
       sessionId: string;
-      switchesThisTurn: number;
+      switchesThisTurn?: number;
       classification: ConnectedServiceRuntimeFailureClassification;
       resumePromptMode?: 'standard' | 'off' | 'custom';
       recoveryInvocationSource?: 'scheduler_retry';
@@ -40,15 +42,16 @@ type RuntimeAuthRecoveryModule = Readonly<{
     beginClassifiedFailure: (input: {
       reportId?: string;
       sessionId: string;
-      switchesThisTurn: number;
+      switchesThisTurn?: number;
       classification: ConnectedServiceRuntimeFailureClassification;
       resumePromptMode?: 'standard' | 'off' | 'custom';
+      deferToScheduler?: boolean;
     }) => Promise<{ status: string; retryable: boolean; nextRetryAtMs?: number | null; resumePromptMode?: 'standard' | 'off' | 'custom'; attemptId?: string; transition?: string }>;
     enqueueHandlerFailure: (input: {
       reportId?: string;
       expectedAttemptId?: string;
       sessionId: string;
-      switchesThisTurn: number;
+      switchesThisTurn?: number;
       classification: ConnectedServiceRuntimeFailureClassification;
       error: unknown;
     }) => Promise<{ status: string; retryable: boolean; nextRetryAtMs?: number | null }>;
@@ -56,7 +59,7 @@ type RuntimeAuthRecoveryModule = Readonly<{
       reportId?: string;
       expectedAttemptId?: string;
       sessionId: string;
-      switchesThisTurn: number;
+      switchesThisTurn?: number;
       classification: ConnectedServiceRuntimeFailureClassification;
       result: unknown;
     }) => Promise<{ status: string; retryable: boolean; nextRetryAtMs?: number | null }>;
@@ -158,7 +161,365 @@ function applyFailedResult(errorCode: string, diagnostics?: unknown): unknown {
   };
 }
 
+function createSerializedRecoveryStore(initial: ReadonlyArray<readonly [string, unknown]> = []): RecoveryIntentFileStore<RuntimeAuthRecoveryIntent> {
+  // Persisted JSON is the storage boundary; the predecessor adapter and scheduler remain real.
+  const rows = new Map(initial.map(([key, value]) => [key, JSON.stringify(value)]));
+  const claims = new Map<string, string>();
+  const read = (key: string): unknown => {
+    const value = rows.get(key);
+    return value === undefined ? null : JSON.parse(value) as unknown;
+  };
+  return {
+    read,
+    readAll: () => [...rows.keys()].map((key) => [key, read(key)] as const),
+    write: (key, intent) => { rows.set(key, JSON.stringify(intent)); },
+    remove: (key) => { rows.delete(key); claims.delete(key); },
+    readKeysAuthoritative: (keys) => new Map(keys.map((key) => [key, read(key)])),
+    transactKeys: async (keys, transaction) => {
+      const entries = new Map([...rows.keys()].map((key) => [key, {
+        // Historical bytes intentionally cross the current typed persistence boundary.
+        intent: read(key) as RuntimeAuthRecoveryIntent | null,
+        effectClaimToken: claims.get(key) ?? null,
+      }]));
+      const current = new Map(keys.map((key) => [key, entries.get(key) ?? { intent: null, effectClaimToken: null }]));
+      const next = transaction(current, entries);
+      for (const mutation of next.mutations) {
+        if (mutation.intent === null) rows.delete(mutation.sessionId);
+        else rows.set(mutation.sessionId, JSON.stringify(mutation.intent));
+        if (mutation.effectClaimToken === null) claims.delete(mutation.sessionId);
+        else claims.set(mutation.sessionId, mutation.effectClaimToken);
+      }
+      return next.result;
+    },
+  };
+}
+
 describe('RuntimeAuthRecoveryScheduler', () => {
+  it('retains the failed ai1 turn through batiplus adoption, scheduler replacement, retry and report replay', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await import('./RuntimeAuthRecoveryScheduler');
+    const serviceId = 'happier.agent.claude/claude-subscription';
+    const sessionId = 'ai1-failed-turn';
+    const durableStore = createSerializedRecoveryStore();
+    const failure = usageLimitClassification({ serviceId, groupId: 'claude-pool', profileId: 'ai1',
+      groupGeneration: 1, expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      sourceProviderAccountId: 'account-ai1', sourceProviderOrganizationId: 'org-ai1',
+      providerLimitId: 'five_hour', resetsAtMs: 100_000 });
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      serviceId, groupId: 'claude-pool', activeProfileId: 'ai1', generation: 1,
+      runtimeStateRevision: 0, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: ['ai1', 'batiplus_ai'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map([['batiplus_ai', {
+        quotaSnapshot: { capturedAtMs: 1_000, staleAfterMs: 60_000, effectiveRemainingPercent: 98,
+          meters: [{ meterId: 'five_hour', limitCategory: 'usage_limit', remainingPct: 98,
+            resetAtMs: 100_000, providerLimitId: 'five_hour' }] },
+      }]]),
+    };
+    const blockedProfiles: string[] = [];
+    const continuations: string[] = [];
+    const retriedFailures: ConnectedServiceRuntimeFailureClassification[] = [];
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 1_000,
+      loadState: async () => current,
+      // Group persistence and provider application are genuine external boundaries.
+      recordObservedFailureState: async ({ observedProfileId }) => {
+        if (!observedProfileId) throw new Error('Expected an attributed failed profile');
+        blockedProfiles.push(observedProfileId);
+      },
+      commitSwitch: async ({ toProfileId }) => (current = { ...current, activeProfileId: toProfileId,
+        generation: 2, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' }),
+      applyGeneration: async () => ({ ok: true, mode: 'hot_apply' }),
+    });
+    const handlerDeps = {
+      getChildren: () => [{ startedBy: 'daemon' as const, happySessionId: sessionId, pid: 123 }],
+      switchCoordinator: coordinator,
+      resolveRegisteredRuntimeAuthFailureSource: async () => {
+        if (!current.activeProfileId) throw new Error('Expected an active registered profile');
+        return { serviceId, groupId: 'claude-pool', profileId: current.activeProfileId,
+          generation: current.generation, credentialRevision: current.credentialRevision ?? null };
+      },
+      continueAfterRuntimeAuthSwitch: async () => {
+        if (!current.activeProfileId) throw new Error('Expected an adopted continuation target');
+        continuations.push(current.activeProfileId);
+      },
+    } satisfies Pick<Parameters<typeof handleConnectedServiceRuntimeAuthFailureForSession>[0],
+      'getChildren' | 'switchCoordinator' | 'resolveRegisteredRuntimeAuthFailureSource' | 'continueAfterRuntimeAuthSwitch'>;
+    const makeScheduler = () => new RuntimeAuthRecoveryScheduler({ durableStore, nowMs: () => 1_000,
+      recover: async (input) => {
+        retriedFailures.push(input.classification);
+        return await handleConnectedServiceRuntimeAuthFailureForSession({ ...handlerDeps, ...input });
+      } });
+    const body = { reportId: 'runtime-auth-report:ai1-turn', sessionId, classification: failure };
+    const first = makeScheduler();
+    let replacement: InstanceType<typeof RuntimeAuthRecoveryScheduler> | undefined;
+    try {
+      const begun = await first.beginClassifiedFailure(body);
+      const recovered = await handleConnectedServiceRuntimeAuthFailureForSession({ ...handlerDeps, ...body });
+      expect(recovered).toMatchObject({ status: 'switch_attempted', result: { status: 'switched', activeProfileId: 'batiplus_ai' } });
+      await first.markAwaitingProviderOutcomeProofByKey({ sessionId, serviceId, groupId: failure.groupId,
+        profileId: failure.profileId, expectedAttemptId: begun.attemptId, result: recovered });
+      expect(first.read(sessionId)).toMatchObject({ classification: failure,
+        profileId: 'ai1', status: 'resumed_awaiting_proof', pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2 });
+      first.dispose();
+      replacement = makeScheduler();
+      expect(replacement.hydratePassive()).toEqual([expect.objectContaining({ classification: failure,
+        profileId: 'ai1', pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2 })]);
+      await replacement.wake({ sessionId, reason: 'manual' });
+      expect(replacement.read(sessionId)).toMatchObject({ classification: failure,
+        profileId: 'ai1', pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2 });
+      await replacement.beginClassifiedFailure(body);
+      expect(retriedFailures).toEqual([expect.objectContaining(failure)]);
+      expect(replacement.read(sessionId)).toMatchObject({ classification: failure,
+        profileId: 'ai1', pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2 });
+      expect(blockedProfiles.length).toBeGreaterThan(0);
+      expect(blockedProfiles.every((profileId) => profileId === 'ai1')).toBe(true);
+      expect(continuations).toContain('batiplus_ai');
+      expect(continuations.every((profileId) => profileId === 'batiplus_ai')).toBe(true);
+    } finally { first.dispose(); replacement?.dispose(); }
+  });
+
+  it('starts a new failure attempt when provider-reported organization changes within the same runtime issue', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1_000,
+      recover: async () => ({ status: 'credential_refreshed' }) });
+    try {
+      const first = await scheduler.beginClassifiedFailure({ sessionId: 'changed-provider-evidence',
+        reportId: 'runtime-auth-report:org-ai1', classification: usageLimitClassification({
+          runtimeIssueFingerprint: 'runtime-issue:same-error', providerReportedOrganizationId: 'org-ai1' }) });
+      const changed = await scheduler.beginClassifiedFailure({ sessionId: 'changed-provider-evidence',
+        reportId: 'runtime-auth-report:org-batiplus', classification: usageLimitClassification({
+          runtimeIssueFingerprint: 'runtime-issue:same-error', providerReportedOrganizationId: 'org-batiplus' }) });
+      expect(changed.attemptId).not.toBe(first.attemptId);
+      expect(scheduler.read('changed-provider-evidence')).toMatchObject({ attemptId: changed.attemptId,
+        classification: { providerReportedOrganizationId: 'org-batiplus' } });
+    } finally { scheduler.dispose(); }
+  });
+
+  it('hydrates the released 0.2.18 and 0.2.19 pending-proof intent without replacing its failed identity', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    const serviceId = 'happier.agent.claude/claude-subscription';
+    const failure = usageLimitClassification({ serviceId, groupId: 'claude-pool', profileId: 'ai1',
+      groupGeneration: 1, expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      sourceProviderAccountId: 'account-ai1', sourceProviderOrganizationId: 'org-ai1',
+      providerLimitId: 'five_hour', resetsAtMs: 100_000 });
+    // Producer basis: CLI 0.2.18 (0895032a51), CLI 0.2.19 (93147767e4), identical writers.
+    // markAwaitingProviderOutcomeProofForResultByKey retains 'working' while adding a deadline.
+    const key = `runtime-auth:v1:${Buffer.from(JSON.stringify([
+      'released-failure', 'claude-subscription', null, 'claude-pool',
+    ])).toString('base64url')}`;
+    const { expectedCredentialRevision: credentialRevision, ...releasedFailure } = failure;
+    const physicalStore = createSerializedRecoveryStore([[key, {
+      v: 2, attemptId: 'runtime-auth-attempt:released-failure', lastSettledTransition: 'working',
+      sessionId: 'released-failure', serviceId: 'claude-subscription', profileId: 'ai1', groupId: 'claude-pool',
+      resumePromptMode: 'off', status: 'resumed_awaiting_proof', armedAtMs: 1_000, nextRetryAtMs: 2_000,
+      attemptCount: 0, maxAttempts: 5, switchesThisTurn: 0,
+      classification: { ...releasedFailure, serviceId: 'claude-subscription', credentialRevision },
+      failurePhase: 'handler', failureReason: 'source_tuple_superseded',
+      lastError: 'recovery_unproven_awaiting_provider_outcome',
+      lastErrorClassification: { kind: 'rate_limited', retryable: true },
+      pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2, terminalAtMs: null, terminalReason: null,
+    }]]);
+    let retried: ConnectedServiceRuntimeFailureClassification | undefined;
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      durableStore: createPredecessorCompatibleRuntimeAuthRecoveryStore(physicalStore), nowMs: () => 2_000,
+      recover: async (input) => { retried = input.classification; return { status: 'credential_refreshed' }; } });
+    try {
+      expect(scheduler.hydratePassive()).toEqual([expect.objectContaining({
+        classification: expect.objectContaining(failure), profileId: 'ai1',
+        pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2, nextRetryAtMs: null,
+      })]);
+      expect(retried).toBeUndefined();
+      await scheduler.wake({ sessionId: 'released-failure', reason: 'manual' });
+      expect(retried).toMatchObject(failure);
+      expect(scheduler.read('released-failure')).toMatchObject({ profileId: 'ai1', classification: failure,
+        pendingTargetProfileId: 'batiplus_ai', pendingTargetGeneration: 2 });
+    } finally { scheduler.dispose(); }
+  });
+
+  it.each([
+    { remainingPercent: 60, incomplete: false },
+    { remainingPercent: 0, incomplete: false },
+    { remainingPercent: 60, incomplete: true },
+  ])('rechecks unknown current-member quota before the failed member reset ($remainingPercent percent, incomplete=$incomplete)', async ({ remainingPercent, incomplete }) => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const serviceId = 'happier.agent.codex/openai-codex';
+    let nowMs = 1_000;
+    let publishFreshEvidence = false;
+    const probes: ReadonlyArray<string>[] = [];
+    const classification = usageLimitClassification({ groupId: 'team', profileId: 'primary', groupGeneration: 1,
+      expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', resetsAtMs: 604_800_000 });
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      serviceId, groupId: 'team', activeProfileId: 'backup', generation: 2,
+      runtimeStateRevision: 0, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: ['primary', 'backup'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map(),
+    };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => nowMs,
+      loadState: async () => current,
+      // Provider quota reads and remote group storage are genuine system boundaries.
+      probeQuotaSnapshotsForGroup: async ({ profileIds }) => {
+        probes.push(profileIds);
+        if (!publishFreshEvidence && incomplete) return { status: 'incomplete' as const,
+          requestedProfileCount: 1, completedProfileCount: 0, reason: 'probe_unavailable' as const };
+        if (publishFreshEvidence) current = { ...current, memberStatesByProfileId: new Map([['backup', {
+          quotaSnapshot: { capturedAtMs: nowMs, staleAfterMs: 60_000,
+            effectiveRemainingPercent: remainingPercent, exhausted: remainingPercent === 0,
+            meters: [{ meterId: 'weekly', limitCategory: 'usage_limit', remainingPct: remainingPercent,
+              resetAtMs: 180_000, providerLimitId: null }] },
+          ...(remainingPercent === 0 ? { quotaExhaustedUntilMs: 180_000 } : {}),
+        }]]) };
+        return undefined;
+      },
+      commitSwitch: async () => { throw new Error('Observation must not select another member'); },
+      applyGeneration: async () => { throw new Error('Observation must not reapply a switch'); },
+    });
+    let continuations = 0;
+    let recovered: unknown;
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => nowMs,
+      recover: async input => {
+        recovered = await handleConnectedServiceRuntimeAuthFailureForSession({ ...input,
+          recoveryInvocationSource: 'scheduler_retry',
+          getChildren: () => [{ startedBy: 'daemon', happySessionId: 'quota-recheck', pid: 123 }],
+          switchCoordinator: coordinator,
+          resolveRegisteredRuntimeAuthFailureSource: async () => ({ serviceId, groupId: 'team', profileId: 'backup', generation: 2,
+            credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' }),
+          continueAfterRuntimeAuthSwitch: async () => { continuations += 1; },
+        });
+        return recovered;
+      },
+    });
+    try {
+      await scheduler.enqueueHandlerFailure({ sessionId: 'quota-recheck', classification,
+        error: Object.assign(new Error('network unavailable'), { code: 'ECONNRESET' }) });
+      nowMs = 3_000;
+      vi.setSystemTime(nowMs);
+      await scheduler.wake({ sessionId: 'quota-recheck', reason: 'manual' });
+      expect(continuations).toBe(0);
+      expect(scheduler.read('quota-recheck')).toMatchObject({ status: 'waiting', nextRetryAtMs: 33_000 });
+      expect(recovered).toMatchObject({ status: 'switch_attempted', result: { status: 'quota_proof_unavailable', activeProfileId: 'backup' } });
+      nowMs = 33_000;
+      publishFreshEvidence = true;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(probes).toEqual([['backup'], ['backup']]);
+      expect(continuations).toBe(remainingPercent > 0 ? 1 : 0);
+      expect(scheduler.read('quota-recheck')).toMatchObject(remainingPercent > 0
+        ? { status: 'resumed_awaiting_proof', pendingTargetProfileId: 'backup', nextRetryAtMs: null }
+        : { status: 'waiting', nextRetryAtMs: 180_000 });
+    } finally { scheduler.dispose(); vi.useRealTimers(); }
+  });
+
+  it('waits passively for provider outcome after local completion without timer-driven replay', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    const recover = vi.fn(async () => ({ status: 'credential_refreshed' }));
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: Date.now, recover });
+    try {
+      await scheduler.enqueueHandlerFailure({ sessionId: 'passive-proof', switchesThisTurn: 0,
+        classification: usageLimitClassification(), error: new Error('timeout of 5000ms exceeded') });
+      await scheduler.wake({ sessionId: 'passive-proof', reason: 'manual' });
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(recover).toHaveBeenCalledTimes(1);
+      expect(scheduler.read('passive-proof')).toMatchObject({ status: 'resumed_awaiting_proof', nextRetryAtMs: null });
+      await scheduler.cancel({ sessionId: 'passive-proof' });
+      expect(scheduler.read('passive-proof')).toMatchObject({ status: 'cancelled' });
+    } finally { scheduler.dispose(); vi.useRealTimers(); }
+  });
+  it.each(['provider', 'endpoint'] as const)('keeps %s recovery active beyond the former attempt ceilings until Stop', async (failure) => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    const recover = vi.fn(async () => failure === 'endpoint'
+      ? { status: 'session_endpoint_unavailable', reason: 'connect ECONNREFUSED 127.0.0.1:52753' }
+      : applyFailedResult('hot_apply_failed', { underlyingError: 'connect ECONNREFUSED 127.0.0.1:9999' }));
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1_000, recover });
+    try {
+      await scheduler.enqueueHandlerFailure({ sessionId: 'unbounded-recovery', switchesThisTurn: 0,
+        classification: usageLimitClassification(), error: new Error('timeout of 5000ms exceeded') });
+      for (let index = 0; index < 65; index += 1) {
+        await expect(scheduler.wake({ sessionId: 'unbounded-recovery', reason: 'manual' })).resolves.toEqual({ status: 'waiting' });
+      }
+      expect(recover).toHaveBeenCalledTimes(65);
+      await scheduler.cancel({ sessionId: 'unbounded-recovery' });
+      await scheduler.wake({ sessionId: 'unbounded-recovery', reason: 'manual' });
+      expect(recover).toHaveBeenCalledTimes(65);
+      expect(scheduler.read('unbounded-recovery')).toMatchObject({ status: 'cancelled' });
+    } finally { scheduler.dispose(); }
+  });
+  it('retries real group lease contention without spending provider attempts, then adopts a usable switch', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const leases = new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry({ leaseTimeoutMs: 10 });
+    const owner = leases.acquire({ serviceId: 'happier.agent.codex/openai-codex', groupId: 'team' });
+    if (owner.kind !== 'owner') throw new Error('Expected group owner');
+    let current: ConnectedServiceAuthGroupSwitchState = {
+      serviceId: 'happier.agent.codex/openai-codex', groupId: 'team', activeProfileId: 'primary', generation: 1,
+      runtimeStateRevision: 0,
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      members: [
+        { profileId: 'primary', priority: 1, createdAtMs: 1, enabled: true },
+        { profileId: 'backup', priority: 2, createdAtMs: 2, enabled: true },
+      ], memberStatesByProfileId: new Map(),
+    };
+    // Group state, CAS and application are the remote storage/session boundaries.
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases, nowMs: Date.now,
+      loadState: async () => current,
+      commitSwitch: async ({ toProfileId }) => (current = { ...current, activeProfileId: toProfileId, generation: 2 }),
+      applyGeneration: async () => ({ ok: true, mode: 'hot_apply' }),
+    });
+    const switchGroup = () => coordinator.switchAfterClassifiedFailure({
+      sessionId: 'lease-contention', serviceId: 'happier.agent.codex/openai-codex', groupId: 'team',
+      reason: 'usage_limit', observedProfileId: 'primary',
+    });
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: Date.now, jitterMs: () => 0,
+      recover: async () => ({ status: 'switch_attempted', result: await switchGroup() }),
+    });
+    try {
+      const begun = await scheduler.beginClassifiedFailure({
+        reportId: 'runtime-auth-report:lease-contention',
+        sessionId: 'lease-contention', switchesThisTurn: 0, classification: usageLimitClassification({ groupId: 'team' }),
+      });
+      expect(begun).toMatchObject({ status: 'scheduled', attemptId: 'runtime-auth-attempt:lease-contention' });
+      const initial = switchGroup().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(10);
+      const error = await initial;
+      expect(error).toBeInstanceOf(Error);
+      await expect(scheduler.enqueueHandlerFailure({
+        sessionId: 'untyped-lease-message', switchesThisTurn: 0, classification: usageLimitClassification({ groupId: 'team' }),
+        error: new Error('connected_service_auth_group_switch_lease_expired'),
+      })).resolves.toMatchObject({ status: 'terminal_non_retry', retryable: false });
+      await expect(scheduler.enqueueHandlerFailure({
+        sessionId: 'lease-contention', switchesThisTurn: 0, classification: usageLimitClassification({ groupId: 'team' }),
+        expectedAttemptId: begun.attemptId, error,
+      })).resolves.toMatchObject({ status: 'scheduled', retryable: true, attemptId: begun.attemptId });
+      for (const degradedAttemptCount of [1, 2, 3]) {
+        const wake = scheduler.wake({ sessionId: 'lease-contention', reason: 'manual', attemptId: begun.attemptId });
+        await vi.advanceTimersByTimeAsync(10);
+        await expect(wake).resolves.toEqual({ status: 'waiting' });
+        expect(scheduler.read('lease-contention')).toMatchObject({
+          status: 'waiting', attemptId: begun.attemptId, attemptCount: 0, degradedAttemptCount,
+          lastError: 'connected_service_auth_group_switch_lease_expired',
+        });
+        expect(leases.acquire({ serviceId: 'happier.agent.codex/openai-codex', groupId: 'team' }).kind).toBe('loser');
+      }
+      owner.finish();
+      await expect(scheduler.wake({ sessionId: 'lease-contention', reason: 'manual', attemptId: begun.attemptId }))
+        .resolves.toEqual({ status: 'waiting' });
+      expect(scheduler.read('lease-contention')).toMatchObject({
+        status: 'resumed_awaiting_proof', attemptId: begun.attemptId, attemptCount: 1,
+        pendingTargetProfileId: 'backup', pendingTargetGeneration: 2,
+      });
+    } finally {
+      owner.finish(); scheduler.dispose(); vi.useRealTimers();
+    }
+  });
+
+
   it.each([undefined, 'usage-limit:old'])('replaces an in-flight %s issue with freshly accepted evidence', async (previousFingerprint) => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     let release: () => void = () => {};
@@ -196,7 +557,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     { runtime: 'unchanged incumbent', targetRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', staleRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb', adoptedRevision: null, timerProofWait: false },
     { runtime: 'fresh activation', targetRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb', staleRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', adoptedRevision: null, timerProofWait: false },
     { runtime: 'in-place refresh after continuation', targetRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', staleRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', adoptedRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb', timerProofWait: false },
-    { runtime: 'bounded timer proof wait', targetRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', staleRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb', adoptedRevision: null, timerProofWait: true },
+    { runtime: 'explicit proof check', targetRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', staleRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb', adoptedRevision: null, timerProofWait: true },
   ])('continues the same qualified profile after its account quota reset without reclassifying the historical failure ($runtime)', async ({ targetRevision, staleRevision, adoptedRevision, timerProofWait }) => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const resumed: unknown[] = [];
@@ -205,10 +566,10 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     const unexpectedGroupEffect = async (): Promise<never> => { throw new Error('Unexpected group recovery effect'); };
     const switchCoordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
       leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => nowMs,
-      quotaFreshnessMs: 60_000, loadState: unexpectedGroupEffect,
+      loadState: unexpectedGroupEffect,
       commitSwitch: unexpectedGroupEffect, applyGeneration: unexpectedGroupEffect,
     });
-    const recover = async (input: Readonly<{ sessionId: string; classification: ConnectedServiceRuntimeFailureClassification; switchesThisTurn: number }>) =>
+    const recover = async (input: Readonly<{ sessionId: string; classification: ConnectedServiceRuntimeFailureClassification; switchesThisTurn?: number }>) =>
       await handleConnectedServiceRuntimeAuthFailure({ ...input,
         selection: { kind: 'profile', serviceId: input.classification.serviceId, profileId: 'primary' },
         switchCoordinator,
@@ -218,7 +579,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      providerOutcomePendingWaitMs: 100,
       recover,
       continueAfterUsageLimitReset: async (intent) => {
         resumed.push(intent);
@@ -248,7 +608,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       expect(resumed).toHaveLength(1);
       expect(scheduler.readForSession('reset-profile')).toEqual([
         expect.objectContaining({ status: 'resumed_awaiting_proof', attemptCount: 2,
-          nextRetryAtMs: 2_100,
+          nextRetryAtMs: null,
           classification: expect.objectContaining({ expectedCredentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' }),
           pendingTargetProfileId: 'primary', pendingTargetCredentialRevision: targetRevision, pendingTargetGeneration: null }),
       ]);
@@ -256,14 +616,14 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       await scheduler.wake({ sessionId: 'reset-profile', reason: 'manual' });
       expect(resumed).toHaveLength(1);
       expect(scheduler.readForSession('reset-profile')).toEqual([
-        expect.objectContaining({ status: 'resumed_awaiting_proof', attemptCount: 2, nextRetryAtMs: 2_100 }),
+        expect.objectContaining({ status: 'resumed_awaiting_proof', attemptCount: 2, nextRetryAtMs: null }),
       ]);
       if (timerProofWait) {
         nowMs = 2_100;
         await scheduler.wake({ sessionId: 'reset-profile', reason: 'timer' });
         expect(resumed).toHaveLength(1);
         expect(scheduler.readForSession('reset-profile')).toEqual([
-          expect.objectContaining({ status: 'exhausted', attemptCount: 3 }),
+          expect.objectContaining({ status: 'resumed_awaiting_proof', attemptCount: 3 }),
         ]);
       }
       if (adoptedRevision) {
@@ -493,13 +853,21 @@ describe('RuntimeAuthRecoveryScheduler', () => {
 
   it('persists a stable attempt identity derived from the durable report id', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
-    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1_000, recover: async () => ({ status: 'wait' }) });
+    let persisted: unknown = null;
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1_000, recover: async () => ({ status: 'wait' }),
+      durableStore: { read: () => persisted, write: (_key, intent) => { persisted = intent; } } });
     const result = await scheduler.beginClassifiedFailure({
       reportId: 'runtime-auth-report:attempt-1',
-      sessionId: 'session-attempt', switchesThisTurn: 0, classification: usageLimitClassification(),
+      sessionId: 'session-attempt', switchesThisTurn: 999, classification: usageLimitClassification(),
     });
     expect(result).toMatchObject({ attemptId: 'runtime-auth-attempt:attempt-1', transition: 'working' });
     expect(scheduler.read('session-attempt')).toMatchObject({ attemptId: 'runtime-auth-attempt:attempt-1', lastSettledTransition: 'working' });
+    expect(persisted).toMatchObject({ switchesThisTurn: 0 });
+    if (typeof persisted !== 'object' || persisted === null) throw new Error('Expected persisted recovery');
+    const { normalizeRuntimeAuthRecoveryIntent } = await import('./RuntimeAuthRecoveryScheduler');
+    const retained = normalizeRuntimeAuthRecoveryIntent({ ...persisted, switchesThisTurn: 999 });
+    expect(retained).toMatchObject({ attemptId: 'runtime-auth-attempt:attempt-1', lastSettledTransition: 'working' });
+    expect(retained).toMatchObject({ switchesThisTurn: 0 });
   });
 
   it('accepts only the current attempt and a strictly newer visible transition', async () => {
@@ -928,7 +1296,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     });
   });
 
-  it('keeps a non-group recovery_action_required terminal when no wait-until is computable', async () => {
+  it('keeps a non-group usage limit waiting on the canonical backoff when its reset is unknown', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
@@ -958,11 +1326,13 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       }),
       error: new Error('timeout of 5000ms exceeded'),
     });
-    await expect(scheduler.wake({ sessionId: 'sess_pinned_no_reset', reason: 'manual' })).resolves.toEqual({ status: 'terminal' });
-    expect(scheduler.read('sess_pinned_no_reset')).toMatchObject({
-      status: 'cancelled',
-      terminalReason: 'recovery_action_required',
-    });
+    try {
+      for (let wake = 0; wake < 2; wake += 1) {
+        await expect(scheduler.wake({ sessionId: 'sess_pinned_no_reset', reason: 'manual' })).resolves.toEqual({ status: 'waiting' });
+        expect(scheduler.read('sess_pinned_no_reset')).toMatchObject({ status: 'waiting',
+          nextRetryAtMs: 1_000 + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS, terminalReason: null });
+      }
+    } finally { scheduler.dispose(); }
   });
 
   it('retries a provider_state_sharing_settings_unavailable apply failure instead of terminalizing (incident Jun-11 H-A)', async () => {
@@ -1239,10 +1609,10 @@ describe('RuntimeAuthRecoveryScheduler', () => {
 
     expect(recover).toHaveBeenCalledWith({
       sessionId: 'sess_1',
-      switchesThisTurn: 1,
       classification,
       resumePromptMode: 'standard',
       recoveryInvocationSource: 'scheduler_retry',
+      interruptedOriginId: expect.stringMatching(/^runtime-auth:/),
     });
     expect(scheduler.read('sess_1')).toMatchObject({
       status: 'resumed_awaiting_proof',
@@ -1778,7 +2148,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     });
   });
 
-  it('clears an exhausted dead-letter on later recovered provider-outcome proof and emits a recovered resolution', async () => {
+  it('clears a retained exhausted record on later recovered provider-outcome proof and emits a recovered resolution', async () => {
     // Incident 2026-06-12 (cmq8y3nlx): a defect-artifact dead-letter kept a permanent
     // "retry limit" banner alive for a healthy account. Positive provider-outcome proof
     // (real provider activity under the same recovery identity) must remove the durable
@@ -1786,15 +2156,15 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     // `recovered` resolution — the dead-letter row's closing counterpart.
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const diagnostics: unknown[] = [];
+    const retained = new Map<string, unknown>();
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      maxAttempts: 1,
-      recover: async () => {
-        throw new Error('timeout of 5000ms exceeded');
-      },
+      durableStore: { read: (key) => retained.get(key) ?? null, readAll: () => [...retained.entries()],
+        write: (key, intent) => { retained.set(key, intent); }, remove: (key) => { retained.delete(key); } },
+      recover: async () => ({ status: 'recovery_action_required' }),
       recordDiagnostic: (event) => diagnostics.push(event),
     });
 
@@ -1805,6 +2175,8 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       error: new Error('timeout of 5000ms exceeded'),
     });
     await scheduler.wake({ sessionId: 'sess_1', reason: 'manual' });
+    for (const [key, value] of retained) retained.set(key, { ...value as Record<string, unknown>, status: 'exhausted', terminalReason: 'max_attempts_exhausted' });
+    scheduler.hydratePassive();
     expect(scheduler.readForSession('sess_1')).toEqual([
       expect.objectContaining({ status: 'exhausted' }),
     ]);
@@ -1846,18 +2218,18 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     ]);
   });
 
-  it('does not clear an exhausted dead-letter through non-recovered or terminal proof kinds', async () => {
+  it('does not clear an exhausted record through non-recovered or terminal proof kinds', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const diagnostics: unknown[] = [];
+    const retained = new Map<string, unknown>();
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      maxAttempts: 1,
-      recover: async () => {
-        throw new Error('timeout of 5000ms exceeded');
-      },
+      durableStore: { read: (key) => retained.get(key) ?? null, readAll: () => [...retained.entries()],
+        write: (key, intent) => { retained.set(key, intent); }, remove: (key) => { retained.delete(key); } },
+      recover: async () => ({ status: 'recovery_action_required' }),
       recordDiagnostic: (event) => diagnostics.push(event),
     });
 
@@ -1868,6 +2240,8 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       error: new Error('timeout of 5000ms exceeded'),
     });
     await scheduler.wake({ sessionId: 'sess_1', reason: 'manual' });
+    for (const [key, value] of retained) retained.set(key, { ...value as Record<string, unknown>, status: 'exhausted', terminalReason: 'max_attempts_exhausted' });
+    scheduler.hydratePassive();
     expect(scheduler.readForSession('sess_1')).toEqual([
       expect.objectContaining({ status: 'exhausted' }),
     ]);
@@ -2129,7 +2503,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       nowMs: () => 1_000,
       baseBackoffMs: 1_000,
       maxBackoffMs: 10_000,
-      providerOutcomePendingWaitMs: 5_000,
       recover: async () => ({ status: 'credential_refreshed' }),
     });
 
@@ -2167,13 +2540,13 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       status: 'resumed_awaiting_proof',
       pendingTargetProfileId: 'primary',
       pendingTargetGeneration: null,
-      nextRetryAtMs: 6_000,
+      nextRetryAtMs: null,
     }));
     expect(scheduler.read('sess_claude_group')).toMatchObject({
       status: 'resumed_awaiting_proof',
       pendingTargetProfileId: 'primary',
       pendingTargetGeneration: null,
-      nextRetryAtMs: 6_000,
+      nextRetryAtMs: null,
     });
   });
 
@@ -2185,8 +2558,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      maxAttempts: 2,
-      providerOutcomePendingWaitMs: 250,
       recover: async () => ({ status: 'credential_refreshed', restartRequested: true }),
     });
 
@@ -2211,7 +2582,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     }
   });
 
-  it('keeps a credential-refresh continuation targeted and bounded while provider proof is absent', async () => {
+  it('keeps a credential-refresh continuation targeted while provider proof is absent', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     let nowMs = 1_000;
     const targetRevision = 'csr_bcdefghijklmnopqrstuvw';
@@ -2220,8 +2591,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      maxAttempts: 2,
-      providerOutcomePendingWaitMs: 250,
       recover: async () => ({
         status: 'credential_refreshed',
         restartRequested: false,
@@ -2251,9 +2620,9 @@ describe('RuntimeAuthRecoveryScheduler', () => {
 
     nowMs += 250;
     await expect(scheduler.wake({ sessionId: 'session-1', reason: 'manual' }))
-      .resolves.toEqual({ status: 'exhausted' });
+      .resolves.toEqual({ status: 'waiting' });
     expect(scheduler.read('session-1')).toMatchObject({
-      status: 'exhausted',
+      status: 'resumed_awaiting_proof',
       attemptCount: 2,
       pendingTargetProfileId: 'primary',
       pendingTargetGeneration: 2,
@@ -2496,7 +2865,17 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     ]));
   });
 
-  it('delays retry during a local-server storm and dead-letters after max attempts', async () => {
+  it.each(['credential_revision_missing', 'credential_revision_superseded'])(
+    'keeps %s retryable through the existing apply-recovery lifecycle', async (errorCode) => {
+      const { RuntimeAuthRecoveryScheduler } = await loadModule();
+      const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1_000, recover: vi.fn() });
+      await expect(scheduler.enqueueApplyFailure({ sessionId: 'credential-retry', switchesThisTurn: 0,
+        classification: usageLimitClassification(), result: applyFailedResult(errorCode),
+      })).resolves.toMatchObject({ status: 'scheduled', retryable: true });
+      expect(scheduler.read('credential-retry')).toMatchObject({ status: 'waiting', failurePhase: 'apply' });
+    });
+
+  it('delays retry during a local-server storm and keeps retryable failures pending', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const diagnostics: unknown[] = [];
     const recover = vi.fn(async () => {
@@ -2505,7 +2884,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     let nowMs = 2_000;
     const delayed = new RuntimeAuthRecoveryScheduler({
       nowMs: () => nowMs,
-      maxAttempts: 1,
       recover,
       gate: () => ({ status: 'delayed', retryAtMs: 32_000, reason: 'local_server_storm' }),
       recordDiagnostic: (event) => diagnostics.push(event),
@@ -2528,7 +2906,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
 
     const deadLetter = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 3_000,
-      maxAttempts: 1,
       recover,
       recordDiagnostic: (event) => diagnostics.push(event),
     });
@@ -2538,30 +2915,14 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       classification: usageLimitClassification(),
       error: new Error('timeout of 5000ms exceeded'),
     });
-    await expect(deadLetter.wake({ sessionId: 'sess_2', reason: 'timer' })).resolves.toEqual({ status: 'exhausted' });
-    expect(deadLetter.read('sess_2')).toMatchObject({ status: 'exhausted', attemptCount: 1 });
+    await expect(deadLetter.wake({ sessionId: 'sess_2', reason: 'timer' })).resolves.toEqual({ status: 'waiting' });
+    expect(deadLetter.read('sess_2')).toMatchObject({ status: 'waiting', attemptCount: 1 });
     expect(diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ event: 'runtime_auth_recovery_delayed', sessionId: 'sess_1' }),
-      expect.objectContaining({
-        event: 'runtime_auth_recovery_dead_letter',
-        sessionId: 'sess_2',
-        transcriptEvent: expect.objectContaining({
-          type: 'connected-service-runtime-auth-recovery',
-          status: 'dead_lettered',
-          serviceId: 'happier.agent.codex/openai-codex',
-          profileId: 'primary',
-          groupId: 'codex-main',
-          terminal: true,
-          diagnostic: expect.objectContaining({
-            source: 'runtime_auth_recovery',
-            failurePhase: 'runtime_auth_recovery',
-          }),
-        }),
-      }),
     ]));
   });
 
-  it('preserves same-key attempt state so repeated reports cannot bypass dead-lettering', async () => {
+  it('preserves same-key attempt state across repeated reports without dead-lettering', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const recover = vi.fn(async () => {
       throw new Error('timeout of 5000ms exceeded');
@@ -2571,7 +2932,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       nowMs: () => nowMs,
       baseBackoffMs: 1_000,
       maxBackoffMs: 10_000,
-      maxAttempts: 2,
       recover,
     });
 
@@ -2601,16 +2961,15 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     expect(scheduler.read('sess_repeated')).toMatchObject({
       status: 'waiting',
       attemptCount: 1,
-      maxAttempts: 2,
       nextRetryAtMs: 3_500,
       lastError: 'timeout of 5000ms exceeded again',
     });
 
     nowMs = 3_500;
     await expect(scheduler.wake({ sessionId: 'sess_repeated', reason: 'timer' }))
-      .resolves.toEqual({ status: 'exhausted' });
+      .resolves.toEqual({ status: 'waiting' });
     expect(scheduler.read('sess_repeated')).toMatchObject({
-      status: 'exhausted',
+      status: 'waiting',
       attemptCount: 2,
     });
 
@@ -2622,7 +2981,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       error: new Error('timeout of 5000ms exceeded after dead letter'),
     });
     expect(scheduler.read('sess_repeated')).toMatchObject({
-      status: 'exhausted',
+      status: 'waiting',
       attemptCount: 2,
     });
   });
@@ -2656,7 +3015,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     });
   });
 
-  it('preserves terminal settlement only for the same attempt and re-arms a fresh report epoch', async () => {
+  it.each([false, true])('preserves terminal settlement and re-arms a fresh report epoch (deferred=%s)', async deferToScheduler => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
@@ -2675,7 +3034,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       reportId: 'runtime-auth-report:terminal-a',
       sessionId: 'session-terminal-new-attempt',
       switchesThisTurn: 0,
-      classification: usageLimitClassification(),
+      classification: usageLimitClassification(), deferToScheduler,
     });
     await scheduler.wake({ sessionId: 'session-terminal-new-attempt', reason: 'manual' });
     expect(scheduler.read('session-terminal-new-attempt')).toMatchObject({
@@ -2687,7 +3046,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       reportId: 'runtime-auth-report:terminal-a',
       sessionId: 'session-terminal-new-attempt',
       switchesThisTurn: 0,
-      classification: usageLimitClassification(),
+      classification: usageLimitClassification(), deferToScheduler,
     });
     expect(scheduler.read('session-terminal-new-attempt')).toMatchObject({
       status: 'cancelled',
@@ -2698,7 +3057,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       reportId: 'runtime-auth-report:terminal-b',
       sessionId: 'session-terminal-new-attempt',
       switchesThisTurn: 0,
-      classification: usageLimitClassification(),
+      classification: usageLimitClassification(), deferToScheduler,
     });
     expect(fresh.attemptId).not.toBe(first.attemptId);
     expect(scheduler.read('session-terminal-new-attempt')).toMatchObject({
@@ -2746,7 +3105,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       serviceId: 'happier.agent.codex/openai-codex',
       groupId: 'codex-main',
       profileId: 'member-b',
-      switchesThisTurn: 2,
     });
   });
 
@@ -2809,7 +3167,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      maxAttempts: 3,
       recover: async () => ({
         status: 'session_endpoint_unavailable',
         reason: 'connect ECONNREFUSED 127.0.0.1:52753',
@@ -2841,7 +3198,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     expect(events).not.toContain('runtime_auth_recovery_dead_letter');
     expect(events).not.toContain('runtime_auth_recovery_terminal');
     // The normal attempt budget is untouched by degraded retries.
-    expect(intent?.attemptCount ?? 0).toBeLessThan(intent?.maxAttempts ?? 0);
+    expect(intent?.attemptCount).toBe(0);
   });
 
   it('routes a handler-thrown ECONNREFUSED onto the degraded track (stays WAITING, no dead-letter)', async () => {
@@ -2855,7 +3212,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      maxAttempts: 3,
       recover: async () => {
         throw new Error('connect ECONNREFUSED 127.0.0.1:52753');
       },
@@ -2882,12 +3238,11 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     expect(intent?.status).toBe('waiting');
     const events = diagnostics.map((event) => event.event);
     expect(events).not.toContain('runtime_auth_recovery_dead_letter');
-    expect(intent?.attemptCount ?? 0).toBeLessThan(intent?.maxAttempts ?? 0);
+    expect(intent?.attemptCount).toBe(0);
   });
 
-  it('still dead-letters a genuine retryable provider failure within the normal attempt budget', async () => {
-    // Guard against over-suppression: a real (non-degraded) retryable failure must still count
-    // toward max_attempts and dead-letter as before.
+  it('keeps a genuine retryable provider failure active', async () => {
+    // Retryable provider failures remain counted without imposing a retry ceiling.
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const diagnostics: Array<{ event: string }> = [];
     let nowMs = 1_000;
@@ -2896,7 +3251,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      maxAttempts: 3,
       recover: async () => applyFailedResult('hot_apply_failed', {
         underlyingError: 'connect ECONNREFUSED 127.0.0.1:9999',
       }),
@@ -2918,7 +3272,8 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     }
 
     const events = diagnostics.map((event) => event.event);
-    expect(events).toContain('runtime_auth_recovery_dead_letter');
+    expect(events).not.toContain('runtime_auth_recovery_dead_letter');
+    expect(scheduler.read('sess_real')).toMatchObject({ status: 'waiting', attemptCount: 5 });
   });
 
   it('keeps stale-profile proof waits pending until provider outcome proof arrives', async () => {
@@ -2972,7 +3327,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     });
   });
 
-  it('does consume another retry attempt when the pending proof target itself re-fails', async () => {
+  it('starts fresh source evidence when the pending proof target fails with another token', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
@@ -2995,7 +3350,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     await scheduler.enqueueHandlerFailure({
       sessionId: 'session-1',
       switchesThisTurn: 1,
-      classification: usageLimitClassification(),
+      classification: usageLimitClassification({ failingAccessTokenFingerprint: 'first-token' }),
       error: new Error('timeout of 5000ms exceeded'),
     });
     await expect(scheduler.wake({ sessionId: 'session-1', reason: 'manual' }))
@@ -3012,16 +3367,19 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     await scheduler.enqueueHandlerFailure({
       sessionId: 'session-1',
       switchesThisTurn: 1,
-      classification: usageLimitClassification({ profileId: 'backup' }),
+      classification: usageLimitClassification({ profileId: 'backup', failingAccessTokenFingerprint: 'second-token' }),
       error: new Error('timeout of 5000ms exceeded'),
     });
+    expect(scheduler.readForSession('session-1')).toEqual([
+      expect.objectContaining({ attemptCount: 0, pendingTargetProfileId: null, pendingTargetGeneration: null }),
+    ]);
     await expect(scheduler.wake({ sessionId: 'session-1', reason: 'manual' }))
       .resolves.toEqual({ status: 'waiting' });
 
     expect(scheduler.readForSession('session-1')).toEqual(expect.arrayContaining([
       expect.objectContaining({
         status: 'resumed_awaiting_proof',
-        attemptCount: 2,
+        attemptCount: 1,
         pendingTargetProfileId: 'backup',
         pendingTargetGeneration: 2,
       }),
@@ -3124,7 +3482,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     });
   });
 
-  it('retains retry and dead-letter state for repeated stale-profile proof waits without provider proof', async () => {
+  it('retains repeated stale-profile proof waits without provider proof', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const diagnostics: Array<{ event: string }> = [];
     let recoverRuns = 0;
@@ -3134,8 +3492,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      maxAttempts: 3,
-      maxCoalescedReplays: 2,
       recover: async () => {
         recoverRuns += 1;
         return {
@@ -3169,10 +3525,10 @@ describe('RuntimeAuthRecoveryScheduler', () => {
 
     expect(recoverRuns).toBeGreaterThan(1);
     expect(scheduler.read('session-1')).toMatchObject({
-      status: 'exhausted',
+      status: 'resumed_awaiting_proof',
       pendingTargetProfileId: 'backup',
     });
-    expect(diagnostics.map((event) => event.event)).toContain('runtime_auth_recovery_dead_letter');
+    expect(diagnostics.map((event) => event.event)).not.toContain('runtime_auth_recovery_dead_letter');
     expect(diagnostics.map((event) => event.event)).not.toContain('runtime_auth_recovery_superseded');
   });
 

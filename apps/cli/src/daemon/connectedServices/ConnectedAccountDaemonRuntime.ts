@@ -128,7 +128,10 @@ function projectConfigurationControlView(
         values[fieldId] = PluginJsonValueV2Schema.parse(value);
     }
     return Object.freeze({
-        ...view,
+        status: view.status,
+        revision: view.revision,
+        configuredSecretFieldIds: view.configuredSecretFieldIds,
+        missingFieldIds: view.missingFieldIds,
         values: Object.freeze(values),
     });
 }
@@ -549,7 +552,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                     const pending = await params.persistence.attempts.listPending(command.service);
                     assertNotAborted(options?.signal);
                     return Object.freeze({ status: 'pendingAttempts' as const,
-                        attempts: attempts.selectResumableAttempts(pending) });
+                        attempts: await attempts.selectResumableAttempts(pending) });
                 }
                 if (command.operation === 'describeService') {
                     const operationTransport = command.requiredOperation
@@ -790,6 +793,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                     return Object.freeze({
                         status: 'configuration' as const,
                         ...basis,
+                        mode: view.mode,
                         configuration:
                             projectConfigurationControlView(view),
                     });
@@ -893,6 +897,7 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                 return Object.freeze({
                     status: 'configurationCommitted' as const,
                     ...basis,
+                    mode: replacement.configuration.mode,
                     configuration:
                         projectConfigurationControlView(replacement.configuration),
                 });

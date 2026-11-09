@@ -40,7 +40,8 @@ it.each(['kilo', 'acp', 'acp-failure', 'external', 'foreign'] as const)('carries
   const accountId = scenario === 'foreign' ? 'foreign' : 'requester';
   const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId,
     provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
-  const h = await createInstalledProjectAgentLaunchFixture({ accountActionCredentials: { token, encryption: null } });
+  const homeServerIdentityId = 'workflow-project-home';
+  const h = await createInstalledProjectAgentLaunchFixture({ accountActionCredentials: { token, encryption: null }, homeServerIdentityId });
   const credentials = h.installedCredentials!;
   // Never invoke an ambient vendor binary or borrow a developer's login.
   vi.stubEnv('HAPPIER_KILO_PATH', process.execPath);
@@ -65,6 +66,10 @@ it.each(['kilo', 'acp', 'acp-failure', 'external', 'foreign'] as const)('carries
         send({ id: r.id, error: { code: -32602, message: 'unknown config option reasoning_effort' } }); continue;
       }
       if (r.method === 'session/set_mode') selectedMode = r.params.modeId;
+      if (r.method === 'session/set_model') {
+        send({ id: r.id, result: { models: { currentModelId: r.params.modelId,
+          availableModels: [{ modelId: r.params.modelId, name: r.params.modelId }] } } }); continue;
+      }
       if (r.method === 'session/prompt') {
         const text = r.params.prompt.filter(part => part.type === 'text').map(part => part.text).join('\\n');
         appendFileSync(${JSON.stringify(inputsReceipt)}, JSON.stringify(text) + '\\n');
@@ -264,6 +269,7 @@ it.each(['kilo', 'acp', 'acp-failure', 'external', 'foreign'] as const)('carries
   let failure: unknown;
   let coordinating: Promise<unknown> | undefined;
   const bootstrap = createDaemonMachineBootstrapRuntime({ api, credentials, controlPort: 43129, requesterServerId: 'session-home',
+    resolveCurrentServerIdentityId: () => homeServerIdentityId,
     runtimeId: 'workflow-project', publicReleaseChannel: 'dev', startupSource: 'manual', serviceLabel: undefined,
     transferRuntimeStatePublisher: null, spawnSessionForInternalResume: async () => { throw new Error('Unexpected Session'); },
     spawnSession: async () => { throw new Error('Unexpected Session'); }, stopSession: async () => true,

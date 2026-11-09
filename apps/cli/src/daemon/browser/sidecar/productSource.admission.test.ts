@@ -129,7 +129,7 @@ describe('browser session memory admission', () => {
         try {
             expect(await h.open('failed')).toMatchObject({ status: 'failed', completion: 'unknown' });
             expect(await h.open('waiting')).toMatchObject({ status: 'dispatched' });
-            expect(h.profiles.listProfiles()).toHaveLength(1);
+            expect(h.profiles.listProfiles().map(profile => profile.owner.id)).toEqual(['failed', 'waiting']);
         } finally { await h.runtime.dispose?.(); }
     });
 
@@ -180,7 +180,7 @@ describe('browser session memory admission', () => {
             expect(await h.open('waiting')).toMatchObject({ status: 'dispatched' });
             h.children[1]!.emit('exit', 1, null);
             expect(await h.open('after_crash')).toMatchObject({ status: 'dispatched' });
-            expect(h.profiles.listProfiles()).toHaveLength(1);
+            expect(h.profiles.listProfiles().map(profile => profile.owner.id)).toEqual(['first', 'waiting', 'after_crash']);
         } finally { await h.runtime.dispose?.(); }
     });
 

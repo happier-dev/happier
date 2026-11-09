@@ -14,6 +14,31 @@ function tracked(overrides: Partial<TrackedSession> = {}): TrackedSession {
 }
 
 describe('applyTrackedSessionTurnLifecycle', () => {
+  it.each(['assistant_message_end', 'turn_cancelled', 'idle_snapshot'] as const)(
+    'preserves the live native input across %s while clearing only Queue turn admission', async terminal => {
+      const native = { admission: { admissionId: 'native-input', occurrenceId: 'realtime-occurrence', attemptId: 'realtime-attempt' },
+        runner: { pid: 42, processStartTimeMs: 123, processCommandHash: '5'.repeat(64), snapshotIdentity: 'snapshot:runner' },
+        sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'source-generation', installSource: 'localPath' as const } };
+      const current = tracked({ agentRuntimeDaemonServiceNativeRealtimeAdmission: native,
+        agentRuntimeDaemonServiceAdmittedTurnId: 'provider-turn-1', agentRuntimeDaemonServiceAdmittedInputId: 'previous-queue-input',
+        agentRuntimeDaemonServiceAdmittedUserMessageSeq: 1, agentRuntimeDaemonServiceAdmittedUserMessageSeqs: [1] });
+      // Marker persistence is the boundary; the real lifecycle and admission cleanup stay active.
+      const updateSessionMarkerActiveTurn = vi.fn(async () => true);
+      const apply = (event: Parameters<typeof applyTrackedSessionTurnLifecycle>[0]['event'], turnId?: string,
+        activeTurnIdWitness?: null) => applyTrackedSessionTurnLifecycle({ trackedSessions: [current], sessionId: 'session-1',
+        event, ...(turnId ? { turnId } : {}), ...(activeTurnIdWitness === null ? { activeTurnIdWitness } : {}), updateSessionMarkerActiveTurn });
+      expect(await apply('task_started', 'provider-turn-1')).toEqual({ status: 'recorded', activeTurnId: 'provider-turn-1' });
+      expect(current.agentRuntimeDaemonServiceNativeRealtimeAdmission).toBe(native);
+      expect(await (terminal === 'idle_snapshot' ? apply('prompt_or_steer', undefined, null) : apply(terminal, 'provider-turn-1')))
+        .toEqual({ status: 'recorded', activeTurnId: null });
+      expect(current.agentRuntimeDaemonServiceAdmittedTurnId).toBeUndefined();
+      expect(current.agentRuntimeDaemonServiceAdmittedInputId).toBeUndefined();
+      expect(current.agentRuntimeDaemonServiceAdmittedUserMessageSeq).toBeUndefined();
+      expect(current.agentRuntimeDaemonServiceAdmittedUserMessageSeqs).toBeUndefined();
+      expect(current.agentRuntimeDaemonServiceNativeRealtimeAdmission).toBe(native);
+      expect(await apply('task_started', 'provider-turn-2')).toEqual({ status: 'recorded', activeTurnId: 'provider-turn-2' });
+      expect(current.agentRuntimeDaemonServiceNativeRealtimeAdmission).toBe(native);
+    });
   it.each(['completed', 'waiting'] as const)('reconciles an exact reattached %s turn so retained marker custody does not keep the runner busy', async latestTurnStatus => {
     const current = tracked({
       reattachedInterruptedTurnId: 'settled-turn',

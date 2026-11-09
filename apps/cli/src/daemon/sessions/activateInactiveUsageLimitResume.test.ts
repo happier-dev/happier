@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
@@ -10,10 +11,10 @@ import { UsageLimitRecoveryScheduler } from '../connectedServices/usageLimitReco
 import { resolveInactiveUsageLimitRecoverySchedulerResult } from '../connectedServices/usageLimitRecovery/resolveInactiveUsageLimitRecoverySchedulerResult';
 import { routeSessionUsageLimitRecoveryCheckNow } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRouter';
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 
 // Keep the recovery, authoring and Pending owners real; replace HTTP only.
-const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
-vi.mock('axios', () => ({ default: { ...http, isAxiosError: () => false } }));
+const http = { get: vi.spyOn(axios, 'get'), post: vi.spyOn(axios, 'post') };
 
 const sessionId = 'c123456789012345678901234';
 const credentials = { token: 'recovery-test', encryption: null };
@@ -33,6 +34,7 @@ const params = { credentials, sessionId, rawSession, metadata, nowMs: 200, isCur
 describe('activateInactiveUsageLimitResume', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    installAxiosRequestMethodAdapter();
     http.get.mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -54,7 +56,7 @@ describe('activateInactiveUsageLimitResume', () => {
 
   it('admits Pending from the actual due backoff result without cancelling the continuation first', async () => {
     const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({
-      providerId: 'codex', nowMs: () => 200, processEnv: {},
+      providerId: 'codex', nowMs: () => 200,
     });
     const checked = await adapter.checkNow!({
       token: credentials.token, credentials, sessionId, rawSession,
@@ -98,7 +100,7 @@ describe('activateInactiveUsageLimitResume', () => {
       : await readHttp(url));
     // The real Pending HTTP acknowledgement says the newer queued user input won; no row was written.
     http.post.mockResolvedValue({ status: 200, data: { didWrite: false, terminal: false, suppressed: true } });
-    const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({ providerId: 'codex', processEnv: {} });
+    const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({ providerId: 'codex' });
     let routedResult: unknown;
     const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => 200,
       store: {
@@ -118,8 +120,7 @@ describe('activateInactiveUsageLimitResume', () => {
           },
           resumeInactiveSessionWhenReady: input => activateInactiveUsageLimitResume({ ...params, ...input, nowMs: Date.now() }),
         });
-        return resolveInactiveUsageLimitRecoverySchedulerResult({ result: routedResult,
-          nowMs: 200, fallbackRetryDelayMs: 600_000 });
+        return resolveInactiveUsageLimitRecoverySchedulerResult({ result: routedResult });
       },
     });
     try {

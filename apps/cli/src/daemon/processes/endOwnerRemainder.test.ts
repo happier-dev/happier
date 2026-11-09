@@ -17,6 +17,26 @@ import { formatProcessOwnerTag, resolveProcessOwnerScopeKey } from '@/processes/
 import { spawn } from 'node:child_process';
 import { createHappierLinuxScopeName } from '../platform/linux/systemdUserResourceGovernor';
 
+it.skipIf(process.platform !== 'linux')('ends a fully departed owner without re-reading the whole machine to terminate nothing', async () => {
+    const scope = '123456789abc';
+    const owner = { kind: 'session', sessionId: `departed-${randomUUID()}` } as const;
+    let wholeHostCensuses = 0;
+    const censusDependencies: ProcessCensusDependencies = { platform: 'linux', linuxBoundary: {
+        readFile, readlink,
+        readdir: async (path: string) => { if (path === '/proc') wholeHostCensuses++; return await readdir(path); },
+    } };
+    const runtime = createProcessOwnershipRuntime({ daemonScopeKey: scope, censusDependencies,
+        listRoots: snapshot => listHappierProcessRoots({ snapshot, daemonScopeKey: scope, trackedSessions: [], endedRoots: [] }) });
+    const leftBehind = createLeftBehindPass({ processOwnershipRuntime: runtime });
+    try {
+        const remainder = createEndOwnerRemainder({ processOwnershipRuntime: runtime, daemonScopeKey: scope,
+            retainEndedRoots: () => {}, firstPass: leftBehind.firstPass, systemBoundary: { censusDependencies } });
+        expect(await remainder.end(owner)).toEqual({ status: 'complete', outcomes: [] });
+        // One ownership view plus the left-behind pass; nothing to signal, so no terminator rounds.
+        expect(wholeHostCensuses).toBe(2);
+    } finally { leftBehind.dispose?.(); }
+});
+
 it.skipIf(process.platform !== 'linux').each([
     { evidence: 'fence', signalDenied: false }, { evidence: 'fence', signalDenied: true },
     { evidence: 'marker', signalDenied: false },

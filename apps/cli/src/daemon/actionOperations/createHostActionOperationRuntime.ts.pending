@@ -1,0 +1,424 @@
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ActionExecuteResult, ActionExecutorDeps, ActionOperationDomainRefV1, ActionOperationSnapshotV1, ActionOperationDeclarationV1 } from '@happier-dev/protocol/actions';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+
+import { createActionOperationRpcHandlers, resolveActionOperationScope, type ActionOperationRpcContext } from './actionOperationRpcHandlers';
+import { createActionOperationRunner } from './actionOperationRunner';
+import { createActionOperationStore } from './actionOperationStore';
+import type { ActionOperationDomainOwner, ActionOperationProgressUpdate } from './actionOperationTypes';
+import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { RpcError, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
+import type { LiveWorkProducerV1 } from '@/daemon/lifecycle/managedActivity';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { isDeepStrictEqual } from 'node:util';
+import { readDeploymentArchiveOperationIdentityForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
+import type { ManagedDeleteOperationSettlement, ManagedMachineOperationSettlementContext } from '@/machines/managed/managedIntentReconciler';
+
+export type RequesterMachineOperationCleanupInput = Readonly<{
+  serverId: string;
+  requesterAccountId: string;
+  machineId: string;
+  installationId: string;
+  verifyCurrentMachineAdmission: () => Promise<boolean>;
+}>;
+
+function readRequestId(actionId: string, input: unknown): string | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const record = input as Readonly<Record<string, unknown>>;
+  const candidate = actionId === 'session.spawn_new'
+    ? record.creationKey
+    : actionId === 'session.handoff'
+      ? record.actionRequestId ?? record.requestId
+      : record.requestId;
+  if (typeof candidate !== 'string') return undefined;
+  const normalized = candidate.trim();
+  return normalized.length > 0 && normalized.length <= 2_000 ? normalized : undefined;
+}
+
+function readInitialDomainRef(
+  actionId: string,
+  input: unknown,
+  requestId: string | undefined,
+): ActionOperationDomainRefV1 | undefined {
+  if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.rebuild') {
+    // The Home-scoped operation concerns this guest even when controller admission
+    // fails before the native owner can publish its admitted/enriched reference.
+    const parsed = ManagedMachineActionInputSchemasV1[actionId].safeParse(input);
+    if (!parsed.success) return undefined;
+    return { kind: 'managedMachine', id: 'managedMachineId' in parsed.data ? parsed.data.managedMachineId : parsed.data.managedId };
+  }
+  if (!requestId) return undefined;
+  if (actionId === 'session.spawn_new') return { kind: 'spawnAttempt' as const, id: requestId };
+  if (actionId !== 'session.fork') return undefined;
+  const record = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Readonly<Record<string, unknown>>
+    : null;
+  const strategy = record?.strategy;
+  return {
+    kind: 'forkRequest' as const,
+    id: requestId,
+    ...(strategy === 'native' || strategy === 'replay' ? { strategy } : {}),
+  };
+}
+
+function observeUntilCallerAbort<T>(result: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return result;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    void result.then(
+      value => { signal.removeEventListener('abort', onAbort); resolve(value); },
+      error => { signal.removeEventListener('abort', onAbort); reject(error); },
+    );
+  });
+}
+
+export function createHostActionOperationRuntime(deps: Readonly<{
+  /** Exact configured Home binding, shared with the incumbent Session launch owner. */
+  serverId?: string;
+  machineId: string;
+  /** Captured by the actual installed Machine client, never an Action input. */
+  custodyBinding?: Readonly<{ serverId: string; installationId: string }>;
+  resolveAccountId: () => Promise<string | null>;
+  generateOperationId?: () => string;
+  publishSnapshot?: (snapshot: ActionOperationSnapshotV1) => void;
+  onInspection?: (operation: ActionOperationSnapshotV1) => void;
+  supportsCoreCancellation?: (
+    actionId: 'session.fork' | 'session.spawn_new' | 'session.handoff' | 'projects.service.relocate',
+    input: unknown,
+  ) => boolean;
+}>) {
+  const store = createActionOperationStore({
+    ...(deps.publishSnapshot ? { onSnapshot: deps.publishSnapshot } : {}),
+  });
+  const runner = createActionOperationRunner({
+    store,
+    resolveAction: (rawActionId) => {
+      const parsed = ActionIdSchema.safeParse(rawActionId);
+      const spec = parsed.success ? getActionSpec(parsed.data) : null;
+      return spec?.operation
+        ? { actionId: spec.id, title: spec.title, operation: spec.operation,
+            ...(spec.operationReentry ? { operationReentry: spec.operationReentry } : {}) }
+        : null;
+    },
+    ...(deps.generateOperationId ? { generateOperationId: deps.generateOperationId } : {}),
+  });
+  let owner: ActionOperationDomainOwner | null = null;
+  const attachedOwners = new Set<ActionOperationDomainOwner>();
+  const rebuildOwner = () => {
+    const attached = [...attachedOwners];
+    if (attached.length === 0) { owner = null; return; }
+    const candidates = (scope: Parameters<ActionOperationDomainOwner['get']>[0], id: string) => {
+      const retained = store.get(scope, id);
+      return retained ? attached.filter(item => item.actionIds.includes(retained.actionId)) : attached;
+    };
+    const find = async (scope: Parameters<ActionOperationDomainOwner['get']>[0], id: string) => {
+      for (const item of candidates(scope, id)) {
+        const snapshot = await item.get(scope, id);
+        if (owner !== composite) return null;
+        if (snapshot) return { item, snapshot };
+      }
+      return null;
+    };
+    // An immutable attachment view preserves the existing stale-reader guard.
+    const composite: ActionOperationDomainOwner = {
+      actionIds: [...new Set(attached.flatMap(item => item.actionIds))],
+      async list(scope) { return (await Promise.all(attached.map(item => item.list(scope)))).flat(); },
+      async get(scope, id) { return (await find(scope, id))?.snapshot ?? null; },
+      async cancel(scope, id) { return (await find(scope, id))?.item.cancel(scope, id) ?? null; },
+      async refreshSetupReview(scope, id) { await (await find(scope, id))?.item.refreshSetupReview?.(scope, id); },
+      async decideSetupReview(scope, id, workspace, phase, decision) {
+        return (await find(scope, id))?.item.decideSetupReview?.(scope, id, workspace, phase, decision) ?? null;
+      },
+      async waitForTerminal(scope, id, signal, options) {
+        const found = await find(scope, id);
+        return found?.item.waitForTerminal ? await found.item.waitForTerminal(scope, id, signal, options) : found?.snapshot ?? null;
+      },
+      subscribe(input) {
+        const unsubscribe = attached.map(item => item.subscribe(input));
+        return () => { for (const detach of unsubscribe) detach(); };
+      },
+    };
+    owner = composite;
+  };
+  const acceptedAttribution = (scope: Readonly<{ accountId: string; machineId: string }>, context?: ActionOperationRpcContext) =>
+    !context?.machineAdmission && context?.requesterSessionBootstrap
+      ? RequesterWorkAttributionV1Schema.parse(context.requesterSessionBootstrap.attribution)
+      : (deps.custodyBinding?.serverId ?? deps.serverId) && context?.machineAdmission
+      ? RequesterWorkAttributionV1Schema.parse({ serverId: deps.custodyBinding?.serverId ?? deps.serverId, accountId: scope.accountId,
+        machineId: scope.machineId, installationId: context.machineAdmission.installationId })
+      : undefined;
+  const handlers = createActionOperationRpcHandlers({
+    owner: () => owner,
+    store,
+    runner,
+    machineId: deps.machineId,
+    resolveAccountId: deps.resolveAccountId,
+    ...(deps.onInspection ? { onInspection: deps.onInspection } : {}),
+  });
+
+  const resolveObservedScope = async (context?: ActionOperationRpcContext, sessionId?: string) => {
+    const admission = context?.machineAdmission;
+    const session = !admission ? context?.requesterSessionBootstrap : undefined;
+    if (session && (!deps.custodyBinding || session.attribution.installationId !== deps.custodyBinding.installationId
+      || !await isServerProfileHomeIdentity(deps.custodyBinding.serverId, session.attribution.serverId))) {
+      throw new RpcError(RPC_ERROR_MESSAGES.FORBIDDEN, RPC_ERROR_CODES.FORBIDDEN);
+    }
+    if (admission && ((!deps.custodyBinding && admission.actorAccountId !== admission.custodianAccountId)
+      || (deps.custodyBinding && admission.installationId !== deps.custodyBinding.installationId))) {
+      throw new RpcError(RPC_ERROR_MESSAGES.FORBIDDEN, RPC_ERROR_CODES.FORBIDDEN);
+    }
+    return await resolveActionOperationScope(deps, context, sessionId);
+  };
+
+  const observeExecution = async (request: Readonly<{
+    actionId: string;
+    input: unknown;
+    actionRequestId?: import('@happier-dev/protocol').ActionExecutorContext['actionRequestId'];
+    sessionId?: string;
+    /** Already admitted receiving-host context, never a public Action input. */
+    rpcContext?: ActionOperationRpcContext;
+    onOperation?: (operation: ActionOperationSnapshotV1) => void;
+    execute: (context: Readonly<{
+      actionRequestId?: string;
+      resumeActionRequest?: true;
+      signal: AbortSignal;
+      requesterWorkAttributionV1?: RequesterWorkAttributionV1;
+      operationProgress: Readonly<{ update: (update: ActionOperationProgressUpdate) => void }>;
+      operationOwnerUpdate: Readonly<{ update: (update: import('./actionOperationTypes').ActionOperationOwnerUpdate) => void }>;
+      operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
+      operationCancellation?: import('@happier-dev/protocol').ActionExecutorContext['operationCancellation'];
+      operationReview?: import('./actionOperationTypes').ActionOperationReviewContinuation;
+      settleManagedDeleteOperation?: ManagedMachineOperationSettlementContext['settleManagedDeleteOperation'];
+    }>) => Promise<ActionExecuteResult>;
+  }>): Promise<ActionExecuteResult> => {
+    const scope = await resolveObservedScope(request.rpcContext, request.sessionId);
+    const deploymentChildIdentity = await readDeploymentArchiveOperationIdentityForHost(request.rpcContext, request.actionId);
+    const settleManagedDeleteOperation = scope
+      && (request.actionId === 'machines.managed.inspect' || request.actionId === 'machines.managed.delete')
+      ? (settlement: ManagedDeleteOperationSettlement) => {
+        if (settlement.controller.machineId !== deps.machineId
+          || deps.custodyBinding && settlement.controller.installationId !== deps.custodyBinding.installationId) return;
+        const operation = store.findByRequestIdentity(scope, 'machines.managed.delete', settlement.requestId);
+        const target = operation?.domainRef;
+        // Only the retained uncertain invocation is retired. A running native
+        // handler, another resource/controller, or terminal history is untouched.
+        if (!operation || operation.state !== 'running' || operation.observation?.kind !== 'outcome_uncertain'
+          || operation.observation.code !== 'action_outcome_unknown' || target?.kind !== 'managedMachine'
+          || target.id !== settlement.managedId || !isDeepStrictEqual(target.controller, settlement.controller)
+          || !isDeepStrictEqual(target.resource, settlement.resource)) return;
+        store.succeed(operation.operationId, { kind: 'accepted', managedId: settlement.managedId,
+          intentRevision: settlement.intentRevision, operation: { operationId: operation.operationId } });
+      } : undefined;
+    const actionId = ActionIdSchema.safeParse(request.actionId);
+    const spec = actionId.success ? getActionSpec(actionId.data) : null;
+    if (!scope || !spec?.operation) {
+      return await request.execute({
+        signal: new AbortController().signal,
+        operationProgress: { update: () => undefined },
+        operationOwnerUpdate: { update: () => undefined },
+        ...(settleManagedDeleteOperation ? { settleManagedDeleteOperation } : {}),
+      });
+    }
+    const attribution = acceptedAttribution(scope, request.rpcContext);
+    const cancellableActionId = request.actionId === 'session.fork'
+      || request.actionId === 'session.spawn_new'
+      || request.actionId === 'session.handoff'
+      || request.actionId === 'projects.service.relocate'
+      ? request.actionId
+      : null;
+    const requestId = request.actionRequestId?.trim()
+      || readRequestId(request.actionId, request.input);
+    const domainRef = readInitialDomainRef(request.actionId, request.input, requestId);
+    let observedOperationId: string | undefined;
+    const execution = runner.observe({
+      actionId: request.actionId,
+      scope,
+      ...(attribution ? { requesterWorkAttributionV1: attribution } : {}),
+      ...(requestId ? { requestId } : {}),
+      input: request.input,
+      ...(deploymentChildIdentity ? { deploymentChildIdentity } : {}),
+      onOperation: operation => { observedOperationId = operation.operationId; request.onOperation?.(operation); },
+      ...(domainRef ? { domainRef } : {}),
+      cancellation: request.actionId === 'workspace.files.replace'
+        || request.actionId === 'projects.script.run' || request.actionId === 'projects.compute.exec' || request.actionId === 'projects.prepare'
+        || request.actionId === 'machines.managed.power.set' || request.actionId === 'machines.managed.delete'
+        || request.actionId === 'machines.managed.acquire' || request.actionId === 'machines.managed.bootstrap.retry'
+        || request.actionId === 'machines.setup.apply'
+        || (cancellableActionId && deps.supportsCoreCancellation?.(cancellableActionId, request.input) === true)
+        ? 'supported'
+        : 'unsupported',
+      execute: async ({ actionRequestId, resumeActionRequest, signal, updateProgress, publishOwnerUpdate, operationAcceptance, onCancellationRequested, requesterWorkAttributionV1, operationReview }) => await request.execute({
+        ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}),
+        ...(actionRequestId ? { actionRequestId } : {}),
+        ...(resumeActionRequest ? { resumeActionRequest } : {}),
+        signal,
+        operationProgress: { update: updateProgress },
+        operationOwnerUpdate: { update: publishOwnerUpdate },
+        operationCancellation: { onRequest: onCancellationRequested },
+        operationReview,
+        ...(settleManagedDeleteOperation ? { settleManagedDeleteOperation } : {}),
+        ...(operationAcceptance ? { operationAcceptance } : {}),
+      }),
+    });
+    // The keyed Session startup remains daemon-owned after its caller leaves.
+    // Detach only this transport waiter; a retry can rejoin the same execution.
+    const result = await (request.actionId === 'session.spawn_new'
+      ? observeUntilCallerAbort(execution, request.rpcContext?.signal)
+      : execution);
+    const serverId = deps.custodyBinding?.serverId ?? deps.serverId;
+    if (request.actionId === 'session.spawn_new' && result.ok && serverId && observedOperationId) {
+      const pending = SessionSpawnNewActionResultV1Schema.safeParse(result.result);
+      if (pending.success && pending.data.type === 'pending') {
+        return { ...result, result: { ...pending.data,
+          operation: { serverId, machineId: scope.machineId, operationId: observedOperationId } } };
+      }
+    }
+    return result;
+  };
+
+  const runActionOperation: NonNullable<ActionExecutorDeps['runActionOperation']> = async request => {
+    return runHostActionOperation(observeExecution, request);
+  };
+
+  const observePluginExecution = async (request: Readonly<{
+    actionId: string;
+    title: string;
+    operation: ActionOperationDeclarationV1;
+    input: unknown;
+    requestId?: string;
+    sessionId?: string;
+    rpcContext?: ActionOperationRpcContext & Pick<RpcActionExecutorContext, 'externalActionExecutionAuthorization'>;
+    execute: (context: Readonly<{
+      signal: AbortSignal;
+      operationProgress: Readonly<{ update: (update: ActionOperationProgressUpdate) => void }>;
+      operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
+      operationOwnerUpdate?: import('@happier-dev/protocol').ActionExecutorContext['operationOwnerUpdate'];
+    }>) => Promise<ActionExecuteResult>;
+  }>): Promise<ActionExecuteResult> => {
+    const scope = await resolveObservedScope(request.rpcContext, request.sessionId);
+    if (!scope) {
+      return await request.execute({
+        signal: new AbortController().signal,
+        operationProgress: { update: () => undefined },
+      });
+    }
+    const attribution = acceptedAttribution(scope, request.rpcContext);
+    return await runner.observe({
+      actionId: request.actionId,
+      action: {
+        actionId: request.actionId,
+        title: request.title,
+        operation: request.operation,
+      },
+      scope,
+      ...(attribution ? { requesterWorkAttributionV1: attribution } : {}),
+      ...(request.requestId ? { requestId: request.requestId } : {}),
+      input: request.input,
+      execute: async ({ signal, updateProgress, operationAcceptance, publishOwnerUpdate }) => await request.execute({
+        signal,
+        operationProgress: { update: updateProgress },
+        operationAcceptance,
+        operationOwnerUpdate: { update: publishOwnerUpdate },
+      }),
+    });
+  };
+
+  const attachOwner = (next: ActionOperationDomainOwner): (() => void) => {
+    if (attachedOwners.has(next)) throw new Error('action_operation_domain_owner_already_attached');
+    attachedOwners.add(next);
+    rebuildOwner();
+    const unsubscribe = next.subscribe({
+      resolveScope: async () => {
+        const accountId = await deps.resolveAccountId();
+        return accountId ? { accountId, machineId: deps.machineId } : null;
+      },
+      publishSnapshot: snapshot => { if (attachedOwners.has(next)) store.project(snapshot); },
+    });
+    return () => {
+      unsubscribe();
+      if (attachedOwners.delete(next)) {
+        rebuildOwner();
+        store.removeOwnerProjections(next.actionIds.filter(id => !owner?.actionIds.includes(id)));
+      }
+    };
+  };
+  const decideSetupReview: typeof runner.decideSetupReview = async (scope, id, workspace, phase, decision) => {
+    const current = owner;
+    const retained = store.get(scope, id);
+    if (current && (!retained || current.actionIds.includes(retained.actionId))) {
+      const projected = await current.get(scope, id);
+      if (current !== owner) return null;
+      if (projected) {
+        const result = await current.decideSetupReview?.(scope, id, workspace, phase, decision) ?? null;
+        if (current !== owner) return null;
+        if (result) store.project(result);
+        return result;
+      }
+    }
+    return await runner.decideSetupReview(scope, id, workspace, phase, decision);
+  };
+  const activity: LiveWorkProducerV1 = Object.freeze({ read: store.readLiveWork, subscribe: store.subscribe });
+  const cleanupRequesterMachineOperations = async (input: RequesterMachineOperationCleanupInput): Promise<Readonly<{ kind: 'settled' | 'incomplete' }>> => {
+    if (!deps.custodyBinding || input.machineId !== deps.machineId
+      || input.serverId !== deps.custodyBinding.serverId || input.installationId !== deps.custodyBinding.installationId) {
+      return { kind: 'incomplete' };
+    }
+    try {
+      if (!await input.verifyCurrentMachineAdmission()) return { kind: 'incomplete' };
+      const scope = { accountId: input.requesterAccountId, machineId: deps.machineId };
+      const requests = await runner.cancelForAccessLoss(scope, input.verifyCurrentMachineAdmission, {
+        serverId: input.serverId, accountId: input.requesterAccountId,
+        machineId: input.machineId, installationId: input.installationId,
+      });
+      let incomplete = false;
+      for (const request of requests) {
+        if (request.result.kind === 'unsupported' || request.result.kind === 'not_found' || request.result.kind === 'admission_not_current') {
+          incomplete = true;
+          continue;
+        }
+        const settled = await runner.waitForTerminal(scope, request.operationId);
+        if (!settled || settled.state === 'accepted' || settled.state === 'running') incomplete = true;
+      }
+      return { kind: incomplete ? 'incomplete' : 'settled' };
+    } catch { return { kind: 'incomplete' }; }
+  };
+  return Object.freeze({ store, runner, handlers, observeExecution, runActionOperation, observePluginExecution, attachOwner, activity,
+    decideSetupReview,
+    retireProjectFiniteOperations: runner.retireProjectFiniteOperations,
+    cleanupRequesterMachineOperations,
+    waitForProjectTerminalAttachment: runner.waitForProjectTerminalAttachment });
+}
+
+export type HostActionOperationRuntime = ReturnType<typeof createHostActionOperationRuntime>;
+
+/** All receiving hosts adapt admitted effects to the same runner and requester lifetime. */
+export async function runHostActionOperation(
+  observeExecution: HostActionOperationRuntime['observeExecution'],
+  request: Parameters<NonNullable<ActionExecutorDeps['runActionOperation']>>[0],
+  rpcContext?: ActionOperationRpcContext,
+): Promise<ActionExecuteResult> {
+  const context: RpcActionExecutorContext = request.context;
+  // Every native Open route converges on registerProjectOpenRpcHandlers. Its
+  // receiving-host observer owns the operation even when a Machine relay
+  // cannot carry this private context. Declared Service Start likewise observes
+  // at its native declaration receiver; an outer observer would join itself.
+  if (request.actionId === 'projects.open' || request.actionId === 'localServices.launcher.start') return request.execute(context);
+  if (context.operationAcceptance?.actionId === request.actionId) return request.execute(context);
+  return observeExecution({ actionId: request.actionId, input: request.input, rpcContext: rpcContext ?? context,
+    ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
+    ...(context.defaultSessionId ? { sessionId: context.defaultSessionId } : {}),
+    execute: async operation => {
+      // Acceptance may return before transfer/process settlement. Retain the
+      // original requester's private ports until the effect actually finishes.
+      const release = readRequesterAccountActionContext(context.externalActionExecutionAuthorization)?.retain();
+      try { return await request.execute({ ...context, ...operation }); }
+      finally { await release?.(); }
+    },
+  });
+}

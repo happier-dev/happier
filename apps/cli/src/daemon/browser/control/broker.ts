@@ -56,13 +56,26 @@ function normalizeAdapterResult(
 
 export function createBrowserDaemonControlBroker(): BrowserDaemonControlBroker {
   const adapters = new Set<BrowserDaemonControlAdapter>();
+  const viewListeners = new Set<Readonly<{ browserSessionId: string; check: () => void }>>();
   let hasRegisteredAdapter = false;
+
+  const listViews = (browserSessionId: string, scope?: BrowserCommandScope) =>
+    [...adapters].flatMap(adapter => adapter.listViews?.(browserSessionId, scope) ?? []);
+  const notify = (browserSessionId?: string) => {
+    for (const listener of viewListeners) {
+      if (!browserSessionId || listener.browserSessionId === browserSessionId) listener.check();
+    }
+  };
 
   function registerAdapter(adapter: BrowserDaemonControlAdapter): () => void {
     adapters.add(adapter);
     hasRegisteredAdapter = true;
+    const unsubscribe = adapter.subscribeViewLifecycle?.(event => notify(event.browserSessionId));
+    notify();
     return () => {
+      unsubscribe?.();
       adapters.delete(adapter);
+      notify();
     };
   }
 
@@ -110,6 +123,32 @@ export function createBrowserDaemonControlBroker(): BrowserDaemonControlBroker {
     dispatchCommand,
     ownsView: (view) => [...adapters].some(adapter => adapter.ownsView(view)),
     hasExecutableAdapters: () => adapters.size > 0,
-    listViews: (browserSessionId) => [...adapters].flatMap(adapter => adapter.listViews?.(browserSessionId) ?? []),
+    listViews,
+    getCommandAccessFailure(command, scope) {
+      for (const adapter of adapters) {
+        if ('kind' in command && !(command.kind === 'openView'
+          ? adapter.supportsOpenView(command) : adapter.ownsView(command))) continue;
+        const failure = adapter.getCommandAccessFailure?.(command, scope);
+        if ('kind' in command) return failure;
+        if (failure) return failure;
+      }
+      return undefined;
+    },
+    watchViews: ({ browserSessionId, knownViewIds, signal, scope }) => new Promise<void>(resolve => {
+      const known = new Set(knownViewIds);
+      const settle = () => {
+        viewListeners.delete(listener);
+        signal?.removeEventListener('abort', settle);
+        resolve();
+      };
+      const listener = { browserSessionId, check: () => {
+        const views = listViews(browserSessionId, scope);
+        if (views.length !== known.size || views.some(view => !known.has(view.viewId))) settle();
+      } };
+      viewListeners.add(listener);
+      signal?.addEventListener('abort', settle, { once: true });
+      if (signal?.aborted) settle();
+      else listener.check();
+    }),
   };
 }

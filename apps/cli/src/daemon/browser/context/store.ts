@@ -1,7 +1,7 @@
-import type { BrowserContextItemV1 } from '@happier-dev/protocol';
+import type { BrowserContextItemV1 } from '@happier-dev/protocol/browser/context/v1';
 
 type AnnotationItem = Extract<BrowserContextItemV1, { kind: 'browserAnnotation' }>;
-type ContextSource = Readonly<{ browserSessionId: string; viewId: string }>;
+type ContextSource = Readonly<{ browserSessionId: string; viewId: string; profileId?: string }>;
 
 export type BrowserContextStoreClearResult = Readonly<{
   removedItems: readonly BrowserContextItemV1[];
@@ -10,7 +10,7 @@ export type BrowserContextStoreClearResult = Readonly<{
 
 /** The daemon retains one item per annotation; marks and element facts live on that item. */
 export type BrowserContextItemStore = Readonly<{
-  record(item: BrowserContextItemV1, source?: ContextSource): void;
+  record(item: BrowserContextItemV1, source?: ContextSource, expected?: Readonly<{ item: BrowserContextItemV1 | undefined }>): boolean;
   item(contextId: string): BrowserContextItemV1 | undefined;
   source(contextId: string): ContextSource | undefined;
   annotation(annotationId: string): AnnotationItem | undefined;
@@ -48,7 +48,8 @@ export function createBrowserContextItemStore(): BrowserContextItemStore {
   }
 
   return {
-    record(item, source) {
+    record(item, source, expected) {
+      if (expected && itemsByContextId.get(item.contextId)?.item !== expected.item) return false;
       remove(item.contextId);
       if (item.kind === 'browserAnnotation') {
         const previousContextId = contextIdByAnnotation.get(item.annotationId);
@@ -62,6 +63,7 @@ export function createBrowserContextItemStore(): BrowserContextItemStore {
         refs.add(item.contextId);
         contextIdsByMediaId.set(mediaId, refs);
       }
+      return true;
     },
     item: contextId => itemsByContextId.get(contextId)?.item,
     source: contextId => itemsByContextId.get(contextId)?.source,

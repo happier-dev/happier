@@ -13,16 +13,21 @@ describe('resolveAutomationPollingConfig', () => {
     });
   });
 
-  it('clamps heartbeat cadence below half of the resolved lease', () => {
+  it('preserves the explicit lease request and derives its heartbeat ceiling from that lease', () => {
     const config = resolveAutomationPollingConfig({ NODE_ENV: 'test',
       HAPPIER_AUTOMATION_LEASE_MS: '1000',
       HAPPIER_AUTOMATION_HEARTBEAT_MS: '9999999',
     });
 
     expect(config).toEqual({
-      leaseDurationMs: 5_000,
-      heartbeatMs: 2_500,
+      leaseDurationMs: 1_000,
+      heartbeatMs: 500,
     });
+  });
+
+  it('derives a positive heartbeat for the smallest positive lease request', () => {
+    expect(resolveAutomationPollingConfig({ HAPPIER_AUTOMATION_LEASE_MS: '1' }))
+      .toEqual({ leaseDurationMs: 1, heartbeatMs: 1 });
   });
 
   it('fires the first resolved heartbeat before the lease can expire', async () => {

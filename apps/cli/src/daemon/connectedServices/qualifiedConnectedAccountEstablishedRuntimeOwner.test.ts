@@ -9,13 +9,14 @@ import { sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/conn
 import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { ConnectedServiceCredentialRecordV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { createLoggerAndEventsAvailablePluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
+import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import { createConnectedAccountHostRuntimeInvoker } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
 import {
   createConnectedAccountConfigurationOwner,
@@ -205,7 +206,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       resolveRuntime: async () => runtimeLease,
       resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
       resolveHostPolicy: () => ({ hostAccess: [], serviceBinding:
-        createLoggerAndEventsAvailablePluginInvocationServiceBinding('authority-generation', 'producer', []) }),
+        createPluginInvocationServiceBinding('authority-generation', 'producer') }),
       // This native leaf uses no platform services; all credential/currentness owners stay real.
       createServices: () => ({}) as PluginInvocationContext['services'],
       registerRawForRedaction() {},
@@ -589,7 +590,8 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       resolveQualifiedConnectedAccountV4Support: () => 'advertised', allowNativeAccountCredentials: false,
       store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }),
         subscribe: () => ({ dispose() {} }) },
-      qualifiedApi: { listAccounts: async service => ({ service, accounts: [] }), listGroups: async () => ({ groups: [] }), readGroup: async () => null },
+      qualifiedApi: { listAccountsForServices: async services => ({ services, accounts: [] }),
+        listAccounts: async service => ({ service, accounts: [] }), listGroups: async () => ({ groups: [] }), readGroup: async () => null },
     });
     const purpose = { consumer: { pluginId: 'happier.mcp', localId: 'remote-bridge' }, purpose: 'mcp-server' };
     const binding = { purpose, target: { kind: 'account' as const, account: mcpAccount } };
@@ -656,7 +658,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       resolveRuntime: async () => runtimeLease,
       resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
       resolveHostPolicy: () => ({ hostAccess: [], serviceBinding:
-        createLoggerAndEventsAvailablePluginInvocationServiceBinding('quota-generation', 'producer', []) }),
+        createPluginInvocationServiceBinding('quota-generation', 'producer') }),
       // No platform service is used by this provider leaf; the real invoker owns its context.
       createServices: () => ({}) as PluginInvocationContext['services'],
       registerRawForRedaction() {},
@@ -710,7 +712,64 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     })).rejects.toBeInstanceOf(Error);
     expect(providerCalls).toBe(1);
     expect(release).toHaveBeenCalledTimes(3);
+    runtimeCurrent = true;
+    const deferred = new Error('Provider quota backoff');
+    const scheduled = await owner.invokeScheduledWithReceipts({
+      account, status: {}, quota: { assertProviderCallAllowed: () => { throw deferred; } },
+    });
+    expect(scheduled).toMatchObject({ status: { status: 'fulfilled', value: { result: { status: 'connected' } } },
+      quota: { status: 'rejected', reason: deferred } });
+    expect(providerCalls).toBe(1);
   });
+  it('resolves a Saved Secret held credential key from its one record and sees the record rotate', async () => {
+    const keyRef = 'happier:shared-secret:v1:anthropic-key';
+    const records = new Map([[keyRef, { value: 'sk-ant-first', fingerprint: 'saved-secret-record:v1:first' }]]);
+    // Saved Secret catalog port: the canonical materializer's current value and fingerprint for a reference.
+    const secrets = {
+      admit: vi.fn(async () => undefined),
+      has: vi.fn(async (ref: string) => records.has(ref)),
+      read: vi.fn(async (ref: string) => records.get(ref)?.value ?? null),
+      readMaterial: vi.fn(async (ref: string) => records.get(ref) ?? null),
+    };
+    const keyDescriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+      id: service.localId, title: 'Acme',
+      authentication: { defaultModeId: 'api-key', modes: [{ id: 'api-key', kind: 'manual', outcomeReconciliation: 'none', accountDirectSave: true,
+        fields: [{ id: 'token', title: 'API key', schema: { type: 'string', minLength: 1 }, secret: true }] }] },
+    });
+    const snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+      ref: account, authenticationModeId: 'api-key', revisionSemantics: 'revisioned', credentialRevision: requestAuthCredentialRevision,
+      configurationRevision: null, metadata: { scopes: [] },
+      content: plainEnvelope('credential', { v: 1, values: { identity: 'acct-1' }, secretRefs: { token: keyRef } }),
+    });
+    const owner = createQualifiedConnectedAccountEstablishedRuntimeOwner({
+      reloadController: {
+        acquireRuntimeRegistry: vi.fn(async () => ({ registry: { connectedAccountContributions: { describe: vi.fn(() => Object.freeze({
+          ref: service, descriptor: keyDescriptor, occurrenceId: 'plugin-contract-1',
+          sourceCustody: { kind: 'managed', immutableGenerationId: 'plugin-contract-1', installSource: 'npm' }, isCurrent: () => true,
+        })) } }, source: 'active' as const, release: vi.fn(async () => undefined) })),
+        isRuntimeRegistryCurrent: vi.fn(() => true),
+      } as unknown as Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent'>,
+      credentials: { token: 'token-1', encryption: null },
+      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
+      readCredential: vi.fn(async () => snapshot),
+      readConfiguration: vi.fn(async () => null),
+      configuration: { read: vi.fn(async () => null), secrets },
+    });
+
+    const material = await owner.readMaterialSnapshot({ account });
+    expect(material.credential).toEqual({ v: 1, values: { identity: 'acct-1', token: 'sk-ant-first' } });
+    await expect(material.isCurrent()).resolves.toBe(true);
+    // Rotating the one record makes earlier material stale and is what the next read returns.
+    records.set(keyRef, { value: 'sk-ant-rotated', fingerprint: 'saved-secret-record:v1:rotated' });
+    await expect(material.isCurrent()).resolves.toBe(false);
+    expect((await owner.readMaterialSnapshot({ account })).credential.values.token).toBe('sk-ant-rotated');
+    await expect(readQualifiedConnectedAccountCredentialMaterial({ credentials: { token: 'token-1', encryption: null }, account,
+      getAccountEncryptionMode: async () => 'plain', readCredential: async () => snapshot, secrets }))
+      .resolves.toMatchObject({ credential: { v: 1, values: { identity: 'acct-1', token: 'sk-ant-rotated' } } });
+    records.delete(keyRef);
+    await expect(owner.readMaterialSnapshot({ account })).rejects.toMatchObject({ code: 'connected_account_credential_secret_unavailable' });
+  });
+
   it('refuses credential material without an authentication mode before disclosing its payload', async () => {
     const snapshot = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
       ref: account,
@@ -1259,8 +1318,10 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       basis: {
         credentialRevision: 'credential-1',
         credentialHealth: { v: 1, status: 'connected', reconnectRequired: false },
+        credentialProviderIdentity: { accountId: 'provider-user', organizationId: 'org-a' },
         credentialConfigurationRevision: 'configuration-1',
         runtimeConfigurationRevision: 'configuration-1',
+        materializationPublicValues: ['https://api.example.test'],
         occurrenceId: 'generation-1',
         sourceCustody: {
           kind: 'managed',
@@ -1750,14 +1811,16 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
     // Exercise the real managed-purpose lease and daemon adapter too: the
     // public materialize request cannot choose or replace its retained basis.
     const purpose = { consumer: { pluginId: 'acme.compute', localId: 'vm' }, purpose: 'coordinator' };
+    const profile: QualifiedConnectedAccountProfileV4 = { ref: account, status: 'connected', authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned', credentialRevision: revisionB, configurationReady: true,
+      configurationRevision, kind: 'token', expiresAt: null, providerIdentity: { accountId: 'retained' }, displayName: 'Retained account', scopes: [] };
     const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
       establishedRuntimeOwner: owner, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
       store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }),
         subscribe: () => ({ dispose() {} }) },
       qualifiedApi: {
-        listAccounts: async () => ({ service, accounts: [{ ref: account, status: 'connected', authenticationModeId: 'oauth',
-          revisionSemantics: 'revisioned', credentialRevision: revisionB, configurationReady: true,
-          configurationRevision, kind: 'token', expiresAt: null, providerIdentity: { accountId: 'retained' }, displayName: 'Retained account', scopes: [] }] }),
+        listAccountsForServices: async services => ({ services, accounts: [profile] }),
+        listAccounts: async () => ({ service, accounts: [profile] }),
         listGroups: async () => ({ groups: [] }), readGroup: async () => null,
       },
       runtimeRegistry: { subscribe: () => () => undefined, acquire: async () => ({

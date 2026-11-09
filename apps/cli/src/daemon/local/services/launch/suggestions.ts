@@ -5,6 +5,7 @@ import type {
     LocalServicePreviewResourceV1,
 } from '@happier-dev/protocol';
 import { LOCAL_SERVICE_LAUNCH_TARGET_TITLE_MAX_LENGTH, LOCAL_SERVICE_LAUNCH_TARGET_COMMAND_PREVIEW_MAX_LENGTH } from '@happier-dev/protocol/local/services/launcher/v1';
+import { isLocalServiceWebServerV1 } from '@happier-dev/protocol/local/services/inventory/v1';
 
 import type { LocalServiceLauncherRunTarget } from './runTargets';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
@@ -308,6 +309,7 @@ export function buildLocalServiceLauncherSnapshot(
     const runTargets = input.runTargets.filter(target => matchesWorkspaceScope(target.cwd, scopePaths));
     const previews = [...input.previewResources].sort((a, b) => a.previewId.localeCompare(b.previewId));
     const inventoryEntries = [...input.inventoryEntries]
+        .filter(isLocalServiceWebServerV1)
         .filter((entry) => localServiceInventoryEntryMatchesWorkspaceScope(entry, scopePaths))
         .sort((a, b) => a.port - b.port || a.id.localeCompare(b.id));
     const terminalUrlCandidates = [...(input.terminalUrlCandidates ?? [])].sort((a, b) => a.sourceId.localeCompare(b.sourceId));

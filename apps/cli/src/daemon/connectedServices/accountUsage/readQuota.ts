@@ -7,7 +7,7 @@ import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect
 import type { PendingResetStartsReadInputV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { evaluatePendingResetStartReadinessV1 } from '@happier-dev/protocol/sessions/pending/pendingResetStartReadinessV1';
 import { readPendingResetStartsForSource } from '@/api/session/pendingQueueV2Transport';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import type { ProviderAccountUsageWaitingWorkV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 
@@ -27,7 +27,8 @@ export type ProviderAccountUsageReadOptions = Readonly<{
 export async function readProviderAccountUsageQuotaV4(input: ConnectedServiceQuotaGetInputV1, options: ProviderAccountUsageReadOptions): Promise<ConnectedServiceQuotaGetResultV1> {
   const request = ConnectedServiceQuotaGetInputV1Schema.parse(input);
   await options.assertCurrent?.();
-  const transport = { token: options.credentials.token, signal: options.signal, authorizeRequest: options.authorizeRequest };
+  const transport = { token: options.credentials.token, signal: options.signal, authorizeRequest: options.authorizeRequest,
+    requestPurpose: 'connected-accounts:quota-qualification' as const };
   const resolution = await resolveQualifiedProviderAccountUsageSourceV4({ ...transport, source: request.source });
   await options.assertCurrent?.();
   const material = options.accountMode === 'e2ee' ? requireAccountEncryptionCredentials(options.credentials).encryption : undefined;
@@ -78,7 +79,8 @@ async function readWaitingWork(input: ConnectedServiceQuotaGetInputV1, current: 
 
 export async function readProviderAccountUsageHistoryWitnessV4(input: Readonly<{ recordId: ProviderAccountUsageRecordId; witness: ProviderAccountUsageHistoryWitnessV1 }>, options: ProviderAccountUsageReadOptions) {
   await options.assertCurrent?.();
-  const page = await readQualifiedProviderAccountUsageHistoryV4({ token: options.credentials.token, query: input, signal: options.signal, authorizeRequest: options.authorizeRequest });
+  const page = await readQualifiedProviderAccountUsageHistoryV4({ token: options.credentials.token, query: input, signal: options.signal, authorizeRequest: options.authorizeRequest,
+    requestPurpose: 'connected-accounts:quota-qualification' });
   await options.assertCurrent?.();
   if (!page) return null;
   const opened = openProviderAccountUsageHistoryPageV4({ recordId: input.recordId, accountMode: options.accountMode, material: options.accountMode === 'e2ee' ? requireAccountEncryptionCredentials(options.credentials).encryption : undefined, page });

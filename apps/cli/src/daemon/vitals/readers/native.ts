@@ -22,11 +22,8 @@ export function createNativeMachineVitalsReader(platform: 'darwin' | 'win32', op
     const excludedNetworkDelta = createCounterRateReader();
     const swapDelta = createCounterRateReader();
     let host: MachineVitalsHostFactsV1 | undefined;
-    let extrasAt = -Infinity;
-    let extras: { battery?: MachineVitalsSampleV1['battery'] } = {};
     return { read: async (input) => {
-        const readExtras = input.overviewExtras && input.monotonicMs - extrasAt >= 15_000;
-        const outcome = await invoke({ command: 'vitals-sample', sampledAt: input.sampledAt, args: readExtras ? ['--extras'] : [], signal: options.signal });
+        const outcome = await invoke({ command: 'vitals-sample', sampledAt: input.sampledAt, args: input.overviewExtras ? ['--extras'] : [], signal: options.signal });
         if (outcome.state !== 'ready') return outcome;
         let raw: NativeVitalsSample;
         try { raw = NativeVitalsSampleSchema.parse(JSON.parse(outcome.stdout)).sample; } catch { return { state: 'unavailable', reason: 'reader_failed' }; }
@@ -58,7 +55,6 @@ export function createNativeMachineVitalsReader(platform: 'darwin' | 'win32', op
         const busiest = nd ? [...rates].sort((a, b) => (b.rxBps ?? 0) + (b.txBps ?? 0) - (a.rxBps ?? 0) - (a.txBps ?? 0))[0] : undefined;
         const swap = raw.memory.swap;
         const sd = swap?.in !== undefined && swap.out !== undefined ? swapDelta({ monotonicMs: input.monotonicMs, counters: { in: swap.in, out: swap.out } }, input.intervalMs) : null;
-        if (readExtras) { extrasAt = input.monotonicMs; extras = { battery: raw.battery }; }
         const load = platform === 'darwin' ? (options.readLoadAverage ?? loadavg)().map((value) => value / cpu.length) : undefined;
         const sample: MachineVitalsSampleV1 = {
             v: 1, sampledAt: input.sampledAt, intervalMs: input.intervalMs,
@@ -76,7 +72,7 @@ export function createNativeMachineVitalsReader(platform: 'darwin' | 'win32', op
                 interfaces: networkInterfaces, ...(busiest ? { label: busiest.label } : {}) },
             ...(raw.limits ? { limits: raw.limits } : {}),
             ...(raw.power ? { power: raw.power } : {}),
-            ...(input.overviewExtras && extras.battery ? { battery: extras.battery } : {}),
+            ...(input.overviewExtras && raw.battery ? { battery: raw.battery } : {}),
         };
         if (platform === 'darwin' && raw.daemonFileSoftLimit !== undefined) {
             try {

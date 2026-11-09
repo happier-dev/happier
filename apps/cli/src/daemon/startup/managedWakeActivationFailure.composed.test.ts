@@ -320,7 +320,7 @@ it.each([
         const machine = await runWithServerHttpBaseUrl(serverUrl, () => api.getMachine(guest.id));
         if (!machine) throw new Error('Guest Machine was not readable');
         const snapshot = await fetchServerFeaturesSnapshot({ serverUrl, token });
-        const client = runWithServerHttpBaseUrl(serverUrl, () => api.machineSyncClient(machine, undefined, {
+        const client = await runWithServerHttpBaseUrl(serverUrl, () => api.machineSyncClient(machine, undefined, {
             getServerFeaturesSnapshot: () => snapshot, resolveCurrentServerIdentityId: () => homeId,
         }));
         guestClient = client;

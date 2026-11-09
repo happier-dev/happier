@@ -4,6 +4,7 @@ import { resolveProcessOwnership } from './resolveProcessOwnership';
 import type { HappierProcessRoot } from './types';
 import { createHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUserResourceGovernor';
 import { createWindowsJobCustodyName } from '@/subprocess/supervision/processCustody';
+import { resolveProcessOwnershipLevel } from './levelRules';
 
 const principal = { kind: 'uid', value: '1000' } as const;
 const scope = '123456789abc';
@@ -19,6 +20,46 @@ function resolve(rows: readonly ProcessCensusRow[], roots: readonly HappierProce
         roots, daemonPrincipal: principal, daemonScopeKey: scope, platform: 'darwin', ...extra });
 }
 describe('resolveProcessOwnership', () => {
+    it('keeps native containment proof distinct from operating-system principal equality', () => {
+        const native = { kind: 'fence' as const, state: 'met' as const, reason: 'linux_container' as const };
+        expect(resolveProcessOwnershipLevel({ samePrincipal: false, ownerEnded: false, observationsIncomplete: false, evidence: [native] })).toBe('proven');
+        expect(resolveProcessOwnershipLevel({ samePrincipal: false, ownerEnded: false, observationsIncomplete: false,
+            evidence: [{ ...native, reason: 'linux_scope' }] })).toBe('not_happier');
+        expect(resolveProcessOwnershipLevel({ samePrincipal: undefined, ownerEnded: false, observationsIncomplete: true, evidence: [native] })).toBe('unknown');
+        const containerId = 'a'.repeat(64);
+        const prefix = `/system.slice/docker-${containerId}.scope`;
+        expect(resolve([row(10, { principal: null, cgroup: prefix })], [root({
+            owner: { kind: 'container', serverId: 'home', machineId: 'machine', serviceId: 'production/web',
+                containerId, composeProject: 'production', composeService: 'web', environmentId: 'environment' },
+            containment: { kind: 'linux_container', prefix },
+        })], { platform: 'linux' })[0]?.level).toBe('unknown');
+    });
+    it('keeps native proof and detail ancestry within its exact fence with one root-fact pass', () => {
+        let containmentReads = 0;
+        const roots = Array.from({ length: 16 }, (_, index) => {
+            const id = index.toString(16).padStart(64, '0');
+            const containment = { kind: 'linux_container' as const, prefix: `/system.slice/docker-${id}.scope` };
+            const native = root({ owner: { kind: 'container', serverId: 'home', machineId: 'machine', serviceId: `service-${index}`,
+                containerId: id, composeProject: 'project', composeService: `service-${index}`, environmentId: 'environment' },
+                pid: 100 + index, start: { startTimeMs: (100 + index) * 100 },
+                containment });
+            Object.defineProperty(native, 'containment', { get() { containmentReads++; return containment; } });
+            return native;
+        });
+        const rows = [row(50, { name: 'private-host-ancestor' }), ...Array.from({ length: 1000 }, (_, index) => row(100 + index, {
+            ppid: index < 16 ? 50 : 100 + index % 16,
+            cgroup: `/system.slice/docker-${(index % 16).toString(16).padStart(64, '0')}.scope`,
+            principal: { kind: 'uid', value: '0' }, name: 'native-worker',
+        }))];
+        containmentReads = 0;
+        const result = resolve(rows, roots, { platform: 'linux' });
+        expect(result.slice(1).every(item => item.level === 'proven' && item.owner?.kind === 'container')).toBe(true);
+        expect(result.slice(1).flatMap(item => item.chain).some(item => item.name === 'private-host-ancestor')).toBe(false);
+        // Root facts are immutable within this census. Row count must not multiply their traversal.
+        expect(containmentReads).toBeLessThanOrEqual(roots.length * 2);
+        const escaped = row(3000, { ppid: 100, cwd: '/repo/child', pgid: 100, cgroup: '/user.slice' });
+        expect(resolve([...rows, escaped], roots, { platform: 'linux', listeners: [{ pid: escaped.pid, port: 4000 }] }).at(-1)?.owner).toBeNull();
+    });
     it('proves unattached daemon-only rows belong to Happier without claiming their spawner ended', () => {
         const daemon = root({ owner: { kind: 'happier' } });
         const daemonTag = `v1.${scope}.happier.daemon`;
@@ -79,7 +120,12 @@ describe('resolveProcessOwnership', () => {
     it('keeps principal and required-observation uncertainty out of not-Happier and victims', () => {
         expect(resolve([row(20, { principal: null })])[0]?.level).toBe('unknown');
         expect(resolve([row(20, { principal: { kind: 'uid', value: '0' }, ownerTag: `v1.${scope}.session.s1` })])[0]?.level).toBe('not_happier');
-        expect(resolve([row(20)], [], { snapshot: { status: 'ok', capturedAtMs: 10000, logicalCpus: 4, rows: [row(20)], partial: [{ pid: 20, missing: ['ownerTag', 'argv'] }] } })[0]?.level).toBe('unknown');
+        for (const missing of [['ownerTag', 'argv'], ['cgroup']]) {
+            expect(resolve([row(20)], [], { snapshot: { status: 'ok', capturedAtMs: 10000, logicalCpus: 4,
+                rows: [row(20)], partial: [{ pid: 20, missing }] } })[0]?.level).toBe('unknown');
+            expect(resolve([row(10), row(20, { ppid: 10 })], [root()], { snapshot: { status: 'ok', capturedAtMs: 10000,
+                logicalCpus: 4, rows: [row(10), row(20, { ppid: 10 })], partial: [{ pid: 20, missing }] } })[1]?.level).toBe('proven');
+        }
     });
     it('does not promote an unreadable or unknown marker to weak listener/group action authority', () => {
         const unreadable = row(20, { cwd: '/repo/app', pgid: 10 });

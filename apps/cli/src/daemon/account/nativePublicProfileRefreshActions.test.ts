@@ -47,24 +47,23 @@ describe('native public-profile Account Action adapter', () => {
   });
 
   it.each([
-    { policy: { v: 1 }, code: 'approval_required' },
-    { policy: { v: 1, approvalWaivedSurfaces: { 'account.public_profile.refresh': ['ui', 'agent'] } }, code: 'approval_required' },
     { policy: { v: 1, actions: { 'account.public_profile.refresh': { enabled: false } } }, code: 'action_disabled' },
     { policy: { v: 1, approvalWaivedSurfaces: { 'account.public_profile.refresh': ['cli'] },
-      actions: { 'account.public_profile.refresh': { approvalRequiredSurfaces: ['cli'] } } }, code: 'approval_required' },
-  ])('refuses $code through canonical CLI policy before any background preparation', async ({ policy, code }) => {
+      actions: { 'account.public_profile.refresh': { approvalRequiredSurfaces: ['cli'] } } }, code: 'action_interactive_review_required' },
+  ])('refuses $code through canonical CLI policy without creating a background approval or writing facts', async ({ policy, code }) => {
     const f = await fixture(policy);
     await expect(f.actions.refresh(context())).resolves.toMatchObject({ ok: false, errorCode: code });
-    expect(f.requests).toEqual([]);
+    expect(f.refreshes).toEqual([]);
+    expect(f.requests.filter(request => request.method !== 'GET' && !['/v2/usage/query', '/v2/sessions/read-batch'].includes(request.path))).toEqual([]);
   });
 
-  it('runs Allowed CLI refresh through real Usage computation and acknowledges only the facts-only HTTP snapshot effect', async () => {
-    const f = await fixture({ v: 1, approvalWaivedSurfaces: { 'account.public_profile.refresh': ['cli'] } });
+  it('runs default Allowed CLI refresh through real Usage computation and acknowledges only the facts-only HTTP snapshot effect', async () => {
+    const f = await fixture({ v: 1 });
     await expect(f.actions.refresh(context())).resolves.toMatchObject({ ok: true,
       result: { kind: 'updated', record: { state: 'published', snapshot: { facts: { tokens: 10 } } } } });
     expect(f.refreshes).toHaveLength(1);
     expect(Object.keys(f.refreshes[0]!).sort()).toEqual(['query', 'snapshot']);
-    expect(f.requests.filter(request => request.method !== 'GET' && request.path !== '/v2/usage/query')).toEqual([
+    expect(f.requests.filter(request => request.method !== 'GET' && !['/v2/usage/query', '/v2/sessions/read-batch'].includes(request.path))).toEqual([
       { method: 'PUT', path: '/v1/account/public-profile/snapshot' },
     ]);
   });

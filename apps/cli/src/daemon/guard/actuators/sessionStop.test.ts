@@ -15,6 +15,32 @@ beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ con
 afterAll(async () => { await runtime?.dispose(); });
 
 describe('memory guard Session stop admission', () => {
+  it.each(['pid', 'birth', 'promoted_runner', 'equal_promoted_runner'] as const)('pins the captured target through same tracked object %s final admission', async change => {
+    const tracked: TrackedSession = { pid: 10, happySessionId: 's', startedBy: 'daemon', processStartTimeMs: 1 };
+    if (change === 'equal_promoted_runner') {
+      tracked.sessionRunnerPid = 11; tracked.runnerProcessIdentity = { pid: 11, processStartTimeMs: 2, processCommandHash: 'runner-11' };
+    }
+    const root = { owner: { kind: 'session' as const, sessionId: 's' }, pid: change === 'equal_promoted_runner' ? 11 : 10,
+      start: { startTimeMs: change === 'equal_promoted_runner' ? 2 : 1 }, live: true, ownerCreatedAtMs: 0 };
+    const inventory = { coverage: 'complete' as const, items: [{ category: 'session' as const, ownerRef: tracked,
+      attribution: { kind: 'unknown' as const }, state: 'settled' as const, settledAt: 0 }] };
+    const resume = { sessionId: 's', rawSession: { machineId: 'm', path: '/project' },
+      metadata: { runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: { backendMode: 'appServer' } },
+        machineId: 'm', path: '/project', flavor: 'codex', codexSessionId: 'native-s' } };
+    const eligibility = await evaluateSessionEligibility({ tracked, inventory, resume, draft: { status: 'absent' } });
+    const candidate: GuardCandidate = { kind: 'session', rung: 'idleSessions', step: 3, root,
+      target: { kind: 'session', root, tracked, eligibility, label: 'Session' }, footprintBytes: 0, settledAt: 0, attribution: { kind: 'unknown' } };
+    if (change === 'pid') tracked.pid = 11;
+    else if (change === 'birth') tracked.processStartTimeMs = 2;
+    else if (change === 'promoted_runner') { tracked.sessionRunnerPid = 11; tracked.runnerProcessIdentity = { pid: 11, processStartTimeMs: 2, processCommandHash: 'runner-11' }; }
+    let nativeStops = 0;
+    const result = await sessionStop({ candidate, signal: new AbortController().signal,
+      readCurrentTracked: () => tracked,
+      readCurrentEligibility: async () => evaluateSessionEligibility({ tracked, inventory, resume, draft: { status: 'absent' } }),
+      stopSession: async () => { nativeStops++; return true; } });
+    expect(result).toEqual(change === 'equal_promoted_runner' ? { status: 'stopped' } : { status: 'failed', reason: 'identity_changed' });
+    expect(nativeStops).toBe(change === 'equal_promoted_runner' ? 1 : 0);
+  });
   it.each(['refused', 'error', 'draft', 'cancelled'] as const)('settles the original intent when native admission is %s', async mode => {
     let content: LegacyHostSessionSystemRecord['content'] = { t: 'plain', v: {
       v: 1, at: 1000, status: 'requested', rule: 'memory_guard',
@@ -28,7 +54,7 @@ describe('memory guard Session stop admission', () => {
       upsertSessionSystemRecord: async request => { content = request.content; addresses.push(request.localId); },
     });
     const tracked: TrackedSession = { pid: 10, happySessionId: 's', startedBy: 'daemon',
-      guardStopReceipt: createGuardSessionStopReceipt({ records, at: 1000, isCurrent: async () => true }) };
+      guardStopReceipt: createGuardSessionStopReceipt({ records, at: 1000 }) };
     const root = { owner: { kind: 'session' as const, sessionId: 's' }, pid: 10, start: { startTimeMs: 1 }, live: true, ownerCreatedAtMs: 0 };
     const eligibilityInput = { tracked,
       resume: { sessionId: 's', rawSession: { machineId: 'm', path: '/project' },

@@ -122,7 +122,8 @@ describe('cleanupDaemonHomeMachineWorkspace', () => {
       runtime,
       profile,
       token: 'daemon-token',
-      readProfile: async () => profile,
+      readProfile: async () => ({ serverUrl: HOME_DESCRIPTOR.canonicalServerUrl,
+        homeConnectionDescriptor: { ...HOME_DESCRIPTOR, revision: HOME_DESCRIPTOR.revision + 1 } }),
       probe: async () => ({ status: 'ready' as const }),
       publishRuntimeOrigin: () => () => undefined,
     });

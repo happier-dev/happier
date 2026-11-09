@@ -13,16 +13,16 @@ import { isSustainedV1 } from '@happier-dev/protocol/machines/vitals/isSustained
 export type GuardOwnership = Awaited<ReturnType<ReturnType<typeof createProcessOwnershipRuntime>['readOwners']>>;
 export type GuardRung = 'browsers' | 'devServers' | 'idleSessions';
 export type GuardConnectionMinute = Readonly<{ t: number; quiet: boolean | null; quietSince?: number }>;
-type TargetBase = Readonly<{ root: HappierProcessRoot; label: string;
+type TargetBase = Readonly<{ root: HappierProcessRoot;
   wayBack?: MachineGuardActivityEntryV1['wayBack'] }>;
 /** Facts are projected by the incumbent launch/Service/Session owners, never inferred from names. */
 export type GuardTarget = TargetBase & (
-  | Readonly<{ kind: 'browser'; ownerRef: unknown; idle: boolean | null; settledAt?: number }>
-  | Readonly<{ kind: 'service'; ownerRef: unknown; scope?: 'project' | 'session'; workspacePath?: string;
+  | Readonly<{ kind: 'browser'; label: string; ownerRef: unknown; idle: boolean | null; settledAt?: number }>
+  | Readonly<{ kind: 'service'; label: string; ownerRef: unknown; scope?: 'project' | 'session'; workspacePath?: string;
     workspaceIdle?: boolean | null; attribution?: MachineGuardActivityEntryV1['attribution'];
     connectionMinutes?: readonly GuardConnectionMinute[];
     listeners: readonly Readonly<{ establishedConnections: number | null }>[] }>
-  | Readonly<{ kind: 'session'; tracked: TrackedSession; eligibility: SessionEligibility }>
+  | Readonly<{ kind: 'session'; label: string | null; tracked: TrackedSession; eligibility: SessionEligibility }>
 );
 export type GuardCandidate = Readonly<{ kind: GuardTarget['kind']; rung: GuardRung; step: 1 | 2 | 3;
   root: HappierProcessRoot; target: GuardTarget; footprintBytes: number; settledAt: number;
@@ -103,8 +103,8 @@ export function planIdleSessions(input: GuardFacts & Readonly<{ policy: MachineG
 }
 
 /** Read-only ref; any later Action re-admits its own exact target independently. */
-export function guardTargetRef(target: Pick<GuardTarget, 'kind' | 'root'>): string {
-  return `${target.kind}:${target.root.pid}:${target.root.start.startTimeMs}:${target.root.start.native ?? ''}`;
+export function guardTargetRef(target: Pick<GuardTarget, 'root'>): string {
+  return processRef(target.root.pid, target.root.start);
 }
 export function projectGuardLadderV1(ladder: GuardLadderPreview): MachineGuardLadderV1 {
   return { steps: ladder.steps.map(step => ({ ...step, candidates: step.candidates.map(candidate => ({

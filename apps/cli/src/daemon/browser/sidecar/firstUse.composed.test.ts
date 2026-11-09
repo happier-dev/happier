@@ -2,7 +2,7 @@ import { createSnapshotCaptureTestRoutes, snapshotReadBoundaryFixture } from '..
 import '../../../../../ui/sources/dev/vitestSetup';
 import { createHash, randomBytes } from 'node:crypto';
 import axios from 'axios';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -56,13 +56,16 @@ import type { ActionOperationRpcContext } from '../../actionOperations/actionOpe
 import { logger } from '@/ui/logger';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
-import { act, renderHook } from '../../../../../ui/sources/dev/testkit';
-import { useSessionCompletedBrowserActionKey } from '../../../../../ui/sources/sync/store/hooks';
 import { actionOperationStore } from '../../../../../ui/sources/sync/domains/actionOperations/actionOperationStore';
+import { reconcileBrowserDiscovery } from '../../../../../ui/sources/components/browser/streamed/discovery';
+import { applyBrowserControlEvent, createBrowserControlState } from '../../../../../ui/sources/sync/domains/browser/control/reducer';
 import { writeStoredCredentialsForServerId } from '@/persistence';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { dispatchRuntimeAction } from '@happier-dev/protocol/actions/executor/dispatch';
 import { createBrowserRuntimeActionExecutor } from '../../../../../ui/sources/sync/domains/browser/actions/runtimeActionExecutor';
+import { createBrowserExtensionService } from '../extensions/service';
+import { createBrowserProfileStore } from '../profiles/store';
+import { createBrowserStoragePartitionOwner } from '../storage/partitions';
 
 // A tiny valid ZIP with an executable and companion file; no real Chromium is fetched.
 const archive = Buffer.from('UEsDBBQAAAAAAKCqIl2/ze6ZDgAAAA4AAAASAAAAYWd5X2FjcF9zZXJ2ZXIucGFyc2VydmVyLWZpeHR1cmVQSwMEFAAAAAAAoKoiXeOBVF8PAAAADwAAABUAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWxoYXJuZXNzLWZpeHR1cmVQSwECFAMUAAAAAACgqiJdv83umQ4AAAAOAAAAEgAAAAAAAAAAAAAA7YEAAAAAYWd5X2FjcF9zZXJ2ZXIucGFyUEsBAhQDFAAAAAAAoKoiXeOBVF8PAAAADwAAABUAAAAAAAAAAAAAAO2BPgAAAGxvY2FsaGFybmVzc19leHRlcm5hbFBLBQYAAAAAAgACAIMAAACAAAAAAAA=', 'base64');
@@ -101,6 +104,9 @@ async function setup(pageOpenFailure?: Error, publishControlBeforeInstall = fals
         await writeFile(destinationPath, archive);
     });
     const broker = createBrowserDaemonControlBroker();
+    const profiles = createBrowserProfileStore({ storageRootDirectory: boundary.home,
+        partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: boundary.home }) });
+    const control = createBrowserDaemonControlRoutes({ broker, extensions: createBrowserExtensionService({ profileStore: profiles }) });
     let routes: DaemonRuntimeActionRouteOwners = {};
     const errors: unknown[] = [];
     const provisioner = createBrowserAutomationRuntimeProvisioner({ platform: 'linux', arch: 'x64', onError: error => errors.push(error),
@@ -126,14 +132,14 @@ async function setup(pageOpenFailure?: Error, publishControlBeforeInstall = fals
                     browserContext: createSnapshotCaptureTestRoutes({ transport, resolvePageHandle: adapter.resolvePageHandle }),
                     contextCapture: { transport, resolvePageHandle: adapter.resolvePageHandle,
                         getNavigationState: adapter.getNavigationState } }) }) });
-            routes = { ...routes, browserControl: createBrowserDaemonControlRoutes({ broker }),
+            routes = { ...routes, browserControl: control,
                 browserAutomation: createBrowserAutomationRoutes({ service }),
                 browserUiAutomation: { ownsAutomationView: broker.ownsView,
                     uiAutomation: async () => { throw new Error('Owned managed view must not dispatch to UI'); } } };
         },
     });
     routes = { provisionBrowserAutomationRuntime: provisioner.provision,
-        ...(publishControlBeforeInstall ? { browserControl: createBrowserDaemonControlRoutes({ broker }) } : {}) };
+        ...(publishControlBeforeInstall ? { browserControl: control } : {}) };
     const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
         generateOperationId: (() => { let count = 0; return () => count++ ? `open-operation-${count}` : 'first-open-operation'; })() });
     let sidecarEnabled = true;
@@ -159,7 +165,7 @@ async function setup(pageOpenFailure?: Error, publishControlBeforeInstall = fals
         navigationGeneration: 0, actionKind: 'snapshot', payload: {}, requestedBy: 'agent', timeoutMs: 5_000,
         requesterRef: { kind: 'agent', id: 'first-use-agent' },
     }, context: { surface: 'agent', authority: 'account_automation', bypassApprovals: true, defaultSessionId: 'session' } });
-    return { execute, snapshot, operations, broker, downloading, release, opened, provisioner, routes: () => routes, errors,
+    return { execute, snapshot, operations, broker, profiles, downloading, release, opened, provisioner, routes: () => routes, errors,
         disableSidecar: () => { sidecarEnabled = false; },
         clearRoutes: () => { routes = {}; },
         installBeforeOpen: async () => {
@@ -175,8 +181,8 @@ async function setup(pageOpenFailure?: Error, publishControlBeforeInstall = fals
         } };
 }
 
-async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 'decision' | 'daemon' = 'decision') {
-    const browser = await setup();
+async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 'decision' | 'daemon' = 'decision', requireOpenApproval = true) {
+    const browser = await setup(undefined, true);
     const directory = boundary.home;
     const homeId = 'srv_browser_first_use';
     const endpoint = 'https://browser-first-use.test';
@@ -184,7 +190,8 @@ async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 
         provenance: { v: 1, kind: terminal ? 'terminal' : 'account', authority: terminal ? 'account_automation' : 'present_user' } })).toString('base64url')}.signature`;
     const credentials = { token: token('alice', true), encryption: null };
     const currentnessChannel = await createRequesterCurrentnessSocketHarness();
-    const settings = { actionsSettingsV1: { v: 1, actions: { 'browser.view.open': { approvalRequiredSurfaces: ['ui', 'rpc', 'cli'] } } } };
+    const settings = { actionsSettingsV1: { v: 1, actions: requireOpenApproval
+        ? { 'browser.view.open': { approvalRequiredSurfaces: ['ui', 'rpc', 'cli'] } } : {} } };
     let artifact: Record<string, unknown> | undefined;
     let originalAuthorizationCurrent = true;
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async url => {
@@ -258,7 +265,7 @@ async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 
     machine.setRPCHandlers({ spawnSession: async () => ({ type: 'error', errorMessage: 'Unexpected launch' }),
         stopSession: async () => false, requestShutdown: () => {} }, { externalActionIngressOwner: ingress });
     const phaseDiagnostics = vi.spyOn(logger, 'warnLocalFile');
-    const invoke = async (actionId: 'browser.view.open' | 'approval.request.decide', input: unknown, requestId: string, replayApproved = false) => {
+    const invoke = async (actionId: 'browser.view.open' | 'browser.extensions.install' | 'approval.request.decide', input: unknown, requestId: string, replayApproved = false) => {
         const target = { kind: 'machine' as const, machineId: 'machine' };
         const envelope = { v: 1 as const, requestId, target, input };
         const authentication = { kind: 'account' as const, tokenEpoch: 0 };
@@ -330,6 +337,57 @@ async function setupInstalledRequester(requesterAccountId = 'bob', replayRoute: 
 }
 
 describe('managed Browser provisioning through the approved first open', () => {
+    it('adopts an Inbox-approved first view from the daemon change producer without a local operation projection', async () => {
+        const fixture = await setupInstalledRequester('bob', 'decision');
+        const abort = new AbortController();
+        try {
+            const observation = fixture.broker.watchViews({ browserSessionId: 'session', knownViewIds: [], signal: abort.signal });
+            expect(await fixture.invoke('browser.view.open', command, 'inbox-open')).toMatchObject({ ok: true,
+                result: { kind: 'approval_request_created' } });
+            expect(await fixture.approve()).toMatchObject({ ok: true });
+            const accepted = BrowserOpenViewInProgressV1Schema.parse((await fixture.approval()).execution?.result);
+            await fixture.downloading.promise;
+            fixture.release.resolve();
+            await fixture.read(accepted.operationId, true);
+            await observation;
+            // Capture readiness is produced by the capture owner in production; the
+            // fixture models that external source boundary after the native view exists.
+            const views = fixture.broker.listViews('session').map(view => ({ ...view, captureSource: {
+                v: 1 as const, sourceId: view.sourceId, sourceKind: 'browser' as const,
+                supportedCodecs: ['image.mjpeg' as const], inputMode: 'shared' as const,
+                sidebands: [], health: { status: 'available' as const },
+            } }));
+            let state = createBrowserControlState();
+            for (const event of reconcileBrowserDiscovery([], views).events) state = applyBrowserControlEvent(state, event);
+            expect(state.viewsById[command.viewId]).toMatchObject({ browserSessionId: 'session', viewId: command.viewId,
+                adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface' });
+            expect(actionOperationStore.getSnapshot().operationsByKey.size).toBe(0);
+        } finally { abort.abort(); await fixture.close(); }
+    });
+    it.each(['alice', 'bob'])('executes the Home-admitted person %s open and extension install without the agent approval floor', async accountId => {
+        const fixture = await setupInstalledRequester(accountId, 'decision', false);
+        try {
+            // Real installed ingress restores Home's private present-user invocation;
+            // only network, download and CDP boundaries are replaced above.
+            const opened = await fixture.invoke('browser.view.open', command, 'present-user-open');
+            expect.soft(opened).toMatchObject({ ok: true, result: { status: 'in_progress' } });
+            const directory = join(boundary.home, 'unpacked-person-extension');
+            await mkdir(directory);
+            await writeFile(join(directory, 'manifest.json'), JSON.stringify({ manifest_version: 3,
+                name: 'Present user extension', version: '1.0', permissions: ['storage'] }));
+            expect(await fixture.invoke('browser.extensions.install', { machineId: 'machine', profileId: 'personal',
+                source: { kind: 'unpacked', directory },
+                reviewedPermissions: { version: '1.0', permissions: ['storage'], hostPermissions: [] } }, 'present-user-extension'))
+                .toMatchObject({ ok: true, result: { status: 'updated', entry: {
+                    extension: { name: 'Present user extension', enabled: true } } } });
+            fixture.release.resolve();
+            if (opened.ok && opened.result && typeof opened.result === 'object' && 'operationId' in opened.result) {
+                expect(await fixture.read(String(opened.result.operationId), true)).toMatchObject({ kind: 'found',
+                    operation: { state: 'succeeded' } });
+            }
+            expect(fixture.broker.listViews('session')).toMatchObject([{ viewId: command.viewId }]);
+        } finally { await fixture.close(); }
+    });
     it('refuses daemon replay when the original requester authorization is no longer current', async () => {
         const fixture = await setupInstalledRequester('bob', 'daemon');
         try {
@@ -378,12 +436,6 @@ describe('managed Browser provisioning through the approved first open', () => {
             const running = await fixture.read(accepted.operationId);
             expect(running).toMatchObject({ kind: 'found', operation: { state: 'running', scope: { accountId, sessionId: 'session' } } });
             if (running.kind !== 'found') throw new Error('Missing requester operation');
-            actionOperationStore.mergeSnapshots({ serverId: fixture.homeId, snapshots: [running.operation] });
-            const requesterDiscovery = await renderHook(() => useSessionCompletedBrowserActionKey('session', {
-                operationScope: { serverId: fixture.homeId, accountId, machineId: 'machine' } }));
-            const custodianDiscovery = await renderHook(() => useSessionCompletedBrowserActionKey('session', {
-                operationScope: { serverId: fixture.homeId, accountId: 'alice', machineId: 'machine' } }));
-            expect(requesterDiscovery.getCurrent()).toBe('');
             if (accountId !== 'alice') {
                 expect(await fixture.list(false)).toMatchObject({ items: [] });
                 expect(await fixture.read(accepted.operationId, false, false)).toEqual({ kind: 'not_found' });
@@ -393,11 +445,6 @@ describe('managed Browser provisioning through the approved first open', () => {
             expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'succeeded', scope: { accountId } } });
             expect(await admitted?.verifyMachineAdmissionCurrent?.()).toBe(false);
             if (terminal.kind !== 'found') throw new Error('Missing requester terminal operation');
-            await act(async () => actionOperationStore.mergeSnapshots({ serverId: fixture.homeId, snapshots: [terminal.operation] }));
-            expect(requesterDiscovery.getCurrent()).not.toBe('');
-            if (accountId !== 'alice') expect(custodianDiscovery.getCurrent()).toBe('');
-            await requesterDiscovery.unmount();
-            await custodianDiscovery.unmount();
             expect(await fixture.list()).toMatchObject({ items: [{ operationId: accepted.operationId, state: 'succeeded' }] });
             expect(fixture.broker.listViews('session')).toMatchObject([{ viewId: command.viewId }]);
             expect(fixture.opened).toEqual([command.target.url]);

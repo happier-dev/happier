@@ -1,3 +1,4 @@
+import type { AgentPluginAccountSettingsSource } from '@/plugins/runtime/agentPluginSettings';
 import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { ConnectedServiceCredentialHealthV1Schema, ConnectedServiceCredentialRefreshFailureKindV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
@@ -634,6 +635,7 @@ export class ConnectedServiceRefreshCoordinator {
     isAccountRuntimeCurrent?: (signal?: AbortSignal) => Promise<boolean>;
     runAccountOperation?: <T>(operation: () => Promise<T>, signal?: AbortSignal) => Promise<T>;
     allowNativeAccountState?: boolean;
+    accountPluginSettingsSource?: AgentPluginAccountSettingsSource;
     connectedAccountsOwner?: Parameters<typeof materializeConnectedServicesForSpawn>[0]['connectedAccountsOwner'];
     activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
     resolveQualifiedPurposeBindingSnapshot?: (input: Readonly<{
@@ -3315,6 +3317,7 @@ export class ConnectedServiceRefreshCoordinator {
           accountSettings: this.params.accountSettingsProvider?.() ?? null,
           processEnv: this.params.processEnv ?? process.env,
           allowNativeAccountState: this.params.allowNativeAccountState,
+          accountPluginSettingsSource: this.params.accountPluginSettingsSource,
           connectedAccountsOwner: this.params.connectedAccountsOwner,
           isAccountRuntimeCurrent: this.params.isAccountRuntimeCurrent
             ? () => this.params.isAccountRuntimeCurrent!(signal) : undefined,

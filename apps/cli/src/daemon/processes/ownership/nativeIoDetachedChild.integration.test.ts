@@ -3,7 +3,7 @@ import { watch } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createProcessOwnershipRuntime } from './processOwnershipRuntime';
 import { listHappierProcessRoots } from '../roots/listHappierProcessRoots';
 import { configuration } from '@/configuration';
@@ -38,7 +38,7 @@ describe('native IO detached child observation', () => {
             child.on('close',()=>{fs.writeFileSync(${JSON.stringify(`${readyPath}.tmp`)},JSON.stringify({rootPid:process.pid,detachedPid:Number(output.trim())}));
                 fs.renameSync(${JSON.stringify(`${readyPath}.tmp`)},${JSON.stringify(readyPath)});});
             setInterval(()=>{},1000);`;
-        const io = createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null });
+        const io = createProjectNativeToolchainIoForHost({ resolveTool: async () => null });
         const running = io.run({ command: process.execPath, args: ['-e', script], cwd: directory,
             env: stripUnsetEnvironmentVariables(process.env, undefined), signal: aborted.signal });
         const settled = running.then(result => ({ result }), error => ({ error }));

@@ -13,22 +13,13 @@ type DirectPeerRuntimeConfig = Readonly<{
   advertisedHosts: readonly string[];
 }>;
 
-function createListenerState(params: Readonly<{
-  enabled: boolean;
-  configured: boolean;
-  active: boolean;
-  available?: boolean;
-}>): Readonly<{
-  enabled: boolean;
-  configured: boolean;
-  active: boolean;
-  available?: boolean;
-}> {
+function createListenerState(params: DaemonTransferListenerState): DaemonTransferListenerState {
   return {
     enabled: params.enabled,
     configured: params.configured,
     active: params.active,
     ...(typeof params.available === 'boolean' ? { available: params.available } : {}),
+    ...(params.diagnostic ? { diagnostic: params.diagnostic } : {}),
   };
 }
 
@@ -57,6 +48,7 @@ export function createDaemonTransferRuntimeState(params: Readonly<{
         ...(typeof params.tailscaleServe?.available === 'boolean'
           ? { available: params.tailscaleServe.available }
           : { available: false }),
+        ...(params.tailscaleServe?.diagnostic ? { diagnostic: params.tailscaleServe.diagnostic } : {}),
       }),
     },
     lifecycle: {
@@ -106,14 +98,7 @@ function applyTailscaleTransferListenerState(
     ...transferState,
     listenerClasses: {
       ...transferState.listenerClasses,
-      tailscale_serve_https: {
-        enabled: tailscaleServe.enabled,
-        configured: tailscaleServe.configured,
-        active: tailscaleServe.active,
-        ...(typeof tailscaleServe.available === 'boolean'
-          ? { available: tailscaleServe.available }
-          : {}),
-      },
+      tailscale_serve_https: createListenerState(tailscaleServe),
     },
   };
 }

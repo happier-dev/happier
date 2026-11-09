@@ -23,6 +23,7 @@ export async function createRemoteManagedProviderSessionProjection<TLaunchAuthor
   retainedScope?: RetainedManagedProviderRuntimeInvocationScope;
   signal: AbortSignal;
   isBootstrapCurrent(): boolean;
+  revalidateAdmission(scope: RunnerManagedProviderCustodyScopeV1): Promise<boolean>;
   isCurrent(scope: RunnerManagedProviderCustodyScopeV1): Promise<boolean>;
   openBroker?: OpenAccountConnectionProviderBrokerAccess;
   installConsumerCleanup(cleanup: () => Promise<void>): void;
@@ -59,7 +60,9 @@ export async function createRemoteManagedProviderSessionProjection<TLaunchAuthor
   input.installConsumerCleanup(async () => { await opened?.cleanup(); });
   const start = () => {
     startPromise ??= (async () => {
-      if (!await isCurrent()) throw unavailable('Remote managed gateway selection is not current');
+      if (!await isCurrent() || !await input.revalidateAdmission(scope)) {
+        throw unavailable('Remote managed gateway selection is not current');
+      }
       opened = await input.openBroker!({ connectionId: basis.connectionId, targetMachineId,
         expectedConnectionSecurityFingerprint: basis.credentialAuthorization.connectionSecurityFingerprint,
         expectedManagedRuntimeBindingFingerprint: createProviderManagedRuntimeBindingFingerprintV1({
@@ -68,10 +71,6 @@ export async function createRemoteManagedProviderSessionProjection<TLaunchAuthor
         consumer: { kind: 'session', sessionId: input.sessionId },
         application: { implementationIdentity: deployment.implementationIdentity, agentTargetKey: basis.agentTargetKey,
           endpointTemplateId: basis.endpoint.endpointTemplateId, protocol: basis.endpoint.protocol }, signal });
-      if (!await isCurrent()) {
-        await opened.cleanup();
-        throw unavailable('Remote managed gateway selection changed before publication');
-      }
     })();
     return startPromise;
   };

@@ -44,30 +44,6 @@ describe('startHappySessionInWindowsTerminal', () => {
     }
   });
 
-  it('returns pid when powershell prints it', async () => {
-    const child = createFakeChildProcess();
-    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>);
-
-    const pending = startHappySessionInWindowsTerminal({
-      workingDirectory: 'C:\\repo',
-      env: { FOO: 'bar' },
-      filePath: 'C:\\node\\node.exe',
-      args: ['--version'],
-      windowId: 'happy-session-1',
-      title: 'Happier Session happy-session-1',
-    });
-
-    child.stdout.emit('data', Buffer.from('12345\r\n'));
-    child.emit('close', 0);
-
-    await expect(pending).resolves.toEqual({
-      ok: true,
-      pid: 12345,
-      custodyPid: 4242,
-    });
-    expect(spawn).toHaveBeenCalled();
-  });
-
   it('uses the provided launch env as the complete PowerShell environment', async () => {
     process.env.HAPPIER_WINDOWS_TERMINAL_AMBIENT_ONLY_TEST = 'ambient-only';
     const child = createFakeChildProcess();

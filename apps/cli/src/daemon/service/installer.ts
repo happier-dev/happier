@@ -1,8 +1,13 @@
+import { lstat, rm } from 'node:fs/promises';
+import { withDesktopResourceOwnership, resolveDesktopResourceOwnershipPath } from '@happier-dev/cli-common/firstPartyRuntime';
 import { homedir } from 'node:os';
+
+import { prepareServicePlanCopies } from '@happier-dev/cli-common/service';
 
 import { configuration } from '@/configuration';
 import {
   DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
+  FIRST_PARTY_INSTALL_HOME_ENV_KEY,
   resolveManagedCliReleaseChannel,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 
@@ -137,6 +142,7 @@ export function readDaemonServicePreservedInstallOptions(params: Readonly<{
   managedBy?: DaemonServiceManagedBy | null;
   irohRelayConfig: IrohRelayEnvConfig;
   homeCarrierEligibility?: HomeApplicationCarrierEligibility;
+  firstPartyInstallHome?: string;
   enablement?: DaemonServiceInstallEnablement;
   preserveRunningWhenDisabled?: boolean;
 }> {
@@ -162,6 +168,7 @@ export async function previewDaemonServiceInstall(options: Readonly<{
   uid?: number;
   userHomeDir?: string;
   happierHomeDir?: string;
+  firstPartyInstallHome?: string;
   mode?: DaemonServiceMode;
   systemUser?: string;
   channel?: PublicReleaseRingId;
@@ -185,6 +192,7 @@ export async function previewDaemonServiceInstall(options: Readonly<{
   managedBy?: DaemonServiceManagedBy;
   autostart?: DaemonServiceAutostartMode;
   bundleId?: string;
+  deadlineMs?: number;
 }> = {}): Promise<DaemonServiceInstallPreview> {
   const platformInput = options.platform ?? process.platform;
   const platform = resolveSupportedPlatform(platformInput);
@@ -208,18 +216,11 @@ export async function previewDaemonServiceInstall(options: Readonly<{
   const publicServerUrl = options.publicServerUrl ?? configuration.serverUrl;
   const explicitNodePath = options.nodePath ?? null;
   const explicitEntryPath = options.entryPath ?? null;
-  const runtimeTarget = await resolveDaemonServiceInstallRuntimeTarget({
-    currentExecPath: process.execPath,
-    explicitNodePath,
-    explicitEntryPath,
-    targetMode,
-    channel,
-    processEnv: process.env,
-  });
   const strategy: DaemonServiceInstallStrategy = options.strategy
     ?? resolveDaemonServiceInstallerStrategyFromEnv(process.env);
   const discoveredServices = (await Promise.all(
     resolveDaemonServiceDiscoveryTargets({
+      deadlineMs: options.deadlineMs,
       platform,
       mode: options.mode,
       userHomeDir,
@@ -230,6 +231,7 @@ export async function previewDaemonServiceInstall(options: Readonly<{
       happierHomeDir: target.happierHomeDir,
       mode: target.mode,
       serversById: {},
+      deadlineMs: options.deadlineMs,
     })),
   ))
     .flat()
@@ -260,6 +262,19 @@ export async function previewDaemonServiceInstall(options: Readonly<{
   const homeCarrierEligibility = resolveDaemonServiceHomeCarrierPolicy({ processEnv: process.env })
     ?? options.homeCarrierEligibility
     ?? installedOptions?.homeCarrierEligibility;
+  const firstPartyInstallHome = process.env[FIRST_PARTY_INSTALL_HOME_ENV_KEY]?.trim()
+    || options.firstPartyInstallHome || installedOptions?.firstPartyInstallHome;
+  const runtimeTarget = await resolveDaemonServiceInstallRuntimeTarget({
+    currentExecPath: process.execPath,
+    explicitNodePath,
+    explicitEntryPath,
+    targetMode,
+    channel,
+    processEnv: {
+      ...process.env,
+      ...(firstPartyInstallHome ? { [FIRST_PARTY_INSTALL_HOME_ENV_KEY]: firstPartyInstallHome } : {}),
+    },
+  });
   // Only an explicit request marks a service as the desktop's; every rewrite keeps the installed mark.
   const managedBy = options.managedBy ?? installedOptions?.managedBy;
   const installedAutostart = installedOptions?.autostart;
@@ -286,6 +301,7 @@ export async function previewDaemonServiceInstall(options: Readonly<{
     entryPath: runtimeTarget.entryPath,
     irohRelayConfig,
     homeCarrierEligibility,
+    firstPartyInstallHome,
     managedBy,
     bundleId,
     autostart: modeOptions.autostart,
@@ -305,10 +321,12 @@ export async function previewDaemonServiceInstall(options: Readonly<{
     !expectedInstalledFile
     || discoveredServices
       .filter((service) => daemonServiceMatchesInstallTarget(service, target))
-      .some((service) => service.path === expectedInstalledFile.path && doesInstalledDaemonServiceDefinitionMatchExpected({
-        installedPath: service.path,
-        expectedContents: expectedInstalledFile.content,
-      }))
+      .some((service) => service.path === expectedInstalledFile.path
+        && service.windowsLauncherUpgradeNeeded !== true
+        && doesInstalledDaemonServiceDefinitionMatchExpected({
+          installedPath: service.path,
+          expectedContents: expectedInstalledFile.content,
+        }))
   );
   // kickstart runs launchd's loaded definition, not a newly written plist.
   if (platform === 'darwin' && options.darwinInstallMode === 'kickstart'
@@ -342,6 +360,7 @@ export async function installDaemonService(options: Readonly<{
   uid?: number;
   userHomeDir?: string;
   happierHomeDir?: string;
+  firstPartyInstallHome?: string;
   mode?: DaemonServiceMode;
   systemUser?: string;
   channel?: PublicReleaseRingId;
@@ -365,10 +384,13 @@ export async function installDaemonService(options: Readonly<{
   managedBy?: DaemonServiceManagedBy;
   runCommands?: boolean;
   bundleId?: string;
+  desktopBundleId?: string;
+  preserveDesktopOwnership?: boolean;
   autostart?: DaemonServiceAutostartMode;
   /** Prepare the current owner only when installation will actually change its definition. */
   beforeApply?: () => Promise<void>;
   commandFailureMode?: DaemonServiceCommandFailureMode;
+  deadlineMs?: number;
 }> = {}): Promise<void> {
   const platformInput = options.platform ?? process.platform;
   const platform = resolveSupportedPlatform(platformInput);
@@ -379,48 +401,69 @@ export async function installDaemonService(options: Readonly<{
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const preview = await previewDaemonServiceInstall(options);
-  const conflictNotice = describeDaemonServiceInstallConflict({
-    exactTargetExists: preview.exactTargetExists,
-    strategy: preview.strategy,
-    conflictPlan: preview.conflictPlan,
-  });
+  const definitionPath = preview.plan.files[0]?.path;
+  const apply = async (): Promise<void> => {
+    const conflictNotice = describeDaemonServiceInstallConflict({
+      exactTargetExists: preview.exactTargetExists,
+      strategy: preview.strategy,
+      conflictPlan: preview.conflictPlan,
+    });
 
-  if (conflictNotice?.blocking) {
-    throw createDaemonServiceConflictError(
-      conflictNotice.message,
-      preview.conflictPlan.competingServices,
-    );
-  }
+    if (conflictNotice?.blocking) {
+      throw createDaemonServiceConflictError(
+        conflictNotice.message,
+        preview.conflictPlan.competingServices,
+      );
+    }
 
-  if (options.runCommands !== false) {
-    assertDaemonServiceCommandsAvailable(preview.plan.commands);
-    assertDaemonServiceManagerAvailable(preview.plan.commands);
-  }
+    if (options.runCommands !== false) {
+      assertDaemonServiceCommandsAvailable(preview.plan.commands);
+      assertDaemonServiceManagerAvailable(preview.plan.commands, options.deadlineMs);
+    }
 
-  for (const service of preview.conflictPlan.servicesToRemove) {
-    await uninstallDaemonService({
-      platform,
-      uid,
-      userHomeDir,
-      happierHomeDir,
-      mode: service.mode,
-      channel: service.releaseChannel,
-      targetMode: service.targetMode,
-      instanceId: service.serverId,
-      installedPath: service.path,
+    const installIsCurrent = preview.exactTargetIsConverged && preview.exactTargetMatchesExpectedDefinition
+      && options.restartRunningDaemon !== true && options.autostart === undefined;
+    if (!installIsCurrent) {
+      // Preflight every immutable launcher destination before stopping or removing its current owner.
+      await prepareServicePlanCopies(preview.plan.copies);
+    }
+
+    for (const service of preview.conflictPlan.servicesToRemove) {
+      await uninstallDaemonService({
+        platform,
+        uid,
+        userHomeDir,
+        happierHomeDir,
+        mode: service.mode,
+        channel: service.releaseChannel,
+        targetMode: service.targetMode,
+        instanceId: service.serverId,
+        installedPath: service.path,
+        runCommands: options.runCommands,
+        commandFailureMode: options.commandFailureMode,
+        deadlineMs: options.deadlineMs,
+      });
+    }
+
+    if (installIsCurrent) return;
+    await options.beforeApply?.();
+    await applyDaemonServiceInstallPlan(preview.plan, {
       runCommands: options.runCommands,
       commandFailureMode: options.commandFailureMode,
+      deadlineMs: options.deadlineMs,
     });
-  }
-
-  if (preview.exactTargetIsConverged && preview.exactTargetMatchesExpectedDefinition
-    && options.restartRunningDaemon !== true && options.autostart === undefined) {
-    return;
-  }
-  await options.beforeApply?.();
-  await applyDaemonServiceInstallPlan(preview.plan, {
-    runCommands: options.runCommands,
-    commandFailureMode: options.commandFailureMode,
+  };
+  if (!definitionPath) return await apply();
+  await withDesktopResourceOwnership({
+    resourcePath: definitionPath, bundleId: options.desktopBundleId, preserve: options.preserveDesktopOwnership,
+    operation: async () => {
+      const exists = await lstat(definitionPath).then(() => true).catch((error: unknown) => {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false;
+        throw error;
+      });
+      await apply();
+      return { value: undefined, created: !exists };
+    },
   });
 }
 
@@ -451,6 +494,7 @@ export async function uninstallDaemonService(options: Readonly<{
   installedPath?: string;
   runCommands?: boolean;
   commandFailureMode?: DaemonServiceCommandFailureMode;
+  deadlineMs?: number;
 }> = {}): Promise<void> {
   const platformInput = options.platform ?? process.platform;
   const platform = resolveSupportedPlatform(platformInput);
@@ -483,5 +527,7 @@ export async function uninstallDaemonService(options: Readonly<{
   await applyDaemonServiceUninstallPlan(plan, {
     runCommands: options.runCommands,
     commandFailureMode: options.commandFailureMode,
+    deadlineMs: options.deadlineMs,
   });
+  for (const path of plan.filesToRemove) await rm(resolveDesktopResourceOwnershipPath(path), { force: true });
 }

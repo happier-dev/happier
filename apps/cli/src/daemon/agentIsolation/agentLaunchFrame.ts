@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
+import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 
 /** Native state exists even when the selected Provider needs no credential file. */
 export const AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH = 'native-home';
@@ -23,9 +24,19 @@ export const AgentLaunchNativeSocketDirectorySchema = z.object({ path: absoluteP
 export type AgentLaunchNativeSocketDirectory = z.infer<typeof AgentLaunchNativeSocketDirectorySchema>;
 
 /** The private runner envelope and stdin frame consume the same file grammar. */
+const accountSettingsApplicationSchema = z.object({
+  pluginId: nonNullString,
+  pluginVersion: nonNullString,
+  cliVersion: nonNullString,
+  localAgentId: nonNullString,
+  account: z.record(z.string(), StrictJsonValueSchema),
+}).strict();
+export type AgentLaunchAccountSettingsApplication = z.infer<typeof accountSettingsApplicationSchema>;
+
 export const AgentLaunchMaterializationSchema = z.object({
   /** Incumbent lease's retained Agent-owned runtime home, never the canonical Agent HOME. */
   runtimeHome: absolutePath,
+  accountSettingsApplication: accountSettingsApplicationSchema.optional(),
   environment: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u), nonNullString),
   selectedMaterials: z.array(z.object({ relativePath: relativeMaterialPath, contentBase64: base64Bytes }).strict()),
 }).strict().refine((payload) => new Set(payload.selectedMaterials.map((file) => file.relativePath)).size === payload.selectedMaterials.length);
@@ -48,6 +59,7 @@ export type AgentLaunchPayload = Readonly<{
   args: readonly string[];
   cwd: string;
   runtimeHome: string;
+  accountSettingsApplication?: AgentLaunchAccountSettingsApplication;
   environment: Readonly<Record<string, string>>;
   selectedMaterials: readonly AgentLaunchSelectedMaterial[];
 }>;

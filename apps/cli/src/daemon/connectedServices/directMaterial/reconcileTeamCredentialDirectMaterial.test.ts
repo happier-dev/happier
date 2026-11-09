@@ -1,14 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import {
   ProviderConnectionIdSchema,
   ProviderConnectionSecurityFingerprintV1Schema,
   ProviderCredentialTransportV1Schema,
   TeamCredentialDirectMaterialPreparationResponseV1Schema,
+  TeamCredentialDirectMaterialUpsertRequestV1Schema,
 } from '@happier-dev/protocol';
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
 
 import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 import { reconcileTeamCredentialDirectMaterial } from './reconcileTeamCredentialDirectMaterial';
+import { TeamCredentialDirectMaterialHttpContractError, upsertTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialHttp';
+
+// Axios is the network boundary; producer, orchestration and wire admission stay real.
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, put: vi.fn() } };
+});
 
 const sourceMember = Object.freeze({
   kind: 'provider_credential_slot' as const,
@@ -40,6 +49,53 @@ const sourceSnapshot: TeamCredentialSourceSnapshot = Object.freeze({
 const sourceMemberKey = computeTeamCredentialSourceMemberKeyV1(sourceMember);
 
 describe('reconcileTeamCredentialDirectMaterial', () => {
+  it.each(['valid', 'invalid_request', 'invalid_response'] as const)(
+    'preserves the producer → HTTP contract through reconciliation (%s)', async mode => {
+      const page = TeamCredentialDirectMaterialPreparationResponseV1Schema.parse({
+        homeServerIdentityId: 'home', teamId: 'team', resourceId: 'resource', resourceRevision: 4,
+        source: { v: 1, kind: 'provider_connection', connectionId: sourceMember.connectionId,
+          connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema.parse('connection-security:v1:test'), credentialSlotId: 'apiKey' },
+        sourceMember, sourceCredentialIncarnation: null, publishedSourceVersion: null,
+        recipients: [{ recipientAccountId: 'a', recipientMode: 'plain', recipientContentPublicKeyFingerprint: null,
+          recipientContentPublicKey: null, expectedStoredSourceVersion: null, storedTupleCurrent: false }],
+        nextCursor: null,
+      });
+      const put = vi.mocked(axios.put).mockReset();
+      put.mockImplementation(async (_url, body) => ({ status: 200, data: mode === 'invalid_response' ? {} : {
+        results: TeamCredentialDirectMaterialUpsertRequestV1Schema.parse(body).items.map(item => ({
+          status: 'stored', recipientAccountId: item.recipientAccountId,
+          sourceMemberKey: item.sourceMemberKey, sourceVersion: item.sourceVersion,
+        })),
+      } }));
+      let preparationReads = 0;
+      const result = reconcileTeamCredentialDirectMaterial({
+        teamId: page.teamId, resourceId: page.resourceId, sourceMemberKey,
+        fetchPreparation: async () => { preparationReads++; return page; },
+        resolveSourceSnapshot: async () => sourceSnapshot,
+        upsert: async item => {
+          await upsertTeamCredentialDirectMaterial({
+            token: 'fixture-token', serverUrl: 'https://home.test', teamId: page.teamId, resourceId: page.resourceId,
+            body: { items: [mode === 'invalid_request' ? { ...item, recipientAccountId: '' } : item] },
+          });
+          return { ok: true };
+        },
+        withdrawPublication: async () => ({ ok: true }),
+      });
+      if (mode === 'valid') {
+        await expect(result).resolves.toEqual({ ok: true, prepared: 1 });
+        expect(put.mock.calls[0]?.[0]).toBe('https://home.test/v2/teams/team/credential-resources/resource/direct-material');
+        expect(TeamCredentialDirectMaterialUpsertRequestV1Schema.parse(put.mock.calls[0]?.[1]).items[0].stored).toMatchObject({
+          t: 'plain', v: { resourceId: 'resource', recipientAccountId: 'a' },
+        });
+      } else {
+        await expect(result).rejects.toBeInstanceOf(TeamCredentialDirectMaterialHttpContractError);
+      }
+      // A bad request never reaches the network; a contract failure settles without a re-poll.
+      expect(put).toHaveBeenCalledTimes(mode === 'invalid_request' ? 0 : 1);
+      expect(preparationReads).toBe(3);
+    },
+  );
+
   it.each(['missing', 'unavailable', 'changed', 'replacement_rejected'] as const)('withdraws the captured publication when source configuration is %s', async (failure) => {
     let published: string | null = 'source-v1';
     const page = TeamCredentialDirectMaterialPreparationResponseV1Schema.parse({

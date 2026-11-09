@@ -6,12 +6,15 @@ import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1, type External
   from '@happier-dev/protocol/actions/externalActionApi';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
-  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
+  EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectAccountRowV1Schema, ProjectAccountRowMutationRequestV1Schema,
   buildProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { auth } from '../../../../server/sources/app/auth/auth';
-import { verifyExternalActionDomainExecutionRequest, verifyExternalActionExecutionAuthorizationCurrentness }
+import { verifyExternalActionDomainExecutionRequest, verifyExternalActionExecutionAuthorizationCurrentness,
+  resolveExternalActionExecutionMachineAdmissionInTx }
   from '../../../../server/sources/app/auth/externalActionExecutionAuthorization';
+import { db } from '../../../../server/sources/storage/db';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
@@ -25,14 +28,33 @@ import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/acc
 import { prepareRequesterAccountActionContext } from "../sessionEncryption/requesterAccountActionProjection";
 import { type RequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { executeExternalAction } from './executeExternalAction';
+import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
 import type { JsonValue } from '@happier-dev/protocol';
 import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+  createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployment-protocol';
+import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1 } from '@happier-dev/protocol';
+import { ExternalActionMachineRpcExecutionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionMachineRpcParamsDigestV1, decodeDeploymentChildExecutionV1,
+  encodeExternalActionResolvedTargetV1, verifyExternalActionMachineRequestV1,
+  verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
+import { createOwnServerDeploymentRuntimeForHost } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import * as installationStore from '@/daemon/identity/store';
 
-// Database I/O and HTTP are the only substitutes. Home token minting, signed
-// request verification, private custody, Action policy and row semantics stay real.
+// Only database, HTTP, socket endpoints and installation I/O are substituted.
+// Home token minting, signed verification, custody and Action semantics stay real.
 const storage = vi.hoisted(() => {
-  const account = { id: 'project-owner', status: 'active', tokenEpoch: 1, encryptionMode: 'plain', terminalPresentUserPolicy: 'never' };
-  const state: { publicKey: Uint8Array; revokedAt: Date | null } = { publicKey: new Uint8Array(), revokedAt: null };
+  const account = { id: 'project-owner', status: 'active', tokenEpoch: 1, encryptionMode: 'plain' };
+  const state: { publicKey: Uint8Array; revokedAt: Date | null; deploymentEnvironment: Readonly<{
+    id: string; projectSourceId: string; controllerMachineId: string; deletedAt: null; deployerMode: 'members';
+  }> | null } = { publicKey: new Uint8Array(), revokedAt: null, deploymentEnvironment: null };
   const machine = () => ({ id: 'project-machine', accountId: account.id, kind: 'persistent', active: true,
     installationId: 'project-installation', installationPublicKey: state.publicKey, revokedAt: state.revokedAt,
     metadata: encodePlainMachineStoredContent({}), daemonState: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
@@ -41,6 +63,12 @@ const storage = vi.hoisted(() => {
     $queryRaw: async () => [{ statement_timeout: '0' }],
     $executeRawUnsafe: async () => 0,
     account: { findUnique: async () => account },
+    deploymentEnvironment: { findUnique: async ({ where }: { where: { id: string } }) =>
+      state.deploymentEnvironment?.id === where.id ? state.deploymentEnvironment : null },
+    projectSource: { findUnique: async ({ where }: { where: { id: string } }) =>
+      state.deploymentEnvironment?.projectSourceId === where.id
+        ? { ...source, id: where.id, owner: { kind: 'account', accountId: account.id },
+          defaultRef: null, subdir: null, attachments: [] } : null },
     machine: { findUnique: async () => machine(), findFirst: async () => machine(), findMany: async () => [machine()] },
     simpleCache: { findUnique: async () => ({ value: 'srv_PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP' }) } };
   return { state, account, db: { ...reader, $transaction: async <T>(run: (tx: typeof reader) => Promise<T>) => run(reader) } };
@@ -68,10 +96,10 @@ beforeAll(async () => {
   storage.state.publicKey = installation.publicKey;
   await auth.init();
 });
-afterEach(() => { vi.restoreAllMocks(); storage.state.revokedAt = null; storage.account.tokenEpoch = 1; });
+afterEach(() => { vi.restoreAllMocks(); storage.state.revokedAt = null; storage.state.deploymentEnvironment = null; storage.account.tokenEpoch = 1; });
 afterAll(() => vi.unstubAllEnvs());
 
-async function withHome(run: () => Promise<void>) {
+async function withHome(run: (currentness: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>) => Promise<void>) {
   await withTempDir('project-terminal-home-', async home => {
     const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
     const currentness = await createRequesterCurrentnessSocketHarness();
@@ -84,12 +112,13 @@ async function withHome(run: () => Promise<void>) {
           v: 1, homeServerIdentityId: homeId, canonicalServerUrl: serverUrl, revision: 1,
           endpoints: [{ kind: 'https', url: serverUrl }] }),
       } } }));
-      await run();
+      await run(currentness);
     } finally { await currentness.close(); env.restore(); reloadConfiguration(); }
   });
 }
 
-function httpBoundary() {
+function httpBoundary(additionalResponse?: (method: string, path: string, body: unknown,
+  headers: Readonly<Record<string, unknown>>) => Readonly<{ status: number; data: unknown }> | undefined) {
   const workspace = { id: 'workspace', serverId: homeId, machineId: target.machineId,
     rootPath: '/repo', projectKey: 'project', createdAtMs: 1 };
   const key = { kind: 'workspace-ref' as const, serverId: homeId, id: workspace.id };
@@ -99,6 +128,8 @@ function httpBoundary() {
     const parsed = new URL(url);
     const path = `${parsed.pathname}${parsed.search}`;
     const record = headers && typeof headers === 'object' ? headers as Readonly<Record<string, unknown>> : {};
+    const additional = additionalResponse?.(method, path, body, record);
+    if (additional) return additional;
     if ('Authorization' in record) {
       expect(record.Authorization).toBe(`Bearer ${token}`);
       if (path === '/v1/account/profile') return { status: 200, data: { id: 'project-owner' } };
@@ -152,12 +183,14 @@ function httpBoundary() {
   return { rows, admitted, request };
 }
 
-async function original(actionId: SignedRootActionId, input: Readonly<Record<string, JsonValue>>, kind: 'account' | 'terminal' = 'terminal') {
+async function original(actionId: SignedRootActionId, input: Readonly<Record<string, JsonValue>>, kind: 'account' | 'terminal' = 'terminal',
+  admittedMachineRole?: 'use' | 'manage') {
   const envelope = { v: 1 as const, requestId: `request-${actionId}`, target, input };
   const authentication = { kind, tokenEpoch: 1 };
   const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: 'project-owner', authentication,
     serverIdentityId: homeId, machineId: target.machineId, actionId, requestId: envelope.requestId,
-    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target });
+    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target,
+    ...(admittedMachineRole ? { admittedMachineRole } : {}) }, { input: envelope.input });
   return { envelope, authorization, principal: { accountId: 'project-owner', authentication,
     authority: kind === 'terminal' ? 'account_automation' as const : 'present_user' as const } };
 }
@@ -199,6 +232,166 @@ function signedProof(authorization: ExternalActionExecutionAuthorizationV1, meth
 }
 
 describe('paired terminal Project Account Actions through CLI custody and signed Home verification', () => {
+  it.each([
+    ['account', 'published'], ['terminal', 'published'], ['account', 'unknown'], ['terminal', 'unknown'],
+  ] as const)('retains the admitted %s deployment root through real review-child signing with %s content mode', async (kind, contentMode) => withHome(async currentness => {
+    const environment = createDeploymentEnvironmentDetailV1();
+    environment.environment.serverId = homeId;
+    environment.environment.controllerMachineId = target.machineId;
+    environment.environment.buildMachineId = 'deployment-member';
+    storage.state.deploymentEnvironment = { id: environment.environment.id,
+      projectSourceId: environment.environment.projectSourceId, controllerMachineId: target.machineId,
+      deletedAt: null, deployerMode: 'members' };
+    const link = environment.targetLinks[0].targetLink;
+    link.machines = ['deployment-member'];
+    link.members = [{ machineId: 'deployment-member', installationId: 'member-installation', state: 'active' }];
+    // Private content from another retained target is not part of this native
+    // runtime demand. No Artifact response is installed for this reference.
+    environment.targetLinks.push({ targetLink: { ...link, id: 'unrelated-target', contentArtifactId: 'unrelated-private-content' }, content: {} });
+    const candidate = createDeploymentReceiptDetailV1();
+    candidate.content.machines = [...link.machines];
+    candidate.content.buildMachineId = 'deployment-member';
+    candidate.content.machineResults = [];
+    const input = { serverId: homeId, environmentId: environment.environment.id, targetLinkId: link.id,
+      expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision,
+      requestKey: 'review-child', contentArtifactId: candidate.deployment.contentArtifactId,
+      contentHeaderVersion: candidate.deployment.contentHeaderVersion, contentBodyVersion: candidate.deployment.contentBodyVersion };
+    const machineAdmission = await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: storage.account.id,
+      machineId: target.machineId, actionId: 'deployments.deploy',
+      callerAuthority: kind === 'terminal' ? 'account_automation' : 'present_user' });
+    if (machineAdmission.kind !== 'admitted') throw new Error(`Deployment fixture Machine admission: ${machineAdmission.code}`);
+    const request = await original('deployments.deploy', input, kind, machineAdmission.role);
+    const reviewJob = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'review', actionId: 'deployments.deploy',
+      input, machineId: 'deployment-member', installationId: 'member-installation' });
+    const documents = new Map<string, Readonly<{ header: unknown; content: unknown }>>([
+      [environment.environment.contentArtifactId, { header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Deployment' }, content: environment.content }],
+      [link.contentArtifactId, { header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Runtime' }, content: environment.targetLinks[0].content }],
+      [input.contentArtifactId, { header: createDeploymentReceiptArtifactHeaderV1('Candidate', candidate.content), content: candidate.content }],
+    ]);
+    const memberKeys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(18));
+    const deploymentHttpPaths: string[] = [];
+    const codecAdmissions: boolean[] = [];
+    httpBoundary((method, path, _body, headers) => {
+      deploymentHttpPaths.push(path);
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      // A generic Account lookup could resolve this legacy response, but a
+      // deployment child may not borrow ambient requester authority for it.
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path.startsWith(`/v1/deployments/environments/${environment.environment.id}?`)) return { status: 200,
+        data: { ok: true, environment: environment.environment, targetLinks: environment.targetLinks.map(item => item.targetLink) } };
+      if (path === '/v1/machines/deployment-member') {
+        const header = headers[EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER];
+        const proof = typeof header === 'string' ? decodeDeploymentChildExecutionV1(header,
+          String(headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] ?? '')) : null;
+        const execution = proof?.externalActionExecution;
+        const admitted = !Object.keys(headers).some(name => name.toLowerCase() === 'authorization')
+          && headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] === request.authorization.token
+          && headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER] === 'deployments.deploy'
+          && headers[EXTERNAL_ACTION_RESOLVED_TARGET_HEADER] === encodeExternalActionResolvedTargetV1(target)
+          && proof !== null && proof.archiveOrigin === undefined && proof.paramsPresent
+          && proof.paramsDigest === computeExternalActionMachineRpcParamsDigestV1(reviewJob)
+          && execution !== undefined && execution.authorization.token === request.authorization.token
+          && sameStrictJsonValue(execution.authorization.binding, request.authorization.binding)
+          && sameStrictJsonValue(execution.deploymentChildRouting, projectDeploymentChildRoutingV1(reviewJob))
+          && execution.installationId === 'project-installation'
+          && verifyExternalActionMachineRpcRequestV1({ authorizationToken: execution.authorization.token,
+            requesterAccountContext: execution.authorization.requesterAccountContext, effectActionId: execution.effectActionId,
+            target: execution.target, installationId: execution.installationId, method: proof.method, requestId: proof.requestId,
+            paramsPresent: proof.paramsPresent, paramsDigest: proof.paramsDigest,
+            deploymentChildRouting: execution.deploymentChildRouting, signature: execution.machineSignature, publicKey: installation.publicKey })
+          && verifyExternalActionMachineRequestV1({ authorizationToken: request.authorization.token, effectActionId: 'deployments.deploy',
+            target, installationId: 'project-installation', requestId: request.envelope.requestId, method, path,
+            deploymentChildExecution: proof, signature: String(headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER] ?? ''),
+            publicKey: installation.publicKey });
+        codecAdmissions.push(admitted);
+        if (!admitted) return { status: 403, data: { error: 'access_denied' } };
+        return { status: 200, data: { machine: {
+        id: 'deployment-member', kind: 'persistent', active: true, installationId: 'member-installation',
+        revokedAt: null, replacedByMachineId: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        installationPublicKey: Buffer.from(memberKeys.publicKey).toString('base64'),
+        ...(contentMode === 'published' ? { storageMode: 'plain', access: {
+          custodian: { accountId: 'project-owner', displayName: 'Project Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
+        } } : {}),
+        } } };
+      }
+      const document = documents.get(decodeURIComponent(new URL(path, serverUrl).pathname.split('/').at(-1)!));
+      if (path.startsWith('/v1/artifacts/') && document) return { status: 200, data: {
+        id: decodeURIComponent(new URL(path, serverUrl).pathname.split('/').at(-1)!), ownerAccountId: 'project-owner', access: 'owner',
+        publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        header: encodePlainArtifactStoredContent(document.header), body: encodePlainArtifactStoredContent({ body: JSON.stringify(document.content) }),
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+      } };
+      return undefined;
+    });
+    vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
+      installationId: 'project-installation', createdAt: 1, publicKey: Buffer.from(installation.publicKey).toString('base64url'),
+      privateKey: Buffer.from(installation.secretKey).toString('base64url') });
+    const signedChildren: unknown[] = [];
+    currentness.server.on('connection', socket => socket.on('rpc-call', (raw: Readonly<{
+      method: string; requestId: string; params: unknown; externalActionExecution: unknown }>, acknowledge: (result: unknown) => void) => {
+      const execution = ExternalActionMachineRpcExecutionV1Schema.parse(raw.externalActionExecution);
+      const job = DeploymentChildRpcV1Schema.parse(raw.params);
+      const valid = verifyExternalActionMachineRpcRequestV1({ authorizationToken: execution.authorization.token,
+        requesterAccountContext: execution.authorization.requesterAccountContext, effectActionId: execution.effectActionId,
+        target: execution.target, installationId: execution.installationId, event: SOCKET_RPC_EVENTS.CALL, method: raw.method, requestId: raw.requestId,
+        params: raw.params, deploymentChildRouting: execution.deploymentChildRouting,
+        publicKey: installation.publicKey, signature: execution.machineSignature });
+      signedChildren.push({ valid, job, method: raw.method, rootRequestId: execution.authorization.binding.requestId });
+      acknowledge({ ok: true, result: { ok: false, errorCode: 'deployment_executor_unavailable', error: 'deployment_executor_unavailable' } });
+    }));
+    const executor = (context?: RequesterAccountActionContext) => {
+      const runtime = createOwnServerDeploymentRuntimeForHost({
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const),
+        credentials: context?.credentials ?? credentials,
+        serverId: homeId, serverHttpBaseUrl: serverUrl, machineId: target.machineId,
+        async acquirePluginRuntimeRegistryLease() {
+          const lease = pluginReloadController.tryAcquireRuntimeRegistry();
+          if (!lease) throw new Error('No installed plugin runtime');
+          return lease;
+        } });
+      const deployment = createDaemonDeploymentActionDeps({
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const),
+        credentials: context?.credentials ?? credentials,
+        serverId: homeId, serverHttpBaseUrl: serverUrl, machineId: target.machineId, runtime,
+        ...(context ? { savedSecretOperationContext: context.savedSecretOperationContext } : {}) });
+      return createCliActionExecutorHarness({ token, credentials: context?.credentials ?? credentials, sessionId: 'cli-global',
+        mode: 'plain', ctx: null, serverId: profileId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl,
+        externalActionMachineRequestPrivateKey: installation.secretKey, externalActionMachineInstallationId: 'project-installation',
+        actionsSettingsProvider: createActionSettingsProvider({ scopeKey: 'deployment-root-fixture',
+          getAccountSettings: () => context?.savedSecretOperationContext.readSnapshot()?.settings ?? null }),
+        ...(context ? { savedSecretOperationContext: context.savedSecretOperationContext } : {}),
+      }, deployment).executor;
+    };
+    const result = await executeExternalAction({ actionId: 'deployments.deploy', ...request,
+      executionAuthorization: request.authorization, currentMachineId: target.machineId, currentServerId: profileId,
+      currentServerHttpBaseUrl: serverUrl, currentInstallationId: 'project-installation', externalActionMachineRequestPrivateKey: installation.secretKey,
+      surface: kind === 'terminal' ? 'cli' : 'ui', resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+      verifyExecutionAuthorization: async ({ authorization }) => await verifyExternalActionExecutionAuthorizationCurrentness({
+        ...signedProof(authorization, 'POST', bindExternalActionExecutionAuthorizationVerifyHttpPathV1(authorization.binding.actionId),
+          { v: 1, ...(authorization.binding.admittedMachineRole
+            ? { admittedMachineRole: authorization.binding.admittedMachineRole } : {}) }), outerActionId: authorization.binding.actionId,
+      }) !== null, executor: executor(),
+      prepareRequesterAccountContext: value => prepareRequesterAccountActionContext({ ...value, purpose: { kind: 'external_action' },
+        machineId: target.machineId, installationId: 'project-installation', installationPrivateKey: installation.secretKey,
+        serverId: profileId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl, ownCredentials: credentials,
+        isCurrent: async () => storage.state.revokedAt === null, createExecutor: executor }),
+    });
+    expect(result, JSON.stringify({ result, deploymentHttpPaths, signedChildren, codecAdmissions })).toMatchObject({ kind: 'response', response: { execution: {
+      ok: false, errorCode: contentMode === 'published' ? 'deployment_executor_unavailable' : 'machine_content_key_unavailable',
+    } } });
+    expect(codecAdmissions.length).toBeGreaterThan(0);
+    expect(codecAdmissions.every(Boolean)).toBe(true);
+    expect(deploymentHttpPaths).not.toContain('/v1/account/encryption');
+    if (contentMode === 'unknown') {
+      expect(signedChildren).toEqual([]);
+      return;
+    }
+    expect(signedChildren).toEqual([{ valid: true, method: `deployment-member:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`,
+      rootRequestId: request.envelope.requestId,
+      job: { v: 1, kind: 'review', actionId: 'deployments.deploy', input, machineId: 'deployment-member', installationId: 'member-installation' } }]);
+  }));
+
   it('reads Sources as the original paired terminal actor', async () => withHome(async () => {
     const boundary = httpBoundary();
     const result = await run('projects.sources.read', { serverId: homeId, sourceId: source.id });

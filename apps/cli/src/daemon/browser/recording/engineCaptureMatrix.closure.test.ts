@@ -233,7 +233,7 @@ describe('engine × capture-kind closure (BA-7 producer matrix)', () => {
           // The producer was reached — never a dark cell.
           expect(result.status).toBe('started');
         } finally {
-          runtime.stop();
+          await runtime.stop();
         }
       });
 
@@ -249,7 +249,7 @@ describe('engine × capture-kind closure (BA-7 producer matrix)', () => {
             },
           });
         } finally {
-          runtime.stop();
+          await runtime.stop();
         }
       });
     } else {
@@ -261,7 +261,7 @@ describe('engine × capture-kind closure (BA-7 producer matrix)', () => {
             reason: { code: 'browser_recording_capture_unavailable' },
           });
         } finally {
-          runtime.stop();
+          await runtime.stop();
         }
       });
     }

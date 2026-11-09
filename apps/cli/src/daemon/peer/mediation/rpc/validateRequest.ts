@@ -1,6 +1,5 @@
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import { PeerMachineRpcDirectRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
-import { createPeerMachineRpcRequestHashV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/commandReceiptV1';
 import { isMachineRpcDirectRoutePolicy, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import type { DirectPeerRouteKindV1, PeerFlowKindV1, PeerMachineRpcDirectFallbackReasonCodeV1, PeerMachineRpcDirectRequestV2, PeerMachineRpcDirectResponseV2, SignedDirectRouteGrantV2 } from '@happier-dev/protocol';
 
@@ -8,7 +7,6 @@ import {
     verifyDirectRouteGrantV2,
     type DirectRouteGrantTrustRoot,
 } from '../verifyDirectRouteGrant';
-import type { PeerMachineRpcReplayKeyCache } from './replayKeys';
 
 export type PeerMachineRpcDirectExpectedBinding = Readonly<{
     accountId: string;
@@ -28,7 +26,6 @@ export type PeerMachineRpcDirectValidationResult =
         ok: true;
         request: PeerMachineRpcDirectRequest;
         grant: DirectRouteGrantPayload;
-        commandReceiptRequired: boolean;
     }>
     | Readonly<{
         ok: false;
@@ -41,7 +38,6 @@ export type ValidatePeerMachineRpcDirectRequestOptions = Readonly<{
     expected: PeerMachineRpcDirectExpectedBinding;
     trustRoots: readonly DirectRouteGrantTrustRoot[];
     nowMs: number;
-    replayKeyCache: PeerMachineRpcReplayKeyCache;
 }>;
 
 function fallback(input: Readonly<{
@@ -81,35 +77,6 @@ function mapGrantFailureReason(reasonCode: string): PeerMachineRpcDirectFallback
         default:
             return 'grant_scope_mismatch';
     }
-}
-
-function validateCommandReceipt(input: Readonly<{
-    request: PeerMachineRpcDirectRequest;
-    grantId: string;
-    grantExpiresAtMs: number;
-    replayKeyCache: PeerMachineRpcReplayKeyCache;
-}>): PeerMachineRpcDirectFallbackReasonCodeV1 | null {
-    const receipt = input.request.commandReceipt;
-    if (!receipt) return 'command_receipt_required';
-
-    const expectedRequestHash = createPeerMachineRpcRequestHashV1({
-        method: input.request.method,
-        params: input.request.params,
-        grantId: input.grantId,
-        endpointFingerprint: input.request.endpointFingerprint,
-        replayKey: receipt.replayKey,
-    });
-    if (receipt.issuer !== 'ui' || receipt.requestHash !== expectedRequestHash) {
-        return 'command_receipt_rejected';
-    }
-    if (!input.replayKeyCache.claim({
-        grantId: input.grantId,
-        replayKey: receipt.replayKey,
-        expiresAtMs: input.grantExpiresAtMs,
-    })) {
-        return 'command_receipt_rejected';
-    }
-    return null;
 }
 
 export function validatePeerMachineRpcDirectRequest(
@@ -223,30 +190,9 @@ export function validatePeerMachineRpcDirectRequest(
         };
     }
 
-    if (policy.commandReceiptRequired) {
-        const receiptFailure = validateCommandReceipt({
-            request,
-            grantId: grantVerification.payload.grantId,
-            grantExpiresAtMs: grantVerification.payload.exp,
-            replayKeyCache: options.replayKeyCache,
-        });
-        if (receiptFailure) {
-            return {
-                ok: false,
-                grant: grantVerification.payload,
-                response: fallback({
-                    requestId: request.requestId,
-                    method: request.method,
-                    reasonCode: receiptFailure,
-                }),
-            };
-        }
-    }
-
     return {
         ok: true,
         request,
         grant: grantVerification.payload,
-        commandReceiptRequired: policy.commandReceiptRequired,
     };
 }

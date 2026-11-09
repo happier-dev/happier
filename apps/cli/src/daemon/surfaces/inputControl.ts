@@ -1,6 +1,6 @@
 export type SurfaceInputCompletion = 'known' | 'unknown';
 export type SurfaceInputRequester = 'agent' | 'human';
-export type SurfaceInputAdmissionFailure = 'busy' | 'closed' | 'human_interrupted' | 'observation_required' | 'uncertain';
+export type SurfaceInputAdmissionFailure = 'busy' | 'closed' | 'human_interrupted' | 'observation_required' | 'observation_held' | 'uncertain';
 
 export type SurfaceInputExecutionResult<T> =
   | Readonly<{ ok: false; errorCode: SurfaceInputAdmissionFailure }>
@@ -9,6 +9,7 @@ export type SurfaceInputExecutionResult<T> =
 export type SurfaceInputControl = Readonly<{
   getStatus(): Readonly<{ controller: SurfaceInputRequester | 'idle'; controlEpoch: number; stopping: boolean; uncertain: boolean }>;
   getAdmissionFailure(requestedBy: SurfaceInputRequester): SurfaceInputAdmissionFailure | undefined;
+  getObservationFailure(requestedBy: SurfaceInputRequester): 'closed' | 'observation_held' | undefined;
   isClosed(): boolean;
   observe(controlEpoch: number): boolean;
   invalidateObservation(): void;
@@ -23,6 +24,8 @@ export type SurfaceInputControl = Readonly<{
   registerConfidentialityDrain(drain: () => Promise<void>): () => void;
   execute<T>(input: Readonly<{
     requestedBy: SurfaceInputRequester;
+    /** Page-independent effects need no locator observation; hand-back recovery still does. */
+    requiresObservation?: boolean;
     signal?: AbortSignal;
     effect(signal: AbortSignal): Promise<T>;
     classifyCompletion(value: T, signal: AbortSignal): SurfaceInputCompletion;
@@ -52,13 +55,18 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
   const observations = new Set<Promise<unknown>>();
   const captureDrains = new Set<() => Promise<void>>();
 
-  function getAdmissionFailure(requestedBy: SurfaceInputRequester): SurfaceInputAdmissionFailure | undefined {
-    if (active) return 'busy';
+  function getObservationFailure(requestedBy: SurfaceInputRequester): 'closed' | 'observation_held' | undefined {
     if (closed) return 'closed';
-    if (requestedBy === 'agent' && confidentialityHeld) return 'observation_required';
+    return requestedBy === 'agent' && confidentialityHeld ? 'observation_held' : undefined;
+  }
+
+  function getAdmissionFailure(requestedBy: SurfaceInputRequester, requiresObservation = true): SurfaceInputAdmissionFailure | undefined {
+    if (active) return 'busy';
+    const observationFailure = getObservationFailure(requestedBy);
+    if (observationFailure) return observationFailure;
     if (uncertain && (requestedBy === 'human' || observationRequirement !== 'hand_back')) return 'uncertain';
     if (requestedBy === 'agent' && humanHeld) return 'human_interrupted';
-    if (requestedBy === 'agent' && observationRequirement) return 'observation_required';
+    if (requestedBy === 'agent' && observationRequirement && (requiresObservation || observationRequirement === 'hand_back')) return 'observation_required';
     return undefined;
   }
 
@@ -77,6 +85,7 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
       uncertain,
     }),
     getAdmissionFailure,
+    getObservationFailure,
     isClosed: () => closed,
     isObservationHeld: () => confidentialityHeld || closed,
     hasConfidentialityHold: () => confidentialityHeld,
@@ -109,7 +118,7 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
     },
     drainWhile,
     async observeWhile<T>(read: () => Promise<T>, classifyCompletion?: (value: T) => SurfaceInputCompletion): Promise<T | undefined> {
-      if (confidentialityHeld || closed) return undefined;
+      if (getObservationFailure('agent')) return undefined;
       const epoch = controlEpoch;
       try {
         const result = await drainWhile(read);
@@ -139,11 +148,12 @@ export function createSurfaceInputControl(options: Readonly<{ requireObservation
     invalidateObservation() { observationRequirement ??= 'required'; },
     async execute<T>(input: Readonly<{
       requestedBy: SurfaceInputRequester;
+      requiresObservation?: boolean;
       signal?: AbortSignal;
       effect(signal: AbortSignal): Promise<T>;
       classifyCompletion(value: T, signal: AbortSignal): SurfaceInputCompletion;
     }>): Promise<SurfaceInputExecutionResult<T>> {
-      const errorCode = getAdmissionFailure(input.requestedBy);
+      const errorCode = getAdmissionFailure(input.requestedBy, input.requiresObservation !== false);
       if (errorCode) return { ok: false, errorCode };
 
       const abort = new AbortController();

@@ -1268,7 +1268,7 @@ export async function bootstrapMachineSyncRuntime(
       featureGate: providerFeatureGate,
       readForAccount: async (request, context) => {
         if (request.actionId === 'providers.models.list') {
-          return await providerRuntimeServices.models(request.input, context.signal, createProviderAccountOperationScope(context));
+          return await providerRuntimeServices.models({ ...request.input, machineId: params.machineId }, context.signal, createProviderAccountOperationScope(context));
         }
         const services = createConnectionRuntimeServices(context);
         return services ? await services.describeConnections(request.input, context.signal)
@@ -1936,7 +1936,7 @@ export async function bootstrapMachineSyncRuntime(
           }
           // Retained requester references select credential custody, not Follow
           // demand. Read each requester's Account/Home work set once as well.
-          const groups = new Map<string, RequesterSessionCredentialBinding[]>();
+          const groups = new Map<string, Array<Extract<RequesterSessionCredentialBindingsResult, { status: 'ready' }>['bindings'][number]>>();
           for (const binding of discovery.bindings) {
             // The owned Account read already covers these retained references.
             if (binding.attribution.serverId === followHome.serverId

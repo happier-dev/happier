@@ -308,6 +308,7 @@ describe('Voice credential resolver', () => {
     const sharedResource = (revision: number, value: string) => ({
       resourceId,
       ownerAccountId: 'owner-account',
+      relationship: 'owner' as const,
       displayName: 'Shared Voice key',
       kind: 'apiKey' as const,
       encryptionMode: 'plain' as const,
@@ -423,6 +424,7 @@ describe('Voice credential resolver', () => {
     const sharedResource = (revision: number, value: string) => ({
       resourceId,
       ownerAccountId: 'owner-account',
+      relationship: 'owner' as const,
       displayName: 'Shared Voice key',
       kind: 'apiKey' as const,
       encryptionMode: 'plain' as const,

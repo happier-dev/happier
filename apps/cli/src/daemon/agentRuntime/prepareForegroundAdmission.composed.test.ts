@@ -19,10 +19,58 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { refreshActiveProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
 import { readStoredCredentials } from '@/persistence';
 import { ProfileRecordV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
+import axios from 'axios';
+import { ApiClient } from '@/api/api';
+import { executeSpawnSessionRequest } from '@/daemon/startup/executeSpawnSessionRequest';
+import { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runtimeRegistry/registry';
+import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawnErrorResult';
+import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
+import { ForegroundAgentRuntimeAdmissionResponseV1Schema } from './foregroundAdmissionContract';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('foreground admission composed real Provider authorization seam', () => {
+  it('keeps the missing native CLI cause at the strict foreground admission sink', async () => {
+    await withForegroundProviderFixture({}, async fixture => {
+      vi.stubEnv(resolveAgentCliOverrideEnvKey('codex'), join(fixture.home, 'missing-agent-cli'));
+      vi.stubEnv('PATH', '');
+      try {
+        const refusal = await fixture.prepare({ profileId: undefined });
+        expect(ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(refusal)).toMatchObject({
+          ok: false, error: { code: 'agent_cli_missing' },
+        });
+        expect(await fixture.bootstrapFiles()).toEqual([]);
+      } finally { vi.unstubAllEnvs(); }
+    });
+  });
+  it('refuses ordinary daemon spawn with a revoked required Profile secret before creating a Session', async () => {
+    await withForegroundProviderFixture({
+      settings: { version: 1, profileSecretRef: 'happier:shared-secret:v1:resource-profile-shared' },
+      sharedSecretFailure: 'reference_forbidden',
+    }, async (fixture) => {
+      const credentials = await readStoredCredentials();
+      if (!credentials) throw new Error('Fixture credentials unavailable');
+      const posts = vi.spyOn(axios, 'post');
+      const gets = vi.spyOn(axios, 'get');
+      const result = await executeSpawnSessionRequest({
+        options: { directory: fixture.directory, machineId: 'machine-1', profileId: 'profile-1',
+          backendTarget: fixture.request().backendTarget, connectedServices: { v: 2, bindingsByServiceId: {} } },
+        credentials, api: await ApiClient.create(credentials),
+        connectedServicesMaterializationBaseDir: join(fixture.home, 'connected-services'),
+        connectedServiceRefreshCoordinator: null, connectedServiceQuotasCoordinator: null,
+        connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(),
+        pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
+        pidToSpawnWebhookTimeout: new Map(), spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+        resolveCanonicalTrackedSessionId: () => '', onChildExited: () => {}, processEnv: {},
+      });
+      expect(result).toEqual(buildProviderSpawnErrorResult(createProviderErrorV1('provider_secret_missing', { sourceProfileId: 'profile-1',
+        savedSecretReason: 'reference_forbidden' })));
+      expect(gets.mock.calls.filter(([url]) => url.endsWith('/saved-secrets/resources/materials'))).toHaveLength(1);
+      expect(posts.mock.calls.filter(([url]) => /\/sessions(?:\/|$)/.test(url))).toHaveLength(0);
+      expect(await fixture.bootstrapFiles()).toEqual([]);
+    });
+  });
+
   it('refuses a destination Profile changed without a Settings revision before final claim', async () => {
     await withForegroundProviderFixture({}, async (fixture) => {
       const record = ProfileRecordV1Schema.parse({ v: 1, id: 'profile-1', enabled: true,
@@ -62,7 +110,8 @@ describe('foreground admission composed real Provider authorization seam', () =>
       });
       expect(admitted).toEqual({
         ok: false,
-        error: createProviderErrorV1('provider_binding_changed', { machineId: 'machine-1', sourceProfileId: 'profile-1' }),
+        error: createProviderErrorV1('provider_binding_changed', { machineId: 'machine-1', sourceProfileId: 'profile-1',
+          savedSecretReason: 'reference_stale' }),
       });
       expect(await fixture.bootstrapFiles()).toEqual([]);
       expect(fixture.runtime.registry.activatedPluginIds.has(fixture.agentPluginId)).toBe(false);
@@ -82,7 +131,8 @@ describe('foreground admission composed real Provider authorization seam', () =>
     }, async (fixture) => {
       expect(await fixture.prepare()).toEqual({
         ok: false,
-        error: createProviderErrorV1('provider_secret_missing', { machineId: 'machine-1', sourceProfileId: 'profile-1' }),
+        error: createProviderErrorV1('provider_secret_missing', { machineId: 'machine-1', sourceProfileId: 'profile-1',
+          savedSecretReason: reason }),
       });
       expect(await fixture.bootstrapFiles()).toEqual([]);
       expect(fixture.runtime.registry.activatedPluginIds.has(fixture.agentPluginId)).toBe(false);
@@ -96,7 +146,8 @@ describe('foreground admission composed real Provider authorization seam', () =>
       });
       expect(admitted).toEqual({
         ok: false,
-        error: createProviderErrorV1('provider_secret_unavailable', { machineId: 'machine-1', sourceProfileId: 'profile-1' }),
+        error: createProviderErrorV1('provider_secret_unavailable', { machineId: 'machine-1', sourceProfileId: 'profile-1',
+          savedSecretReason: 'reference_unavailable' }),
       });
       expect(await fixture.bootstrapFiles()).toEqual([]);
       expect(fixture.runtime.registry.activatedPluginIds.has(fixture.agentPluginId)).toBe(false);
@@ -199,6 +250,26 @@ describe('foreground admission composed real Provider authorization seam', () =>
       expect(redactBugReportSensitiveText('value=profile-plaintext')).toBe('value=[REDACTED]');
       await admitted.prepared.cleanup();
       expect(redactBugReportSensitiveText('value=profile-plaintext')).toBe('value=profile-plaintext');
+    });
+  });
+
+  it('admits the foreground Account once at entry and once when the canonical Session binds', async () => {
+    await withForegroundProviderFixture({}, async (fixture) => {
+      const observed: Array<string | undefined> = [];
+      const admitted = await fixture.prepare({}, { isSessionAccountCurrent: async canonicalSessionId => {
+        observed.push(canonicalSessionId);
+        return true;
+      } });
+      expect(admitted.ok, !admitted.ok ? JSON.stringify(admitted.error) : undefined).toBe(true);
+      if (!admitted.ok) throw new Error(admitted.error.code);
+      expect(observed).toEqual([undefined]);
+      const claimed = await admitted.prepared.claim({
+        canonicalSessionId: 'canonical-session-once', httpPort: 40123,
+        foregroundSatisfiedProfileSecretRequirementNames: [],
+      });
+      expect(claimed.ok, !claimed.ok ? JSON.stringify(claimed.error) : undefined).toBe(true);
+      expect(observed).toEqual([undefined, 'canonical-session-once']);
+      await admitted.prepared.cleanup();
     });
   });
 

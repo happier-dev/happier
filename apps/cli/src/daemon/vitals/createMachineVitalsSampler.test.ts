@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,10 +10,12 @@ import { createLinuxMachineVitalsReader } from './readers/linux';
 import { createDarwinMachineVitalsReader } from './readers/darwin';
 import type { ProcessCustodyExecFile } from '@/subprocess/supervision/processCustody';
 import { createLinuxVitalsFixture } from './readers/linux.testkit';
-import type { MachineVitalsReader } from './readers/types';
+import type { MachineVitalsReader, MachineVitalsReaderInput } from './readers/types';
 import { MachineVitalsSampleV1Schema, type MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import { MachineVitalsHistoryV1Schema, MachineVitalsMinuteRecordV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 import { MachineResourcesPolicyV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
+import { createMachineResourcesPolicyRuntime } from '../resources/machineResourcesPolicy';
+import { createMachineResourceSummary } from '../resources/machineResourceSummary';
 
 interface CounterFixture {
     busy: number;
@@ -31,6 +33,10 @@ interface CounterFixture {
 
 describe('createMachineVitalsSampler', () => {
     const initialTime = Date.UTC(2026, 9, 10);
+    const policyAtInterval = (intervalMs: number) => {
+        const policy = MachineResourcesPolicyV1Schema.parse({ v: 1, monitoring: { intervalMs } });
+        return () => policy;
+    };
     let directory: string;
     let fixturePath: string;
 
@@ -49,9 +55,11 @@ describe('createMachineVitalsSampler', () => {
         await writeFile(fixturePath, JSON.stringify({ busy: 0, total: 0, rx: 0, tx: 0, mem: 100, cpuPct: null, ...patch } satisfies CounterFixture));
     }
 
-    async function setup(options: Partial<Omit<MachineVitalsSamplerOptions, 'readers' | 'historyStore'>> = {}, readBoundary = () => readFile(fixturePath, 'utf8')) {
+    async function setup(options: Partial<Omit<MachineVitalsSamplerOptions, 'readers' | 'historyStore'>> = {},
+        readBoundary = () => readFile(fixturePath, 'utf8'), observeRead?: (input: MachineVitalsReaderInput) => void) {
         // This fixture reader is a filesystem system boundary, with captured cumulative-counter vectors.
         const reader: MachineVitalsReader = { read: async (input) => {
+            observeRead?.(input);
             const fixture = JSON.parse(await readBoundary()) as CounterFixture;
             if (fixture.failure) return { state: 'unavailable', reason: fixture.failure };
             return {
@@ -59,7 +67,7 @@ describe('createMachineVitalsSampler', () => {
                 host: { logicalCores: 4, memoryTotalBytes: 1000, bootedAt: initialTime - 100_000 },
                 sample: {
                     v: 1, sampledAt: input.sampledAt, intervalMs: input.intervalMs,
-                    ...(input.overviewExtras ? { sharedMemory: { totalBytes: 500, availableBytes: 400 } } : {}),
+                    ...(input.overviewExtras ? { sharedMemory: { totalBytes: 500, availableBytes: 500 - fixture.mem } } : {}),
                     cpu: { reported: true, busyPct: fixture.cpuPct },
                     memory: { reported: true, totalBytes: 1000, availableBytes: 1000 - fixture.mem, usedBytes: fixture.mem,
                         pressure: fixture.lowMemorySignal !== undefined || fixture.commitLimitBytes !== undefined
@@ -79,12 +87,143 @@ describe('createMachineVitalsSampler', () => {
         return createMachineVitalsSampler({ readers: reader, historyStore, monotonicMs: () => Date.now() - initialTime, ...options });
     }
 
-    it('answers immediately and samples minute boundaries even with a 15-second viewer', async () => {
+    it('keeps publishing and streaming samples in monotonic order when the wall clock steps backwards', async () => {
+        await writeCounters({ mem: 100 });
+        let monotonic = 0;
+        const sampler = await setup({ monotonicMs: () => monotonic });
+        const observed: MachineVitalsSampleV1[] = [];
+        const unsubscribe = sampler.subscribe(({ sample }) => observed.push(sample));
+        const release = sampler.demand('live');
+        try {
+            await sampler.start();
+            const cursor = sampler.latest()!.sampledAt;
+            await writeCounters({ mem: 200 });
+            vi.setSystemTime(initialTime - 120_000);
+            monotonic = 2_000;
+            await vi.advanceTimersByTimeAsync(2_000);
+            await sampler.start();
+            expect(observed.map(point => point.memory.reported ? point.memory.usedBytes : null)).toEqual([100, 200]);
+            expect(sampler.latest()?.memory).toMatchObject({ usedBytes: 200 });
+            expect(sampler.samplesSince(cursor)).toEqual([sampler.latest()]);
+        } finally {
+            release();
+            unsubscribe();
+            await sampler.stop();
+        }
+    });
+
+    it('does zero sampling, timer fires and history writes when monitoring is off, then follows deliberate policy and viewing demand', async () => {
         await writeCounters();
-        const sampler = await setup();
+        let metadata: Record<string, unknown> = { resourcesPolicyV1: { v: 1, monitoring: { mode: 'off', intervalMs: 3_000 } } };
+        let revision = 1;
+        const policy = createMachineResourcesPolicyRuntime({ port: {
+            read: async () => ({ status: 'ready', metadata, metadataVersion: revision }),
+            compareAndSwap: async input => { metadata = input.metadata; revision++; return { status: 'applied', metadata, metadataVersion: revision }; },
+        } });
+        await policy.reload();
+        let fires = 0; let ticks = 0;
+        let pendingRead: Promise<void> | undefined;
+        let finishRead = () => {};
+        const reads: MachineVitalsReaderInput[] = [];
+        const options = {
+            readPolicy: () => { const snapshot = policy.read(); return snapshot.status === 'ready' ? snapshot.policy : null; },
+            subscribeMonitoring: (listener: () => void) => policy.subscribeKey('monitoring', listener),
+            setTimeoutFn: (callback: () => void, delay: number) => setTimeout(() => { fires++; callback(); }, delay),
+            onTick: () => { ticks++; },
+        };
+        const sampler = await setup(options, async () => { await pendingRead; return readFile(fixturePath, 'utf8'); }, input => reads.push(input));
+        const release = sampler.demandOverview();
+        try {
+            await sampler.start();
+            await vi.advanceTimersByTimeAsync(600_000); await sampler.start();
+            expect(reads).toHaveLength(0); expect(fires).toBe(0);
+            expect(sampler.minutes(initialTime)).toEqual([]);
+            expect(await readdir(join(directory, 'history'))).toEqual([]);
+            await policy.set({ expectedRevision: revision, patch: { monitoring: { mode: 'while_viewing' } } });
+            await vi.advanceTimersByTimeAsync(0); await sampler.start();
+            expect(reads).toHaveLength(1);
+            await vi.advanceTimersByTimeAsync(3_000); await sampler.start();
+            expect(reads).toHaveLength(2); expect(reads.at(-1)?.intervalMs).toBe(3_000);
+            release();
+            const hiddenReads = reads.length; const hiddenFires = fires;
+            await vi.advanceTimersByTimeAsync(600_000); await sampler.start();
+            expect(reads).toHaveLength(hiddenReads); expect(fires).toBe(hiddenFires);
+            const releaseLive = sampler.demand('live');
+            await policy.set({ expectedRevision: revision, patch: { monitoring: { mode: 'always', intervalMs: 5_000 } } });
+            await vi.advanceTimersByTimeAsync(0); await sampler.start();
+            expect(reads).toHaveLength(hiddenReads + 1);
+            await vi.advanceTimersByTimeAsync(5_000); await sampler.start();
+            expect(reads.at(-1)?.intervalMs).toBe(5_000);
+            releaseLive();
+            await policy.set({ expectedRevision: revision, patch: { monitoring: { mode: 'off' } } });
+            const offReads = reads.length; const offFires = fires;
+            await vi.advanceTimersByTimeAsync(600_000); await sampler.start();
+            expect(reads).toHaveLength(offReads); expect(fires).toBe(offFires);
+            const retained = sampler.latest(); const history = sampler.minutes(initialTime); const acceptedTicks = ticks;
+            pendingRead = new Promise<void>(resolve => { finishRead = resolve; });
+            await policy.set({ expectedRevision: revision, patch: { monitoring: { mode: 'always' } } });
+            await vi.advanceTimersByTimeAsync(0);
+            expect(reads).toHaveLength(offReads + 1);
+            await policy.set({ expectedRevision: revision, patch: { monitoring: { mode: 'off' } } });
+            finishRead(); await sampler.start();
+            expect(sampler.latest()).toBe(retained);
+            expect(sampler.minutes(initialTime)).toEqual(history);
+            expect(ticks).toBe(acceptedTicks);
+        } finally { finishRead(); release(); await sampler.stop(); policy.stop(); }
+    });
+
+    it('reads every minute boundary under Live demand when the selected interval is longer than a minute', async () => {
+        await writeCounters();
+        const reads: MachineVitalsReaderInput[] = [];
+        const sampler = await setup({ readPolicy: policyAtInterval(2_147_483_647 + 1_000) }, undefined, input => reads.push(input));
+        const release = sampler.demand('live');
+        try {
+            await sampler.start();
+            for (let minute = 1; minute <= 2; minute++) {
+                await vi.advanceTimersByTimeAsync(60_000); await sampler.start();
+                expect(reads.at(-1)).toMatchObject({ sampledAt: initialTime + minute * 60_000, intervalMs: 60_000 });
+            }
+            expect(sampler.minutes(initialTime).map(record => record.t)).toEqual([initialTime + 60_000, initialTime + 120_000]);
+        } finally { release(); await sampler.stop(); }
+    });
+
+    it('reads Overview extras on every selected tick across demand changes', async () => {
+        await writeCounters();
+        const reads: MachineVitalsReaderInput[] = [];
+        const sampler = await setup({}, undefined, input => reads.push(input));
+        const releaseSummary = sampler.demand('summary');
+        let releaseOverview = () => {};
+        try {
+            await sampler.start();
+            expect(reads[0]?.intervalMs).toBe(60_000);
+            await vi.advanceTimersByTimeAsync(2_000); await sampler.start();
+            expect(reads).toHaveLength(1);
+            releaseOverview = sampler.demandOverview();
+            await vi.advanceTimersByTimeAsync(0); await sampler.start();
+            expect(reads).toHaveLength(2);
+            for (let tick = 0; tick < 9; tick++) {
+                await writeCounters({ mem: 100 + tick });
+                await vi.advanceTimersByTimeAsync(2_000); await sampler.start();
+                expect(sampler.latest()?.sharedMemory?.availableBytes).toBe(400 - tick);
+            }
+            expect(reads.map(read => read.sampledAt - initialTime)).toEqual(
+                Array.from({ length: 11 }, (_, index) => index * 2_000),
+            );
+            expect(reads.filter(read => read.overviewExtras).map(read => read.sampledAt - initialTime)).toEqual(
+                Array.from({ length: 10 }, (_, index) => (index + 1) * 2_000),
+            );
+            releaseOverview(); releaseSummary();
+            await vi.advanceTimersByTimeAsync(2_000); await sampler.start();
+            expect(reads.at(-1)).toMatchObject({ intervalMs: 60_000, overviewExtras: false });
+        } finally { releaseOverview(); releaseSummary(); await sampler.stop(); }
+    });
+
+    it('answers immediately and aggregates minutes at the selected 15-second interval while a Live viewer holds demand', async () => {
+        await writeCounters();
+        const sampler = await setup({ readPolicy: policyAtInterval(15_000) });
         await sampler.start();
         expect(sampler.latest()?.sampledAt).toBe(initialTime);
-        const release = sampler.demand('summary');
+        const release = sampler.demand('live');
         await writeCounters({ busy: 15, total: 100, rx: 150, tx: 50, cpuPct: 15, mem: 200 });
         await vi.advanceTimersByTimeAsync(15_000);
         await sampler.start();
@@ -109,7 +248,7 @@ describe('createMachineVitalsSampler', () => {
         await f.put('/sys/fs/cgroup/child/cpu.max', `${quota * 100_000} 100000`);
         await f.put('/sys/fs/cgroup/child/cpu.stat', 'usage_usec 0\nuser_usec 0\nsystem_usec 0\nnr_throttled 0\n');
         const sampler = createMachineVitalsSampler({ readers: createLinuxMachineVitalsReader({ root: f.root }),
-            historyStore, monotonicMs: () => Date.now() - initialTime });
+            historyStore, monotonicMs: () => Date.now() - initialTime, readPolicy: policyAtInterval(60_000) });
         try {
             await sampler.start();
             const effectiveCores = Math.min(1, quota);
@@ -124,7 +263,7 @@ describe('createMachineVitalsSampler', () => {
 
     it('records Windows low-memory and exhausted commit as Critical for the shared sustained rules', async () => {
         await writeCounters({ lowMemorySignal: true });
-        const sampler = await setup();
+        const sampler = await setup({ readPolicy: policyAtInterval(60_000) });
         await sampler.start();
         await vi.advanceTimersByTimeAsync(60_000);
         await sampler.start();
@@ -140,7 +279,7 @@ describe('createMachineVitalsSampler', () => {
         await sampler.stop();
     });
 
-    it('reschedules faster demand, keeps Overview extras exclusive, and releases back to the minute cadence', async () => {
+    it('keeps Overview extras exclusive on the shared configured clock and stops that clock on shutdown', async () => {
         await writeCounters();
         const sampler = await setup();
         await sampler.start();
@@ -154,6 +293,8 @@ describe('createMachineVitalsSampler', () => {
         const releaseOverview = sampler.demandOverview();
         await vi.advanceTimersByTimeAsync(0);
         await sampler.start();
+        expect(sampler.latest()).not.toHaveProperty('sharedMemory');
+        await vi.advanceTimersByTimeAsync(2_000); await sampler.start();
         expect(sampler.latest()?.memory).toHaveProperty('composition');
         expect(sampler.latest()?.sharedMemory).toEqual({ totalBytes: 500, availableBytes: 400 });
         await vi.advanceTimersByTimeAsync(2_000);
@@ -161,10 +302,9 @@ describe('createMachineVitalsSampler', () => {
         expect(sampler.latest()?.sharedMemory).toEqual({ totalBytes: 500, availableBytes: 400 });
         releaseOverview();
         releaseLive();
-        await vi.advanceTimersByTimeAsync(55_000);
-        expect(sampler.latest()?.sampledAt).toBe(initialTime + 4_000);
-        await vi.advanceTimersByTimeAsync(1_000);
-        await sampler.start();
+        for (let tick = 0; tick < 27; tick++) {
+            await vi.advanceTimersByTimeAsync(2_000); await sampler.start();
+        }
         expect(sampler.latest()?.sampledAt).toBe(initialTime + 60_000);
         await sampler.stop();
         await vi.advanceTimersByTimeAsync(60_000);
@@ -216,17 +356,18 @@ describe('createMachineVitalsSampler', () => {
                     expect(memory.composition?.reduce((sum, part) => sum + part.bytes, 0)).toBe(memory.usedBytes);
                 }
             }
-            expect(count('/usr/bin/vm_stat')).toBe(view === 'overview' ? 8 : 0);
-            expect(count('/usr/bin/pmset', 'therm')).toBe(view === 'overview' ? 1 : 0);
-            expect(count('/usr/bin/pmset', 'batt')).toBe(view === 'overview' || needsPolicyPower ? 1 : 0);
-            expect(count('/usr/sbin/ioreg')).toBe(view === 'overview' ? 1 : 0);
-            expect(count('/helper')).toBe(view === 'overview' ? 9 : view === 'processes' ? 8 : 1);
-            await vi.advanceTimersByTimeAsync(1_000);
+            expect(count('/usr/bin/vm_stat')).toBe(view === 'overview' ? 7 : 0);
+            expect(count('/usr/bin/pmset', 'therm')).toBe(view === 'overview' ? 7 : 0);
+            expect(count('/usr/bin/pmset', 'batt')).toBe(view === 'overview' ? 7 : needsPolicyPower ? 1 : 0);
+            expect(count('/usr/sbin/ioreg')).toBe(view === 'overview' ? 7 : 0);
+            // Only a Live or Overview viewer keeps the selected interval; everyone else reads at minute boundaries.
+            expect(count('/helper')).toBe(view === 'overview' || view === 'processes' ? 8 : 1);
+            await vi.advanceTimersByTimeAsync(4_000);
             await sampler.start();
             expect(count('/usr/bin/vm_stat')).toBe(view === 'overview' ? 9 : 0);
-            expect(count('/usr/bin/pmset', 'therm')).toBe(view === 'overview' ? 2 : 0);
-            expect(count('/usr/bin/pmset', 'batt')).toBe(view === 'overview' ? 2 : needsPolicyPower ? 1 : 0);
-            expect(count('/usr/sbin/ioreg')).toBe(view === 'overview' ? 2 : 0);
+            expect(count('/usr/bin/pmset', 'therm')).toBe(view === 'overview' ? 9 : 0);
+            expect(count('/usr/bin/pmset', 'batt')).toBe(view === 'overview' ? 9 : needsPolicyPower ? 1 : 0);
+            expect(count('/usr/sbin/ioreg')).toBe(view === 'overview' ? 9 : 0);
             releaseSecond();
             releaseSummary();
             release();
@@ -239,7 +380,7 @@ describe('createMachineVitalsSampler', () => {
             releaseProcesses();
             await vi.advanceTimersByTimeAsync(43_000);
             await sampler.start();
-            expect(count('/usr/bin/pmset', 'batt')).toBe(needsPolicyPower || view === 'overview' ? 2 : 0);
+            expect(count('/usr/bin/pmset', 'batt')).toBe(view === 'overview' ? 9 : needsPolicyPower ? 2 : 0);
             if (needsPolicyPower) expect(sampler.latest()?.power).toEqual({ onAC: true });
             policy = MachineResourcesPolicyV1Schema.parse({ v: 1, guard: { keepAwake: 'on' } });
             const batteryReads = count('/usr/bin/pmset', 'batt');
@@ -264,19 +405,19 @@ describe('createMachineVitalsSampler', () => {
         expect(sampler.state()).toEqual({ state: 'unavailable', reason: 'helper_failing' });
         expect(sampler.latest()?.sampledAt).toBe(initialTime);
         await writeCounters({ busy: 60, total: 100, rx: 300, tx: 600 });
-        await vi.advanceTimersByTimeAsync(57_000);
+        await vi.advanceTimersByTimeAsync(59_000);
         expect(sampler.state()).toEqual({ state: 'unavailable', reason: 'helper_failing' });
         await vi.advanceTimersByTimeAsync(1_000);
         await sampler.start();
         expect(sampler.state()).toEqual({ state: 'reporting' });
-        expect(sampler.latest()?.sampledAt).toBe(initialTime + 60_000);
+        expect(sampler.latest()?.sampledAt).toBe(initialTime + 62_000);
         release();
         await sampler.stop();
     });
 
     it('records unavailable minute rates after counter reset or an interface change, then recovers', async () => {
         await writeCounters({ busy: 200, total: 500, rx: 1000, tx: 500 });
-        const sampler = await setup();
+        const sampler = await setup({ readPolicy: policyAtInterval(60_000) });
         await sampler.start();
         await writeCounters({ busy: 1, total: 100, rx: 100, tx: 100, interfaces: ['eth1'] });
         await vi.advanceTimersByTimeAsync(60_000);
@@ -320,7 +461,8 @@ describe('createMachineVitalsSampler', () => {
     it('journals the intended minute when a timer runs late and does not fabricate stale rates after sleep', async () => {
         await writeCounters();
         let delay = 0;
-        const sampler = await setup({ nowMs: () => Date.now() + delay, monotonicMs: () => Date.now() + delay - initialTime });
+        const sampler = await setup({ nowMs: () => Date.now() + delay, monotonicMs: () => Date.now() + delay - initialTime,
+            readPolicy: policyAtInterval(60_000) });
         await sampler.start();
         await writeCounters({ busy: 50, total: 100, rx: 500, tx: 200 });
         delay = 5;
@@ -332,7 +474,7 @@ describe('createMachineVitalsSampler', () => {
         // A suspended process misses two minute boundaries; the old counters cannot explain a fresh minute.
         delay = 120_005;
         await writeCounters({ busy: 80, total: 200, rx: 1500, tx: 900 });
-        await vi.advanceTimersByTimeAsync(59_995);
+        await vi.advanceTimersByTimeAsync(60_000);
         await sampler.start();
         expect(sampler.minutes(initialTime)[1]).toMatchObject({ t: initialTime + 240_000, cpu: null, rx: null, tx: null });
         await sampler.stop();
@@ -372,7 +514,7 @@ describe('createMachineVitalsSampler', () => {
     it.each([
         { name: 'extras after timer jitter', offset: 0, jitterAt: 14_000, duration: 18_000, rearmAt: Infinity },
         { name: 'the aligned minute', offset: 45_500, jitterAt: Infinity, duration: 16_500, rearmAt: Infinity },
-        { name: 'a watch re-arm at the aligned minute', offset: 45_500, jitterAt: Infinity, duration: 18_500, rearmAt: 14_000 },
+        { name: 'a watch re-arm at the aligned minute', offset: 15_500, jitterAt: Infinity, duration: 48_500, rearmAt: 44_000 },
     ])('keeps valid live counter spans around $name', async ({ offset, jitterAt, duration, rearmAt }) => {
         vi.setSystemTime(initialTime + offset);
         const fixture = await createLinuxVitalsFixture();
@@ -521,6 +663,7 @@ describe('createMachineVitalsSampler', () => {
             readers: createLinuxMachineVitalsReader({ root: fixture.root }), historyStore,
             nowMs: () => Date.now() + elapsed,
             monotonicMs: () => Date.now() + elapsed - initialTime,
+            readPolicy: policyAtInterval(60_000),
         });
         try {
             await sampler.start();
@@ -548,6 +691,7 @@ describe('createMachineVitalsSampler', () => {
             readers: createLinuxMachineVitalsReader({ root: fixture.root }), historyStore,
             nowMs: () => Date.now() + lateness,
             monotonicMs: () => Date.now() + lateness - initialTime,
+            readPolicy: policyAtInterval(60_000),
         });
         try {
             await sampler.start();
@@ -559,11 +703,156 @@ describe('createMachineVitalsSampler', () => {
             expect(sampler.minutes(initialTime).at(-1)).toMatchObject({ t: initialTime + 60_000, rx: 60_000, tx: 120_000 });
             const live = MachineVitalsHistoryV1Schema.parse(sampler.history('1h')).points.at(-1);
             expect(live).toMatchObject({ rx: 60_000, tx: 120_000, rxObservedMs: 60_000, txObservedMs: 60_000 });
+            // The next read aligns to the 2m boundary, 49 s after the 11 s-late read.
             await fixture.put('/proc/net/dev', 'eth0: 121000 0 0 0 0 0 0 0 242000 0 0 0 0 0 0 0\n');
             await vi.advanceTimersByTimeAsync(49_000);
             await sampler.start();
             expect(sampler.minutes(initialTime).at(-1)).toMatchObject({ t: initialTime + 120_000, rx: 60_000, tx: 120_000 });
         } finally { await sampler.stop(); await fixture.cleanup(); }
+    });
+
+    describe('sampling cadence', () => {
+        const MINUTE = 60_000;
+        // The fixture reader is real file I/O: settle each read before moving the clock on.
+        const advance = async (sampler: Awaited<ReturnType<typeof setup>>, ms: number) => {
+            for (let elapsed = 0; elapsed < ms; elapsed += 1_000) {
+                await vi.advanceTimersByTimeAsync(Math.min(1_000, ms - elapsed));
+                await sampler.start();
+            }
+        };
+        const readCount = async (sampler: Awaited<ReturnType<typeof setup>>, reads: MachineVitalsReaderInput[], ms: number) => {
+            const before = reads.length;
+            await advance(sampler, ms);
+            return reads.length - before;
+        };
+        const expectNoHistoryGaps = (sampler: Awaited<ReturnType<typeof setup>>, fromMinute: number, toMinute: number) => {
+            const times = sampler.minutes(initialTime).map(record => record.t);
+            const expected = Array.from({ length: toMinute - fromMinute + 1 }, (_, index) => initialTime + (fromMinute + index) * MINUTE);
+            expect(times).toEqual(expected);
+        };
+
+        it('reads once per minute boundary while nobody watches live, without drift from slow reads', async () => {
+            await writeCounters();
+            const reads: MachineVitalsReaderInput[] = [];
+            const sampler = await setup({}, undefined, input => reads.push(input));
+            try {
+                await sampler.start();
+                expect(reads).toHaveLength(1);
+                expect(reads[0]).toMatchObject({ intervalMs: MINUTE });
+                expect(await readCount(sampler, reads, 3 * MINUTE)).toBe(3);
+                expect(reads.slice(1).map(read => read.sampledAt)).toEqual([1, 2, 3].map(minutes => initialTime + minutes * MINUTE));
+                expect(reads.at(-1)).toMatchObject({ intervalMs: MINUTE });
+                expectNoHistoryGaps(sampler, 1, 3);
+            } finally { await sampler.stop(); }
+        });
+
+        it('does not sample faster for a summary-only watch', async () => {
+            await writeCounters();
+            const reads: MachineVitalsReaderInput[] = [];
+            const sampler = await setup({}, undefined, input => reads.push(input));
+            try {
+                await sampler.start();
+                const release = sampler.demand('summary');
+                expect(await readCount(sampler, reads, 2 * MINUTE)).toBe(2);
+                release();
+            } finally { await sampler.stop(); }
+        });
+
+        it('reads at the selected interval while a Live or Overview viewer holds demand, and stops when it leaves', async () => {
+            await writeCounters();
+            const reads: MachineVitalsReaderInput[] = [];
+            const sampler = await setup({}, undefined, input => reads.push(input));
+            try {
+                await sampler.start();
+                // A viewer arriving mid-interval gets an immediate read.
+                await advance(sampler, 30_000);
+                const beforeLive = reads.length;
+                const releaseLive = sampler.demand('live');
+                await vi.advanceTimersByTimeAsync(0); await sampler.start();
+                expect(reads).toHaveLength(beforeLive + 1);
+                expect(reads.at(-1)).toMatchObject({ intervalMs: 2_000 });
+                expect(await readCount(sampler, reads, 10_000)).toBe(5);
+                // Overview demand alone also keeps the fast clock.
+                releaseLive();
+                const releaseOverview = sampler.demandOverview();
+                expect(await readCount(sampler, reads, 10_000)).toBe(5);
+                releaseOverview();
+                // The viewer left: one settling read stamped at the slow cadence, then minute boundaries only.
+                const settled = await readCount(sampler, reads, 2_000);
+                expect(settled).toBe(1);
+                expect(reads.at(-1)).toMatchObject({ intervalMs: MINUTE });
+                expect(await readCount(sampler, reads, MINUTE)).toBe(1);
+                expectNoHistoryGaps(sampler, 1, 1);
+            } finally { await sampler.stop(); }
+        });
+
+        it('keeps a minute record at every boundary across viewer transitions', async () => {
+            await writeCounters({ busy: 0, total: 0 });
+            const sampler = await setup();
+            try {
+                await sampler.start();
+                await writeCounters({ busy: 60, total: 600 });
+                await advance(sampler, MINUTE);
+                // Viewer arrives mid-minute, leaves just before the next boundary.
+                await advance(sampler, 40_000);
+                const release = sampler.demand('live');
+                await advance(sampler, 19_000);
+                release();
+                // The last fast read can land right before the boundary; the boundary is still read.
+                await writeCounters({ busy: 120, total: 1200 });
+                await advance(sampler, 1_000);
+                await writeCounters({ busy: 180, total: 1800 });
+                await advance(sampler, MINUTE);
+                await writeCounters({ busy: 240, total: 2400 });
+                await advance(sampler, MINUTE);
+                expectNoHistoryGaps(sampler, 1, 4);
+                expect(sampler.minutes(initialTime).map(record => record.cpu)).toEqual([10, 10, 10, 10]);
+            } finally { await sampler.stop(); }
+        });
+
+        it('reads the next minute boundary even when a read overruns it', async () => {
+            await writeCounters();
+            let finishRead!: () => void;
+            let holding = false;
+            const reads: MachineVitalsReaderInput[] = [];
+            const sampler = await setup({ readPolicy: policyAtInterval(7_000) }, async () => {
+                if (holding) await new Promise<void>(resolve => { finishRead = resolve; });
+                return readFile(fixturePath, 'utf8');
+            }, input => reads.push(input));
+            const release = sampler.demand('live');
+            try {
+                await sampler.start();
+                await advance(sampler, 55_000);
+                // The 56 s read overruns the 1m boundary and the viewer leaves meanwhile.
+                holding = true;
+                await vi.advanceTimersByTimeAsync(1_000);
+                expect(reads.at(-1)?.sampledAt).toBe(initialTime + 56_000);
+                release();
+                await vi.advanceTimersByTimeAsync(5_000);
+                holding = false;
+                finishRead();
+                await sampler.start();
+                await vi.advanceTimersByTimeAsync(0); await sampler.start();
+                expect(reads.at(-1)?.sampledAt).toBe(initialTime + 61_000);
+                await advance(sampler, 2 * MINUTE);
+                expectNoHistoryGaps(sampler, 1, 3);
+            } finally { release(); await sampler.stop(); }
+        });
+
+        it('raises a memory-pressure attention within one slow interval with no viewer', async () => {
+            await writeCounters();
+            const sampler = await setup();
+            const summary = createMachineResourceSummary({ sampler, readNearlyFull: () => null, onError: (error) => { throw error; } });
+            try {
+                await sampler.start();
+                summary.refresh();
+                expect(summary.getSummary()?.attention.level).toBe('calm');
+                await writeCounters({ lowMemorySignal: true });
+                await advance(sampler, MINUTE);
+                summary.refresh();
+                expect(summary.getSummary()?.attention).toMatchObject({ level: 'needs_you', reasons: [expect.objectContaining({ kind: 'memory_pressure' })] });
+            } finally { summary.stop(); await sampler.stop(); }
+        });
     });
 
     it('composes the real Linux reader and persistent minute journal', async () => {
@@ -574,6 +863,7 @@ describe('createMachineVitalsSampler', () => {
             const sampler = createMachineVitalsSampler({
                 readers: createLinuxMachineVitalsReader({ root: fixture.root }), historyStore: store,
                 monotonicMs: () => Date.now() - initialTime,
+                readPolicy: policyAtInterval(60_000),
             });
             await sampler.start();
             await fixture.put('/proc/stat', 'cpu 110 30 40 450 70 0 0 10 0 0\ncpu0 110 30 40 450 70 0 0 10 0 0\nbtime 100\n');

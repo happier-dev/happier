@@ -7,6 +7,9 @@ import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
 
 import { createLocalServicesDaemonRuntime } from './runtime';
 import { removeSessionMarker, writeSessionMarker } from '@/daemon/sessionRegistry';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const observations = vi.hoisted(() => ({ directories: [] as string[], attachments: new Set<string>(), starts: [] as string[], events: [] as string[],
     failedWatchPath: undefined as string | undefined,
@@ -54,6 +57,46 @@ function declaredWorkspaces(roots: readonly string[]) {
 }
 
 describe('Services declaration discovery demand', () => {
+    it('releases a cancelled launcher RPC discovery before a new Machine read', async () => {
+        const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-cancelled-snapshot-')));
+        const packageFile = join(root, 'package.json');
+        await writeFile(packageFile, JSON.stringify({ name: 'cancelled', packageManager: 'npm@10', scripts: { dev: 'serve' } }));
+        const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false, inventoryEnabled: () => true,
+            workspaceFacts: () => declaredWorkspaces([root]),
+            scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger() {} });
+        registerDaemonLocalServicesMachineRpcHandlers(rpc, { machineId: 'machine', localServicesLauncher: runtime.launcherRoutes });
+        const cancellation = new AbortController();
+        let release!: () => void;
+        let entered!: () => void;
+        const resumed = new Promise<void>(resolve => { release = resolve; });
+        const held = new Promise<void>(resolve => { entered = resolve; });
+        let workspaceRead: Promise<unknown> | undefined;
+        let machineRead: Promise<unknown> | undefined;
+        try {
+            observations.heldRead = { path: packageFile, entered, resume: resumed };
+            workspaceRead = rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
+                { machineId: 'machine', scope: 'workspace', workspaceRoot: root }, { signal: cancellation.signal });
+            await held;
+            cancellation.abort();
+            let machineSettled = false;
+            machineRead = rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
+                { machineId: 'machine', scope: 'machine' }).then(snapshot => { machineSettled = true; return snapshot; });
+            // The retired filesystem boundary remains held throughout this assertion.
+            await vi.waitFor(() => expect(machineSettled).toBe(true));
+            expect(await machineRead).toMatchObject({ protocolVersion: 1, snapshot: { targets: [] } });
+            release();
+            await workspaceRead;
+            expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root, discovery: 'cached' }))).toEqual([]);
+            expect(scripts(await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root }))).toEqual(['cancelled:dev']);
+        } finally {
+            observations.heldRead = undefined;
+            release(); cancellation.abort();
+            await Promise.allSettled([workspaceRead, machineRead]);
+            await runtime.stop(); await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('releases A package demand before B or Machine observation without losing retained scripts', async () => {
         const base = await realpath(await mkdtemp(join(tmpdir(), 'happier-services-current-demand-')));
         const a = join(base, 'a');

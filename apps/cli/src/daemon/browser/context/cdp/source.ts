@@ -192,6 +192,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                 const faviconUrl = evaluateString(await evaluate(handle, FAVICON_EXPRESSION));
                 return {
                     ok: true,
+                    ...(handle.profileId ? { profileId: handle.profileId } : {}),
                     ...(url ? { url } : {}),
                     ...(title ? { title } : {}),
                     ...(faviconUrl ? { faviconUrl } : {}),
@@ -241,10 +242,11 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                     ...(written.disabledReason ? { disabledReason: written.disabledReason } : {}),
                 };
             }
-            return { ok: true, media: written.media, ...(viewport ? { viewport } : {}) };
+            return { ok: true, ...(handle.profileId ? { profileId: handle.profileId } : {}), media: written.media, ...(viewport ? { viewport } : {}) };
         },
 
         async captureSummary(view) {
+            const handle = resolve(view);
             if (view.kind === 'browserNetworkSummary' || view.kind === 'browserConsoleSummary') {
                 if (!input.summarizeDiagnostics) return ADAPTER_UNAVAILABLE;
                 const summary = input.summarizeDiagnostics({
@@ -254,10 +256,8 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                     kind: view.kind,
                 });
                 if (!summary) return ADAPTER_UNAVAILABLE;
-                return { ok: true, summary: summary.summary, ...(summary.truncated ? { truncated: true } : {}) };
+                return { ok: true, ...(handle?.profileId ? { profileId: handle.profileId } : {}), summary: summary.summary, ...(summary.truncated ? { truncated: true } : {}) };
             }
-
-            const handle = resolve(view);
             if (!handle) return ADAPTER_UNAVAILABLE;
 
             try {
@@ -265,7 +265,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
                 const collapsed = collapseWhitespace(evaluated);
                 const truncated = collapsed.length > BROWSER_CONTEXT_SUMMARY_MAX_CHARS;
                 const summary = collapsed.slice(0, BROWSER_CONTEXT_SUMMARY_MAX_CHARS);
-                return { ok: true, summary, ...(truncated ? { truncated: true } : {}) };
+                return { ok: true, ...(handle.profileId ? { profileId: handle.profileId } : {}), summary, ...(truncated ? { truncated: true } : {}) };
             } catch {
                 return CAPTURE_FAILED;
             }
@@ -298,6 +298,7 @@ export function createCdpBrowserContextSource(input: CdpBrowserContextSourceInpu
 
                 return {
                     ok: true,
+                    ...(handle.profileId ? { profileId: handle.profileId } : {}),
                     selectorPath,
                     ...(rect ? { rect } : {}),
                     ...(accessibleName ? { accessibleName } : {}),

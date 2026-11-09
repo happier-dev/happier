@@ -5,6 +5,10 @@ import type { WorkflowCoordinatorInvocation, WorkflowCoordinatorStore } from './
 import { WorkflowInputResolutionError } from './input';
 export type WorkflowScopeFrame = WorkflowScopeFrameV1;
 
+type ProducerInvocation = Pick<WorkflowCoordinatorInvocation, 'key' | 'path'>;
+type ProducerStore<T extends ProducerInvocation> = Readonly<{
+  readCurrent: (params: Parameters<WorkflowCoordinatorStore['readCurrent']>[0]) => T | undefined | Promise<T | undefined>;
+}>;
 export type WorkflowProducerBinding<T extends ProducerInvocation = WorkflowCoordinatorInvocation> = Readonly<{
   resolve: (producer: WorkflowAuthoredProducerRef) => Promise<T | undefined>;
 }>;
@@ -94,8 +98,3 @@ export function createWorkflowProducerBinding<T extends ProducerInvocation>(para
     return frame ? await resolveWorkflowProducerInFrame({ ...params, frame, blockId: producer.blockId }) : undefined;
   } };
 }
-
-type ProducerInvocation = Pick<WorkflowCoordinatorInvocation, 'key' | 'path'>;
-type ProducerStore<T extends ProducerInvocation> = Readonly<{
-  readCurrent: (params: Parameters<WorkflowCoordinatorStore['readCurrent']>[0]) => T | undefined | Promise<T | undefined>;
-}>;

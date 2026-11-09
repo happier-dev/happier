@@ -1,6 +1,20 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+
+import type { ApiMachineClient } from '@/api/apiMachine';
+import type { DaemonState, Machine } from '@/api/types';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
+import { createApiMachineTransportFixture } from '@/testkit/apiMachineTransport';
+import { createDeferred } from '@/testkit/async/deferred';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt } from './bootstrapMachineSyncRuntime';
+
 import { UsageLimitRecoveryScheduler, type UsageLimitRecoveryIntent } from '../connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
 
 describe('bootstrapMachineSyncRuntime passive startup', () => {
@@ -27,4 +41,108 @@ describe('bootstrapMachineSyncRuntime passive startup', () => {
     const source = await readFile(new URL('./bootstrapMachineSyncRuntime.ts', import.meta.url), 'utf8');
     expect(source).toContain('voiceBinaryAppendConsumer');
   });
+});
+
+
+it('applies Agent Account settings after startup and reconnect, and retires its watches with the Machine attempt', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'bootstrap-account-settings-'));
+  const native = join(root, 'native');
+  let policy = { mode: 'days' as const, days: 365 };
+  let revision = 1;
+  const hints = new Set<() => void>();
+  const settingsRead = createDeferred<void>();
+  const runtime = await createAdmittedPluginRuntimeFixture({
+    controller: pluginReloadController,
+    runtimeOptions: { pluginIds: ['happier.agent.claude'], accountSettingsRecordAdapter: {
+      bindOperation: async () => ({
+        readRecord: async () => {
+          await settingsRead.promise;
+          return { status: 'present', revision, values: { claudeSessionRetentionV1: policy } };
+        },
+        writeRecord: async () => { throw new Error('Daemon application must preserve Account intent'); },
+      }),
+      watchRecord: (_model, listener) => {
+        const hint = () => listener({ revision });
+        hints.add(hint);
+        return () => { hints.delete(hint); };
+      },
+    } },
+  });
+  let state: DaemonState = { status: 'running', startedAt: 100 };
+  const connect = vi.fn<ApiMachineClient['connect']>(() => {});
+  // The Machine transport and Account persistence are boundaries. Registry
+  // activation, settings service, native editor and lifecycle remain real.
+  const apiMachine = {
+    ...createApiMachineTransportFixture(),
+    setRPCHandlers: () => ({}),
+    registerLiveStreamRelayRoutes: () => {},
+    connect,
+    updateDaemonState: async (handler: Parameters<ApiMachineClient['updateDaemonState']>[0]) => { state = handler(state); },
+    updateMachineMetadata: async () => {},
+    emitExternalSessionTranscriptUpdate: () => {},
+    sendMachineTransferEnvelope: () => {},
+    sendTransferRelayV2Envelope: () => {},
+    sendMachineLiveStreamRelayEnvelope: () => {},
+    getPeerMediationMachineRpcHandlerManager: () => ({ invokeLocal: async () => ({ ok: true }) }),
+  } as unknown as ApiMachineClient;
+  const machine: Machine = { id: 'retention-bootstrap-machine', encryptionMode: 'plain', metadata: null,
+    metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+  let bootstrap: Awaited<ReturnType<typeof bootstrapMachineSyncRuntime>> | undefined;
+  let bootstrapPromise: ReturnType<typeof bootstrapMachineSyncRuntime> | undefined;
+  try {
+    await mkdir(native);
+    await writeFile(join(native, 'settings.json'), JSON.stringify({ cleanupPeriodDays: 7, theme: 'dark' }));
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: 'retention-bootstrap-account',
+      settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [] });
+    const params = {
+      cliVersion: 'test', machineId: machine.id, machine,
+      preferredHost: 'host.local', happyHomeDir: root, happyLibDir: root,
+      filesystemAccessPolicy: { kind: 'osUser' as const }, takeoverRequested: false,
+      isShuttingDown: () => false, createConnectedApiMachine: () => apiMachine,
+      attachTransferRuntimeStatePublisher: async () => {},
+      startAutomationWorkerForMachine: () => null, startMemoryWorkerForMachine: async () => null,
+      startVoiceInferenceWorkerForMachine: async () => null,
+      spawnSession: async () => ({ type: 'success' as const, sessionId: 'unused' }),
+      spawnSessionForInternalResume: async () => ({ type: 'success' as const, sessionId: 'unused' }),
+      stopSession: async () => ({ status: 'stopped' as const }), isSessionAlreadyRunning: async () => false,
+      loadLocalSessionMetadataForHandoff: async () => null, beforeShutdown: async () => {}, requestShutdown: () => {},
+      directPeerServerLifecycle: null, directTransferRegistryHost: createCliRegistryHostV1(),
+      connectedServiceRefreshLoopHandle: null, connectedServiceQuotasLoopHandle: null,
+      daemonServerWorkScheduler: {} as never,
+      providerAccountSettings: { scopeKey: 'retention-bootstrap-account', processEnv: { CLAUDE_CONFIG_DIR: native },
+        materializationBaseDir: join(root, 'materialized'), activeServerDir: join(root, 'server') },
+    };
+    bootstrapPromise = bootstrapMachineSyncRuntime(params);
+    // Optional plugin settings must not hold the ordinary Machine connection.
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledOnce());
+    settingsRead.resolve();
+    bootstrap = await bootstrapPromise;
+    await vi.waitFor(async () => expect(JSON.parse(await readFile(join(native, 'settings.json'), 'utf8')))
+      .toEqual({ cleanupPeriodDays: 365, theme: 'dark' }));
+    expect(state.providerSettingsSourceV1?.pid).toBe(process.pid);
+    expect(state.providerSettingsSourceV1?.startedAt).toBe(100);
+    expect(state.providerSettingsV1?.claude?.targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'native', status: 'applied', currentDays: 365 }),
+    ]));
+
+    // A missed Account push is reconciled by the existing reconnect edge.
+    policy = { mode: 'days', days: 36500 };
+    revision++;
+    const onConnect = connect.mock.calls[0]?.[0]?.onConnect;
+    if (!onConnect) throw new Error('Machine reconnect callback unavailable');
+    await onConnect();
+    await vi.waitFor(async () => expect(JSON.parse(await readFile(join(native, 'settings.json'), 'utf8')).cleanupPeriodDays).toBe(36500));
+    expect(hints.size).toBeGreaterThan(0);
+    await retireMachineSyncRuntimeAttempt(bootstrap);
+    bootstrap = undefined;
+    bootstrapPromise = undefined;
+    expect(hints.size).toBe(0);
+  } finally {
+    settingsRead.resolve();
+    if (!bootstrap && bootstrapPromise) bootstrap = await bootstrapPromise;
+    if (bootstrap) await retireMachineSyncRuntimeAttempt(bootstrap);
+    resetActiveAccountSettingsSnapshotForTests();
+    await runtime.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
 });

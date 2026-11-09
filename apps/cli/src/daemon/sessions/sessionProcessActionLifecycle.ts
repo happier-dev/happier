@@ -5,10 +5,10 @@ import type { ExactTrackedRunnerStopWitness, StopSessionOptions } from './stopSe
 import type { StopSessionResult } from './stopSessionContract';
 import type { ProcessActionExecution } from '../processes/actions/processActionExecutor';
 import { readSessionStopRequestSource } from './stopSessionDiagnostics';
+import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 
 type ExactTarget = Readonly<{ pid: number; start: ProcessStartIdentity }>;
-type VerifyCurrent = () => boolean | Promise<boolean>;
-type Execution = Readonly<{ signal?: AbortSignal; verifyCurrent?: VerifyCurrent;
+type Execution = Readonly<{ signal?: AbortSignal;
   actionContext?: ProcessActionExecution['actionContext']; rpcContext?: ProcessActionExecution['rpcContext'];
   physicalStopEffect?: ProcessActionExecution['physicalStopEffect'] }>;
 type BoundRunner = ExactTrackedRunnerStopWitness & Readonly<{
@@ -25,12 +25,11 @@ export type SessionProcessActionLifecycle = Readonly<{
 export function createSessionProcessActionLifecycle(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
   markStopRequested: SessionRunnerRespawnManager['markStopRequested'];
-  recordExplicitStopIntent(sessionId: string, execution: Execution): Promise<void>;
+  prepareStopIntent(sessionId: string, execution: Execution, stopIntent: SessionStopIntent): Promise<void>;
   registerPhysicalStopEffect(sessionId: string, completion: Promise<void>): void;
   stopSession(sessionId: string, options?: StopSessionOptions, physicalEffect?: Promise<void>): Promise<StopSessionResult>;
 }>): SessionProcessActionLifecycle {
-  const executionCurrent = async (input: Execution) => !input.signal?.aborted
-    && (!input.verifyCurrent || await input.verifyCurrent()) && !input.signal?.aborted;
+  const executionCurrent = async (input: Execution) => !input.signal?.aborted;
   const isAutomaticHostCleanup = (input: Execution) => input.actionContext?.authority === 'account_automation'
     && input.actionContext.actionCaller?.kind !== 'session';
   const isCleanup = (input: Execution, witness: BoundRunner) => {
@@ -91,7 +90,7 @@ export function createSessionProcessActionLifecycle(params: Readonly<{
           if (!current(witness) || !witness.sessionId || isCleanup(input, witness)) continue;
           try {
             if (!recorded.has(witness.sessionId)) {
-              await params.recordExplicitStopIntent(witness.sessionId, input);
+              await params.prepareStopIntent(witness.sessionId, input, 'explicit_stop');
               recorded.add(witness.sessionId);
             }
           } catch {
@@ -126,7 +125,7 @@ export function createSessionProcessActionLifecycle(params: Readonly<{
           if (!await executionCurrent(input) || !current(witness)) return false;
           try {
             if (!isCleanup(input, witness) && !recorded.has(input.sessionId)) {
-              await params.recordExplicitStopIntent(input.sessionId, input);
+              await params.prepareStopIntent(input.sessionId, input, 'lifecycle_control');
               recorded.add(input.sessionId);
             }
           } catch {

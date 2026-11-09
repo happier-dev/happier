@@ -6,7 +6,7 @@ import type { TrackedSession } from '../types';
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { createPersistedTakeoverAdmissionWaiter } from './persistedTakeoverAdmission';
 
-import { armSessionWebhookStartupCustody, hasSessionWebhookPidTimedOut, waitForSessionWebhook } from './waitForSessionWebhook';
+import { armSessionWebhookStartupCustody, waitForSessionWebhook } from './waitForSessionWebhook';
 
 describe('waitForSessionWebhook', () => {
   afterEach(() => {
@@ -29,6 +29,11 @@ describe('waitForSessionWebhook', () => {
     expect(result.errorMessage).toContain('code=1');
     expect(result.errorMessage).toContain('signal=null');
     expect(result.errorMessage).toContain('Provider-bound model selection requires a validated provider binding handoff');
+    expect(result.errorDetail).toMatchObject({ kind: 'launch_error',
+      code: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+      childExit: { code: 1, signal: null,
+        stderrHead: 'Provider-bound model selection requires a validated provider binding handoff' },
+    });
     await completion.waitForFinalization();
   });
 
@@ -185,7 +190,7 @@ describe('waitForSessionWebhook', () => {
     expect(pidToTrackedSession.get(78)?.sessionWebhookTimedOutAtMs).toEqual(expect.any(Number));
   });
 
-  it('marks the exact startup owner timed out while canonical readiness is still pending', async () => {
+  it('marks the exact startup owner timed out without retaining PID expiry timers', async () => {
     vi.useFakeTimers();
 
     const pidToAwaiter = new Map<number, (session: any) => void>();
@@ -213,6 +218,10 @@ describe('waitForSessionWebhook', () => {
       errorMessage: 'Session webhook timeout for PID 79',
     });
     expect(pidToTrackedSession.get(79)?.sessionWebhookTimedOutAtMs).toEqual(expect.any(Number));
+    expect(pidToAwaiter.size).toBe(0);
+    expect(pidToSpawnResultResolver.size).toBe(0);
+    expect(pidToSpawnWebhookTimeout.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('times out the exact promoted runner while retaining original waiter-map ownership', async () => {
@@ -257,15 +266,13 @@ describe('waitForSessionWebhook', () => {
     });
     expect(originalTracked.sessionWebhookTimedOutAtMs)
       .toEqual(expect.any(Number));
-    expect(hasSessionWebhookPidTimedOut(wrapperPid)).toBe(true);
-    expect(hasSessionWebhookPidTimedOut(runnerPid)).toBe(true);
     expect(onTimeout).toHaveBeenCalledWith(originalTracked);
     expect(pidToAwaiter).toHaveLength(0);
     expect(pidToSpawnResultResolver).toHaveLength(0);
     expect(pidToSpawnWebhookTimeout).toHaveLength(0);
   });
 
-  it('tombstones a reported runner before wrapper-to-runner promotion completes', async () => {
+  it('marks a reported runner owner timed out before wrapper-to-runner promotion completes', async () => {
     vi.useFakeTimers();
     const wrapperPid = 83;
     const runnerPid = 84;
@@ -299,8 +306,8 @@ describe('waitForSessionWebhook', () => {
       errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
     });
 
-    expect(hasSessionWebhookPidTimedOut(wrapperPid)).toBe(true);
-    expect(hasSessionWebhookPidTimedOut(runnerPid)).toBe(true);
+    expect(tracked).toHaveProperty('sessionWebhookTimedOutAtMs', expect.any(Number));
+    expect(pidToTrackedSession.get(wrapperPid)).toBe(tracked);
   });
 
   it('does not delete or time out same-PID replacement custody when a superseded request timer fires', async () => {
@@ -345,7 +352,6 @@ describe('waitForSessionWebhook', () => {
     expect(pidToSpawnResultResolver.get(pid)).toBe(replacementResolver);
     expect(pidToSpawnWebhookTimeout.get(pid)).toBe(replacementTimeout);
     expect(replacementTracked).not.toHaveProperty('sessionWebhookTimedOutAtMs');
-    expect(hasSessionWebhookPidTimedOut(pid)).toBe(false);
     expect(replacementAwaiter).not.toHaveBeenCalled();
     expect(replacementResolver).not.toHaveBeenCalled();
     expect(replacementTimeoutCallback).not.toHaveBeenCalled();

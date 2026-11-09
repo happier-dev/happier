@@ -8,14 +8,33 @@ import { runConnectedAccountBindingStage, withConnectedAccountBindingDiagnostic 
 describe('Connected Account binding diagnostics', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('retains the admitted Happier Session identity through the actual file redactor', async () => {
+  it('records normal stages at debug and reserves warnings for failures', async () => {
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const warn = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    await withConnectedAccountBindingDiagnostic({ requestId: 'normal-binding' }, () =>
+      runConnectedAccountBindingStage('account_purpose_read', () => null));
+    expect(warn).not.toHaveBeenCalled();
+    expect(debug.mock.calls.map(([, record]) => record)).toEqual([
+      expect.objectContaining({ stage: 'account_purpose_read', event: 'begin' }),
+      expect.objectContaining({ stage: 'account_purpose_read', event: 'end' }),
+    ]);
+    const failure = new Error('binding unavailable');
+    await expect(withConnectedAccountBindingDiagnostic({ requestId: 'failed-binding' }, () =>
+      runConnectedAccountBindingStage('account_purpose_read', () => { throw failure; }))).rejects.toBe(failure);
+    expect(warn.mock.calls).toEqual([['[connected-account-binding-stage]', expect.objectContaining({
+      requestId: 'failed-binding', event: 'failure', errorCode: 'binding_read_failed',
+    })]]);
+  });
+
+  it('retains the admitted Happier Session identity on failures through the actual file redactor', async () => {
     const directory = createTempDirSync('happier-binding-diagnostics-');
     const sink = new Logger({ logFilePath: join(directory, 'binding.log'), pruneCurrentProcessLogs: false,
       allowDangerousRemoteLogging: false });
     const restore = bindProcessLogger(sink);
     try {
-      await withConnectedAccountBindingDiagnostic({ sessionId: 'happier-session-1', requestId: 'request-1' }, () =>
-        runConnectedAccountBindingStage('binding_read', () => null));
+      const failure = new Error('binding unavailable');
+      await expect(withConnectedAccountBindingDiagnostic({ sessionId: 'happier-session-1', requestId: 'request-1' }, () =>
+        runConnectedAccountBindingStage('binding_read', () => { throw failure; }))).rejects.toBe(failure);
       sink.warnLocalFile('credential redaction remains enabled', { sessionId: 'private-session-cookie', token: 'private-token' });
       sink.flushSync();
       const content = readFileSync(sink.getLogPath(), 'utf8');
@@ -40,6 +59,7 @@ describe('Connected Account binding diagnostics', () => {
   });
 
   it('keeps both successful and failed reads unchanged when file logging fails', async () => {
+    vi.spyOn(logger, 'debug').mockImplementation(() => { throw new Error('file unavailable'); });
     vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => { throw new Error('file unavailable'); });
     const failure = new Error('original operation failure');
     await withConnectedAccountBindingDiagnostic({ requestId: 'request-2' }, async () => {

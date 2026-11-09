@@ -109,6 +109,25 @@ export async function setGuardSessionMemoryHigh(params: Readonly<{
   ], { timeout: SYSTEMD_USER_RESOURCE_GOVERNOR_PROBE_TIMEOUT_MS, env: params.environment ?? process.env, maxBuffer: 16 * 1024 });
 }
 
+/** Scope availability does not require a provisioned governor or memory controller. */
+export async function readSystemdUserManager(params: Readonly<{
+  platform?: NodeJS.Platform;
+  environment?: NodeJS.ProcessEnv;
+  execFile?: SystemdUserResourceGovernorExecFile;
+}> = {}): Promise<Readonly<{ controlGroup: string | undefined }> | null> {
+  if ((params.platform ?? process.platform) !== 'linux') return null;
+  try {
+    const result = await (params.execFile ?? execFileWithDeadline)('systemctl', ['--user', 'show', '--property=ControlGroup'], {
+      timeout: SYSTEMD_USER_RESOURCE_GOVERNOR_PROBE_TIMEOUT_MS,
+      env: params.environment ?? process.env,
+      maxBuffer: 16 * 1024,
+    });
+    return { controlGroup: parseSystemdProperties(String(result.stdout)).get('ControlGroup') };
+  } catch {
+    return null;
+  }
+}
+
 export async function readGuardCeilingCapability(params: Readonly<{
   platform?: NodeJS.Platform;
   environment?: NodeJS.ProcessEnv;
@@ -116,17 +135,9 @@ export async function readGuardCeilingCapability(params: Readonly<{
   readFile?: (path: string, encoding: 'utf8') => Promise<string>;
 }> = {}): Promise<MachineGuardStateV1['capabilities']['ceiling']> {
   if ((params.platform ?? process.platform) !== 'linux') return { status: 'unavailable', reason: 'not_linux' };
-  let controlGroup: string | undefined;
-  try {
-    const result = await (params.execFile ?? execFileWithDeadline)('systemctl', ['--user', 'show', '--property=ControlGroup'], {
-      timeout: SYSTEMD_USER_RESOURCE_GOVERNOR_PROBE_TIMEOUT_MS,
-      env: params.environment ?? process.env,
-      maxBuffer: 16 * 1024,
-    });
-    controlGroup = parseSystemdProperties(String(result.stdout)).get('ControlGroup');
-  } catch {
-    return { status: 'unavailable', reason: 'no_user_manager' };
-  }
+  const manager = await readSystemdUserManager(params);
+  if (!manager) return { status: 'unavailable', reason: 'no_user_manager' };
+  const { controlGroup } = manager;
   // A live user manager is separate from delegation of the memory controller to its subtree.
   if (controlGroup === undefined || (controlGroup !== '' && !controlGroup.startsWith('/')) || controlGroup.split('/').includes('..')) {
     return { status: 'unavailable', reason: 'no_memory_controller' };

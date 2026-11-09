@@ -47,7 +47,8 @@ export function createComputerCaptureSource(input: Readonly<({
   let consentGranted = false;
   let title = input.title ?? '';
   let appName = input.appName;
-  let captureMedia: (SessionImageMediaReferenceV1 & { file: NonNullable<SessionImageMediaReferenceV1['file']> }) | undefined;
+  let captureMedia: Readonly<{ captureId: string;
+    captureMedia: SessionImageMediaReferenceV1 & { file: NonNullable<SessionImageMediaReferenceV1['file']> } }> | undefined;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let framePending: Promise<void> | null = null;
   type Viewer = { fps: number | undefined; paused: boolean; ready: boolean; nextFrameAt: number;
@@ -226,7 +227,7 @@ export function createComputerCaptureSource(input: Readonly<({
       } };
     },
   };
-  return { sourceIdentity, desktopKey: input.desktopKey, target: input.target, sourceId, get provider() { return provider; }, adapter, access,
+  return { inputControl: control, sourceIdentity, desktopKey: input.desktopKey, target: input.target, sourceId, get provider() { return provider; }, adapter, access,
     isClosed: () => closed,
     get title() { return title; },
     get appName() { return appName; },
@@ -244,7 +245,7 @@ export function createComputerCaptureSource(input: Readonly<({
     consentGranted: () => consentGranted,
     grantConsent: () => { consentGranted = true; },
     captureMedia: () => captureMedia,
-    setCaptureMedia: (media: NonNullable<typeof captureMedia>) => { captureMedia = media; },
+    setCaptureMedia: (captureId: string, media: NonNullable<typeof captureMedia>['captureMedia']) => { captureMedia = { captureId, captureMedia: media }; },
     observe,
     input: (captureId: string, operation: ComputerInputOperationV1, requestedBy: 'agent' | 'human', signal?: AbortSignal) => execute(captureId, operation, requestedBy, signal),
     async clipboard(operation: ComputerClipboardOperationV1, requestedBy: 'agent' | 'human', signal?: AbortSignal): Promise<ComputerClipboardResultV1> {

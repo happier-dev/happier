@@ -1,12 +1,10 @@
 import type {
     ConnectedServiceId,
-    ConnectedServiceQuotaMeterV1,
     ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
 import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
-import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol/connect/connected-service-limit-category';
-
-import { normalizeQuotaMeter, selectEffectiveQuotaMeter } from '../normalization';
+import { normalizeConnectedServiceAuthGroupQuotaMeter } from '../../accountGroups/quotas/projection';
+import { selectEffectiveQuotaMeter } from '../normalization';
 import type { ProviderOutcomeProofKind } from '../../recovery/providerOutcomeProof';
 
 export type QuotaProbeFreshNoProofReason =
@@ -79,35 +77,8 @@ function appliedIdentitiesMatch(
         && expected.materialFingerprint === observed.materialFingerprint;
 }
 
-function isUnavailableMeter(meter: ConnectedServiceQuotaMeterV1): boolean {
-    return meter.status === 'unavailable'
-        || meter.confidence === 'unknown'
-        || meter.confidence === 'stale';
-}
-
-function normalizeMeter(meter: ConnectedServiceQuotaMeterV1) {
-    return normalizeQuotaMeter({
-        meterId: meter.meterId,
-        label: meter.label,
-        limitCategory: readConnectedServiceLimitCategoryV1(
-            typeof meter.details === 'object' && meter.details !== null && !Array.isArray(meter.details)
-                ? meter.details.limitCategory
-                : undefined,
-        ) ?? 'usage_limit',
-        remainingPct: meter.remainingPct,
-        utilizationPct: meter.utilizationPct,
-        used: meter.used,
-        limit: meter.limit,
-        resetAtMs: meter.resetAtMs ?? meter.resetsAt,
-        providerLimitId: meter.providerLimitId,
-        reliable: !isUnavailableMeter(meter),
-        applicable: meter.status !== 'unavailable',
-    });
-}
-
 export function resolveQuotaProbeFreshProof(input: Readonly<{
     nowMs: number;
-    maxAgeMs: number;
     serviceId: ConnectedServiceId;
     profileId: string;
     expectedAppliedIdentity: QuotaProbeAppliedIdentity | null;
@@ -133,19 +104,15 @@ export function resolveQuotaProbeFreshProof(input: Readonly<{
         return { status: 'no_proof', reason: 'provider_operation_identity_mismatch' };
     }
     const fetchedAt = Number.isFinite(input.snapshot.fetchedAt) ? Math.trunc(input.snapshot.fetchedAt) : 0;
-    const configuredMaxAgeMs = Math.max(1, Math.trunc(input.maxAgeMs));
-    const snapshotMaxAgeMs = Number.isFinite(input.snapshot.staleAfterMs)
-        ? Math.max(1, Math.trunc(input.snapshot.staleAfterMs))
-        : configuredMaxAgeMs;
-    const maxAgeMs = Math.min(configuredMaxAgeMs, snapshotMaxAgeMs);
     const nowMs = Math.max(0, Math.trunc(input.nowMs));
-    if (!isConnectedServiceQuotaObservationFresh({ observedAtMs: fetchedAt, nowMs, maxAgeMs })) {
+    if (!isConnectedServiceQuotaObservationFresh({ observedAtMs: fetchedAt, nowMs, maxAgeMs: input.snapshot.staleAfterMs })) {
         return { status: 'no_proof', reason: 'stale_snapshot' };
     }
-    if (input.snapshot.meters.length > 0 && input.snapshot.meters.every(isUnavailableMeter)) {
+    const meters = input.snapshot.meters.map(normalizeConnectedServiceAuthGroupQuotaMeter);
+    if (meters.length > 0 && meters.every((meter) => !meter.applicable)) {
         return { status: 'no_proof', reason: 'snapshot_unavailable' };
     }
-    const effective = selectEffectiveQuotaMeter(input.snapshot.meters.map(normalizeMeter));
+    const effective = selectEffectiveQuotaMeter(meters);
     if (!effective) return { status: 'no_proof', reason: 'no_reliable_quota_meter' };
     if (effective.remainingPct !== null && effective.remainingPct <= 0) {
         return { status: 'no_proof', reason: 'snapshot_exhausted' };

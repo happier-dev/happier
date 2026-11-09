@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { getEventListeners } from 'node:events';
+import axios from 'axios';
 import { HomeConnectionDescriptorV1Schema, RunnerBrokerReadinessRequestV1Schema } from '@happier-dev/protocol';
 import { createNodeIrohHomeTunnelSession } from '@happier-dev/iroh-native/node';
 
@@ -6,6 +8,8 @@ import { createDaemonMachineIrohRuntime } from './daemonMachineIrohRuntime';
 import { prepareDaemonHomeIrohTransport } from './daemonHomeIrohTransport';
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
 import { resolveServerHttpBaseUrl, resolveServerSocketIoTransports } from '@/api/client/serverHttpBaseUrl';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 const HOME_DESCRIPTOR = HomeConnectionDescriptorV1Schema.parse({
   v: 1,
@@ -16,6 +20,14 @@ const HOME_DESCRIPTOR = HomeConnectionDescriptorV1Schema.parse({
 });
 
 const WORKSPACE_SYNC_HANDSHAKE = { v: 1, flow: 'workspace_sync', operationId: 'operation-1', exact: 'verified' };
+const RUNNER_READINESS_HANDSHAKE = RunnerBrokerReadinessRequestV1Schema.parse({
+  v: 1, kind: 'provider_broker_readiness', homeServerIdentityId: 'srv_runner_home',
+  activationId: '00000000-0000-4000-8000-000000000010', launchManifestCommitment: 'A'.repeat(43),
+  resourceId: 'resource-1', agentTargetKey: 'agent:happier.agent.codex/codex', protocol: 'openai-responses', modelId: 'gpt-5',
+  initiator: { installationId: 'installation-1', endpointId: 'a'.repeat(64) },
+  target: { machineId: 'broker-machine', endpointId: 'b'.repeat(64) },
+  activationSignature: 'A'.repeat(86), installationSignature: 'A'.repeat(86),
+});
 
 function nativeHarness(overrides: Record<string, unknown> = {}) {
   return {
@@ -45,7 +57,7 @@ function nativeHarness(overrides: Record<string, unknown> = {}) {
       runtimeOrigin: 'http://127.0.0.1:49123', carrier: 'iroh', observedPath: 'direct',
       startedAtMs: 1,
     })),
-    releaseHomeTunnel: vi.fn(async () => undefined),
+    releaseHomeTunnel: vi.fn(async (_tunnelId: string) => undefined),
     shutdownEndpoint: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -63,6 +75,27 @@ async function createHarness(nativeOverrides: Record<string, unknown> = {}, conn
 }
 
 describe('createDaemonMachineIrohRuntime', () => {
+  it('reads only bounded native failure status on demand before closing the tunnel', async () => {
+    const getMachineTunnelStatus = vi.fn(async () => ({
+      connectionActive: true, streamsOpened: 1, lastErrorCode: 'machine-stream-decision-timeout',
+      machineTunnelId: 'private-tunnel', endpointHandle: 'private-endpoint', remoteEndpointId: 'private-peer',
+      localPort: 48123, observedPath: 'relay', startedAtMs: 1,
+    }));
+    const { runtime } = await createHarness({ getMachineTunnelStatus });
+    if (!runtime.available) throw new Error('Expected native endpoint');
+    try {
+      const tunnel = await runtime.openHttpTunnel({ alpn: 'happier/machine/1', remoteEndpointId: 'b'.repeat(64),
+        flow: 'provider_broker_readiness', handshake: RUNNER_READINESS_HANDSHAKE },
+      { endpointId: 'b'.repeat(64) });
+      expect(getMachineTunnelStatus).not.toHaveBeenCalled();
+      expect(await tunnel.readFailureDiagnostic?.()).toEqual({
+        closingSide: 'initiator', closingStage: 'stream_decision',
+      });
+      expect(getMachineTunnelStatus).toHaveBeenCalledExactlyOnceWith('tunnel-1');
+      await tunnel.close();
+    } finally { await runtime.shutdown(); }
+  });
+
   it('uses an ephemeral native identity for an Account client without touching the daemon endpoint key', async () => {
     const native = nativeHarness();
     const runtime = await createDaemonMachineIrohRuntime({ happyHomeDir: '/daemon-home', identity: 'ephemeral',
@@ -80,6 +113,7 @@ describe('createDaemonMachineIrohRuntime', () => {
       profile: { serverUrl: 'https://home.example', homeConnectionDescriptor: HOME_DESCRIPTOR } as never,
       probe: async () => ({ status: 'ready' }),
     });
+    const publishedOrigin = resolveServerHttpBaseUrl();
     try {
       const helper = await acquireTerminalAuthEnrollmentRuntime(HOME_DESCRIPTOR, {
         // Exercise the real session lifecycle beneath the native/OS boundary.
@@ -92,7 +126,7 @@ describe('createDaemonMachineIrohRuntime', () => {
       await helper.close();
       expect(native.shutdownEndpoint).not.toHaveBeenCalled();
       expect(native.stopMachineAcceptor).not.toHaveBeenCalled();
-      expect(resolveServerHttpBaseUrl()).toBe('http://127.0.0.1:49123');
+      expect(resolveServerHttpBaseUrl()).toBe(publishedOrigin);
       expect(resolveServerSocketIoTransports()).toEqual(['websocket']);
       const cancellation = new AbortController();
       cancellation.abort();
@@ -127,13 +161,158 @@ describe('createDaemonMachineIrohRuntime', () => {
       await otherRevision.close();
       expect(privateNative.shutdownEndpoint).toHaveBeenCalledOnce();
       expect(native.shutdownEndpoint).not.toHaveBeenCalled();
-      expect(resolveServerHttpBaseUrl()).toBe('http://127.0.0.1:49123');
+      expect(resolveServerHttpBaseUrl()).toBe(publishedOrigin);
       await expect(runtime.ensureHomeTunnel!({ descriptor: HOME_DESCRIPTOR })).resolves.toMatchObject({
         runtimeOrigin: 'http://127.0.0.1:49123',
       });
     } finally {
       await home.release();
       await runtime.shutdown();
+    }
+  });
+
+  it.each(['lease', 'rejection', 'failed_release'] as const)(
+    'cancels a stalled borrowed Home acquisition and retains shared daemon custody after late %s', async lateOutcome => {
+      const { native, runtime } = await createHarness();
+      if (!runtime.available) throw new Error('expected daemon endpoint');
+      await runtime.startAttemptAcceptor({ admissionPort: 49124 });
+      const home = await prepareDaemonHomeIrohTransport({
+        runtime,
+        profile: { serverUrl: HOME_DESCRIPTOR.canonicalServerUrl, homeConnectionDescriptor: HOME_DESCRIPTOR },
+        applicationCarrierEligibility: 'automatic',
+        probe: async () => ({ status: 'ready' }),
+      });
+      const publishedOrigin = resolveServerHttpBaseUrl();
+      const lateLease = {
+        tunnelId: 'late-borrowed-home', endpointHandle: 'endpoint-1',
+        homeServerIdentityId: HOME_DESCRIPTOR.homeServerIdentityId, homeEndpointId: 'c'.repeat(64),
+        runtimeOrigin: 'http://127.0.0.1:49123', carrier: 'iroh', observedPath: 'direct', startedAtMs: 1,
+      };
+      let resolveDial!: (value: typeof lateLease) => void;
+      let rejectDial!: (error: unknown) => void;
+      const pendingDial = new Promise<typeof lateLease>((resolve, reject) => {
+        resolveDial = resolve;
+        rejectDial = reject;
+      });
+      native.ensureHomeTunnel.mockImplementationOnce(() => pendingDial);
+      const controller = new AbortController();
+      let outcome: Awaited<ReturnType<typeof acquireTerminalAuthEnrollmentRuntime>> | undefined;
+      const acquiring = acquireTerminalAuthEnrollmentRuntime(HOME_DESCRIPTOR, 'iroh', controller.signal)
+        .then(result => { outcome = result; return result; });
+      try {
+        // The native boundary is held only after the real daemon publication
+        // and enrollment borrower have selected the shared carrier.
+        await vi.waitFor(() => expect(native.ensureHomeTunnel).toHaveBeenCalledTimes(2));
+        controller.abort();
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(outcome).toMatchObject({ ok: false, reason: 'fail_closed', error: { name: 'AbortError' } });
+        expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+        expect(native.releaseHomeTunnel).not.toHaveBeenCalled();
+        expect(native.shutdownEndpoint).not.toHaveBeenCalled();
+        expect(native.stopMachineAcceptor).not.toHaveBeenCalled();
+
+        if (lateOutcome === 'rejection') {
+          rejectDial(new Error('native dial failed after cancellation'));
+          await new Promise<void>(resolve => setImmediate(resolve));
+          expect(native.releaseHomeTunnel).not.toHaveBeenCalled();
+        } else {
+          if (lateOutcome === 'failed_release') native.releaseHomeTunnel.mockRejectedValueOnce(new Error('late release failed'));
+          resolveDial(lateLease);
+          await vi.waitFor(() => expect(native.releaseHomeTunnel).toHaveBeenCalledExactlyOnceWith('late-borrowed-home'));
+        }
+        expect(resolveServerHttpBaseUrl()).toBe(publishedOrigin);
+        expect(resolveServerSocketIoTransports()).toEqual(['websocket']);
+        const nextController = new AbortController();
+        const next = await acquireTerminalAuthEnrollmentRuntime(HOME_DESCRIPTOR, 'iroh', nextController.signal);
+        expect(next).toMatchObject({ ok: true, runtime: { carrier: 'iroh', runtimeOrigin: 'http://127.0.0.1:49123' } });
+        expect(getEventListeners(nextController.signal, 'abort')).toHaveLength(0);
+        if (next.ok) await next.close();
+        expect(native.shutdownEndpoint).not.toHaveBeenCalled();
+        expect(native.stopMachineAcceptor).not.toHaveBeenCalled();
+      } finally {
+        resolveDial(lateLease);
+        const finalOutcome = await acquiring;
+        if (finalOutcome.ok) await finalOutcome.close();
+        await home.release();
+        await runtime.shutdown();
+      }
+      if (lateOutcome === 'failed_release') {
+        expect(native.releaseHomeTunnel.mock.calls.filter(([id]) => id === 'late-borrowed-home')).toHaveLength(2);
+      }
+    },
+  );
+
+  it('cancels a stalled borrowed Home approval before any authentication HTTP effect', async () => {
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL',
+      'HAPPIER_LOCAL_SERVER_URL', 'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_HOME_CARRIER_POLICY']);
+    const { reloadConfiguration } = await import('@/configuration');
+    try {
+      await withTempDir('happier-borrowed-home-approval-', async homeDir => {
+        envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+          HAPPIER_SERVER_URL: undefined, HAPPIER_LOCAL_SERVER_URL: undefined, HAPPIER_PUBLIC_SERVER_URL: undefined,
+          HAPPIER_WEBAPP_URL: undefined, HAPPIER_HOME_CARRIER_POLICY: 'automatic' });
+        reloadConfiguration();
+        const { addServerProfile, adoptServerProfileHomeConnectionDescriptor } = await import('@/server/serverProfiles');
+        const profile = await addServerProfile({ name: 'Borrowed Home', serverUrl: HOME_DESCRIPTOR.canonicalServerUrl,
+          webappUrl: HOME_DESCRIPTOR.canonicalServerUrl, use: true });
+        await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, descriptor: HOME_DESCRIPTOR, observation: 'exact' });
+        const { writeCredentialsTokenOnlyForServerId } = await import('@/persistence');
+        await writeCredentialsTokenOnlyForServerId(profile.id, { token: 'fixture-borrowed-approval' });
+        const { resolveCliHomeTarget } = await import('@/server/homeTarget');
+        const target = await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: profile.id });
+        const { native, runtime } = await createHarness();
+        if (!runtime.available) throw new Error('expected daemon endpoint');
+        const home = await prepareDaemonHomeIrohTransport({ runtime,
+          profile: { serverUrl: HOME_DESCRIPTOR.canonicalServerUrl, homeConnectionDescriptor: HOME_DESCRIPTOR },
+          probe: async () => ({ status: 'ready' }) });
+        const lateLease = {
+          tunnelId: 'late-approval-home', endpointHandle: 'endpoint-1',
+          homeServerIdentityId: HOME_DESCRIPTOR.homeServerIdentityId, homeEndpointId: 'c'.repeat(64),
+          runtimeOrigin: 'http://127.0.0.1:49123', carrier: 'iroh', observedPath: 'direct', startedAtMs: 1,
+        };
+        let resolveDial!: (lease: typeof lateLease) => void;
+        native.ensureHomeTunnel.mockImplementationOnce(() => new Promise<typeof lateLease>(resolve => { resolveDial = resolve; }));
+        // Network is the genuine effect boundary; approval, credentials,
+        // descriptor selection and borrowed native lifecycle remain real.
+        const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Unexpected auth POST'));
+        const get = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected currentness GET'));
+        const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected Home fetch'));
+        const { approveTerminalAuthRequest } = await import('@/auth/terminalAuthApproval');
+        const controller = new AbortController();
+        let settlement = 'pending';
+        let failure: unknown;
+        const approving = approveTerminalAuthRequest({
+          publicKey: Buffer.alloc(32, 3).toString('base64'), target, signal: controller.signal,
+          supportsTokenOnly: true, authorizeUnattendedTeamAccess: true,
+          pairing: { secretB64Url: Buffer.alloc(32, 11).toString('base64url'),
+            createdAtMs: Date.now() - 1_000, expiresAtMs: Date.now() + 60_000 },
+        }).then(() => { settlement = 'resolved'; }, error => { settlement = 'rejected'; failure = error; });
+        try {
+          await vi.waitFor(() => expect(native.ensureHomeTunnel).toHaveBeenCalledTimes(2));
+          controller.abort();
+          await new Promise<void>(resolve => setImmediate(resolve));
+          expect(settlement).toBe('rejected');
+          expect(failure).toBeInstanceOf(Error);
+          expect(post.mock.calls.length).toBe(0);
+          expect(get.mock.calls.length).toBe(0);
+          expect(fetch.mock.calls.length).toBe(0);
+          resolveDial(lateLease);
+          await vi.waitFor(() => expect(native.releaseHomeTunnel).toHaveBeenCalledWith('late-approval-home'));
+          expect(post.mock.calls.length).toBe(0);
+          expect(native.shutdownEndpoint).not.toHaveBeenCalled();
+        } finally {
+          resolveDial(lateLease);
+          await approving;
+          post.mockRestore();
+          get.mockRestore();
+          fetch.mockRestore();
+          await home.release();
+          await runtime.shutdown();
+        }
+      });
+    } finally {
+      envScope.restore();
+      reloadConfiguration();
     }
   });
 
@@ -383,21 +562,7 @@ describe('createDaemonMachineIrohRuntime', () => {
     expect(runtime.available).toBe(true);
     if (!runtime.available) return;
 
-    const handshake = RunnerBrokerReadinessRequestV1Schema.parse({
-      v: 1,
-      kind: 'provider_broker_readiness',
-      homeServerIdentityId: 'srv_runner_home',
-      activationId: '00000000-0000-4000-8000-000000000010',
-      launchManifestCommitment: 'A'.repeat(43),
-      resourceId: 'resource-1',
-      agentTargetKey: 'agent:happier.agent.codex/codex',
-      protocol: 'openai-responses',
-      modelId: 'gpt-5',
-      initiator: { installationId: 'installation-1', endpointId: 'a'.repeat(64) },
-      target: { machineId: 'broker-machine', endpointId: 'b'.repeat(64) },
-      activationSignature: 'A'.repeat(86),
-      installationSignature: 'A'.repeat(86),
-    });
+    const handshake = RUNNER_READINESS_HANDSHAKE;
     const tunnel = await runtime.openHttpTunnel({
       alpn: 'happier/machine/1', remoteEndpointId: 'b'.repeat(64),
       flow: 'provider_broker_readiness', handshake,

@@ -70,6 +70,7 @@ const harness = vi.hoisted(() => {
         pause: vi.fn(async () => {}),
         resume: vi.fn(async () => {}),
         refreshAssignments: vi.fn(async () => {}),
+        catchUp: vi.fn(async () => {}),
         handleServerUpdate: vi.fn(),
     }));
     const apiMachine = {
@@ -598,10 +599,6 @@ vi.mock('./sessions/visibleConsoleSpawnWaiter', () => ({
 
 vi.mock('./sessions/stopSession', () => ({
     createStopSession: vi.fn(() => vi.fn(async () => ({ status: 'stopped' as const }))),
-}));
-
-vi.mock('./sessions/resolveSpawnWebhookResult', () => ({
-    resolveSpawnWebhookResult: vi.fn(({ result }) => result),
 }));
 
 vi.mock('./lifecycle/heartbeat', () => ({

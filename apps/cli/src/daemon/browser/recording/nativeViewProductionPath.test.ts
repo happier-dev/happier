@@ -95,7 +95,7 @@ describe('nativeViewCapture production path (desktop daemon entrypoint wiring)',
       expect(outputPath).toMatch(/^browser_recording_.+\.capture_1\.native-view\.png$/);
       expect(outputPath).not.toMatch(/^[/\\]|^[A-Za-z]:[\\/]/);
     } finally {
-      runtime.stop();
+      await runtime.stop();
     }
   });
 
@@ -128,7 +128,7 @@ describe('nativeViewCapture production path (desktop daemon entrypoint wiring)',
         reason: { code: 'browser_recording_capture_unavailable' },
       });
     } finally {
-      runtime.stop();
+      await runtime.stop();
     }
   });
 
@@ -143,7 +143,7 @@ describe('nativeViewCapture production path (desktop daemon entrypoint wiring)',
         status: 'started',
       });
     } finally {
-      runtime.stop();
+      await runtime.stop();
     }
   });
 });

@@ -264,6 +264,13 @@ export function createEndOwnerRemainder(input: Readonly<{
                 // a swapped live owner in an old physical fence is an exact-identity sweep instead.
                 const exclusiveContainment = containment && members.every(member => targets.some(target =>
                     target.pid === member.pid && equalProcessStart(target.start, member.start))) ? containment : undefined;
+                // This fresh view proves nothing remains to signal: the terminator's
+                // rounds would re-read the whole machine to change nothing. A Windows
+                // Job's members appear only in the terminator's verified Job read.
+                if (targets.length === 0 && members.length === 0 && containment?.kind !== 'windows_job'
+                    && !(containment && view.snapshot.partial?.some(row => row.missing.includes('cgroup')))) {
+                    return withTreeResult({ status: ownedRows.length > 0 ? 'incomplete' : 'complete', outcomes: [] });
+                }
                 let authorizedSnapshot = view.snapshot;
                 const authorize = async (snapshot: Extract<ProcessCensusSnapshot, { status: 'ok' }>) => {
                     const current = await input.processOwnershipRuntime.resolveSnapshot(snapshot, undefined, { requesterAttribution: 'retained' });

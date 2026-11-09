@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import * as filesystem from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AxiosError, AxiosHeaders } from 'axios';
@@ -16,12 +17,16 @@ import {
 import type { NormalizedLocalServiceInventorySnapshot } from './inventory/scanner';
 import { createLocalServiceEndpointEnricher } from './inventory/endpoint';
 import { createLocalPageTitleEnricher } from './inventory/pageTitle';
-import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import { LocalServicePreviewResourceV1Schema, LocalServicePreviewSnapshotV1Schema, localServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
+import { createLiveWorkProducerGroup } from '@/daemon/lifecycle/managedActivity';
 import { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState, selectLocalServiceLaunchTargets } from '../../../../../../apps/ui/sources/sync/domains/local/services/launch/store';
 import { buildLocalServiceRows } from '../../../../../../apps/ui/sources/sync/domains/local/services/serviceRow';
+import { groupLocalServiceRowsBySection } from '../../../../../../apps/ui/sources/sync/domains/local/services/serviceRow';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
 
 function previewServerBoundary() {
     const registrations = new Map<string, unknown>();
@@ -78,6 +83,7 @@ function buildSnapshot(
             lastSeenAt: 1_000,
             state: 'listening',
             source: 'detected',
+            classification: { kind: 'vite', signals: ['command:vite'] },
             labels: [],
             confidence: 'high',
             processOwnershipConfidence: 'medium',
@@ -99,6 +105,412 @@ function buildSnapshot(
 }
 
 describe('createLocalServicesDaemonRuntime', () => {
+    it('probes only the explicitly opened listener rather than inventory refreshes', async () => {
+        const probes: number[] = [];
+        const server = previewServerBoundary();
+        const runtime = createLocalServicesDaemonRuntime({
+            machineId: 'machine-a', accountId: 'owner', previewServer: server.input,
+            inventoryEnabled: () => true, startLoop: false, now: () => 2_000,
+            endpointEnricher: createLocalServiceEndpointEnricher({
+                now: () => 2_000, probe: async ({ port, scheme }) => { probes.push(port); return scheme === 'http'; },
+            }),
+            scan: async () => ({
+                listeners: Array.from({ length: 513 }, (_, index) => ({ address: '127.0.0.1', port: 5_000 + index,
+                    pid: 1_000 + index, protocol: 'tcp' as const })),
+                processes: new Map(Array.from({ length: 513 }, (_, index) => [1_000 + index,
+                    { pid: 1_000 + index, command: 'node vite' }])), workspaces: [], diagnostics: [],
+            }),
+        });
+        try {
+            await runtime.refreshInventoryNow();
+            const snapshot = await runtime.refreshInventoryNow();
+            expect(probes.length).toBe(0);
+            const launcher = LocalServiceLauncherSnapshotV1Schema.parse(await runtime.launcherRoutes.getSnapshot({ scope: 'machine' }));
+            expect(launcher.targets.filter(target => target.actions.includes('register_preview'))).toHaveLength(513);
+            const opened = await runtime.previewRoutes.openOrCreate({ machineId: 'machine-a', inventoryEntryId: snapshot.entries[0]!.id });
+            expect(opened).toMatchObject({ ok: true, response: { preview: { resource: {
+                target: { scheme: 'http', host: '127.0.0.1', port: 5_000 },
+            } } } });
+            expect(probes).toEqual([5_000, 5_000]);
+            await runtime.previewRoutes.openOrCreate({ machineId: 'machine-a', inventoryEntryId: snapshot.entries[0]!.id });
+            expect(probes).toEqual([5_000, 5_000, 5_000, 5_000]);
+        } finally { await runtime.stop(); }
+    });
+
+    it('does no discovery for unrelated operations before Services demand, then pushes a real Start', async () => {
+        const accountId = 'owner';
+        const machineId = 'machine-a';
+        const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => accountId });
+        let scans = 0;
+        let discoveries = 0;
+        let publications = 0;
+        const runtime = createLocalServicesDaemonRuntime({ machineId, accountId, startLoop: false, inventoryEnabled: () => true,
+            runTargets: () => { discoveries++; return []; },
+            scan: async () => { scans++; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; } });
+        const detach = runtime.launcherRoutes.bindStartOperations?.(operations.store, accountId);
+        const unsubscribe = runtime.inventoryRegistry.subscribe(() => { publications++; });
+        try {
+            const unrelated = operations.store.create({ operationId: 'script', actionId: 'projects.script.run',
+                scope: { accountId, machineId }, title: 'Script', inputIdentity: '{}', cancellation: 'unsupported' });
+            operations.store.markRunning(unrelated.operationId);
+            operations.store.updateProgress(unrelated.operationId, { kind: 'phase', phase: 'running' });
+            operations.store.succeed(unrelated.operationId, {});
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect({ scans, discoveries, publications }).toEqual({ scans: 0, discoveries: 0, publications: 0 });
+            const start = operations.store.create({ operationId: 'service', actionId: 'localServices.launcher.start',
+                scope: { accountId, machineId }, title: 'Start', inputIdentity: '{}', cancellation: 'unsupported',
+                domainRef: { kind: 'projectService', purpose: 'start', sourceWorkspace: { serverId: 'home', refId: 'checkout' },
+                    workspace: { serverId: 'home', machineId, workspaceId: 'checkout', rootPath: process.cwd() },
+                    declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'worker' } } } });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect({ scans, discoveries, publications }).toEqual({ scans: 0, discoveries: 0, publications: 1 });
+            operations.store.cancel(start.operationId);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect({ scans, discoveries, publications }).toEqual({ scans: 0, discoveries: 0, publications: 2 });
+        } finally { unsubscribe(); detach?.(); await runtime.stop(); }
+    });
+
+    it.each(['failed', 'cancelled', 'native_ready'] as const)('publishes an accepted retry before native readiness and settles from %s authority', async outcome => {
+        const machineId = 'machine-a';
+        const accountId = 'owner';
+        const workspace = { id: 'checkout', serverId: 'home', machineId, rootPath: process.cwd(), createdAtMs: 1 };
+        const address = { serverId: workspace.serverId, machineId, workspaceId: workspace.id, rootPath: workspace.rootPath };
+        const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'worker' } };
+        const serviceId = createProjectServiceDeclarationTargetIdV1(workspace, declaration.selection);
+        const owner = createManagedServicesOwner({
+            processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+            dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
+        });
+        const launch = () => owner.superviseProject({ kind: 'workspace', workspace, declaration, cwd: workspace.rootPath,
+            serviceId, specIdentity: 'worker', isCurrent: () => true,
+            requester: { serverId: 'home', accountId, machineId, installationId: 'installation' },
+            processSpec: { mode: { kind: 'managedSpawn', endpointNone: true } },
+            authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'],
+                env: {}, release: async () => undefined }) });
+        const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => accountId });
+        let scans = 0;
+        let discoveries = 0;
+        const runtime = createLocalServicesDaemonRuntime({ machineId, accountId, startLoop: false,
+            inventoryEnabled: () => true, projectManagedServices: owner,
+            runTargets: () => { discoveries++; return [{ id: serviceId, cwd: workspace.rootPath,
+                workspaceId: workspace.id, workspace: address, declaration, title: 'worker' }]; },
+            scan: async () => { scans++; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; } });
+        const detach = runtime.launcherRoutes.bindStartOperations?.(operations.store, accountId);
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        let enter!: () => void;
+        const entered = new Promise<void>(resolve => { enter = resolve; });
+        let completion: Promise<unknown> | undefined;
+        try {
+            const first = await launch();
+            const pid = owner.readProcessRoots()[0]!.pid;
+            let failureObservation: ReturnType<typeof first.observe> | undefined;
+            const failed = new Promise<void>(resolve => {
+                failureObservation = first.observe(snapshot => { if (snapshot.state === 'failed') resolve(); });
+            });
+            try {
+                process.kill(pid, 'SIGTERM');
+                // Terminal cleanup owns the failed-attempt projection. Join its
+                // real publication rather than a one-second scheduler assumption.
+                await failed;
+                expect(first.snapshot().state).toBe('failed');
+            } finally { failureObservation?.dispose(); }
+            await runtime.refreshInventoryNow();
+            const read = async () => LocalServiceLauncherSnapshotV1Schema.parse(await runtime.launcherRoutes.getSnapshot({ scope: 'machine', discovery: 'cached' }));
+            expect((await read()).targets[0]?.serviceState).toBe('failed');
+            const before = { scans, discoveries };
+            let publications = 0;
+            const unsubscribe = runtime.inventoryRegistry.subscribe(() => { publications++; });
+            try {
+                completion = operations.observeExecution({ actionId: 'localServices.launcher.start', input: {}, execute: async operation => {
+                    operation.operationOwnerUpdate.update({ state: 'running', domainRef: { kind: 'projectService', purpose: 'start',
+                        sourceWorkspace: { serverId: 'home', refId: workspace.id }, workspace: address, declaration } });
+                    enter(); await gate;
+                    return outcome === 'failed' ? { ok: false, errorCode: 'project_service_start_unavailable', error: 'failed' }
+                        : { ok: true, result: {} };
+                } });
+                await entered;
+                await new Promise<void>(resolve => setImmediate(resolve));
+                const pending = await read();
+                expect(pending.targets).toHaveLength(1);
+                expect(pending.targets[0]).toMatchObject({ state: 'starting', serviceState: 'starting' });
+                const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: pending.targets, sessionId: null, scope: 'workspace' });
+                expect(rows[0]?.status).toBe('starting');
+                expect(groupLocalServiceRowsBySection(rows)[0]?.section).toBe('running');
+                expect(publications).toBe(1);
+                const start = operations.store.list({ accountId, machineId }).items[0]!;
+                for (let index = 0; index < 20; index++) operations.store.updateProgress(start.operationId, { kind: 'phase', phase: `preparing-${index}` });
+                const foreign = operations.store.create({ operationId: 'foreign', actionId: 'localServices.launcher.start',
+                    scope: { accountId: 'someone-else', machineId }, title: 'Start', inputIdentity: '{}', cancellation: 'unsupported',
+                    domainRef: { kind: 'projectService', purpose: 'start', sourceWorkspace: { serverId: 'home', refId: workspace.id }, workspace: address, declaration } });
+                operations.store.succeed(foreign.operationId, {});
+                await new Promise<void>(resolve => setImmediate(resolve));
+                expect(publications).toBe(1);
+                expect({ scans, discoveries }).toEqual(before);
+                if (outcome === 'native_ready') {
+                    await launch();
+                    await new Promise<void>(resolve => setImmediate(resolve));
+                    expect((await read()).targets[0]?.serviceState).toBe('running');
+                } else if (outcome === 'cancelled') operations.store.cancel(start.operationId);
+                release(); await completion;
+                await new Promise<void>(resolve => setImmediate(resolve));
+                const settled = await read();
+                expect(settled.targets[0]?.serviceState).toBe(outcome === 'native_ready' ? 'running' : 'failed');
+                expect(publications).toBe(2);
+                expect({ scans, discoveries }).toEqual(before);
+            } finally { release(); await completion; unsubscribe(); }
+        } finally { detach?.(); await runtime.stop(); await owner.dispose(); }
+    });
+
+    it('pushes native readiness and reads the complete current feed without rediscovering the Machine', async () => {
+        let observedAt = 1_000;
+        let scans = 0;
+        let discoveries = 0;
+        let holdDiscovery = false;
+        let running = true;
+        let releaseDiscovery!: () => void;
+        const discoveryGate = new Promise<void>(resolve => { releaseDiscovery = resolve; });
+        const owner = createManagedServicesOwner({
+            processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+            dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
+        });
+        const workspace = { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: process.cwd(), createdAtMs: 1 };
+        const declaredWorkspace = { serverId: workspace.serverId, machineId: workspace.machineId,
+            workspaceId: workspace.id, rootPath: workspace.rootPath };
+        const runTargets = Array.from({ length: 100 }, (_, index) => ({ id: `worker-${index}`, cwd: workspace.rootPath,
+            workspaceId: workspace.id, workspace: declaredWorkspace, title: `worker-${index}`,
+            declaration: { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: `worker-${index}` } } }));
+        const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
+            inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner,
+            // Discovery's filesystem boundary may be pending while native custody already knows readiness.
+            runTargets: async () => { discoveries++; if (holdDiscovery) await discoveryGate; return runTargets; },
+            scan: async () => { scans++; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; } });
+        const cancellation = new AbortController();
+        try {
+            await runtime.launcherRoutes.getSnapshot({ scope: 'machine' });
+            await runtime.refreshInventoryNow();
+            const initial = runtime.inventoryRegistry.getSnapshot();
+            const before = { discoveries, scans };
+            holdDiscovery = true;
+            const answers: unknown[] = [];
+            const watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: initial.generatedAt,
+                signal: cancellation.signal }).then(answer => { answers.push(answer); });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            observedAt += 10_000;
+            const handle = await owner.superviseProject({ kind: 'workspace', workspace,
+                declaration: runTargets[0]!.declaration, cwd: workspace.rootPath, serviceId: 'worker-0', specIdentity: 'worker-0',
+                isCurrent: () => true,
+                requester: { serverId: 'home', accountId: 'owner', machineId: 'machine-a', installationId: 'installation' },
+                processSpec: { mode: { kind: 'native',
+                    instance: { adapter: { pluginId: 'fixture.plugin', localId: 'worker' }, nativeResourceId: 'worker' },
+                    lifecycle: { inspect: async () => ({ phase: running ? 'running' : 'stopped', readiness: 'ready', endpoint: null }),
+                        stop: async () => { running = false; return { status: 'stopped' }; } } } },
+                authorizeLaunch: async () => ({ command: process.execPath, args: [], env: {}, release: async () => undefined }),
+            });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(handle.snapshot().state).toBe('healthy');
+            expect({ discoveries, scans }).toEqual(before);
+            expect(answers).toEqual([expect.objectContaining({ changed: true })]);
+            const current = LocalServiceLauncherSnapshotV1Schema.parse(await runtime.launcherRoutes.getSnapshot({
+                scope: 'machine', discovery: 'cached',
+            }));
+            expect(current.targets).toHaveLength(100);
+            expect(current.targets.find(target => target.id === 'worker-0')).toMatchObject({ serviceState: 'healthy' });
+            expect({ discoveries, scans }).toEqual(before);
+            cancellation.abort();
+            await watch;
+        } finally { releaseDiscovery(); cancellation.abort(); await runtime.stop(); await owner.dispose(); }
+    });
+
+    it('pushes preview registration and revocation through the existing Machine watch without another scan', async () => {
+        const scan = vi.fn(async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }));
+        const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
+            inventoryEnabled: () => true, runTargets: () => [], scan, now: () => 1_000 });
+        const cancellation = new AbortController();
+        try {
+            await runtime.refreshInventoryNow();
+            runtime.inventoryRegistry.replaceSnapshot(buildSnapshot());
+            const forgotten = runtime.inventoryRegistry.forgetEntry({ inventoryId: 'entry-1', updatedAt: 1_001 });
+            if (!forgotten.ok) throw new Error('Expected a forgotten listener');
+            const first = runtime.inventoryRegistry.getSnapshot();
+            const scans = scan.mock.calls.length;
+            let notifications = 0;
+            runtime.inventoryRegistry.subscribe(() => { notifications++; });
+            const answers: unknown[] = [];
+            const watched = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: first.generatedAt, signal: cancellation.signal })
+                .then(answer => { answers.push(answer); });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            const resource = { previewId: 'preview-a', sessionId: 'session-a', machineId: 'machine-a',
+                owner: { kind: 'session' as const, id: 'session-a' },
+                target: { scheme: 'http' as const, host: '127.0.0.1', port: 5173 },
+                initialPath: { pathname: '/', search: '' }, display: { title: 'App', addressLabel: 'localhost:5173' }, originMode: 'host' as const };
+            expect(registerLocalServicePreview(runtime.previewRegistry, resource).ok).toBe(true);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(answers).toEqual([expect.objectContaining({ changed: true })]);
+            await watched;
+            expect(notifications).toBe(1);
+            registerLocalServicePreview(runtime.previewRegistry, resource);
+            expect(notifications).toBe(1);
+            unregisterLocalServicePreview(runtime.previewRegistry, resource.previewId);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(notifications).toBe(2);
+            expect(scan).toHaveBeenCalledTimes(scans);
+            expect(runtime.getSummary()).toEqual({ v: 1, state: 'ready', runningCount: 0 });
+            expect(runtime.inventoryRegistry.undoForget(forgotten.undoKey).ok).toBe(true);
+            expect(runtime.inventoryRegistry.getSnapshot().entries.map(entry => entry.id)).toEqual(['entry-1']);
+        } finally { cancellation.abort(); await runtime.stop(); }
+    });
+
+    it('keeps the settled Machine watch quiet after preview registration while scans continue, and pushes real preview changes', async () => {
+        let observedAt = 1_000;
+        const server = previewServerBoundary();
+        const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
+            accountId: 'owner', previewServer: server.input,
+            inventoryEnabled: () => true, runTargets: () => [], now: () => observedAt,
+            endpointEnricher: createLocalServiceEndpointEnricher({ now: () => observedAt,
+                probe: async () => true }),
+            scan: async () => ({ listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp' as const, pid: 400 }],
+                processes: new Map([[400, { pid: 400, command: 'node vite' }]]), workspaces: [], diagnostics: [] }) });
+        const cancellation = new AbortController();
+        try {
+            const initial = await runtime.refreshInventoryNow();
+            const registration = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
+                signal: cancellation.signal });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            const created = await runtime.previewRoutes.openOrCreate({ machineId: 'machine-a', sessionId: 'session-a',
+                inventoryEntryId: initial.entries[0]!.id });
+            if (!created.ok) throw new Error(created.reasonCode);
+            const resource = created.response.preview.resource;
+            expect((await registration).changed).toBe(true);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            const cursor = runtime.inventoryRegistry.getSnapshot().generatedAt;
+            let publications = 0;
+            let launcherReads = 0;
+            const release = runtime.inventoryRegistry.subscribe(() => { publications++; });
+            const watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: cursor, signal: cancellation.signal })
+                .then(async answer => {
+                    if (answer.changed) { launcherReads++; await runtime.launcherRoutes.getSnapshot({ scope: 'machine' }); }
+                    return answer;
+                });
+            try {
+                // The same post-registration idle period as QA-R81e: real scans,
+                // one parked watch, no navigation or additional preview mutation.
+                for (let scan = 0; scan < 12; scan++) { observedAt += 10_000; await runtime.refreshInventoryNow(); }
+                await new Promise<void>(resolve => setImmediate(resolve));
+                expect({ publications, launcherReads }).toEqual({ publications: 0, launcherReads: 0 });
+                expect(runtime.inventoryRegistry.getSnapshot().generatedAt).toBe(cursor);
+                registerLocalServicePreview(runtime.previewRegistry, { ...resource, display: { ...resource.display, title: 'Renamed app' } });
+                expect((await watch).changed).toBe(true);
+                expect({ publications, launcherReads }).toEqual({ publications: 1, launcherReads: 1 });
+                expect((await runtime.launcherRoutes.getSnapshot({ scope: 'machine' })).targets).toEqual([
+                    expect.objectContaining({ browserTarget: expect.objectContaining({ display: expect.objectContaining({ title: 'Renamed app' }) }) }),
+                ]);
+                const bindingWatch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
+                    signal: cancellation.signal });
+                await new Promise<void>(resolve => setImmediate(resolve));
+                // A real preview binding change is not necessarily a changed launcher row.
+                registerLocalServicePreview(runtime.previewRegistry, { ...resource,
+                    display: { ...resource.display, title: 'Renamed app' }, initialPath: { pathname: '/changed', search: '' } });
+                expect((await bindingWatch).changed).toBe(true);
+                expect((await runtime.previewRoutes.getSnapshot()).resources[0]?.initialPath.pathname).toBe('/changed');
+                const changedPublications = publications;
+                for (let scan = 0; scan < 12; scan++) { observedAt += 10_000; await runtime.refreshInventoryNow(); }
+                expect(publications).toBe(changedPublications);
+                const forgotten = runtime.inventoryRegistry.forgetEntry({ inventoryId: initial.entries[0]!.id, updatedAt: observedAt });
+                if (!forgotten.ok) throw new Error(forgotten.reason);
+                const revokeWatch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt,
+                    signal: cancellation.signal });
+                await new Promise<void>(resolve => setImmediate(resolve));
+                unregisterLocalServicePreview(runtime.previewRegistry, resource.previewId);
+                expect((await revokeWatch).changed).toBe(true);
+                const revokedPublications = publications;
+                for (let scan = 0; scan < 12; scan++) { observedAt += 10_000; await runtime.refreshInventoryNow(); }
+                expect(publications).toBe(revokedPublications);
+                expect(runtime.inventoryRegistry.getSnapshot().entries).toEqual([]);
+                expect(runtime.inventoryRegistry.undoForget(forgotten.undoKey).ok).toBe(true);
+                expect(runtime.inventoryRegistry.getSnapshot().entries).toHaveLength(1);
+            } finally { release(); cancellation.abort(); await watch; }
+        } finally { cancellation.abort(); await runtime.stop(); }
+    });
+
+    it('keeps settled native Services quiet across unchanged scans and operation projection wakes', async () => {
+        const accountId = 'owner';
+        const machineId = 'machine-a';
+        const workspace = { id: 'checkout', serverId: 'home', machineId, rootPath: process.cwd(), createdAtMs: 1 };
+        const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'worker' } };
+        const serviceId = createProjectServiceDeclarationTargetIdV1(workspace, declaration.selection);
+        const owner = createManagedServicesOwner({
+            processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+            dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
+        });
+        const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => accountId });
+        const operation = operations.store.create({ operationId: 'accepted-start', actionId: 'localServices.launcher.start',
+            scope: { accountId, machineId }, title: 'Start', inputIdentity: '{}', cancellation: 'unsupported',
+            domainRef: { kind: 'projectService', purpose: 'start', sourceWorkspace: { serverId: 'home', refId: workspace.id },
+                workspace: { serverId: 'home', machineId, workspaceId: workspace.id, rootPath: workspace.rootPath }, declaration } });
+        operations.store.markRunning(operation.operationId);
+        let observedAt = 1_000;
+        const runtime = createLocalServicesDaemonRuntime({ machineId, accountId, startLoop: false,
+            inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner, runTargets: () => [],
+            scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
+        const cancellation = new AbortController();
+        let detach: (() => void) | undefined;
+        try {
+            // Native IO alone is substituted; supervision, accepted-operation storage,
+            // launcher publication and the mounted reader's parked watch remain real.
+            const handle = await owner.superviseProject({ kind: 'workspace', workspace, declaration,
+                cwd: workspace.rootPath, serviceId, specIdentity: serviceId, isCurrent: () => true,
+                requester: { serverId: 'home', accountId, machineId, installationId: 'installation' },
+                processSpec: { mode: { kind: 'native',
+                    instance: { adapter: { pluginId: 'fixture.plugin', localId: 'worker' }, nativeResourceId: 'ready-worker' },
+                    lifecycle: { inspect: async () => ({ phase: 'running', readiness: 'ready', endpoint: null }),
+                        stop: async () => ({ status: 'stopped' }) } } },
+                authorizeLaunch: async () => ({ command: process.execPath, args: [], env: {}, release: async () => undefined }),
+            });
+            detach = runtime.launcherRoutes.bindStartOperations?.(operations.store, accountId);
+            await runtime.refreshInventoryNow();
+            expect((await runtime.launcherRoutes.getSnapshot({ scope: 'machine' })).targets)
+                .toEqual([expect.objectContaining({ serviceState: 'healthy', state: 'available' })]);
+            const cursor = runtime.inventoryRegistry.getSnapshot().generatedAt;
+            let launcherReads = 0;
+            let publications = 0;
+            const unsubscribe = runtime.inventoryRegistry.subscribe(() => { publications++; });
+            const watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: cursor, signal: cancellation.signal })
+                .then(async answer => {
+                    if (answer.changed) {
+                        launcherReads++;
+                        await runtime.launcherRoutes.getSnapshot({ scope: 'machine' });
+                    }
+                    return answer;
+                });
+            try {
+                for (let index = 0; index < 75; index++) {
+                    observedAt += 10_000;
+                    operations.store.updateProgress(operation.operationId, { kind: 'phase', phase: `receipt-${index}` });
+                    const unrelated = operations.store.create({ operationId: `script-${index}`, actionId: 'projects.script.run',
+                        scope: { accountId, machineId }, title: 'Script', inputIdentity: '{}', cancellation: 'unsupported' });
+                    operations.store.markRunning(unrelated.operationId);
+                    operations.store.succeed(unrelated.operationId, {});
+                    await runtime.refreshInventoryNow();
+                }
+                operations.store.succeed(operation.operationId, {});
+                await new Promise<void>(resolve => setImmediate(resolve));
+                expect({ launcherReads, publications }).toEqual({ launcherReads: 0, publications: 0 });
+                expect(runtime.inventoryRegistry.getSnapshot().generatedAt).toBe(cursor);
+                await handle.stop();
+                await runtime.refreshInventoryNow();
+                expect((await watch).changed).toBe(true);
+                expect(launcherReads).toBe(1);
+                // Stop can publish distinct control/retirement facts. The exact
+                // zero-publication contract above concerns unchanged idle work.
+                expect(publications).toBeGreaterThan(0);
+                expect(owner.listProjectServices()).toEqual([]);
+                expect((await runtime.launcherRoutes.getSnapshot({ scope: 'machine', discovery: 'cached' })).targets)
+                    .toEqual([]);
+            } finally { unsubscribe(); cancellation.abort(); await watch; }
+        } finally { detach?.(); cancellation.abort(); await runtime.stop(); await owner.dispose(); }
+    });
+
     it('keeps scans fresh without waking inventory or launcher readers for unchanged facts', async () => {
         let observedAt = 1_000;
         let port = 5173;
@@ -193,16 +605,18 @@ describe('createLocalServicesDaemonRuntime', () => {
 
     it('publishes declaration changes and endpoint-free managed start/stop without a listener change', async () => {
         let observedAt = 1_000;
+        let scans = 0;
         const owner = createManagedServicesOwner({
             processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
             // Literal Project commands do not install plugin dependencies.
             dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
         });
         const runTargets: import('./launch/runTargets').LocalServiceLauncherRunTarget[] = [];
+        const serviceActivity = createLiveWorkProducerGroup(() => [owner.activity]);
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
-            inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner,
+            inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: { ...owner, activity: serviceActivity },
             runTargets: () => runTargets,
-            scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
+            scan: async () => { scans++; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; } });
         const workspaceRef = { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: process.cwd(), createdAtMs: 1 };
         const workspace = { serverId: workspaceRef.serverId, machineId: workspaceRef.machineId, workspaceId: workspaceRef.id,
             rootPath: workspaceRef.rootPath };
@@ -217,9 +631,10 @@ describe('createLocalServicesDaemonRuntime', () => {
             expect(publications).toBe(1);
             runTargets.push({ id: 'worker', cwd: workspace.rootPath, workspaceId: workspace.workspaceId,
                 workspace, declaration, title: 'worker' });
+            await runtime.launcherRoutes.getSnapshot({ scope: 'machine' });
             await observe();
             expect(publications).toBe(2);
-            const handle = await owner.superviseProject({ workspace: workspaceRef, declaration, cwd: workspaceRef.rootPath,
+            const handle = await owner.superviseProject({ kind: 'workspace', workspace: workspaceRef, declaration, cwd: workspaceRef.rootPath,
                 serviceId: 'worker', specIdentity: 'worker', isCurrent: () => true,
                 requester: { serverId: 'home', accountId: 'owner', machineId: 'machine-a', installationId: 'installation' },
                 processSpec: { mode: { kind: 'managedSpawn', endpointNone: true } },
@@ -232,15 +647,121 @@ describe('createLocalServicesDaemonRuntime', () => {
             ]);
             await observe();
             expect(publications).toBe(3);
+            const beforeStop = runtime.inventoryRegistry.getSnapshot();
+            const scansBeforeStop = scans;
+            const cancellation = new AbortController();
+            const changed: unknown[] = [];
+            const watch = runtime.inventoryRoutes.watchSnapshot({ sinceGeneratedAt: beforeStop.generatedAt,
+                signal: cancellation.signal }).then(result => { changed.push(result); });
+            await new Promise<void>(resolve => setImmediate(resolve));
             await handle.stop();
-            await observe();
-            expect(publications).toBe(4);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            cancellation.abort();
+            await watch;
+            expect(changed).toEqual([expect.objectContaining({ changed: true })]);
             expect((await runtime.launcherRoutes.getSnapshot({ scope: 'machine' })).targets).toEqual([
                 expect.objectContaining({ id: 'worker', state: 'unavailable', actions: [] }),
             ]);
+            expect(scans).toBe(scansBeforeStop);
+            const stoppedPublications = publications;
             await observe();
-            expect(publications).toBe(4);
-        } finally { await runtime.stop(); await owner.dispose(); }
+            expect(publications).toBe(stoppedPublications);
+        } finally { await runtime.stop(); serviceActivity.dispose(); await owner.dispose(); }
+    });
+
+    it('pushes ended managed previews without Reload, native probes or scans while preserving unknown and scanned registrations', async () => {
+        let phase: 'running' | 'unknown' | 'stopped' = 'running';
+        let inspections = 0;
+        let scans = 0;
+        let scannedObservations = 0;
+        const server = previewServerBoundary();
+        const owner = createManagedServicesOwner({
+            processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+            dependencies() { throw new Error('Project native services do not resolve plugin dependencies'); },
+            resolveScope: scope => scope,
+        });
+        const serviceActivity = createLiveWorkProducerGroup(() => [owner.activity]);
+        const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', accountId: 'account-a',
+            previewServer: server.input, startLoop: false, inventoryEnabled: () => true,
+            projectManagedServices: { ...owner, activity: serviceActivity }, runTargets: () => [],
+            scan: async () => { scans++; return { listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }; } });
+        const workspace = { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: process.cwd(), createdAtMs: 1 };
+        const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'native-web' } };
+        const endpoint = buildSnapshot().entries[0]!.endpoint!;
+        const start = () => owner.superviseProject({ kind: 'workspace', workspace, declaration, cwd: workspace.rootPath,
+            serviceId: 'native-web', specIdentity: 'native-web', isCurrent: () => true,
+            requester: { serverId: 'home', accountId: 'account-a', machineId: 'machine-a', installationId: 'installation' },
+            processSpec: { mode: { kind: 'native',
+                instance: { adapter: { pluginId: 'fixture.plugin', localId: 'web' }, nativeResourceId: 'owned-web' },
+                // The external native program supplies lifecycle evidence; the supervisor and watch stay real.
+                lifecycle: {
+                    inspect: async () => { inspections++; return { phase, readiness: 'not_reported',
+                        endpoint: `http://${endpoint.host}:${endpoint.port}` }; },
+                    stop: async () => { phase = 'stopped'; return { status: 'stopped' }; },
+                } } },
+            authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', ''], env: {}, release: async () => undefined }),
+        });
+        const targetFor = (handle: Awaited<ReturnType<typeof start>>) => ({
+            kind: 'managed_service' as const, machineId: workspace.machineId, workspaceId: workspace.id,
+            managedServiceId: handle.instanceId, declaration, cwd: workspace.rootPath,
+        });
+        const snapshot = async () => LocalServicePreviewSnapshotV1Schema.parse(await runtime.previewRoutes.getSnapshot());
+        const cancellation = new AbortController();
+        try {
+            await runtime.refreshInventoryNow();
+            const handle = await start();
+            const opened = await runtime.previewRoutes.openOrCreate({ machineId: workspace.machineId, serviceTarget: targetFor(handle) });
+            if (!opened.ok) throw new Error(opened.reasonCode);
+            const resource = opened.response.preview.resource;
+            registerLocalServicePreview(runtime.previewRegistry, { ...resource, previewId: 'unrelated-scanned', serviceTarget: undefined },
+                { isCurrent() { scannedObservations++; throw new Error('Scanned native observation must remain request-owned'); } });
+            expect((await snapshot()).resources.map(row => row.previewId)).toContain(resource.previewId);
+            const beforeFreshAccess = inspections;
+            await runtime.previewRoutes.resolveApplication(localServicePreviewDirectBindingV1(resource));
+            expect(inspections).toBe(beforeFreshAccess + 1);
+
+            phase = 'unknown';
+            await handle.inspectCurrentOccurrence();
+            const unknownInspections = inspections;
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect((await snapshot()).resources.map(row => row.previewId)).toContain(resource.previewId);
+            expect(runtime.previewRegistry.previewsById.get(resource.previewId)?.occurrence?.ended).not.toBe(true);
+            expect(inspections).toBe(unknownInspections);
+            phase = 'running';
+            await handle.inspectCurrentOccurrence();
+            const recoveredInspections = inspections;
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(inspections).toBe(recoveredInspections);
+
+            const scansBeforeStop = scans;
+            const changed: unknown[] = [];
+            const watched = runtime.inventoryRoutes.watchSnapshot({
+                sinceGeneratedAt: runtime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal,
+            }).then(result => { changed.push(result); });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await handle.stop();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            cancellation.abort();
+            await watched;
+            expect(changed).toEqual([expect.objectContaining({ changed: true })]);
+            expect((await snapshot()).resources.map(row => row.previewId)).toEqual(['unrelated-scanned']);
+            expect((await snapshot()).previews.map(row => row.previewId)).toEqual(['unrelated-scanned']);
+            expect(scans).toBe(scansBeforeStop);
+            expect(scannedObservations).toBe(0);
+            const stoppedGeneration = runtime.inventoryRegistry.getSnapshot().generatedAt;
+            await handle.stop();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(runtime.inventoryRegistry.getSnapshot().generatedAt).toBe(stoppedGeneration);
+
+            phase = 'running';
+            const restarted = await start();
+            const reopened = await runtime.previewRoutes.openOrCreate({ machineId: workspace.machineId, serviceTarget: targetFor(restarted) });
+            if (!reopened.ok) throw new Error(reopened.reasonCode);
+            expect(reopened.response.preview.previewId).not.toBe(resource.previewId);
+            expect((await snapshot()).resources.map(row => row.previewId)).toContain(reopened.response.preview.previewId);
+            await expect(runtime.previewRoutes.resolveApplication(localServicePreviewDirectBindingV1(resource)))
+                .rejects.toMatchObject({ reasonCode: 'preview_not_found' });
+        } finally { cancellation.abort(); await runtime.stop(); serviceActivity.dispose(); await owner.dispose(); }
     });
 
     it.each(['running', 'unknown'] as const)('carries only failed native diagnostics to Services rows without republishing equal %s observations', async initialPhase => {
@@ -256,6 +777,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         try {
             const handle = await owner.superviseProject({
+                kind: 'workspace',
                 workspace: { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: process.cwd(), createdAtMs: 1 },
                 declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'native-worker' } },
                 cwd: process.cwd(), serviceId: 'native-worker', specIdentity: 'native-worker', isCurrent: () => true,
@@ -266,7 +788,8 @@ describe('createLocalServicesDaemonRuntime', () => {
                     instance: { adapter: { pluginId: 'fixture.plugin', localId: 'worker' }, nativeResourceId: 'exact-worker' },
                     lifecycle: {
                         inspect: async () => ({ phase, readiness: phase === 'running' ? 'ready' : 'not_ready', endpoint: null }),
-                        logs: async () => 'Native worker failed with fixture-service-secret',
+                        logs: async () => ({ kind: 'page', page: { sourceRevision: 'native-worker',
+                            text: 'Native worker failed with fixture-service-secret', nextCursor: null, truncated: false } }),
                         stop: async () => { phase = 'stopped'; return { status: 'stopped' }; },
                     } } },
                 authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'],
@@ -324,6 +847,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             inventoryEnabled: () => true, now: () => observedAt, projectManagedServices: owner, runTargets: () => [],
             scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
         const start = () => owner.superviseProject({
+            kind: 'workspace',
             workspace: { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: process.cwd(), createdAtMs: 1 },
             declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: kind } },
             cwd: process.cwd(), serviceId: kind, specIdentity: restored ? `${kind}-restored` : kind, isCurrent: () => true,
@@ -340,7 +864,8 @@ describe('createLocalServicesDaemonRuntime', () => {
                     logs: async () => {
                         logStarted = true;
                         if (kind === 'native-lifetime') await outputReady;
-                        return 'container failed with fixture-service-secret';
+                        return { kind: 'page', page: { sourceRevision: kind,
+                            text: 'container failed with fixture-service-secret', nextCursor: null, truncated: false } };
                     },
                     stop: async () => { started = false; return { status: 'stopped' }; },
                 },
@@ -396,7 +921,8 @@ describe('createLocalServicesDaemonRuntime', () => {
             await runtime.refreshInventoryNow();
             expect((await readRow())?.status).toBe('running');
             expect((await readRow())?.target).not.toHaveProperty('diagnostics');
-            expect(publications).toBe(1);
+            // Retiring the failed occurrence and publishing its replacement are distinct changes.
+            expect(publications).toBe(2);
             await recovered.stop();
             expect(owner.listProjectServices()).toEqual([]);
         } finally { releaseOutput(); await runtime.stop(); await owner.dispose(); }
@@ -412,8 +938,8 @@ describe('createLocalServicesDaemonRuntime', () => {
         });
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
             inventoryEnabled: () => true, projectManagedServices: owner, runTargets: () => [],
-            scan: async () => { await scanned; return { listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp' as const }],
-                processes: new Map(), workspaces: [], diagnostics: [] }; } });
+            scan: async () => { await scanned; return { listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp' as const, pid: 400 }],
+                processes: new Map([[400, { pid: 400, command: 'node vite' }]]), workspaces: [], diagnostics: [] }; } });
         const inventory = runtime.refreshInventoryNow();
         let bindings: unknown;
         let ordinary: unknown;
@@ -430,6 +956,97 @@ describe('createLocalServicesDaemonRuntime', () => {
             ]);
         } finally { releaseScan(); await Promise.all([inventory, bindingRead, ordinaryRead]); await runtime.stop(); await owner.dispose(); }
     });
+    it.each(['machine', 'workspace'] as const)('keeps automatic package suggestions in Workspace scope only: %s', async scope => {
+        const root = await mkdtemp(join(tmpdir(), 'FIX15-SVCSCOPE-'));
+        // Multiple checkouts and nested packages expose the checkout × script expansion.
+        const workspaces = Array.from({ length: 16 }, (_, index) => ({ id: `workspace-${index}`,
+            serverId: 'home-a', machineId: 'machine-a', rootPath: join(root, `checkout-${index}`), createdAtMs: 1 }));
+        let runtime: ReturnType<typeof createLocalServicesDaemonRuntime> | undefined;
+        const cancellation = new AbortController();
+        let observing: Promise<void> | undefined;
+        const reads = vi.spyOn(filesystem, 'readdir');
+        try {
+            await Promise.all(workspaces.map(async workspace => {
+                await mkdir(workspace.rootPath);
+                await Promise.all(Array.from({ length: 4 }, async (_, index) => {
+                    const directory = index === 0 ? workspace.rootPath : join(workspace.rootPath, `package-${index}`);
+                    if (index > 0) await mkdir(directory);
+                    await writeFile(join(directory, 'package.json'), JSON.stringify({ name: '@happier-dev/app',
+                        scripts: { start: 'vite', dev: 'vite' } }));
+                }));
+            }));
+            const workspace = workspaces[0]!;
+            await mkdir(join(workspace.rootPath, '.happier'));
+            await writeFile(join(workspace.rootPath, '.happier/project.json'), JSON.stringify({ version: 1,
+                services: { http: { source: { kind: 'command', command: 'http-command' } } } }));
+            // Observe real filesystem traversal. Workspace facts and the native scan are system boundaries.
+            runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-a', startLoop: false,
+                inventoryEnabled: () => true, workspaceFacts: () => ({
+                    facts: workspaces.map(ref => ({ id: ref.id, path: ref.rootPath })),
+                    acceptedWorkspaceRefs: workspaces, diagnostics: [],
+                }), scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
+            const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(await runtime.launcherRoutes.getSnapshot({
+                scope, ...(scope === 'workspace' ? { workspaceRoot: workspace.rootPath } : {}),
+            }));
+            expect.soft(snapshot.targets.filter(target => target.source === 'package_script'))
+                .toHaveLength(scope === 'machine' ? 0 : 8);
+            expect(snapshot.targets.filter(target => target.source === 'managed_service'))
+                .toEqual([expect.objectContaining({ title: 'http', workspaceId: workspace.id })]);
+            if (scope === 'machine') {
+                expect(reads.mock.calls.filter(([path]) => String(path).startsWith(root)
+                    && !String(path).endsWith('.devcontainer'))).toHaveLength(0);
+                const repeated = await runtime.launcherRoutes.getSnapshot({ scope: 'machine' });
+                expect(repeated.targets).toEqual(snapshot.targets);
+                expect(reads.mock.calls.filter(([path]) => String(path).startsWith(root)
+                    && !String(path).endsWith('.devcontainer'))).toHaveLength(0);
+                const suggestions = await runtime.launcherRoutes.getSnapshot({ workspaceRoot: workspace.rootPath });
+                expect(suggestions.targets.filter(target => target.source === 'package_script')).toHaveLength(8);
+            } else {
+                expect(snapshot.targets.every(target => target.cwd?.startsWith(workspace.rootPath))).toBe(true);
+                // A later cached Machine projection must not inherit this Workspace's package suggestions.
+                const machine = await runtime.launcherRoutes.getSnapshot({ scope: 'machine', discovery: 'cached' });
+                expect(machine.targets).toEqual([expect.objectContaining({ title: 'http', source: 'managed_service' })]);
+                await runtime.launcherRoutes.getSnapshot({ scope: 'machine' });
+                const retained = await runtime.launcherRoutes.getSnapshot({ scope: 'workspace', workspaceRoot: workspace.rootPath,
+                    discovery: 'cached' });
+                expect(retained.targets.filter(target => target.source === 'package_script')).toHaveLength(8);
+                await runtime.refreshInventoryNow();
+                const watchedRuntime = runtime;
+                const attached = watchedRuntime.inventoryRoutes.watchSnapshot({
+                    sinceGeneratedAt: watchedRuntime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal,
+                });
+                observing = (async () => {
+                    await attached;
+                    while (!cancellation.signal.aborted) await watchedRuntime.inventoryRoutes.watchSnapshot({
+                        sinceGeneratedAt: watchedRuntime.inventoryRegistry.getSnapshot().generatedAt, signal: cancellation.signal,
+                    });
+                })();
+                // Attachment reconciles all known roots before measuring the edit.
+                expect((await attached).changed).toBe(true);
+                expect((await watchedRuntime.launcherRoutes.getSnapshot({ discovery: 'cached' }))
+                    .targets.filter(target => target.source === 'package_script')).toHaveLength(128);
+                let publications = 0;
+                const unsubscribe = runtime.inventoryRegistry.subscribe(() => { publications++; });
+                try {
+                    await writeFile(join(workspace.rootPath, 'package.json'), JSON.stringify({ name: '@happier-dev/app',
+                        scripts: { start: 'vite', dev: 'vite', serve: 'vite' } }));
+                    await vi.waitFor(async () => expect((await watchedRuntime.launcherRoutes.getSnapshot({ scope: 'workspace', workspaceRoot: workspace.rootPath }))
+                        .targets.filter(target => target.source === 'package_script')).toHaveLength(9));
+                    await runtime.refreshInventoryNow();
+                    expect(publications).toBe(1);
+                    await runtime.refreshInventoryNow();
+                    expect(publications).toBe(1);
+                } finally { unsubscribe(); }
+            }
+        } finally {
+            cancellation.abort();
+            await observing;
+            reads.mockRestore();
+            await runtime?.stop();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('projects manifest and detected native services from actual accepted WorkspaceRefs without a Session', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-local-service-declarations-'));
         await mkdir(join(root, '.happier'));
@@ -466,6 +1083,62 @@ describe('createLocalServicesDaemonRuntime', () => {
             await rm(root, { recursive: true, force: true });
         }
     });
+    it.each(['throw', 'diagnostic'] as const)('keeps declared Services and one scan failure on cold and hydrated %s reads', async failure => {
+        const root = await mkdtemp(join(tmpdir(), 'SVC-SCAN-declarations-'));
+        await mkdir(join(root, '.happier'));
+        await writeFile(join(root, '.happier', 'project.json'), JSON.stringify({
+            version: 1, services: { web: { source: { kind: 'command', command: 'web-command' } } },
+        }));
+        const workspace = { id: 'accepted-workspace', serverId: 'home-a', machineId: 'machine-a',
+            rootPath: root, projectKey: 'project-a', createdAtMs: 1 };
+        let fail = true;
+        let observedAt = 1_000;
+        let scans = 0;
+        const diagnostic = { code: failure === 'throw' ? 'local_services_inventory_scan_failed' : 'linux_procfs_scan_failed',
+            severity: 'error' as const };
+        const runtime = createLocalServicesDaemonRuntime({
+            machineId: workspace.machineId, startLoop: false, inventoryEnabled: () => true, now: () => observedAt,
+            onError: () => undefined,
+            workspaceFacts: () => ({ facts: [{ id: workspace.id, path: root }],
+                acceptedWorkspaceRefs: [workspace], diagnostics: [] }),
+            scan: async () => {
+                scans++;
+                if (fail && failure === 'throw') throw new Error('Listener scan unavailable');
+                return { listeners: [], processes: new Map(), workspaces: [], diagnostics: fail ? [diagnostic] : [] };
+            },
+        });
+        const read = async () => {
+            const [launcher, inventory] = await Promise.all([
+                runtime.launcherRoutes.getSnapshot({ workspaceRoot: root }), runtime.inventoryRoutes.getSnapshot(),
+            ]);
+            const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(launcher);
+            expect(snapshot.targets).toEqual([expect.objectContaining({
+                declaration: { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'web' } },
+                state: 'unavailable',
+            })]);
+            const state = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), snapshot);
+            const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: selectLocalServiceLaunchTargets(state),
+                rowIdsByTargetId: state.rowIdsByTargetId, sessionId: null, scope: 'workspace' });
+            expect(rows).toEqual([expect.objectContaining({ status: 'stopped', primaryAction: { kind: 'start', target: snapshot.targets[0] } })]);
+            return inventory;
+        };
+        try {
+            const cold = await read();
+            expect(cold).toMatchObject({ refreshState: 'error', diagnostics: [diagnostic] });
+            expect(scans).toBe(1); // Launcher and inventory share the owner's single failed scan, with no retry.
+            fail = false;
+            observedAt += 10_000;
+            await runtime.inventoryRoutes.refreshSnapshot();
+            expect(await read()).toMatchObject({ refreshState: 'idle', diagnostics: [] });
+            expect(scans).toBe(2);
+            fail = true;
+            observedAt += 10_000;
+            expect(await runtime.inventoryRoutes.refreshSnapshot()).toMatchObject({ refreshState: 'error', diagnostics: [diagnostic] });
+            expect(await read()).toMatchObject({ refreshState: 'error', diagnostics: [diagnostic] });
+            expect(scans).toBe(3);
+        } finally { await runtime.stop(); await rm(root, { recursive: true, force: true }); }
+    });
+
     it('discovers a sessionless workspace through the same workspace facts used by inventory', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-local-service-workspace-'));
         await writeFile(join(root, 'package.json'), JSON.stringify({
@@ -480,7 +1153,7 @@ describe('createLocalServicesDaemonRuntime', () => {
         try {
             const snapshot = await runtime.launcherRoutes.getSnapshot({ workspaceRoot: root });
             expect(snapshot.targets).toEqual([expect.objectContaining({
-                id: 'package:sessionless-project:dev', source: 'package_script', cwd: root,
+                id: expect.stringMatching(/^package:sessionless-project:dev:[a-f0-9]{12}$/), source: 'package_script', cwd: root,
             })]);
             expect(snapshot).not.toHaveProperty('sessionId');
         } finally {
@@ -522,7 +1195,9 @@ describe('createLocalServicesDaemonRuntime', () => {
         const unsubscribe = runtime.subscribeSummary((summary) => summaries.push(summary));
         await runtime.refreshInventoryNow();
         failScan = true;
-        await expect(runtime.refreshInventoryNow()).rejects.toThrow('OS scan unavailable');
+        await expect(runtime.refreshInventoryNow()).resolves.toMatchObject({
+            refreshState: 'error', diagnostics: [{ code: 'local_services_inventory_scan_failed', severity: 'error' }],
+        });
         expect(summaries.at(-1)).toEqual({ v: 1, state: 'error' });
         failScan = false;
         await runtime.refreshInventoryNow();
@@ -606,7 +1281,7 @@ describe('createLocalServicesDaemonRuntime', () => {
     it('does no native or presentation work for summary observers until an inventory reader arrives', async () => {
         vi.useFakeTimers();
         const readProcessFacts = vi.fn(async () => new Map([
-            [400, { pid: 400, ppid: 1, command: 'node server.js', cwd: '/repo/app' }],
+            [400, { pid: 400, ppid: 1, command: 'node vite', cwd: '/repo/app' }],
         ]));
         const probe = vi.fn(async () => true);
         const title = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response('<title>Local app</title>', {
@@ -617,7 +1292,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             scan: async () => ({ listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 400 }],
                 processes: new Map(), readProcessFacts, workspaces: [], diagnostics: [] }),
             endpointEnricher: createLocalServiceEndpointEnricher({ now: Date.now,
-                timeoutMs: 250, concurrency: 1, successTtlMs: 30_000, failureTtlMs: 5_000, probe }),
+                probe }),
             pageTitleEnricher: createLocalPageTitleEnricher({ maxBodyBytes: 1_024,
                 timeoutMs: 650, concurrency: 1, successTtlMs: 30_000, failureTtlMs: 10_000, fetch: title }),
         });
@@ -962,8 +1637,7 @@ describe('createLocalServicesDaemonRuntime', () => {
                 listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 400, establishedConnections: visitors }],
                 processes: new Map([[400, { pid: 400, command: 'node server.js' }]]), workspaces: [], diagnostics: [],
             }; },
-            endpointEnricher: createLocalServiceEndpointEnricher({ now: () => 2_000, timeoutMs: 250, concurrency: 1,
-                successTtlMs: 30_000, failureTtlMs: 5_000, probe: async ({ scheme }) => scheme === 'http' }),
+            endpointEnricher: createLocalServiceEndpointEnricher({ now: () => 2_000, probe: async ({ scheme }) => scheme === 'http' }),
             pageTitleEnricher: createLocalPageTitleEnricher({ timeoutMs: 10_000, maxBodyBytes: 1_024, concurrency: 1,
                 successTtlMs: 30_000, failureTtlMs: 5_000, fetch: async () => {
                     enterHttp(); await httpRead;
@@ -1013,14 +1687,16 @@ describe('createLocalServicesDaemonRuntime', () => {
             void full.catch(() => undefined);
             const native = runtime.refreshInventoryNow({ stage: 'native' });
             await expect(native).rejects.toBe(unavailable);
-            await expect(full).rejects.toBe(unavailable);
+            await expect(full).resolves.toMatchObject({
+                refreshState: 'error', diagnostics: [{ code: 'local_services_inventory_scan_failed', severity: 'error' }],
+            });
             fail = false;
             expect((await runtime.refreshInventoryNow({ stage: 'native' })).entries[0]?.establishedConnections).toBe(1);
             expect(errors).toContain(unavailable);
         } finally { await runtime.stop(); }
     });
 
-    it('admits a fresh native successor after the prior presentation probe aborts', async () => {
+    it('admits a fresh native successor after explicitly requested presentation aborts', async () => {
         const cancellation = new AbortController();
         const errors: unknown[] = [];
         let enterProbe!: () => void;
@@ -1032,10 +1708,10 @@ describe('createLocalServicesDaemonRuntime', () => {
             inventoryEnabled: () => true, onError: error => { errors.push(error); },
             scan: async () => ({ listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp', establishedConnections: visitors }],
                 processes: new Map(), workspaces: [], diagnostics: [] }),
-            endpointEnricher: createLocalServiceEndpointEnricher({ now: () => 2_000, timeoutMs: 250, concurrency: 1,
-                successTtlMs: 30_000, failureTtlMs: 5_000, signal: cancellation.signal, probe: async ({ signal }) => {
+            endpointEnricher: createLocalServiceEndpointEnricher({ now: () => 2_000, signal: cancellation.signal, probe: async ({ signal }) => {
                     enterProbe(); await probeRead; signal?.throwIfAborted(); return true;
                 } }),
+            pageTitleEnricher: { fetchTitle: async () => null },
         });
         try {
             const native = runtime.refreshInventoryNow({ stage: 'native' });
@@ -1106,9 +1782,7 @@ describe('createLocalServicesDaemonRuntime', () => {
                 },
             },
             endpointEnricher: createLocalServiceEndpointEnricher({
-                now: () => 2_000, timeoutMs: 250, concurrency: 1,
-                successTtlMs: 30_000, failureTtlMs: 5_000,
-                probe: async ({ scheme }) => scheme === 'http',
+                now: () => 2_000, probe: async ({ scheme }) => scheme === 'http',
             }),
             now: () => 2_000,
             startLoop: false,

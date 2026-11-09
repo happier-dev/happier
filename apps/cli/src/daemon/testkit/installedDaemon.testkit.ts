@@ -23,6 +23,7 @@ import { PROCESS_OWNER_ENV_KEY } from '@/processes/ownerTag';
 import { daemonPost } from '@/daemon/controlHttp';
 import { stopDaemonSession } from '@/daemon/controlClient';
 import { createInstalledDaemonMountInventory } from './installedDaemonMounts.testkit';
+import type { ExternalActionForwardRpcCall } from '../../../../server/sources/app/api/socket/externalActionDispatcher';
 
 type FullDaemonHome = Readonly<{
   accountId: string;
@@ -47,6 +48,8 @@ type FullDaemonHome = Readonly<{
  * disposable database and real HTTP/socket admission; no daemon, Workflow,
  * requester, Pending, runner, or native-launch owner is substituted. */
 export async function startInstalledDaemonFixture(input: Readonly<{
+  /** Replace only the socket/vendor delivery boundary in managed wake journeys. */
+  forwardRpc?: ExternalActionForwardRpcCall;
   plugins?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['plugins'];
   env?: Readonly<Record<string, string | undefined>>;
   registerCleanup?: (cleanup: () => Promise<void>) => void;
@@ -165,9 +168,11 @@ export async function startInstalledDaemonFixture(input: Readonly<{
     input.onStartupPhase?.('home');
     const server: Readonly<{ startWorkflowApprovedOperationServer(input: Readonly<{
       installedMachine: Readonly<{ machineId: string; installation: MachineInstallationIdentityV1; happyHomeDir: string }>;
+      forwardRpc?: ExternalActionForwardRpcCall;
     }>): Promise<FullDaemonHome> }> = await import(serverPath);
     input.onStartupPhase?.('homeStart');
-    home = await server.startWorkflowApprovedOperationServer({ installedMachine: { machineId, installation, happyHomeDir: homeDirectory } });
+    home = await server.startWorkflowApprovedOperationServer({ installedMachine: { machineId, installation, happyHomeDir: homeDirectory },
+      ...(input.forwardRpc ? { forwardRpc: input.forwardRpc } : {}) });
     if (!home.installedToken) throw new Error('Home did not mint the installed terminal credential');
     const serverId = 'installed-daemon-fixture';
     environment.patch({ HAPPIER_HOME_DIR: homeDirectory, HAPPIER_ACTIVE_SERVER_ID: serverId,

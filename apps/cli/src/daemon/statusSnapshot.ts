@@ -100,7 +100,7 @@ export async function readDaemonStatusSnapshot(): Promise<DaemonStatusSnapshot> 
       machineRegistered: readiness.machineRegistered,
       machineRegistrationState: readiness.machineRegistrationState,
       machineId,
-      needsAuth: !readiness.authenticated || !readiness.machineRegistered,
+      needsAuth: readiness.unusableReason !== null || !readiness.machineRegistered,
       accountId,
       accountLabel: readiness.accountLabel,
     },

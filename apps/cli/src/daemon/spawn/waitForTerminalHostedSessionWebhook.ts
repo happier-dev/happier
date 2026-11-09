@@ -2,7 +2,6 @@ import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionR
 
 import type { RunnerAgentSessionBootstrapAuthorization } from '../agentRuntime/sessionBridgeAuthorization';
 import type { ChildExit } from '../sessions/onChildExited';
-import { resolveSpawnWebhookResult } from '../sessions/resolveSpawnWebhookResult';
 import type { RunnerAgentInvocationContext, TrackedSession } from '../types';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import type { PersistedTakeoverAdmissionWaitRegistration } from './persistedTakeoverAdmission';
@@ -149,12 +148,7 @@ export async function waitForTerminalHostedSessionWebhook(params: Readonly<{
   trackedSession.acceptedSpawnMarkerGate = undefined;
   resolveAcceptedSpawnMarker(true);
 
-  let spawnResult = await spawnResultPromise.then((result) => resolveSpawnWebhookResult({
-    pid: params.pid,
-    result,
-    pidToTrackedSession: params.pidToTrackedSession,
-    warn: params.warn,
-  }));
+  let spawnResult = await spawnResultPromise;
   if (spawnResult.type === 'error' && (
     trackedSession.spawnStartupReadinessFailure
     || typeof trackedSession.sessionWebhookTimedOutAtMs === 'number'

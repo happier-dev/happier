@@ -1,13 +1,14 @@
 import { URLSearchParams } from 'node:url';
+import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError, CREDENTIAL_REQUEST_REDIRECT_POLICY } from '@happier-dev/cli-common/homeTarget';
 
-import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import type { HttpMethod, HttpService } from '@happier-dev/plugin-sdk/http';
 import { CLAUDE_OAUTH_TOKEN_URL, CLAUDE_OAUTH_CLIENT_ID, CLAUDE_OAUTH_PROFILE_HEADERS, CLAUDE_OAUTH_PROFILE_URL, projectConnectedAccountOauthProfileMetadata } from '@happier-dev/protocol/providers/claude/oauth-profile';
 import { OPENAI_CODEX_CLIENT_ID, OPENAI_CODEX_TOKEN_URL } from '@happier-dev/protocol/providers/codex/oauth';
 import type { ConnectedServiceId, ConnectedServiceOauthCredentialRawMetadata } from '@happier-dev/protocol';
 
 import {
   isBuiltInLegacyConnectedAccountPeerOperationSupported,
-} from '@/api/client/qualifiedConnectedAccountApi';
+} from '@happier-dev/protocol/connect/connected-service-bindings';
 import { readSafeOauthProviderErrorCode } from '@/cloud/safeOauthProviderError';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
 
@@ -21,6 +22,25 @@ function readFetchResponseText(response: Awaited<ReturnType<HttpService['request
 
 function readFetchResponseJson(response: Awaited<ReturnType<HttpService['request']>>): unknown {
   return JSON.parse(readFetchResponseText(response)) as unknown;
+}
+
+/** Adapt the existing buffered HTTP service to the shared redirect owner, retaining its body without another copy. */
+async function requestCredentialedRefresh(
+  runtime: Pick<HttpService, 'request'>,
+  request: Parameters<HttpService['request']>[0],
+  options: Parameters<HttpService['request']>[1],
+): ReturnType<HttpService['request']> {
+  let response!: Awaited<ReturnType<HttpService['request']>>;
+  await fetchWithCredentialRedirectRefusal(request.url, {
+    method: request.method, headers: request.headers, body: request.body, signal: options?.signal,
+  }, async (url, init) => {
+    // This owner submits only a buffered byte body; the shared policy can retain or drop it.
+    response = await runtime.request({ url: String(url), method: init?.method as HttpMethod,
+      headers: init?.headers as Readonly<Record<string, string>> | undefined, body: init?.body as Uint8Array | undefined,
+      redirect: 'manual' }, options);
+    return new Response(null, { status: response.status, headers: response.headers });
+  });
+  return response;
 }
 
 type LegacyOauthPayloadMapping = Readonly<{
@@ -235,21 +255,21 @@ export async function refreshReleasedPeerLegacyConnectedAccountOauthTokens(param
     refresh_token: params.refreshToken,
     client_id: config.clientId,
   };
-  const response = await runtimeFetch.request(
+  const response = await requestCredentialedRefresh(runtimeFetch,
     config.refreshBody === 'json'
       ? {
           url: config.tokenUrl,
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: textEncoder.encode(JSON.stringify(bodyFields)),
-          redirect: 'error',
+          redirect: CREDENTIAL_REQUEST_REDIRECT_POLICY.redirect,
         }
       : {
           url: config.tokenUrl,
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: textEncoder.encode(new URLSearchParams(bodyFields).toString()),
-          redirect: 'error',
+          redirect: CREDENTIAL_REQUEST_REDIRECT_POLICY.redirect,
         },
     { signal: AbortSignal.timeout(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS) },
   );
@@ -275,16 +295,17 @@ export async function refreshReleasedPeerLegacyConnectedAccountOauthTokens(param
   if (profileMetadata) {
     let profileResponse: Awaited<ReturnType<HttpService['request']>> | null = null;
     try {
-      profileResponse = await runtimeFetch.request({
+      profileResponse = await requestCredentialedRefresh(runtimeFetch, {
         url: profileMetadata.endpointUrl,
         method: 'GET',
         headers: {
           ...profileMetadata.headers,
           Authorization: `Bearer ${accessToken}`,
         },
-        redirect: 'error',
+        redirect: CREDENTIAL_REQUEST_REDIRECT_POLICY.redirect,
       }, { signal: AbortSignal.timeout(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS) });
-    } catch {
+    } catch (error) {
+      if (error instanceof CredentialRequestRedirectError) throw error;
       profileResponse = null;
     }
 

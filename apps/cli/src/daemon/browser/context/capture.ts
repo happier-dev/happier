@@ -42,6 +42,7 @@ type BrowserContextSourceFailure = Readonly<{
 export type BrowserContextSourcePageResult =
   | Readonly<{
       ok: true;
+      profileId?: string;
       url?: string;
       title?: string;
       faviconUrl?: string;
@@ -52,16 +53,17 @@ export type BrowserContextSourcePageResult =
   | BrowserContextSourceFailure;
 
 export type BrowserContextSourceScreenshotResult =
-  | Readonly<{ ok: true; media: BrowserScreenshotMediaReferenceV1; viewport?: Readonly<{ width: number; height: number }> }>
+  | Readonly<{ ok: true; profileId?: string; media: BrowserScreenshotMediaReferenceV1; viewport?: Readonly<{ width: number; height: number }> }>
   | BrowserContextSourceFailure;
 
 export type BrowserContextSourceSummaryResult =
-  | Readonly<{ ok: true; summary: string; truncated?: boolean }>
+  | Readonly<{ ok: true; profileId?: string; summary: string; truncated?: boolean }>
   | BrowserContextSourceFailure;
 
 export type BrowserContextSourceSelectedElementResult =
   | Readonly<{
       ok: true;
+      profileId?: string;
       selectorPath: string;
       accessibleName?: string;
       rect?: Readonly<{ x: number; y: number; width: number; height: number }>;
@@ -127,7 +129,7 @@ export type BrowserContextSummaryCaptureRequest = BrowserContextCaptureRequest &
 }>;
 
 export type BrowserContextCaptureResult =
-  | Readonly<{ status: 'captured'; item: BrowserContextItemV1 }>
+  | Readonly<{ status: 'captured'; item: BrowserContextItemV1; profileId?: string }>
   | Readonly<{ status: 'unavailable'; item: BrowserContextItemV1 }>
   | Readonly<{ status: 'denied' }>;
 
@@ -317,7 +319,7 @@ export function createBrowserContextCaptureService(input: Readonly<{
         ...(capture.targetKind ? { targetKind: capture.targetKind } : {}),
         ...(capture.display ? { display: capture.display } : {}),
       });
-      return { status: 'captured', item };
+      return { status: 'captured', item, ...(capture.profileId ? { profileId: capture.profileId } : {}) };
     },
 
     async captureScreenshot(request) {
@@ -348,7 +350,7 @@ export function createBrowserContextCaptureService(input: Readonly<{
         media: capture.media,
         ...(capture.viewport ? { viewport: capture.viewport } : {}),
       });
-      return { status: 'captured', item };
+      return { status: 'captured', item, ...(capture.profileId ? { profileId: capture.profileId } : {}) };
     },
 
     async captureSummary(request) {
@@ -362,6 +364,7 @@ export function createBrowserContextCaptureService(input: Readonly<{
       if (await sourcePrivacyDenial(request)) return { status: 'denied' };
       return {
         status: 'captured',
+        ...(capture.profileId ? { profileId: capture.profileId } : {}),
         item: buildSidecarSummaryContextItem({
           contextId: request.contextId,
           sourceViewId: request.viewId,
@@ -385,6 +388,7 @@ export function createBrowserContextCaptureService(input: Readonly<{
       if (await sourcePrivacyDenial(request)) return { status: 'denied' };
       return {
         status: 'captured',
+        ...(capture.profileId ? { profileId: capture.profileId } : {}),
         item: buildSelectedElementItem({
           contextId: request.contextId,
           sourceViewId: request.viewId,

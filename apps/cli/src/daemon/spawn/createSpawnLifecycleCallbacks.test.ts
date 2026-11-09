@@ -34,6 +34,10 @@ describe('createSpawnLifecycleCallbacks runtime target registration', () => {
 
     callbacks.registerConnectedServiceSpawnTarget(1234);
 
+    const tracked: TrackedSession = { pid: 1234, startedBy: 'daemon' };
+    if (!callbacks.onTrackedSessionRegistered) throw new Error('Runtime target registration callback is missing');
+    callbacks.onTrackedSessionRegistered(tracked);
+
     expect(registerConnectedServiceRuntimeTarget).toHaveBeenCalledWith({
       pid: 1234,
       agentId: 'opencode',

@@ -26,7 +26,7 @@ describe('Computer requester desktop admission', () => {
   it('does not recover an arbitrary payload Session before admitting an owner or Manage caller', async () => {
     for (const caller of [context('owner'), context('guest', 'manage')]) {
       expect(await resolveComputerRequesterScope({ machineId: 'machine', context: caller,
-        host: { ...host, readSessionBootstrap: async () => { throw new Error('Unrelated Session birth'); } } }))
+        host: { ...host, readSessionRequester: async () => { throw new Error('Unrelated Session birth'); } } }))
         .toEqual({ kind: 'owner' });
     }
   });
@@ -65,9 +65,33 @@ describe('Computer requester desktop admission', () => {
         actorAccountId: 'other', custodianAccountId: 'owner', role: 'use',
       } } } as unknown as AdmittedRequesterSessionBootstrap;
     const viewer = await resolveComputerRequesterScope({ machineId: 'machine',
-      host: { ...host, readSessionBootstrap: () => otherBootstrap },
+      host: { ...host, readSessionRequester: () => otherBootstrap },
       context: { ...context('guest'), ownDesktopOnly: true }, platform: 'linux' });
     expect(viewer).toMatchObject({ kind: 'personal', identity: { requester: { accountId: 'guest' } } });
+  });
+
+  it.each(['owner', 'other-guest'])('keeps admitted guest B on its own desktop when the named Session belongs to %s', async accountId => {
+    let birthReads = 0;
+    const scope = await resolveComputerRequesterScope({ machineId: 'machine', platform: 'linux',
+      context: { ...context('guest'), defaultSessionId: `${accountId}-session` },
+      host: { ...host, readSessionRequester: async () => {
+        birthReads++;
+        return { kind: 'isolated', requester: { serverId: 'home', accountId,
+          machineId: 'machine', installationId: 'installation' }, separationRequired: accountId !== 'owner' };
+      } } });
+    expect(scope).toMatchObject({ kind: 'personal', identity: { requester: { accountId: 'guest' } } });
+    expect(scope).toEqual(await resolveComputerRequesterScope({ machineId: 'machine', host,
+      context: context('guest'), platform: 'linux' }));
+    expect(birthReads).toBe(0);
+  });
+
+  it('uses Machine admission instead of another guest bootstrap supplied alongside it', async () => {
+    // The persisted requester boundary supplies the birth fields consumed by this owner.
+    const bootstrap = { attribution: { serverId: 'home', accountId: 'other-guest', machineId: 'machine', installationId: 'installation' },
+      homeServerIdentityId: 'home', savedSecretOperationContext: { machineAdmission: context('other-guest').machineAdmission } } as unknown as AdmittedRequesterSessionBootstrap;
+    expect(await resolveComputerRequesterScope({ machineId: 'machine', host, platform: 'linux',
+      context: { ...context('guest'), requesterSessionBootstrap: bootstrap } }))
+      .toMatchObject({ kind: 'personal', identity: { requester: { accountId: 'guest' } } });
   });
 
   it('awaits recovered Session birth and never falls back to owner on an unavailable birth read', async () => {
@@ -75,11 +99,17 @@ describe('Computer requester desktop admission', () => {
     const bootstrap = { attribution: { serverId: 'home', accountId: 'guest', machineId: 'machine', installationId: 'installation' },
       homeServerIdentityId: 'home', savedSecretOperationContext: { machineAdmission: context('guest').machineAdmission } } as unknown as AdmittedRequesterSessionBootstrap;
     const recovered = await resolveComputerRequesterScope({ machineId: 'machine', platform: 'linux',
-      context: { defaultSessionId: 'session' }, host: { ...host, readSessionBootstrap: async () => bootstrap } });
+      context: { defaultSessionId: 'session' }, host: { ...host, readSessionRequester: async () => bootstrap } });
     expect(recovered).toMatchObject({ kind: 'personal', identity: { requester: { accountId: 'guest' } } });
     await expect(resolveComputerRequesterScope({ machineId: 'machine', platform: 'linux',
-      context: { defaultSessionId: 'session' }, host: { ...host, readSessionBootstrap: async () => {
+      context: { defaultSessionId: 'session' }, host: { ...host, readSessionRequester: async () => {
         throw Object.assign(new Error('Requester birth unavailable'), { code: 'agent_isolation_unavailable' });
       } } })).rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+  });
+
+  it('keeps an unavailable qualified Session identity unavailable instead of taking the owner fallback', async () => {
+    await expect(resolveComputerRequesterScope({ machineId: 'machine', context: { defaultSessionId: 'session' },
+      host: { ...host, readSessionRequester: async () => ({ kind: 'unknown', reason: 'session_requester_unavailable' }) },
+    })).rejects.toMatchObject({ code: 'agent_isolation_unavailable', details: { reason: 'session_requester_unavailable' } });
   });
 });

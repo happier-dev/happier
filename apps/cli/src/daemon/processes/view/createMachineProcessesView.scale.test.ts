@@ -56,8 +56,8 @@ it('returns private custody rows on a 10,000-process host before unrelated HTTP 
     const services = createLocalServicesDaemonRuntime({ machineId: 'm', startLoop: false, inventoryEnabled: () => true,
         scan: async () => ({ listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 102 }],
             processes: new Map([[102, { pid: 102, command: 'node worker.js', processStartTimeMs: 1020 }]]), workspaces: [], diagnostics: [] }),
-        endpointEnricher: createLocalServiceEndpointEnricher({ now: Date.now, timeoutMs: 250, concurrency: 8,
-            successTtlMs: 30_000, failureTtlMs: 5000, probe: async () => { enterProbe(); await pendingHttp; return true; } }),
+        endpointEnricher: createLocalServiceEndpointEnricher({ now: Date.now, probe: async () => { enterProbe(); await pendingHttp; return true; } }),
+        pageTitleEnricher: { fetchTitle: async () => null },
     });
     const refresh = services.refreshInventoryNow();
     await entered;

@@ -32,7 +32,6 @@ import {
   writeSessionMarker,
 } from '../sessionRegistry';
 import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '../processSupervision/sessionRunnerRespawnDescriptor';
-import { hasSessionWebhookPidTimedOut } from '../spawn/waitForSessionWebhook';
 import { promoteTrackedSessionPidCustody } from './promoteTrackedSessionPidCustody';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import {
@@ -222,9 +221,7 @@ function didDaemonWebhookPidTimeOut(
   }>,
 ): boolean {
   if (input.metadata.startedBy !== 'daemon') return false;
-  const tracked = input.pidToTrackedSession.get(input.pid);
-  if (tracked && !didSessionWebhookTimeout(tracked)) return false;
-  return hasSessionWebhookPidTimedOut(input.pid);
+  return didSessionWebhookTimeout(input.pidToTrackedSession.get(input.pid));
 }
 
 function didDaemonWebhookParentTimeOut(
@@ -235,10 +232,7 @@ function didDaemonWebhookParentTimeOut(
   }>,
 ): boolean {
   if (input.metadata.startedBy !== 'daemon' || typeof input.parentPid !== 'number') return false;
-  const trackedParent = input.pidToTrackedSession.get(input.parentPid);
-  if (didSessionWebhookTimeout(trackedParent)) return true;
-  if (trackedParent) return false;
-  return hasSessionWebhookPidTimedOut(input.parentPid);
+  return didSessionWebhookTimeout(input.pidToTrackedSession.get(input.parentPid));
 }
 
 function createStartupReadinessGate(): Readonly<{
@@ -264,6 +258,11 @@ function createStartupReadinessGate(): Readonly<{
 export function buildSessionCreationTerminalSpawnErrorResult(
   errorDetail: SessionCreationTerminalSpawnErrorDetail,
 ): DaemonSpawnStartupReadinessFailure {
+  if (errorDetail.kind === 'session_creation_currentness_unavailable') {
+    return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorMessage: `Session creation could not proceed: Account encryption currentness is unavailable (${errorDetail.reason}).`,
+      errorDetail };
+  }
   return {
     type: 'error',
     errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
@@ -894,6 +893,16 @@ export function createOnHappySessionWebhook(params: Readonly<{
           processCommand,
           metadata: persistedMetadata,
           ...(respawn ? { respawn } : {}),
+          // The spawn-captured binding is a Session fact. A reattaching daemon
+          // adopts this runner marker, so it must carry the binding that
+          // authorizes the Session's shared native-state observation files.
+          ...(trackedForPid?.startedBy === 'daemon'
+            && trackedForPid.materializedStateObservationBinding
+            ? {
+                materializedStateObservationBinding:
+                  trackedForPid.materializedStateObservationBinding,
+              }
+            : {}),
           ...(trackedForPid
             ?.agentRuntimeDaemonServiceAuthorityFilePath
             ? {

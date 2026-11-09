@@ -3,6 +3,27 @@ import { classifyHappyProcess } from './doctor';
 
 describe('classifyHappyProcess', () => {
   it.each([
+    ['/repo/apps/cli/src/index.ts', '/repo/packages/cli-common/registerSourceRuntime.mjs'],
+    ['C:\\repo\\apps\\cli\\src\\index.ts', 'C:\\repo\\packages\\cli-common\\registerSourceRuntime.mjs'],
+  ])('recognizes canonical registered-source daemons and Sessions: %s', (entrypoint, registration) => {
+    const command = `node --conditions=happier-source --import "${registration}" "${entrypoint}"`;
+    expect(classifyHappyProcess({ pid: 123, name: 'node', cmd: `${command} daemon start-sync` }))
+      .toMatchObject({ type: 'daemon' });
+    expect(classifyHappyProcess({ pid: 123, name: 'node', cmd: `${command} session --started-by daemon` }))
+      .toMatchObject({ type: 'daemon-spawned-session' });
+  });
+
+  it.each([
+    ['node', '/repo/apps/other/src/index.ts'],
+    ['node', '/repo/apps/cli/src/index.ts.extra'],
+    ['unrelated', '/repo/apps/cli/src/index.ts'],
+  ])('rejects unrelated registered-source processes: %s %s', (name, entrypoint) => {
+    expect(classifyHappyProcess({ pid: 123, name,
+      cmd: `${name} --conditions=happier-source --import /repo/packages/cli-common/registerSourceRuntime.mjs ${entrypoint} daemon start-sync`,
+    })).toBeNull();
+  });
+
+  it.each([
     '/home/happier/.happier/dev-targets/nl1/stack-state/source-bundles/bundle-a/apps/cli/src/index.mjs',
     'C:\\happier\\stack-state\\source-bundles\\bundle-a\\apps\\cli\\src\\index.mjs',
   ])('recognizes the built Stack Session runner entrypoint %s', entrypoint => {

@@ -349,6 +349,28 @@ it.skipIf(process.platform !== 'linux')('preserves the encrypted original Action
 });
 
 
+it.skipIf(process.platform !== 'linux')('executes a local exact-copy destination approval under Allow through the requester receipt owner', async () => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo,
+    workerCleanCopy: true, allowRelationshipAction: true });
+
+  const preflight = vi.spyOn(setup.installed.machine, 'preflightWorkspaceSyncRelationshipTarget');
+  const result = await setup.executeRelationshipAction();
+  const preflightResults = await Promise.all(preflight.mock.results.map(async call => {
+    try { return await call.value; }
+    catch (error) { return error instanceof Error ? { message: error.message, stack: error.stack } : String(error); }
+  }));
+  expect(result, JSON.stringify({ result, preflightResults, diagnostics: setup.rpcDiagnostics,
+    approvalArtifactIds: [...setup.approvalArtifacts.keys()] })).toMatchObject({ ok: true, result: { created: true } });
+  // Exact mirroring has a destination consequence even when ordinary Action
+  // approval is waived. The Action owner persists that consent before SOURCE
+  // validates its executing receipt; TARGET never invents another decision.
+  expect(setup.approvalArtifacts.size).toBe(1);
+  expect([...setup.approvalArtifacts.values()].every(row => row.ownerAccountId === 'member-a')).toBe(true);
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  expect(setup.custodianRows).toEqual(setup.custodianBefore);
+});
+
 it.skipIf(process.platform !== 'linux')('refuses an unapproved requester receipt before dispatching to a shared Manage destination', async () => {
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,

@@ -37,23 +37,26 @@ describe('buildConnectedServiceAuthGroupSwitchState', () => {
       },
     });
     expect(result).not.toBeNull();
-    expect(selectConnectedServiceAuthGroupCandidate({ ...result!.state, nowMs: 1_000, quotaFreshnessMs: 300_000 }).selected?.profileId).toBe('early');
+    expect(selectConnectedServiceAuthGroupCandidate({ ...result!.state, nowMs: 1_000, }).selected?.profileId).toBe('early');
   });
 
   it('preserves the failure reset when a healthy snapshot reports the next quota window', () => {
     expect(mergePersistedMemberRuntimeState({
       providerResetsAtMs: 20_000,
       quotaSnapshot: {
+        staleAfterMs: 60_000,
         capturedAtMs: 11_000,
         effectiveRemainingPercent: 60,
       },
     }, {
       providerResetsAtMs: 10_000,
       lastFailureKind: 'usage_limit',
+      lastFailureProviderLimitId: 'weekly',
       lastObservedAtMs: 9_000,
     })).toMatchObject({
       providerResetsAtMs: 10_000,
       lastFailureKind: 'usage_limit',
+      lastFailureProviderLimitId: 'weekly',
       lastObservedAtMs: 9_000,
     });
   });

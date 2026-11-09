@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { writeSessionMarker } from '../sessionRegistry';
+import * as processRunState from '../processRunState';
 
 function installProcessKillMock(aliveRef: { alive: boolean }): void {
   vi.spyOn(process, 'kill').mockImplementation(
@@ -123,6 +124,8 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
 
   it('delegates pending runner absence to the canonical startup exit owner', async () => {
     vi.useFakeTimers();
+    // Fixed fixture PIDs must not reach the real OS census while time is virtual.
+    vi.spyOn(processRunState, 'readProcessRunState').mockResolvedValue('dead');
     const aliveRef = { alive: true };
     installProcessKillMock(aliveRef);
     const pid = 12347;
@@ -145,6 +148,8 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
 
   it('retains physical custody when canonical exit cleanup rejects after startup failure', async () => {
     vi.useFakeTimers();
+    // Keep the OS census consistent with the absent-process signal fixture.
+    vi.spyOn(processRunState, 'readProcessRunState').mockResolvedValue('dead');
     const aliveRef = { alive: true };
     installProcessKillMock(aliveRef);
     const pid = 12348;

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import {
   type SpawnSessionOptions,
@@ -41,7 +42,7 @@ const MAX_SEALED_RESPAWN_ENVIRONMENT_CIPHERTEXT_CHARS = 65_536;
 
 type RespawnDescriptorEncryptionMaterial = AccountScopedCryptoMaterial;
 
-const SealedRespawnEnvironmentVariablesSchema = z.discriminatedUnion('format', [
+const SealedRespawnEnvironmentVariablesSchema = lazyZodSchema(() => z.discriminatedUnion('format', [
   z.strictObject({
     format: z.literal('account_scoped_v1'),
     ciphertext: z.string().check(z.minLength(1), z.maxLength(MAX_SEALED_RESPAWN_ENVIRONMENT_CIPHERTEXT_CHARS)),
@@ -50,19 +51,19 @@ const SealedRespawnEnvironmentVariablesSchema = z.discriminatedUnion('format', [
     format: z.literal('device_local_v1'),
     ciphertext: z.string().check(z.minLength(1), z.maxLength(MAX_SEALED_RESPAWN_ENVIRONMENT_CIPHERTEXT_CHARS)),
   }),
-]);
+]));
 
-const TerminalTmuxSpawnOptionsSchema: z.ZodMiniType<NonNullable<TerminalSpawnOptions['tmux']>> = z.looseObject({
+const TerminalTmuxSpawnOptionsSchema: z.ZodMiniType<NonNullable<TerminalSpawnOptions['tmux']>> = lazyZodSchema(() => z.looseObject({
     sessionName: z.optional(z.string()),
     isolated: z.optional(z.boolean()),
     tmpDir: z.optional(z.union([z.string(), z.null()])),
-  });
+  }));
 
-const TerminalSpawnOptionsSchema: z.ZodMiniType<TerminalSpawnOptions> = z.looseObject({
+const TerminalSpawnOptionsSchema: z.ZodMiniType<TerminalSpawnOptions> = lazyZodSchema(() => z.looseObject({
     mode: z.optional(z.enum(TERMINAL_MODES)),
     tmux: z.optional(TerminalTmuxSpawnOptionsSchema),
     herdr: z.optional(z.object({ sessionName: z.optional(z.string()) })),
-  });
+  }));
 
 function pickPersistedEnvironmentVariables(value: unknown): Record<string, string> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -318,7 +319,7 @@ function canonicalizeSessionRunnerRespawnDescriptorIngress(value: unknown): unkn
   };
 }
 
-export const SessionRunnerRespawnDescriptorSchema = (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(canonicalizeSessionRunnerRespawnDescriptorIngress), z.looseObject({
+export const SessionRunnerRespawnDescriptorSchema = lazyZodSchema(() => (<I extends z.core.$ZodType, O extends z.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as z.ZodMiniPipe<I, O>)(z.transform(canonicalizeSessionRunnerRespawnDescriptorIngress), z.looseObject({
     version: z.union([z.literal(1), z.literal(2)]),
     directory: z.string(),
     directoryKind: z.optional(z.enum(['path', 'managed'])),
@@ -448,7 +449,7 @@ export const SessionRunnerRespawnDescriptorSchema = (<I extends z.core.$ZodType,
         message: 'Provider-bound model selection requires binding continuity metadata',
       });
     }
-  })));
+  }))));
 
 export type SessionRunnerRespawnDescriptor = z.infer<typeof SessionRunnerRespawnDescriptorSchema>;
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ConnectedServiceAuthGroupGenerationConsumer } from './ConnectedServiceAuthGroupGenerationConsumer';
+import { ConnectedServiceRuntimeRegistry } from '../../runtimeRegistry/registry';
 import {
   reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget,
   reconcileConnectedServiceDirectCredentialRevisions,
@@ -42,6 +43,55 @@ function createConsumer() {
 }
 
 describe('live connected-service projection reconciliation', () => {
+  it.each(['metadata-only', 'selection-update', 'replacement', 'unbind'] as const)(
+    'delivers availability only to the original live pool recipient through %s settlement', async (scenario) => {
+      const registry = new ConnectedServiceRuntimeRegistry();
+      const serviceId = 'happier.agent.codex/openai-codex';
+      const bindings = { v: 2, bindingsByServiceId: { [serviceId]: {
+        source: 'connected', selection: 'group', groupId: 'team', profileId: 'previous',
+      } } };
+      registry.registerTarget({ pid: 123, agentId: 'codex', sessionId: 'recipient', connectedServicesBindingsRaw: bindings,
+        ...(scenario === 'metadata-only' ? {} : { connectedServiceSelectionsEnvRaw: JSON.stringify([{
+          kind: 'group', serviceId, groupId: 'team', activeProfileId: 'previous', fallbackProfileId: 'previous',
+          generation: 2, policy: null, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+        }]) }),
+      });
+      const original = registry.getBySessionId('recipient')!;
+      const available: string[] = [];
+      const consumer = new ConnectedServiceAuthGroupGenerationConsumer({
+        resolveGenerationApplicationScope: async () => ({ status: 'supported', scope: 'per_session_runtime', ownerId: 'codex' }),
+        verifySharedGenerationApplication: async () => null,
+        applyCommittedGeneration: async ({ committedGeneration }) => {
+          if (scenario === 'replacement') {
+            registry.unregisterPid(123);
+            registry.registerTarget(original);
+          } else if (scenario === 'unbind') {
+            registry.updateTarget({ pid: 123, connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {} },
+              connectedServiceSelectionsEnvRaw: '[]' });
+          }
+          return { reconciliationDisposition: 'converged', errorCode: null,
+            providerAdoptedTarget: { ...committedGeneration.decisionCommittedTarget,
+              proof: { status: 'verified', source: 'provider_read', credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' } } };
+        },
+        clearAdoptedGeneration: async ({ providerAdoptedTarget }) => {
+          if (!providerAdoptedTarget.credentialRevision) throw new Error('credential_revision_missing');
+          const settled = registry.adoptExactGroupApplicationForSession({ ...providerAdoptedTarget,
+            sessionId: 'recipient', credentialRevision: providerAdoptedTarget.credentialRevision });
+          if (!settled) throw new Error('provider_adoption_runtime_binding_unavailable');
+          available.push(providerAdoptedTarget.credentialRevision);
+        },
+      });
+      await reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
+        target: { ...original, isCurrent: () => registry.resolveExactSessionGroupApplicationTarget(original) !== null,
+          activeBindings: original.activeBindings.map(binding => ({ ...binding, generation: binding.groupGeneration })) },
+        consumer, listCurrentGroups: async () => [{ serviceId, groupId: 'team', activeProfileId: 'current', generation: 3 }],
+        resolveCredentialRevision: () => 'csr_bbbbbbbbbbbbbbbbbbbbbb', resolveCredentialPresence: revisionedCredentialPresence,
+        executionAuthority,
+      });
+      const retained = scenario === 'metadata-only' || scenario === 'selection-update';
+      expect(available).toEqual(retained ? ['csr_bbbbbbbbbbbbbbbbbbbbbb'] : []);
+      expect(registry.resolveExactSessionGroupApplicationTarget(original) !== null).toBe(retained);
+    });
   it('applies exact current group truth only to the supplied live runtime target', async () => {
     const { consumer, applyCommittedGeneration } = createConsumer();
     await expect(reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
@@ -84,7 +134,7 @@ describe('live connected-service projection reconciliation', () => {
   });
 
   it('does not re-apply an exact target produced by successful spawn materialization', async () => {
-    const { consumer, applyCommittedGeneration } = createConsumer();
+    const { consumer, applyCommittedGeneration, clearAdoptedGeneration } = createConsumer();
     await expect(reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
       target: {
         sessionId: 'fresh-session',
@@ -121,6 +171,9 @@ describe('live connected-service projection reconciliation', () => {
     })).resolves.toEqual({ acknowledgeable: true, reconciledGroupCount: 0, sessionDispositionCount: 0 });
 
     expect(applyCommittedGeneration).not.toHaveBeenCalled();
+    expect(clearAdoptedGeneration).toHaveBeenCalledWith(expect.objectContaining({
+      providerAdoptedTarget: expect.objectContaining({ credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' }),
+    }));
   });
 
   it('settles a durable exact provider-adoption proof without re-applying the provider effect', async () => {
@@ -178,7 +231,7 @@ describe('live connected-service projection reconciliation', () => {
     });
   });
 
-  it('does not re-apply an exact target produced from a supported legacy-unfenced credential', async () => {
+  it('re-applies a revisionless pool projection before acknowledging availability', async () => {
     const { consumer, applyCommittedGeneration } = createConsumer();
     await expect(reconcileConnectedServiceAuthGroupGenerationForRuntimeTarget({
       target: {
@@ -213,9 +266,9 @@ describe('live connected-service projection reconciliation', () => {
       resolveCredentialRevision: () => null,
       resolveCredentialPresence: () => ({ status: 'legacy_unfenced' }),
       executionAuthority,
-    })).resolves.toEqual({ acknowledgeable: true, reconciledGroupCount: 0, sessionDispositionCount: 0 });
+    })).rejects.toThrow('connected_service_generation_reconciliation_not_acknowledgeable');
 
-    expect(applyCommittedGeneration).not.toHaveBeenCalled();
+    expect(applyCommittedGeneration).toHaveBeenCalledOnce();
   });
 
   it('does not treat an absent credential as a successfully materialized legacy credential', async () => {

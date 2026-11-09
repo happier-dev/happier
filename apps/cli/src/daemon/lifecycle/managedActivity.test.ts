@@ -43,6 +43,79 @@ describe('managed activity inventory', () => {
             expect(facts[1]).toMatchObject({ coverage: 'complete', items: [expect.objectContaining({ state: 'settled', actionOperationId: 'finite' })] });
         } finally { detach(); inventory.dispose(); }
     });
+    it('reads the accepted decision without starting observations and fails closed while idle is invalidated', async () => {
+        let now = 10;
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        const operations = createActionOperationStore({ now: () => now });
+        const inventory = createManagedActivityInventory({
+            producers: [{ read: operations.readLiveWork, subscribe: operations.subscribe }], now: () => now,
+        });
+        try {
+            expect(inventory.getCurrentDecision()).toEqual({ kind: 'unknown', reasons: ['coverage_unknown'] });
+            await nextTurn();
+            expect(inventory.getCurrentDecision()).toEqual({ kind: 'unknown', reasons: ['coverage_unknown'] });
+            expect(await inventory.readDecision()).toEqual({ kind: 'idle', since: 10 });
+            expect(inventory.getCurrentDecision()).toEqual({ kind: 'idle', since: 10 });
+            now = 20;
+            operations.create({ operationId: 'finite', actionId: 'projects.compute.exec', scope,
+                title: 'Work', cancellation: 'supported', inputIdentity: '{}' });
+            expect(inventory.getCurrentDecision()).toEqual({ kind: 'unknown', reasons: ['coverage_unknown'] });
+            now = 30;
+            operations.succeed('finite', {});
+            expect(inventory.getCurrentDecision()).toEqual({ kind: 'unknown', reasons: ['coverage_unknown'] });
+            expect(await inventory.readDecision()).toEqual({ kind: 'idle', since: 30 });
+            expect(inventory.getCurrentDecision()).toEqual({ kind: 'idle', since: 30 });
+        } finally { inventory.dispose(); }
+    });
+    it('keeps a settled minute silent through real operation metadata and Session observations without missing same-turn work', async () => {
+        let now = 100;
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        const operations = createActionOperationStore({ now: () => now });
+        operations.create({ operationId: 'waiting', actionId: 'machines.managed.power.set', scope,
+            title: 'Waiting', cancellation: 'supported', inputIdentity: '{}' });
+        operations.updateProgress('waiting', { kind: 'phase', phase: 'managed.intent.waiting-idle', label: 'Waiting' });
+        const sessions = createSessionLiveWorkProducer({ readSessions: () => [], readActivity: async () => ({
+            session: 'settled', input: 'settled', agents: 'settled', attention: 'settled',
+        }) });
+        const inventory = createManagedActivityInventory({ producers: [sessions,
+            { read: operations.readLiveWork, subscribe: operations.subscribe }], now: () => now });
+        const decisions: unknown[] = [];
+        let facts = 0;
+        const unsubscribe = inventory.subscribe(decision => { decisions.push(decision); });
+        const unsubscribeFacts = inventory.subscribeFacts(() => { facts++; });
+        try {
+            expect(await inventory.readDecision()).toEqual({ kind: 'idle', since: 100 });
+            decisions.length = 0;
+            facts = 0;
+            for (let second = 1; second <= 60; second++) {
+                now = 100 + second * 1_000;
+                operations.updateProgress('waiting', { kind: 'phase', phase: 'managed.intent.waiting-idle', label: `Waiting ${second}` });
+                operations.updateDomainRef('waiting', { kind: 'managedMachine', id: `resource-${second}`,
+                    controller: { machineId: 'controller', installationId: 'installation' } });
+                const current = operations.get(scope, 'waiting')!;
+                operations.project({ ...current, revision: current.revision + 1 });
+                sessions.notifyChanged('observation');
+                await inventory.read();
+            }
+            expect({ decisions: decisions.length, facts }).toEqual({ decisions: 0, facts: 0 });
+            expect(await inventory.readDecision()).toEqual({ kind: 'idle', since: 100 });
+
+            now += 1_000;
+            operations.create({ operationId: 'finite', actionId: 'projects.compute.exec', scope,
+                title: 'Work', cancellation: 'supported', inputIdentity: '{}' });
+            operations.succeed('finite', {});
+            expect(await inventory.readDecision()).toEqual({ kind: 'idle', since: now });
+            expect(decisions).toEqual([{ kind: 'idle', since: now }]);
+            expect(facts).toBe(1);
+
+            const settledSince = now;
+            now += 24 * 60 * 60 * 1_000 + 1;
+            operations.list(scope);
+            expect(await inventory.readDecision()).toEqual({ kind: 'idle', since: settledSince });
+            expect(decisions).toHaveLength(1);
+            expect(facts).toBe(2);
+        } finally { unsubscribe(); unsubscribeFacts(); inventory.dispose(); }
+    });
     it('keeps resident services busy for retention while maintenance reads fresh facts and excludes only its Action', async () => {
         const service: LiveWorkItemV1 = { category: 'service', ownerRef: 'deployed-db', attribution: { kind: 'unknown' },
             state: 'active', lifecyclePurpose: 'deployment', serviceActivity: 'residency' };
@@ -358,7 +431,7 @@ describe('managed activity inventory', () => {
         try {
             expect(await inventory.readDecision()).toEqual({ kind: 'busy', reasons: ['session'] });
             const waiting = waitForChangeOrDeadline({ remainingMs: 1000, waitForChange: signal => new Promise(resolve => {
-                const unsubscribe = inventory.subscribe(() => { unsubscribe(); resolve(); });
+                const unsubscribe = inventory.subscribeFacts(() => { unsubscribe(); resolve(); });
                 signal.addEventListener('abort', unsubscribe, { once: true });
             }) });
             source.change([{ ...one, state: 'settled', settledAt: 20 }, two]);

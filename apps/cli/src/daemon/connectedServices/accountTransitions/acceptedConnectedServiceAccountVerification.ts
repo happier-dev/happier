@@ -1,6 +1,9 @@
 import type { ConnectedAccountServiceKey, ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
+import { QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import type { ConnectedServiceAccountTransitionVerificationResult } from '../runtimeAuth/types';
+import { isSameConnectedServiceAccountTarget, type ConnectedServiceMaterializedTargetsByServiceId, type ConnectedServiceAuthGroupGenerationTarget, type ConnectedServiceProviderAdoptedGenerationTarget } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 
 export type AcceptedConnectedServiceAccountVerification = Readonly<{
   status: 'verified' | 'weakly_verified';
@@ -81,6 +84,60 @@ export function isExactAcceptedConnectedServiceAccountVerification(
   return verification?.status === 'verified'
     && verification.proofStrength === 'exact'
     && hasExactIdentityMaterial(verification);
+}
+
+function readApplicationServiceKey(value: unknown): string | null {
+  const service = typeof value === 'string' ? value : QualifiedConnectedAccountServiceRefSchema.safeParse(value).data;
+  return !service ? null : typeof service === 'string' ? service : buildQualifiedPluginContributionKey(service);
+}
+
+export function readExactConnectedServiceGenerationApplication(input: Readonly<{
+  serviceId: unknown;
+  groupId: string;
+  profileId: string | null;
+  generation: number;
+  verificationByServiceId?: AcceptedConnectedServiceAccountVerificationByServiceId;
+}>): NonNullable<AcceptedConnectedServiceAccountVerification['generationApplication']> | null {
+  const serviceId = readApplicationServiceKey(input.serviceId);
+  if (!serviceId) return null;
+  const verification = input.verificationByServiceId?.[serviceId];
+  if (!isExactAcceptedConnectedServiceAccountVerification(verification)) return null;
+  const application = verification.generationApplication;
+  return application && isSameConnectedServiceAccountTarget({ ...input, serviceId }, application)
+    ? application : null;
+}
+
+export function readConnectedServiceApplicationTargetCredentialRevision(input: Parameters<typeof readExactConnectedServiceGenerationApplication>[0] & Readonly<{
+  materializedTargetByServiceId?: ConnectedServiceMaterializedTargetsByServiceId;
+}>): ConnectedServiceCredentialRevisionV1 | null {
+  const verified = readExactConnectedServiceGenerationApplication(input);
+  if (verified) return verified.credentialRevision ?? null;
+  const serviceId = readApplicationServiceKey(input.serviceId);
+  const handedTarget = serviceId ? input.materializedTargetByServiceId?.[serviceId] : undefined;
+  return serviceId && handedTarget && isSameConnectedServiceAccountTarget({ ...input, serviceId }, handedTarget)
+    ? handedTarget.credentialRevision : null;
+}
+
+export function readConnectedServiceProviderAdoptedGenerationTarget(input: Readonly<{
+  target: ConnectedServiceAuthGroupGenerationTarget;
+  verificationByServiceId?: AcceptedConnectedServiceAccountVerificationByServiceId;
+}>): ConnectedServiceProviderAdoptedGenerationTarget | null {
+  const application = readExactConnectedServiceGenerationApplication({ ...input.target,
+    verificationByServiceId: input.verificationByServiceId });
+  if (!application) return null;
+  const verification = input.verificationByServiceId?.[input.target.serviceId];
+  return {
+    ...input.target,
+    credentialRevision: application.credentialRevision ?? null,
+    proof: {
+      status: 'verified', source: verification?.source ?? 'post_switch_verification',
+      ...(verification?.providerAccountId === undefined ? {} : { providerAccountId: verification.providerAccountId }),
+      ...(verification?.activeAccountId === undefined ? {} : { activeAccountId: verification.activeAccountId }),
+      ...(verification?.sharedAuthSurfaceId === undefined ? {} : { sharedAuthSurfaceId: verification.sharedAuthSurfaceId }),
+      ...(application.credentialRevision === undefined ? {} : { credentialRevision: application.credentialRevision }),
+      ...(application.credentialFingerprint === undefined ? {} : { credentialFingerprint: application.credentialFingerprint }),
+    },
+  };
 }
 
 export function serializeAcceptedConnectedServiceAccountVerifications(

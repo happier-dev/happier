@@ -30,12 +30,16 @@ export function resolveCliVersionFromBinary(params: Readonly<{
   binaryPath: string;
   platform: NodeJS.Platform;
   timeoutMs?: number;
+  deadlineMs?: number;
 }>): string | null {
   const binaryPath = String(params.binaryPath ?? '').trim();
   if (!binaryPath) return null;
   if (!existsSync(binaryPath)) return null;
 
-  const timeout = params.timeoutMs ?? 2000;
+  const remainingTimeout = () => params.deadlineMs === undefined ? params.timeoutMs ?? 2000
+    : Math.min(params.timeoutMs ?? 2000, params.deadlineMs - Date.now());
+  const timeout = remainingTimeout();
+  if (timeout <= 0) return null;
   const commonEnv = { cmd: binaryPath, args: ['--version'], env: process.env } as const;
 
   try {
@@ -46,10 +50,12 @@ export function resolveCliVersionFromBinary(params: Readonly<{
       env: buildServiceCommandEnv(commonEnv),
     });
     if (res.status !== 0 && params.platform !== 'win32') {
+      const remaining = remainingTimeout();
+      if (remaining <= 0) return null;
       res = spawnBackgroundSync('bash', [binaryPath, '--version'], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        timeout,
+        timeout: remaining,
         env: buildServiceCommandEnv({ cmd: 'bash', args: [binaryPath, '--version'], env: process.env }),
       });
     }

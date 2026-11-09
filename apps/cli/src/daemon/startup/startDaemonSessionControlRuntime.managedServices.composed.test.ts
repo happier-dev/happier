@@ -25,6 +25,11 @@ import { AGENT_RUNTIME_DAEMON_SERVICES_PATH, AgentRuntimeDaemonServiceResponseV1
 import { projectManagedServiceSpawnEnvironmentKeys } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { buildOpenCodeManagedServerSpawnSpec } from '../../../../../packages/plugins/opencode/src/agent/runtime/server/spawnSpec';
 import { OPEN_CODE_SYSTEM_TOOL_ID } from '../../../../../packages/plugins/opencode/src/agent/systemTool';
+import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createPurposeTargetResolver } from '@happier-dev/cli-common/connectedAccounts';
+import { PluginConnectedAccountAuthenticationV2Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
+import { decodeRunnerDaemonPluginServiceWireValueV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null }));
 // Only the listening socket is replaced. Requests below use real HTTP injection,
@@ -37,6 +42,77 @@ vi.mock('@/daemon/controlServer', async importOriginal => ({
   },
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); boundary.control = null; });
+
+it('projects the detached OpenCode Run exact profile through its requester Account owner instead of the parent binding', async () => {
+  const authentication = PluginConnectedAccountAuthenticationV2Schema.parse({ defaultModeId: 'token', modes: [{
+    id: 'token', kind: 'manual', outcomeReconciliation: 'none',
+    fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }],
+  }] });
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, false, {
+    manifest: createPluginManifestV2Fixture({ id: 'acme.project-launch', contributes: {
+      connectedAccountDescriptors: [{ id: 'subscription', title: 'Subscription', authentication }],
+      agents: [{ id: 'agent', title: 'OpenCode account binding fixture', runtime: { kind: 'custom' }, primary: 'sessions',
+        capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        connectedAccounts: [{ purpose: 'openai-codex-model-request', service: 'subscription', materializationKinds: ['httpHeaders'] }] }],
+    } }),
+    files: {
+      'agent.mjs': 'export function factory() { return { sessions: { open() { throw new Error("Binding observation cannot run inference"); } } }; }',
+      'daemon.mjs': `import { factory } from './agent.mjs';
+        export function activate(api) {
+          const unused = async () => { throw new Error('Binding observation cannot invoke account credentials'); };
+          api.connectedAccounts.register('subscription', {
+            authentication: { modes: { token: { kind: 'manual', complete: unused } } },
+            refresh: unused, revoke: unused, status: unused, materialize: unused,
+          });
+          api.agents.register('agent', factory, { sessionRunnerFactory: { module: './agent.mjs', export: 'factory', runtimeApiVersion: 1 } });
+        }`,
+    },
+  }, createPluginReloadController());
+  const service = { pluginId: h.retainedAgent.pluginId, localId: 'subscription' };
+  const purpose = { consumer: { pluginId: h.retainedAgent.pluginId, localId: h.retainedAgent.localAgentId }, purpose: 'openai-codex-model-request' };
+  // Account metadata transport is the boundary; binding and target resolution stay real.
+  const resolver = createPurposeTargetResolver({ available: true,
+    resolveService: async () => ({ service, authentication }),
+    listAccounts: async () => ['parent-profile', 'judge-profile'].map(accountId => QualifiedConnectedAccountProfileV4Schema.parse({
+      ref: { service, accountId }, authenticationModeId: 'token', status: 'connected', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationReady: true,
+      configurationRevision: null, scopes: [], displayName: accountId,
+    })),
+  });
+  const unused = async () => { throw new Error('Binding observation cannot select or materialize credentials'); };
+  const owner = createConnectedAccountPurposeBindingOwner({
+    store: { read: async () => ({ v: 1, bindings: [] }), update: unused, subscribe: () => ({ dispose() {} }) },
+    resolveTarget: resolver, selectTarget: unused, materializeAccount: unused,
+    projectTargetAccounts: unused, assertTargetAccountMaterializable: unused,
+  });
+  h.tracked.requesterSessionRuntimeContext = { ...h.requester, connectedAccountsOwner: owner };
+  const binding = (accountId: string) => ({ purpose, target: { kind: 'account' as const, account: { service, accountId } } });
+  const parentLease = owner.activatePurposeBindings({ subject: { kind: 'session', sessionId: h.sessionId },
+    purposes: [purpose], bindings: [binding('parent-profile')] });
+  const runId = 'judge-with-exact-connected-profile';
+  const runLease = owner.activatePurposeBindings({ subject: { kind: 'execution_run', runId,
+    runnerPid: h.runner.pid, agentId: h.retainedAgent.agentId, isCurrent: () => true }, purposes: [purpose], bindings: [binding('judge-profile')] });
+  onTestFinished(() => { runLease.dispose(); parentLease.dispose(); });
+  h.connectedServiceRuntimeRegistry.registerRunTarget({ runKey: runId, pid: h.runner.pid,
+    sessionId: h.sessionId, agentId: h.retainedAgent.agentId, exactPurposeBindingSubjectId: runLease.subjectId });
+  const snapshot = await h.dispatch({ kind: 'execution_run.snapshot.acquire_v1',
+    backendTarget: { kind: 'backend', backendId: h.retainedAgent.agentId } });
+  if (!snapshot.ok || snapshot.result.kind !== 'execution_run.snapshot') throw new Error('Missing admitted Run snapshot');
+  const snapshotId = snapshot.result.snapshotId;
+  const prepared = await h.dispatch({ kind: 'plugin_services.prepare_v1', ...h.operationBase(runId), executionRunCwd: h.cwd }, snapshotId);
+  expect(prepared).toMatchObject({ ok: true });
+  const read = () => h.dispatch({ kind: 'plugin_connected_accounts.get_binding_v1', ...h.operationBase(runId), purpose: purpose.purpose }, snapshotId);
+  const selected = await read();
+  if (!selected.ok || selected.result.kind !== 'plugin_services.result_v1') throw new Error(`Missing connected binding: ${JSON.stringify(selected)}`);
+  expect(decodeRunnerDaemonPluginServiceWireValueV1(selected.result.value)).toMatchObject({ account: { service, accountId: 'judge-profile' } });
+  // An expired exact Run must not fall back to the still-active parent's profile.
+  runLease.dispose();
+  const retired = await read();
+  if (!retired.ok || retired.result.kind !== 'plugin_services.result_v1') throw new Error('Missing retired binding result');
+  expect(decodeRunnerDaemonPluginServiceWireValueV1(retired.result.value)).toBeNull();
+  await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase(runId) }, snapshotId);
+  await h.dispatch({ kind: 'execution_run.snapshot.release_v1', snapshotId });
+});
 
 it.each([
   ['development', 'metadata'], ['development', 'retained'],

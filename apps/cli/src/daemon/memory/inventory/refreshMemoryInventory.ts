@@ -292,9 +292,14 @@ export async function refreshMemoryInventoryOnce(params: Readonly<{
       backfillPolicy: params.backfillPolicy,
       nowMs: params.nowMs,
     });
+    const rowsById = new Map<string, RawSessionListRow>();
+    for (const row of page.sessions) {
+      const id = readSessionId(row);
+      if (!rowsById.has(id)) rowsById.set(id, row);
+    }
     for (const id of selected.sessionIds) {
       if (!id || emitted.has(id)) continue;
-      const row = page.sessions.find((candidate) => readSessionId(candidate) === id);
+      const row = rowsById.get(id);
       if (!row) continue;
       if (params.isSessionEligible && !params.isSessionEligible(row)) continue;
       const eligibility = resolveMemoryInventorySessionEligibility({

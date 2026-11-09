@@ -3,13 +3,14 @@ import type { BrowserAdapterCapabilitiesV1, BrowserDiagnosticFamilyV1 } from '@h
 
 import type { BrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
 import type {
+    BrowserSidecarContextCaptureSurface,
     BrowserSidecarCdpEventSubscriber,
     BrowserSidecarCdpPageHandle,
     BrowserSidecarViewLifecycleEvent,
     BrowserSidecarViewLifecycleSubscriber,
 } from '../controlAdapter';
 import { createBrowserSidecarDiagnosticsEventSourceBridge } from './eventSource';
-import { createSidecarCdpDiagnosticsEventSource, SIDECAR_CDP_DIAGNOSTIC_FAMILIES } from './cdpEventSource';
+import { createSidecarCdpDiagnosticsEventSource, SIDECAR_CDP_DIAGNOSTIC_FAMILIES, SIDECAR_CDP_DIAGNOSTICS_FIDELITY } from './cdpEventSource';
 import type { SurfaceInputControl } from '../../../surfaces/inputControl';
 import { readSidecarRequestDetail, type BrowserDiagnosticsRequestDetailInput } from './requestDetails';
 import type { BrowserDiagnosticsRequestDetailV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
@@ -21,14 +22,11 @@ import type { BrowserDiagnosticsRequestDetailV1 } from '@happier-dev/protocol/br
 const SIDECAR_CDP_DIAGNOSTICS_CAPABILITIES: BrowserAdapterCapabilitiesV1 = BrowserAdapterCapabilitiesV1Schema.parse({
     adapterKind: 'chromiumSidecar',
     supportedTargetKinds: ['externalUrl'],
-    diagnosticsFidelityByFamily: Object.fromEntries(SIDECAR_CDP_DIAGNOSTIC_FAMILIES.map(family => [family, 'cdp'])),
+    diagnosticsFidelityByFamily: SIDECAR_CDP_DIAGNOSTICS_FIDELITY,
 });
 
-// openView establishes a view at the initial navigation generation (the automation service and the
-// context routes both anchor at 0). Per-navigation generation progression is a live-session concern.
-const INITIAL_NAVIGATION_GENERATION = 0;
-
 type SidecarCdpDiagnosticsContextCapture = Readonly<{
+    getNavigationState: NonNullable<BrowserSidecarContextCaptureSurface['getNavigationState']>;
     transport: Readonly<{
         dispatchPageCommand(input: BrowserSidecarCdpPageHandle & Readonly<{
             method: string;
@@ -97,7 +95,8 @@ export function createSidecarCdpDiagnosticsRuntime(
             requesterAccountId: input.ownerAccountId,
             browserSessionId: view.browserSessionId,
             viewId: view.viewId,
-            navigationGeneration: INITIAL_NAVIGATION_GENERATION,
+            // The bridge reads this at publication, after the control owner has advanced the page.
+            get navigationGeneration() { return input.contextCapture.getNavigationState(view)?.navigationGeneration ?? 0; },
             adapterCapabilities: SIDECAR_CDP_DIAGNOSTICS_CAPABILITIES,
             source,
             families: SIDECAR_CDP_DIAGNOSTIC_FAMILIES,

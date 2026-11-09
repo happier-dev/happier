@@ -60,6 +60,7 @@ export async function readQualifiedConnectedAccountCredentialMaterial(input: Rea
   account: QualifiedConnectedAccountRef;
   getAccountEncryptionMode(signal?: AbortSignal): Promise<ConnectedServiceAccountEncryptionMode>;
   readCredential?: CredentialSnapshotReader;
+  requestPurpose?: Parameters<CredentialSnapshotReader>[0]['requestPurpose'];
   /** The daemon's Saved Secret catalog for keys held by reference; defaults to the active Account's. */
   secrets?: CredentialSecretReader;
   signal?: AbortSignal;
@@ -74,6 +75,7 @@ export async function readQualifiedConnectedAccountCredentialMaterial(input: Rea
     readCredential: ({ ref, signal }) => (input.readCredential ?? readQualifiedConnectedAccountCredentialV4)({
       token: input.credentials.token,
       ref,
+      requestPurpose: input.requestPurpose ?? 'connected-accounts:purpose-binding',
       signal,
     }),
     openCredentialContent: (accountMode, envelope) => openEnvelope({

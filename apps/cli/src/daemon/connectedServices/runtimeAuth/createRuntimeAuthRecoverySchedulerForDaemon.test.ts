@@ -132,6 +132,31 @@ async function seedRuntimeAuthRecoveryFile(
 }
 
 describe('createRuntimeAuthRecoverySchedulerForDaemon', () => {
+  it.each([-500, 50])('re-arms a persisted deadline offset %s asynchronously after passive construction', async (offset) => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-runtime-auth-rearm-'));
+    const deadline = Date.now() + offset;
+    const recovered: string[] = [];
+    let resolveRecovery!: () => void;
+    const recovery = new Promise<void>(resolve => { resolveRecovery = resolve; });
+    await seedRuntimeAuthRecoveryFile(activeServerDir, {
+      [predecessorRecoveryKey]: predecessorV2Intent({ nextRetryAtMs: deadline }),
+    });
+    const scheduler = createRuntimeAuthRecoverySchedulerForDaemon({
+      activeServerDir, nowMs: () => Date.now(), jitterMs: () => 0,
+      recover: async ({ sessionId }) => { recovered.push(sessionId); resolveRecovery(); return { status: 'session_not_found' }; },
+    });
+    try {
+      expect(recovered).toEqual([]);
+      scheduler.hydrate();
+      expect(recovered).toEqual([]);
+      await recovery;
+      await scheduler.wake({ sessionId: 'session-predecessor', reason: 'timer' });
+      expect(recovered).toEqual(['session-predecessor']);
+    } finally {
+      scheduler.dispose();
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
   it('retains predecessor pending event custody with retired fields and normalizes its service identity', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-runtime-auth-retired-event-'));
     const identity = { sessionId: 'session-retained-event', serviceId: 'openai-codex', profileId: 'primary', groupId: 'team' };

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { createDaemonMachineBootstrapRuntime } from './createDaemonMachineBootstrapRuntime';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { createMemoryProcessBoundary } from '../memory/processMemoryIndexer.testkit';
 
 function createBaseRuntimeParams(
   overrides: Partial<Parameters<typeof createDaemonMachineBootstrapRuntime>[0]> = {},
@@ -54,12 +55,16 @@ describe('createDaemonMachineBootstrapRuntime Memory startup', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     restoreEnvValues(envBackup);
     vi.resetModules();
     if (homeDir) await removeTempDir(homeDir);
   });
 
   it('starts the canonical Memory worker for token-only credentials and plaintext settings', async () => {
+    const boundary = createMemoryProcessBoundary();
+    const processChannel = await import('@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessChannel');
+    vi.spyOn(processChannel, 'spawnBackgroundServiceProcessChannel').mockImplementation(boundary.spawnChannel);
     const { writeCredentialsTokenOnly } = await import('@/persistence');
     const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
     await writeCredentialsTokenOnly({ token: 'token-only' });
@@ -72,9 +77,12 @@ describe('createDaemonMachineBootstrapRuntime Memory startup', () => {
     const worker = await runtime.startMemoryWorkerForMachine('machine_1');
 
     expect(worker).not.toBeNull();
-    expect(worker?.getSettings().enabled).toBe(true);
-    expect(worker?.getTier1DbPath()).toBeTruthy();
-    worker?.stop();
+    try {
+      await worker?.waitForReady();
+      expect(worker?.getSettings().enabled).toBe(true);
+      expect(worker?.getTier1DbPath()).toBeTruthy();
+    } finally { await worker?.stop(); }
+    expect(boundary.children.every(child => child.closed)).toBe(true);
   }, 60_000);
 
   it('keeps retained unreadable encrypted Memory settings typed unavailable instead of disabling Memory', async () => {
@@ -111,8 +119,11 @@ describe('createDaemonMachineBootstrapRuntime Memory startup', () => {
     );
     const runtime = createRuntime(createBaseRuntimeParams());
 
-    await expect(runtime.startMemoryWorkerForMachine('machine_1')).rejects.toMatchObject({
-      code: 'memory_settings_secrets_unavailable',
-    });
+    const worker = await runtime.startMemoryWorkerForMachine('machine_1');
+    expect(worker).not.toBeNull();
+    try {
+      await expect(worker!.waitForReady()).rejects.toMatchObject({ code: 'memory_settings_secrets_unavailable' });
+      expect(worker!.getTier1DbPath()).toBeNull();
+    } finally { await worker?.stop(); }
   });
 });

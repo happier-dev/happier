@@ -150,12 +150,14 @@ export class InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<
                 const current = this.pendingByKey.get(key);
                 if (current !== entry || entry.settled) return;
                 entry.settled = true;
+                this.pendingByKey.delete(key);
                 current.resolve({ status: 'completed', completion });
             },
             completeResult: (result, context) => {
                 const current = this.pendingByKey.get(key);
                 if (current !== entry || entry.settled) return;
                 entry.settled = true;
+                this.pendingByKey.delete(key);
                 current.resolve({ status: 'completed_result', completion: buildLeaseResultCompletion(result, context) });
             },
             finish: () => {

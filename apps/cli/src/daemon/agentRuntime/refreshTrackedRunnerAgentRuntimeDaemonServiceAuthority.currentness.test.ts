@@ -356,6 +356,11 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
         agentRuntimeDaemonServiceAdmittedInputId: 'input-retained-p',
         agentRuntimeDaemonServiceAdmittedUserMessageSeq: 8,
         agentRuntimeDaemonServiceAdmittedUserMessageSeqs: [8],
+        agentRuntimeDaemonServiceNativeRealtimeAdmission: {
+          admission: { admissionId: 'native-input', occurrenceId: 'native-occurrence', attemptId: 'native-attempt' },
+          runner: { pid: 4354, processStartTimeMs: 23_446, processCommandHash, snapshotIdentity: 'version:1.2.3' },
+          sourceCustody: retainedAgent().sourceCustody,
+        },
         runnerManagedDependencyRetentionV1: {
           v: 1,
           adoptedManagedProviderAuthority: {
@@ -465,6 +470,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       });
       expect(persistedRetainedP).toBe(false);
       expect(tracked.agentRuntimeDaemonServiceCapabilityHash).toBeUndefined();
+      expect(tracked.agentRuntimeDaemonServiceNativeRealtimeAdmission).toBeUndefined();
       expect(tracked.agentRuntimeDaemonServiceAdmittedTurnId).toBeUndefined();
       expect(tracked.agentRuntimeDaemonServiceAdmittedInputId).toBeUndefined();
       expect(tracked.agentRuntimeDaemonServiceAdmittedUserMessageSeq)

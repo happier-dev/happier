@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
+import { readConnectedAccountPurposeProfileLabel, type ConnectedAccountPurposeResolvedTarget,
+  type ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import type { ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type { QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol';
@@ -12,6 +14,7 @@ import type {
 } from '@happier-dev/plugin-sdk';
 import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeBindingTargetV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import type { ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import { QualifiedConnectedAccountRequestAuthUseV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
@@ -31,7 +34,9 @@ import {
   commitActiveConnectedAccountCatalog,
   getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken,
-  subscribeActiveAccountSettingsSnapshotChanges,
+  readConnectedAccountCatalogFromSnapshot,
+  readPublishedConnectedAccountCatalog,
+  subscribeActiveAccountSettingsKeys,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type {
   HostCurrentSessionUiServices,
@@ -56,9 +61,14 @@ import {
   parseHttpHeadersRequestAuthBearer,
 } from '../requestAuth/parseHttpHeadersRequestAuthBearer';
 import { runConnectedAccountBindingStage, withConnectedAccountBindingDiagnostic } from './bindingDiagnostics';
+import {
+  assertConnectedAccountPurposeTargetAuthorized as assertTargetAuthorized,
+  assertConnectedAccountPurposeResolvedTargetMatchesIntent as assertResolvedTargetMatchesIntent,
+  readConnectedAccountPurposeBindingTarget,
+} from '@happier-dev/cli-common/connectedAccounts';
 
 export type ConnectedAccountPurposeBindingStore = Readonly<{
-  read(signal?: AbortSignal): Promise<QualifiedConnectedAccountPurposeBindingsV1>;
+  read(signal?: AbortSignal, options?: Readonly<{ published: true }>): Promise<QualifiedConnectedAccountPurposeBindingsV1>;
   update(
     mutate: (
       current: QualifiedConnectedAccountPurposeBindingsV1,
@@ -68,28 +78,14 @@ export type ConnectedAccountPurposeBindingStore = Readonly<{
   subscribe(listener: () => void): Disposable;
 }>;
 
-export type ConnectedAccountPurposeResolvedTarget = Readonly<{
-  displayName: string;
-  /** Exact current account. Group intent is resolved here, at read/materialization time. */
-  account: QualifiedConnectedAccountRef;
-  /** Present only when the resolved target is a qualified group. */
-  group?: Readonly<{
-    groupId: string;
-    generation: number;
-  }>;
-  /** Credential-free source facts that also drive purpose-scoped account listings. */
-  observation?: Readonly<{
-    profiles: readonly QualifiedConnectedAccountProfileV4[];
-    group?: QualifiedConnectedAccountGroupV4;
-  }>;
-}>;
+export { readConnectedAccountPurposeProfileLabel, type ConnectedAccountPurposeResolvedTarget } from '@happier-dev/cli-common/connectedAccounts';
 
-/** Authorized profile presentation, without falling back to the opaque row id. */
-export function readConnectedAccountPurposeProfileLabel(
-  profile: Pick<QualifiedConnectedAccountProfileV4, 'displayName' | 'providerIdentity'>,
-): string | null {
-  return profile.displayName ?? profile.providerIdentity?.email ?? profile.providerIdentity?.accountId ?? null;
-}
+/** Existing logical selection and native member/generation tuple, retained for one host operation. */
+export type ConnectedAccountPurposeBindingIntentSelection = Readonly<{
+  binding: QualifiedConnectedAccountPurposeBindingV1;
+  resolved: ConnectedAccountPurposeResolvedTarget;
+  isCurrent(signal?: AbortSignal): Promise<boolean>;
+}>;
 
 /** Launch-only pointer to one exact recipient-scoped Team material row. */
 export type ConnectedAccountTeamDirectMaterialOrigin = Readonly<{
@@ -130,6 +126,7 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
     account: QualifiedConnectedAccountRef;
     expectedConfigurationRevision?: string | null;
     credentialRevisionBasis?: ConnectedAccountMaterializationCredentialRevisionBasis;
+    observeMaterializationPublicValues?: (values: readonly string[]) => void;
     request: ConnectedAccountMaterializationRequest;
     existingFiles?: Readonly<Record<string, Uint8Array>>;
     signal: AbortSignal;
@@ -160,15 +157,17 @@ export type ConnectedAccountPurposeBindingOwnerDependencies = Readonly<{
    */
   projectTargetAccounts(input: Readonly<{
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
+    observation?: ConnectedAccountPurposeResolvedTarget['observation'];
     limit?: number;
     signal: AbortSignal;
   }>): Promise<PluginConnectedAccountMetadataList>;
   /**
-   * Rechecks that one exact account remains admitted by the same exact binding
+   * Checks that one exact account is admitted by the same exact binding
    * target and its configured-origin projection before credential disclosure.
    */
   assertTargetAccountMaterializable(input: Readonly<{
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
+    observation?: ConnectedAccountPurposeResolvedTarget['observation'];
     account: QualifiedConnectedAccountRef;
     request: ConnectedAccountMaterializationRequest;
     signal: AbortSignal;
@@ -190,6 +189,8 @@ export type ConnectedAccountPurposeAuthorizationScope = Readonly<{
   purpose: QualifiedConnectedAccountPurposeV1;
   serviceRefs: readonly PluginContributionRef[];
 }>;
+
+type ManagedCredentialConfigurations = NonNullable<ConnectedAccountInvocationPurposeBinding['managedOperation']>['credentialConfigurations'];
 
 export type ConnectedAccountPurposeBindingSubject =
   | Readonly<{
@@ -216,8 +217,8 @@ export type ConnectedAccountPurposeBindingSubject =
       operationId: string;
       pluginId: string;
       providerLocalId: string;
+      credentialConfigurations?: ManagedCredentialConfigurations;
       isCurrent(): boolean;
-      credentialConfigurations?: readonly Readonly<{ account: QualifiedConnectedAccountRef; revision: string | null }>[];
     }>
   | Readonly<{
       kind: 'agent_catalog_observation';
@@ -456,6 +457,7 @@ export type ConnectedAccountPurposeBindingOwner =
       subject: ConnectedAccountPurposeBindingSubject;
       purposes: readonly QualifiedConnectedAccountPurposeV1[];
       bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+      bindingSelections?: readonly ConnectedAccountPurposeBindingIntentSelection[];
       directMaterialOrigins?: readonly ConnectedAccountTeamDirectMaterialOrigin[];
       /** Host-only observation port bound to this exact operation lifetime. */
       recordOperationCredentialUse?: (use: ActionOperationCredentialUseV1) => void;
@@ -482,11 +484,7 @@ export type ConnectedAccountPurposeBindingOwner =
       target: QualifiedConnectedAccountPurposeBindingTargetV1;
       serviceRefs: readonly PluginContributionRef[];
       signal: AbortSignal;
-    }>): Promise<Readonly<{
-      binding: QualifiedConnectedAccountPurposeBindingV1;
-      resolved: ConnectedAccountPurposeResolvedTarget;
-      isCurrent(signal?: AbortSignal): Promise<boolean>;
-    }>>;
+    }>): Promise<ConnectedAccountPurposeBindingIntentSelection>;
     /**
      * Resolves one current, immutable launch snapshot from already-authorized qualified
      * purpose declarations. This is a read of the canonical selection owner; it neither
@@ -635,18 +633,6 @@ function isPurposeReconciliationDeferred(error: unknown): error is PluginError {
       || error.code === 'plugin_connected_account_settings_outcome_unknown');
 }
 
-function assertTargetAuthorized(
-  target: QualifiedConnectedAccountPurposeBindingTargetV1,
-  serviceRefs: readonly PluginContributionRef[],
-  hostMcpRequestAuth = false,
-): void {
-  if (contributionKey(targetService(target)) === contributionKey(HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1) && !hostMcpRequestAuth) throw bindingOutOfScope();
-  const selectedServiceKey = contributionKey(targetService(target));
-  if (!serviceRefs.some((service) => contributionKey(service) === selectedServiceKey)) {
-    throw bindingOutOfScope();
-  }
-}
-
 function replacePurposeBinding(
   collectionLike: QualifiedConnectedAccountPurposeBindingsV1,
   purpose: QualifiedConnectedAccountPurposeV1,
@@ -684,27 +670,9 @@ function readPurposeBinding(
   collectionLike: QualifiedConnectedAccountPurposeBindingsV1,
   purpose: QualifiedConnectedAccountPurposeV1,
 ): QualifiedConnectedAccountPurposeBindingTargetV1 | null {
-  const key = qualifiedPurposeKey(purpose);
-  return createStoredReadSchema(ConnectedPurposeCatalogV1Schema).parse(collectionLike)
-    .bindings
-    .find((binding) => qualifiedPurposeKey(binding.purpose) === key)
-    ?.target ?? null;
-}
-
-function assertResolvedTargetMatchesIntent(
-  target: QualifiedConnectedAccountPurposeBindingTargetV1,
-  resolved: ConnectedAccountPurposeResolvedTarget,
-): void {
-  const intendedService = contributionKey(targetService(target));
-  if (contributionKey(resolved.account.service) !== intendedService) {
-    throw new Error('connected_account_purpose_resolution_service_mismatch');
-  }
-  if (
-    target.kind === 'account'
-    && !sameQualifiedConnectedAccountRef(resolved.account, target.account)
-  ) {
-    throw new Error('connected_account_purpose_resolution_account_mismatch');
-  }
+  return readConnectedAccountPurposeBindingTarget(
+    createStoredReadSchema(ConnectedPurposeCatalogV1Schema).parse(collectionLike), purpose,
+  );
 }
 
 function summary(
@@ -775,21 +743,21 @@ export function createConnectedAccountPurposeBindingOwner(
     isSubjectCurrent(): boolean;
     coveredPurposeKeys: ReadonlySet<string>;
     bindingByPurposeKey: ReadonlyMap<string, QualifiedConnectedAccountPurposeBindingV1>;
+    bindingSelectionByPurposeKey: ReadonlyMap<string, ConnectedAccountPurposeBindingIntentSelection>;
     bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+    credentialConfigurations?: ManagedCredentialConfigurations;
     hostMcpRequestAuth?: Readonly<{ serverId: string; resource: string }>;
-    credentialConfigurations?: readonly Readonly<{ account: QualifiedConnectedAccountRef; revision: string | null }>[];
     directMaterialOriginByPurposeKey: ReadonlyMap<string, ActiveConnectedAccountTeamDirectMaterialOrigin>;
     recordOperationCredentialUse?: (use: ActionOperationCredentialUseV1) => void;
   }>;
   const purposeBindingsBySubjectKey = new Map<string, PurposeBindingState>();
   const purposeBindingsBySubjectId = new Map<string, PurposeBindingState>();
-  const retainedConfigurationBasis = (subjectId: string | undefined, account: QualifiedConnectedAccountRef) => {
-    const retained = subjectId ? purposeBindingsBySubjectId.get(subjectId)?.credentialConfigurations : undefined;
-    if (!retained) return {};
-    const basis = retained.find(configuration => sameQualifiedConnectedAccountRef(configuration.account, account));
-    if (!basis || retained.some(configuration => sameQualifiedConnectedAccountRef(configuration.account, account)
-        && configuration.revision !== basis.revision)) throw bindingOutOfScope();
-    return { expectedConfigurationRevision: basis.revision };
+  const readAdmittedConfigurationBasis = (subjectId: string | undefined, account: QualifiedConnectedAccountRef): Readonly<{
+    expectedConfigurationRevision?: string | null;
+  }> => {
+    const captured = subjectId ? purposeBindingsBySubjectId.get(subjectId)?.credentialConfigurations
+      ?.find(entry => sameQualifiedConnectedAccountRef(entry.account, account)) : undefined;
+    return captured ? { expectedConfigurationRevision: captured.revision } : {};
   };
   const sessionInvalidationListenersBySessionId = new Map<string, Set<() => void>>();
   const sessionSubjectKey = (sessionId: string): string =>
@@ -1102,19 +1070,26 @@ export function createConnectedAccountPurposeBindingOwner(
         consumer: normalized.directMaterialConsumer,
       }));
     }
+    const bindingSelectionByPurposeKey = new Map<string, ConnectedAccountPurposeBindingIntentSelection>();
+    for (const selection of input.bindingSelections ?? []) {
+      const key = qualifiedPurposeKey(selection.binding.purpose);
+      const binding = bindingByPurposeKey.get(key);
+      if (!binding || targetKey(binding.target) !== targetKey(selection.binding.target) || bindingSelectionByPurposeKey.has(key)) {
+        throw bindingOutOfScope();
+      }
+      bindingSelectionByPurposeKey.set(key, selection);
+    }
     const state: PurposeBindingState = Object.freeze({
       subjectId: normalized.subjectId,
       isSubjectCurrent: normalized.isSubjectCurrent,
       coveredPurposeKeys,
       bindingByPurposeKey,
+      bindingSelectionByPurposeKey,
       bindings: Object.freeze(parsedBindings),
+      ...(subject.kind === 'managed_provider_operation' && subject.credentialConfigurations !== undefined
+        ? { credentialConfigurations: subject.credentialConfigurations } : {}),
       ...(subject.kind === 'mcp_request_auth' ? { hostMcpRequestAuth: Object.freeze({ serverId: subject.serverId,
         resource: canonicalMcpOAuthResourceUrlV1(subject.resource) }) } : {}),
-      ...(subject.kind === 'managed_provider_operation' && subject.credentialConfigurations
-        ? { credentialConfigurations: Object.freeze(subject.credentialConfigurations.map(configuration => Object.freeze({
-            account: Object.freeze({ service: Object.freeze({ ...configuration.account.service }), accountId: configuration.account.accountId }),
-            revision: configuration.revision,
-          }))) } : {}),
       directMaterialOriginByPurposeKey,
       ...(input.recordOperationCredentialUse ? { recordOperationCredentialUse: input.recordOperationCredentialUse } : {}),
     });
@@ -1177,7 +1152,9 @@ export function createConnectedAccountPurposeBindingOwner(
     });
   };
 
-  const readAuthorizedResolvedLocked = async (input: Readonly<{
+  // Reads consume the published admission/catalog; maintenance and selection writers
+  // own the mutation tail. Target/credential I/O must not reserve that tail for readers.
+  const readAuthorizedResolved = async (input: Readonly<{
     purpose: QualifiedConnectedAccountPurposeV1;
     serviceRefs: readonly PluginContributionRef[];
     exactPurposeBindingSubjectId?: string;
@@ -1185,7 +1162,7 @@ export function createConnectedAccountPurposeBindingOwner(
     sessionId?: string;
     signal: AbortSignal;
     observationOnly?: true;
-  }>): Promise<Readonly<{
+  }>, publishedCatalog?: QualifiedConnectedAccountPurposeBindingsV1): Promise<Readonly<{
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
     resolved: ConnectedAccountPurposeResolvedTarget;
     directMaterialOrigin: ActiveConnectedAccountTeamDirectMaterialOrigin | null;
@@ -1225,9 +1202,15 @@ export function createConnectedAccountPurposeBindingOwner(
       input.signal.throwIfAborted();
       if (!resolved) return unavailableBinding(input, 'target_unavailable');
       assertResolvedTargetMatchesIntent(target, resolved);
+      const retainedSelection = input.exactPurposeBindingSubjectId
+        ? purposeBindingsBySubjectId.get(input.exactPurposeBindingSubjectId)?.bindingSelectionByPurposeKey.get(qualifiedPurposeKey(purpose)) : null;
+      if (retainedSelection && !sameResolvedTarget({ target, resolved }, {
+        target: retainedSelection.binding.target, resolved: retainedSelection.resolved,
+      })) return unavailableBinding(input, 'target_unavailable');
       return { target, resolved, directMaterialOrigin: null };
     }
-    const durable = await runConnectedAccountBindingStage('account_purpose_read', () => dependencies.store.read(input.signal));
+    const durable = publishedCatalog
+      ?? await runConnectedAccountBindingStage('account_purpose_read', () => dependencies.store.read(input.signal, { published: true }));
     input.signal.throwIfAborted();
     const target = readPurposeBinding(durable, purpose);
     if (!target) {
@@ -1248,7 +1231,7 @@ export function createConnectedAccountPurposeBindingOwner(
     input.signal.throwIfAborted();
     if (!resolved) {
       const revalidatedTarget = readPurposeBinding(
-        await runConnectedAccountBindingStage('account_purpose_read', () => dependencies.store.read(input.signal)),
+        publishedCatalog ?? await runConnectedAccountBindingStage('account_purpose_read', () => dependencies.store.read(input.signal, { published: true })),
         purpose,
       );
       input.signal.throwIfAborted();
@@ -1271,22 +1254,6 @@ export function createConnectedAccountPurposeBindingOwner(
     assertResolvedTargetMatchesIntent(target, resolved);
     return { target, resolved, directMaterialOrigin: null };
   };
-  const readAuthorizedResolved = async (input: Readonly<{
-    purpose: QualifiedConnectedAccountPurposeV1;
-    serviceRefs: readonly PluginContributionRef[];
-    exactPurposeBindingSubjectId?: string;
-    requireSelected?: true;
-    sessionId?: string;
-    signal: AbortSignal;
-    observationOnly?: true;
-  }>): Promise<Readonly<{
-    target: QualifiedConnectedAccountPurposeBindingTargetV1;
-    resolved: ConnectedAccountPurposeResolvedTarget;
-    directMaterialOrigin: ActiveConnectedAccountTeamDirectMaterialOrigin | null;
-  }> | null> => await withSerializedConsumerMutations(
-    [contributionKey(QualifiedConnectedAccountPurposeV1Schema.parse(input.purpose).consumer)],
-    async () => await readAuthorizedResolvedLocked(input),
-  );
   const resolveCurrentSessionPurposeBindingSnapshot = async (input: Readonly<{
     authorizedPurposes: readonly ConnectedAccountPurposeAuthorizationScope[];
     signal: AbortSignal;
@@ -1309,61 +1276,57 @@ export function createConnectedAccountPurposeBindingOwner(
       scopeByPurposeKey.set(key, Object.freeze({ purpose, serviceRefs }));
     }
     const scopes = [...scopeByPurposeKey.values()];
-    return await withSerializedConsumerMutations(
-      scopes.map((scope) => contributionKey(scope.purpose.consumer)),
-      async () => {
-        const bindings: QualifiedConnectedAccountPurposeBindingV1[] = [];
-        const directMaterialOrigins: ConnectedAccountTeamDirectMaterialOrigin[] = [];
-        const teamResourceSelections: ConnectedAccountSessionTeamResourceSelection[] = [];
-        const current = await dependencies.store.read(input.signal);
-        input.signal.throwIfAborted();
-        for (const scope of scopes) {
-          const teamSelection = readPurposeTeamResourceSelection(current, scope.purpose);
-          if (teamSelection) {
-            const selection = teamSelection.selection;
-            if (selection.deliveryMode === 'direct') {
-              const service = scope.serviceRefs.find((candidate) => (
-                contributionKey(candidate) === contributionKey(selection.disclosedMember.service)
-              ));
-              const projected = service
-                ? projectTeamResourceSelectionToSessionPurposeBinding({
-                    purpose: scope.purpose,
-                    service,
-                    selection,
-                  })
-                : null;
-              if (!projected) continue;
-              bindings.push(projected.binding);
-              directMaterialOrigins.push(projected.origin);
-            }
-            teamResourceSelections.push(Object.freeze({
-              purpose: scope.purpose,
-              teamId: teamSelection.teamId,
-              selection,
-              services: scope.serviceRefs,
-            }));
-            continue;
-          }
-          const resolved = await readAuthorizedResolvedLocked({
-            purpose: scope.purpose,
-            serviceRefs: scope.serviceRefs,
-            signal: input.signal,
-          });
-          if (resolved) {
-            bindings.push(immutableBinding({
-              purpose: scope.purpose,
-              target: resolved.target,
-            }));
-          }
+    const bindings: QualifiedConnectedAccountPurposeBindingV1[] = [];
+    const directMaterialOrigins: ConnectedAccountTeamDirectMaterialOrigin[] = [];
+    const teamResourceSelections: ConnectedAccountSessionTeamResourceSelection[] = [];
+    // Resolve every purpose from this publication, even if another writer finishes during target I/O.
+    const current = await dependencies.store.read(input.signal);
+    input.signal.throwIfAborted();
+    for (const scope of scopes) {
+      const teamSelection = readPurposeTeamResourceSelection(current, scope.purpose);
+      if (teamSelection) {
+        const selection = teamSelection.selection;
+        if (selection.deliveryMode === 'direct') {
+          const service = scope.serviceRefs.find((candidate) => (
+            contributionKey(candidate) === contributionKey(selection.disclosedMember.service)
+          ));
+          const projected = service
+            ? projectTeamResourceSelectionToSessionPurposeBinding({
+                purpose: scope.purpose,
+                service,
+                selection,
+              })
+            : null;
+          if (!projected) continue;
+          bindings.push(projected.binding);
+          directMaterialOrigins.push(projected.origin);
         }
-        return Object.freeze({
-          purposes: Object.freeze(scopes.map((scope) => scope.purpose)),
-          bindings: Object.freeze(bindings),
-          directMaterialOrigins: Object.freeze(directMaterialOrigins),
-          teamResourceSelections: Object.freeze(teamResourceSelections),
-        });
-      },
-    );
+        teamResourceSelections.push(Object.freeze({
+          purpose: scope.purpose,
+          teamId: teamSelection.teamId,
+          selection,
+          services: scope.serviceRefs,
+        }));
+        continue;
+      }
+      const resolved = await readAuthorizedResolved({
+        purpose: scope.purpose,
+        serviceRefs: scope.serviceRefs,
+        signal: input.signal,
+      }, current);
+      if (resolved) {
+        bindings.push(immutableBinding({
+          purpose: scope.purpose,
+          target: resolved.target,
+        }));
+      }
+    }
+    return Object.freeze({
+      purposes: Object.freeze(scopes.map((scope) => scope.purpose)),
+      bindings: Object.freeze(bindings),
+      directMaterialOrigins: Object.freeze(directMaterialOrigins),
+      teamResourceSelections: Object.freeze(teamResourceSelections),
+    });
   };
 
   const projectCredentialUse = (input: Readonly<{
@@ -1419,7 +1382,7 @@ export function createConnectedAccountPurposeBindingOwner(
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       signal: input.signal,
     });
-    const hasExplicitSelectionLocked = async (): Promise<boolean> => {
+    const hasExplicitSelection = async (): Promise<boolean> => {
       if (input.exactPurposeBindingSubjectId) {
         const state = purposeBindingsBySubjectId.get(input.exactPurposeBindingSubjectId);
         let current = false;
@@ -1433,21 +1396,16 @@ export function createConnectedAccountPurposeBindingOwner(
       }
       const session = readSessionPurposeBinding(authorizationInput);
       if (session.covered) return session.binding !== null;
-      const durable = await dependencies.store.read(input.signal);
+      const durable = await dependencies.store.read(input.signal, { published: true });
       input.signal.throwIfAborted();
       return readPurposeBinding(durable, input.purpose) !== null
         || readPurposeTeamResourceSelection(durable, input.purpose) !== null;
     };
-    const readMaterializationTarget = async () => await readAuthorizedResolved(authorizationInput);
-    const before = await observeMaterializationPhase('materialization_binding_before', async () => input.nativeService
-      ? await withSerializedConsumerMutations(
-          [contributionKey(input.purpose.consumer)],
-          async () => ({
-            explicit: await hasExplicitSelectionLocked(),
-            resolved: await readAuthorizedResolvedLocked(authorizationInput),
-          }),
-        )
-      : { explicit: false, resolved: await readMaterializationTarget() });
+    // Retained admissions consume the published binding while only mutations queue.
+    const before = await observeMaterializationPhase('materialization_binding_before', async () => ({
+      explicit: input.nativeService ? await hasExplicitSelection() : false,
+      resolved: await readAuthorizedResolved(authorizationInput),
+    }));
     const resolved = before.resolved;
     if (!resolved) {
       if (before.explicit || !input.nativeService || !dependencies.materializeNative) throw resourceNotSelected(input.purpose);
@@ -1455,9 +1413,6 @@ export function createConnectedAccountPurposeBindingOwner(
       const service = Object.freeze(nativeService.data);
       const materialization = await dependencies.materializeNative({ service, request: input.request, signal: input.signal });
       input.signal.throwIfAborted();
-      await withSerializedConsumerMutations([contributionKey(input.purpose.consumer)], async () => {
-        if (await hasExplicitSelectionLocked()) throw resourceNotSelected(input.purpose);
-      });
       return materialization;
     }
     if (
@@ -1493,30 +1448,14 @@ export function createConnectedAccountPurposeBindingOwner(
         })()
       : await dependencies.materializeAccount({
           account: resolved.resolved.account,
-          ...retainedConfigurationBasis(input.exactPurposeBindingSubjectId, resolved.resolved.account),
+          ...readAdmittedConfigurationBasis(input.exactPurposeBindingSubjectId, resolved.resolved.account),
+          ...(input.observeMaterializationPublicValues ? { observeMaterializationPublicValues: input.observeMaterializationPublicValues } : {}),
           ...(credentialRevisionBasis ? { credentialRevisionBasis } : {}),
           request: input.request,
           ...(input.existingFiles ? { existingFiles: input.existingFiles } : {}),
           signal: input.signal,
         }));
     input.signal.throwIfAborted();
-    const current = await observeMaterializationPhase('materialization_binding_after', readMaterializationTarget);
-    if (
-      !current
-      || targetKey(current.target) !== targetKey(resolved.target)
-      || !sameQualifiedConnectedAccountRef(
-        current.resolved.account,
-        resolved.resolved.account,
-      )
-      || current.directMaterialOrigin?.resourceId
-        !== resolved.directMaterialOrigin?.resourceId
-      || (
-        input.expectedAccount
-        && !sameQualifiedConnectedAccountRef(input.expectedAccount, current.resolved.account)
-      )
-    ) {
-      throw resourceNotSelected(input.purpose);
-    }
     if (input.credentialRevisionBasis) {
       if (materializedCredentialRevision === null) throw bindingOutOfScope();
       input.credentialRevisionBasis.captureCredentialRevision(
@@ -1525,9 +1464,9 @@ export function createConnectedAccountPurposeBindingOwner(
     }
     if (recordCredentialUse) {
       recordCredentialUse(projectCredentialUse({
-        purpose: input.purpose, target: current.target.kind, account: current.resolved.account,
-        resolved: current.resolved, teamResource: admittedTeamResource,
-        isTeamResource: current.directMaterialOrigin !== null,
+        purpose: input.purpose, target: resolved.target.kind, account: resolved.resolved.account,
+        resolved: resolved.resolved, teamResource: admittedTeamResource,
+        isTeamResource: resolved.directMaterialOrigin !== null,
       }));
     }
     return materialization;
@@ -1549,14 +1488,11 @@ export function createConnectedAccountPurposeBindingOwner(
     if (!before) throw resourceNotSelected(input.purpose);
     const listing = await dependencies.projectTargetAccounts({
       target: before.target,
+      observation: before.resolved.observation,
       ...(input.limit === undefined ? {} : { limit: input.limit }),
       signal: input.signal,
     });
     input.signal.throwIfAborted();
-    const after = await readAuthorizedResolved(authorizationInput);
-    if (!after || !sameResolvedTarget(before, after)) {
-      throw bindingOutOfScope();
-    }
     return listing;
   };
 
@@ -1576,31 +1512,23 @@ export function createConnectedAccountPurposeBindingOwner(
     if (!before) throw bindingOutOfScope();
     await dependencies.assertTargetAccountMaterializable({
       target: before.target,
+      observation: before.resolved.observation,
       account: input.account,
       request: input.request,
       signal: input.signal,
     });
     const materialization = await dependencies.materializeAccount({
       account: input.account,
-      ...retainedConfigurationBasis(input.exactPurposeBindingSubjectId, input.account),
+      ...readAdmittedConfigurationBasis(input.exactPurposeBindingSubjectId, input.account),
+      ...(input.observeMaterializationPublicValues ? { observeMaterializationPublicValues: input.observeMaterializationPublicValues } : {}),
       request: input.request,
       signal: input.signal,
     });
     input.signal.throwIfAborted();
-    await dependencies.assertTargetAccountMaterializable({
-      target: before.target,
-      account: input.account,
-      request: input.request,
-      signal: input.signal,
-    });
-    const after = await readAuthorizedResolved(authorizationInput);
-    if (!after || !sameResolvedTarget(before, after)) {
-      throw bindingOutOfScope();
-    }
     const recordCredentialUse = input.recordOperationCredentialUse ?? (input.exactPurposeBindingSubjectId
       ? purposeBindingsBySubjectId.get(input.exactPurposeBindingSubjectId)?.recordOperationCredentialUse
       : undefined);
-    recordCredentialUse?.(projectCredentialUse({ purpose: input.purpose, target: 'listed_account', account: input.account, resolved: after.resolved }));
+    recordCredentialUse?.(projectCredentialUse({ purpose: input.purpose, target: 'listed_account', account: input.account, resolved: before.resolved }));
     return materialization;
   };
 
@@ -1635,7 +1563,7 @@ export function createConnectedAccountPurposeBindingOwner(
     );
     const service = Object.freeze({ ...targetService(binding.target) });
     const readCurrent = async () => {
-      const current = await readAuthorizedResolvedLocked({
+      const current = await readAuthorizedResolved({
         purpose: binding.purpose,
         serviceRefs: Object.freeze([service]),
         exactPurposeBindingSubjectId: subjectId,
@@ -1655,45 +1583,40 @@ export function createConnectedAccountPurposeBindingOwner(
         ? null
         : Object.freeze({ current, group });
     };
-    return await withSerializedConsumerMutations(
-      [contributionKey(binding.purpose.consumer)],
-      async () => {
-        const before = await readCurrent();
-        if (!before) return null;
-        const revisionLike = before.current.directMaterialOrigin?.resourceId
-          ?? (dependencies.resolveCredentialRevision
-            ? await dependencies.resolveCredentialRevision(
-                before.current.resolved.account,
-                input.signal,
-              )
-            : null);
-        input.signal.throwIfAborted();
-        const revision = before.current.directMaterialOrigin
-          ? { success: true as const, data: revisionLike as ConnectedServiceCredentialRevisionV1 }
-          : ConnectedServiceCredentialRevisionV1Schema.safeParse(revisionLike);
-        if (!revision.success || revisionLike === null) return null;
-        const after = await readCurrent();
-        if (
-          !after
-          || !sameQualifiedConnectedAccountRef(
+    const before = await readCurrent();
+    if (!before) return null;
+    const revisionLike = before.current.directMaterialOrigin?.resourceId
+      ?? (dependencies.resolveCredentialRevision
+        ? await dependencies.resolveCredentialRevision(
             before.current.resolved.account,
-            after.current.resolved.account,
+            input.signal,
           )
-          || before.group?.groupId !== after.group?.groupId
-          || before.group?.generation !== after.group?.generation
-        ) {
-          return null;
-        }
-        return Object.freeze({
-          account: Object.freeze({
-            service: Object.freeze({ ...after.current.resolved.account.service }),
-            accountId: after.current.resolved.account.accountId,
-          }),
-          credentialRevision: revision.data,
-          ...(after.group ? { group: after.group } : {}),
-        });
-      },
-    );
+        : null);
+    input.signal.throwIfAborted();
+    const revision = before.current.directMaterialOrigin
+      ? { success: true as const, data: revisionLike as ConnectedServiceCredentialRevisionV1 }
+      : ConnectedServiceCredentialRevisionV1Schema.safeParse(revisionLike);
+    if (!revision.success || revisionLike === null) return null;
+    const after = await readCurrent();
+    if (
+      !after
+      || !sameQualifiedConnectedAccountRef(
+        before.current.resolved.account,
+        after.current.resolved.account,
+      )
+      || before.group?.groupId !== after.group?.groupId
+      || before.group?.generation !== after.group?.generation
+    ) {
+      return null;
+    }
+    return Object.freeze({
+      account: Object.freeze({
+        service: Object.freeze({ ...after.current.resolved.account.service }),
+        accountId: after.current.resolved.account.accountId,
+      }),
+      credentialRevision: revision.data,
+      ...(after.group ? { group: after.group } : {}),
+    });
   };
 
   const materializeRequestAuthBearer = async (input: Readonly<{
@@ -1803,21 +1726,22 @@ export function createConnectedAccountPurposeBindingOwner(
       resolved,
       async isCurrent(signal: AbortSignal = input.signal) {
         if (signal.aborted) return false;
-        try {
-          const current = await dependencies.resolveTarget(target, signal);
-          return !signal.aborted && current !== null
-            && sameQualifiedConnectedAccountRef(current.account, resolved.account)
-            && current.group?.groupId === resolved.group?.groupId
-            && current.group?.generation === resolved.group?.generation;
-        } catch {
-          return false;
-        }
+        const current = await dependencies.resolveTarget(target, signal);
+        return !signal.aborted && current !== null
+          && sameQualifiedConnectedAccountRef(current.account, resolved.account)
+          && current.group?.groupId === resolved.group?.groupId
+          && current.group?.generation === resolved.group?.generation;
       },
     });
   };
 
   return Object.freeze({
     activatePurposeBindings,
+    readExecutionRunPurposeBindingSubjectId(runId) {
+      return purposeBindingsBySubjectKey.get(
+        JSON.stringify(['execution_run', runId.trim()]),
+      )?.subjectId ?? null;
+    },
     async readCredentialConfigurationRevision(account, signal) {
       signal.throwIfAborted();
       if (!dependencies.resolveCredentialConfigurationRevision) throw bindingOutOfScope();
@@ -2103,7 +2027,6 @@ export function createConnectedAccountPurposeBindingOwner(
 
 export function createActiveAccountSettingsConnectedAccountPurposeBindingStore(input: Readonly<{
   credentials?: StoredCredentials; operationContext?: SavedSecretOperationContextV1;
-  subscribe?: ConnectedAccountPurposeBindingStore['subscribe'];
 }> = {}): ConnectedAccountPurposeBindingStore {
   const readSnapshot = () => input.operationContext ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
   const unavailable = (reason: string, retryable = false) => new PluginError({ code: 'plugin_connected_account_settings_unavailable',
@@ -2132,6 +2055,11 @@ export function createActiveAccountSettingsConnectedAccountPurposeBindingStore(i
     if (!credentials) throw unavailable('credentials-unavailable');
     return credentials;
   };
+  const requirePurposeCatalog = (catalog: ConnectedAccountCatalogSnapshotV1) => {
+    if (catalog.status !== 'ready') throw unavailable(catalog.status === 'unavailable' ? catalog.reason : 'loading');
+    if (catalog.record.key !== 'purposes') throw unavailable('invalid-stored-content');
+    return { ...catalog, record: catalog.record };
+  };
   const readCatalog = async (operation: ReturnType<typeof captureOperation>, signal?: AbortSignal) => {
     signal?.throwIfAborted();
     await operation.verifyCurrent(signal);
@@ -2140,15 +2068,28 @@ export function createActiveAccountSettingsConnectedAccountPurposeBindingStore(i
     const catalog = await readActiveConnectedAccountCatalog({
       credentials: await credentialsForOperation(operation, signal), key: 'purposes', signal, operationContext: input.operationContext });
     await operation.verifyCurrent(signal);
-    if (catalog.status !== 'ready') throw unavailable(catalog.status === 'unavailable' ? catalog.reason : 'loading');
-    if (catalog.record.key !== 'purposes') throw unavailable('invalid-stored-content');
     signal?.throwIfAborted();
-    return { ...catalog, record: catalog.record };
+    return requirePurposeCatalog(catalog);
   };
   return Object.freeze({
-    async read(signal) {
+    async read(signal, options) {
       const operation = captureOperation();
-      const catalog = await readCatalog(operation, signal);
+      if (!options?.published) {
+        const catalog = await readCatalog(operation, signal);
+        operation.assertCurrent();
+        return catalog.record.value;
+      }
+      const credentials = await credentialsForOperation(operation, signal);
+      const published = input.operationContext
+        ? readConnectedAccountCatalogFromSnapshot(readSnapshot(), 'purposes')
+        : readPublishedConnectedAccountCatalog({ key: 'purposes', scopeKey: resolveAccountSettingsScopeKey(credentials) });
+      // Only first demand needs the loader. A normal republish retains the
+      // prior settled row; a published clear/refusal remains authoritative.
+      const catalog = published.status === 'loading'
+        ? requirePurposeCatalog(await refreshActiveConnectedAccountCatalog({ credentials, key: 'purposes', signal,
+            operationContext: input.operationContext, readMode: 'admitted' }))
+        : requirePurposeCatalog(published);
+      if (published.status === 'loading') await operation.verifyCurrent(signal);
       operation.assertCurrent();
       return catalog.record.value;
     },
@@ -2200,21 +2141,14 @@ export function createActiveAccountSettingsConnectedAccountPurposeBindingStore(i
     subscribe(listener) {
       // Publish purpose-reader demand only for its Account inputs. Independent
       // Profile/Prompt/etc. catalog reads are not binding changes. The snapshot
-      // owner retains unchanged preference/key identities; fresh read authority
-      // stays in readCatalog. Connected Services has its own runtime invalidation.
-      if (input.subscribe) return input.subscribe(listener);
-      const unsubscribe = subscribeActiveAccountSettingsSnapshotChanges((previous, next) => {
-        if (!previous || !next
-          || previous.scopeKey !== next.scopeKey
-          || previous.source !== next.source
-          || previous.settings !== next.settings
-          || previous.rawSettings !== next.rawSettings
-          || previous.settingsSecretsReadKeys !== next.settingsSecretsReadKeys
-          || previous.connectedPurposeCatalog !== next.connectedPurposeCatalog
-          || previous.connectedConfigurationCatalog !== next.connectedConfigurationCatalog
-          || previous.savedSecretResources !== next.savedSecretResources
-          || previous.savedSecretCatalogState !== next.savedSecretCatalogState) listener();
-      });
+      // owner retains unchanged preference/key identities; writers reobserve
+      // through readCatalog. Connected Services has its own runtime invalidation.
+      const keys = { settings: ['secrets'],
+        facets: ['connectedPurposeCatalog', 'connectedConfigurationCatalog', 'savedSecretResources', 'savedSecretCatalogState'],
+      } as const;
+      const unsubscribe = input.operationContext
+        ? input.operationContext.subscribeAccountSettings(listener, keys)
+        : subscribeActiveAccountSettingsKeys(keys, () => listener());
       return Object.freeze({ dispose: unsubscribe });
     },
   });

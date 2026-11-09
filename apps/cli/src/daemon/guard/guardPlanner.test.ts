@@ -81,7 +81,9 @@ describe('memory guard canonical ladder', () => {
     const rows = [...ladder.steps.flatMap(step => step.candidates), ...ladder.excluded];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      const root = roots.find(candidate => row.ref.includes(`:${candidate.pid}:`))!;
+      const root = roots.find(candidate => row.ref === processRef(candidate.pid, candidate.start))!;
+      expect(root).toBeDefined();
+      expect(row.ref).toBe(row.processRef);
       expect(row.processRef).toBe(processRef(root.pid, root.start));
     }
   });

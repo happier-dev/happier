@@ -153,9 +153,11 @@ function normalizePredecessorRuntimeAuthRecoveryIntent(value: unknown): RuntimeA
   const nextRetryAtMs = record.nextRetryAtMs === null
     ? null
     : readNonNegativeInteger(record.nextRetryAtMs);
+  // Released 0.2 pending-proof writes retain their previous working transition while
+  // adding a proof deadline. Other predecessor transition/deadline checks still apply.
   if (
     (record.nextRetryAtMs !== null && nextRetryAtMs === null)
-    || (lastSettledTransition === 'working' && nextRetryAtMs !== null)
+    || (record.status !== 'resumed_awaiting_proof' && lastSettledTransition === 'working' && nextRetryAtMs !== null)
     || (lastSettledTransition === 'scheduled' && nextRetryAtMs === null)
   ) {
     return null;

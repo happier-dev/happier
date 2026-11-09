@@ -1,10 +1,14 @@
 import type { ApprovalRequestV2, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
+import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
+import { redactPluginInvocationResultData } from '@happier-dev/cli-common/plugins/registration';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import {
   classifyApprovalExecutionOriginCurrentness,
   type ActionExecuteResult,
+  type ActionExecutorContext,
   type ActionExecutorDeps,
 } from '@happier-dev/protocol/actions';
 import { admitApprovalRequesterDecisionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -38,6 +42,8 @@ import type {
 } from '@/plugins/runtime/invocation/actionExecutor';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
+import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { settleTargetActionExecution } from '@/session/actions/approvals/targetActionSettlement';
 
 type TargetActionApprovalStore = Pick<
   ReturnType<typeof createCliApprovalsArtifactStore>,
@@ -71,6 +77,7 @@ function projectTargetApprovalRequest(request: TargetActionApprovalRequestV1): A
  * plugin caller.
  */
 export function createDaemonExternalActionContributedInvoker(input: Readonly<{
+  observePluginExecution?: HostActionOperationRuntime['observePluginExecution'];
   acquireRuntimeRegistryLease?: typeof acquireAuthoritativePluginRuntimeRegistryLease;
   requestCurrentIntent?: (
     request: TargetActionCurrentIntentRequest,
@@ -80,6 +87,7 @@ export function createDaemonExternalActionContributedInvoker(input: Readonly<{
     ?? acquireAuthoritativePluginRuntimeRegistryLease;
 
   return createCommittedContributedActionInvoker({
+    ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
     defaultInvocationSurface: 'api',
     acquireRuntimeRegistryLease: () => acquireRuntimeRegistryLease({
       happyHomeDir: configuration.happyHomeDir,
@@ -94,6 +102,12 @@ export function createDaemonExternalActionContributedInvoker(input: Readonly<{
  * contributed-Action dispatcher. `approval.request.decide` owns both decisions.
  */
 export function createDaemonExternalActionContributedApprovalReplay(input: Readonly<{
+  observePluginExecution?: HostActionOperationRuntime['observePluginExecution'];
+  prepareApprovalExecutionAuthorization?: NonNullable<ActionExecutorDeps['prepareApprovalExecutionAuthorization']>;
+  resolvePreparedApprovalExecutionOriginCurrentness?: (
+    authorization: NonNullable<ActionExecutorContext['externalActionExecutionAuthorization']>,
+  ) => DaemonApprovalExecutionOriginCurrentness | undefined;
+  createFileDownloadPublisher?: (context: ActionExecutorContext) => NonNullable<ActionExecutorContext['prepareFileDownload']>;
   credentials: StoredCredentials;
   isApprovalExecutionOriginCurrent?: DaemonApprovalExecutionOriginCurrentness;
   acquireRuntimeRegistryLease?: typeof acquireAuthoritativePluginRuntimeRegistryLease;
@@ -108,11 +122,33 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
   const now = input.now ?? Date.now;
   const readInstallationIdentity = input.readInstallationIdentity
     ?? readInstallationIdentityIfExistsSync;
+  const prepareRequesterSource = async (authorization: ActionExecutorContext['externalActionExecutionAuthorization'], signal?: AbortSignal) => {
+    if (!authorization || !input.prepareApprovalExecutionAuthorization) return undefined;
+    const binding = authorization.binding;
+    // This reopening is the ordinary Account path. Delegated HTTP, Session and
+    // Workflow sources keep their existing currentness/custody owners.
+    if (!('authentication' in binding)
+      || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')
+      || binding.sessionActionOrigin || binding.workflowActionOrigin) return undefined;
+    const prepared = await input.prepareApprovalExecutionAuthorization({ authorization, ...(signal ? { signal } : {}) });
+    if (!prepared || prepared.authorization.token !== authorization.token
+      || !sameStrictJsonValue(prepared.authorization.binding, authorization.binding)) {
+      await prepared?.dispose?.();
+      return null;
+    }
+    return prepared;
+  };
   const isRequesterSourceCurrent = async (request: TargetActionApprovalRequestV1, signal?: AbortSignal): Promise<boolean> => {
     const projected = projectTargetApprovalRequest(request);
-    return projected !== null && input.isApprovalExecutionOriginCurrent !== undefined
-      && await input.isApprovalExecutionOriginCurrent({ origin: projected.executionOriginV1, request: projected,
-        ...(signal ? { signal } : {}) }).catch(() => false);
+    if (!projected) return false;
+    const prepared = await prepareRequesterSource(projected.executionOriginV1.externalActionExecutionAuthorization, signal);
+    if (prepared === null) return false;
+    try {
+      const currentness = prepared ? input.resolvePreparedApprovalExecutionOriginCurrentness?.(prepared.authorization)
+        : input.isApprovalExecutionOriginCurrent;
+      return currentness !== undefined && await currentness({ origin: projected.executionOriginV1, request: projected,
+        ...(signal ? { signal } : {}) });
+    } finally { await prepared?.dispose?.(); }
   };
   return createTargetActionApprovalDecision({
     read: artifactId => targetActionApprovals.targetActionApprovalsGet({ artifactId }),
@@ -140,20 +176,30 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
       if (!action) return targetActionReplayFailure('approval_invalid');
       const origin = approved.executionOriginV1;
       if (!origin) return targetActionReplayFailure('approval_invalid');
+      const originalAuthorization = origin.externalActionExecutionAuthorization;
+      let preparedSource: Awaited<ReturnType<NonNullable<ActionExecutorDeps['prepareApprovalExecutionAuthorization']>>> | undefined;
+      try {
       const sourceBinding = origin.externalActionExecutionAuthorization?.binding;
       const sourceSession = sourceBinding && 'authentication' in sourceBinding ? sourceBinding.sessionActionOrigin : undefined;
 
       const approvalRequest = projectTargetApprovalRequest(approved);
       if (!approvalRequest) return targetActionReplayFailure('approval_invalid');
+      const source: { currentness?: DaemonApprovalExecutionOriginCurrentness } = {};
       const currentness = await classifyApprovalExecutionOriginCurrentness({
-        check: async reportStale => input.isApprovalExecutionOriginCurrent
-          ? await input.isApprovalExecutionOriginCurrent({
+        check: async reportStale => {
+          preparedSource = await prepareRequesterSource(originalAuthorization, signal);
+          if (preparedSource === null) { reportStale('credential_changed'); return false; }
+          source.currentness = preparedSource
+            ? input.resolvePreparedApprovalExecutionOriginCurrentness?.(preparedSource.authorization)
+            : input.isApprovalExecutionOriginCurrent;
+          return source.currentness ? await source.currentness({
               origin,
               request: approvalRequest,
               reportStale,
               ...(signal ? { signal } : {}),
             })
-          : (reportStale('currentness_owner_unavailable'), false),
+          : (reportStale('currentness_owner_unavailable'), false);
+        },
       });
       if (currentness.status === 'requester_home_unavailable') {
         return targetActionReplayFailure('project_requester_home_unavailable');
@@ -181,6 +227,8 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         const persistenceFailure = await persist(terminal);
         return persistenceFailure ?? targetActionReplayFailure('approval_stale');
       }
+      const sourceCurrentness = source.currentness;
+      if (!sourceCurrentness) return targetActionReplayFailure('approval_stale');
 
       const executionClaim: TargetActionApprovalRequestV1 = {
         ...approved,
@@ -195,7 +243,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         } catch {
           return targetActionReplayFailure('approval_unavailable');
         }
-        if (persisted && (persisted.status === 'executed' || persisted.status === 'failed')
+        if (persisted && (persisted.status === 'executed' || persisted.status === 'failed' || persisted.status === 'outcome_unknown')
           && persisted.decision?.kind === 'approve') {
           return buildTargetActionApprovalDecisionResult(persisted);
         }
@@ -228,21 +276,16 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         ) {
           executionResult = targetActionReplayFailure('approval_stale');
         } else {
-          const authorization = origin.externalActionExecutionAuthorization;
+          const authorization = preparedSource?.authorization ?? origin.externalActionExecutionAuthorization;
           const externalActionCredential = 'grant' in authorization.binding && origin.principalId && origin.credentialId ? Object.freeze({
             accountId: origin.accountId,
             principalId: origin.principalId,
             credentialId: origin.credentialId,
             grant: authorization.binding.grant,
           }) : undefined;
-          const authorizedTarget = Object.freeze({ ...authorization.binding.target });
-          const externalActionExecutionAuthorization = Object.freeze({
-            ...authorization,
-            binding: Object.freeze({
-              ...authorization.binding,
-              target: authorizedTarget,
-            }),
-          });
+          // The canonical prepared carrier is immutable and owns non-enumerable
+          // requester ports. Spreading it would silently discard that custody.
+          const externalActionExecutionAuthorization = authorization;
           const externalActionTarget = Object.freeze({ ...origin.target });
           externalActionContext = Object.freeze<PluginExternalActionContext>({
             authority: 'account_automation',
@@ -274,6 +317,20 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
           });
           try {
             invocationSignal.throwIfAborted();
+            const replayContext: ActionExecutorContext = { authority: origin.authority, runtimeAccountId: origin.accountId,
+              recordOperationCredentialUse,
+              serverId: origin.serverId,
+              serverIdentityId: origin.serverIdentityId,
+              ...(replayPlacement.defaultSessionId === undefined ? {} : { defaultSessionId: replayPlacement.defaultSessionId }),
+              actionRequestAttributionV1: origin.actionRequestAttributionV1,
+              actionCaller: origin.caller,
+              callerPermissionMode: origin.callerPermissionMode,
+              causalPermissionAuthority: origin.causalPermissionAuthority,
+              sessionInputSource: origin.sessionInputSource,
+              sessionAgentSpawnPolicyV1: origin.sessionAgentSpawnPolicyV1,
+              workspaceWrites: sourceSession?.workspaceWrites,
+              ...(externalActionContext ?? {}),
+            };
             const attempt = await executeContributedAction({
               runtimeRegistry: lease.registry,
               actionId: buildQualifiedPluginContributionKey(action),
@@ -281,18 +338,8 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
               expectedApprovalReplayPlacement: replayPlacement,
               // Replay fingerprints the admitting authority, not the decider's
               // authority or the dispatcher's absent-context automation default.
-              approvalContext: { authority: origin.authority, runtimeAccountId: origin.accountId,
-                recordOperationCredentialUse,
-                serverId: origin.serverId,
-                ...(replayPlacement.defaultSessionId === undefined ? {} : { defaultSessionId: replayPlacement.defaultSessionId }),
-                actionRequestAttributionV1: origin.actionRequestAttributionV1,
-                actionCaller: origin.caller,
-                callerPermissionMode: origin.callerPermissionMode,
-                causalPermissionAuthority: origin.causalPermissionAuthority,
-                sessionInputSource: origin.sessionInputSource,
-                sessionAgentSpawnPolicyV1: origin.sessionAgentSpawnPolicyV1,
-                workspaceWrites: sourceSession?.workspaceWrites,
-                ...(externalActionContext ?? {}),
+              approvalContext: { ...replayContext,
+                ...(input.createFileDownloadPublisher ? { prepareFileDownload: input.createFileDownloadPublisher(replayContext) } : {}),
               },
               approvalExecutionOrigin: origin,
               requestCurrentIntent: async (currentIntent) => (
@@ -304,6 +351,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
                   : { status: 'unavailable', code: 'plugin_action_current_intent_mismatch' }
               ),
               context: {
+                ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
                 surface: requestedSurface,
                 invocationSurface: requestedSurface,
                 initiatingActionCaller: origin.caller,
@@ -317,7 +365,10 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
                   if (!admission.ok) throw new PluginError({
                     code: admission.errorCode, message: admission.error,
                   });
-                  if (!await isRequesterSourceCurrent(approved, signal)) throw new PluginError({ code: 'approval_stale', message: 'approval_stale' });
+                  const projected = projectTargetApprovalRequest(approved);
+                  if (!projected || !await sourceCurrentness({ origin, request: projected, ...(signal ? { signal } : {}) })) {
+                    throw new PluginError({ code: 'approval_stale', message: 'approval_stale' });
+                  }
                 } } : {}),
               },
             });
@@ -331,41 +382,25 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
           } finally {
             await lease.release();
           }
-        } catch {
-          executionResult = targetActionReplayFailure('plugin_action_execution_failed');
+        } catch (error) {
+          const failure = readPluginActionError(error);
+          const failureCode = failure ? failure.code : 'plugin_action_execution_failed';
+          executionResult = failure ? {
+            ok: false,
+            errorCode: failure.code,
+            error: projectPluginFailureMessage(failure.message),
+            ...(failure.data === undefined ? {} : {
+              data: redactPluginInvocationResultData(failure.data, projectPluginFailureMessage),
+            }),
+          } : targetActionReplayFailure('plugin_action_execution_failed');
+          logger.warnLocalFile('[ExternalAction] Approved contributed Action replay failed', { code: failureCode });
         }
       }
       observingCredentialUse = false;
 
-      const executedAtMs = nextTimestamp(approved);
-      const terminal: TargetActionApprovalRequestV1 = executionResult.ok
-        ? {
-            ...approved,
-            status: 'executed',
-            updatedAtMs: executedAtMs,
-            execution: { executedAtMs, ok: true, result: executionResult.result },
-          }
-        : {
-            ...approved,
-            status: 'failed',
-            updatedAtMs: executedAtMs,
-            execution: {
-              executedAtMs,
-              ok: false,
-              errorCode: executionResult.errorCode,
-              error: executionResult.error,
-            },
-          };
-      if (operationCredentialUses.length && terminal.execution) {
-        terminal.execution = { ...terminal.execution, effectAttempted: true, operationCredentialUses };
-      }
-      const persistenceFailure = await persist(terminal);
-      // Once the durable claim is admitted, a lost terminal write leaves later
-      // callers unable to distinguish an in-flight effect from an unknown one.
-      if (persistenceFailure) return targetActionReplayFailure('approval_execution_outcome_unknown');
-      return executionResult.ok
-        ? buildTargetActionApprovalDecisionResult(terminal)
-        : operationCredentialUses.length ? { ...executionResult, operationCredentialUses } : executionResult;
+      return await settleTargetActionExecution({ request: approved, result: executionResult,
+        operationCredentialUses, persist, executedAtMs: nextTimestamp(approved) });
+      } finally { await preparedSource?.dispose?.(); }
     },
   });
 }

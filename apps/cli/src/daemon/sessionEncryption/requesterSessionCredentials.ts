@@ -604,7 +604,10 @@ async function readRequesterSessionMachineAdmissionCurrent(input: Parameters<typ
       privateKey: installation.privateKey, daemonToken: input.boundary.daemonToken, serverHttpBaseUrl: input.serverHttpBaseUrl, signal }));
     if (signal?.aborted || !input.boundary.isHomeCurrent()
       || input.boundary.readInstallation()?.installationId !== installation.installationId) return undefined;
-    return current === null ? null : context;
+    // Signed admission also refuses unavailable operation support and daemon
+    // readiness. It must deny this recovery without erasing private birth;
+    // authenticated Account, Machine and Session reads own withdrawal evidence.
+    return current === null ? undefined : context;
   } catch (error) {
     rethrowRequesterHomeReadFailure(error);
     return classifyServerEndpointError(error).kind === 'auth_failed' ? null : undefined;

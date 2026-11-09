@@ -125,7 +125,7 @@ describe('nativeViewCapture reverse channel production path (W2C-BA-1)', () => {
       expect(outputPath).toMatch(/^browser_recording_.+\.capture_1\.native-view\.png$/);
       expect(outputPath).not.toMatch(/^[/\\]|^[A-Za-z]:[\\/]/);
     } finally {
-      runtime.stop();
+      await runtime.stop();
     }
   });
 
@@ -141,7 +141,7 @@ describe('nativeViewCapture reverse channel production path (W2C-BA-1)', () => {
       });
       expect(callUi).not.toHaveBeenCalled();
     } finally {
-      runtime.stop();
+      await runtime.stop();
     }
   });
 
@@ -156,7 +156,7 @@ describe('nativeViewCapture reverse channel production path (W2C-BA-1)', () => {
         status: 'started',
       });
     } finally {
-      runtime.stop();
+      await runtime.stop();
     }
   });
 });

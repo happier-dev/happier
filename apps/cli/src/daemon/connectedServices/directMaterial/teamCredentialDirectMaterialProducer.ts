@@ -1,6 +1,7 @@
 import { computeTeamCredentialSourceMemberKeyV1, createTeamCredentialDirectMaterialStoredV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
-import type { TeamCredentialDirectMaterialPayloadV1, TeamCredentialDirectMaterialStoredV1, TeamCredentialSourceMemberV1 } from '@happier-dev/protocol/teams';
+import type { TeamCredentialDirectMaterialPayloadV1, TeamCredentialDirectMaterialUpsertRequestV1, TeamCredentialSourceMemberV1 } from '@happier-dev/protocol/teams';
 import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
+import { TeamCredentialDirectMaterialHttpContractError } from './teamCredentialDirectMaterialContractError';
 
 type RecipientMode = 'plain' | 'e2ee';
 
@@ -30,18 +31,9 @@ export type TeamCredentialDirectMaterialProducerInput = Readonly<{
   resourceId: string;
   recipientAccountId: string;
   randomBytes?: (length: number) => Uint8Array;
-  upsert(input: Readonly<{
-    resourceId: string;
-    recipientAccountId: string;
-    sourceMemberKey: string;
-    sourceVersion: string;
-    recipientMode: RecipientMode;
-    recipientContentPublicKeyFingerprint: string | null;
-    stored: TeamCredentialDirectMaterialStoredV1;
-    expectedResourceRevision: number;
-    expectedStoredSourceVersion: string | null;
-    expectedPublishedSourceVersion: string | null;
-  }>): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; reason: string }>>;
+  upsert(input: TeamCredentialDirectMaterialUpsertRequestV1['items'][number]): Promise<
+    Readonly<{ ok: true }> | Readonly<{ ok: false; reason: string }>
+  >;
   signal?: AbortSignal;
 }>;
 
@@ -104,7 +96,6 @@ export async function produceTeamCredentialDirectMaterial(
     }
     input.signal?.throwIfAborted();
     const result = await input.upsert({
-      resourceId: input.resourceId,
       recipientAccountId: input.recipientAccountId,
       sourceMemberKey: computeTeamCredentialSourceMemberKeyV1(expected.sourceMember),
       sourceVersion,
@@ -119,7 +110,8 @@ export async function produceTeamCredentialDirectMaterial(
       return { ok: false, reason: result.reason === 'source_changed' ? 'source_changed' : 'upload_failed' };
     }
     return { ok: true, sourceVersion };
-  } catch {
+  } catch (error) {
+    if (!input.signal?.aborted && error instanceof TeamCredentialDirectMaterialHttpContractError) throw error;
     return input.signal?.aborted
       ? { ok: false, reason: 'cancelled' }
       : { ok: false, reason: 'source_unavailable' };

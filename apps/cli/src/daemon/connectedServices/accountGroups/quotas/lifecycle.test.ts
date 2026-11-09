@@ -102,6 +102,31 @@ function snapshotMap(...snapshots: ProviderAccountUsageSnapshotV1[]): Map<string
 }
 
 describe('evaluateConnectedServiceAuthGroupQuotaLifecycle', () => {
+  it('uses quota-source validity beyond the former caller freshness ceiling and rejects source-expired evidence', () => {
+    const nowMs = 1_000_000;
+    const group = createGroup();
+    const evaluate = (staleAfterMs: number) => evaluateConnectedServiceAuthGroupQuotaLifecycle({
+      mode: 'live_account_usage_change',
+      group,
+      changedProfileId: 'primary',
+      changedGroupGeneration: group.generation,
+      previousState: { status: 'unblocked' },
+      snapshotsByProfileId: snapshotMap(...['primary', 'backup'].map(profileId => createUsageSnapshot({
+        profileId,
+        nowMs,
+        fetchedAtMs: nowMs - 6 * 60_000,
+        staleAfterMs,
+        remainingPct: 0,
+        resetAtMs: nowMs + 60_000,
+      }))),
+      activeSessionIds: ['session-1'],
+      nowMs,
+    });
+
+    expect(evaluate(10 * 60_000).edge).toEqual(expect.objectContaining({ phase: 'blocked' }));
+    expect(evaluate(60_000)).toEqual({ edge: { phase: 'no_edge' }, nextState: { status: 'unblocked' } });
+  });
+
   it('emits one blocked edge and one recovered edge for live fresh stable account-usage evidence', () => {
     const nowMs = 1_000_000;
     const resetAtMs = nowMs + 600_000;
@@ -118,7 +143,6 @@ describe('evaluateConnectedServiceAuthGroupQuotaLifecycle', () => {
       snapshotsByProfileId: snapshotMap(primaryBlocked, backupBlocked),
       activeSessionIds: ['session-1'],
       nowMs,
-      quotaFreshnessMs: 300_000,
     });
     expect(first.edge).toEqual(expect.objectContaining({
       phase: 'blocked',
@@ -135,7 +159,6 @@ describe('evaluateConnectedServiceAuthGroupQuotaLifecycle', () => {
       snapshotsByProfileId: snapshotMap(primaryBlocked, backupBlocked),
       activeSessionIds: ['session-1'],
       nowMs,
-      quotaFreshnessMs: 300_000,
     });
     expect(duplicate.edge).toEqual({ phase: 'no_edge' });
     expect(duplicate.nextState).toBe(first.nextState);
@@ -150,7 +173,6 @@ describe('evaluateConnectedServiceAuthGroupQuotaLifecycle', () => {
       snapshotsByProfileId: snapshotMap(primaryBlocked, backupRecovered),
       activeSessionIds: ['session-1'],
       nowMs: nowMs + 1_000,
-      quotaFreshnessMs: 300_000,
     });
     expect(recovered.edge).toEqual(expect.objectContaining({
       phase: 'recovered',
@@ -176,7 +198,6 @@ describe('evaluateConnectedServiceAuthGroupQuotaLifecycle', () => {
       ),
       activeSessionIds: ['session-1'],
       nowMs,
-      quotaFreshnessMs: 300_000,
     });
 
     expect(cold.edge).toEqual({ phase: 'no_edge' });
@@ -200,7 +221,6 @@ describe('evaluateConnectedServiceAuthGroupQuotaLifecycle', () => {
       snapshotsByProfileId: snapshotMap(createUsageSnapshot({ profileId: 'primary', nowMs, remainingPct: 0 })),
       activeSessionIds: ['session-1'],
       nowMs,
-      quotaFreshnessMs: 300_000,
     });
     expect(partialBlocked.edge).toEqual({ phase: 'no_edge' });
     expect(partialBlocked.nextState).toEqual({ status: 'unblocked' });
@@ -219,7 +239,6 @@ describe('evaluateConnectedServiceAuthGroupQuotaLifecycle', () => {
       snapshotsByProfileId: snapshotMap(createUsageSnapshot({ profileId: 'backup', nowMs, remainingPct: 80 })),
       activeSessionIds: ['session-1'],
       nowMs,
-      quotaFreshnessMs: 300_000,
     });
     expect(partialRecovered.edge).toEqual({ phase: 'no_edge' });
     expect(partialRecovered.nextState).toBe(previousState);
@@ -235,14 +254,12 @@ describe('evaluateConnectedServiceAuthGroupQuotaLifecycle', () => {
       expectedGroupGeneration: 4,
       observedGroupGeneration: 4,
       nowMs,
-      quotaFreshnessMs: 300_000,
     })).toEqual({ ok: false, reason: 'insufficient_confidence' });
     expect(canDriveQuotaLifecycleEdge({
       snapshot: estimated,
       expectedGroupGeneration: 4,
       observedGroupGeneration: 4,
       nowMs,
-      quotaFreshnessMs: 300_000,
       allowUnconfirmedConfidence: true,
     })).toEqual({ ok: true });
   });
@@ -261,7 +278,6 @@ describe('evaluateConnectedServiceAuthGroupQuotaLifecycle', () => {
       expectedGroupGeneration: 4,
       observedGroupGeneration: 4,
       nowMs,
-      quotaFreshnessMs: 300_000,
     })).toEqual({ ok: false, reason: 'stale' });
   });
 });

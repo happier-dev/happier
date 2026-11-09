@@ -23,7 +23,7 @@ import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { assertNonEscalatingPermissionMode, resolveEffectivePermissionMode } from '@happier-dev/protocol/actions/permissionPrivilege';
 import { getActionSpec, resolveActionExecutionPlacementForInput, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { ApprovalExecutionOriginV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalExecutionOriginV1Schema, isHistoricalPublishApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -281,6 +281,8 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       const operands = request?.actionArgs ?? actionInput;
       const hasSessionOperand = operands !== null && typeof operands === 'object' && 'sessionId' in operands
         && typeof operands.sessionId === 'string' && operands.sessionId.trim().length > 0;
+      // Historical publish has no executable spec; preserve the existing stale refusal.
+      if (request && isHistoricalPublishApprovalRequestV2(request)) return stale('currentness_read_failed');
       const requestSpec = request?.v === 2 ? getActionSpec(request.actionId) : null;
       // Live input remains on this exact origin Machine. The durable projection
       // cannot be parsed as executable input to infer placement; a contextual

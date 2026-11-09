@@ -28,13 +28,13 @@ export function createGuardLeftBehindActionExecutor(params: Readonly<{
         ...(request.sessionId ? { defaultSessionId: request.sessionId } : {}),
         ...(request.signal ? { signal: request.signal } : {}) };
       const execute = async (current: RpcActionExecutorContext) => {
-        if (!await captured.verifyMachineAdmissionCurrent!()) return { ok: false as const, errorCode: 'scope-retired', error: 'scope-retired' };
+        current.signal?.throwIfAborted();
         const executor = params.getExecutor(current);
         if (!executor) return { ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action' };
         const result = await executor.execute(request.mode === 'ask' ? 'approval.request.create' : 'machines.processes.leftBehind.cleanUp',
           request.mode === 'ask' ? { actionId: 'machines.processes.leftBehind.cleanUp', actionArgs: input,
             summary: 'Clean up the confirmed left-behind process set', createdBy: { surface: 'system', ...(request.sessionId ? { sessionId: request.sessionId } : {}) } } : input, current);
-        return await captured.verifyMachineAdmissionCurrent!() ? result : { ok: false as const, errorCode: 'scope-retired', error: 'scope-retired' };
+        return result;
       };
       if (request.mode === 'ask') return await execute(context);
       let completion: Promise<ActionExecuteResult> | undefined;

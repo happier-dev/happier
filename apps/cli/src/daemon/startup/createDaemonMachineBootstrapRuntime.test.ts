@@ -15,6 +15,10 @@ import { reloadConfiguration } from '@/configuration';
 import { updateSettings, writeStoredCredentialsForServerId } from '@/persistence';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonExecutionRunListResponseSchema } from '@happier-dev/protocol/daemon/executionRuns';
+import { writeExecutionRunMarker, removeExecutionRunMarker } from '../executionRunRegistry';
+import * as processCensus from '@/processes/census/processCensus';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
@@ -150,6 +154,51 @@ function createBaseRuntimeParams(overrides: Partial<Parameters<typeof createDaem
 }
 
 describe('createDaemonMachineBootstrapRuntime', () => {
+  it('uses current machine CPU capacity for execution-run statistics after bootstrap', async () => {
+    const credentials = { token: 'cpu-capacity-account', encryption: null };
+    const runId = 'fin-type-1109b-capacity';
+    let effectiveCores = 0.5;
+    let sample = 0;
+    // HTTP and native process census are system boundaries; bootstrap, API,
+    // handler registration and CPU sampling remain real.
+    const home = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { id: 'cpu-capacity-account' } });
+    const census = vi.spyOn(processCensus, 'readProcessCensus').mockImplementation(async () => ({
+      status: 'ok', capturedAtMs: ++sample * 1_000, logicalCpus: 8,
+      rows: [{ pid: process.pid, ppid: null, start: { startTimeMs: 1 }, principal: null,
+        name: 'execution-run', memory: null, cpuTimeUs: sample * 250_000 }],
+    }));
+    const registrations = vi.spyOn(RpcHandlerManager.prototype, 'registerHandler');
+    const params = { ...createBaseRuntimeParams({ api: await ApiClient.create(credentials), credentials,
+      workspaceSyncHandoffAdapter: undefined }), readMachineEffectiveCores: () => effectiveCores };
+    const bootstrap = createDaemonMachineBootstrapRuntime(params);
+    const machine = await bootstrap.createConnectedApiMachine({ id: 'cpu-capacity-machine', encryptionMode: 'plain',
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+    try {
+      if (!machine) throw new Error('Missing actual Machine client');
+      machine.setRPCHandlers({ spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+        stopSession: async () => true, requestShutdown() {} });
+      const handler = registrations.mock.calls.find(([method]) => method === RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST)?.[1];
+      if (!handler) throw new Error('Missing execution-run handler');
+      await writeExecutionRunMarker({ pid: process.pid, happySessionId: 'capacity-session', runId, callId: 'capacity-call',
+        sidechainId: 'capacity-side', intent: 'review', backendTarget: { kind: 'backend', backendId: 'claude' },
+        status: 'running', startedAtMs: 1, updatedAtMs: 1 });
+      const readCpu = async () => DaemonExecutionRunListResponseSchema.parse(await handler({})).runs
+        .find(run => run.runId === runId)?.process?.cpu;
+      expect(await readCpu()).toBeUndefined();
+      expect(await readCpu()).toBe(50);
+      effectiveCores = 0.25;
+      expect(await readCpu()).toBeUndefined();
+      expect(await readCpu()).toBe(100);
+    } finally {
+      await removeExecutionRunMarker(runId);
+      await machine?.shutdown();
+      await bootstrap.beforeShutdown();
+      registrations.mockRestore();
+      census.mockRestore();
+      home.mockRestore();
+    }
+  });
+
   it('retains failed-attachment finite custody before plugin disposal while attempt cleanup is still waiting', async () => {
     const credentials = { token: 'failed-attachment-token', encryption: null };
     const admissionDrain = createDaemonAdmissionDrain();

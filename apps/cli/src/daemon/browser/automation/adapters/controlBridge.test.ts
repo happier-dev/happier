@@ -1,7 +1,6 @@
-import { access, readFile } from 'node:fs/promises';
 import type { BrowserAutomationActionRequestV1, BrowserCommandV1 } from '@happier-dev/protocol';
 import type { BrowserAutomationSecretFillRequestV1 } from '@happier-dev/protocol/browser/automation/v1';
-import { BrowserAutomationActionResultV1Schema, BrowserAutomationJavaScriptDialogSummaryV1Schema } from '@happier-dev/protocol/browser/automation/v1';
+import { BrowserAutomationActionResultV1Schema, BrowserAutomationJavaScriptDialogSummaryV1Schema, BrowserAutomationSecretFillRequestV1Schema } from '@happier-dev/protocol/browser/automation/v1';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { BrowserDaemonControlAdapter } from '../../control/types';
@@ -23,11 +22,17 @@ import { createBrowserContextRoutes } from '../../context/routes';
 import { createCdpBrowserContextSource } from '../../context/cdp/source';
 import { createSnapshotMaskingFixture, createSnapshotCaptureTestRoutes as contextRoutes } from '../../context/cdp/snapshotMasking.testkit';
 import { browserContextSensitiveFieldsExpression } from '@happier-dev/protocol/browser/context/privacy';
-import { BrowserContextSnapshotV1Schema } from '@happier-dev/protocol/browser/context/v1';
+import { BrowserContextSnapshotV1Schema, BrowserFocusedCredentialTargetV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { createSurfaceInputControl } from '../../../surfaces/inputControl';
 import { dispatchRuntimeAction } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutorBoundaryFixture } from '../../../../../../../packages/tests/src/testkit/actionExecutorBoundary';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createBrowserDaemonRuntimeActionExecutor } from '../../actions/runtimeActionExecutor';
+import { createConfidentialSecretFillExecutor } from '../../../surfaces/confidentialSecretFill';
+import { AccountSettingsSchema, encryptSecretStringV1 } from '@happier-dev/protocol';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 function controlAdapter(overrides: Partial<BrowserDaemonControlAdapter> = {}): BrowserDaemonControlAdapter {
   return {
@@ -59,12 +64,14 @@ async function inputSettlementBoundary(
   let closePeer: () => void = () => undefined;
   const state = { loseAck: false, loseDialogAck: false, holdDialogAck: false, disposedBeforeInput: false, failedRead: false, dialogOnRead: false, dialogRaised: false };
   const effects: string[] = [];
+  const cdpMethods: string[] = [];
   const dialogResponses: Record<string, unknown>[] = [];
   const client: LoopbackWebSocketJsonClientV1 = {
     closed: new Promise<void>(resolve => { closePeer = resolve; }),
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async sendJson(message) {
       const command = message as { id: number; method: string; params?: Record<string, unknown> };
+      cdpMethods.push(command.method);
       const mutatingExpression = command.method === 'Runtime.evaluate' && String(command.params?.expression).includes('el.value');
       if (command.method === 'Page.handleJavaScriptDialog') dialogResponses.push(command.params ?? {});
       if (command.method.startsWith('Input.') || command.method === 'Page.navigate'
@@ -122,7 +129,7 @@ async function inputSettlementBoundary(
     requestedBy: 'agent', requesterRef: { kind: 'agent', id: 'agent' },
     navigationGeneration: adapter.getNavigationState(view)?.navigationGeneration ?? 0, actionKind, payload, timeoutMs: 10_000,
   });
-  return { state, effects, dialogResponses, service, routes, execute, dispose() { service.dispose(); adapter.dispose(); transport.dispose(); } };
+  return { state, effects, cdpMethods, dialogResponses, service, routes, execute, dispose() { service.dispose(); adapter.dispose(); transport.dispose(); } };
 }
 
 const confidentialRequest: BrowserAutomationSecretFillRequestV1 = {
@@ -134,7 +141,7 @@ const confidentialRequest: BrowserAutomationSecretFillRequestV1 = {
 function confidentialBoundary(nativeObservation?: 'not_observable' | 'unknown') {
   const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
   const state = { generation: 3, documentId: 'document', origin: 'https://example.test', fieldId: 41,
-    focused: true, inserted: false, failInsert: false, submitted: false, controlId: 51, stableLocator: '#password', viewOpen: true,
+    focused: true, allowFocus: true, inserted: false, failInsert: false, submitted: false, controlId: 51, stableLocator: '#password', viewOpen: true,
     empty: false, originalConnected: true,
     beforeCommand: (_method: string, _params?: Record<string, unknown>) => {} };
   // The network boundary executes the actual isolated-world function; no internal target proof
@@ -148,6 +155,7 @@ function confidentialBoundary(nativeObservation?: 'not_observable' | 'unknown') 
     textContent = '';
   }
   class NativeHTMLElement extends NativeElement {
+    focus() { if (state.allowFocus) state.focused = true; }
     click() { state.submitted = true; }
   }
   class NativeInput extends NativeHTMLElement {
@@ -172,6 +180,7 @@ function confidentialBoundary(nativeObservation?: 'not_observable' | 'unknown') 
   Object.defineProperty(field, 'value', { get() { throw new Error('Page value getter must not run'); },
     set() { throw new Error('Page value setter must not run'); } });
   Object.defineProperty(field, 'dispatchEvent', { value: () => { throw new Error('Page dispatch hook must not run'); } });
+  Object.defineProperty(field, 'focus', { value: () => { throw new Error('Page focus hook must not run'); } });
   Object.defineProperty(control, 'click', { value: () => { throw new Error('Page click hook must not run'); } });
   const nodes: Record<string, NativeElement> = { field, control, other, active: field };
   function executeFunction(params: Record<string, unknown> | undefined): unknown {
@@ -285,6 +294,7 @@ type FakeBridgeElement = Readonly<{
   children: readonly FakeBridgeElement[];
   getAttribute(name: string): string | null;
   getBoundingClientRect(): Readonly<{ left: number; top: number; width: number; height: number }>;
+  getClientRects(): readonly Readonly<{ left: number; top: number; width: number; height: number }>[];
   scrollIntoView(): void;
   focus(): void;
 }>;
@@ -305,6 +315,9 @@ function bridgeElement(input: Readonly<{
     },
     getBoundingClientRect() {
       return input.rect;
+    },
+    getClientRects() {
+      return [input.rect];
     },
     scrollIntoView() {
       return undefined;
@@ -471,6 +484,7 @@ describe('control adapter automation transport bridge', () => {
     expect(await query()).toMatchObject({ ok: false });
     expect(boundary.calls).toHaveLength(count);
   });
+
   it.each(['snapshot', 'semanticSnapshot'] as const)('settles unfocused sensitive %s through the real automation service', async actionKind => {
     const boundary = confidentialBoundary();
     boundary.state.focused = false;
@@ -495,6 +509,96 @@ describe('control adapter automation transport bridge', () => {
     } finally { service.dispose(); }
   });
 
+  it.each(['plain', 'e2ee'] as const)('delivers the private answer to an unfocused queried input through public Actions (%s)', async mode => {
+    const boundary = confidentialBoundary('not_observable');
+    boundary.state.focused = false;
+    const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: boundary.bridge }) });
+    const routes = createBrowserAutomationRoutes({ service });
+    setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: 'query-fill-scope', loadedAtMs: 1, settingsVersion: 1,
+      settingsSecretsReadKeys: [], settings: AccountSettingsSchema.parse({}) });
+    const records = new Map<string, ApprovalRequest>();
+    const runtimeActionExecute = createBrowserDaemonRuntimeActionExecutor({
+      featureGate: { isEnabled: () => true }, automation: routes,
+    });
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ runtimeActionExecute,
+      isActionApprovalRequired: () => false,
+      // Host currentness is an external Account/Session observation port; private admission stays real.
+      isApprovalExecutionOriginCurrent: async () => true,
+      approvalsCreate: async ({ request }) => { records.set('approval', request); return { artifactId: 'approval' }; },
+      approvalsGet: async ({ artifactId }) => records.get(artifactId) ?? null,
+      approvalsUpdate: async ({ artifactId, request }) => { records.set(artifactId, request); return { ok: true }; },
+      confidentialSecretFill: createConfidentialSecretFillExecutor({ expectedScopeKey: 'query-fill-scope', expectedAccountId: 'owner',
+        serverId: 'home', machineId: 'machine', readAccountMode: async () => mode,
+        prepareTarget: ({ request, context }) => routes.prepareConfidentialFill(request, context) }),
+    }));
+    const context = { surface: 'agent', authority: 'account_automation', serverId: 'home',
+      defaultSessionId: view.browserSessionId, defaultSessionMachineId: 'machine',
+      actionRequestId: 'query-fill', actionCaller: { kind: 'host' } } as const;
+    try {
+      const result = await executor.execute('browser.automation.queryElements', {
+        v: 1, ...view, automationRequestId: 'query-fill', requestedBy: 'agent', requesterRef: { kind: 'agent', id: 'agent' },
+        navigationGeneration: 3, actionKind: 'queryElements', payload: { selector: '#password' }, timeoutMs: 10_000,
+      }, context);
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      expect(result).toMatchObject({ ok: true, result: { status: 'succeeded', resultSummary: {
+        focusedCredentialTarget: { field: confidentialRequest.field },
+      } } });
+      const observed = BrowserAutomationActionResultV1Schema.parse(result.result);
+      const identity = BrowserFocusedCredentialTargetV1Schema.parse(observed.resultSummary?.focusedCredentialTarget);
+      const request = { ...confidentialRequest, ...identity, sessionId: view.browserSessionId };
+      expect(await executor.execute('browser.automation.secret.fill', request, context))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' } });
+      expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' },
+        { surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: false, errorCode: 'confidential_choice_required' });
+      expect(boundary.state.focused).toBe(false);
+      expect(boundary.state.inserted).toBe(false);
+      expect(await executor.continueConfidentialApprovalRequest({ v: 1, artifactId: 'approval', requestId: 'query-fill',
+        actionId: 'browser.automation.secret.fill', request, accountEncryptionMode: mode,
+        choice: { kind: 'once', value: 'fixture-private-answer' }, submit: false },
+      { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'owner' }))
+        .toEqual({ ok: true, result: { status: 'filled', code: 'filled' } });
+      expect(boundary.state.inserted).toBe(true);
+      expect(records.get('approval')).toMatchObject({ status: 'executed', execution: { ok: true,
+        result: { status: 'filled', code: 'filled' } } });
+      expect(JSON.stringify([...records.values()])).not.toContain('fixture-private-answer');
+    } finally { service.dispose(); resetActiveAccountSettingsSnapshotForTests(); }
+  });
+
+  it('publishes exact input identity from a query through the real route and service, then refuses a changed field', async () => {
+    const boundary = confidentialBoundary();
+    const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: boundary.bridge }) });
+    const routes = createBrowserAutomationRoutes({ service });
+    const query = (selector: string) => routes.dispatch('browser.automation.queryElements', {
+      v: 1, ...view, automationRequestId: 'input-identity', requestedBy: 'agent', requesterRef: { kind: 'agent', id: 'agent' },
+      navigationGeneration: 3, actionKind: 'queryElements', payload: { selector }, timeoutMs: 10_000,
+    }, { authority: 'account_automation' });
+    try {
+      const observed = await query('#password');
+      expect(observed).toMatchObject({ status: 'succeeded', resultSummary: { count: 1,
+        focusedCredentialTarget: { ...view, tabId: HANDLE.targetId, frameId: 'frame', documentId: 'document',
+          navigationGeneration: 3, origin: 'https://example.test', field: confidentialRequest.field } } });
+      if (!('resultSummary' in observed)) throw new Error('Missing input identity');
+      const unrelated = await query('#other');
+      expect(unrelated).toMatchObject({ status: 'succeeded', resultSummary: { count: 1,
+        focusedCredentialTarget: { field: { fieldId: '42', focusId: '42', locator: '#other' } } } });
+      const identity = BrowserFocusedCredentialTargetV1Schema.parse(observed.resultSummary?.focusedCredentialTarget);
+      const target = BrowserAutomationSecretFillRequestV1Schema.parse({ ...confidentialRequest, ...identity });
+      const prepared = await routes.prepareConfidentialFill(target, { authority: 'present_user' });
+      if ('status' in prepared) throw new Error('Expected verified input');
+      boundary.state.fieldId += 1;
+      expect(await prepared.fill(new TextEncoder().encode('fixture-credential')))
+        .toEqual({ status: 'refused', code: 'target_changed' });
+      await prepared.finish();
+      const different = await query('#submit');
+      expect(different).toMatchObject({ status: 'succeeded', resultSummary: { count: 1 } });
+      if ('resultSummary' in different) expect(different.resultSummary).not.toHaveProperty('focusedCredentialTarget');
+      boundary.state.focused = false;
+      const unfocused = await query('#password');
+      expect(unfocused).toMatchObject({ status: 'succeeded', resultSummary: { count: 1,
+        focusedCredentialTarget: { field: { fieldId: String(boundary.state.fieldId) } } } });
+      expect(boundary.calls.some(call => call.method === 'Input.insertText')).toBe(false);
+    } finally { service.dispose(); }
+  });
   it('returns complete daemon query and context Action results while timelines stay compact', async () => {
     const name = 'Accessible label '.repeat(30).trim();
     const nodes = Array.from({ length: 513 }, (_, index) => ({
@@ -512,6 +616,7 @@ describe('control adapter automation transport bridge', () => {
       actionKind: 'queryElements', payload: { selector }, timeoutMs: 10_000,
     }, { authority: 'account_automation' });
     try {
+      const queryStart = boundary.cdpMethods.length;
       const full = await query('button', 'full-query');
       expect(full).toMatchObject({ status: 'succeeded', resultSummary: { count: nodes.length, truncated: false } });
       expect('resultSummary' in full && full.resultSummary?.elements).toHaveLength(nodes.length);
@@ -519,6 +624,8 @@ describe('control adapter automation transport bridge', () => {
       const semantic = await query(`role=button[name="${name}"]`, 'semantic-query');
       expect(semantic).toMatchObject({ status: 'succeeded', resultSummary: { count: nodes.length, truncated: false } });
       expect('resultSummary' in semantic && semantic.resultSummary?.elements).toEqual(nodes.map(() => ({ tag: 'button', name })));
+      // A large non-input query needs no per-element identity/currentness CDP reads.
+      expect(boundary.cdpMethods.slice(queryStart).filter(method => method === 'Page.getFrameTree' || method === 'DOM.describeNode')).toHaveLength(0);
       const snapshot = await boundary.execute('semanticSnapshot');
       expect(snapshot).toMatchObject({ status: 'succeeded', resultSummary: { interactiveElementsTruncated: false } });
       expect(snapshot.resultSummary?.elements).toHaveLength(nodes.length);
@@ -694,29 +801,94 @@ describe('control adapter automation transport bridge', () => {
     await target.finish();
   });
 
-  it.each(['tab', 'frame', 'document', 'origin', 'field', 'focus', 'navigation'] as const)('refuses changed %s before confidential delivery', async changed => {
+  it.each(['plain', 'e2ee'] as const)('admits one fill in %s mode with zero downstream authority decisions and proves the target at delivery', async mode => {
+    const boundary = confidentialBoundary('not_observable');
+    const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: boundary.bridge }) });
+    const routes = createBrowserAutomationRoutes({ service });
+    const key = new Uint8Array(32).fill(7);
+    const value = 'fixture-acquired-material';
+    const publish = (version: number, material: string) => setActiveAccountSettingsSnapshot({
+      source: 'network', scopeKey: 'd26-scope', loadedAtMs: 1, settingsVersion: version,
+      settingsSecretsReadKeys: mode === 'plain' ? [] : [key],
+      settings: AccountSettingsSchema.parse({ secrets: [{ id: 'personal', name: 'Password', kind: 'password', createdAt: 1, updatedAt: version,
+        encryptedValue: mode === 'plain' ? { _isSecretValue: true, value: material }
+          : { _isSecretValue: true, encryptedValue: encryptSecretStringV1(material, key, length => new Uint8Array(length).fill(3)) },
+      }] }),
+    });
+    publish(1, value);
+    let admissions = 0;
+    let authorityRechecks = 0;
+    let modeReads = 0;
+    let prepared = false;
+    const execute = createConfidentialSecretFillExecutor({ expectedScopeKey: 'd26-scope', expectedAccountId: 'owner', serverId: 'home', machineId: 'machine',
+      readAccountMode: async () => { modeReads += 1; return mode; },
+      prepareTarget: async ({ request, context }) => {
+        const target = await routes.prepareConfidentialFill(request, context);
+        prepared = true;
+        return target;
+      },
+    });
+    boundary.state.beforeCommand = method => {
+      if (prepared && method === 'Page.createIsolatedWorld') {
+        // Publication changes after acquisition must affect the next fill, not
+        // re-admit this one while the bridge is proving its physical target.
+        publish(2, 'fixture-next-material');
+      }
+    };
+    const args = { actionId: 'browser.automation.secret.fill' as const, request: confidentialRequest,
+      choice: { kind: 'saved' as const, ref: 'personal', fingerprint: 'personal:personal:1', revision: null }, submit: false,
+      accountEncryptionMode: mode, context: {
+        // This private operand has already passed human-choice admission. Count any
+        // downstream attempt to decide that same authority again.
+        get authority() { authorityRechecks += 1; return 'present_user' as const; },
+        runtimeAccountId: 'owner',
+      },
+      isCurrent: async () => { admissions += 1; return true; },
+    };
+    try {
+      expect(await execute(args)).toEqual({ status: 'filled', code: 'filled' });
+      expect({ admissions, authorityRechecks, modeReads }).toEqual({ admissions: 1, authorityRechecks: 0, modeReads: 1 });
+      expect(boundary.calls.filter(call => call.method === 'Page.createIsolatedWorld')).toHaveLength(1);
+      const inserts = boundary.calls.filter(call => call.method === 'Input.insertText');
+      expect(inserts).toEqual([{ method: 'Input.insertText', params: { text: value } }]);
+      const index = boundary.calls.findIndex(call => call.method === 'Input.insertText');
+      expect(boundary.calls[index - 1]).toMatchObject({ method: 'Runtime.callFunctionOn', params: { objectId: 'field' } });
+      expect(service.getStatus(view).confidentialityHeld).toBe(true);
+      expect(await execute(args)).toEqual({ status: 'refused', code: 'saved_secret_changed' });
+      expect(boundary.calls.filter(call => call.method === 'Input.insertText')).toHaveLength(1);
+    } finally { service.dispose(); resetActiveAccountSettingsSnapshotForTests(); }
+  });
+
+  it.each(['tab', 'frame', 'document', 'origin', 'field', 'unfocusable', 'navigation'] as const)('refuses changed %s before confidential delivery', async changed => {
     const { bridge, calls, state } = confidentialBoundary();
     const target = await bridge.prepareConfidentialFill?.(confidentialRequest);
     expect(target).toBeDefined();
     if (!target || 'status' in target) throw new Error('Expected supported confidential target');
     if (changed === 'field') state.fieldId = 42;
-    if (changed === 'focus') state.focused = false;
+    if (changed === 'unfocusable') { state.focused = false; state.allowFocus = false; }
     if (changed === 'document') state.documentId = 'replacement';
     if (changed === 'origin') state.origin = 'https://other.test';
     if (changed === 'navigation') state.generation += 1;
     const request = changed === 'tab' ? { ...confidentialRequest, tabId: 'wrong' }
       : changed === 'frame' ? { ...confidentialRequest, frameId: 'wrong' } : undefined;
-    if (request) expect(await bridge.prepareConfidentialFill?.(request)).toEqual({ status: 'refused', code: 'target_changed' });
-    else expect(await target.fill(new TextEncoder().encode('fixture-credential-unique'))).toEqual({ status: 'refused', code: 'target_changed' });
+    const deliveryTarget = request ? await bridge.prepareConfidentialFill?.(request) : target;
+    if (!deliveryTarget || 'status' in deliveryTarget) throw new Error('Expected prepared target');
+    expect(await deliveryTarget.fill(new TextEncoder().encode('fixture-credential-unique')))
+      .toEqual({ status: 'refused', code: 'target_changed' });
     expect(calls.some(call => call.method === 'Input.insertText')).toBe(false);
     await target.finish();
+    if (deliveryTarget !== target) await deliveryTarget.finish();
   });
 
   it('rechecks navigation during proof and never retries ambiguous confidential delivery', async () => {
     const { bridge, calls, state } = confidentialBoundary();
     state.beforeCommand = method => { if (method === 'DOM.describeNode') state.generation += 1; };
-    expect(await bridge.prepareConfidentialFill?.(confidentialRequest)).toEqual({ status: 'refused', code: 'target_changed' });
+    const changed = await bridge.prepareConfidentialFill?.(confidentialRequest);
+    if (!changed || 'status' in changed) throw new Error('Expected prepared target');
+    expect(await changed.fill(new TextEncoder().encode('fixture-credential-unique')))
+      .toEqual({ status: 'refused', code: 'target_changed' });
     expect(calls.some(call => call.method === 'Input.insertText')).toBe(false);
+    await changed.finish();
     state.beforeCommand = () => {};
     state.generation = 3;
     state.failInsert = true;
@@ -797,42 +969,57 @@ describe('control adapter automation transport bridge', () => {
     await target.finish();
   });
 
-  it('reverifies focus after the human authority callback and before inserting text', async () => {
+  it('proves focus after awaited node resolution and before inserting text', async () => {
     const { bridge, state, calls } = confidentialBoundary();
     const target = await bridge.prepareConfidentialFill?.(confidentialRequest);
     if (!target || 'status' in target) throw new Error('Expected supported confidential target');
-    expect(await target.fill(new TextEncoder().encode('fixture-credential-unique'), undefined, async () => {
-      state.focused = false; return true;
-    })).toEqual({ status: 'refused', code: 'target_changed' });
+    state.beforeCommand = method => { if (method === 'DOM.describeNode') state.focused = false; };
+    expect(await target.fill(new TextEncoder().encode('fixture-credential-unique')))
+      .toEqual({ status: 'refused', code: 'target_changed' });
     expect(calls.some(call => call.method === 'Input.insertText')).toBe(false);
     await target.finish();
   });
 
-  it('refuses confidential delivery when the authority callback before fresh target proof rejects it', async () => {
-    const { bridge, calls, state } = confidentialBoundary();
-    const target = await bridge.prepareConfidentialFill?.(confidentialRequest);
-    if (!target || 'status' in target) throw new Error('Expected supported confidential target');
-    expect(await target.fill(new TextEncoder().encode('fixture-credential-unique'), undefined, async () => false))
-      .toEqual({ status: 'refused', code: 'approval_changed' });
-    expect(state.inserted).toBe(false);
-    expect(calls.some(call => call.method === 'Input.insertText')).toBe(false);
-    await target.finish();
-  });
 
-  it('refuses confidential delivery when authority is withdrawn during awaited field identity resolution', async () => {
-    const { bridge, calls, state } = confidentialBoundary();
-    const target = await bridge.prepareConfidentialFill?.(confidentialRequest);
-    if (!target || 'status' in target) throw new Error('Expected supported confidential target');
-    let approved = true;
-    // Revoke at the CDP network boundary after preparation, while fill awaits its identity proof.
-    state.beforeCommand = method => { if (method === 'DOM.describeNode') approved = false; };
-    const value = new TextEncoder().encode('fixture-credential-unique');
-    expect(await target.fill(value, undefined, async () => approved))
-      .toEqual({ status: 'refused', code: 'approval_changed' });
-    expect(state.inserted).toBe(false);
-    expect(calls.some(call => call.method === 'Input.insertText')).toBe(false);
-    expect(value.every(byte => byte === 0)).toBe(true);
-    await target.finish();
+  it('refuses confidential delivery when the reviewed field cannot regain focus after prior agent input drains', async () => {
+    const { bridge, state, calls } = confidentialBoundary();
+    const service = createBrowserAutomationDaemonService({ adapter: createBrowserAutomationCdpAdapter({ transport: bridge }) });
+    const routes = createBrowserAutomationRoutes({ service });
+    const inputControl = service.getInputControl(view);
+    let releaseInput: () => void = () => undefined;
+    const heldInput = new Promise<void>(resolve => { releaseInput = resolve; });
+    let inputInterrupted: () => void = () => undefined;
+    const interrupted = new Promise<void>(resolve => { inputInterrupted = resolve; });
+    // execute refuses busy input; preparation waits for the real confidentiality
+    // drain. Keep that owner real rather than inventing a test-only input queue.
+    const priorInput = inputControl.execute({ requestedBy: 'agent',
+      effect: async signal => {
+        signal.addEventListener('abort', inputInterrupted, { once: true });
+        await heldInput;
+        return 'settled';
+      }, classifyCompletion: () => 'known',
+    });
+    const preparing = routes.prepareConfidentialFill(confidentialRequest, { authority: 'present_user' });
+    let prepared: Awaited<typeof preparing> | undefined;
+    try {
+      await interrupted;
+      expect(inputControl.getStatus()).toMatchObject({ controller: 'agent', stopping: true });
+      state.focused = false;
+      state.allowFocus = false;
+      releaseInput();
+      expect(await priorInput).toMatchObject({ ok: true, interrupted: true, completion: 'known' });
+      prepared = await preparing;
+      if ('status' in prepared) throw new Error('Expected prepared confidential target');
+      expect(await prepared.fill(new TextEncoder().encode('fixture-credential-unique')))
+        .toEqual({ status: 'refused', code: 'target_changed' });
+      expect(calls.filter(call => call.method === 'Input.insertText')).toHaveLength(0);
+    } finally {
+      releaseInput();
+      await priorInput;
+      prepared ??= await preparing;
+      if (!('status' in prepared)) await prepared.finish();
+      service.dispose();
+    }
   });
 
   it.each([false, true])('composes confidential delivery and observation hold through the real route/service/CDP owners (ambiguous=%s)', async ambiguous => {
@@ -912,29 +1099,29 @@ describe('control adapter automation transport bridge', () => {
     expect(state.submitted).toBe(true);
     await next.finish();
   });
-  it('rechecks human authority at the separate submit boundary and never clicks after approval withdrawal', async () => {
+  it('cancels separate submit without erasing the known fill', async () => {
     const { bridge, state } = confidentialBoundary();
     const request = { ...confidentialRequest, submit: { controlId: '51', locator: '#submit', label: 'Sign in', consequence: 'Send credential' } };
     const target = await bridge.prepareConfidentialFill?.(request);
     if (!target || 'status' in target) throw new Error('Expected supported confidential target');
     expect(await target.fill(new TextEncoder().encode('fixture-credential-unique'))).toEqual({ status: 'filled', code: 'filled' });
-    expect(await target.submit?.(undefined, async () => false)).toEqual({ status: 'refused', code: 'submit_refused' });
+    const abort = new AbortController(); abort.abort();
+    expect(await target.submit?.(abort.signal)).toEqual({ status: 'refused', code: 'submit_refused' });
     expect(state.submitted).toBe(false);
     await target.finish();
   });
 
-  it('retains known fill and refuses submit when authority is withdrawn during awaited control identity resolution', async () => {
+  it('retains known fill and refuses submit when focus changes during awaited control identity resolution', async () => {
     const { bridge, state } = confidentialBoundary();
     const request = { ...confidentialRequest, submit: { controlId: '51', locator: '#submit', label: 'Sign in', consequence: 'Send credential' } };
     const target = await bridge.prepareConfidentialFill?.(request);
     if (!target || 'status' in target) throw new Error('Expected supported confidential target');
     expect(await target.fill(new TextEncoder().encode('fixture-credential-unique'))).toEqual({ status: 'filled', code: 'filled' });
-    let approved = true;
-    // The separate approved action can be withdrawn while its exact control is resolved.
+    // The final physical proof follows the awaited exact-control resolution.
     state.beforeCommand = (method, params) => {
-      if (method === 'DOM.describeNode' && params?.objectId === 'control') approved = false;
+      if (method === 'DOM.describeNode' && params?.objectId === 'control') state.focused = false;
     };
-    expect(await target.submit?.(undefined, async () => approved)).toEqual({ status: 'refused', code: 'submit_refused' });
+    expect(await target.submit?.()).toEqual({ status: 'refused', code: 'submit_refused' });
     expect(state.inserted).toBe(true);
     expect(state.submitted).toBe(false);
     await target.finish();
@@ -948,11 +1135,45 @@ describe('control adapter automation transport bridge', () => {
       target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
     const bridge = createControlAdapterAutomationTransport({ adapter,
       contextCapture: { transport, resolvePageHandle: adapter.resolvePageHandle } });
-    expect(await bridge.dispatchInputCommand?.({ ...view, actionKind: 'tap', navigationGeneration: 0, payload: { x: 200, y: 100 } })).toEqual({ ok: true });
-    expect(calls).toEqual(expect.arrayContaining([
-      expect.objectContaining({ method: 'Input.dispatchMouseEvent', params: expect.objectContaining({ type: 'mousePressed', x: 200, y: 100 }) }),
-      expect.objectContaining({ method: 'Input.dispatchMouseEvent', params: expect.objectContaining({ type: 'mouseReleased', x: 200, y: 100 }) }),
-    ]));
+    expect(await bridge.dispatchInputCommand?.({ ...view, actionKind: 'tap', navigationGeneration: 0,
+      payload: { x: 200, y: 100, button: 'right', clickCount: 2, modifiers: ['control', 'shift'] } })).toEqual({ ok: true });
+    expect(calls.filter(call => call.method === 'Input.dispatchMouseEvent' && call.params?.type !== 'mouseMoved').map(call => call.params))
+      .toEqual([1, 2].flatMap(clickCount => ['mousePressed', 'mouseReleased'].map(type => ({ type, x: 200, y: 100, button: 'right', clickCount, modifiers: 10 }))));
+    expect(await bridge.dispatchInputCommand?.({ ...view, actionKind: 'drag', navigationGeneration: 0,
+      payload: { from: '#missing', to: '#also-missing' } })).toEqual({ ok: false, errorCode: 'selector_not_found' });
+    expect(await bridge.dispatchInputCommand?.({ ...view, actionKind: 'drag', navigationGeneration: 0,
+      payload: { from: { x: 20, y: 30 }, to: { x: 60, y: 80 } } })).toEqual({ ok: true });
+    expect(calls.at(-1)?.params).toMatchObject({ type: 'mouseReleased', x: 60, y: 80, buttons: 0 });
+    adapter.dispose();
+  });
+  it('holds the streamed pointer across commands and releases on cancel or owner cleanup', async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
+    let refuseRelease = false;
+    const transport = { openPage: async () => HANDLE, dispatchBrowserCommand: async () => ({}),
+      dispatchPageCommand: async (command: (typeof calls)[number]) => {
+        calls.push(command);
+        if (refuseRelease && command.params?.type === 'mouseReleased') throw new Error('release failed');
+        return {};
+      } };
+    const adapter = createBrowserSidecarCdpControlAdapter({ browserSessionId: view.browserSessionId, sidecarId: 'sidecar', transport });
+    await adapter.dispatchCommand({ kind: 'openView', commandId: 'open', focus: true, ...view, platform: 'web',
+      target: { kind: 'externalUrl', targetId: 'external', url: 'https://example.test/' } });
+    const bridge = createControlAdapterAutomationTransport({ adapter,
+      contextCapture: { transport, resolvePageHandle: adapter.resolvePageHandle } });
+    const pointer = (phase: string, x: number) => bridge.dispatchInputCommand?.({ ...view, actionKind: 'drag', navigationGeneration: 0,
+      payload: { phase, x, y: 100 } });
+    expect(await pointer('down', 20)).toEqual({ ok: true });
+    expect(calls.filter(call => call.params?.type === 'mouseReleased')).toHaveLength(0);
+    expect(await pointer('move', 80)).toEqual({ ok: true });
+    expect(calls.at(-1)?.params).toMatchObject({ type: 'mouseMoved', x: 80, buttons: 1 });
+    expect(await pointer('cancel', 80)).toEqual({ ok: true });
+    expect(calls.at(-1)?.params).toMatchObject({ type: 'mouseReleased', x: 80, buttons: 0 });
+    expect(await pointer('down', 30)).toEqual({ ok: true });
+    refuseRelease = true;
+    await expect(bridge.releaseInput?.(view)).rejects.toThrow('release failed');
+    refuseRelease = false;
+    await bridge.releaseInput?.(view);
+    expect(calls.at(-1)?.params).toMatchObject({ type: 'mouseReleased', x: 30, buttons: 0 });
     adapter.dispose();
   });
   it('auto-dismisses navigation dialogs for the whole adapter operation', async () => {
@@ -1105,24 +1326,6 @@ describe('control adapter automation transport bridge', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('uploads file descriptors to the resolved DOM file input and cleans request-owned bytes', async () => {
-    let uploadedFiles: string[] = [];
-    const { surface } = fakeContextCapture(async (method, params) => {
-      if (method === 'Runtime.evaluate') return { result: { objectId: 'file-input' } };
-      if (method === 'DOM.setFileInputFiles') {
-        uploadedFiles = params?.files as string[];
-        expect(params?.objectId).toBe('file-input');
-        expect(await readFile(uploadedFiles[0], 'utf8')).toBe('Hello upload');
-      }
-      return {};
-    });
-    const transport = createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: surface });
-    const result = await transport.dispatchInputCommand?.({ ...view, actionKind: 'upload', navigationGeneration: 1, payload: { selector: '#files', files: [{ name: 'example.txt', mimeType: 'text/plain', text: 'Hello upload' }] } });
-    expect(result).toMatchObject({ ok: true, data: { fileCount: 1 } });
-    expect(uploadedFiles).toHaveLength(1);
-    await expect(access(uploadedFiles[0])).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
   it('drags between locator centres through trusted mouse events', async () => {
     const { surface, calls } = fakeContextCapture((method, params) => method === 'Runtime.evaluate' ? cdpEvaluateValue(String(params?.expression).includes('#target') ? { x: 100, y: 200 } : { x: 10, y: 20 }) : {});
     const transport = createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: surface });
@@ -1134,25 +1337,6 @@ describe('control adapter automation transport bridge', () => {
       { type: 'mouseMoved', x: 100, y: 200, button: 'left', buttons: 1 },
       { type: 'mouseReleased', x: 100, y: 200, button: 'left', buttons: 0, clickCount: 1 },
     ]);
-  });
-  it('cleans duplicate-name binary uploads even when Chromium rejects selection', async () => {
-    let uploadedFiles: string[] = [];
-    const bytes = Buffer.from([0, 255, 128, 10]);
-    const { surface } = fakeContextCapture(async (method, params) => {
-      if (method === 'Runtime.evaluate') return { result: { objectId: 'file-input' } };
-      if (method === 'DOM.setFileInputFiles') {
-        uploadedFiles = params?.files as string[];
-        expect(uploadedFiles[0]).not.toBe(uploadedFiles[1]);
-        for (const file of uploadedFiles) expect(await readFile(file)).toEqual(bytes);
-        throw new Error('CDP selection rejected');
-      }
-      return {};
-    });
-    const descriptor = { name: 'same.bin', mimeType: 'application/octet-stream', text: bytes.toString('base64'), base64: true };
-    const result = await createControlAdapterAutomationTransport({ adapter: controlAdapter(), contextCapture: surface }).dispatchInputCommand?.({ ...view, actionKind: 'upload', navigationGeneration: 1, payload: { selector: '#files', files: [descriptor, descriptor] } });
-    expect(result).toMatchObject({ ok: false, errorCode: 'runtime_unavailable' });
-    expect(uploadedFiles).toHaveLength(2);
-    for (const file of uploadedFiles) await expect(access(file)).rejects.toMatchObject({ code: 'ENOENT' });
   });
   it.each(['click', 'press', 'drag'] as const)('drains canceled %s and releases held input before the route acknowledges', async (actionKind) => {
     let entered!: () => void;

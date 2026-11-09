@@ -1,4 +1,3 @@
-import { isDeepStrictEqual } from 'node:util';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -29,7 +28,7 @@ import {
 import { reconcileTeamCredentialDirectMaterial } from './reconcileTeamCredentialDirectMaterial';
 import {
   getActiveAccountSettingsSnapshotLifetimeToken,
-  subscribeActiveAccountSettingsSnapshotChanges,
+  subscribeActiveAccountSettingsKeys,
   type ActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
@@ -70,14 +69,16 @@ export function subscribeTeamCredentialDirectMaterialSourceChanges(
     wake: DirectMaterialSnapshotWake) => void,
 ): () => void {
   let previousLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
-  return subscribeActiveAccountSettingsSnapshotChanges((previous, next) => {
+  return subscribeActiveAccountSettingsKeys({ settings: ['secrets'],
+    facets: ['providerConnectionsCatalog', 'connectedConfigurationCatalog', 'savedSecretResources', 'savedSecretCatalogState'],
+  }, (previous, next) => {
     // Catalog producers also publish real source/history cleanup diagnostics.
     // Direct delivery consumes the admitted row, not its maintenance outcome.
     const previousConfiguration = previous?.connectedConfigurationCatalog;
     const nextConfiguration = next?.connectedConfigurationCatalog;
     const sameConfigurationContent = previousConfiguration === nextConfiguration
       || previousConfiguration?.status === 'ready' && nextConfiguration?.status === 'ready'
-        && isDeepStrictEqual(previousConfiguration.record, nextConfiguration.record);
+        && previousConfiguration.record === nextConfiguration.record;
     const nextLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
     const previousRevisions = sourceRevisions(previous, previousLifetime);
     const nextRevisions = sourceRevisions(next, nextLifetime);
@@ -88,8 +89,8 @@ export function subscribeTeamCredentialDirectMaterialSourceChanges(
     if (!sameConfigurationContent) predicates.push('connected-configuration-content');
     if (previous?.savedSecretResources !== next?.savedSecretResources) predicates.push('saved-secret-resources');
     if (previous?.savedSecretCatalogState !== next?.savedSecretCatalogState) predicates.push('saved-secret-state');
-    if (!isDeepStrictEqual(previous?.settings.secrets, next?.settings.secrets)) predicates.push('secrets');
-    if (!isDeepStrictEqual(previous?.settingsSecretsReadKeys, next?.settingsSecretsReadKeys)) predicates.push('read-keys');
+    if (previous?.settings.secrets !== next?.settings.secrets) predicates.push('secrets');
+    if (previous?.settingsSecretsReadKeys !== next?.settingsSecretsReadKeys) predicates.push('read-keys');
     if (previous?.source !== next?.source) predicates.push('source');
     if (previous?.scopeKey !== next?.scopeKey) predicates.push('scope');
     if (previousRevisions.accountLifetime !== nextRevisions.accountLifetime) predicates.push('account-lifetime');

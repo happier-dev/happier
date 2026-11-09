@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createProjectServiceDeclarationTargetIdV1, type ProjectServiceDeclarationRefV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { readProjectManifest } from '@/workspaces/projectSetup/projectManifestFile';
@@ -64,26 +64,14 @@ function disambiguatedRunTargetId(baseId: string, cwd: string): string {
     return `${baseId.slice(0, RUN_TARGET_ID_MAX_LENGTH - suffix.length)}${suffix}`;
 }
 
-function disambiguateRunTargetIds(targets: readonly LocalServiceRunTarget[]): readonly LocalServiceRunTarget[] {
-    const countById = new Map<string, number>();
-    for (const target of targets) {
-        countById.set(target.id, (countById.get(target.id) ?? 0) + 1);
-    }
-    return targets.map((target) => {
-        if ((countById.get(target.id) ?? 0) <= 1) {
-            return target;
-        }
-        return {
-            ...target,
-            id: disambiguatedRunTargetId(target.id, target.cwd),
-        };
-    });
+function withStableRunTargetIds(targets: readonly LocalServiceRunTarget[]): readonly LocalServiceRunTarget[] {
+    return targets.map(target => ({ ...target, id: disambiguatedRunTargetId(target.id, resolve(target.cwd)) }));
 }
 /** Resolve a launcher selection from the actual package, not its presentation preview.
  * Only the canonical finite script vocabulary is admitted, so the resulting
  * command contains no user-authored shell syntax on POSIX, cmd or PowerShell.
  */
-export async function resolveLocalServiceRunTargetCommand(input: Readonly<{
+export async function resolveLocalServiceRunTargetScriptName(input: Readonly<{
     cwd: string;
     runTargetId: string;
 }>): Promise<string | null> {
@@ -92,8 +80,19 @@ export async function resolveLocalServiceRunTargetCommand(input: Readonly<{
     const scriptName = SERVER_SCRIPT_PRIORITY.find((name) => {
         const baseId = `${packageJson.name}:${name}`;
         return packageJson.scripts[name]
-            && (input.runTargetId === baseId || input.runTargetId === disambiguatedRunTargetId(baseId, input.cwd));
+            && (input.runTargetId === baseId
+                || input.runTargetId === disambiguatedRunTargetId(baseId, resolve(input.cwd))
+                // Retained pre-FX224 selections hashed their original path spelling.
+                || input.runTargetId === disambiguatedRunTargetId(baseId, input.cwd));
     });
+    return scriptName ?? null;
+}
+
+export async function resolveLocalServiceRunTargetCommand(input: Readonly<{
+    cwd: string;
+    runTargetId: string;
+}>): Promise<string | null> {
+    const scriptName = await resolveLocalServiceRunTargetScriptName(input);
     if (!scriptName) return null;
     // Workspace packages inherit the root's declaration or lockfile. Read ancestors
     // without discovering or executing other packages.
@@ -192,5 +191,5 @@ export async function discoverLocalServiceRunTargets(input: Readonly<{
         }
     }
     const unqualified = targets.filter(target => !(input.acceptedWorkspaceRefs ?? []).some(workspace => isWorkspacePathWithin(workspace.rootPath, target.cwd)));
-    return [...disambiguateRunTargetIds(unqualified), ...declarations];
+    return [...withStableRunTargetIds(unqualified), ...declarations];
 }

@@ -153,17 +153,18 @@ export async function searchTier2Memory(params: Readonly<{
   try {
     // Project admission owns both transcript membership and direct attachments.
     // It precedes candidate windows, reranking, limits and cursors.
-    let projectScope = projectRequested && params.resolveDocuments
-      ? await params.resolveDocuments(params.query.scope, params.signal) : undefined;
+    const documentScope: MemoryDocumentSearchScope = (projectRequested || documentsRequested) && params.resolveDocuments
+      ? await params.resolveDocuments(params.query.scope, params.signal)
+      : { state: 'unavailable' as const, eligibleDocuments: [] };
+    const projectScope = projectRequested ? documentScope : undefined;
     if (projectRequested && (!projectScope || (projectScope.state !== 'ready' && projectScope.state !== 'partial')
       || projectScope.eligibleSessionIds === undefined)) {
       return { v: 1, ok: true, hits: [], project: { state: 'unavailable' },
         ...(documentsRequested ? { documents: { state: 'unavailable' } } : {}) };
     }
-    let eligibleSessionIds = projectRequested
+    const eligibleSessionIds = projectRequested
       ? intersectSessionEligibility(projectScope?.eligibleSessionIds ?? [], params.query.eligibleSessionIds)
       : params.query.eligibleSessionIds;
-    let projectMembershipChanged = false;
     summaryDb = params.sessionSummaryDbPath && sessionsRequested
       ? openSummaryShardIndexReader({ dbPath: params.sessionSummaryDbPath }) : null;
     const key = pageKey(params.query, { tier: 'deep', poolSize: candidateLimit,
@@ -201,14 +202,12 @@ export async function searchTier2Memory(params: Readonly<{
         finalScore: undefined as number | undefined,
       }));
 
-      let crossedEmbeddingBoundary = false;
       if (embeddings?.enabled === true && typeof params.embedQuery === 'function' && ranked.length > 0) {
         const provider = String(embeddings.providerKind ?? '').trim();
         const modelId = String(embeddings.modelId ?? '').trim();
         if (provider && modelId) {
           try {
             params.signal?.throwIfAborted();
-            crossedEmbeddingBoundary = true;
             const queryEmbedding = await params.embedQuery(params.query.query, params.signal);
             params.signal?.throwIfAborted();
             const embeddingMap = db.loadEmbeddings({
@@ -246,24 +245,7 @@ export async function searchTier2Memory(params: Readonly<{
         }
       }
 
-      // Embedding failure may fall back to lexical ranking; failed scope
-      // admission must never fall back to previously authorized snippets.
-      if (crossedEmbeddingBoundary && projectRequested && params.resolveDocuments) {
-        projectScope = await params.resolveDocuments(params.query.scope, params.signal);
-        if ((projectScope.state !== 'ready' && projectScope.state !== 'partial') || !projectScope.eligibleSessionIds) {
-          return { v: 1, ok: true, hits: [], project: { state: 'unavailable' },
-            ...(documentsRequested ? { documents: { state: 'unavailable' } } : {}) };
-        }
-        const currentIds = intersectSessionEligibility(projectScope.eligibleSessionIds, params.query.eligibleSessionIds);
-        const previousIds = new Set(eligibleSessionIds);
-        if (currentIds.length !== previousIds.size || currentIds.some(id => !previousIds.has(id))) projectMembershipChanged = true;
-        eligibleSessionIds = currentIds;
-      }
-
-      // Qualify documents after asynchronous reranking, immediately before disclosure.
-      const documentScope = projectScope ?? (documentsRequested && params.resolveDocuments
-        ? await params.resolveDocuments(params.query.scope, params.signal)
-        : { state: 'unavailable' as const, eligibleDocuments: [] });
+      // Candidate windows and embeddings consume this query's admitted scope.
       params.signal?.throwIfAborted();
       if (documentScope.state === 'ready' || documentScope.state === 'partial') documentScope.assertCurrent();
       const documentHits = documentsRequested && (documentScope.state === 'ready' || documentScope.state === 'partial') ? db.searchDocuments({
@@ -305,7 +287,7 @@ export async function searchTier2Memory(params: Readonly<{
       return {
         v: 1,
         ok: true,
-        ...(projectRequested ? { project: { state: documentScope.state === 'ready' && !externalRequested && !projectMembershipChanged ? 'ready' as const : 'partial' as const } } : {}),
+        ...(projectRequested ? { project: { state: documentScope.state === 'ready' && !externalRequested ? 'ready' as const : 'partial' as const } } : {}),
         ...(documentsRequested ? { documents: { state: documentScope.state } } : {}),
         hits, hasMore: next !== null,
         ...(next ? { nextCursor: encodePageCursor(next) } : {}),

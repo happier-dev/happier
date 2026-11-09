@@ -6,21 +6,26 @@ import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from './requestAu
 import { resolveConnectedServiceAuthForSpawn } from './resolveConnectedServiceAuthForSpawn';
 
 describe('spawn pool model eligibility', () => {
-    it('refuses an exhausted requested model before credential reads', async () => {
+    it.each(['requested-model', 'observational-probe'] as const)('refuses unavailable %s admission before credential reads', async (operation) => {
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+        const healthyId = '7e9ced1f-60ac-4618-bcf0-31adc1c2e4aa';
+        const activeId = operation === 'observational-probe' ? '92fe29be-575b-4551-8e90-edaacc3ec7a4' : 'primary';
+        const memberIds = operation === 'observational-probe'
+            ? [healthyId, '97bd5614-8970-4068-87f2-1447de69d604', '705530f2-81e8-4ba2-bc7b-7929a4b95b5a', activeId]
+            : ['primary', 'backup'];
         const group = QualifiedConnectedAccountGroupV4Schema.parse({
             v: 1, ref: { service, groupId: 'pool' }, incarnation: 'pool-row', displayName: 'Pool',
-            policy: { autoSwitch: true }, activeConnectedAccountId: 'primary', generation: 7,
+            policy: { autoSwitch: true }, activeConnectedAccountId: activeId, generation: 7,
             runtimeStateRevision: 0, state: {}, createdAt: 1, updatedAt: 1,
-            members: ['primary', 'backup'].map((connectedAccountId, priority) => ({
+            members: memberIds.map((connectedAccountId, priority) => ({
                 v: 1, connectedAccountId, priority, enabled: true,
-                state: { modelUnavailableUntilMsByModelId: { 'requested-model': 50_000 } },
+                state: operation === 'requested-model' ? { modelUnavailableUntilMsByModelId: { 'requested-model': 50_000 } } : {},
                 createdAt: 1, updatedAt: 1,
             })),
         });
         const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({ service,
-            accounts: ['primary', 'backup'].map((accountId) => ({
-                ref: { service, accountId }, status: 'connected', authenticationModeId: 'oauth',
+            accounts: memberIds.map((accountId) => ({
+                ref: { service, accountId }, status: operation === 'observational-probe' && accountId !== healthyId ? 'needs_reauth' : 'connected', authenticationModeId: 'oauth',
                 revisionSemantics: 'revisioned', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
                 configurationReady: true, configurationRevision: null, scopes: [],
             })),
@@ -41,8 +46,15 @@ describe('spawn pool model eligibility', () => {
             resolveQualifiedPurposeBindingSnapshot: (bindings: Parameters<typeof resolveQualifiedPurposeBindingSnapshotForAgentSpawn>[0]['bindings']) =>
                 resolveQualifiedPurposeBindingSnapshotForAgentSpawn({ agentId: 'codex', bindings, contributions: getResolvedContributionRegistry() }),
         };
-        await expect(resolveConnectedServiceAuthForSpawn({ ...request, modelId: 'requested-model' }))
-            .rejects.toMatchObject({ code: 'connected_service_run_model_unavailable', modelId: 'requested-model' });
+        if (operation === 'requested-model') {
+            await expect(resolveConnectedServiceAuthForSpawn({ ...request, modelId: 'requested-model' }))
+                .rejects.toMatchObject({ code: 'connected_service_run_model_unavailable', modelId: 'requested-model' });
+        } else {
+            await expect(resolveConnectedServiceAuthForSpawn({ ...request, probePurpose: 'probe',
+                authGroupSwitchCoordinator: null, credentialRefreshService: null }))
+                .rejects.toMatchObject({ code: 'connected_service_auth_group_switch_unavailable_auth_expired', reason: 'auth_expired',
+                    activeProfileId: activeId, selectedProfileId: healthyId });
+        }
         expect(readCredential).not.toHaveBeenCalled();
     });
 });

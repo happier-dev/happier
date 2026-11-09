@@ -112,8 +112,10 @@ export function createDaemonMachineLiveStreamCaptureAdapter(
           };
         }
         const selected = source.source;
-        if (input.startRequest.sourceOccurrenceId !== undefined
-            && input.startRequest.sourceOccurrenceId !== selected.sourceOccurrenceId) {
+        const authorization = input.startRequest.authorization?.payload;
+        const sourceOccurrenceId = authorization?.v === 2
+          ? authorization.personalSourceAdmission.sourceOccurrenceId : input.startRequest.sourceOccurrenceId;
+        if (sourceOccurrenceId !== undefined && sourceOccurrenceId !== selected.sourceOccurrenceId) {
           return { ok: false, reasonCode: 'capture_source_unavailable' };
         }
         let session: MachineLiveStreamCaptureSession | null = null;

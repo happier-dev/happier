@@ -47,11 +47,24 @@ describe('Guard requester view and parked watch', () => {
     vi.useRealTimers(); await rm(directory, { recursive: true, force: true });
   });
 
-  async function setup(otherAccount = 'bob', workState: 'settled' | 'active' = 'settled', withProjectServices = false, withTerminals = false, failBrowser = false) {
+  async function setup(otherAccount = 'bob', workState: 'settled' | 'active' = 'settled', withProjectServices = false, withTerminals = false, failBrowser = false,
+    monitoringIntervalMs = 60_000) {
+    let metadata: Record<string, unknown> = { resourcesPolicyV1: { v: 1, monitoring: { mode: 'always', intervalMs: monitoringIntervalMs } } };
+    let metadataVersion = 2;
+    const policy = createMachineResourcesPolicyRuntime({ port: {
+      read: async () => ({ status: 'ready', metadata, metadataVersion }),
+      // Genuine Machine metadata transport boundary; policy normalization/CAS remain real.
+      compareAndSwap: async request => {
+        if (request.expectedMetadataVersion !== metadataVersion) return { status: 'conflict', metadata, metadataVersion };
+        metadata = request.metadata; metadataVersion++;
+        return { status: 'applied', metadata, metadataVersion };
+      },
+    } }); await policy.reload(); cleanup.push(() => policy.stop());
     const os = await createLinuxVitalsFixture(); cleanup.push(os.cleanup);
     const readers = createLinuxMachineVitalsReader({ root: os.root });
     const historyStore = await createMinuteHistoryStore({ directory: join(directory, 'history'), nowMs: Date.now });
-    const sampler = createMachineVitalsSampler({ readers, historyStore, nowMs: Date.now, monotonicMs: Date.now });
+    const sampler = createMachineVitalsSampler({ readers, historyStore, nowMs: Date.now, monotonicMs: Date.now,
+      readPolicy: () => { const current = policy.read(); return current.status === 'ready' ? current.policy : null; } });
     await sampler.start(); cleanup.push(() => sampler.stop());
     const summary = createMachineResourceSummary({ sampler, readNearlyFull: () => null, nowMs: Date.now,
       onError: error => { throw error; } }); cleanup.push(() => summary.stop());
@@ -105,17 +118,6 @@ describe('Guard requester view and parked watch', () => {
           : { kind: 'session' as const, sessionId: `s${row.pid - 1001}` },
       })); },
     });
-    let metadata: Record<string, unknown> = {};
-    let metadataVersion = 2;
-    const policy = createMachineResourcesPolicyRuntime({ port: {
-      read: async () => ({ status: 'ready', metadata, metadataVersion }),
-      // Genuine Machine metadata transport boundary; policy normalization/CAS remain real.
-      compareAndSwap: async request => {
-        if (request.expectedMetadataVersion !== metadataVersion) return { status: 'conflict', metadata, metadataVersion };
-        metadata = request.metadata; metadataVersion++;
-        return { status: 'applied', metadata, metadataVersion };
-      },
-    } }); await policy.reload(); cleanup.push(() => policy.stop());
     const activityLog = await createActivityLog({ activeServerDir: directory, nowMs: Date.now,
       resourceSummary: summary });
     for (const [id, who] of [['own', attribution], ['other', { ...attribution, accountId: otherAccount }],
@@ -184,7 +186,7 @@ describe('Guard requester view and parked watch', () => {
         return () => { changes.delete(listener); };
       } });
     cleanup.push(() => view.dispose());
-    return { view, sampler, policy, ownership, readFacts, activityLog, inventory,
+    return { view, sampler, policy, ownership, readFacts, activityLog, inventory, sessionState,
       holdActivityReply: () => {
         let release!: () => void;
         let entered!: () => void;
@@ -303,8 +305,8 @@ describe('Guard requester view and parked watch', () => {
     expect(own.idleTerminals?.[0]).not.toHaveProperty('attribution');
   });
 
-  it('refreshes parked previews on summary samples and releases demand on cancellation', async () => {
-    const h = await setup();
+  it('refreshes parked previews at the minute cadence and releases observations on cancellation', async () => {
+    const h = await setup('bob', 'settled', false, false, false, 15_000);
     const first = await h.view.watch({ machineId: 'machine' }, requester);
     expect(first.changed).toBe(true);
     if (!first.changed) throw new Error('Expected initial view');
@@ -317,8 +319,8 @@ describe('Guard requester view and parked watch', () => {
     expect(h.listeners()).toBe(1);
     h.setGuardName('systemd-oomd');
     h.setMemory(2);
-    await vi.advanceTimersByTimeAsync(15_000); await h.sampler.start();
-    expect(h.sampler.latest()?.intervalMs).toBe(15_000);
+    await vi.advanceTimersByTimeAsync(60_000); await h.sampler.start();
+    expect(h.sampler.latest()?.intervalMs).toBe(60_000);
     const changed = await pending;
     expect(changed.changed).toBe(true);
     if (!changed.changed) throw new Error('Expected changed preview');
@@ -333,13 +335,13 @@ describe('Guard requester view and parked watch', () => {
     const reads = h.nativeReads();
     await vi.advanceTimersByTimeAsync(15_000);
     expect(h.nativeReads()).toBe(reads);
-    expect(h.sampler.latest()?.intervalMs).toBe(15_000);
+    expect(h.sampler.latest()?.intervalMs).toBe(60_000);
     await vi.advanceTimersByTimeAsync(30_000); await h.sampler.start();
     expect(h.sampler.latest()?.intervalMs).toBe(60_000);
   });
 
-  it('keeps a parked ladder on the summary cadence when Overview demands live samples', async () => {
-    const h = await setup();
+  it('keeps a parked ladder on summary observations while Overview consumes selected live samples', async () => {
+    const h = await setup('bob', 'settled', false, false, false, 2_000);
     const first = await h.view.watch({ machineId: 'machine' }, requester);
     if (!first.changed) throw new Error('Expected initial view');
     const release = h.sampler.demandOverview();
@@ -534,6 +536,25 @@ describe('Guard requester view and parked watch', () => {
     expect(view.ladder.steps[0]?.status).toBe('run');
     expect(view.ladder.steps[0]?.candidates[0]?.label).toBe('private-browser');
     expect(view.ladder.steps.slice(1).some(step => step.status === 'done')).toBe(false);
+  });
+
+  it('projects memory warnings through the same recipient-visible Session rows while idle stopping is disabled', async () => {
+    const h = await setup('bob', 'settled', false, false, true);
+    await h.enableMemory();
+    const current = h.policy.read();
+    if (current.status !== 'ready') throw new Error('Policy unavailable');
+    await h.policy.set({ expectedRevision: current.revision, patch: { guard: { idleSessions: { warnBeforeMs: 30_000 } } } });
+    await vi.advanceTimersByTimeAsync(60_000); await h.sampler.start();
+    void h.runMemory();
+    await vi.waitFor(() => expect(h.sessionState.readSessionWarning('s0')).toBeDefined());
+    const warning = h.sessionState.readSessionWarning('s0');
+    const own = await h.view.readView(requester);
+    expect(own.policy.idleSessions.enabled).toBe(false);
+    expect(own.idle).toContainEqual(expect.objectContaining({ sessionRef: 's0', status: 'stops_at', stopAt: warning?.stopAt }));
+    expect((await h.view.readView({ ...requester, accountId: 'bob' })).idle.map(row => row.sessionRef)).toEqual(['s1']);
+    expect((await h.view.readView({ ...requester, isCustodian: true })).idle)
+      .toContainEqual(expect.objectContaining({ sessionRef: 's0', status: 'stops_at', stopAt: warning?.stopAt }));
+    expect(h.sessionState.readSessionWarning('s0')).toEqual(warning);
   });
 
   it('excludes a failed still-present browser from the executable preview and shows the next session', async () => {

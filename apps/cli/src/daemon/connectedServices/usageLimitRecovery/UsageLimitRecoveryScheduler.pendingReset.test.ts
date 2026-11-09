@@ -16,7 +16,7 @@ function snapshot(at: number, resetsAt: number): ProviderAccountUsageSnapshotV1 
 describe('UsageLimitRecoveryScheduler Pending reset demand', () => {
   afterEach(() => vi.useRealTimers());
 
-  it('reconstructs demand from Pending and releases only a fresh witnessed next window, without a recovery prompt', async () => {
+  it.each([1_000, 2_000])('releases the original Pending hold at fresh window %s, including after sleeping through its reset', async resumedAt => {
     vi.useFakeTimers(); vi.setSystemTime(500);
     const previous = snapshot(500, 1_000);
     const reset = { source: { ref: { service: { pluginId: 'example', localId: 'service' }, accountId: 'account' }, bindingKind: 'account' } as const,
@@ -28,7 +28,6 @@ describe('UsageLimitRecoveryScheduler Pending reset demand', () => {
     const scheduler = new UsageLimitRecoveryScheduler({
       nowMs: () => Date.now(), resume: async () => { resumed.push('resume'); },
       pendingResetStarts: { withSession: async (_sessionId, run) => run({
-        isCurrent: async () => true,
         read: async () => rows,
         readAuthority: async () => true,
         readWitness: async () => previous,
@@ -39,7 +38,8 @@ describe('UsageLimitRecoveryScheduler Pending reset demand', () => {
     await scheduler.reconcilePendingResetStarts('session');
     await vi.advanceTimersByTimeAsync(500);
     expect(released).toEqual([]);
-    current = snapshot(1_000, 2_000);
+    vi.setSystemTime(resumedAt);
+    current = snapshot(resumedAt, resumedAt + 1_000);
     await scheduler.reconcilePendingResetStartsForTrackedSessions();
     expect(released).toEqual(['pending']);
     expect(resumed).toEqual([]);
@@ -49,29 +49,25 @@ describe('UsageLimitRecoveryScheduler Pending reset demand', () => {
     scheduler.dispose();
   });
 
-  it.each(['retired', 'expired', 'stale'] as const)('does not release when %s during the final Account currentness probe', async reason => {
+  it.each(['retired', 'expired', 'stale'] as const)('does not release when %s while reading the current quota', async reason => {
     vi.useFakeTimers(); vi.setSystemTime(1_000);
     const previous = snapshot(500, 1_000);
     const current = snapshot(1_000, 2_000);
     current.staleAfterMs = reason === 'expired' ? 10_000 : reason === 'stale' ? 100 : 1_000;
     const reset = { source: { ref: { service: { pluginId: 'example', localId: 'service' }, accountId: 'account' }, bindingKind: 'account' } as const,
       recordId: previous.recordId, meterId: 'window', witness: { id: 'history', observedAtMs: 500 } };
-    let holdAuthority = false;
     let enterAuthority: (() => void) | undefined;
     let releaseAuthority: (() => void) | undefined;
     const authorityEntered = new Promise<void>(resolve => { enterAuthority = resolve; });
     const released: string[] = [];
     const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => Date.now(), pendingResetStarts: { withSession: async (_sessionId, run) => run({
-      isCurrent: async () => {
-        if (holdAuthority) {
-          enterAuthority?.();
-          await new Promise<void>(resolve => { releaseAuthority = resolve; });
-        }
-        return true;
-      },
       read: async () => [{ localId: 'pending', reset }], readAuthority: async () => true,
       readWitness: async () => previous,
-      readCurrent: async () => { holdAuthority = true; return current; },
+      readCurrent: async () => {
+        enterAuthority?.();
+        await new Promise<void>(resolve => { releaseAuthority = resolve; });
+        return current;
+      },
       release: async ({ localId }) => { released.push(localId); },
     }) } });
     try {
@@ -95,7 +91,6 @@ describe('UsageLimitRecoveryScheduler Pending reset demand', () => {
     let authorityCurrent = true;
     const released: string[] = [];
     const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => Date.now(), pendingResetStarts: { withSession: async (_sessionId, run) => run({
-      isCurrent: async () => true,
       read: async () => rows, readWitness: async () => reason === 'wrong_witness' ? { ...previous, fetchedAtMs: 501 } : previous, readCurrent: async () => current,
       readAuthority: async () => authorityCurrent,
       release: async ({ localId }) => { released.push(localId); },

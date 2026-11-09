@@ -10,6 +10,9 @@ export function readRuntimeAuthFailureReportSourceIdentity(
     ...(classification.runtimeIssueFingerprint ? { runtimeIssueFingerprint: classification.runtimeIssueFingerprint } : {}),
     ...(classification.sourceProviderOrganizationId
       ? { sourceProviderOrganizationId: classification.sourceProviderOrganizationId } : {}),
+    ...(classification.providerReportedOrganizationId === undefined ? {}
+      : { providerReportedOrganizationId: classification.providerReportedOrganizationId }),
+    sourceProviderAccountId: classification.sourceProviderAccountId ?? null,
     profileId: classification.profileId,
     groupId: classification.groupId,
     groupGeneration: classification.groupGeneration ?? null,

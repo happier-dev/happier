@@ -114,10 +114,12 @@ export async function readLocalServiceWorkspaceFacts(input: Readonly<{
     const diagnostics: LocalServiceAcceptedWorkspaceReadDiagnostic[] = [];
     try {
         const { readProjectAccountRows } = await import('@/workspaces/projectAccountRows');
+        const selectedHomeServerId = await resolveServerProfileHomeIdentityId(input.serverId) ?? input.serverId;
+        input.signal?.throwIfAborted();
         const snapshot = await runWithServerHttpBaseUrl(input.serverBaseUrl, () => readProjectAccountRows({
             credentials: input.credentials,
-            publication: 'installed',
             serverId: input.serverId,
+            selection: { kinds: ['workspace-ref'], serverId: selectedHomeServerId },
             ...(input.signal ? { signal: input.signal } : {}),
         }));
         input.signal?.throwIfAborted();

@@ -1,6 +1,8 @@
 import { browserViewContextId } from '@happier-dev/protocol/browser/view/key';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import type { BrowserContextAttachmentV1, BrowserContextItemV1, BrowserContextSnapshotV1, RuntimeActionIdV1 } from '@happier-dev/protocol';
+import type { BrowserContextAttachmentV1, BrowserContextItemV1, BrowserContextSnapshotV1 } from '@happier-dev/protocol/browser/context/v1';
+import type { RuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import type { BrowserExistingProfile } from '../control/types';
 
 import {
   createBrowserContextCaptureService,
@@ -33,8 +35,15 @@ export type BrowserContextSnapshotRouteResult =
   | BrowserContextSnapshotV1
   | BrowserContextRouteFailure;
 
+export type BrowserContextAccessTarget = Readonly<{
+  browserSessionId: string;
+  existingProfile?: BrowserExistingProfile;
+}>;
+
 export type BrowserContextRoutes = Readonly<{
   dispatch(actionId: RuntimeActionIdV1, input: unknown): Promise<BrowserContextRouteResult>;
+  /** Resolve the real saved item, including one a capture would replace. */
+  resolveAccessTargets?(actionId: RuntimeActionIdV1, input: unknown): readonly BrowserContextAccessTarget[];
   /**
    * BA-2 combined rich agent snapshot — a single op returning the accessibility tree, interactive
    * elements (synthesized selectors + rects), visible text, a console summary, and a screenshot
@@ -144,11 +153,13 @@ function parseSnapshotInput(input: unknown): Readonly<{
 function mapCaptureResult(
   result: BrowserContextCaptureResult,
   options?: Readonly<{
-    record?: (item: BrowserContextItemV1) => void;
+    record?: (item: BrowserContextItemV1, profileId?: string) => boolean;
   }>,
 ): BrowserContextRouteResult {
   if (result.status === 'denied') return disabled('browser_context_denied');
-  options?.record?.(result.item);
+  if (options?.record?.(result.item, result.status === 'captured' ? result.profileId : undefined) === false) {
+    return disabled('browser_context_capture_failed');
+  }
   return result.item;
 }
 
@@ -174,12 +185,25 @@ export function createBrowserContextRoutes(input: Readonly<{
   const attachService = createBrowserContextAttachService({ store });
 
   return {
+    resolveAccessTargets(actionId, rawInput) {
+      const parsed = parseContextInput(actionId, rawInput);
+      if (!parsed) return [];
+      const captures = Boolean(SUMMARY_OPERATIONS[actionId] || CAPTURE_OPERATIONS[actionId]);
+      const item = !captures && parsed.annotationId ? store.annotation(parsed.annotationId) : store.item(parsed.contextId);
+      const source = item ? store.source(item.contextId) : undefined;
+      const targets: BrowserContextAccessTarget[] = captures || !source ? [{ browserSessionId: parsed.browserSessionId }] : [];
+      if (item && source) targets.push({ browserSessionId: source.browserSessionId,
+        existingProfile: { adapterKind: item.sourceAdapterKind, ...(source.profileId ? { profileId: source.profileId } : {}) } });
+      return targets;
+    },
     async dispatch(actionId, rawInput) {
       const parsed = parseContextInput(actionId, rawInput);
       if (!parsed) return invalidParameters;
-      const record = (item: BrowserContextItemV1) => store.record(item, {
+      const previousItem = store.item(parsed.contextId);
+      const record = (item: BrowserContextItemV1, profileId?: string) => store.record(item, {
         browserSessionId: parsed.browserSessionId, viewId: parsed.viewId,
-      });
+        ...(profileId ? { profileId } : {}),
+      }, { item: previousItem });
 
       const attachDestination = ATTACH_DESTINATIONS[actionId];
       if (attachDestination) {

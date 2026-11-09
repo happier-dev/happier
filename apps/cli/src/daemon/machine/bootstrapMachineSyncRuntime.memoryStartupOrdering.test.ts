@@ -22,12 +22,15 @@ describe('bootstrapMachineSyncRuntime memory startup ordering', () => {
   it('does not connect the Account changes carrier until deletion and revocation purges are subscribed', async () => {
     const memoryStartup = createDeferred<MemoryWorkerHandle>();
     const removeSessions = vi.fn(async () => {});
+    const noteSessionChanged = vi.fn(async () => {});
     const memoryWorker: MemoryWorkerHandle = {
       stop: vi.fn(),
+      waitForReady: async () => {},
       reloadSettings: vi.fn(async () => {}),
       clearIndex: vi.fn(async () => {}),
       ensureUpToDate: vi.fn(async () => {}),
       removeSessions,
+      noteSessionChanged,
       reconcileRetainedSessionAccess: vi.fn(async () => {}),
       listIndexedSessionIds: vi.fn(() => []),
       applySessionArchivedState: vi.fn(async () => {}),
@@ -48,8 +51,9 @@ describe('bootstrapMachineSyncRuntime memory startup ordering', () => {
     let deletedListener: ((change: { sessionId: string }) => void | Promise<void>) | null = null;
     let revokedListener: ((change: { sessionId: string }) => void | Promise<void>) | null = null;
     let resetListener: ((change: { cursor: number }) => void | Promise<void>) | null = null;
+    const changedListeners = new Set<(change: { sessionId: string; cursor: number }) => void | Promise<void>>();
     const connect = vi.fn(() => {
-      if (!deletedListener || !revokedListener || !resetListener) {
+      if (!deletedListener || !revokedListener || !resetListener || changedListeners.size === 0) {
         throw new Error('changes carrier connected before memory purge subscriptions');
       }
     });
@@ -68,6 +72,10 @@ describe('bootstrapMachineSyncRuntime memory startup ordering', () => {
       onSessionAccessReset: vi.fn((listener: NonNullable<typeof resetListener>) => {
         resetListener = listener;
         return () => { resetListener = null; };
+      }),
+      onSessionChanged: vi.fn((listener: (change: { sessionId: string; cursor: number }) => void | Promise<void>) => {
+        changedListeners.add(listener);
+        return () => { changedListeners.delete(listener); };
       }),
       connect,
       updateDaemonState: vi.fn(async () => {}),
@@ -156,5 +164,7 @@ describe('bootstrapMachineSyncRuntime memory startup ordering', () => {
       [['revoked-before-worker-start']],
     ]);
     expect(memoryWorker.reconcileRetainedSessionAccess).toHaveBeenCalledOnce();
+    for (const listener of changedListeners) await listener({ sessionId: 'new-local-session', cursor: 12 });
+    expect(noteSessionChanged).toHaveBeenCalledWith({ sessionId: 'new-local-session', cursor: 12 });
   });
 });

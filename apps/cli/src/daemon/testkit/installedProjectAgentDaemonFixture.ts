@@ -50,10 +50,10 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   controller?: PluginReloadController,
   requesterOptions?: Partial<Pick<Parameters<typeof createRequesterSessionRuntimeContext>[0], 'resolveQualifiedConnectedAccountV4Support'>>
   & { reattachedFromDiskMarker?: true }
-    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'processEnv' | 'openTeamCredentialProviderBinding'>>
+    & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'processEnv' | 'openTeamCredentialProviderBinding' | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady'>>
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'managedProviderOperationAuthority'
-      | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'externalSessionHostOperationOwner'>>
-    & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'accountActionCredentials' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods'>
+      | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'externalSessionHostOperationOwner' | 'runtimeActionExecute'>>
+    & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'accountActionCredentials' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods' | 'agentIsolationEnabled'>
     & { additionalPluginIds?: readonly string[]; requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean; retainIncompleteRequesterCustody?: boolean;
       /** Process-census boundary authors the runner before tracked authority is constructed. */
       runnerIdentity?: (happyHomeDir: string) => InstalledProjectAgentDaemonFixtureOwners['runner'];
@@ -72,12 +72,13 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null };
   const fixture = await createInstalledProjectAgentLaunchFixture(unassociated
     ? { prepareProject: false, serverId, ...birth, requesterCredentials: requesterOptions?.requesterCredentials, machineAccess: requesterOptions?.machineAccess,
-      accountSettings: requesterOptions?.accountSettings,
+      accountSettings: requesterOptions?.accountSettings, agentIsolationEnabled: requesterOptions?.agentIsolationEnabled,
       machineRpcMethods: requesterOptions?.machineRpcMethods, agentIsolation: requesterOptions?.agentIsolation,
       resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,
       ...(requesterOptions?.ordinaryAccountSession ? { accountActionCredentials } : {}) }
     : { serverId, ...birth, accountActionCredentials, machineAccess: requesterOptions?.machineAccess,
-      accountSettings: requesterOptions?.accountSettings, machineRpcMethods: requesterOptions?.machineRpcMethods, agentIsolation: requesterOptions?.agentIsolation,
+      accountSettings: requesterOptions?.accountSettings, agentIsolationEnabled: requesterOptions?.agentIsolationEnabled,
+      machineRpcMethods: requesterOptions?.machineRpcMethods, agentIsolation: requesterOptions?.agentIsolation,
       resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext });
   const { f, machine } = fixture;
   const signal: AbortSignal = fixture.signal;
@@ -153,9 +154,12 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     skillStore,
     resolveCurrentMachineExecutionOriginContext: requesterOptions?.resolveCurrentMachineExecutionOriginContext,
     openTeamCredentialProviderBinding: requesterOptions?.openTeamCredentialProviderBinding,
+    liveStreamCaptureRegistry: requesterOptions?.liveStreamCaptureRegistry,
+    onComputerRoutesReady: requesterOptions?.onComputerRoutesReady,
     releaseSessionOwnedNativeBindings: requesterOptions?.releaseSessionOwnedNativeBindings,
     onLocalServicesRoutesReady: requesterOptions?.onLocalServicesRoutesReady,
     resolveServerFeaturesSnapshot: requesterOptions?.resolveServerFeaturesSnapshot,
+    runtimeActionExecute: requesterOptions?.runtimeActionExecute,
     externalActionAccountId: requesterOptions?.externalActionAccountId ?? 'custodian', credentials: daemonCredentials, api: {} as never,
     deviceLocalSecretStorage,
     pluginRuntimeController: plugin.controller, connectedServiceRuntimeRegistry,

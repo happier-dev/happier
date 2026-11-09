@@ -4,11 +4,18 @@ import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendi
 import type { SessionContinuationResumePromptModeV1 } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import { sendSessionMessage } from '@/session/services/sendSessionMessage';
+import { logger } from '@/ui/logger';
 
 import { continueConnectedServiceRecoveryForScope, type ConnectedServiceContinuationInterruption } from './continuationResumePrompt';
 import type { ConnectedServiceRuntimeAuthFailureKind } from '../runtimeAuth/types';
 
 export type { ConnectedServiceContinuationInterruption } from './continuationResumePrompt';
+
+export type RuntimeAuthRecoveryContinuationAdmission = Readonly<{
+  armedAtMs: number;
+  isCurrent: () => boolean;
+  readActiveTurnId: () => string | null;
+}>;
 
 type ConnectedServiceContinuationMessageDispatcherDeps = Readonly<{
   credentials: StoredCredentials;
@@ -70,6 +77,8 @@ export function createConnectedServiceContinuationMessageDispatcher(
       resumePromptMode: SessionContinuationResumePromptModeV1;
       customResumePrompt?: string | null;
       recoveryKind?: ConnectedServiceRuntimeAuthFailureKind | null;
+      afterUsageLimitReset?: boolean;
+      runtimeAuthRecovery?: RuntimeAuthRecoveryContinuationAdmission;
       isCurrent?: Parameters<typeof sendSessionMessage>[0]['canAdmitPendingInput'];
     }>): Promise<
       | Readonly<{ status: 'not_interrupted' | 'disabled' | 'suppressed_newer_user_input' }>
@@ -81,9 +90,29 @@ export function createConnectedServiceContinuationMessageDispatcher(
         resumePromptMode: input.resumePromptMode,
         customResumePrompt: input.customResumePrompt,
         recoveryKind: input.recoveryKind,
+        afterUsageLimitReset: input.afterUsageLimitReset,
         deliver: async ({ prompt }) => {
           const localId = createContinuationLocalId(input.sessionId, input.attemptId, input.interruptedOriginId);
-          const sent = await this.sendContinuationPrompt({ sessionId: input.sessionId, prompt, localId, isCurrent: input.isCurrent });
+          const recovery = input.runtimeAuthRecovery;
+          const isCurrent: typeof input.isCurrent = recovery ? async context => {
+            if (input.isCurrent && !(await input.isCurrent(context))) return false;
+            if (!recovery.isCurrent()) return false;
+            const session = context.rawSession;
+            const activeTurnId = recovery.readActiveTurnId();
+            const failedAtMs = session.lastRuntimeIssue?.occurredAt ?? session.latestTurnStatusObservedAt;
+            if (session.archivedAt != null || (activeTurnId && session.latestTurnId && activeTurnId !== session.latestTurnId)) return false;
+            if (session.latestTurnStatus === 'failed' && typeof failedAtMs === 'number' && Number.isFinite(recovery.armedAtMs)) {
+              return failedAtMs <= recovery.armedAtMs;
+            }
+            if ((session.latestTurnStatus === 'completed' || session.latestTurnStatus === 'cancelled')
+              && typeof session.latestTurnStatusObservedAt === 'number' && session.latestTurnStatusObservedAt > recovery.armedAtMs) return false;
+            // Failure publication may lag the local report. Retain recovery custody until the
+            // same turn projects failed rather than claiming a continuation was delivered.
+            const code = 'connected_service_continuation_turn_projection_pending';
+            logger.infoFile('[ConnectedServices] Runtime-auth continuation awaiting turn projection', { sessionId: input.sessionId, code });
+            throw Object.assign(new Error(code), { code, retryable: true });
+          } : input.isCurrent;
+          const sent = await this.sendContinuationPrompt({ sessionId: input.sessionId, prompt, localId, isCurrent });
           return sent.suppressed ? { status: 'suppressed_newer_user_input' as const } : { status: 'enqueued' as const, localId };
         },
       });

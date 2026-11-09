@@ -15,6 +15,7 @@ import type { RestartSessionRunnerCompletion } from '../plannedRunnerRestart/res
 import { HostTerminalTranscriptFollowAdmissionError } from '@/agent/runtime/session/terminal/contract';
 import { resolveSessionRunnerFailureExitCode } from '@/cli/resolveSessionRunnerFailureExitCode';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 type RespawnOptionsResolver = (input: Readonly<{
   sessionId: string;
@@ -77,6 +78,50 @@ describe('createSessionRunnerRespawnManager', () => {
     }
   });
 
+  it.each(['held_by_person', 'archived'] as const)('stops automatic respawn after one deterministic resume-admission refusal (%s)', async code => {
+    vi.useFakeTimers();
+    try {
+      const spawnSession = vi.fn(async () => ({ type: 'error' as const,
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: 'Automatic Session resume refused',
+        errorDetail: { kind: 'launch_error' as const, code, message: 'Automatic Session resume refused' } }));
+      const terminal = vi.fn();
+      const manager = createSessionRunnerRespawnManager({ enabled: true, maxRestarts: null,
+        baseDelayMs: 1_000, maxDelayMs: 32_000, jitterMs: 0, random: () => 0,
+        isSessionAlreadyRunning: () => false, spawnSession, onRespawnTerminal: terminal,
+        logDebug: () => {}, logWarn: () => {} });
+      const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'person-held',
+        vendorResumeId: 'native', spawnOptions: { directory: '/repo' } };
+      expect(manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null })).toBe('scheduled');
+      // Covers the observed live 1+2+4+8+16+32 s schedule several times over.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(spawnSession).toHaveBeenCalledTimes(1);
+      expect(terminal).toHaveBeenCalledTimes(1);
+      expect(terminal.mock.calls[0]?.[0]).toMatchObject({ sessionId: 'person-held', reason: 'stop_requested', detail: code });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('settles an unconfirmed Provider without relaunch or Home polling and leaves explicit Resume available', async () => {
+    vi.useFakeTimers();
+    try {
+      const spawnSession = vi.fn(async () => ({ type: 'success' as const }));
+      const readStartupFailure = vi.fn(async () => null);
+      const manager = createSessionRunnerRespawnManager({ enabled: true, maxRestarts: null,
+        baseDelayMs: 50, maxDelayMs: 50, jitterMs: 0,
+        isSessionAlreadyRunning: () => false, spawnSession, readStartupFailure,
+        random: () => 0, logDebug: () => {}, logWarn: () => {} });
+      const error = Object.assign(new Error('private binding context'), createProviderErrorV1('provider_compatibility_unverified'));
+      const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'unconfirmed-provider',
+        spawnOptions: { directory: '/repo' } };
+      expect(manager.handleUnexpectedExit(tracked, { reason: 'process-exit', code: resolveSessionRunnerFailureExitCode(error), signal: null })).toBe('terminal');
+      await vi.runAllTimersAsync();
+      expect(spawnSession).not.toHaveBeenCalled();
+      expect(readStartupFailure).not.toHaveBeenCalled();
+      manager.prepareFreshExplicitResumeAdmission('unconfirmed-provider').complete();
+      expect(manager.prepareAutomaticResumeAdmission('unconfirmed-provider')()).toBe(true);
+      expect(resolveSessionRunnerFailureExitCode(Object.assign(new Error('temporary endpoint'),
+        createProviderErrorV1('provider_endpoint_unavailable')))).toBe(1);
+    } finally { vi.useRealTimers(); }
+  });
   it.each(['scheduled', 'retry', 'preflight'] as const)('settles the exact predecessor refresh when Stop retires a %s respawn', async phase => {
     vi.useFakeTimers();
     const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'stopped-refresh',

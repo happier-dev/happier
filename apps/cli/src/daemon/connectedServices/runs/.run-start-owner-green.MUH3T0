@@ -1,0 +1,61 @@
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+
+import {
+    ConnectedServiceSpawnAuthGroupAuthorityError,
+    resolveConnectedServiceAuthForSpawn,
+} from '../resolveConnectedServiceAuthForSpawn';
+import type { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from '../runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
+
+type SpawnInput = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0];
+type CoordinatorOptions = Parameters<typeof createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator>[0];
+
+export type ExecutionRunAuthGroupCoordinatorFactory = (input: Readonly<{
+    serviceId: ConnectedAccountServiceKey;
+    reason: string;
+    applyGeneration: CoordinatorOptions['applyGeneration'];
+}>) => Promise<ReturnType<typeof createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator> | null>;
+
+/** Runs commit pool selection through the incumbent coordinator and materialize
+ * that generation themselves. Their parent's Session is requester authority,
+ * never the target of this preparation's native application or turn policy. */
+export async function resolveExecutionRunAuthForSpawn(
+    input: SpawnInput,
+    createCoordinator: ExecutionRunAuthGroupCoordinatorFactory,
+) {
+    const resolveCoordinator = async (request: Readonly<{
+        serviceId: ConnectedAccountServiceKey;
+        groupId: string;
+        reason: string;
+    }>) => {
+        input.signal?.throwIfAborted();
+        const service = parseQualifiedPluginContributionKey(request.serviceId);
+        const coordinator = service ? await createCoordinator({
+            serviceId: request.serviceId,
+            reason: request.reason,
+            applyGeneration: async () => ({ ok: true }),
+        }) : null;
+        input.signal?.throwIfAborted();
+        if (!service || !coordinator) {
+            throw new ConnectedServiceSpawnAuthGroupAuthorityError({
+                kind: 'resolution_unavailable', serviceId: request.serviceId, groupId: request.groupId,
+            });
+        }
+        return { service, coordinator };
+    };
+    return await resolveConnectedServiceAuthForSpawn({
+        ...input,
+        sessionId: undefined,
+        predictiveSwitchGuard: null,
+        authGroupSwitchCoordinator: {
+            switchBeforeTurn: async request => {
+                const { service, coordinator } = await resolveCoordinator(request);
+                return await coordinator.switchBeforeTurn({ ...request, serviceId: service, signal: input.signal });
+            },
+            switchAfterClassifiedFailure: async request => {
+                const { service, coordinator } = await resolveCoordinator(request);
+                return await coordinator.switchAfterClassifiedFailure({ ...request, serviceId: service });
+            },
+        },
+    });
+}

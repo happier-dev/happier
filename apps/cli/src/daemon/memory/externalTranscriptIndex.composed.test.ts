@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createClaudeExternalSessionsContribution } from '../../../../../packages/plugins/claude/src/agent/surfaces/sessions/external/contribution';
 import { createCodexExternalSessionsContribution } from '../../../../../packages/plugins/codex/src/agent/surfaces/sessions/external/contribution';
 import { createPiExternalSessionsContribution } from '../../../../../packages/plugins/pi/src/agent/externalSessions/contribution';
+import { createCopilotExternalSessionsContribution } from '../../../../../packages/plugins/copilot/src/agent/externalSessions/contribution';
 import { normalizeMemorySettings } from '@happier-dev/protocol/memory/memorySettings';
 import { openDeepIndexDb } from './deepIndex/deepIndexDb';
 import { externalMemoryStorageId, syncExternalMemoryTranscriptOnce, syncExternalMemoryTranscriptsBatch, type MemoryExternalSourceReader } from './externalTranscriptIndex';
@@ -20,9 +21,10 @@ import { openSummaryShardIndexDb } from './summaryShardIndexDb';
 import { syncDeepIndexForSessionsOnce } from './deepIndex/syncDeepIndexForSessionsOnce';
 import { enforceMemoryDiskBudgets } from './enforceMemoryDiskBudgets';
 import { getMemoryWindow } from './getMemoryWindow';
-import { searchConversations } from '../../../../../apps/ui/sources/sync/domains/search/searchConversations';
+import { hasConversationSearchScanFallback, searchConversations } from '../../../../../apps/ui/sources/sync/domains/search/searchConversations';
 import { RPC_METHODS } from '@happier-dev/protocol';
 import { MemoryIndexSourceStatusV1Schema } from '@happier-dev/protocol/memory/memoryStatus';
+import { SearchConversationsResultV1Schema } from '@happier-dev/protocol/actions/actionSpecs';
 import { logger } from '@/ui/logger';
 
 // Only cross-device transports are replaced; ingestion, SQLite, readiness and
@@ -35,6 +37,90 @@ vi.mock('../../../../../apps/ui/sources/sync/runtime/orchestration/serverScopedR
 vi.mock('../../../../../apps/ui/sources/sync/ops/machineExternalSessions', () => ({ machineExternalSessionsCandidatesList: transports.list }));
 
 describe('external memory transcript ingestion', () => {
+  it.each(['unknown event', 'torn tail'] as const)('reports an undecodable Copilot %s as unavailable without rescanning or hiding readable siblings', async defect => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-memory-copilot-unavailable-'));
+    const db = openDeepIndexDb({ dbPath: join(dir, 'deep.sqlite') });
+    const tier1 = openSummaryShardIndexDb({ dbPath: join(dir, 'summary.sqlite') });
+    const lifetime = new AbortController();
+    let nowMs = Date.now();
+    try {
+      const header = (id: string) => JSON.stringify({ type: 'session.start', id: 'start', timestamp: new Date().toISOString(),
+        data: { sessionId: id, version: 1, producer: 'copilot-agent', copilotVersion: '1.0.100' } }) + '\n';
+      const message = JSON.stringify({ type: 'user.message', id: 'prompt', timestamp: new Date().toISOString(),
+        data: { content: 'quartz native fact' } }) + '\n';
+      for (const id of ['broken', 'readable']) {
+        await mkdir(join(dir, 'session-state', id), { recursive: true });
+        await writeFile(join(dir, 'session-state', id, 'events.jsonl'), header(id) + message);
+      }
+      const reader = createBoundedAgentExternalSessionsContribution({ contribution: createCopilotExternalSessionsContribution({ env: {} }),
+        identity: { pluginId: 'fixture.copilot', agentId: 'copilot', occurrenceId: 'current',
+          contributionQualifiedId: 'fixture.copilot/agents/copilot', sourceCustody: { kind: 'development', registeredRootId: 'fixture' } },
+        retirementSignal: lifetime.signal, isCurrent: () => true,
+        createInvocationExec: async () => createUnavailablePluginServices().exec });
+      const native = { agentId: 'copilot', sourceKey: 'local', source: { kind: 'copilotHome', homeDir: dir }, reader };
+      const candidate = (nativeSessionId: string) => ({ native,
+        source: { type: 'external_transcript' as const, agentId: 'copilot', sourceKey: 'local', nativeSessionId } });
+      const broken = candidate('broken'), readable = candidate('readable');
+      const traversal = createMemoryExternalTranscriptTraversal();
+      traversal.replace([broken, readable]);
+      const settings = normalizeMemorySettings({ enabled: true, indexMode: 'deep', coveragePolicy: { type: 'full' },
+        conversationSearch: { indexExternal: { enabled: true, agents: ['copilot'] } } });
+      const sync = () => syncExternalMemoryTranscriptsBatch({ candidates: [broken, readable], db, tier1, settings,
+        nowMs, signal: lifetime.signal, onSourceResult: traversal.noteSyncResult });
+      await sync();
+      expect(traversal.getIndexSources(db)).toMatchObject([{ state: 'ready' }]);
+      // A once-readable conversation must also retire its old searchable text.
+      await appendFile(join(dir, 'session-state', 'broken', 'events.jsonl'), defect === 'unknown event'
+        ? JSON.stringify({ type: 'future.message', id: 'unknown', data: { content: 'not decodable' } }) + '\n'
+        : '{"type":"user.message","id":"torn","data":{"content":');
+      await sync();
+      expect(traversal.getIndexSources(db).map(row => MemoryIndexSourceStatusV1Schema.parse(row))).toMatchObject([
+        { state: 'error', errorCode: 'unsupported', errorReason: 'external_sessions_transcript_read_failed' },
+      ]);
+      const hits = db.search({ query: 'quartz', scope: { type: 'global' }, maxResults: 10, includeExternal: true });
+      expect(hits.map(hit => hit.source)).toEqual([readable.source]);
+      // After retiring the old tail, the initial-page path must refuse it too.
+      nowMs = tier1.getSessionCursors({ sessionId: externalMemoryStorageId(broken.source), nowMs }).nextDeepEligibleAtMs;
+      await sync();
+      expect(traversal.getIndexSources(db)).toMatchObject([{ state: 'error', errorCode: 'unsupported' }]);
+      expect(db.search({ query: 'quartz', scope: { type: 'global' }, maxResults: 10, includeExternal: true }).map(hit => hit.source)).toEqual([readable.source]);
+      const restarted = createMemoryExternalTranscriptTraversal();
+      restarted.replace([broken, readable]);
+      expect(restarted.getIndexSources(db)).toMatchObject([{ state: 'error', errorCode: 'unsupported',
+        errorReason: 'external_sessions_transcript_read_failed' }]);
+      await syncExternalMemoryTranscriptsBatch({ candidates: [broken, readable], db, tier1, settings, nowMs,
+        signal: lifetime.signal, onSourceResult: restarted.noteSyncResult });
+      expect(restarted.getIndexSources(db)).toMatchObject([{ state: 'error', errorCode: 'unsupported',
+        errorReason: 'external_sessions_transcript_read_failed' }]);
+      transports.rpc.mockImplementation(async request => {
+        if (request.method === RPC_METHODS.DAEMON_MEMORY_SETTINGS_GET) return settings;
+        if (request.method === RPC_METHODS.DAEMON_MEMORY_STATUS) return {
+          v: 1, enabled: true, indexMode: 'deep', hintsIndexReady: true, deepIndexReady: true, activeIndexReady: true,
+          embeddingsEnabled: false, embeddingsMode: 'disabled', embeddingsPresetId: null, embeddingsProviderKind: null,
+          embeddingsModelId: null, embeddingsRuntimeState: 'unavailable', embeddingsUsingFallback: false,
+          tier1DbPath: null, deepDbPath: join(dir, 'deep.sqlite'), tier1DbBytes: 0, deepDbBytes: 0, sources: restarted.getIndexSources(db),
+        };
+        return { v: 1, ok: true, hits: [] };
+      });
+      transports.list.mockClear();
+      transports.list.mockResolvedValue({ ok: true, candidates: [], contentCoverage: 'partial' });
+      for (let query = 0; query < 2; query++) {
+        const result = await searchConversations({ serverId: 'home', accountId: 'account', machines: [{ id: 'local', online: true }],
+          mode: 'auto', query: { v: 1, query: 'quartz', scope: { type: 'global' }, corpora: ['external_transcripts'] },
+          readSources: async () => [{ agentId: native.agentId, sourceKey: native.sourceKey, source: native.source, contentSearch: true }] });
+        SearchConversationsResultV1Schema.parse(result);
+        expect(result.failures).toEqual([{ machineId: 'local', agentId: 'copilot', sourceKey: 'local', errorCode: 'agent_unavailable', retryable: false }]);
+        expect(hasConversationSearchScanFallback(result)).toBe(false);
+      }
+      expect(transports.list).not.toHaveBeenCalled();
+      // An observed repair is not a permanent partial/unavailable flag.
+      await writeFile(join(dir, 'session-state', 'broken', 'events.jsonl'), header('broken') + message);
+      nowMs = tier1.getSessionCursors({ sessionId: externalMemoryStorageId(broken.source), nowMs }).nextDeepEligibleAtMs;
+      await sync();
+      expect(traversal.getIndexSources(db)).toMatchObject([{ state: 'ready' }]);
+      expect(db.search({ query: 'quartz', scope: { type: 'global' }, maxResults: 10, includeExternal: true })).toHaveLength(2);
+    } finally { lifetime.abort(); db.close(); tier1.close(); await rm(dir, { recursive: true, force: true }); }
+  });
   it('does not read every retained native frontier after a source group is already indexing', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-memory-native-status-cost-'));
     const db = openDeepIndexDb({ dbPath: join(dir, 'deep.sqlite') });

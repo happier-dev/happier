@@ -14,8 +14,7 @@ export function createSignedRootActionApprovalAcknowledgement() {
       run(signal: AbortSignal, progress?: ActionExecutorContext['operationOwnerUpdate']): Promise<ActionExecuteResult>;
     }>): Promise<ActionExecuteResult> {
       const spec = getActionSpec(args.actionId);
-      if (args.surface !== 'cli' || spec.approvalInputCustody !== 'live_only'
-        || spec.approvalResultCustody === 'live_only') return await args.run(args.signal);
+      if (args.surface !== 'cli' || spec.approvalInputCustody !== 'live_only') return await args.run(args.signal);
       const invocation = new AbortController();
       const cancel = () => invocation.abort(args.signal.reason);
       const stop = () => invocation.abort(shutdown.signal.reason);

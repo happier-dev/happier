@@ -1,10 +1,11 @@
+import { resolveDaemonServiceSystemdUnitName } from './plan';
 import { existsSync, statSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { buildLaunchdPlistXml, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
+import { buildWindowsScheduledTaskLauncherAction, buildLaunchdPlistXml, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
 import { withConfiguredDaemonTestHome, writeDaemonSettingsFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -25,7 +26,14 @@ function doMockChildProcessSpawnSync(
     const actual = await importOriginal<typeof import('node:child_process')>();
     return {
       ...actual,
-      spawnSync: vi.fn(spawnSyncImpl),
+      // Like the real spawnSync, return strings when the caller requests an encoding.
+      spawnSync: vi.fn((command: string, args?: readonly string[], options?: { encoding?: BufferEncoding | 'buffer' }) => {
+        const result = spawnSyncImpl(command, args) as { stdout?: unknown; stderr?: unknown } | null;
+        const encoding = options?.encoding;
+        if (!encoding || encoding === 'buffer' || !result || typeof result !== 'object') return result;
+        const decode = (value: unknown) => (Buffer.isBuffer(value) ? value.toString(encoding) : value);
+        return { ...result, stdout: decode(result.stdout), stderr: decode(result.stderr) };
+      }),
     };
   });
 }
@@ -34,6 +42,34 @@ function isHappierTaskFolderListing(command: string, args: readonly string[] = [
   return command === 'powershell.exe' && args.some((arg) => arg.includes('.GetFolder("\\Happier")'));
 }
 
+function isWindowsScheduledTaskStatusRead(command: string, args: readonly string[]): boolean {
+  return command === 'powershell.exe' && args.some((arg) => arg.includes('Get-ScheduledTaskInfo'));
+}
+
+type WindowsNativeTaskPaths = Readonly<{
+  installedPath: string;
+  launcherPath: string;
+  launcherDiagnosticLogPath: string;
+}>;
+
+/** What the ScheduledTasks status read reports for a task registered with the native launcher action. */
+function windowsNativeLauncherTaskStatusStdout(paths: WindowsNativeTaskPaths): Buffer {
+  const action = buildWindowsScheduledTaskLauncherAction({
+    launcherPath: paths.launcherPath,
+    definitionPath: paths.installedPath,
+    diagnosticLogPath: paths.launcherDiagnosticLogPath,
+  });
+  return Buffer.from(JSON.stringify({
+    exists: true,
+    enabled: true,
+    active: true,
+    stateLabel: 'running',
+    stateValue: 4,
+    lastRunTime: '',
+    lastTaskResult: 0,
+    taskToRun: `${action.executable} ${action.arguments}`,
+  }));
+}
 const SCOPED_ENV_KEYS = [
   'HAPPIER_DAEMON_SERVICE_PLATFORM',
   'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
@@ -45,12 +81,14 @@ const SCOPED_ENV_KEYS = [
   'HAPPIER_DAEMON_SERVICE_SYSTEM_USER',
   'HAPPIER_DAEMON_SERVICE_CHANNEL',
   'HAPPIER_DAEMON_SERVICE_TARGET_MODE',
+  'HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS',
   'HAPPIER_PUBLIC_RELEASE_CHANNEL',
   'HAPPIER_SERVER_URL',
   'HAPPIER_PUBLIC_SERVER_URL',
   'HAPPIER_LOCAL_SERVER_URL',
   'HAPPIER_WEBAPP_URL',
   'HAPPIER_HOME_DIR',
+  'HAPPIER_FIRST_PARTY_INSTALL_HOME',
   'HAPPIER_IROH_RELAY_POLICY',
   'HAPPIER_IROH_RELAY_URLS',
   'HAPPIER_HOME_CARRIER_POLICY',
@@ -73,6 +111,7 @@ function writeValidInstalledDaemonServiceFile(
   happierHomeDir: string,
   options: Readonly<{
     activeServerId?: string;
+    execStart?: string[];
     releaseChannel?: 'stable' | 'preview' | 'dev';
     targetMode?: 'default-following' | 'pinned';
   }> = {},
@@ -81,7 +120,7 @@ function writeValidInstalledDaemonServiceFile(
     installedPath,
     renderSystemdServiceUnit({
       description: 'Happier Daemon',
-      execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
+      execStart: options.execStart ?? ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
       env: {
         HAPPIER_HOME_DIR: happierHomeDir,
         HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir,
@@ -214,7 +253,10 @@ describe('runDaemonServiceCliCommand', () => {
         runtimeId: 'runtime-1',
       });
 
-      await expect(runDaemonServiceCliCommand({ argv: ['restart', '--takeover'] })).rejects.toThrow(/restart/i);
+      await expect(runDaemonServiceCliCommand({ argv: ['restart', '--takeover'] })).rejects.toMatchObject({
+        message: expect.stringMatching(/restart/i),
+        cause: { code: 'service_command_failed', serviceStep: 'command', serviceStepStatus: 'failed' },
+      });
       expect(stopDaemonMock).toHaveBeenCalledTimes(1);
       expect(restartDaemonAndWaitMock).toHaveBeenCalledTimes(1);
     });
@@ -1362,7 +1404,10 @@ describe('runDaemonServiceCliCommand', () => {
           await start;
           expect(output.json()).toMatchObject({ ok: true, platform });
         } else {
-          await expect(start).rejects.toThrow(/did not become the active daemon/);
+          await start;
+          expect(output.json()).toEqual({ ok: false, error: 'service_ownership_failed', serviceStep: 'wait',
+            serviceStepStatus: 'deadline_elapsed', reason: 'deadline_elapsed' });
+          expect(process.exitCode).toBe(1);
         }
       } finally {
         output.restore();
@@ -1629,7 +1674,7 @@ describe('runDaemonServiceCliCommand', () => {
       writeValidInstalledWindowsDaemonServiceFile(paths.installedPath);
       await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(1), token: 'token-win32-wait-budget' });
 
-      await expect(runDaemonServiceCliCommand({ argv: ['restart', '--json'], commandPath: 'hdev service' })).rejects.toThrow(/hdev service status/i);
+      await expect(runDaemonServiceCliCommand({ argv: ['restart'], commandPath: 'hdev service' })).rejects.toThrow(/hdev service status/i);
       expect(observedWaitTimeouts).toEqual([120_000, 60_000]);
     });
   });
@@ -1690,7 +1735,7 @@ describe('runDaemonServiceCliCommand', () => {
         serviceLabel: paths.label,
       });
 
-      await expect(runDaemonServiceCliCommand({ argv: ['restart', '--json'] })).rejects.toThrow(/did not become the active daemon/i);
+      await expect(runDaemonServiceCliCommand({ argv: ['restart'] })).rejects.toThrow(/did not become the active daemon/i);
     });
   });
 
@@ -1698,10 +1743,14 @@ describe('runDaemonServiceCliCommand', () => {
     { keepDisabled: false, hasDaemonOwner: true },
     { keepDisabled: true, hasDaemonOwner: true },
     { keepDisabled: true, hasDaemonOwner: false },
-  ])('preserves a running Windows service across install and retry ($keepDisabled, $hasDaemonOwner)', async ({ keepDisabled, hasDaemonOwner }) => {
+    { keepDisabled: false, hasDaemonOwner: true, queryTimesOut: true },
+  ])('preserves a running Windows service across install and retry ($keepDisabled, $hasDaemonOwner; query timeout: $queryTimesOut)', async ({ keepDisabled, hasDaemonOwner, queryTimesOut }) => {
     await withTempDir('happier-service-install-win32-same-owner-', async (homeDir) => {
       const happierHomeDir = `${homeDir}/.happier`;
       const lifecycleEvents: string[] = [];
+      const observedQueryTimeouts: Array<number | undefined> = [];
+      const observedTaskStatusTimeouts: Array<number | undefined> = [];
+      const expectedQueryTimeout = queryTimesOut ? 7_300 : 15_000;
       let writeDaemonStateImpl: ((state: DaemonLocallyPersistedState) => void) | null = null;
       envScope.patch({
         HAPPIER_HOME_DIR: happierHomeDir,
@@ -1709,6 +1758,7 @@ describe('runDaemonServiceCliCommand', () => {
         HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
         HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir,
         HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+        HAPPIER_WINDOWS_SCHTASKS_TIMEOUT_MS: queryTimesOut ? String(expectedQueryTimeout) : undefined,
         HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS: '120',
         HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS: '10',
         HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS: '20',
@@ -1720,15 +1770,24 @@ describe('runDaemonServiceCliCommand', () => {
           const actual = await importOriginal<typeof import('node:child_process')>();
           return {
             ...actual,
-            spawnSync: vi.fn((command: string, args: readonly string[] = []) => {
+            spawnSync: vi.fn((command: string, args: readonly string[] = [], options?: { timeout?: number; encoding?: BufferEncoding | 'buffer' }) => {
+              // Match spawnSync's string output contract so timeout diagnostics work on Windows too.
+              const encode = (value: string) => options?.encoding && options.encoding !== 'buffer' ? value : Buffer.from(value);
               if (isHappierTaskFolderListing(command, args)) {
-                return { status: 0, stdout: Buffer.from('[]'), stderr: Buffer.from('') };
+                return { status: 0, stdout: encode('[]'), stderr: encode('') };
               }
               if (command.endsWith('powershell.exe') && String(args.at(-1)).includes('RegisterTask')) {
                 lifecycleEvents.push('registered');
               }
+              if (isWindowsScheduledTaskStatusRead(command, args)) {
+                observedQueryTimeouts.push(options?.timeout);
+                if (queryTimesOut && options?.timeout) {
+                  return { status: null, error: Object.assign(new Error('query timed out'), { code: 'ETIMEDOUT' }), stdout: encode(''), stderr: encode('') };
+                }
+                return { status: 0, stdout: encode(windowsNativeLauncherTaskStatusStdout(paths).toString('utf8')), stderr: encode('') };
+              }
               if (command !== 'schtasks') {
-                return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
+                return { status: 0, stdout: encode(''), stderr: encode('') };
               }
               const action = String(args[0] ?? '');
               lifecycleEvents.push(action);
@@ -1745,13 +1804,14 @@ describe('runDaemonServiceCliCommand', () => {
                 });
               }
               if (action === '/Query') {
+                observedTaskStatusTimeouts.push(options?.timeout);
                 return {
                   status: 0,
-                  stdout: Buffer.from('Status: Running\nScheduled Task State: Enabled\n'),
-                  stderr: Buffer.from(''),
+                  stdout: encode('Status: Running\nScheduled Task State: Enabled\n'),
+                  stderr: encode(''),
                 };
               }
-              return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
+              return { status: 0, stdout: encode(''), stderr: encode('') };
             }),
           };
         });
@@ -1793,10 +1853,23 @@ describe('runDaemonServiceCliCommand', () => {
 
         const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
         try {
+          if (queryTimesOut) {
+            await expect(runDaemonServiceCliCommand({ argv: ['install', '--yes'] }))
+              .rejects.toThrow(/did not become the active daemon/i);
+            expect(observedQueryTimeouts.length).toBeGreaterThan(0);
+            expect(new Set(observedQueryTimeouts)).toEqual(new Set([expectedQueryTimeout]));
+            expect(observedTaskStatusTimeouts).not.toContain(undefined);
+            expect(observedTaskStatusTimeouts).toContain(expectedQueryTimeout);
+            return;
+          }
           await runDaemonServiceCliCommand({ argv: ['install', '--yes', '--json', ...(keepDisabled ? ['--keep-disabled'] : [])] });
           const payload = output.json();
           expect(payload.ok).toBe(true);
           expect(payload.platform).toBe('win32');
+          expect(observedQueryTimeouts.length).toBeGreaterThan(0);
+          expect(new Set(observedQueryTimeouts)).toEqual(new Set([expectedQueryTimeout]));
+          expect(observedTaskStatusTimeouts).not.toContain(undefined);
+          expect(observedTaskStatusTimeouts).toContain(expectedQueryTimeout);
         } finally {
           output.restore();
         }
@@ -2307,6 +2380,12 @@ describe('runDaemonServiceCliCommand', () => {
         HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
       });
       vi.resetModules();
+      // The daemon marker and the OS-registered launchd job must both exist.
+      doMockChildProcessSpawnSync((command, args = []) => ({
+        status: command === 'launchctl' && args[0] === 'print' ? 0 : 1,
+        stdout: Buffer.from(command === 'launchctl' && args[0] === 'print' ? 'state = running\n' : ''),
+        stderr: Buffer.from(''),
+      }));
 
       const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { writeDaemonState }, { configuration }] = await Promise.all([
         loadCliModule(),
@@ -2434,6 +2513,12 @@ describe('runDaemonServiceCliCommand', () => {
         HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir,
       });
       vi.resetModules();
+      // The daemon marker and the OS-registered launchd job must both exist.
+      doMockChildProcessSpawnSync((command, args = []) => ({
+        status: command === 'launchctl' && args[0] === 'print' ? 0 : 1,
+        stdout: Buffer.from(command === 'launchctl' && args[0] === 'print' ? 'state = running\n' : ''),
+        stderr: Buffer.from(''),
+      }));
 
       const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { writeDaemonState }, { configuration }, controlClient] = await Promise.all([
         loadCliModule(),
@@ -2770,6 +2855,7 @@ describe('runDaemonServiceCliCommand', () => {
       expect(payload.commands).toContain('list');
       expect(payload.commands).toContain('install');
       expect(payload.flags).toContain('--json');
+      expect(payload.flags).toContain('--install-root');
     } finally {
       output.restore();
     }
@@ -3032,7 +3118,7 @@ describe('runDaemonServiceCliCommand', () => {
       HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/tmp',
       HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/tmp/happier',
     });
-    await expect(runDaemonServiceCliCommand({ argv: ['paths', '--json', '--mode', 'system'] })).rejects.toThrow(
+    await expect(runDaemonServiceCliCommand({ argv: ['paths', '--mode', 'system'] })).rejects.toThrow(
       'System mode background services are only supported on Linux',
     );
 
@@ -3041,7 +3127,7 @@ describe('runDaemonServiceCliCommand', () => {
       HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '/tmp',
       HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: '/tmp/happier',
     });
-    await expect(runDaemonServiceCliCommand({ argv: ['paths', '--json', '--mode', 'system'] })).rejects.toThrow(
+    await expect(runDaemonServiceCliCommand({ argv: ['paths', '--mode', 'system'] })).rejects.toThrow(
       'System mode background services are only supported on Linux',
     );
   });
@@ -3078,6 +3164,7 @@ describe('runDaemonServiceCliCommand', () => {
       HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'company',
       HAPPIER_DAEMON_SERVICE_NODE_PATH: '/usr/local/bin/happier',
       HAPPIER_DAEMON_SERVICE_ENTRY_PATH: '',
+      HAPPIER_FIRST_PARTY_INSTALL_HOME: '/opt/happier',
       PATH: '/usr/bin',
     });
 
@@ -3098,6 +3185,7 @@ describe('runDaemonServiceCliCommand', () => {
       expect(installPayload.plan.files[0]?.content).toContain('User=happier');
       expect(installPayload.plan.files[0]?.content).toContain('WorkingDirectory=/home/happier');
       expect(installPayload.plan.files[0]?.content).toContain('Environment=HAPPIER_HOME_DIR=/home/happier/.happier');
+      expect(installPayload.plan.files[0]?.content).toContain('Environment=HAPPIER_FIRST_PARTY_INSTALL_HOME=/opt/happier');
       expect(installPayload.plan.files[0]?.content).toContain('Environment=PATH=');
       expect(installPayload.plan.files[0]?.content).toContain('/home/happier/.local/bin');
       expect(installPayload.plan.files[0]?.content).toContain('/home/happier/bin');
@@ -3795,6 +3883,112 @@ describe('runDaemonServiceCliCommand', () => {
       } finally {
         output.restore();
       }
+    });
+  });
+
+  it('uninstalls only services using --install-root, including managed shims and pinned profiles', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-uninstall-installation-' }, async ({ homeDir }) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      envScope.patch({ HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux', HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir, HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir, HAPPIER_FIRST_PARTY_INSTALL_HOME: happierHomeDir });
+      await writeDaemonSettingsFixture(homeDir);
+      doMockChildProcessSpawnSync(() => ({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') }));
+      const { runDaemonServiceCliCommand } = await loadCliModule();
+      const installRoot = join(happierHomeDir, 'cli');
+      const unitDir = join(homeDir, '.config/systemd/user');
+      mkdirSync(unitDir, { recursive: true });
+      const selected = [join(unitDir, 'happier-daemon.alpha.service'), join(unitDir, 'happier-daemon.beta.service')];
+      const kept = [join(unitDir, 'happier-daemon.gamma.service'), join(unitDir, 'happier-daemon.delta.service')];
+      for (const [index, executable] of [join(installRoot, 'current/happier'), join(happierHomeDir, 'bin/happier'), join(happierHomeDir, 'bin/hprev'), `${installRoot}2/current/happier`].entries()) {
+        const path = [...selected, ...kept][index]!;
+        writeValidInstalledDaemonServiceFile(path, happierHomeDir, { activeServerId: ['alpha', 'beta', 'gamma', 'delta'][index], targetMode: 'pinned', execStart: [executable, 'daemon', 'start-sync'] });
+      }
+      const output = captureStdoutJsonOutput<{ removed: number }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['uninstall', '--all', '--install-root', installRoot, '--yes', '--json'] });
+        expect(output.json().removed).toBe(2);
+        expect(selected.map(existsSync)).toEqual([false, false]);
+        expect(kept.map(existsSync)).toEqual([true, true]);
+      } finally {
+        output.restore();
+      }
+    });
+  });
+
+  it('releases only the requested Desktop consumer across rings and reports surviving CLI dependencies', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-uninstall-desktop-' }, async ({ homeDir }) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      const binDir = join(homeDir, 'bin');
+      mkdirSync(binDir);
+      writeFileSync(join(binDir, 'systemctl'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      envScope.patch({ HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux', HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir, HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir, PATH: `${binDir}:${process.env.PATH}` });
+      doMockChildProcessSpawnSync(() => ({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') }));
+      const { runDaemonServiceCliCommand, recordDesktopDaemonServiceUse } = await loadCliModule();
+      const { recordDesktopResourceUse } = await import('@happier-dev/cli-common/firstPartyRuntime');
+      const unitDir = join(homeDir, '.config/systemd/user');
+      mkdirSync(unitDir, { recursive: true });
+      const paths = ['alpha', 'beta', 'gamma'].map((id, index) => join(unitDir, resolveDaemonServiceSystemdUnitName(id, index === 1 ? 'preview' : 'stable', 'pinned')));
+      for (const [index, path] of paths.entries()) {
+        writeValidInstalledDaemonServiceFile(path, happierHomeDir, { activeServerId: ['alpha', 'beta', 'gamma'][index], targetMode: 'pinned', releaseChannel: index === 1 ? 'preview' : 'stable' });
+      }
+      const foreignPath = join(unitDir, resolveDaemonServiceSystemdUnitName('foreign', 'stable', 'pinned'));
+      writeValidInstalledDaemonServiceFile(foreignPath, join(homeDir, '.other-happier'), { activeServerId: 'foreign', targetMode: 'pinned', execStart: ['/foreign/cli/current/happier', 'daemon', 'start-sync'] });
+      await recordDesktopResourceUse({ resourcePath: foreignPath, bundleId: 'dev.happier.app', created: true });
+      await recordDesktopResourceUse({ resourcePath: paths[0]!, bundleId: 'dev.happier.app', created: true });
+      await recordDesktopResourceUse({ resourcePath: paths[1]!, bundleId: 'dev.happier.app', created: true });
+      envScope.patch({ HAPPIER_DAEMON_SERVICE_CHANNEL: 'preview', HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'beta', HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned' });
+      await recordDesktopResourceUse({ resourcePath: paths[1]!, bundleId: 'dev.happier.preview', created: false });
+      const beforePreview = paths.map((path) => readFileSync(path, 'utf8'));
+      const previewOutput = captureStdoutJsonOutput<{ remainingServiceLaunchers: string[][] }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['uninstall', '--all', '--desktop-bundle-id', 'dev.happier.app', '--dry-run', '--json'] });
+        expect(previewOutput.json().remainingServiceLaunchers).toHaveLength(4);
+        expect(paths.map((path) => readFileSync(path, 'utf8'))).toEqual(beforePreview);
+      } finally { previewOutput.restore(); }
+      const output = captureStdoutJsonOutput<{ removed: number; remainingServiceLaunchers: string[][] }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['uninstall', '--all', '--desktop-bundle-id', 'dev.happier.app', '--yes', '--json'] });
+        expect(output.json().removed).toBe(1);
+        expect(existsSync(foreignPath)).toBe(true);
+        expect(paths.map(existsSync)).toEqual([false, true, true]);
+        expect(output.json().remainingServiceLaunchers.map((launcher) => JSON.stringify(launcher)).sort()).toEqual([
+          ['/Users/tester/.happier/cli/current/happier'], ['/foreign/cli/current/happier'], ['/Users/tester/.happier/cli/current/happier'],
+        ].map((launcher) => JSON.stringify(launcher)).sort());
+      } finally { output.restore(); }
+    });
+  });
+
+  it('includes matching system services in installation-scoped user-mode removal', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-uninstall-system-dependency-' }, async ({ homeDir }) => {
+      const happierHomeDir = join(homeDir, '.happier');
+      const installRoot = join(happierHomeDir, 'cli');
+      const systemDir = join(homeDir, 'system-units');
+      envScope.patch({ HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux', HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir, HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir, HAPPIER_FIRST_PARTY_INSTALL_HOME: happierHomeDir });
+      await writeDaemonSettingsFixture(homeDir);
+      mkdirSync(systemDir, { recursive: true });
+      writeValidInstalledDaemonServiceFile(join(systemDir, 'happier-daemon.company.service'), happierHomeDir, { activeServerId: 'company', targetMode: 'pinned', execStart: [join(installRoot, 'current/happier'), 'daemon', 'start-sync'] });
+      // Redirect only the OS system-unit filesystem boundary; discovery and identity logic stay real.
+      const redirect = (path: unknown) => typeof path === 'string' && path.startsWith('/etc/systemd/system') ? path.replace('/etc/systemd/system', systemDir) : path;
+      vi.doMock('node:fs', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('node:fs')>();
+        return { ...actual,
+          readdirSync: (...args: Parameters<typeof actual.readdirSync>) => Reflect.apply(actual.readdirSync, actual, [redirect(args[0]), ...args.slice(1)]),
+          readFileSync: (...args: Parameters<typeof actual.readFileSync>) => Reflect.apply(actual.readFileSync, actual, [redirect(args[0]), ...args.slice(1)]),
+        };
+      });
+      vi.doMock('node:fs/promises', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('node:fs/promises')>();
+        return { ...actual,
+          readdir: (...args: Parameters<typeof actual.readdir>) => Reflect.apply(actual.readdir, actual, [redirect(args[0]), ...args.slice(1)]),
+          readFile: (...args: Parameters<typeof actual.readFile>) => Reflect.apply(actual.readFile, actual, [redirect(args[0]), ...args.slice(1)]),
+        };
+      });
+      doMockChildProcessSpawnSync(() => ({ status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') }));
+      const { runDaemonServiceCliCommand } = await loadCliModule();
+      const output = captureStdoutJsonOutput<{ removed: number }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['uninstall', '--all', '--install-root', installRoot, '--dry-run', '--json'] });
+        expect(output.json().removed).toBe(1);
+      } finally { output.restore(); vi.doUnmock('node:fs'); vi.doUnmock('node:fs/promises'); }
     });
   });
 

@@ -705,7 +705,6 @@ function createDeepIndexDbHandle(db: SqliteDatabaseSync): DeepIndexDbHandle {
     searchDocuments: ({ query, eligibleDocuments, maxResults }) => {
       const terms = tokenizeMemoryText(normalizeQuery(query));
       if (terms.length === 0 || eligibleDocuments.length === 0) return [];
-      const limit = Math.max(1, Math.min(100, Math.floor(maxResults)));
       const documents = [...new Map(eligibleDocuments.map((document) => [documentIdentityKey(document), document])).values()];
       const batchSize = resolveSqliteSupportedValueBatchSize({ fixedParameterCount: terms.length + 1, parametersPerValue: 4 });
       type HitRow = IndexedDocumentRow & Readonly<{
@@ -716,7 +715,7 @@ function createDeepIndexDbHandle(db: SqliteDatabaseSync): DeepIndexDbHandle {
         const batch = documents.slice(offset, offset + batchSize);
         const params: Array<string | number> = [];
         for (const document of batch) params.push(document.ref.serverId, document.ref.artifactId, document.revision.headerVersion, document.revision.bodyVersion);
-        params.push(...terms, limit);
+        params.push(...terms, maxResults);
         rows.push(...db.prepare(`
           WITH eligible(serverId, artifactId, headerVersion, bodyVersion) AS (VALUES ${batch.map(() => '(?, ?, ?, ?)').join(',')})
           SELECT d.documentId, d.serverId, d.artifactId, d.headerVersion, d.bodyVersion,
@@ -731,7 +730,7 @@ function createDeepIndexDbHandle(db: SqliteDatabaseSync): DeepIndexDbHandle {
         `).all(...params) as HitRow[]);
       }
       rows.sort((left, right) => Number(right.hitCount) - Number(left.hitCount) || Number(left.entryId) - Number(right.entryId));
-      return rows.slice(0, limit).map((row) => ({
+      return rows.slice(0, maxResults).map((row) => ({
         ref: { serverId: row.serverId, artifactId: row.artifactId },
         revision: { headerVersion: Number(row.headerVersion), bodyVersion: Number(row.bodyVersion) },
         ...(row.factId === null ? {} : { factId: row.factId }),

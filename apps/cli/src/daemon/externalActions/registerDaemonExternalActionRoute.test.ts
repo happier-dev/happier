@@ -24,6 +24,7 @@ import {
   measureExternalActionResponseEnvelopeUtf8BytesV1,
   type ActionExecuteResult,
   createActionExecutor,
+  ExternalActionRequestEnvelopeSchema,
 } from '@happier-dev/protocol/actions';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';

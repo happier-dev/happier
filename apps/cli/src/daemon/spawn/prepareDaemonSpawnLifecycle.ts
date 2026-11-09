@@ -1,4 +1,5 @@
 import type { CatalogAgentId } from '@/agent/catalog/ids';
+import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
 import { resolvePublishedServerHttpOrigin } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import { HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY } from '@/plugins/runtime/providerBindings/handoff';
@@ -50,6 +51,7 @@ function buildDaemonOwnedSpawnChildEnv(): Record<string, string> {
 }
 
 export async function prepareDaemonSpawnLifecycle(input: Readonly<{
+    agentLaunchMaterials?: AgentLaunchMaterialization;
     runnerAgentSessionBootstrap: Awaited<ReturnType<
         typeof prepareRunnerAgentSessionBootstrapForLease
     >>;
@@ -139,6 +141,7 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
         ...resolveAbsentSessionControlEnvKeys(extraEnvForChildWithMessage),
     ]);
     const spawnLifecycleCallbacks = createSpawnLifecycleCallbacks({
+        ...(input.agentLaunchMaterials ? { agentLaunchMaterials: input.agentLaunchMaterials } : {}),
         connectedServicesBindingsRaw: input.effectiveConnectedServicesBindings,
         connectedServiceSelectionsEnvRaw: input.extraEnvForChild[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY],
         connectedServiceSelectionsEnv: input.connectedServiceSelectionsEnv,

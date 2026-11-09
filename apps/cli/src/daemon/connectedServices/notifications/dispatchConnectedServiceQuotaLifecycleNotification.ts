@@ -139,11 +139,12 @@ export async function dispatchConnectedServiceQuotaLifecycleNotificationAsync(pa
 
   for (const sessionId of transition.sessionIds) {
     await dispatchActivityNotificationAsync({
+      signal: params.signal,
       notificationChannelCatalog: params.notificationChannelCatalog,
       savedSecretMaterializer: params.savedSecretMaterializer,
-      isCurrent: params.isCurrent,
       operationContext: params.operationContext,
       secretSources: params.secretSources,
+      isCurrent: params.isCurrent,
       pluginNotifications: params.pluginNotifications,
       settings: params.settings,
       settingsSecretsReadKeys: params.settingsSecretsReadKeys,

@@ -13,7 +13,7 @@ import { createLinuxVitalsFixture } from '@/daemon/vitals/readers/linux.testkit'
 import { createDaemonKeepAwake } from './daemonKeepAwake';
 import { createMachineResourcesPolicyRuntime } from './machineResourcesPolicy';
 
-it('consumes the canonical policy setter/watch and minute AC edges without viewers, and releases at shutdown', async () => {
+it('retries denied keep-awake only on policy or AC changes, not identical vitals samples, and releases at shutdown', async () => {
     vi.useFakeTimers();
     const directory = await mkdtemp(join(tmpdir(), 'happier-keep-awake-'));
     const fixture = await createLinuxVitalsFixture();
@@ -24,7 +24,7 @@ it('consumes the canonical policy setter/watch and minute AC edges without viewe
     await fixture.put('/sys/class/power_supply/BAT0/status', 'Full');
     // Native child readiness and pipe EOF are the only holder boundary.
     const children: EventEmitter[] = [];
-    let acquisitionFailures = 0;
+    let acquisitionFailures = 1;
     const holder = createKeepAwake({ platform: 'win32', resolveExecutable: () => '/helper', spawn: () => {
         const child = Object.assign(new EventEmitter(), { exitCode: null, signalCode: null, stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
             kill: () => { child.emit('close', 0, null); return true; } });
@@ -45,27 +45,29 @@ it('consumes the canonical policy setter/watch and minute AC edges without viewe
         compareAndSwap: async input => { metadata = input.metadata; return { status: 'applied', metadata, metadataVersion: ++version }; },
     } });
     const vitals = createMachineVitalsSampler({ readers: createLinuxMachineVitalsReader({ root: fixture.root }),
-        historyStore: await createMinuteHistoryStore({ directory }), monotonicMs: () => Date.now() });
+        historyStore: await createMinuteHistoryStore({ directory }), monotonicMs: () => Date.now(),
+        readPolicy: () => { const snapshot = policy.read(); return snapshot.status === 'ready' ? snapshot.policy : null; },
+        subscribeMonitoring: listener => policy.subscribeKey('monitoring', listener),
+    });
+    await policy.reload();
     const binding = createDaemonKeepAwake({ policy, vitals, holder });
     const settled = () => vi.waitFor(() => expect(binding.read().holding).toBe(true));
     try {
-        await policy.reload(); await vitals.start(); await binding.start(); await settled();
+        await vitals.start(); await binding.start();
+        await vi.waitFor(() => expect(binding.read()).toEqual({ holding: false, unavailableReason: 'no_inhibitor' }));
         expect(children).toHaveLength(1);
-        children[0].emit('exit', 5, null); children[0].emit('close', 5, null);
-        expect(binding.read().holding).toBe(false);
-        expect(children).toHaveLength(1);
-        // The next canonical sample is a decision edge even without a policy or AC change.
-        await vi.advanceTimersByTimeAsync(60_000); await settled();
-        expect(children).toHaveLength(2);
-        await vi.advanceTimersByTimeAsync(60_000);
-        expect(children).toHaveLength(2);
-        acquisitionFailures = 1;
-        children[1].emit('exit', 5, null); children[1].emit('close', 5, null);
-        await vi.advanceTimersByTimeAsync(60_000);
-        await vi.waitFor(() => expect(children).toHaveLength(3));
-        expect(binding.read().holding).toBe(false);
-        await vi.advanceTimersByTimeAsync(60_000); await settled();
-        expect(children).toHaveLength(4);
+        const powers: Array<boolean | null> = [];
+        const releaseSamples = vitals.subscribe(({ sample }) => powers.push(sample.power?.onAC ?? null));
+        try {
+            for (let n = 0; n < 3; n++) {
+                const previous = powers.length;
+                await vi.advanceTimersByTimeAsync(60_000);
+                await vi.waitFor(() => expect(powers.length).toBeGreaterThan(previous));
+            }
+            expect(new Set(powers).size).toBe(1);
+            expect(children).toHaveLength(1);
+            expect(binding.read()).toEqual({ holding: false, unavailableReason: 'no_inhibitor' });
+        } finally { releaseSamples(); }
         const mode = async (keepAwake: 'off' | 'on_power') => {
             const snapshot = policy.read();
             if (snapshot.status !== 'ready') throw new Error('Expected policy ready');
@@ -74,17 +76,22 @@ it('consumes the canonical policy setter/watch and minute AC edges without viewe
         await mode('off');
         await vi.waitFor(() => expect(binding.read().holding).toBe(false));
         await vi.advanceTimersByTimeAsync(60_000);
-        expect(children).toHaveLength(4);
-        await mode('on_power'); await settled();
-        expect(children).toHaveLength(5);
+        expect(children).toHaveLength(1);
+        await mode('on_power'); await vi.advanceTimersByTimeAsync(60_000); await settled();
+        expect(children).toHaveLength(2);
+        children[1].emit('exit', 5, null); children[1].emit('close', 5, null);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(binding.read().holding).toBe(false);
+        expect(children).toHaveLength(2);
         await fixture.put('/sys/class/power_supply/AC/online', '0');
         await vi.advanceTimersByTimeAsync(60_000);
+        await vi.waitFor(() => expect(vitals.latest()?.power?.onAC).toBe(false));
         await vi.waitFor(() => expect(binding.read().holding).toBe(false));
         await fixture.put('/sys/class/power_supply/AC/online', '1');
         await vi.advanceTimersByTimeAsync(60_000); await settled();
-        expect(children).toHaveLength(6);
+        expect(children).toHaveLength(3);
         const releaseOverview = vitals.demandOverview();
-        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(2_000);
         await vi.waitFor(() => expect(vitals.latest()?.battery?.onAC).toBe(true));
         await fixture.put('/sys/class/power_supply/AC/online', 'unknown');
         await vi.advanceTimersByTimeAsync(2_000);

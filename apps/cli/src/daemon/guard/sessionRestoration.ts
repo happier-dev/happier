@@ -21,6 +21,10 @@ export function createGuardSessionRestoration(input: Readonly<{
   return {
     async onSessionRunnerStarted(tracked: TrackedSession): Promise<void> {
       if (!tracked.happySessionId || !tracked.requesterWorkAttributionV1) return;
+      const notice = tracked.happySessionMetadataFromLocalWebhook?.sessionGuardStateV1;
+      // Requested also covers a replacement becoming ready before stop-receipt settlement.
+      if (!notice || typeof notice !== 'object' || !('kind' in notice)
+        || notice.kind !== 'stopped' && notice.kind !== 'requested') return;
       const receipt = await readStopped(tracked.happySessionId, tracked.requesterWorkAttributionV1);
       if (receipt) await input.activity.markUndone({ id: randomUUID(), ref: receipt.id, at: now(), attribution: tracked.requesterWorkAttributionV1 });
     },

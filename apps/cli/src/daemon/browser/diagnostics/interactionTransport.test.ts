@@ -613,6 +613,36 @@ describe('browser diagnostics interaction transport (DIAG-INTERACTION)', () => {
     expect(methods).toContain('Debugger.resume');
   });
 
+  it('queries the element at a CSS viewport point without enabling native inspect mode', async () => {
+    const selected = { selectorPath: 'main > button', accessibleName: 'Checkout',
+      rect: { x: 10, y: 20, width: 100, height: 40 }, componentName: 'Checkout',
+      sourceLocation: { file: 'src/Checkout.tsx', line: 12 } };
+    const harness = createHarness({ withEvents: false, responses: { 'Runtime.evaluate': { result: { value: selected } } } });
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
+    harness.bindView();
+    try {
+      const result = await transport.dispatch('browser.diagnostics.elementPicker.start', { v: 1, pickerRequestId: 'point-1',
+        viewId: VIEW_ID, navigationGeneration: 0, tier: 'cdp', action: 'start',
+        point: { x: 15, y: 30 }, diagnosticsInteractionEnabled: true }, BROWSER_SESSION_ID);
+      expect(BrowserDiagnosticsElementPickerResultV1Schema.parse(result)).toMatchObject({ status: 'selected', ...selected });
+      expect(harness.dispatchPageCommand.mock.calls.map(([arg]) => arg.method)).toEqual(['Runtime.evaluate']);
+    } finally { transport.dispose(); }
+  });
+
+  it('settles a failed point transport as a typed picker failure and permits the next query', async () => {
+    const harness = createHarness({ withEvents: false });
+    harness.dispatchPageCommand.mockRejectedValueOnce(new Error('CDP disconnected'));
+    const transport = createBrowserDiagnosticsInteractionTransport({ contextCapture: harness.contextCapture });
+    harness.bindView();
+    const request = { v: 1, pickerRequestId: 'point-failed', viewId: VIEW_ID, navigationGeneration: 0,
+      tier: 'cdp', action: 'start', point: { x: 20, y: 30 }, diagnosticsInteractionEnabled: true };
+    try {
+      await expect(transport.dispatch('browser.diagnostics.elementPicker.start', request, BROWSER_SESSION_ID)).resolves.toMatchObject({ status: 'failed', errorCode: 'collector_degraded' });
+      await expect(transport.dispatch('browser.diagnostics.elementPicker.start', { ...request, pickerRequestId: 'point-empty' }, BROWSER_SESSION_ID)).resolves.toMatchObject({ status: 'cancelled' });
+      expect(harness.dispatchPageCommand).toHaveBeenCalledTimes(2);
+    } finally { transport.dispose(); }
+  });
+
   it('drives the element picker via Overlay and resolves the selected backend node', async () => {
     const harness = createHarness({
       onSetInspectMode: (emit) =>

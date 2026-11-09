@@ -1,8 +1,9 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as filesystem from 'node:fs/promises';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { discoverLocalServiceRunTargets, resolveLocalServiceRunTargetCommand } from './runTargets';
 import { buildLocalServiceLauncherSnapshot } from './suggestions';
@@ -18,6 +19,40 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 }
 
 describe('discoverLocalServiceRunTargets', () => {
+    it('reads each package tree once per discovery while retaining every Workspace and later file changes', async () => {
+        const root = await makeRepo();
+        const reads = vi.spyOn(filesystem, 'readdir'); // Observe the real filesystem boundary; internal discovery stays real.
+        try {
+            await writeJson(join(root, 'package.json'), { name: 'web', scripts: { dev: 'vite' } });
+            await writeFile(join(root, 'Procfile'), 'api: node api.js\n');
+            const refs = Array.from({ length: 16 }, (_, index) => ({
+                id: `workspace-${index}`, serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1,
+            }));
+            const input = { roots: Array.from({ length: 32 }, () => root), acceptedWorkspaceRefs: refs };
+            const targets = await discoverLocalServiceRunTargets(input);
+            expect(reads.mock.calls.filter(([directory]) => directory === root)).toHaveLength(1);
+            for (const workspace of refs) {
+                expect(targets.filter(target => 'workspaceId' in target && target.workspaceId === workspace.id)
+                    .map(target => 'title' in target ? target.title : target.id).sort()).toEqual(['api', 'web:dev']);
+            }
+
+            reads.mockClear();
+            await writeFile(join(root, 'Procfile'), 'api: node api.js\nworker: node worker.js\n');
+            await mkdir(join(root, 'nested'));
+            await writeJson(join(root, 'nested', 'package.json'), { name: 'nested', scripts: { start: 'node server.js' } });
+            const changed = await discoverLocalServiceRunTargets({ ...input, roots: [...input.roots, join(root, 'nested')] });
+            expect(reads.mock.calls.filter(([directory]) => directory === root)).toHaveLength(1);
+            expect(reads.mock.calls.filter(([directory]) => directory === join(root, 'nested'))).toHaveLength(1);
+            for (const workspace of refs) {
+                expect(changed.filter(target => 'workspaceId' in target && target.workspaceId === workspace.id)
+                    .map(target => 'title' in target ? target.title : target.id).sort())
+                    .toEqual(['api', 'nested:start', 'web:dev', 'worker']);
+            }
+        } finally {
+            reads.mockRestore();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
     it('keeps the manifest authority for a same-name native service in each accepted checkout', async () => {
         const root = await makeRepo();
         try {
@@ -52,10 +87,15 @@ describe('discoverLocalServiceRunTargets', () => {
             await writeFile(join(root, 'compose.yaml'), 'services:\n  db:\n    image: postgres\n  cache:\n    image: redis\n');
             const refs = ['one', 'two'].map(id => ({ id, serverId: 'home', machineId: 'machine', rootPath: root, createdAtMs: 1 }));
             const targets = await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: refs });
+            const machineTargets = await discoverLocalServiceRunTargets({ roots: [root], acceptedWorkspaceRefs: refs,
+                includePackageScripts: false });
             for (const ref of refs) {
                 expect(targets.filter(target => 'workspaceId' in target && target.workspaceId === ref.id)
                     .map(target => 'title' in target ? target.title : target.id).sort())
                     .toEqual(['cache', 'database', 'storefront:preview', 'web']);
+                expect(machineTargets.filter(target => 'workspaceId' in target && target.workspaceId === ref.id)
+                    .map(target => 'title' in target ? target.title : target.id).sort())
+                    .toEqual(['cache', 'database', 'web']);
             }
         } finally { await rm(root, { recursive: true, force: true }); }
     });
@@ -76,6 +116,8 @@ describe('discoverLocalServiceRunTargets', () => {
                 id, machineId: 'machine', address: { kind: 'wildcard' as const, host: '::', family: 'ipv6' as const },
                 port, protocol: 'tcp' as const, detectedAt: 1, lastSeenAt: 1, state: 'listening' as const,
                 source: 'detected' as const, labels: [], confidence: 'high' as const,
+                // The scanner recognizes this server child through its npm-dev ancestor.
+                classification: { kind: 'npm-dev', signals: ['npm run dev'] },
                 processOwnershipConfidence: 'medium' as const, workspaceAssociationConfidence: 'high' as const,
                 diagnostics: [], presentation: { addressLabel: `localhost:${port}`, displayName: 'node' },
                 provenance: { process: { pid: port, lineagePids: [port], command, cwd, redacted: true as const },
@@ -153,7 +195,7 @@ describe('discoverLocalServiceRunTargets', () => {
                 expect.objectContaining({ cwd: join(root, 'web'), workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root },
                     declaration: { workspaceRefId: 'accepted', selection: { kind: 'native', source: { kind: 'native', tool: 'package_script', file: 'web/package.json', target: 'start' } } } }),
             ]));
-            expect(targets.filter(target => !('declaration' in target))).toMatchObject([{ id: 'unqualified:dev', cwd: unrelated }]);
+            expect(targets.filter(target => !('declaration' in target))).toMatchObject([{ id: expect.stringMatching(/^unqualified:dev:[a-f0-9]{12}$/u), cwd: unrelated }]);
             const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(buildLocalServiceLauncherSnapshot({
                 machineId: 'machine', updatedAt: 1, runTargets: targets, inventoryEntries: [], previewResources: [],
             }));
@@ -235,21 +277,21 @@ describe('discoverLocalServiceRunTargets', () => {
             command: target.command,
         }))).toEqual([
             {
-                id: 'repo-root:dev',
+                id: expect.stringMatching(/^repo-root:dev:[a-f0-9]{12}$/u),
                 cwd: root,
                 packageManager: 'pnpm',
                 scriptName: 'dev',
                 command: 'vite --host 0.0.0.0',
             },
             {
-                id: '@acme/web:preview',
+                id: expect.stringMatching(/^@acme\/web:preview:[a-f0-9]{12}$/u),
                 cwd: join(root, 'apps', 'web'),
                 packageManager: 'pnpm',
                 scriptName: 'preview',
                 command: 'vite preview',
             },
             {
-                id: '@acme/web:start',
+                id: expect.stringMatching(/^@acme\/web:start:[a-f0-9]{12}$/u),
                 cwd: join(root, 'apps', 'web'),
                 packageManager: 'pnpm',
                 scriptName: 'start',
@@ -285,7 +327,7 @@ describe('discoverLocalServiceRunTargets', () => {
         expect('executablePath' in (targets[0]?.launchIntent ?? {})).toBe(false);
     });
 
-    it('keeps package-script target ids unique when sibling workspaces share a package name', async () => {
+    it('keeps package-script target ids stable and unique across scoped sibling discovery and reopening', async () => {
         const root = await makeRepo();
         await mkdir(join(root, 'apps', 'web'), { recursive: true });
         await mkdir(join(root, 'examples', 'web'), { recursive: true });
@@ -306,6 +348,12 @@ describe('discoverLocalServiceRunTargets', () => {
             join(root, 'apps', 'web'),
             join(root, 'examples', 'web'),
         ]));
+        for (const target of targets) {
+            const scoped = await discoverLocalServiceRunTargets({ roots: [target.cwd] });
+            expect(scoped.map(candidate => candidate.id)).toEqual([target.id]);
+            expect((await discoverLocalServiceRunTargets({ roots: [target.cwd] })).map(candidate => candidate.id)).toEqual([target.id]);
+            expect((await discoverLocalServiceRunTargets({ roots: [`${target.cwd}/`] })).map(candidate => candidate.id)).toEqual([target.id]);
+        }
     });
 
     it('skips malformed package manifests without failing the whole discovery pass', async () => {
@@ -332,7 +380,9 @@ describe('discoverLocalServiceRunTargets', () => {
             await writeJson(join(root, 'folder-05000', 'package.json'), { name: 'late', scripts: { dev: 'vite' } });
             await writeJson(join(secondRoot, 'package.json'), { name: 'second', scripts: { dev: 'vite' } });
             const targets = await discoverLocalServiceRunTargets({ roots: [root, secondRoot] });
-            expect(targets.map((target) => target.id)).toEqual(['late:dev', 'second:dev']);
+            expect(targets.map((target) => target.id)).toEqual([
+                expect.stringMatching(/^late:dev:[a-f0-9]{12}$/u), expect.stringMatching(/^second:dev:[a-f0-9]{12}$/u),
+            ]);
         } finally {
             await Promise.all([root, secondRoot].map((directory) => rm(directory, { recursive: true, force: true })));
         }

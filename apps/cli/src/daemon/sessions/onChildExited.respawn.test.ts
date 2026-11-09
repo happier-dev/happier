@@ -327,7 +327,7 @@ describe('createOnChildExited', () => {
     expect(removeSessionMarkerFn).toHaveBeenCalledWith(pid);
   });
 
-  it.each([undefined, 'turn-capture-rejected'])('retains final-exit custody when terminal capture is rejected (turn %s)', async (activeTurnId) => {
+  it.each([undefined, 'turn-capture-rejected'])('retains final-exit custody when terminal capture transiently fails (turn %s)', async (activeTurnId) => {
     const pid = 126;
     const tracked = { pid, startedBy: 'daemon' as const, happySessionId: 'session-capture-rejected', activeTurnId };
     const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
@@ -337,7 +337,7 @@ describe('createOnChildExited', () => {
         v: 1 as const,
         status: 'rejected' as const,
         sessionId: 'session-capture-rejected',
-        reason: 'unsupported' as const,
+        reason: 'internal_error' as const,
       })),
       finalizeMachineSessionTerminal: vi.fn(async () => ({
         v: 1 as const,

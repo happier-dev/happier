@@ -2,7 +2,7 @@ import { resolveCliGlobalOnlyFeatureDecision } from '@/features/featureDecisionG
 
 export function getAutomationWorkerFeatureDecision(env: NodeJS.ProcessEnv) {
   return resolveCliGlobalOnlyFeatureDecision({
-    featureId: 'automations',
+    featureId: 'workflows',
     env,
   });
 }

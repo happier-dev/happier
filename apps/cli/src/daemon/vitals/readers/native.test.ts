@@ -1,18 +1,42 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createWindowsMachineVitalsReader } from './windows';
 import { createDarwinMachineVitalsReader } from './darwin';
+import { createNativeMachineVitalsReader } from './native';
 import { type ProcessCustodyExecFile } from '@/subprocess/supervision/processCustody';
-
-const output = (offset: number) => JSON.stringify({ v: 1, t: 'vitals-sample', sample: {
-    cpu: [{ idle: 9000 + offset * 5, user: 3000 + offset * 3, system: 2000 + offset * 2 }],
-    memory: { totalBytes: 32_000, availableBytes: 10_000, pressureLevel: 'not_reported', pressureSource: 'none', lowMemorySignal: true,
-        swap: { kind: 'page_file', totalBytes: 64_000, usedBytes: 30_000 } },
-    volumes: [{ id: 'volume-guid', label: 'System', mount: 'C:\\', totalBytes: 100_000, availableBytes: 50_000 }],
-    interfaces: [{ id: '1', name: 'Ethernet', rxBytes: 8_000 + offset * 2, txBytes: 4_000 + offset, included: true },
-        { id: '2', name: 'VPN', rxBytes: 900_000 + offset * 10, txBytes: 100_000 + offset * 10, included: false }],
-} });
+import { nativeVitalsOutputFixture as output } from './native.testkit';
 
 describe('native vitals reader contract', () => {
+    it.each(['darwin', 'win32'] as const)('keeps %s multicore busy time independent of normalized load and omits Windows load', async (platform) => {
+        let step = 0;
+        const readCpuTimes = () => Array.from({ length: 4 }, () => ({
+            user: 100 + step * 60, system: 100 + step * 28, idle: 100 + step * 12,
+        }));
+        const execFile = vi.fn<ProcessCustodyExecFile>().mockImplementation(async (command) => {
+            if (command !== '/helper') return { stdout: '', stderr: '' };
+            // The native executable is the OS boundary; retain the real reader accounting beneath it.
+            const raw = JSON.parse(output(0));
+            raw.sample.cpu = readCpuTimes();
+            return { stdout: JSON.stringify(raw), stderr: '' };
+        });
+        const options = { executablePath: '/helper', execFile, readCpuTimes, readLoadAverage: () => [8, 4, 2] };
+        const reader = platform === 'darwin' ? createDarwinMachineVitalsReader(options) : createWindowsMachineVitalsReader(options);
+        const read = (t: number) => reader.read({ sampledAt: t, monotonicMs: t, intervalMs: 2_000, overviewExtras: false });
+        await read(0);
+        step = 1;
+
+        const result = await read(2_000);
+        expect(result.state).toBe('reporting');
+        if (result.state !== 'reporting') throw new Error('Machine vitals unavailable');
+        expect(result.host.logicalCores).toBe(4);
+        expect(result.sample.cpu).toMatchObject({ busyPct: 88, userPct: 60, systemPct: 28, perCore: [88, 88, 88, 88] });
+        if (platform === 'darwin') expect(result.sample.cpu).toMatchObject({ load1: 2, load5: 1, load15: 0.5 });
+        else {
+            expect(result.sample.cpu).not.toHaveProperty('load1');
+            expect(result.sample.cpu).not.toHaveProperty('load5');
+            expect(result.sample.cpu).not.toHaveProperty('load15');
+        }
+    });
+
     it('measures Darwin composition with each Overview memory read and never reuses failed VM output', async () => {
         let usedBytes = 22_000;
         let wiredPages = 2;
@@ -100,18 +124,43 @@ describe('native vitals reader contract', () => {
         expect(await read(120_000)).toMatchObject({ state: 'reporting', sample: { power: { onAC: false } } });
         expect(execFile.mock.calls.filter(([command, args]) => command === '/usr/bin/pmset' && args[1] === 'batt')).toHaveLength(3);
     });
-    it('shares Overview battery reads with the existing extras cadence and reports the next power edge', async () => {
+    it('reads Overview battery, thermal and GPU facts on every selected tick', async () => {
         let power = "Now drawing from 'AC Power'\n -InternalBattery-0 80%; charging; 1:00 remaining\n";
+        let throttled = false;
+        let busyPct = 20;
         const execFile = vi.fn<ProcessCustodyExecFile>().mockImplementation(async (command, args) => ({
-            stdout: command === '/helper' ? output(0) : command === '/usr/bin/pmset' && args[1] === 'batt' ? power : '', stderr: '',
+            stdout: command === '/helper' ? output(0)
+                : command === '/usr/bin/pmset' && args[1] === 'batt' ? power
+                : command === '/usr/bin/pmset' && args[1] === 'therm' ? `CPU_Speed_Limit = ${throttled ? 50 : 100}`
+                : command === '/usr/sbin/ioreg' ? `+-o GPU "model" = "Test GPU" "Device Utilization %" = ${busyPct}` : '', stderr: '',
         }));
         const reader = createDarwinMachineVitalsReader({ executablePath: '/helper', execFile });
         const read = (t: number) => reader.read({ sampledAt: t, monotonicMs: t, intervalMs: 2_000, overviewExtras: true });
-        for (let t = 0; t < 16_000; t += 2_000) await read(t);
-        expect(execFile.mock.calls.filter(([command, args]) => command === '/usr/bin/pmset' && args[1] === 'batt')).toHaveLength(1);
+        expect(await read(0)).toMatchObject({ sample: { power: { onAC: true }, battery: { state: 'charging' },
+            thermal: { throttled: false }, gpu: [{ busyPct: 20 }] } });
         power = "Now drawing from 'Battery Power'\n -InternalBattery-0 80%; discharging; 2:00 remaining\n";
-        expect(await read(16_000)).toMatchObject({ state: 'reporting', sample: { power: { onAC: false }, battery: { state: 'discharging' } } });
+        throttled = true;
+        busyPct = 75;
+        expect(await read(2_000)).toMatchObject({ state: 'reporting', sample: { power: { onAC: false }, battery: { state: 'discharging' },
+            thermal: { throttled: true }, gpu: [{ busyPct: 75 }] } });
         expect(execFile.mock.calls.filter(([command, args]) => command === '/usr/bin/pmset' && args[1] === 'batt')).toHaveLength(2);
+    });
+    it.each(['darwin', 'win32'] as const)('reads native %s battery extras at the selected cadence without retaining disappeared facts', async platform => {
+        let pct: number | undefined = 80;
+        const execFile = vi.fn<ProcessCustodyExecFile>().mockImplementation(async (_command, args) => {
+            const raw = JSON.parse(output(0));
+            if (args.includes('--extras') && pct !== undefined) raw.sample.battery = { pct, state: 'discharging', onAC: false };
+            return { stdout: JSON.stringify(raw), stderr: '' };
+        });
+        const reader = createNativeMachineVitalsReader(platform, { executablePath: '/helper', execFile });
+        const read = (t: number) => reader.read({ sampledAt: t, monotonicMs: t, intervalMs: 2_000, overviewExtras: true });
+        expect(await read(0)).toMatchObject({ sample: { battery: { pct: 80 } } });
+        pct = 79;
+        expect(await read(2_000)).toMatchObject({ sample: { battery: { pct: 79 } } });
+        pct = undefined;
+        const result = await read(4_000);
+        expect(result.state).toBe('reporting');
+        if (result.state === 'reporting') expect(result.sample.battery).toBeUndefined();
     });
     it('projects fresh power edges without an Overview viewer', async () => {
         let onAC = true;

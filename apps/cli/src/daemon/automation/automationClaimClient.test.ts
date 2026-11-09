@@ -89,7 +89,7 @@ describe('createAutomationClaimClient', () => {
     axiosLifecycleGet.mockReset().mockResolvedValue({ data: { sources: [] } });
   });
 
-  it('spends only the renewal owner budget remaining after publisher proof preparation', async () => {
+  it.each([5_500, 30_000])('spends only the renewal owner budget remaining after publisher proof preparation (%i)', async renewalDeadlineAtMs => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(1_000);
     let releaseProof!: (proof: null) => void;
@@ -97,13 +97,13 @@ describe('createAutomationClaimClient', () => {
     const client = createAutomationClaimClient({ token: 'token', createPublisherHeader: () => proof });
     axiosPost.mockResolvedValue({ status: 200, data: { ok: true, leaseExpiresAt: 30_000 } });
     const renewal = client.heartbeatRun({ protocol: 'v3', runId: 'budget-run', machineId: 'machine-1',
-      attempt: 1, leaseDurationMs: 30_000, renewalDeadlineAtMs: 5_500, signal: new AbortController().signal });
+      attempt: 1, leaseDurationMs: 30_000, renewalDeadlineAtMs, signal: new AbortController().signal });
     try {
       vi.setSystemTime(1_750);
       releaseProof(null);
       await expect(renewal).resolves.toBe(30_000);
       expect(axiosPost).toHaveBeenCalledWith(expect.any(String), expect.any(Object),
-        expect.objectContaining({ timeout: 3_750 }));
+        expect.objectContaining({ timeout: renewalDeadlineAtMs - 1_750 }));
     } finally { vi.useRealTimers(); }
   });
 
@@ -124,16 +124,14 @@ describe('createAutomationClaimClient', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       if (boundary === 'stop') {
         lease.stop();
-        await vi.advanceTimersByTimeAsync(500);
-        releaseProof(null);
       }
-      await vi.advanceTimersByTimeAsync(4_501);
-      expect(publisher).toHaveBeenCalledTimes(boundary === 'stop' ? 1 : 2);
-      expect(axiosPost).toHaveBeenCalledTimes(boundary === 'stop' ? 0 : 1);
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(publisher).toHaveBeenCalledOnce();
+      expect(axiosPost).not.toHaveBeenCalled();
       releaseProof(null);
       await vi.advanceTimersByTimeAsync(0);
-      expect(axiosPost).toHaveBeenCalledTimes(boundary === 'stop' ? 0 : 1);
-      expect(onError).not.toHaveBeenCalled();
+      expect(axiosPost).not.toHaveBeenCalled();
+      expect(onError).toHaveBeenCalledTimes(boundary === 'stop' ? 0 : 1);
     } finally { releaseProof(null); lease.stop(); vi.useRealTimers(); }
   });
 
@@ -354,6 +352,21 @@ describe('createAutomationClaimClient', () => {
         }),
       }),
     );
+  });
+
+  it('preserves server-owned direct Run deadlines and older V3 omission without inventing a deadline', async () => {
+    const client = createAutomationClaimClient({ token: String(), createPublisherHeader: async () => null });
+    const response = { assignments: [], settings: DEFAULT_WORKER_SETTINGS };
+    for (const directRunClaimDeadlines of [[], [{ runId: 'retained-direct-run', nextClaimAt: 1_723_247_231_001 }]]) {
+      axiosGet.mockResolvedValue({ data: { ...response, directRunClaimDeadlines } });
+      await expect(client.fetchAssignments('machine-1')).resolves.toEqual({
+        ...response, directRunClaimDeadlines, runLifecycleSources: [],
+      });
+    }
+    axiosGet.mockResolvedValue({ data: response });
+    const olderResponse = await client.fetchAssignments('machine-1');
+    expect(olderResponse).toEqual({ ...response, runLifecycleSources: [] });
+    expect(olderResponse).not.toHaveProperty('directRunClaimDeadlines');
   });
 
   it('rejects a V3 assignment response that omits the server-owned execution setting', async () => {

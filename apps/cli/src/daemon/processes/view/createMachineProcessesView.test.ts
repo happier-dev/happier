@@ -11,7 +11,7 @@ import { dirname, join } from 'node:path';
 import { createLocalServiceInventoryRegistry } from '@/daemon/local/services/inventory/registry';
 import { createLocalServiceInventoryRoutes } from '@/daemon/local/services/inventory/routes';
 import { MACHINE_WATCH_WINDOW_MS } from '@happier-dev/protocol/rpc/machineWatchWindow';
-import { MachineProcessesWatchResultV1Schema, type MachineProcessesWatchResultV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
+import { MachineProcessesCheckResultV1Schema, MachineProcessesGetResultV1Schema, MachineProcessesWatchResultV1Schema, type MachineProcessesWatchResultV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import { spawn } from 'node:child_process';
 import { createManagedChildProcess } from '@/subprocess/supervision/managedChildProcess';
@@ -25,6 +25,7 @@ import { formatProcessOwnerTag, resolveProcessOwnerScopeKey } from '@/processes/
 import { PROCESS_LAUNCH_NOTIFICATION_PATH, ProcessLaunchNotificationResultSchema } from '@/processes/launchNotification';
 import { createProcessCustodySamplingInvoker } from '@/subprocess/supervision/processCustody';
 import { decodeHelperCensus } from '@/processes/census/decodeHelperCensus';
+import { createGuardLeftBehindFixture, guardLeftBehindOwner } from '../../guard/actuators/leftBehind.testkit';
 
 // Native census and vitals I/O are system boundaries; the sampler and every domain owner are real.
 const boundary = vi.hoisted(() => ({ read: vi.fn<(input: ProcessCensusInput) => Promise<ProcessCensusSnapshot>>() }));
@@ -32,6 +33,35 @@ vi.mock('@/processes/census/processCensus', async importOriginal => ({
     ...await importOriginal<typeof import('@/processes/census/processCensus')>(), readProcessCensus: boundary.read,
 }));
 afterEach(() => { vi.useRealTimers(); boundary.read.mockReset(); });
+it('checks left-behind display facts from the authorized row without disclosing foreign or reused identities', async () => {
+    const native = createGuardLeftBehindFixture();
+    const pass = createLeftBehindPass({ processOwnershipRuntime: native.ownership });
+    const sampler = createMachineVitalsSampler({ readers: { read: async () => { throw new Error('No vitals demand'); } },
+        historyStore: { read: async () => [], append: async () => true, prune: async () => undefined,
+            appendAlert: async () => undefined, minutes: () => [], alerts: () => [] } });
+    const view = createMachineProcessesView({ processOwnershipRuntime: native.ownership, leftBehind: pass,
+        machineVitals: sampler, platform: 'darwin', selfPid: process.pid,
+        allProcessesVisible: () => false, requesterForOwner: () => ({ accountId: 'owner' }) });
+    try {
+        await pass.firstPass();
+        native.advance(60_000);
+        await pass.readConfirmed();
+        const refs = pass.confirmed().map(item => item.ref);
+        expect(refs).toHaveLength(2);
+        const result = await view.check({ machineId: 'machine', refs }, { accountId: 'owner', custodianAccountId: 'owner' });
+        expect(MachineProcessesCheckResultV1Schema.parse(result).checks).toMatchObject(refs.map(ref => ({ ref,
+            present: true, identityEqual: true, level: 'left_behind', owner: guardLeftBehindOwner,
+            row: { ref, name: 'watcher', command: 'watcher', level: 'left_behind' } })));
+        expect(MachineProcessesGetResultV1Schema.parse(await view.get({ machineId: 'machine', ref: refs[0]! },
+            { accountId: 'owner', custodianAccountId: 'owner' })).row).toMatchObject({ name: 'watcher', command: 'watcher' });
+        expect((await view.check({ machineId: 'machine', refs }, { accountId: 'foreign', custodianAccountId: 'owner' })).checks)
+            .toEqual(refs.map(ref => ({ ref, present: false, identityEqual: false })));
+        const child = native.rows.get(300)!;
+        native.rows.set(300, { ...child, start: { startTimeMs: child.start.startTimeMs + 1 } });
+        expect((await view.check({ machineId: 'machine', refs: [refs[0]!] }, { accountId: 'owner', custodianAccountId: 'owner' })).checks[0])
+            .not.toHaveProperty('row');
+    } finally { view.dispose(); pass.dispose(); await sampler.stop(); }
+});
 it('does not let an older metrics read erase newly discovered ownership', async () => {
     vi.useFakeTimers(); vi.setSystemTime(1000);
     const row = (pid: number) => ({ pid, ppid: pid === 100 ? 1 : 100, start: { startTimeMs: pid === 100 ? 100 : 1000 + pid },

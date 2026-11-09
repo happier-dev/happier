@@ -10,25 +10,27 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 export async function resolveConnectedServiceGroupMemberByProviderAccountId(input: Readonly<{
-  providerAccountId: string;
+  providerAccountId?: string | null;
   providerOrganizationId?: string | null;
   members: readonly ConnectedServiceGroupMemberIdentityCandidate[];
   resolveProviderAccountIdentity: (profileId: string) => Promise<ConnectedServiceGroupMemberProviderAccountIdentity | null>;
 }>): Promise<string | null> {
   const providerAccountId = readNonEmptyString(input.providerAccountId);
-  if (!providerAccountId) return null;
   const providerOrganizationId = readNonEmptyString(input.providerOrganizationId);
+  if (!providerAccountId && !providerOrganizationId) return null;
   const matches: string[] = [];
   for (const member of input.members) {
     const profileId = readNonEmptyString(member.profileId);
     if (!profileId) continue;
     try {
       const identity = await input.resolveProviderAccountIdentity(profileId);
-      if (readNonEmptyString(identity?.providerAccountId) === providerAccountId
+      if (!identity && !providerAccountId) return null;
+      if (identity && (!providerAccountId || readNonEmptyString(identity.providerAccountId) === providerAccountId)
         && (providerOrganizationId === null || readNonEmptyString(identity?.providerOrganizationId) === providerOrganizationId)) {
         matches.push(profileId);
       }
     } catch {
+      if (!providerAccountId) return null;
       // An unreadable member is not a match; uniqueness still has to be proven.
     }
   }

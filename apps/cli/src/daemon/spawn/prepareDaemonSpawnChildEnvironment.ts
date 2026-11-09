@@ -1,4 +1,6 @@
 import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { restoreAcceptedSessionTeamCredentialModelIntent } from '@/agent/runtime/mergeSessionMetadataForStartup';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
@@ -22,7 +24,7 @@ import type { resolveConnectedServiceAuthForSpawn } from '../connectedServices/r
 import { withConnectedServiceMaterializationIdentityEnv } from '../connectedServices/materialization/identity';
 import { buildTrackedSessionRespawnEnvironmentVariables } from '../processSupervision/sessionRunnerRespawnDescriptor';
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
-import { buildProviderSpawnErrorResult } from './buildProviderSpawnErrorResult';
+import { projectChildEnvironmentFailure } from './projectChildEnvironmentFailure';
 import {
     HAPPIER_DAEMON_PENDING_FIRST_INPUT_ENV_KEY,
     serializePendingFirstInputForEnv,
@@ -86,13 +88,19 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         && 'materializeAfterHooks' in providerBindingLaunchInput.attempt
             ? providerBindingLaunchInput.attempt.materializeAfterHooks
             : null;
+    const retainedModel = readSessionModelSelectionV2FromMetadata(input.existingSessionMetadata);
+    const acceptedModel = restoreAcceptedSessionTeamCredentialModelIntent(
+        retainedModel, input.sessionAttachPayload?.snapshot?.acceptedTeamCredentialBinding);
+    const existingSessionMetadata = acceptedModel !== retainedModel && input.existingSessionMetadata
+        ? { ...input.existingSessionMetadata, modelSelectionIntentV2: acceptedModel }
+        : input.existingSessionMetadata;
     const spawnEnvironment = await resolveSpawnChildEnvironment({
         memberAgentCliLaunch: input.memberAgentCliLaunch,
         savedSecretOperationContext: input.savedSecretOperationContext,
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: input.pluginRuntimeRegistry,
         options: input.options,
-        ...(input.existingSessionMetadata ? { existingSessionMetadata: input.existingSessionMetadata } : {}),
+        ...(existingSessionMetadata ? { existingSessionMetadata } : {}),
         acceptedTeamCredentialBinding: input.sessionAttachPayload?.snapshot?.acceptedTeamCredentialBinding,
         resolvedAgentId: input.resolvedAgentId,
         profileEnvironmentVariables: input.profileEnvironmentVariables,
@@ -166,14 +174,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     if (!spawnEnvironment.ok) {
         return {
             ok: false,
-            result: spawnEnvironment.providerError
-                ? buildProviderSpawnErrorResult(spawnEnvironment.providerError)
-                : {
-                    type: 'error',
-                    errorCode: spawnEnvironment.errorCode,
-                    errorMessage: spawnEnvironment.errorMessage,
-                    ...(spawnEnvironment.agentId !== undefined ? { agentId: spawnEnvironment.agentId } : {}),
-                },
+            result: projectChildEnvironmentFailure(spawnEnvironment),
         };
     }
 
@@ -245,6 +246,7 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
         verifyRequesterMachineAdmissionCurrent: _verifyRequesterMachineAdmissionCurrent,
         beforeSessionRunnerLaunch: _beforeSessionRunnerLaunch,
         resumeActionContext: _resumeActionContext,
+        spawnActionContext: _spawnActionContext,
         projectSetupOperation: _projectSetupOperation,
         requesterSessionCredentialFile: _requesterSessionCredentialFile,
         requesterSessionBootstrap: _requesterSessionBootstrap,
@@ -256,6 +258,13 @@ export async function prepareDaemonSpawnChildEnvironment(input: Readonly<{
     } = input.options;
     const trackedSpawnOptions: SpawnSessionOptions = {
         ...trackedSpawnOptionsBase,
+        // The protected attach is the accepted source, not the caller's old
+        // pre-create intent. Keep all other purpose slots at their own owner.
+        ...(input.sessionAttachPayload?.snapshot ? { teamCredentialBindings: [
+            ...(trackedSpawnOptionsBase.teamCredentialBindings ?? []).filter(binding => binding.slot.kind !== 'provider_model'),
+            ...(input.sessionAttachPayload.snapshot.acceptedTeamCredentialBinding?.slot.kind === 'provider_model'
+                ? [input.sessionAttachPayload.snapshot.acceptedTeamCredentialBinding] : []),
+        ] } : {}),
         ...(input.effectiveModelSelection
             ? { modelSelection: input.effectiveModelSelection }
             : {}),

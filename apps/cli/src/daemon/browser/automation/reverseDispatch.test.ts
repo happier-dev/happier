@@ -261,7 +261,7 @@ describe('daemon browser reverse dispatch protocol boundary', () => {
         ownsAutomationView: broker.ownsView, provisionAutomationRuntime });
       expect(await execute({ ...args, input: { ...request, ...daemonView }, context: { ...args.context, defaultSessionId: daemonView.browserSessionId } }))
         .toMatchObject({ error: 'runtime_action_disabled:browser:browser_automation_route_unavailable' });
-      expect(await execute({ ...args, input: { ...request, ...daemonView } })).toMatchObject({ errorCode: 'invalid_parameters' });
+      expect(await execute({ ...args, input: { ...request, ...daemonView } })).toMatchObject({ errorCode: 'permission_denied' });
       expect(provisionAutomationRuntime).toHaveBeenCalledOnce();
       expect(await execute(args)).toMatchObject({ error: 'runtime_action_disabled:browser:browser_ui_automation_unavailable' });
       expect(provisionAutomationRuntime).toHaveBeenCalledOnce();

@@ -24,17 +24,26 @@ const metadata = {
 };
 
 describe('resolveInactiveUsageLimitRecoverySchedulerResult', () => {
+  it('retains an untimed admitted wait without scheduling an invented reset', () => {
+    expect(resolveInactiveUsageLimitRecoverySchedulerResult({
+      result: { ok: true, status: 'waiting', metadata: {
+        [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: { ...metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY],
+          resetAtMs: null, nextCheckAtMs: null },
+      } },
+    })).toEqual({ status: 'wait', nextCheckAtMs: null, lastProbeError: null,
+      selectedAuth: metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY].selectedAuth });
+  });
+
   it('keeps waiting after a transport cancellation without a terminal acknowledgement', () => {
     expect(resolveInactiveUsageLimitRecoverySchedulerResult({
       result: { ok: false, status: 'cancelled', errorCode: 'rpc_cancelled' },
-      nowMs: 5_000, fallbackRetryDelayMs: 60_000,
-    })).toEqual({ status: 'wait', nextCheckAtMs: 65_000,
+    })).toEqual({ status: 'wait', nextCheckAtMs: null,
       lastProbeError: 'usage_limit_recovery_probe_not_ready' });
   });
 
   it('settles an acknowledged successful cancellation', () => {
     expect(resolveInactiveUsageLimitRecoverySchedulerResult({
-      result: { ok: true, status: 'cancelled' }, nowMs: 5_000, fallbackRetryDelayMs: 60_000,
+      result: { ok: true, status: 'cancelled' },
     })).toEqual({ status: 'superseded', lastProbeError: null });
   });
 
@@ -45,29 +54,25 @@ describe('resolveInactiveUsageLimitRecoverySchedulerResult', () => {
         [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
           ...metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY], status: 'cancelled',
         },
-      } }, nowMs: 5_000, fallbackRetryDelayMs: 60_000,
+      } },
     })).toEqual({ status: 'superseded', lastProbeError: null });
   });
 
   it('preserves explicit exhaustion when no recovery metadata accompanies it', () => {
     expect(resolveInactiveUsageLimitRecoverySchedulerResult({
-      result: { ok: false, status: 'exhausted' }, nowMs: 5_000, fallbackRetryDelayMs: 60_000,
+      result: { ok: false, status: 'exhausted' },
     })).toEqual({ status: 'exhausted', lastProbeError: null });
   });
 
   it('settles a stale cancelled result even when it carries no recovery metadata', () => {
     expect(resolveInactiveUsageLimitRecoverySchedulerResult({
       result: { ok: false, status: 'cancelled', errorCode: 'usage_limit_recovery_attempt_superseded', sessionId: 'session-1' },
-      nowMs: 5_000,
-      fallbackRetryDelayMs: 60_000,
     })).toMatchObject({ status: 'superseded' });
   });
 
   it('keeps provider-ready startup reconstruction passive', () => {
     expect(resolveInactiveUsageLimitRecoverySchedulerResult({
       result: { ok: true, status: 'ready', metadata },
-      nowMs: 5_000,
-      fallbackRetryDelayMs: 60_000,
     })).toEqual({
       status: 'pause',
       selectedAuth: metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY].selectedAuth,
@@ -77,8 +82,6 @@ describe('resolveInactiveUsageLimitRecoverySchedulerResult', () => {
   it('settles a same-daemon resume as effectfully completed', () => {
     expect(resolveInactiveUsageLimitRecoverySchedulerResult({
       result: { ok: true, status: 'resumed', metadata },
-      nowMs: 5_000,
-      fallbackRetryDelayMs: 60_000,
     })).toEqual({
       status: 'resumed',
       selectedAuth: metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY].selectedAuth,

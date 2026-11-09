@@ -1037,7 +1037,7 @@ describe('executeSpawnSessionRequest', () => {
     });
   });
 
-  it('keeps the persisted Provider resume selection authoritative over a profile model default', async () => {
+  it.each(['explicit', 'persisted'] as const)('keeps the persisted Provider resume selection with a %s profile', async (profileSource) => {
     const setup = await configureProviderBoundExistingSessionSpawn();
     const proposal = {
       v: 1 as const,
@@ -1062,6 +1062,7 @@ describe('executeSpawnSessionRequest', () => {
         encryptionMode: 'plain',
         snapshot: {
           metadata: {
+            profileId: 'focused',
             providerBindingV1: setup.sessionBindingMetadata,
             modelSelectionIntentV1: {
               v: 1,
@@ -1082,7 +1083,7 @@ describe('executeSpawnSessionRequest', () => {
           v: 2,
           id: 'focused',
           name: 'Focused',
-          extraEnvironmentVariables: [],
+          extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: 'profile' }],
           defaultPermissionModeByTargetKey: {},
           defaultPersistenceModeByTargetKey: {},
           compatibilityByTargetKey: { 'agent:happier.agent.codex/codex': true },
@@ -1113,6 +1114,8 @@ describe('executeSpawnSessionRequest', () => {
     );
     vi.mocked(routeSpawnModeAndWaitForWebhook).mockImplementationOnce(
       async (input) => {
+        expect(input.trackedSpawnOptions.profileId).toBe('focused');
+        expect(input.trackedSpawnOptions.environmentVariables).toMatchObject({ TEAM_FLAG: 'profile' });
         expect(input.modelSelection).toEqual(proposal);
         expect(input.trackedSpawnOptions.modelSelection).toEqual(proposal);
         expect(resolveDaemonSessionModelTransitionAuthority({
@@ -1138,7 +1141,7 @@ describe('executeSpawnSessionRequest', () => {
         ...createParams().options,
         resume: undefined,
         existingSessionId: 'existing-session-1',
-        profileId: 'focused',
+        ...(profileSource === 'explicit' ? { profileId: 'focused' } : {}),
         machineId: 'machine-a',
         backendTarget: {
           kind: 'backend',
@@ -3502,6 +3505,29 @@ describe('executeSpawnSessionRequest', () => {
       vi.mocked(shouldResolveConnectedServiceAuthForSpawn).mockReturnValue(true);
       return { getOrCreateSession, processEnv: { HAPPIER_CODEX_PATH: codexPath, PATH: '' } };
     }
+
+    it('records one typed Team refusal before Session creation without logging launch content', async () => {
+      const { getOrCreateSession, processEnv } = await arrangeCommittedLaunch();
+      const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
+      const { logger } = await import('@/ui/logger');
+      const result = await executeSpawnSessionRequest({
+        ...createParams(), api: { getOrCreateSession } as never, processEnv,
+        options: { ...directTeamOptions, teamCredentialBindings: [...directTeamOptions.teamCredentialBindings,
+          { v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-1', teamId: 'team-1',
+            expectedResourceRevision: 3, deliveryMode: 'direct' }],
+        },
+      });
+      expect(result).toMatchObject({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
+        errorMessage: 'team_credential_model_selection_required' });
+      expect(getOrCreateSession).not.toHaveBeenCalled();
+      const records = vi.mocked(logger.infoFile).mock.calls.filter(([label, data]) =>
+        label === '[DAEMON RUN] Spawn preparation phase' && data && typeof data === 'object'
+        && 'phase' in data && data.phase === 'team_credential');
+      expect(records).toHaveLength(1);
+      expect(records[0]?.[1]).toMatchObject({ operation: 'spawn_session', phase: 'team_credential', outcome: 'refused',
+        failurePhase: 'model_selection', code: 'team_credential_model_selection_required' });
+      expect(records[0]?.[1]).not.toHaveProperty('options');
+    });
 
     it('commits the Session with its Team binding before launch material is opened, and launches as an attach to it', async () => {
       const { getOrCreateSession, processEnv } = await arrangeCommittedLaunch();

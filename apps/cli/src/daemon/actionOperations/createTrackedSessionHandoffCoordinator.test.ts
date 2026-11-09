@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } fro
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import axios from 'axios';
+// Load the real dynamic Machine API graph during collection, not the test deadline.
+import '@/api/api';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -13,10 +15,11 @@ import { createPlainSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows, subscribeActiveProjectAccountRowsSnapshot,
   withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
-import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows.testkit';
+import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createDaemonWorkspaceSyncRuntime } from '@/daemon/startup/createDaemonWorkspaceSyncRuntime';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
 import { createWorkspaceSyncMutagenAdapter } from '@/workspaces/sync/workspaceSyncMutagenAdapter';
 import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspaceSyncRootOwnership';
@@ -29,6 +32,7 @@ import { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture }
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
+import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createRequesterSessionCredentialCustody, resolveRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { verifyMachineInstallationProof, MachineInstallationProofV1Schema,
   MachineInstallationProofPayloadV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -81,6 +85,64 @@ function handoffSourceHttpBoundary(sessionId: string) {
 }
 
 describe('createTrackedSessionHandoffCoordinator', () => {
+  it.each([['source', 'source'], ['target', 'source'], ['source', 'observer']])('uses the same-process preparation writer wakeup for target %s on host %s', async (targetMachineId, localMachineId) => {
+    await withTempDir('handoff-local-status-owner-', async activeServerDir => {
+      const sessionId = `c${'d'.repeat(24)}`;
+      handoffSourceHttpBoundary(sessionId);
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const status = { handoffId: 'handoff-local', jobId: 'prepare_local', status: 'pending' as const,
+        phase: 'staging_target' as const, transportStrategy: 'server_routed_stream' as const, recoveryActions: [] };
+      const record = { jobId: status.jobId, handoffId: status.handoffId, createdAtMs: 1, updatedAtMs: 1, status };
+      await store.write(record);
+      let statusReads = 0;
+      let firstStatusRead!: () => void;
+      const observed = new Promise<void>(resolve => { firstStatusRead = resolve; });
+      const callMachine = async (input: MachineCallInput) => {
+        if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3) return { handoffId: status.handoffId, status };
+        if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3) {
+          statusReads++;
+          const current = await store.read(status.jobId);
+          firstStatusRead();
+          return { handoffId: status.handoffId, status: current?.status };
+        }
+        if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3) return { ok: false, errorCode: 'source_export_failed', error: 'Source export failed' };
+        if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT_V3) return { handoffId: status.handoffId, status: { ...status, status: 'aborted' } };
+        throw new Error(`Unexpected Machine method ${input.method}`);
+      };
+      const coordinate = createTrackedSessionHandoffCoordinator({ expectedAccountServerId: 'server-1',
+        readCredentials: async () => ({ token: 'token', encryption: null }), callMachine,
+        workspaceSyncAdapter: createWorkspaceSyncHandoffAdapter({ sync: {} as never,
+          bootstrap: async () => { throw new Error('Unexpected workspace bootstrap'); } }),
+      });
+      const controller = new AbortController();
+      const timers = vi.spyOn(globalThis, 'setTimeout');
+      let localWaits = 0;
+      const operation = coordinate({ operationId: 'local-operation', actionInput: { sessionId, targetMachineId, targetPath: '/source' },
+        signal: controller.signal, publishOwnerUpdate: () => undefined,
+        start: async () => ({ ok: true, result: { handoffId: status.handoffId, targetPath: '/source', endpointCandidates: [],
+          status: { ...status, phase: 'preparing' } } }),
+        localPreparation: { machineId: localMachineId, waitForChange: (observedStatus, signal) => {
+          localWaits++;
+          return store.waitForChange({ jobId: status.jobId, observedStatus, signal });
+        } },
+      });
+      try {
+        const reachedObservation = await Promise.race([observed.then(() => true), operation]);
+        expect(reachedObservation).toBe(true);
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(timers.mock.calls.filter(([, delay]) => delay === 500)).toHaveLength(targetMachineId === localMachineId ? 0 : 1);
+        expect(localWaits).toBe(targetMachineId === localMachineId ? 1 : 0);
+        expect(statusReads).toBe(1);
+        await store.write({ ...record, updatedAtMs: 2, status: { ...status, status: 'awaiting_recovery' } });
+        await expect(operation).resolves.toMatchObject({ ok: false, errorCode: 'source_export_failed' });
+        expect(statusReads).toBe(2);
+      } finally {
+        controller.abort();
+        await operation;
+        timers.mockRestore();
+      }
+    });
+  });
   it.each(['existing_session_state_unavailable', 'handoff_existing_state_update_required'])('refuses %s before stopping the source through the target preflight transport', async errorCode => {
     const sessionId = `c${'d'.repeat(24)}`;
     handoffSourceHttpBoundary(sessionId);
@@ -213,6 +275,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         if (path === '/v1/machines/source' || path === '/v1/machines/target') {
           const id = path.split('/').at(-1)!;
           return { status: 200, data: { machine: { id, active: true, installationId: `${id}-installation`,
+            access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
             metadataVersion: 1, daemonStateVersion: 0, daemonState: null, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
             devcontainerChild: null, metadata: encodePlainMachineStoredContent({ host: id, platform: 'linux', homeDir: '/home/user',
               happyHomeDir: '/home/user/.happier', happyCliVersion: 'source-fixture' }) } } };
@@ -244,12 +307,22 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       const installedRows = [...installedRefs.map(ref => createPlainProjectAccountRefRow(ref)),
         ProjectAccountRowV1Schema.parse({ key: graphKey, revision: 1,
           content: { t: 'plain', v: { key: graphKey, value: { relationships: [relationship] } } } })];
+      const requesterRows = Array.from({ length: 1024 }, (_, index) => {
+        const key = { kind: 'project-organization' as const, serverId: 'bob-home', projectKey: `unrelated-${index}` };
+        return { key, revision: 0, content: { t: 'plain', v: { key, value: { pinned: true } } } };
+      });
+      let requesterOrganizationBodies = 0;
       let retireDuringRead: (() => Promise<void>) | undefined;
       vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
         if (new URL(String(url)).pathname.endsWith('/account/project-rows/list')) {
           const installed = config?.headers?.Authorization === 'Bearer installed-daemon';
           if (!installed) await retireDuringRead?.();
-          return { status: 200, data: { status: 'listed', coverage: 'complete', rows: installed ? installedRows : [] } };
+          const response = projectAccountRowsReadHttpResponse(installed ? installedRows : requesterRows, String(url), body);
+          if (!installed) {
+            if (!response.data.rows) throw new Error('Expected a Project list response');
+            requesterOrganizationBodies += response.data.rows.length;
+          }
+          return response;
         }
         if (new URL(String(url)).pathname === '/v1/machines/source/admission/verify') {
           if (!body || typeof body !== 'object') throw new Error('Missing installed currentness proof');
@@ -274,7 +347,10 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       });
       const credentialBinding = { happyHomeDir: activeServerDir, sessionId,
         attribution: { serverId: 'bob-home', accountId: 'bob', machineId: 'source', installationId: 'source-installation' } };
-      await createRequesterSessionCredentialCustody({ ...credentialBinding, credentials: { token: 'bob-ordinary', encryption: null } });
+      await seedTestServerProfile({ id: credentialBinding.attribution.serverId,
+        homeId: root.binding.serverIdentityId, serverUrl: 'https://bob-home.test' });
+      await createRequesterSessionCredentialCustody({ ...credentialBinding,
+        homeServerIdentityId: root.binding.serverIdentityId, credentials: { token: 'bob-ordinary', encryption: null } });
       phase = 'admit requester Session bootstrap';
       const requester = await resolveRequesterSessionBootstrap({ ...credentialBinding, serverHttpBaseUrl: 'https://bob-home.test',
         machineAdmissionBoundary: { machineId: 'source', daemonToken: 'alice-daemon', isHomeCurrent: () => true,
@@ -354,6 +430,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
       phase = 'settle installed Project subscription after requester handoff';
       await installedRuntime.whenProjectsSettled();
       expect(publications).toBe(0);
+      expect(requesterOrganizationBodies).toBe(0);
       expect(getActiveProjectAccountRowsSnapshot()).toBe(installedSnapshot);
       expect(getActiveProjectAccountRowsSnapshot()?.scopeKey).toBe(installedSnapshot.scopeKey);
       expect(await installedRuntime.managedWorkspaceSync.listRelationships({ workspaceRefId: installedRefs[0]!.id })).toEqual(beforeRelationships);
@@ -363,7 +440,8 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         content: { t: 'plain', v: { key: graphKey, value: { relationships: [] } } } });
       phase = 'refresh installed Project subscription';
       await runWithServerHttpBaseUrl('https://bob-home.test', () => readProjectAccountRows({
-        credentials: { token: 'installed-daemon', encryption: null }, serverId: 'bob-home' }));
+        credentials: { token: 'installed-daemon', encryption: null }, serverId: 'bob-home',
+        selection: { kinds: ['workspace-ref', 'relationship-graph'] } }));
       await installedRuntime.whenProjectsSettled();
       expect(await installedRuntime.managedWorkspaceSync.listRelationships({ workspaceRefId: installedRefs[0]!.id }))
         .toMatchObject({ relationships: [], remoteRelationships: [], membership: { found: false } });
@@ -462,6 +540,9 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         throw new Error('Unexpected Session Home write');
       });
       onTestFinished(() => { get.mockRestore(); post.mockRestore(); withdrawActiveProjectAccountRowsSnapshot(); });
+      // The real target authority consumes the daemon's installed startup
+      // projection; this finite handoff read must not establish that scope.
+      await runWithServerHttpBaseUrl(homeUrl, () => readProjectAccountRows({ credentials, serverId: home, publication: 'installed' }));
       const resolveRef = (id: string) => refs.find(ref => ref.id === id) ?? null;
       const rootOwnershipManager = createWorkspaceRootOwnershipManager({ lockDirectory: join(root, 'locks') });
       const sync = new WorkspaceSyncController({ localServerId: home, localMachineId: 'child', rootOwnershipManager,
@@ -777,15 +858,13 @@ describe('createTrackedSessionHandoffCoordinator', () => {
 
   it('routes the accepted handoff through the existing source and target daemon primitives', async () => {
     const calls: Array<Pick<MachineCallInput, 'machineId' | 'method' | 'request' | 'timeoutMs'>> = [];
-    let resultGets = 0;
+    let statusGets = 0;
     const callMachine = vi.fn(async (input: MachineCallInput) => {
       calls.push(input);
       if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3) {
         return { ok: false, errorCode: 'not_found', error: 'pending' };
       }
       if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3) {
-        resultGets += 1;
-        if (resultGets === 1) return { ok: false, errorCode: 'not_found', error: 'pending' };
         return {
           handoffId: 'handoff-1',
           status: {
@@ -804,11 +883,12 @@ describe('createTrackedSessionHandoffCoordinator', () => {
         };
       }
       if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3) {
+        statusGets++;
         return {
           handoffId: 'handoff-1',
           transitionRevision: 3,
           status: {
-            handoffId: 'handoff-1', status: 'in_progress', phase: 'staging_target',
+            handoffId: 'handoff-1', status: statusGets === 1 ? 'in_progress' : 'ready_for_cutover', phase: 'staging_target',
             transportStrategy: 'server_routed_stream', recoveryActions: [],
           },
         };
@@ -1011,7 +1091,7 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     });
     expect(calls.map(({ machineId, method }) => [machineId, method])).toEqual([
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3],
-      ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3],
+      ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3],
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3],
       ['target-1', RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET_V3],
       ['target-1', RPC_METHODS.SPAWN_HAPPY_SESSION],

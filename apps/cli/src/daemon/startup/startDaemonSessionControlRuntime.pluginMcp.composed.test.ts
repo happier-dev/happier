@@ -5,6 +5,8 @@ import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { configuration } from '@/configuration';
+import { updateSettings } from '@/persistence';
+import { readRequesterSessionCredentialsForChild, requesterSessionCredentialPath, REQUESTER_SESSION_ID_ENV } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { createInstalledProjectAgentDaemonFixture } from '@/daemon/testkit/installedProjectAgentDaemonFixture';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
@@ -42,11 +44,17 @@ vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async (inpu
 } }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); boundary.control = null; });
 
-it.each([false, true])('delivers an external plugin through the daemon runner bridge and retires reapply/Stop attachments (native collision: %s)', async (nativeCollision) => {
+it.each([
+  { nativeCollision: false, member: false },
+  { nativeCollision: true, member: false },
+  { nativeCollision: true, member: true },
+])('delivers only an admitted external plugin and retires reapply/Stop attachments (%o)', async ({ nativeCollision, member }) => {
   const pluginId = 'acme.project-launch';
   const serverId = `plugin:${pluginId}/tools`;
+  const homeId = 'srv_mcp_fixture';
+  const profileId = 'session-home';
   const wireName = nativeCollision ? 'tools_2' : 'tools';
-  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, false, {
+  const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, member, {
     manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: {
       agents: [{ id: 'agent', title: 'Fixture Agent', runtime: { kind: 'custom' }, primary: 'sessions',
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }],
@@ -71,10 +79,24 @@ it.each([false, true])('delivers an external plugin through the daemon runner br
           });
         }`,
     },
-  });
+  }, undefined, { serverId: profileId, homeServerIdentityId: homeId, externalActionAccountId: member ? 'custodian' : 'requester',
+    machineAccess: { custodianAccountId: member ? 'custodian' : 'requester', role: member ? 'use' : 'manage' } });
+  await updateSettings(current => ({ ...current, servers: { ...current.servers, [profileId]: {
+    id: profileId, name: 'Session Home', serverUrl: 'https://session-home.test', webappUrl: 'https://session-home.test',
+    createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+    homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId, canonicalServerUrl: 'https://session-home.test',
+      revision: 1, endpoints: [{ kind: 'https', url: 'https://session-home.test' }] },
+  } } }));
+  vi.stubEnv(REQUESTER_SESSION_ID_ENV, h.sessionId);
+  const childCredentials = await readRequesterSessionCredentialsForChild(requesterSessionCredentialPath({
+    happyHomeDir: h.f.directory, sessionId: h.sessionId, attribution: h.tracked.requesterWorkAttributionV1!,
+  }));
+  if (!childCredentials) throw new Error('Missing genuine child requester credential custody');
+  expect(childCredentials.requesterSessionCredentialScope?.requesterSession?.homeServerIdentityId).toBe(homeId);
+  expect(childCredentials.requesterSessionCredentialScope?.requesterSession?.attribution.serverId).toBe(profileId);
   const runnerCommand = `${process.execPath} ${join(h.f.directory, '.runner-snapshots', 'fixture-runner', 'index.mjs')}`;
-  // The real fixture starts the daemon with custodian credentials and recovers
-  // this Session's distinct requester through its admitted bootstrap custody.
+  // Tokens remain distinct; Account ownership comes from the actual Machine
+  // row and immutable Session birth, never token equality or a changed birth.
   expect(h.tracked.requesterWorkAttributionV1?.accountId).toBe('requester');
   expect(h.requester.bootstrap.attribution.accountId).toBe('requester');
   expect(h.requester.bootstrap.credentials.token).not.toBe('custodian-token');
@@ -89,9 +111,11 @@ it.each([false, true])('delivers an external plugin through the daemon runner br
     path: authorityFilePath, sessionId: h.sessionId, runner: h.runner, retainedAgent: h.retainedAgent, httpPort: 43129 });
   const homeFetch = globalThis.fetch;
   const endpoints: string[] = [];
+  let nativeDiscoveries = 0;
   vi.stubGlobal('fetch', async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
     if (new URL(String(url)).pathname !== AGENT_RUNTIME_DAEMON_SERVICES_PATH) return await homeFetch(url, init);
     const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
+    if (request.operation.kind === 'mcp.plugin.discover') nativeDiscoveries += 1;
     const delivery = new AbortController();
     const response = await boundary.control!.agentRuntimeDaemonServices!.dispatch(request, {
       sessionId: h.sessionId, runner: h.runner, retainedAgent: h.retainedAgent, trackedSession: h.tracked,
@@ -117,17 +141,34 @@ it.each([false, true])('delivers an external plugin through the daemon runner br
     requireRunnerAgentSessionRuntimeSource: true, runnerAgentSessionRuntimeSource: source });
   const resolution = await engines.resolveForBackendId(source.identity.backendId);
   if (!resolution) throw new Error('Missing runner engine');
-  const plan = await resolution.engineAdapter.runtimeCore.createSessionRuntime({ credentials: h.f.bootstrap.credentials,
+  const plan = await resolution.engineAdapter.runtimeCore.createSessionRuntime({ credentials: childCredentials,
     directory: h.cwd, backendTarget: { kind: 'backend', backendId: source.identity.backendId } });
   const bridge = plan.deps?.sessionLoopLifecycleDeps?.daemonTurnContributionsBridge;
   const catalog = McpServerCatalogV1Schema.parse({ v: 1, servers: [], bindings: [] });
   const settings = accountSettingsParse({});
+  if (nativeCollision && !member) {
+    const missing = await h.dispatch({ kind: 'mcp.plugin.discover', preparationId: 'd123e109-9973-4cf7-b50b-95e764e77b82' });
+    expect(missing).toMatchObject({ ok: false, error: { code: 'plugin_mcp_preparation_unavailable' } });
+    const preparation = await bridge!.pluginMcp!.prepare({ catalog, directory: h.cwd });
+    expect((await preparation.discoverNativeServers()).map(server => server.name)).toContain('tools');
+    await preparation.dispose();
+    await expect(preparation.discoverNativeServers()).rejects.toThrow();
+    const cancelled = new AbortController();
+    const aborted = await bridge!.pluginMcp!.prepare({ catalog, directory: h.cwd, signal: cancelled.signal });
+    cancelled.abort();
+    await expect(aborted.discoverNativeServers()).rejects.toThrow();
+    await aborted.dispose();
+    // Preparation close never becomes a new authority or reopens discovery.
+    await aborted.dispose();
+    await expect(aborted.discoverNativeServers()).rejects.toThrow();
+    nativeDiscoveries = 0;
+  }
   const session = applyRunnerMcpSessionContext({ sessionId: h.sessionId,
-    getServerBinding: () => ({ serverId: 'session-home', serverUrl: 'https://session-home.test' }),
+    getServerBinding: () => ({ serverId: profileId, serverUrl: 'https://session-home.test' }),
     rpcHandlerManager: new RpcHandlerManager({ scopePrefix: h.sessionId, encryptionMode: 'plain' }), updateMetadata() {},
     enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: true }),
   }, { getPluginMcpPort: () => bridge?.pluginMcp ?? null });
-  const input = { session, credentials: h.f.bootstrap.credentials, accountSettings: settings,
+  const input = { session, credentials: childCredentials, accountSettings: settings, isolationEnabled: false,
     accountSettingsSnapshot: { source: 'network' as const, settings, settingsVersion: 1, loadedAtMs: 1,
       settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(h.f.bootstrap.credentials.token),
       mcpServerCatalog: { status: 'ready' as const, authority: 'active' as const, catalog, revision: 1, diagnostics: [] } },
@@ -137,6 +178,14 @@ it.each([false, true])('delivers an external plugin through the daemon runner br
     sessionMetadata: { mcpSelectionV1: { v: 1, managedServersEnabled: true, forceIncludeServerIds: [serverId], forceExcludeServerIds: [] } },
   };
   vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
+  if (member) {
+    await expect(resolveRunnerMcpServers(input)).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+    expect(nativeDiscoveries).toBe(0);
+    expect(endpoints).toHaveLength(0);
+    await source.retire?.();
+    runnerExited = true;
+    return;
+  }
   const first = await resolveRunnerMcpServers(input);
   onTestFinished(() => first.happierMcpServer.stop());
   expect(Object.keys(first.mcpServers)).toEqual([wireName]);

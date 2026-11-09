@@ -39,11 +39,10 @@ function entry(overrides: Partial<NormalizedLocalServiceInventoryEntry> = {}): N
 }
 
 describe('local service endpoint facts', () => {
-    it.each([1, 4])('shares cold endpoint observations across duplicate rows with concurrency %s and warms every listener', async (concurrency) => {
+    it('shares endpoint observations across duplicate rows within each explicit presentation demand', async () => {
         let probes = 0;
         const enricher = createLocalServiceEndpointEnricher({
-            now: () => 2_000, timeoutMs: 50, concurrency,
-            successTtlMs: 1_000, failureTtlMs: 1_000,
+            now: () => 2_000,
             probe: async ({ scheme }) => { probes += 1; return scheme === 'http'; },
         });
         const entries = Array.from({ length: 120 }, (_, index) => entry({
@@ -60,17 +59,16 @@ describe('local service endpoint facts', () => {
         expect(probes).toBe(6);
         const warm = await enricher.enrich({ ...snapshot, entries: [...entries].reverse() });
         expect(warm.entries.every(row => row.endpoint?.scheme === 'http')).toBe(true);
-        expect(probes).toBe(6);
+        expect(probes).toBe(12);
     });
 
     it.each([
         { replacement: 'another process', pid: 202, start: 1_000 },
         { replacement: 'the same PID with a new start time', pid: 101, start: 1_500 },
-    ])('reprobes a port taken over by $replacement before the cache expires', async ({ pid, start }) => {
+    ])('observes a port taken over by $replacement on the next Open', async ({ pid, start }) => {
         let scheme = 'http';
         const enricher = createLocalServiceEndpointEnricher({
-            now: () => 2_000, timeoutMs: 50, concurrency: 1,
-            successTtlMs: 1_000, failureTtlMs: 1_000,
+            now: () => 2_000,
             probe: async (input) => input.scheme === scheme,
         });
         const original = listenerEntry(101, 1_000);
@@ -84,8 +82,7 @@ describe('local service endpoint facts', () => {
     it('does not reuse a failed observation for a replacement listener during inventory enrichment', async () => {
         let ready = false;
         const enricher = createLocalServiceEndpointEnricher({
-            now: () => 2_000, timeoutMs: 50, concurrency: 1,
-            successTtlMs: 1_000, failureTtlMs: 1_000,
+            now: () => 2_000,
             probe: async () => ready,
         });
         const snapshot = {
@@ -101,13 +98,11 @@ describe('local service endpoint facts', () => {
         expect(replacement.entries[0]?.endpoint).toMatchObject({ scheme: 'https', probeState: 'ready' });
     });
 
-    it.each(['http', 'unknown'])('reuses a cached %s observation for an unchanged listener', async (scheme) => {
+    it.each(['http', 'unknown'])('observes current demand after an earlier %s observation for an unchanged listener', async (scheme) => {
         let now = 2_000;
         let observedScheme = scheme;
         const enricher = createLocalServiceEndpointEnricher({
-            now: () => now, timeoutMs: 50, concurrency: 1,
-            successTtlMs: 1_000, failureTtlMs: 1_000,
-            probe: async (input) => input.scheme === observedScheme,
+            now: () => now, probe: async (input) => input.scheme === observedScheme,
         });
         const snapshot = {
             v: 1 as const, machineId: 'machine-a', generatedAt: now, refreshState: 'idle' as const,
@@ -121,15 +116,14 @@ describe('local service endpoint facts', () => {
         const refreshed = await enricher.enrich({
             ...snapshot, generatedAt: now, entries: [listenerEntry(101, 1_000, now)],
         });
-        expect(refreshed.entries[0]?.endpoint).toEqual(first.entries[0]?.endpoint);
-        expect(refreshed.entries[0]?.endpoint?.probedAt).toBe(2_000);
+        expect(refreshed.entries[0]?.endpoint).toMatchObject({ scheme: 'https', probeState: 'ready', probedAt: now });
+        expect(await enricher.resolve(snapshot.entries[0]!)).toMatchObject({ scheme: 'https', probeState: 'ready', probedAt: now });
     });
 
     it('preserves internal listener inventory without probing a Happier control endpoint', async () => {
         const probes: number[] = [];
         const enricher = createLocalServiceEndpointEnricher({
-            now: () => 2_000, timeoutMs: 50, concurrency: 1,
-            successTtlMs: 1_000, failureTtlMs: 1_000,
+            now: () => 2_000,
             probe: async ({ port }) => { probes.push(port); return true; },
         });
         const internal = entry({ classification: { kind: 'happier', confidence: 'high', signals: ['owner:happier'] } });
@@ -167,14 +161,10 @@ describe('local service endpoint facts', () => {
         })).toBeNull();
     });
 
-    it('classifies HTTPS before HTTP using bounded loopback probes', async () => {
+    it('classifies HTTPS before HTTP using demanded loopback probes', async () => {
         const calls: string[] = [];
         const enricher = createLocalServiceEndpointEnricher({
             now: () => 2_000,
-            timeoutMs: 50,
-            concurrency: 1,
-            successTtlMs: 1_000,
-            failureTtlMs: 1_000,
             probe: async ({ scheme, host, port }) => {
                 calls.push(`${scheme}://${host}:${port}`);
                 return scheme === 'https';
@@ -203,10 +193,6 @@ describe('local service endpoint facts', () => {
     it('records unknown endpoint state when neither HTTP nor HTTPS responds', async () => {
         const enricher = createLocalServiceEndpointEnricher({
             now: () => 2_000,
-            timeoutMs: 50,
-            concurrency: 1,
-            successTtlMs: 1_000,
-            failureTtlMs: 1_000,
             probe: async () => false,
         });
 
@@ -233,10 +219,6 @@ describe('local service endpoint facts', () => {
         const probedHosts: string[] = [];
         const enricher = createLocalServiceEndpointEnricher({
             now: () => 2_000,
-            timeoutMs: 50,
-            concurrency: 1,
-            successTtlMs: 1_000,
-            failureTtlMs: 1_000,
             probe: async ({ host }) => {
                 probedHosts.push(host);
                 return true;

@@ -5,6 +5,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
+import type { AgentLaunchMaterialization, AgentLaunchMaterializationTarget } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import type { RequesterWorkAttributionV1 } from '../../lifecycle/requesterWorkAttribution';
 import type { ConnectedServiceChildSelection } from '../connectedServiceChildEnvironment';
 
@@ -31,6 +32,7 @@ export type ConnectedServicesRuntimeBindingsV1Like = Readonly<{
 }>;
 
 export type ConnectedServiceRuntimeTargetInput = Readonly<{
+  agentLaunchMaterials?: AgentLaunchMaterialization | null;
   pid: number;
   agentId?: CatalogAgentId | string | null;
   sessionId?: string | null;
@@ -49,6 +51,9 @@ export type ConnectedServiceRuntimeTargetInput = Readonly<{
 export type ConnectedServiceRuntimeTargetUpdate = ConnectedServiceRuntimeTargetInput;
 
 export type ConnectedServiceRuntimeTarget = Readonly<{
+  agentLaunchMaterials?: AgentLaunchMaterialization;
+  /** The incumbent lease's destination survives retiring its selected bytes. */
+  agentLaunchTarget?: AgentLaunchMaterializationTarget;
   pid: number;
   agentId: string | null;
   sessionId: string | null;

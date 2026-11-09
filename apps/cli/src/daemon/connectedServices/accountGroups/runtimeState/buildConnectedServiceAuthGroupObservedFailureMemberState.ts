@@ -37,19 +37,6 @@ function resolveUsageLimitRetryAtMs(input: Readonly<{
         : input.observedAtMs + cooldownMs;
 }
 
-export const CONNECTED_SERVICE_MODEL_ENTITLEMENT_COOLDOWN_MS =
-    24 * 60 * 60 * 1000;
-
-function resolvePlanInvalidRetryAtMs(
-    retryAtMs: number | null,
-    observedAtMs: number,
-): number {
-    return Math.max(
-        retryAtMs ?? 0,
-        observedAtMs + CONNECTED_SERVICE_MODEL_ENTITLEMENT_COOLDOWN_MS,
-    );
-}
-
 export function resolveConnectedServiceAuthGroupFailureRetryAtMs(
     input: Readonly<{
         retryAtMs?: number | null;
@@ -88,6 +75,10 @@ export function buildConnectedServiceAuthGroupObservedFailureMemberState(
             : {}),
     };
     const providerLimitId = input.providerLimitId?.trim();
+    delete state.lastFailureProviderLimitId;
+    if ((input.reason === 'usage_limit' || input.reason === 'rate_limit') && providerLimitId) {
+        state.lastFailureProviderLimitId = providerLimitId;
+    }
     if (
         input.limitCategory === 'plan_invalid'
         && input.quotaScope === 'model'
@@ -100,10 +91,8 @@ export function buildConnectedServiceAuthGroupObservedFailureMemberState(
                 ...readModelCooldowns(
                     input.existing.modelUnavailableUntilMsByModelId,
                 ),
-                [providerLimitId]: resolvePlanInvalidRetryAtMs(
-                    input.retryAtMs,
-                    input.observedAtMs,
-                ),
+                [providerLimitId]: resolveUsageLimitRetryAtMs(input)
+                    ?? input.observedAtMs,
             },
             ...(input.autoDisablePlanInvalidAccounts === true
                 ? { autoDisabledReason: 'model_not_entitled' as const }
@@ -116,10 +105,7 @@ export function buildConnectedServiceAuthGroupObservedFailureMemberState(
     ) {
         return {
             ...state,
-            planUnavailableUntilMs: resolvePlanInvalidRetryAtMs(
-                input.retryAtMs,
-                input.observedAtMs,
-            ),
+            planUnavailableUntilMs: resolveUsageLimitRetryAtMs(input),
         };
     }
     switch (input.reason) {
@@ -151,10 +137,7 @@ export function buildConnectedServiceAuthGroupObservedFailureMemberState(
         case 'plan':
             return {
                 ...state,
-                planUnavailableUntilMs: resolvePlanInvalidRetryAtMs(
-                    input.retryAtMs,
-                    input.observedAtMs,
-                ),
+                planUnavailableUntilMs: resolveUsageLimitRetryAtMs(input),
             };
         case 'validation':
             return {

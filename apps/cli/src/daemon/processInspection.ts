@@ -48,7 +48,9 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
   const normalizedName = normalizeProcessName(name);
   const isNodeHostProcess = normalizedName === 'node' || normalizedName === 'node.exe' || normalizedName === 'mainthread';
   const isCliSourceSnapshot = isCliSourceSnapshotCommand(normalizedCommand);
-  const isBuiltStackCli = /\/apps\/cli\/src\/index\.mjs(?=["']?(?:\s|$))/u.test(normalizedCommand);
+  // The canonical source registration imports tsx internally, so its name need
+  // not appear in argv. Recognize the CLI entrypoint for both source and builds.
+  const isWorkspaceCli = /\/apps\/cli\/src\/index\.(?:mjs|ts)(?=["']?(?:\s|$))/u.test(normalizedCommand);
 
   // NOTE: Be intentionally strict here. This classification is used for PID reuse safety
   // (reattach + stopSession). A false positive could cause us to adopt/kill a non-Happy process.
@@ -58,7 +60,7 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
         normalizedCommand.includes('dist/index.mjs') ||
         normalizedCommand.includes('package-dist/index.mjs') ||
         normalizedCommand.includes('bin/happier.mjs') ||
-        isBuiltStackCli ||
+        isWorkspaceCli ||
         // Some runtime handoff paths execute snapshot `src/index.ts` directly under `node`
         // (without the tsx import hook), so keep this as a first-class Happy process shape.
         isCliSourceSnapshot ||

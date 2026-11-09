@@ -11,6 +11,17 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
     encryption: null,
   };
 
+  // DAEMONRT-DEL HOLD: candidate RED only if the owner chooses empty custom text => disabled.
+  it.skip('does not send a standard prompt for an explicitly empty custom continuation', async () => {
+    const sendMessage = vi.fn();
+    const dispatcher = createConnectedServiceContinuationMessageDispatcher({ credentials, sendMessage });
+    expect(await dispatcher.enqueueInterruptedOriginContinuation({
+      sessionId: 'held-empty-custom', attemptId: 'held-attempt', interruptedOriginId: 'failed-turn',
+      interruption: 'provider_failed_turn', resumePromptMode: 'custom', customResumePrompt: '  ',
+    })).toEqual({ status: 'disabled' });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it('delegates continuation prompts to the durable session-message owner with the supplied local id', async () => {
     const sendMessage = vi.fn(async () => ({
       ok: true as const,
@@ -176,7 +187,7 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it('freezes the usage-limit recovery prompt before handing the row to Pending', async () => {
+  it('keeps account-switch continuation neutral before handing the row to Pending', async () => {
     const sendMessage = vi.fn(async (input: Readonly<{ localId?: string }>) => ({
       ok: true as const,
       sessionId: 'session-1',
@@ -202,7 +213,7 @@ describe('createConnectedServiceContinuationMessageDispatcher', () => {
     });
 
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Usage limits are lifted. Continue where you left off.',
+      message: 'Continue where you left off',
     }));
   });
 

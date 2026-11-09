@@ -7,7 +7,7 @@ import {
   type BrowserRecordingCdpScreencastSession,
   type BrowserRecordingCdpScreencastTransport,
 } from './cdpScreencast';
-import type { BrowserRecordingStreamFrameEncoder } from './stream';
+import type { BrowserRecordingStreamFrameEncoder } from '../../../recording/stream';
 
 function createRecording(
   overrides: Partial<BrowserRecordingSessionV1> = {},

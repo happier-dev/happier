@@ -22,13 +22,57 @@ vi.mock('@happier-dev/cli-common/process', async (importOriginal) => ({
   execFileWithDeadline: mocks.execFileWithDeadline,
 }));
 
-import { buildCgroupProcessLaunchSpec, buildCgroupSelfMigratingHappyCliLaunchSpec } from './buildCgroupSelfMigratingHappyCliLaunchSpec';
+import { buildCgroupProcessLaunchSpec, buildCgroupSelfMigratingHappyCliLaunchSpec, prepareCgroupProcessLaunchScope } from './buildCgroupSelfMigratingHappyCliLaunchSpec';
 
 describe('buildCgroupSelfMigratingHappyCliLaunchSpec', () => {
   beforeEach(() => {
     vi.mocked(getPriority).mockReturnValue(0);
   });
   let sandboxDir: string | null = null;
+
+  it('uses an available user manager for ordinary launches without a jobs governor or memory controller', async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), 'happier-ordinary-user-scope-'));
+    const systemdRunPath = join(sandboxDir, 'systemd-run');
+    const managerControlGroup = `/happier-no-memory-controller-${sandboxDir.split('/').at(-1)}`;
+    await expect(readFile(`/sys/fs/cgroup${managerControlGroup}/cgroup.controllers`, 'utf8'))
+      .rejects.toMatchObject({ code: 'ENOENT' });
+    await writeFile(systemdRunPath, '#!/bin/sh\n', { mode: 0o755 });
+    const execFile = vi.fn(async (command: string, args: readonly string[]) => ({
+      stdout: command === systemdRunPath ? '--expand-environment='
+        : args.includes('--property=ControlGroup') ? `ControlGroup=${managerControlGroup}\n`
+          : 'LoadState=loaded\nCPUWeight=[not set]\nIOWeight=[not set]\nMemoryHigh=infinity\n',
+      stderr: '',
+    }));
+    const scope = await prepareCgroupProcessLaunchScope({
+      environment: { PATH: sandboxDir, DBUS_SESSION_BUS_ADDRESS: 'unix:path=/fixture/bus' },
+      procfsRootDir: '/unused-procfs', systemdUserResourceGovernorExecFile: execFile,
+    });
+    expect(scope).toMatchObject({ kind: 'systemd', systemdRunPath });
+    if (!scope) throw new Error('Ordinary Session scope is required when the user manager is available');
+    const result = buildCgroupProcessLaunchSpec({ scope, unit: 'owned.scope', launchSpec: { filePath: '/target', args: [] } });
+    expect(result.args).toContain('--unit=owned.scope');
+    expect(result.args.join(' ')).not.toMatch(/MemoryHigh|MemoryMax|MemoryAccounting/);
+    // One launch-time manager observation; no poll or memory-controller requirement.
+    expect(execFile.mock.calls.filter(([, args]) => args.includes('--property=ControlGroup'))).toHaveLength(1);
+  });
+
+  it.each(['missing', '0::/\n', '2:memory:/legacy\n'])('refuses an explicit ceiling without a usable scope (%j), retaining optional unbounded fallback', async cgroup => {
+    sandboxDir = await mkdtemp(join(tmpdir(), 'happier-ceiling-no-scope-'));
+    const procfsRootDir = join(sandboxDir, 'proc');
+    if (cgroup !== 'missing') {
+      await mkdir(join(procfsRootDir, '111'), { recursive: true });
+      await writeFile(join(procfsRootDir, '111', 'cgroup'), cgroup);
+    }
+    const params = { daemonPid: 111, procfsRootDir, environment: { PATH: sandboxDir },
+      systemdUserResourceGovernorExecFile: async () => { throw new Error('No user manager'); } };
+    await expect(prepareCgroupProcessLaunchScope({ ...params, memoryHighBytes: 1073741824 }))
+      .rejects.toMatchObject({ code: 'SPAWN_VALIDATION_FAILED' });
+    await expect(buildCgroupSelfMigratingHappyCliLaunchSpec({ ...params,
+      launchSpec: { runtime: 'node', filePath: '/unused-target', args: [] }, memoryHighBytes: 1073741824 }))
+      .rejects.toMatchObject({ code: 'SPAWN_VALIDATION_FAILED' });
+    await expect(prepareCgroupProcessLaunchScope(params)).resolves.toBeNull();
+    await expect(prepareCgroupProcessLaunchScope({ ...params, memoryHighBytes: null })).resolves.toBeNull();
+  });
 
   it.each(['file', 'not writable'] as const)('runs the target without scope diagnostics when the optional cgroup parent is %s', async (state) => {
     sandboxDir = await mkdtemp(join(tmpdir(), 'happier-cgroup-unavailable-'));

@@ -64,6 +64,29 @@ describe('syncMemoryHintsForSessionsOnce', () => {
     },
   );
 
+  it('stops the pass when the hint Run cannot run, and defers the Session', async () => {
+    const dir = await mkdtemp(join(os.tmpdir(), 'happier-hint-run-refused-'));
+    const tier1 = openSummaryShardIndexDb({ dbPath: join(dir, 'memory.sqlite') });
+    try {
+      let attempts = 0;
+      const deferred: number[] = [];
+      await syncMemoryHintsForSessionsOnce({
+        sessionIds: ['session'], tier1, now: () => 10_000, onDeferred: atMs => deferred.push(atMs),
+        settings: { enabled: true, indexMode: 'hints' as const, backfillPolicy: 'all_history' as const,
+          hints: { enabled: true, updateMode: 'continuous' as const, idleDelayMs: 0, windowSizeMessages: 1, maxShardChars: 12_000,
+            maxSummaryChars: 500, maxKeywords: 5, maxEntities: 5, maxDecisions: 5, maxRunsPerHour: 999,
+            maxShardsPerSession: 250, failureBackoffBaseMs: 4_000, failureBackoffMaxMs: 16_000 } },
+        fetchRecentDecryptedRows: async () => [1, 2].map(seq => ({ seq, createdAtMs: 9_000, role: 'user' as const,
+          content: { type: 'text' as const, text: `window ${seq}` } })),
+        runSummarizer: async () => { attempts += 1; throw new Error('execution_run_target_unavailable'); },
+        commitArtifacts: async () => { throw new Error('No Run produced an artifact'); },
+      });
+      expect(attempts).toBe(1);
+      expect(deferred).toEqual([14_000]);
+      expect(tier1.getSessionCursors({ sessionId: 'session', nowMs: 10_000 }).lastHintedSeq).toBe(0);
+    } finally { tier1.close(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('rebuilds edited same-sequence summaries and keeps empty projections empty across repeated ticks', async () => {
     const { syncMemoryHintsForSessionsOnce } = await import('./syncMemoryHintsForSessionsOnce');
     const dir = await mkdtemp(join(os.tmpdir(), 'happier-memory-edited-hints-'));

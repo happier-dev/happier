@@ -651,6 +651,31 @@ describe('daemon local-services runtime action executor', () => {
         }))).rejects.toThrow('local_services_public_preview_exposure_unavailable');
     });
 
+    it('forwards an agent people share with its audience to the Home create route', async () => {
+        const mod = await import('./runtimeActionExecutor');
+        const audience = [{ kind: 'account' as const, accountId: 'account_b' }, { kind: 'team' as const, teamId: 'team_1' }];
+        const peopleExposure = { ...publicExposure, mode: 'people' as const, audience };
+        const publicPreviewRoutes = {
+            getStatus: vi.fn(), revokeExposure: vi.fn(), copyUrl: vi.fn(),
+            createExposure: vi.fn(async () => ({ protocolVersion: 1 as const, exposure: peopleExposure })),
+        };
+        const execute = mod.createLocalServicesDaemonRuntimeActionExecutor({
+            featureGate: enabledFeatureGate,
+            routes: { publicPreviewRoutes } as never,
+        });
+        const request = { machineId: 'machine_1', sessionId: 'session_1', previewId: 'preview_1', mode: 'people' as const,
+            audience, ttlMs: 600_000, confirmation: { acknowledged: true as const } };
+        await expect(execute(runtimeArgs({ actionId: 'localServices.publicPreview.create', input: request,
+            context: { surface: 'agent' } }))).resolves.toMatchObject({ exposure: { mode: 'people', audience } });
+        expect(publicPreviewRoutes.createExposure).toHaveBeenCalledWith(expect.objectContaining({ mode: 'people', audience }), undefined);
+
+        // A people share with nobody named is not a request the daemon forwards.
+        publicPreviewRoutes.createExposure.mockClear();
+        await expect(execute(runtimeArgs({ actionId: 'localServices.publicPreview.create',
+            input: { ...request, audience: [] }, context: { surface: 'agent' } }))).resolves.toMatchObject({ ok: false });
+        expect(publicPreviewRoutes.createExposure).not.toHaveBeenCalled();
+    });
+
     it('redacts public-preview status URLs for agent-surface egress', async () => {
         const mod = await import('./runtimeActionExecutor');
 

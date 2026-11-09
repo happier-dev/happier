@@ -23,7 +23,7 @@ const contributionRegistryMock = vi.hoisted(() => ({
 }));
 
 vi.mock(
-    '@/plugins/projection/registry/createResolvedContributionRegistry',
+    '@/plugins/projection/registry/builtIn/snapshot',
     () => ({
         getResolvedContributionRegistry:
             contributionRegistryMock.getResolvedContributionRegistry,

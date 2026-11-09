@@ -554,6 +554,10 @@ export function resolveSessionRuntimeSnapshot(
     explicitResumeId,
     retainedLiveRuntimeOptions,
   );
+  const profileId = params.incomingOptions.profileId
+    ?? (typeof params.persistedMetadata?.profileId === 'string' ? params.persistedMetadata.profileId : undefined)
+    ?? params.trackedSpawnOptions?.profileId;
+  if (profileId !== undefined) spawnOptions.profileId = profileId;
   // Only the tracked launch of this exact Session can supply missing facts.
   // Server metadata is never a producer of admitted requester attribution.
   const sessionId = readSessionId(params.incomingOptions);

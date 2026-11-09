@@ -7,7 +7,8 @@ import { createBrowserAutomationCdpAdapter } from '../automation/adapters/cdp';
 import { createControlAdapterAutomationTransport } from '../automation/adapters/controlBridge';
 import { createBrowserDaemonControlBroker } from './broker';
 import { createBrowserDaemonControlRoutes } from './routes';
-import { registerDaemonBrowserControlHandler } from '../../../rpc/handlers/daemonBrowserControl';
+import { registerDaemonBrowserControlHandler, registerDaemonBrowserViewWatchHandler } from '../../../rpc/handlers/daemonBrowserControl';
+import { createBrowserDaemonViewDiscovery } from './viewDiscovery';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { RpcHandler } from '../../../api/rpc/types';
 import { createMachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
@@ -53,7 +54,11 @@ describe('daemon browser view discovery', () => {
     const discover = () => routes.listViews('session');
     const handlers = new Map<string, RpcHandler>();
     registerDaemonBrowserControlHandler({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, { browserControl: routes });
+    registerDaemonBrowserViewWatchHandler({ registerHandler: (method, handler) => { handlers.set(method, handler); } },
+      createBrowserDaemonViewDiscovery({ broker, captureRegistry: registry }));
     try {
+      const rpcWatch = handlers.get(RPC_METHODS.DAEMON_BROWSER_VIEW_WATCH);
+      const change = rpcWatch?.({ machineId: 'machine', browserSessionId: 'session', knownViewIds: [] });
       const target = { kind: 'externalUrl' as const, targetId: 'external', url: 'https://example.test/' };
       await routes.dispatchCommand({ kind: 'openView', commandId: 'open', ...view, target, platform: 'web' });
       expect(discover()).toMatchObject([{ ...view, sourceId: browserViewKey(view), target,
@@ -69,6 +74,7 @@ describe('daemon browser view discovery', () => {
       expect(await rpcDiscover?.({ machineId: 'machine', browserSessionId: 'session' })).toMatchObject({
         protocolVersion: 1, views: [{ ...view, sourceId: browserViewKey(view) }],
       });
+      expect(await change).toEqual(await rpcDiscover?.({ machineId: 'machine', browserSessionId: 'session' }));
       expect(JSON.stringify(discover())).not.toContain('private-cdp');
       const focus = { kind: 'focusView' as const, commandId: 'focus-held', ...view };
       blockFocus = true;
@@ -102,6 +108,8 @@ describe('daemon browser view discovery', () => {
         { signal, callerAuthority: 'present_user' })).toMatchObject({ views: [{ ...view }] });
       expect.soft(discover()).toMatchObject([{ ...view }]);
       expect.soft(JSON.stringify(discover())).not.toContain(material);
+      expect.soft(JSON.stringify(await rpcWatch?.({ machineId: 'machine', browserSessionId: 'session', knownViewIds: [] })))
+        .not.toContain(material);
       const rpcDispatch = handlers.get(RPC_METHODS.DAEMON_BROWSER_CONTROL_DISPATCH);
       // The authenticated Home supplies authority; the handler never promotes an omitted caller.
       const humanFocus = await rpcDispatch?.({ machineId: 'machine', command: focus },

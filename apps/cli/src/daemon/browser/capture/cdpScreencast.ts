@@ -87,14 +87,14 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
             ...(viewport ? { maxWidth: Math.max(1, Math.round(viewport.width * scale)),
                 maxHeight: Math.max(1, Math.round(viewport.height * scale)) } : {}) };
     }
-    function updateEncoding(capture: Capture, view: BrowserCaptureView): void {
+    function updateEncoding(capture: Capture, view: BrowserCaptureView, refreshFrame = false): void {
         // CDP has no in-place parameter update. Serialize stop/start with final stop;
         // read the geometry owner's latest applied value when this change takes effect.
         capture.updating = capture.updating.then(async () => {
             if (capture.closed || !await capture.started) return;
             const next = encodingFor(capture, view);
             const previous = capture.encoding;
-            if (next.quality === previous.quality && next.maxWidth === previous.maxWidth && next.maxHeight === previous.maxHeight) return;
+            if (!refreshFrame && next.quality === previous.quality && next.maxWidth === previous.maxWidth && next.maxHeight === previous.maxHeight) return;
             await dispatch({ ...capture.handle, method: 'Page.stopScreencast' });
             if (capture.closed) return;
             capture.encoding = next;
@@ -266,7 +266,9 @@ export function createBrowserCdpScreencastProducer(input: Readonly<{
             } else {
                 capture.consumers.add(consumer);
                 if (consumer.purpose !== 'humanViewer') clearMotion(capture);
-                updateEncoding(capture, consumer.view);
+                // A static page may never repaint after admission. Restart through the same
+                // owner to obtain a fresh frame; cached viewer pixels are not observation evidence.
+                updateEncoding(capture, consumer.view, consumer.purpose !== 'humanViewer' && capture.lastFrame !== null);
                 // Chromium only emits on repaint. A newly admitted human viewer needs the
                 // current picture even while another viewer/recording keeps this capture alive.
                 // Observation subscribers still wait for fresh, non-confidential evidence.

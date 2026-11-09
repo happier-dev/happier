@@ -39,11 +39,6 @@ async function createHarness() {
     directories,
     connection,
     onConnectionStateChange: connection.subscribe,
-    fetchInventoryPage: async () => ({
-      sessions: (await directories.listRecords()).flatMap((record) => record.sessionId ? [{ id: record.sessionId }] : []),
-      hasNext: false,
-      nextCursor: null,
-    }),
     deleted: createSource<{ sessionId: string }>(),
     reset: createSource<{ cursor: number }>(),
   };
@@ -79,13 +74,12 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
     dispose();
   });
 
-  it('reconciles only after complete active and archived inventory and keeps archived folders', async () => {
+  it('retains folders omitted from the daemon Account inventory at startup and access reset', async () => {
     const harness = await createHarness();
     for (const sessionId of ['active', 'archived', 'gone']) {
       const allocation = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: `creation:${sessionId}` });
       await harness.directories.bind({ allocationId: allocation.allocationId, sessionId });
     }
-    let inventory: 'complete' | 'partial' | 'failed' = 'partial';
     const stopped: string[] = [];
     const dispose = await subscribeManagedSessionDirectoryRemoval({
       ...harness,
@@ -93,32 +87,24 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
       stopSession: async (sessionId) => { stopped.push(sessionId); return { status: 'stopped' }; },
       onSessionDeletedChange: harness.deleted.subscribe,
       onSessionAccessReset: harness.reset.subscribe,
-      fetchInventoryPage: async ({ scope, cursor }) => {
-        if (inventory === 'failed' && scope === 'archived') throw new Error('network_unavailable');
-        if (scope === 'active') return { sessions: [{ id: 'active' }], hasNext: false, nextCursor: null };
-        if (!cursor) return { sessions: [], hasNext: true, nextCursor: inventory === 'partial' ? null : 'archived-2' };
-        return { sessions: [{ id: 'archived' }], hasNext: false, nextCursor: null };
-      },
     });
 
     await expect(harness.reset.emit({ cursor: 1 })).resolves.toBeUndefined();
     expect((await harness.directories.listRecords()).map((record) => record.sessionId).sort()).toEqual(['active', 'archived', 'gone']);
-    inventory = 'failed';
     await expect(harness.reset.emit({ cursor: 2 })).resolves.toBeUndefined();
     expect(stopped).toEqual([]);
-    inventory = 'complete';
     await harness.reset.emit({ cursor: 3 });
-    expect(stopped).toEqual(['gone']);
-    expect((await harness.directories.listRecords()).map((record) => record.sessionId).sort()).toEqual(['active', 'archived']);
+    expect(stopped).toEqual([]);
+    expect((await harness.directories.listRecords()).map((record) => record.sessionId).sort()).toEqual(['active', 'archived', 'gone']);
     dispose();
     await harness.deleted.emit({ sessionId: 'active' });
-    expect((await harness.directories.listRecords()).map((record) => record.sessionId).sort()).toEqual(['active', 'archived']);
+    expect((await harness.directories.listRecords()).map((record) => record.sessionId).sort()).toEqual(['active', 'archived', 'gone']);
   });
 
-  it('resolves crash-before-bind records at startup and removes only creations with no row', async () => {
+  it('binds visible crash-before-bind records and retains creations outside the daemon Account', async () => {
     const harness = await createHarness();
     const found = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: 'creation:found' });
-    const deleted = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: 'creation:deleted' });
+    const invisible = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: 'creation:invisible' });
     const dispose = await subscribeManagedSessionDirectoryRemoval({
       ...harness,
       token: 'token',
@@ -131,11 +117,12 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
       }),
     });
 
-    expect(await harness.directories.listRecords()).toEqual([
+    expect(await harness.directories.listRecords()).toEqual(expect.arrayContaining([
       expect.objectContaining({ allocationId: found.allocationId, sessionId: 'found-session' }),
-    ]);
+      expect.objectContaining({ allocationId: invisible.allocationId, sessionId: null }),
+    ]));
     await expect(access(found.directory)).resolves.toBeUndefined();
-    await expect(access(deleted.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(invisible.directory)).resolves.toBeUndefined();
     dispose();
   });
 
@@ -228,7 +215,7 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
       },
     });
     await expect(access(failed.directory)).resolves.toBeUndefined();
-    await expect(access(gone.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(gone.directory)).resolves.toBeUndefined();
     await harness.deleted.emit({ sessionId: 'retained-session' });
     await expect(access(retained.directory)).rejects.toMatchObject({ code: 'ENOENT' });
     dispose();
@@ -254,9 +241,8 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
     dispose();
   });
 
-  it.each(['bootstrap', 'connect', 'reconnect'] as const)(
-    'recovers missed deletion on healthy %s without removing active, archived or unknown allocations',
-    async (recovery) => {
+  it('retains files after a failed deletion until the deletion cursor redelivers',
+    async () => {
       const harness = await createHarness();
       const allocations = new Map<string, string>();
       for (const sessionId of ['active', 'archived', 'gone', 'unknown']) {
@@ -265,7 +251,6 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
         await writeFile(join(allocation.directory, 'notes.md'), sessionId);
         allocations.set(sessionId, allocation.directory);
       }
-      let inventoryAvailable = false;
       const stopped: string[] = [];
       const params = {
         ...harness,
@@ -274,10 +259,6 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
         onSessionDeletedChange: harness.deleted.subscribe,
         onSessionAccessReset: harness.reset.subscribe,
         lookupCreationSessions: async () => ({ state: 'unavailable' as const }),
-        fetchInventoryPage: async ({ scope }: { scope: 'active' | 'archived' }) => {
-          if (!inventoryAvailable) throw new Error('network_unavailable');
-          return { sessions: [{ id: scope }], hasNext: false, nextCursor: null };
-        },
       };
       let dispose = await subscribeManagedSessionDirectoryRemoval(params);
       const goneDirectory = allocations.get('gone')!;
@@ -286,24 +267,17 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
       // A real filesystem enumeration failure prevents writing pendingRemoval.
       await rename(owners, unavailableOwners);
       await writeFile(owners, 'temporarily unavailable');
-      await expect(harness.deleted.emit({ sessionId: 'gone' })).resolves.toBeUndefined();
+      await expect(harness.deleted.emit({ sessionId: 'gone' })).rejects.toThrow();
       await rm(owners);
       await rename(unavailableOwners, owners);
       expect((await harness.directories.listRecords()).find((record) => record.sessionId === 'gone')?.pendingRemoval).toBeUndefined();
       await expect(access(goneDirectory)).resolves.toBeUndefined();
 
-      if (recovery === 'reconnect') {
-        await harness.connection.emit({ phase: 'online' });
-        await expect(access(goneDirectory)).resolves.toBeUndefined();
-        await harness.connection.emit({ phase: 'offline' });
-      }
-      inventoryAvailable = true;
-      if (recovery === 'bootstrap') {
-        dispose();
-        dispose = await subscribeManagedSessionDirectoryRemoval(params);
-      } else {
-        await harness.connection.emit({ phase: 'online' });
-      }
+      dispose();
+      dispose = await subscribeManagedSessionDirectoryRemoval(params);
+      await harness.reset.emit({ cursor: 1 });
+      await expect(access(goneDirectory)).resolves.toBeUndefined();
+      await harness.deleted.emit({ sessionId: 'gone' });
       expect(new Set(stopped)).toEqual(new Set(['gone']));
       await expect(access(goneDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
       for (const retained of ['active', 'archived', 'unknown']) {
@@ -315,4 +289,23 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
       expect(new Set(stopped)).toEqual(new Set(['gone']));
     },
   );
+
+  it('retains folders on healthy reconnects until a deletion arrives', async () => {
+    const harness = await createHarness();
+    const allocation = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: 'creation:retained' });
+    await harness.directories.bind({ allocationId: allocation.allocationId, sessionId: 'retained' });
+    const dispose = await subscribeManagedSessionDirectoryRemoval({
+      ...harness, token: 'token', stopSession: async () => ({ status: 'stopped' }),
+      onSessionDeletedChange: harness.deleted.subscribe,
+      onSessionAccessReset: harness.reset.subscribe,
+    });
+    for (let i = 0; i < 3; i += 1) {
+      await harness.connection.emit({ phase: 'offline' });
+      await harness.connection.emit({ phase: 'online' });
+    }
+    await expect(access(allocation.directory)).resolves.toBeUndefined();
+    await harness.deleted.emit({ sessionId: 'retained' });
+    await expect(access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    dispose();
+  });
 });

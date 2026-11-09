@@ -15,7 +15,7 @@ import type { createLeftBehindPass } from '../leftBehind/leftBehindPass';
 import { equalProcessStart, processOwnerKey, type HappierProcessRoot, type ProcessOwnerRef } from '../ownership/types';
 import { createProcessMetrics } from './processMetrics';
 import { decodeProcessRef, processRef } from './processRef';
-import { projectMachineProcesses, resolveMachineProcessesUnavailableReason, type ProcessRequester, type ProcessRequesterIdentity, type ProcessesProjectionInput, type ProcessesProjectionOptions, type ProcessOwnershipRead } from './projectMachineProcesses';
+import { processEnvironmentReadKey, projectMachineProcesses, resolveMachineProcessesUnavailableReason, type ProcessEnvironmentReadTarget, type ProcessRequester, type ProcessRequesterIdentity, type ProcessesProjectionInput, type ProcessesProjectionOptions, type ProcessOwnershipRead } from './projectMachineProcesses';
 
 export type MachineProcessesViewOptions = Readonly<{
     processOwnershipRuntime: ReturnType<typeof createProcessOwnershipRuntime>;
@@ -85,13 +85,26 @@ export function createMachineProcessesView(options: MachineProcessesViewOptions)
             return await ownershipCapture;
         } finally { captureDemands.delete(demanded); }
     };
-    const project = (read: ProcessOwnershipRead, request: ProcessesProjectionInput & Readonly<{ historySince?: number }>, requester: ProcessRequester, watched = false,
-        facts: Readonly<{ ports?: NormalizedLocalServiceInventorySnapshot; identities?: typeof requesterIdentities }> = {}) =>
-        projectMachineProcesses(read, request, requester, { ...options, allProcessesVisible: options.allProcessesVisible(),
+    const project = async (read: ProcessOwnershipRead, request: ProcessesProjectionInput & Readonly<{ historySince?: number }>, requester: ProcessRequester, watched = false,
+        facts: Readonly<{ ports?: NormalizedLocalServiceInventorySnapshot; identities?: typeof requesterIdentities }> = {}) => {
+        const environments = new Map<string, ProcessEnvironmentReadTarget>();
+        if (read.status === 'ok' && requester.canReadEnvironment) for (const { owner } of read.rows) {
+            if (owner?.kind !== 'container' || owner.machineId !== request.machineId || owner.environmentId === undefined) continue;
+            const target = { serverId: owner.serverId, environmentId: owner.environmentId };
+            environments.set(processEnvironmentReadKey(target), target);
+        }
+        // Admission belongs to this disclosure, never to retained census or watch state.
+        // Deduplicate by actual Home/Environment rather than by process member.
+        const readableEnvironments = new Set((await Promise.all([...environments].map(async ([key, target]) => {
+            try { return await requester.canReadEnvironment!(target) ? key : null; }
+            catch { return null; }
+        }))).filter((key): key is string => key !== null));
+        return projectMachineProcesses(read, request, requester, { ...options, readableEnvironments, allProcessesVisible: options.allProcessesVisible(),
             confirmed: options.leftBehind.confirmed(), ports: facts.ports ?? ports, bootTimeMs, requesterIdentities: facts.identities ?? requesterIdentities,
             ...(watched ? { metrics: read === latestRead ? currentMetrics
                 : new Map([...currentMetrics].filter(([, metric]) => !metric.identityUnavailable)),
                 ...(request.view === 'tree' ? { history: (ref: string) => metrics.history(request.historySince, [ref])[ref] } : {}), capturedAtMs: latestMetricAtMs } : {}) });
+    };
     let currentMetrics: ReadonlyMap<number, import('./processMetrics').ProcessMetrics> = new Map();
     const notify = () => { for (const listener of listeners) listener(); };
     const discover = () => {
@@ -227,12 +240,15 @@ export function createMachineProcessesView(options: MachineProcessesViewOptions)
         const observedPorts = options.localServiceRoutes?.readCurrentSnapshot();
         const { read, identities } = await capture('fresh');
         if (read.status !== 'ok') throw new Error(`Process evidence unavailable: ${read.reason}`);
-        const answer = project(read, { machineId: request.machineId, scope: scope(requester), view: 'tree', ...(detailToken ? { detailToken } : {}) }, requester, true, { identities, ports: observedPorts });
+        const answer = await project(read, { machineId: request.machineId, scope: scope(requester), view: 'tree', ...(detailToken ? { detailToken } : {}) }, requester, true, { identities, ports: observedPorts });
         if (answer.state === 'unavailable') throw new Error(`Process evidence unavailable: ${answer.reason}`);
         return answer;
     }
-    function visibleRows(answer: ReturnType<typeof project>): Array<ProcessRowV1 | NotHappierRowV1> {
-        return [...answer.owners.flatMap(owner => owner.members), ...answer.leftBehind, ...(answer.notHappier?.flatMap(group => group.members) ?? [])];
+    function visibleRows(answer: Awaited<ReturnType<typeof project>>): Array<ProcessRowV1 | NotHappierRowV1> {
+        // Get and check carry owner separately; keep their shared process row
+        // within its strict schema rather than leaking Left-behind's envelope.
+        const leftBehind = answer.leftBehind.map(({ owner: _owner, confirmedAtMs: _confirmedAtMs, ...row }) => row);
+        return [...answer.owners.flatMap(owner => owner.members), ...leftBehind, ...(answer.notHappier?.flatMap(group => group.members) ?? [])];
     }
     return {
         list,
@@ -245,7 +261,7 @@ export function createMachineProcessesView(options: MachineProcessesViewOptions)
                 latestRead = read;
                 latestMetricAtMs = read.status === 'ok' ? read.snapshot.capturedAtMs : undefined;
                 ports = options.localServiceRoutes?.readCurrentSnapshot();
-                return { changed: true, answer: project(read, request, requester, false, { identities, ports }) };
+                return { changed: true, answer: await project(read, request, requester, false, { identities, ports }) };
             }
             let ownershipAtArm = latestRead;
             let since = request.since;
@@ -281,7 +297,7 @@ export function createMachineProcessesView(options: MachineProcessesViewOptions)
                 const answer = await parkWatch({ isNewer: newer,
                     subscribe: listener => { requesterIdentities = identities; return subscribe(listener, request.scope); }, read,
                     signal: controller.signal });
-                return answer.changed ? { changed: true, answer: answer.snapshot } : { changed: false };
+                return answer.changed ? { changed: true, answer: await answer.snapshot } : { changed: false };
             } finally { watches.delete(controller); signal?.removeEventListener('abort', abort); }
         },
         async get(request: MachineProcessesGetInputV1, requester: ProcessRequester): Promise<MachineProcessesGetResultV1> {
@@ -301,7 +317,7 @@ export function createMachineProcessesView(options: MachineProcessesViewOptions)
                 if (row.ref !== ref) return { ref, present: true, identityEqual: false };
                 const owner = answer.owners.find(candidate => candidate.members.some(member => member.ref === ref))?.owner
                     ?? answer.leftBehind.find(candidate => candidate.ref === ref)?.owner;
-                return { ref, present: true, identityEqual: true, level: 'level' in row ? row.level : 'not_happier', owner: owner ?? null, memoryBytes: row.memoryBytes };
+                return { ref, present: true, identityEqual: true, level: 'level' in row ? row.level : 'not_happier', owner: owner ?? null, memoryBytes: row.memoryBytes, row };
             }) };
         },
         dispose() { disposed = true; for (const controller of watches) controller.abort();

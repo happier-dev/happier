@@ -132,6 +132,9 @@ export type NativeComposeEnvironmentProjectInput = Readonly<{
     settleNative(): Promise<void>;
 }>;
 export type NativeComposeEnvironmentProject = Readonly<{
+    /** Lend the reviewed project's native engine through its existing Exec owner. */
+    readNativeDocker(input: Readonly<{ render: NativeComposeProjectRender; signal?: AbortSignal }>):
+        Promise<import('@/plugins/runtime/invocation/services/managedProcessSupervisor').ProjectNativeDockerPort & Readonly<{ dispose(): Promise<void> }>>;
     observeActivated(input: Readonly<{ render: NativeComposeProjectRender; signal?: AbortSignal;
         /** Exact losing-generation custody only; returned health is unverified. */
         purpose?: 'retire' }>): Promise<NativeComposeObservedActivation>;
@@ -1192,6 +1195,26 @@ function createEnvironmentProject(input: NativeComposeEnvironmentProjectInput,
         return { current, capture, identity, authority };
     };
     const owner: NativeComposeEnvironmentProject = {
+        async readNativeDocker(request) {
+            if (!renderedCaptures.has(request.render)) return nativeRefusal('deployment_generation_unavailable');
+            const launch = await authorize(['info', '--format', '{{json .}}'], request.signal);
+            try {
+                const tuple = authorizedPrefixes.get(launch) ?? nativeRefusal('native_service_admission_required');
+                if (!launch.cwd) return nativeRefusal('native_compose_cwd_unavailable');
+                const engine = await readNativeComposeEngine({ io: input.io, command: launch.command,
+                    prefix: tuple.prefix, cwd: launch.cwd, env: tuple.env, signal: request.signal });
+                if (engine.id !== request.render.engineId) return nativeRefusal('deployment_generation_unavailable');
+            } catch (error) { await launch.release(); throw error; }
+            const tuple = authorizedPrefixes.get(launch)!;
+            const cwd = launch.cwd!;
+            return { engineId: request.render.engineId, dispose: () => launch.release(),
+                run: async (args, signal, inputBytes) => {
+                    const effectiveSignal = signal ?? request.signal;
+                    assertOpen(effectiveSignal);
+                    return input.io.run({ command: launch.command, args: [...tuple.prefix, ...args], cwd, env: tuple.env,
+                        ...(effectiveSignal ? { signal: effectiveSignal } : {}), ...(inputBytes ? { stdin: inputBytes } : {}) });
+                } };
+        },
         async observeActivated(request) {
             const capture = renderedCaptures.get(request.render);
             if (input.phase === 'build' || !capture) return { kind: 'unknown', reason: 'deployment_generation_unavailable' };

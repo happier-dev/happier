@@ -71,7 +71,7 @@ type CoordinatorInput = Readonly<{
   }>, signal: AbortSignal) => Promise<RpcResult>;
   abort: (request: Readonly<{ machineId: string; handoffId: string; reason: string }>) => Promise<unknown>;
   publishOwnerUpdate: (update: ActionOperationOwnerUpdate) => void;
-  wait?: (signal: AbortSignal) => Promise<void>;
+  wait?: (signal: AbortSignal, observedStatus: SessionHandoffStatus) => Promise<void>;
   workspaceSyncAdapter: WorkspaceSyncHandoffAdapter;
   callWorkspaceSourcePhase?: PrepareWorkspaceSyncHandoffInput['callWorkspaceSourcePhase'];
 }>;
@@ -227,6 +227,7 @@ async function abortBoth(
 }
 
 function defaultWait(signal: AbortSignal): Promise<void> {
+  // Remote and signed RPCs expose status snapshots, without the local writer's wakeup channel.
   return new Promise((resolve, reject) => {
     const finish = () => {
       signal.removeEventListener('abort', onAbort);
@@ -506,18 +507,6 @@ export async function coordinateTrackedSessionHandoff(
         label: prepared.data.status.phase,
       } });
     }
-    const resultRaw = await input.getPreparedTargetResult({ handoffId }, input.signal);
-    const resultFailure = readFailure(resultRaw, 'session_handoff_prepare_failed');
-    if (resultFailure && !isPrepareObservationPending(resultFailure.errorCode)) {
-      await abortWorkspace();
-      await abortBoth(input, source.sourceMachineId, handoffId, resultFailure.errorCode);
-      return withWorkspaceAbortFailure(resultFailure);
-    }
-    const result = SessionHandoffPrepareTargetResultGetSuccessResponseSchema.safeParse(resultRaw);
-    if (result.success) {
-      prepared = SessionHandoffPrepareTargetResponseSchema.safeParse(result.data);
-      break;
-    }
     const targetStatus = readTargetStatus(
       await input.getTargetStatus({ handoffId }, input.signal),
     );
@@ -528,9 +517,23 @@ export async function coordinateTrackedSessionHandoff(
     }
     const terminalFailure = readTerminalPrepareStatusFailure(targetStatus.status);
     if (terminalFailure) {
+      const settledResult = await input.getPreparedTargetResult({ handoffId }, input.signal);
+      const failure = readFailure(settledResult, terminalFailure.errorCode) ?? terminalFailure;
       await abortWorkspace();
-      await abortBoth(input, source.sourceMachineId, handoffId, terminalFailure.errorCode);
-      return withWorkspaceAbortFailure(terminalFailure);
+      await abortBoth(input, source.sourceMachineId, handoffId, failure.errorCode);
+      return withWorkspaceAbortFailure(failure);
+    }
+    if (targetStatus.status.status === 'ready_for_cutover') {
+      const resultRaw = await input.getPreparedTargetResult({ handoffId }, input.signal);
+      const resultFailure = readFailure(resultRaw, 'session_handoff_prepare_failed');
+      if (resultFailure) {
+        await abortWorkspace();
+        await abortBoth(input, source.sourceMachineId, handoffId, resultFailure.errorCode);
+        return withWorkspaceAbortFailure(resultFailure);
+      }
+      const result = SessionHandoffPrepareTargetResultGetSuccessResponseSchema.safeParse(resultRaw);
+      prepared = SessionHandoffPrepareTargetResponseSchema.safeParse(result.success ? result.data : resultRaw);
+      break;
     }
     if (!publishTargetStatusProgress(input.publishOwnerUpdate, targetStatus.status)) {
       input.publishOwnerUpdate({
@@ -539,7 +542,7 @@ export async function coordinateTrackedSessionHandoff(
           : { phase: 'preparing_target', label: targetStatus.status.phase },
       });
     }
-    await wait(input.signal);
+    await wait(input.signal, targetStatus.status);
   }
   if (!prepared.success || !prepared.data.resume || !prepared.data.remoteSessionId || !prepared.data.directSource) {
     await abortWorkspace();

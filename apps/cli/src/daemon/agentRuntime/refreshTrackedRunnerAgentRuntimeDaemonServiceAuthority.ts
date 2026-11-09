@@ -581,6 +581,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
         === published.capabilityDigest
     ) {
       delete input.tracked.agentRuntimeDaemonServiceCapabilityHash;
+      delete input.tracked.agentRuntimeDaemonServiceNativeRealtimeAdmission;
       clearTrackedRunnerAgentDaemonServiceAdmission(input.tracked);
     }
     if (adoptedManagedProviderAuthority && !retainedProviderCurrent) {

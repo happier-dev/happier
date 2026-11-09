@@ -22,17 +22,20 @@ function parseLinuxPasswdHomeDir(passwdDatabase: string, systemUser: string): st
   return null;
 }
 
-function resolveLinuxSystemUserHomeDir(systemUser: string): string {
+function resolveLinuxSystemUserHomeDir(systemUser: string, deadlineMs?: number): string {
   const normalizedSystemUser = String(systemUser ?? '').trim();
   if (!normalizedSystemUser) {
     throw new Error('systemUser is required');
   }
 
   try {
+    const timeout = deadlineMs === undefined ? undefined : deadlineMs - Date.now();
+    if (timeout !== undefined && timeout <= 0) throw new Error('System user lookup deadline elapsed');
     const result = spawnSync('getent', ['passwd', normalizedSystemUser], {
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf8',
       env: process.env,
+      ...(timeout === undefined ? {} : { timeout }),
     });
     if ((result.status ?? 1) === 0) {
       const homeDir = parseLinuxPasswdHomeDir(String(result.stdout ?? ''), normalizedSystemUser);
@@ -56,9 +59,10 @@ export function resolveLinuxSystemUserPaths(params: Readonly<{
   systemUser: string;
   userHomeDirOverride?: string | null;
   happierHomeDirOverride?: string | null;
+  deadlineMs?: number;
 }>): LinuxSystemUserPaths {
   const userHomeDirOverride = String(params.userHomeDirOverride ?? '').trim();
-  const userHomeDir = userHomeDirOverride || resolveLinuxSystemUserHomeDir(params.systemUser);
+  const userHomeDir = userHomeDirOverride || resolveLinuxSystemUserHomeDir(params.systemUser, params.deadlineMs);
   const happierHomeDirOverride = String(params.happierHomeDirOverride ?? '').trim();
 
   return {

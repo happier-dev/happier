@@ -18,20 +18,20 @@ function trackedSessionMatchesExistingSessionId(trackedSession: TrackedSession, 
   return existingSessionId === sessionId;
 }
 
-function collectStopRequestedMatchingPids(params: Readonly<{
+function collectStopRequestedMatchingRunners(params: Readonly<{
   sessionId: string;
   pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
-}>): number[] {
-  const pids: number[] = [];
+}>): Map<number, TrackedSession> {
+  const runners = new Map<number, TrackedSession>();
   for (const [pid, trackedSession] of params.pidToTrackedSession.entries()) {
     if (!trackedSessionMatchesExistingSessionId(trackedSession, params.sessionId)) {
       continue;
     }
     if (typeof trackedSession.stopRequestedAtMs === 'number' && Number.isFinite(trackedSession.stopRequestedAtMs)) {
-      pids.push(pid);
+      runners.set(pid, trackedSession);
     }
   }
-  return pids;
+  return runners;
 }
 
 export async function waitForExistingSessionExitIfStopRequested(params: Readonly<{
@@ -45,18 +45,26 @@ export async function waitForExistingSessionExitIfStopRequested(params: Readonly
   const normalizedSessionId = String(params.sessionId ?? '').trim();
   if (!normalizedSessionId) return;
 
-  const initialMatchingPids = collectStopRequestedMatchingPids({
+  const initialMatchingRunners = collectStopRequestedMatchingRunners({
     sessionId: normalizedSessionId,
     pidToTrackedSession: params.pidToTrackedSession,
   });
-  if (initialMatchingPids.length === 0) return;
+  if (initialMatchingRunners.size === 0) return;
+  const onExitObserved = params.onExitObserved;
 
   // Serviceability is not death proof: paused or identity-unknown runners must retain custody.
   await waitForTrackedRunnerProcessesExit({
-    runners: initialMatchingPids.map((pid) => ({ pid })),
+    runners: Array.from(initialMatchingRunners, ([pid, tracked]) => ({
+      pid,
+      childProcess: tracked.childProcess,
+    })),
     timeoutMs: params.timeoutMs,
     pollIntervalMs: params.pollIntervalMs,
     readRunState: params.readRunState,
-    onExitObserved: params.onExitObserved,
+    onExitObserved: onExitObserved ? async (pid, exit) => {
+      // A captured child's exit cannot retire a replacement at the same PID.
+      if (params.pidToTrackedSession.get(pid) !== initialMatchingRunners.get(pid)) return;
+      await onExitObserved(pid, exit);
+    } : undefined,
   });
 }

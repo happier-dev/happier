@@ -23,6 +23,7 @@ import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAut
 import { buildQualifiedConnectedAccountAuthGroupSwitchState } from './accountGroups/switching/buildConnectedServiceAuthGroupSwitchState';
 import { createStablePluginConnectedAccountsHost } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import { resolveAgentSpawnPurposeDeclarations } from './requestAuth/agentPurposeDeclarations';
+import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { AgentRuntimeContext, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -158,8 +159,12 @@ describe('qualified first-party spawn credential authority', () => {
   it.each([
     { agentId: 'claude', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, authenticationModeId: 'oauth' } as const,
     { agentId: 'codex', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, authenticationModeId: 'device' } as const,
-  ].flatMap(provider => (['healthy', 'expired', 'rejected', 'stored_rejected', 'stored_rejected_refresh_window'] as const).map(state => ({ ...provider, state }))))('handles $state $agentId credentials through real spawn preflight', async ({ agentId, service, authenticationModeId, state }) => {
-    const account = { service, accountId: `${state}-${agentId}` };
+    { agentId: 'ohMyPi', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, authenticationModeId: 'device' } as const,
+    { agentId: 'ohMyPi', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, authenticationModeId: 'oauth' } as const,
+  ].flatMap(provider => (provider.agentId === 'ohMyPi' ? ['healthy'] as const
+    : ['healthy', 'expired', 'rejected', 'stored_rejected', 'stored_rejected_refresh_window'] as const).map(state => ({ ...provider, state }))))('handles $state $agentId credentials through real spawn preflight', async ({ agentId, service, authenticationModeId, state }) => {
+    if (agentId === 'ohMyPi' && process.platform === 'win32') return;
+    const account = { service, accountId: agentId === 'ohMyPi' ? `${state}-${agentId}-${service.localId}` : `${state}-${agentId}` };
     const serviceId = `${service.pluginId}/${service.localId}`;
     const rejected = state === 'rejected' || state === 'stored_rejected' || state === 'stored_rejected_refresh_window';
     const content = sealQualifiedConnectedAccountContentEnvelope({
@@ -244,6 +249,34 @@ describe('qualified first-party spawn credential authority', () => {
         result = await admission;
         expect(result?.sessionConnectedAccounts).toBeDefined();
         expect(JSON.parse(result!.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON!)[0].credentialRevision).toBe(snapshot.credentialRevision);
+        if (agentId === 'ohMyPi') {
+          // The native process boundary reproduces r1109c: unprepared qualified
+          // credentials produce an empty chat catalog, despite successful install.
+          const key = service.pluginId === 'happier.agent.codex'
+            ? 'OPENAI_CODEX_OAUTH_TOKEN' : 'ANTHROPIC_OAUTH_TOKEN';
+          const command = writeExecutableShimSync({ dir: directory, fileName: `omp-${service.localId}`,
+            contents: `#!/bin/sh
+if [ "$${key}" = 'fixture-access' ]; then
+  printf '%s\n' '{"models":[{"provider":"fixture","id":"chat-model","kind":"chat"}]}'
+else
+  printf '%s\n' '{"models":[]}'
+fi
+` });
+          const withProfile = service.pluginId === 'happier.agent.claude';
+          const launchInput = {
+            happyHomeDir: directory, pluginRuntimeRegistry: lease.registry, resolvedAgentId: agentId,
+            options: { directory, ...(withProfile ? { profileId: 'fixture-claude-profile' } : {}),
+              backendTarget: { kind: 'backend', backendId: agentId, sourceKind: 'built_in' } },
+            profileEnvironmentVariables: withProfile ? { FIXTURE_PROFILE_MARKER: 'selected-profile' } : {},
+            daemonSpawnHooks: null,
+            processEnv: { PATH: '', HOME: directory, HAPPIER_HOME_DIR: directory, HAPPIER_OHMYPI_PATH: command },
+            connectedServiceAuth: result, logDebug() {}, logInfo() {}, logWarn() {},
+          } satisfies Parameters<typeof resolveSpawnChildEnvironment>[0];
+          const launch = await resolveSpawnChildEnvironment(launchInput);
+          expect(launch, JSON.stringify(launch)).toMatchObject({ ok: true,
+            agentCliLaunchSpec: { resolvedPath: command }, extraEnvForChild: { [key]: 'fixture-access' } });
+          expect(JSON.stringify(launch)).not.toContain('fixture-refresh');
+        }
       }
       expect(exchanges).toHaveLength(state === 'expired' ? 1 : 0);
       if (state !== 'expired') {

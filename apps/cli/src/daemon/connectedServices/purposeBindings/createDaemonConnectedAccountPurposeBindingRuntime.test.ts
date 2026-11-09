@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import axios from 'axios';
+import fastify from 'fastify';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -16,6 +17,7 @@ import {
   type QualifiedConnectedAccountPurposeBindingsV1,
 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type {
   HostCurrentSessionInteractionsService,
   HostSessionApprovalRequest,
@@ -37,6 +39,16 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { logger } from '@/ui/logger';
+import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
+import { createBrokerProviderRegistry } from '@/providers/broker/providerBroker.testkit';
+import { createRuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
+import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
+import { admitTeamCredentialSourceModelRowsV1 } from '@happier-dev/protocol/rpc/providers';
+import { TeamCredentialResourceSummaryV1Schema } from '@happier-dev/protocol/teams';
+import { resolveRunnerCredentialSelectionCurrentness } from '@/providers/broker/daemonProviderBrokerRuntime';
+import { registerRunnerBrokerReadinessApplication } from '@/daemon/peer/mediation/loopback/runnerBrokerReadinessApplication';
+import { checkRunnerBrokerNonInferenceReadiness } from '@/ephemeralRunner/runnerBrokerReadinessClient';
 
 import {
   createQualifiedConnectedAccountEstablishedRuntimeOwner,
@@ -117,13 +129,14 @@ function testQualifiedProfile(input: Readonly<{
   displayName?: string;
   authenticationModeId?: string | null;
   configurationReady?: boolean;
+  credentialRevision?: string;
 }> = {}): QualifiedConnectedAccountProfileV4 {
   return {
     ref: { service: openAiService, accountId: input.accountId ?? 'standard-openai' },
     status: input.status ?? 'connected',
     authenticationModeId: input.authenticationModeId ?? 'api-key',
     revisionSemantics: 'revisioned',
-    credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+    credentialRevision: input.credentialRevision ?? 'csr_abcdefghijklmnopqrstuv',
     configurationReady: input.configurationReady ?? true,
     configurationRevision: null,
     kind: 'token',
@@ -166,11 +179,16 @@ function testQualifiedApi(input: Readonly<{
       updatedAt: 1,
     }],
   };
-  return {
-    listAccounts: vi.fn(async () => ({
+  const listAccounts = vi.fn(async () => ({
       service: input.resultService ?? openAiService,
       accounts,
+  }));
+  return {
+    listAccountsForServices: vi.fn(async (services: readonly QualifiedConnectedAccountProfileV4['ref']['service'][]) => ({
+      services, accounts: (await listAccounts()).accounts.filter(profile => services.some(service => service.pluginId === profile.ref.service.pluginId
+        && service.localId === profile.ref.service.localId)),
     })),
+    listAccounts,
     listGroups: vi.fn(async () => ({ groups: [group] })),
     readGroup: vi.fn(async () => group),
   };
@@ -410,6 +428,137 @@ function createSelectionRuntime(
   });
 }
 
+it.each(['account', 'group'] as const)('preserves pending reconnect health for an exact %s until its authority commits recovery or rotation', async kind => {
+  const primary = testQualifiedProfile({ status: 'needs_reauth' });
+  const backup = testQualifiedProfile({ accountId: 'backup-openai' });
+  const group = testQualifiedGroup({ activeAccountId: primary.ref.accountId,
+    members: [{ accountId: primary.ref.accountId }, { accountId: backup.ref.accountId }] });
+  const api = testQualifiedApi({ accounts: [primary, backup], group });
+  const store = kind === 'account' ? selectedStore() : selectedGroupStore();
+  const runtime = createSelectionRuntime(store, 'advertised', api);
+  const target = store.current().bindings[0]!.target;
+  const request = { purpose, target, serviceRefs: [openAiService], signal: new AbortController().signal };
+
+  await expect(runtime.resolveBindingIntentSelection(request)).rejects.toMatchObject({
+    code: 'connected_service_credential_reconnect_required',
+  });
+  // A non-retryable health refusal settles after one authority read, with no
+  // credential effect or reader-owned Pool switch. The health coordinator owns
+  // rotation; a real reconnect also reaches this consumer on its next request.
+  expect(api.listAccounts).toHaveBeenCalledTimes(1);
+  expect(group.activeConnectedAccountId).toBe(primary.ref.accountId);
+  api.listAccounts.mockResolvedValue({ service: openAiService, accounts: [{ ...primary, status: 'connected' }, backup] });
+  await expect(runtime.resolveBindingIntentSelection(request)).resolves.toMatchObject({
+    resolved: { account: primary.ref },
+  });
+  expect(api.listAccounts).toHaveBeenCalledTimes(2);
+  expect(store.current().bindings[0]!.target).toEqual(target);
+});
+
+it.each(['account', 'group'] as const)('projects real %s reauthentication through source catalog and broker eligibility, then recovers', async kind => {
+  const worker = await createManagedRunLaunchFixture();
+  const primary = testQualifiedProfile({ status: 'needs_reauth' });
+  const group = testQualifiedGroup({ activeAccountId: primary.ref.accountId, members: [{ accountId: primary.ref.accountId }] });
+  const api = testQualifiedApi({ accounts: [primary], group });
+  const store = kind === 'account' ? selectedStore() : selectedGroupStore();
+  const runtime = createSelectionRuntime(store, 'advertised', api);
+  const target = store.current().bindings[0]!.target;
+  const base = createBrokerProviderRegistry();
+  const registry = { ...worker.lease.registry, contributes: { ...worker.lease.registry.contributes,
+    providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
+      ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: {
+        ...provider.definition.managedRuntime, connectedAccounts: [{ purpose: 'openai-upstream', service: openAiService,
+          endpointTemplateIds: ['cliproxyapi-openai-responses'], staticModels: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] }],
+      } }),
+    }])) } };
+  const application = { agentTargetKey: worker.agentTargetKey,
+    implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+    endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' as const };
+  const services = createRuntimeProviderModelManagementServices({ machineId: worker.machineId,
+    featureGate: { isEnabled: () => true },
+    getAccountSettingsSnapshot: () => { throw new Error('Source projection must not read a personal Provider catalog'); },
+    acquireRuntimeLease: async () => ({ ...worker.lease, registry }),
+    resolveManagedPurposeBindingIntentSelection: runtime.resolveBindingIntentSelection,
+    modelSettingsMutation: async () => { throw new Error('No settings mutation during source projection'); },
+  });
+  const request = { machineId: worker.machineId, agentTargetKey: worker.agentTargetKey, application,
+    sourceCatalog: true as const, refreshPolicy: 'current_only' as const, connectedAccountTarget: target };
+  const source = target.kind === 'account'
+    ? { v: 1 as const, kind: 'connected_account' as const, target, credentialIncarnation: 'source-incarnation' }
+    : { v: 1 as const, kind: 'connected_pool' as const, target, poolIncarnation: group.incarnation };
+  const selection = { v: 1 as const, resourceId: 'resource', brokerMachineId: worker.machineId,
+    revision: 1, application, sourceRevision: 'source-revision-before-reconnect' };
+  const resource = TeamCredentialResourceSummaryV1Schema.parse({
+    id: selection.resourceId, teamId: 'team', custodianAccountId: 'custodian', displayName: 'Shared account', enabled: true,
+    revision: 1, deliveryPolicy: { preferredAllowedModes: ['brokered'] }, sessionUsePolicy: 'personal_allowed', source,
+    sourcePresentation: { kind: 'connected_service', service: openAiService }, requestPolicy: null,
+    brokerPlacement: { kind: 'machine', machineId: worker.machineId }, allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [],
+    readiness: { kind: 'available' }, recoveryAction: null,
+    brokerPresentation: { selectedTarget: null, eligibleTargets: [], selectedPool: null, eligiblePools: [] }, createdAt: '', updatedAt: '',
+  });
+  const readResource = vi.fn(async () => resource);
+  const app = fastify();
+  registerRunnerBrokerReadinessApplication(app, {
+    // Home authorization is the network boundary. The local eligibility,
+    // actual HTTP application, strict response reader and health producer stay real.
+    authorize: async request => ({ v: 1, binding: {
+      homeServerIdentityId: request.homeServerIdentityId, activationId: request.activationId,
+      launchManifestCommitment: request.launchManifestCommitment, resourceId: request.resourceId,
+      agentTargetKey: request.agentTargetKey, protocol: request.protocol, modelId: request.modelId,
+      initiator: request.initiator, target: request.target,
+    }, credentialSelectionBinding: selection, readiness: { kind: 'available' } }),
+    checkLocalCurrentness: async ({ selection: current, modelId }, signal) => resolveRunnerCredentialSelectionCurrentness({
+      registeredMachineId: worker.machineId, selection: current, modelId, signal, readResource,
+      resolveEligibility: services.resolveTeamCredentialBrokerEligibility,
+    }),
+  });
+  await app.listen({ host: '127.0.0.1', port: 0 });
+  const address = app.server.address();
+  if (!address || typeof address === 'string') throw new Error('Runner readiness fixture did not listen');
+  const closeTunnel = vi.fn(async () => undefined);
+  const shutdown = vi.fn(async () => undefined);
+  const createRuntime: NonNullable<Parameters<typeof checkRunnerBrokerNonInferenceReadiness>[0]['createRuntime']> = async () => ({
+    available: true, endpoint: { endpointId: 'a'.repeat(64) }, shutdown,
+    openHttpTunnel: async () => ({ localPort: address.port, localCapability: 'f'.repeat(64),
+      remoteEndpointId: 'b'.repeat(64), observedPath: 'direct', close: closeTunnel }),
+  });
+  const runnerReadiness = () => checkRunnerBrokerNonInferenceReadiness({
+    target: { endpointId: 'b'.repeat(64) }, happyHomeDir: worker.happyHomeDir, signal: new AbortController().signal, createRuntime,
+    createRequest: endpointId => ({ v: 1, kind: 'provider_broker_readiness', homeServerIdentityId: 'srv_home',
+      activationId: '00000000-0000-4000-8000-000000000010', launchManifestCommitment: 'A'.repeat(43),
+      resourceId: selection.resourceId, agentTargetKey: application.agentTargetKey, protocol: application.protocol, modelId: 'gpt-5.5',
+      initiator: { installationId: 'runner-installation', endpointId }, target: { machineId: worker.machineId, endpointId: 'b'.repeat(64) },
+      activationSignature: 'A'.repeat(86), installationSignature: 'A'.repeat(86) }),
+  });
+  try {
+    const response = await services.projectModels(request);
+    expect(response).toMatchObject({ status: 'error', error: { code: 'connected_service_credential_reconnect_required', retryable: false } });
+    expect(admitTeamCredentialSourceModelRowsV1(response)).toMatchObject({ status: 'unavailable', reason: 'connected_service_credential_reconnect_required' });
+    expect(api.listAccounts).toHaveBeenCalledTimes(1);
+    await expect(services.resolveTeamCredentialBrokerEligibility({ machineId: worker.machineId, teamId: 'team', resourceId: 'resource',
+      expectedResourceRevision: 1, scope: 'source_any', source })).resolves.toEqual({
+        status: 'unavailable', reason: 'connected_service_credential_reconnect_required',
+      });
+    expect(api.listAccounts).toHaveBeenCalledTimes(2);
+    await expect(runnerReadiness()).resolves.toEqual({ kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' });
+    expect(api.listAccounts).toHaveBeenCalledTimes(3);
+    expect(readResource).toHaveBeenCalledTimes(1);
+    expect(closeTunnel).toHaveBeenCalledTimes(1);
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    api.listAccounts.mockResolvedValue({ service: openAiService, accounts: [{ ...primary, status: 'connected' }] });
+    const recovered = await services.projectModels(request);
+    expect(admitTeamCredentialSourceModelRowsV1(recovered)).toMatchObject({ status: 'success', rows: [{ row: { ref: { modelId: 'gpt-5.5' } } }] });
+    if (recovered.status !== 'success' || !recovered.groups[0]?.sourceRevision) throw new Error('Recovered source revision is missing');
+    selection.sourceRevision = recovered.groups[0].sourceRevision;
+    await expect(runnerReadiness()).resolves.toEqual({ kind: 'available' });
+    expect(readResource).toHaveBeenCalledTimes(2);
+    expect(closeTunnel).toHaveBeenCalledTimes(2);
+    expect(shutdown).toHaveBeenCalledTimes(2);
+    expect(group.activeConnectedAccountId).toBe(primary.ref.accountId);
+    expect(store.current().bindings[0]!.target).toEqual(target);
+  } finally { await app.close(); await worker.cleanup(); }
+});
+
 function createInventoryRuntime(input: Readonly<{
   credentialOwnerAccountId?: string;
   accounts?: readonly QualifiedConnectedAccountProfileV4[];
@@ -483,6 +632,7 @@ function createInventoryRuntime(input: Readonly<{
 function createActionFormRuntime(input: Readonly<{
   qualifiedApi?: ReturnType<typeof testQualifiedApi>;
   runtimeRegistry?: DaemonConnectedAccountRuntimeRegistry;
+  allowNativeAccountCredentials?: boolean;
 }> = {}) {
   return createDaemonConnectedAccountPurposeBindingRuntime({
     resolveQualifiedConnectedAccountV4Support: () => 'advertised',
@@ -493,6 +643,7 @@ function createActionFormRuntime(input: Readonly<{
       invokeDirectMaterial: unavailableDirectMaterial,
     },
     qualifiedApi: input.qualifiedApi ?? testQualifiedApi(),
+    allowNativeAccountCredentials: input.allowNativeAccountCredentials,
     store: emptyStore(),
     runtimeRegistry: input.runtimeRegistry ?? {
       subscribe: () => () => undefined,
@@ -520,8 +671,64 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     for (const cleanup of coordinatorCleanups.splice(0)) await cleanup();
   });
 
+  it.each([undefined, 'authority-session'])('forwards purpose authority changes to observed reads with session %s', async (sessionId) => {
+    const store = selectedStore();
+    const { runtime, qualifiedApi } = createInventoryRuntime({ store });
+    const sessionLease = sessionId ? runtime.activateSessionPurposeBindings({
+      sessionId, purposes: [purpose], bindings: store.current().bindings,
+    }) : undefined;
+    const restart = vi.fn();
+    runtime.bindSessionRestartOwner(restart);
+    const retire = vi.fn();
+    const controller = new AbortController();
+    const connectedAccounts = createStablePluginConnectedAccountsHost(runtime.owner).bind({
+      plugin: { id: purpose.consumer.pluginId, version: '1.0.0' },
+      contribution: { id: purpose.consumer.localId, qualifiedId: `${purpose.consumer.pluginId}/agents/${purpose.consumer.localId}` },
+      occurrenceId: 'authority-read', correlationId: 'authority-read', surface: 'agent',
+      ...(sessionId ? { session: { id: sessionId } } : {}),
+      signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted,
+      retireReadObservation: retire,
+    }, [{ purpose: purpose.purpose, serviceRefs: [openAiService], operations: ['use'] }]);
+    const summaries: Array<string | undefined> = [];
+    const refresh = vi.fn(async () => {
+      summaries.push((await connectedAccounts.getBinding(purpose.purpose))?.target.displayName);
+    });
+    const watch = connectedAccounts.watch(purpose.purpose, refresh);
+    try {
+      await vi.waitFor(() => expect(summaries).toEqual(['acct-standard']));
+      for (let index = 0; index < 24; index++) runtime.invalidate({ services: [openAiService] });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(retire).not.toHaveBeenCalled();
+
+      qualifiedApi.listAccounts.mockResolvedValue({ service: openAiService, accounts: [testQualifiedProfile({ displayName: 'Renamed' })] });
+      runtime.invalidate({ services: [openAiService] });
+      await vi.waitFor(() => expect(summaries).toEqual(['acct-standard', 'Renamed']));
+      expect(retire).not.toHaveBeenCalled();
+      if (sessionId) await vi.waitFor(() => expect(restart).toHaveBeenCalledOnce());
+      restart.mockClear();
+
+      qualifiedApi.listAccounts.mockResolvedValue({ service: openAiService, accounts: [
+        testQualifiedProfile({ displayName: 'Renamed', credentialRevision: 'csr_bcdefghijklmnopqrstuvw' }),
+      ] });
+      runtime.invalidate({ services: [openAiService] }, 'credential-updated');
+      await vi.waitFor(() => expect(retire).toHaveBeenCalledOnce());
+      expect(refresh).toHaveBeenCalledTimes(2);
+      if (sessionId) {
+        await vi.waitFor(() => expect(restart).toHaveBeenCalledOnce());
+        expect(restart).toHaveBeenCalledWith({ sessionId, purpose, target: {
+          serviceId: 'happier.voice.openai/openai', profileId: 'standard-openai', groupId: '', generation: 0,
+        } });
+      } else expect(restart).not.toHaveBeenCalled();
+    } finally {
+      watch.dispose();
+      sessionLease?.dispose();
+      controller.abort();
+    }
+  });
+
   async function coordinatorFixture(observed = true, serviceRef: QualifiedConnectedAccountProfileV4['ref']['service'] = openAiService,
-    additionalPluginIds: readonly string[] = [], store: ConnectedAccountPurposeBindingStore = emptyStore()) {
+    additionalPluginIds: readonly string[] = [], store: ConnectedAccountPurposeBindingStore = emptyStore(), http = false) {
     const qualifiedApi = testQualifiedApi();
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-coordinator-inventory-'));
     const resolveRegistry = () => resolveExecutablePluginRuntimeRegistry({
@@ -536,6 +743,11 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         ? await qualifiedApi.listAccounts()
         : { service, accounts: [] };
     });
+    const inventoryBatchReads = vi.fn(async (services: readonly QualifiedConnectedAccountProfileV4['ref']['service'][]) => ({
+      services,
+      accounts: services.some(service => service.pluginId === serviceRef.pluginId && service.localId === serviceRef.localId)
+        ? (await qualifiedApi.listAccounts()).accounts : [],
+    }));
     coordinatorCleanups.push(async () => {
       await reloadController.shutdown();
       await rm(happyHomeDir, { recursive: true, force: true });
@@ -547,14 +759,20 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         invokeWithReceipt: async () => { throw new Error('Inventory must not open credentials'); },
         invokeDirectMaterial: unavailableDirectMaterial,
       },
-      qualifiedApi: {
+      qualifiedApi: http ? {
+        ...qualifiedApi,
+        listAccounts: async (service, signal) => await listQualifiedConnectedAccountsV4({ token: 'fixture', service, signal }),
+        listAccountsForServices: async (services: readonly QualifiedConnectedAccountProfileV4['ref']['service'][], signal: AbortSignal) =>
+          await listQualifiedConnectedAccountsV4({ token: 'fixture', services, signal }),
+      } : {
         ...qualifiedApi,
         listAccounts: inventoryReads,
+        listAccountsForServices: inventoryBatchReads,
       },
       store,
       reloadController,
     });
-    return { runtime, qualifiedApi, inventoryReads, setObserved: (value: boolean) => { observed = value; }, replaceRegistry: async () => {
+    return { runtime, qualifiedApi, inventoryReads, inventoryBatchReads, setObserved: (value: boolean) => { observed = value; }, replaceRegistry: async () => {
       const result = await reloadController.adoptPreparedRuntimeRegistry({
         registry: await resolveRegistry(),
         changedPluginIds: [serviceRef.pluginId],
@@ -587,11 +805,58 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       .toEqual(accountIds.map(accountId => ({ accountId, generation: 7 })));
   });
 
-  it.each([false, true])('keeps quota refreshes out of settled binding watches for 25 minutes (configured=%s)', async configured => {
+  it.each([false, true])('lists the declared coordinator services in one HTTP request and preserves scoped demand (observed=%s)', async observed => {
+    const profile = testQualifiedProfile();
+    const reads = vi.spyOn(axios, 'get').mockImplementation(async value => {
+      const url = new URL(String(value));
+      if (url.pathname !== '/v4/connect/qualified/accounts') throw new Error('Unexpected inventory HTTP request');
+      const services = url.searchParams.has('services')
+        ? JSON.parse(url.searchParams.get('services')!)
+        : [JSON.parse(url.searchParams.get('service')!)];
+      const accounts = services.some((service: QualifiedConnectedAccountProfileV4['ref']['service']) =>
+        service.pluginId === profile.ref.service.pluginId && service.localId === profile.ref.service.localId) ? [profile] : [];
+      return { status: 200, data: url.searchParams.has('services') ? { services, accounts } : { service: services[0], accounts } };
+    });
+    const { runtime } = await coordinatorFixture(observed, openAiService, ['happier.agent.codex'], emptyStore(), true);
+    expect(await runtime.listCoordinatorAccounts()).toEqual([profile]);
+    expect(reads).toHaveBeenCalledTimes(1);
+    const full = new URL(String(reads.mock.calls[0][0]));
+    expect(JSON.parse(full.searchParams.get('services')!)).toContainEqual(openAiService);
+    expect(JSON.parse(full.searchParams.get('services')!).length).toBeGreaterThan(1);
+    runtime.invalidate({ services: [openAiService] });
+    reads.mockClear();
+    expect(await runtime.listCoordinatorAccounts(undefined, openAiService)).toEqual([profile]);
+    expect(reads).toHaveBeenCalledTimes(1);
+    const scoped = new URL(String(reads.mock.calls[0][0]));
+    expect(JSON.parse(scoped.searchParams.get('service')!)).toEqual(openAiService);
+    expect(scoped.searchParams.has('services')).toBe(false);
+  });
+
+  it('records payload-free inventory invalidation scope and reason at the inventory owner', async () => {
+    const diagnostic = vi.spyOn(logger, 'debug');
+    const { runtime } = await coordinatorFixture(true);
+    try {
+      runtime.invalidate({ services: [openAiService] }, 'machine-account-changes');
+      runtime.invalidate();
+      runtime.invalidate({ quotaRefreshOnly: true });
+      expect(diagnostic.mock.calls.filter(([event]) => event === '[ConnectedAccounts] inventory invalidated')).toEqual([
+        ['[ConnectedAccounts] inventory invalidated', {
+          scope: 'services', serviceCount: 1, serviceKinds: ['openai'], reason: 'machine-account-changes',
+        }],
+        ['[ConnectedAccounts] inventory invalidated', {
+          scope: 'all', serviceCount: null, serviceKinds: [], reason: 'unspecified',
+        }],
+      ]);
+    } finally {
+      diagnostic.mockRestore();
+    }
+  });
+
+  it.each([false, true])('keeps quota and unrelated service changes out of settled binding watches for 25 minutes (configured=%s)', async configured => {
     const store = selectedStore();
     const selected = store.current();
     if (!configured) await store.update(() => ({ v: 1, bindings: [] }));
-    const { runtime, inventoryReads } = await coordinatorFixture(true, openAiService, [], store);
+    const { runtime, inventoryReads, inventoryBatchReads } = await coordinatorFixture(true, openAiService, [], store);
     const reads = vi.spyOn(store, 'read'); // The persisted purpose row is the system boundary.
     const changed = vi.fn();
     const quotaEvents: unknown[] = [];
@@ -601,26 +866,49 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     try {
       // Join initial admission at the same consumer lock before measuring idle.
       await runtime.owner.getBinding({ purpose, serviceRefs: [openAiService], signal });
-      await runtime.listCoordinatorAccounts();
+      await runtime.listCoordinatorAccounts(undefined, openAiService);
       vi.useFakeTimers();
       await vi.advanceTimersByTimeAsync(0);
       reads.mockClear();
       inventoryReads.mockClear();
+      inventoryBatchReads.mockClear();
+      // Initial registry admission can invalidate unbound native authority.
+      // Measure only arrivals after the initial admission has settled.
+      changed.mockClear();
       for (let arrival = 0; arrival < 375; arrival += 1) {
         runtime.invalidate({ quotaRefreshRecordIds: ['usage-record'], quotaRefreshOnly: true });
-        await runtime.listCoordinatorAccounts();
+        runtime.invalidate({ services: [githubService] });
+        await runtime.listCoordinatorAccounts(undefined, openAiService);
         await vi.advanceTimersByTimeAsync(4_000);
       }
       expect(reads).not.toHaveBeenCalled();
       expect(inventoryReads).not.toHaveBeenCalled();
+      expect(inventoryBatchReads).not.toHaveBeenCalled();
       expect(changed).not.toHaveBeenCalled();
-      expect(quotaEvents).toHaveLength(375);
-      expect(quotaEvents.at(-1)).toMatchObject({ quotaRefreshRecordIds: ['usage-record'] });
+      expect(quotaEvents).toHaveLength(750);
+      expect(quotaEvents.at(-2)).toMatchObject({ quotaRefreshRecordIds: ['usage-record'] });
+
+      // Real matching, broad, and mixed changes still recheck credential authority.
+      for (const event of [
+        { services: [openAiService] },
+        undefined,
+        { services: [githubService, openAiService], quotaRefreshRecordIds: ['usage-record'] },
+      ]) {
+        reads.mockClear();
+        runtime.invalidate(event);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(reads).toHaveBeenCalled();
+      }
+      // Unbound native authority has no credential revision proving that a
+      // matching source invalidation is only presentation. Quota/unrelated
+      // arrivals above remain silent for both selected and unbound watches.
+      expect(changed).toHaveBeenCalledTimes(configured ? 0 : 3);
 
       await store.update(() => configured ? { v: 1, bindings: [] } : selected);
       await vi.advanceTimersByTimeAsync(0);
       expect(reads).toHaveBeenCalled();
-      expect(changed).toHaveBeenCalledOnce();
+      expect(changed).toHaveBeenCalledTimes(configured ? 1 : 4);
+      expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ authorityChanged: true }));
 
       reads.mockClear();
       // Mixed/unknown invalidations still recheck credential authority.
@@ -636,17 +924,19 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
   });
 
   it('shares one current list per service across binding watches and scoped/full coordinator demand', async () => {
-    const { runtime, inventoryReads, qualifiedApi } = await coordinatorFixture(true, openAiService, ['happier.agent.codex'], selectedStore());
+    const { runtime, inventoryReads, inventoryBatchReads, qualifiedApi } = await coordinatorFixture(true, openAiService, ['happier.agent.codex'], selectedStore());
     const signal = new AbortController().signal;
     await runtime.listCoordinatorAccounts();
-    const services = inventoryReads.mock.calls.map(([service]) => service);
+    const services = inventoryBatchReads.mock.calls.flatMap(([services]) => [...services]);
     expect(services.length).toBeGreaterThan(1);
+    expect(inventoryBatchReads).toHaveBeenCalledTimes(1);
     const changed = vi.fn();
     const watches = Array.from({ length: 24 }, () => runtime.owner.watch({ purpose, serviceRefs: [openAiService], listener: changed }));
     try {
       // The explicit read joins the same consumer lock after all initial watches.
       await runtime.owner.getBinding({ purpose, serviceRefs: [openAiService], signal });
       inventoryReads.mockClear();
+      inventoryBatchReads.mockClear();
       qualifiedApi.listAccounts.mockResolvedValue({ service: openAiService, accounts: [] });
       runtime.invalidate();
       await Promise.all([
@@ -654,14 +944,18 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
         ...services.map(service => runtime.listCoordinatorAccounts(undefined, service)),
       ]);
       await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(watches.length));
-      expect(inventoryReads).toHaveBeenCalledTimes(services.length);
-      expect(new Set(inventoryReads.mock.calls.map(([service]) => JSON.stringify(service))).size).toBe(services.length);
+      const acquired = [...inventoryReads.mock.calls.map(([service]) => service),
+        ...inventoryBatchReads.mock.calls.flatMap(([services]) => [...services])];
+      expect(acquired).toHaveLength(services.length);
+      expect(new Set(acquired.map(service => JSON.stringify(service))).size).toBe(services.length);
 
       inventoryReads.mockClear();
+      inventoryBatchReads.mockClear();
       qualifiedApi.listAccounts.mockResolvedValue({ service: openAiService, accounts: [testQualifiedProfile()] });
       runtime.invalidate({ services: [openAiService] });
       expect(await runtime.listCoordinatorAccounts()).toEqual([testQualifiedProfile()]);
-      expect(inventoryReads.mock.calls.map(([service]) => service)).toEqual([openAiService]);
+      expect(inventoryReads).not.toHaveBeenCalled();
+      expect(inventoryBatchReads.mock.calls.map(([services]) => services)).toEqual([[openAiService]]);
     } finally {
       watches.forEach(watch => watch.dispose());
     }
@@ -674,9 +968,11 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     runtime.invalidate({ services: [openAiService] });
     expect(await runtime.owner.getBinding({ purpose, serviceRefs: [openAiService], signal })).not.toBeNull();
     inventoryReads.mockClear();
+    inventoryBatchReads.mockClear();
     runtime.invalidate({ resetQuotaSchedule: true });
     await runtime.listCoordinatorAccounts();
-    expect(inventoryReads).toHaveBeenCalledTimes(services.length);
+    expect(inventoryReads).not.toHaveBeenCalled();
+    expect(inventoryBatchReads.mock.calls.map(([services]) => services)).toEqual([services]);
   });
 
   it('offers the real saved Email profile after a retryable refresh failure through the declared service inventory', async () => {
@@ -703,20 +999,21 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
   });
 
   it('shares the observed coordinator inventory until an owner invalidation, including empty inventories', async () => {
-    const { runtime, qualifiedApi, inventoryReads } = await coordinatorFixture();
+    const { runtime, qualifiedApi, inventoryReads, inventoryBatchReads } = await coordinatorFixture();
     qualifiedApi.listAccounts.mockResolvedValue({ service: openAiService, accounts: [] });
     const [quotas, refresh] = await Promise.all([runtime.listCoordinatorAccounts(), runtime.listCoordinatorAccounts()]);
     expect(quotas).toEqual([]);
     expect(refresh).toEqual(quotas);
-    const services = inventoryReads.mock.calls.map(([service]) => JSON.stringify(service));
-    expect(new Set(services).size).toBe(services.length);
+    expect(inventoryReads).not.toHaveBeenCalled();
+    expect(inventoryBatchReads).toHaveBeenCalledTimes(1);
     // K scheduler/health consumers with unchanged observed authority reuse even
     // an empty census; demand alone must not become K * M network reads.
     for (let tick = 0; tick < 25; tick++) {
       await runtime.listCoordinatorAccounts();
       await runtime.listCoordinatorAccounts(undefined, openAiService);
     }
-    expect(inventoryReads).toHaveBeenCalledTimes(services.length);
+    expect(inventoryReads).not.toHaveBeenCalled();
+    expect(inventoryBatchReads).toHaveBeenCalledTimes(1);
     expect(qualifiedApi.listAccounts).toHaveBeenCalledTimes(1);
     qualifiedApi.listAccounts.mockResolvedValue({ service: openAiService, accounts: [testQualifiedProfile()] });
     runtime.invalidate();
@@ -725,14 +1022,15 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
   });
 
   it.each([false, true])('reads only the demanded refresh service while preserving independent inventory and invalidation (observed=%s)', async (observed) => {
-    const { runtime, qualifiedApi, inventoryReads } = await coordinatorFixture(observed, openAiService, ['happier.agent.codex']);
+    const { runtime, qualifiedApi, inventoryBatchReads } = await coordinatorFixture(observed, openAiService, ['happier.agent.codex']);
     expect(await runtime.listCoordinatorAccounts(undefined, openAiService)).toEqual([testQualifiedProfile()]);
-    expect(inventoryReads.mock.calls.map(([service]) => service)).toEqual([openAiService]);
-    inventoryReads.mockClear();
+    expect(inventoryBatchReads.mock.calls.map(([services]) => services)).toEqual([[openAiService]]);
+    inventoryBatchReads.mockClear();
     const all = await runtime.listCoordinatorAccounts();
     expect(all).toEqual([testQualifiedProfile()]);
-    expect(inventoryReads.mock.calls.length).toBeGreaterThan(1);
-    inventoryReads.mockClear();
+    expect(inventoryBatchReads).toHaveBeenCalledTimes(1);
+    expect(inventoryBatchReads.mock.calls[0][0].length).toBeGreaterThan(1);
+    inventoryBatchReads.mockClear();
     runtime.invalidate();
     qualifiedApi.listAccounts.mockImplementationOnce(async () => {
       runtime.invalidate();
@@ -740,16 +1038,19 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     });
     qualifiedApi.listAccounts.mockResolvedValueOnce({ service: openAiService, accounts: [] });
     expect(await runtime.listCoordinatorAccounts(undefined, openAiService)).toEqual([]);
-    expect(inventoryReads.mock.calls.map(([service]) => service)).toEqual([openAiService, openAiService]);
+    expect(inventoryBatchReads.mock.calls.map(([services]) => services)).toEqual([[openAiService], [openAiService]]);
   });
 
   it('reuses an already observed complete inventory for a scoped refresh without another acquisition', async () => {
-    const { runtime, inventoryReads } = await coordinatorFixture(true, openAiService, ['happier.agent.codex']);
+    const { runtime, inventoryReads, inventoryBatchReads } = await coordinatorFixture(true, openAiService, ['happier.agent.codex']);
     expect(await runtime.listCoordinatorAccounts()).toEqual([testQualifiedProfile()]);
-    expect(inventoryReads.mock.calls.length).toBeGreaterThan(1);
+    expect(inventoryBatchReads).toHaveBeenCalledTimes(1);
+    expect(inventoryBatchReads.mock.calls[0][0].length).toBeGreaterThan(1);
     inventoryReads.mockClear();
+    inventoryBatchReads.mockClear();
     expect(await runtime.listCoordinatorAccounts(undefined, openAiService)).toEqual([testQualifiedProfile()]);
     expect(inventoryReads).not.toHaveBeenCalled();
+    expect(inventoryBatchReads).not.toHaveBeenCalled();
   });
 
   it('does not publish inventory invalidated during the read and retries failed reads', async () => {
@@ -830,7 +1131,8 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     });
     await expect(runtime.owner.materialize({ purpose, serviceRefs: [githubService], nativeService: githubService,
       request: { kind: 'httpHeaders', origin: 'https://api.github.com', headerNames: ['authorization'] },
-      signal: new AbortController().signal })).rejects.toMatchObject({ code: 'plugin_connected_account_binding_out_of_scope' });
+      signal: new AbortController().signal })).rejects.toMatchObject({ code: 'plugin_connected_account_native_unavailable',
+        remediation: { kind: 'selectAccount', service: githubService } });
     expect(runGhCommand).not.toHaveBeenCalled();
   });
   it.each([
@@ -838,6 +1140,11 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     { origin: 'https://github.example.test', hostname: 'github.example.test' },
   ])('materializes machine GitHub login for $hostname without reading or writing server credentials', async ({ origin, hostname }) => {
     const store = emptyStore();
+    let nativeToken = 'ephemeral-gh-token';
+    const runGhCommand = vi.fn(async ({ args }: { args: readonly string[] }) => {
+      expect(args).toEqual(['auth', args[1], '--hostname', hostname]);
+      return { ok: true as const, stdout: args[1] === 'token' ? `${nativeToken}\n` : '', stderr: '', exitCode: 0 };
+    });
     const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
       store,
       establishedRuntimeOwner: {
@@ -860,10 +1167,7 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       ghDependencies: {
         resolveSystemGhBinPath: async () => '/fixture/gh',
         resolveManagedGhBinPath: async () => null,
-        runGhCommand: async ({ args }) => {
-          expect(args).toEqual(['auth', args[1], '--hostname', hostname]);
-          return { ok: true, stdout: args[1] === 'token' ? 'ephemeral-gh-token\n' : '', stderr: '', exitCode: 0 };
-        },
+        runGhCommand,
       },
     });
     await expect(runtime.owner.materialize({
@@ -872,6 +1176,41 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       signal: new AbortController().signal,
     })).resolves.toEqual({ kind: 'httpHeaders', headers: { Authorization: 'Bearer ephemeral-gh-token' } });
     expect(store.current()).toEqual({ v: 1, bindings: [] });
+    const controller = new AbortController();
+    const retire = vi.fn();
+    const connectedAccounts = createStablePluginConnectedAccountsHost(runtime.owner).bind({
+      plugin: { id: purpose.consumer.pluginId, version: '1.0.0' },
+      contribution: { id: purpose.consumer.localId, qualifiedId: `${purpose.consumer.pluginId}/agents/${purpose.consumer.localId}` },
+      occurrenceId: 'native-read', correlationId: 'native-read', surface: 'agent',
+      signal: controller.signal, isOccurrenceCurrent: () => !controller.signal.aborted, retireReadObservation: retire,
+    }, [{ purpose: purpose.purpose, serviceRefs: [githubService], operations: ['use'] }]);
+    const refresh = vi.fn();
+    const watch = connectedAccounts.watch(purpose.purpose, refresh);
+    try {
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+      runGhCommand.mockClear();
+      for (let index = 0; index < 24; index++) {
+        runtime.invalidate({ services: [openAiService] });
+        await store.update(current => current);
+      }
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(retire).not.toHaveBeenCalled();
+      nativeToken = 'rotated-native-token';
+      runtime.invalidate({ services: [githubService] }, 'credential-updated');
+      await vi.waitFor(() => expect(retire).toHaveBeenCalledOnce());
+      expect(refresh).toHaveBeenCalledOnce();
+      // Currentness observes only the source invalidation, never credential material.
+      expect(runGhCommand).not.toHaveBeenCalled();
+      await expect(connectedAccounts.getBinding(purpose.purpose)).resolves.toBeNull();
+      await expect(runtime.owner.materialize({ purpose, serviceRefs: [githubService], nativeService: githubService,
+        request: { kind: 'httpHeaders', origin, headerNames: ['authorization'] }, signal: controller.signal,
+      })).resolves.toEqual({ kind: 'httpHeaders', headers: { Authorization: 'Bearer rotated-native-token' } });
+      expect(store.current()).toEqual({ v: 1, bindings: [] });
+    } finally {
+      watch.dispose();
+      controller.abort();
+    }
   });
 
   it('preserves Team authentication operation errors through Connected Service materialization', async () => {
@@ -1170,6 +1509,33 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       bindings,
       directMaterialOrigins,
     })).toThrow('connected_account_operation_binding_direct_material_consumer_unsupported');
+  });
+
+  it.each([true, false])('offers declared native services only when requester custody allows them (%s)', async allowNativeAccountCredentials => {
+    const runtimeRegistry: DaemonConnectedAccountRuntimeRegistry = {
+      subscribe: () => () => undefined, acquire: async () => ({ isCurrent: () => true,
+        resolveService: () => ({ service: githubService, availability: 'available' as const,
+          authentication: { ...testAuthentication, native: { systemTool: 'gh' as const } } }),
+        release: async () => undefined,
+      }),
+    };
+    const runtime = createActionFormRuntime({ allowNativeAccountCredentials, runtimeRegistry, qualifiedApi: testQualifiedApi({ resultService: githubService, accounts: [] }) });
+    await expect(runtime.listActionFormConnectedAccountOptions({ purpose, serviceRefs: [githubService],
+      nativeServicePath: 'nativeService', signal: new AbortController().signal,
+    })).resolves.toEqual(allowNativeAccountCredentials ? [{ value: githubService, label: 'gh', nativeServicePath: 'nativeService' }] : []);
+    await expect(runtime.listActionFormConnectedAccountOptions({ purpose, serviceRefs: [githubService],
+      signal: new AbortController().signal,
+    })).resolves.toEqual([]);
+  });
+
+  it('projects the current bundled GitHub native declaration through the strict form-option reader', async () => {
+    const service = githubService;
+    const { runtime, qualifiedApi } = await coordinatorFixture(true, service);
+    qualifiedApi.listAccounts.mockResolvedValue({ service, accounts: [] });
+    const options = await runtime.listActionFormConnectedAccountOptions({ purpose,
+      serviceRefs: [service], nativeServicePath: 'nativeService', signal: new AbortController().signal });
+    expect(DaemonPluginActionFormConnectedAccountOptionsResolveResponseSchema.parse({ ok: true, options }))
+      .toEqual({ ok: true, options: [{ value: service, label: 'gh', nativeServicePath: 'nativeService' }] });
   });
 
   it('lists only safe exact refs for an Action form purpose scope', async () => {
@@ -2592,15 +2958,20 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     } satisfies Partial<PluginError>);
   });
 
-  it('fails closed when a listed materialization target changes during credential disclosure', async () => {
+  it('finishes one admitted listed acquisition without postread metadata or authority acquisitions', async () => {
     const store = selectedStore();
-    const { runtime, invokeWithReceipt } = createInventoryRuntime({
+    const readBindings = vi.spyOn(store, 'read');
+    let readsAtAcquisition: Readonly<{ inventory: number; bindings: number; origins: number }> | undefined;
+    const { runtime, qualifiedApi, invokeWithReceipt, resolveConnectedAccountEndpoints } = createInventoryRuntime({
       accounts: [
         testQualifiedProfile({ accountId: 'standard-openai' }),
         testQualifiedProfile({ accountId: 'second-openai' }),
       ],
       store,
+      originsByAccountId: { 'standard-openai': ['https://cloud.example.test'] },
       invokeWithReceipt: async () => {
+        readsAtAcquisition = { inventory: qualifiedApi.listAccounts.mock.calls.length,
+          bindings: readBindings.mock.calls.length, origins: resolveConnectedAccountEndpoints.mock.calls.length };
         await store.update(() => ({
           v: 1,
           bindings: [{
@@ -2612,25 +2983,35 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
           }],
         }));
         return {
-          result: { kind: 'environment' as const, env: { OPENAI_API_KEY: 'sk-listed' } },
+          result: { kind: 'httpHeaders' as const, headers: { authorization: 'Bearer listed' } },
           basis: { credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' },
         };
       },
     });
 
+    await expect(runtime.owner.listAccounts({ purpose, serviceRefs: [openAiService],
+      signal: new AbortController().signal })).resolves.toMatchObject({ status: 'complete' });
+    expect.soft(readBindings).toHaveBeenCalledOnce();
+    readBindings.mockClear();
+    resolveConnectedAccountEndpoints.mockClear();
+    const inventoryBeforeMaterialization = qualifiedApi.listAccounts.mock.calls.length;
+
     await expect(runtime.owner.materializeListedAccount({
       purpose,
       serviceRefs: [openAiService],
       account: { service: openAiService, accountId: 'standard-openai' },
-      request: { kind: 'environment', keys: ['OPENAI_API_KEY'] },
+      request: { kind: 'httpHeaders', origin: 'https://cloud.example.test', headerNames: ['authorization'] },
       signal: new AbortController().signal,
-    })).rejects.toMatchObject({
-      code: 'plugin_connected_account_binding_out_of_scope',
-    } satisfies Partial<PluginError>);
+    })).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer listed' } });
     expect(invokeWithReceipt).toHaveBeenCalledOnce();
+    expect(readsAtAcquisition).toBeDefined();
+    expect(readsAtAcquisition!.inventory - inventoryBeforeMaterialization).toBe(1);
+    expect({ inventory: qualifiedApi.listAccounts.mock.calls.length,
+      bindings: readBindings.mock.calls.length, origins: resolveConnectedAccountEndpoints.mock.calls.length }).toEqual(readsAtAcquisition);
+    expect(resolveConnectedAccountEndpoints).toHaveBeenCalledOnce();
   });
 
-  it('fails closed when a group target generation changes during listed materialization', async () => {
+  it('records the admitted listed group member when its generation changes after acquisition', async () => {
     const recordOperationCredentialUse = vi.fn();
     let currentGroup = testQualifiedGroup({
       activeAccountId: 'standard-openai',
@@ -2669,12 +3050,30 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       account: { service: openAiService, accountId: 'standard-openai' },
       request: { kind: 'environment', keys: ['OPENAI_API_KEY'] },
       signal: new AbortController().signal,
-    })).rejects.toMatchObject({
-      code: 'plugin_connected_account_binding_out_of_scope',
-    } satisfies Partial<PluginError>);
+    })).resolves.toEqual({ kind: 'environment', env: { OPENAI_API_KEY: 'sk-listed' } });
     expect(invokeWithReceipt).toHaveBeenCalledOnce();
-    expect(recordOperationCredentialUse).not.toHaveBeenCalled();
+    expect(recordOperationCredentialUse).toHaveBeenCalledOnce();
     lease.dispose();
+  });
+
+  it('retains physical listed-account refusal for a disclosed Team member without a local observation', async () => {
+    const disclosedMember = { service: openAiService, accountId: 'team-source-member' };
+    const { runtime, qualifiedApi, invokeWithReceipt, invokeDirectMaterial } = createInventoryRuntime({ accounts: [] });
+    const lease = runtime.activateSessionPurposeBindings({ sessionId: 'team-listed-inventory', purposes: [purpose],
+      bindings: [{ purpose, target: { kind: 'account', account: disclosedMember } }],
+      directMaterialOrigins: [{ purpose, resourceId: 'team-resource', disclosedMember }],
+    });
+    const input = { purpose, serviceRefs: [openAiService], sessionId: 'team-listed-inventory',
+      signal: new AbortController().signal };
+    try {
+      await expect(runtime.owner.listAccounts(input)).resolves.toEqual({ status: 'complete', accounts: [] });
+      await expect(runtime.owner.materializeListedAccount({ ...input, account: disclosedMember,
+        request: { kind: 'environment', keys: ['OPENAI_API_KEY'] } }))
+        .rejects.toMatchObject({ code: 'plugin_connected_account_binding_out_of_scope' });
+      expect(qualifiedApi.listAccounts).toHaveBeenCalledTimes(2);
+      expect(invokeWithReceipt).not.toHaveBeenCalled();
+      expect(invokeDirectMaterial).not.toHaveBeenCalled();
+    } finally { lease.dispose(); }
   });
 
   it('keeps a configuration-free V4 account usable when its configuration projection is absent', async () => {
@@ -3032,15 +3431,19 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     })).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer listed' } });
   });
 
-  it('fails closed when the exact listed account leaves the authorized set during materialization', async () => {
+  it.each([false, true])('retains admitted listed materialization while membership changes, with local cancellation=%s', async cancelled => {
     let listedAccountIds = ['standard-openai'];
+    const cancellation = new AbortController();
+    let readsAtAcquisition = 0;
     const qualifiedApi = testQualifiedApi();
     qualifiedApi.listAccounts.mockImplementation(async () => ({
       service: openAiService,
       accounts: listedAccountIds.map((accountId) => testQualifiedProfile({ accountId })),
     }));
     const invokeWithReceipt = vi.fn(async () => {
+      readsAtAcquisition = qualifiedApi.listAccounts.mock.calls.length;
       listedAccountIds = [];
+      if (cancelled) cancellation.abort();
       return {
         result: { kind: 'environment' as const, env: { OPENAI_API_KEY: 'sk-listed' } },
         basis: { credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' },
@@ -3071,15 +3474,16 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
       },
     });
 
-    await expect(runtime.owner.materializeListedAccount({
+    const result = runtime.owner.materializeListedAccount({
       purpose,
       serviceRefs: [openAiService],
       account: { service: openAiService, accountId: 'standard-openai' },
       request: { kind: 'environment', keys: ['OPENAI_API_KEY'] },
-      signal: new AbortController().signal,
-    })).rejects.toMatchObject({
-      code: 'plugin_connected_account_binding_out_of_scope',
-    } satisfies Partial<PluginError>);
+      signal: cancellation.signal,
+    });
+    if (cancelled) await expect(result).rejects.toMatchObject({ name: 'AbortError' });
+    else await expect(result).resolves.toEqual({ kind: 'environment', env: { OPENAI_API_KEY: 'sk-listed' } });
     expect(invokeWithReceipt).toHaveBeenCalledOnce();
+    expect(qualifiedApi.listAccounts.mock.calls.length).toBe(readsAtAcquisition);
   });
 });

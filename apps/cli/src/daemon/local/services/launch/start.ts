@@ -115,6 +115,7 @@ async function readSnapshot(
     request: DaemonLocalServiceLauncherStartRequestV1,
     actualWorkspaceId?: string,
     managedBindingsOnly = false,
+    cachedDiscovery = false,
 ): Promise<Readonly<
     | { ok: true; snapshot: LocalServiceLauncherSnapshotV1; machineMatches: boolean }
     | { ok: false; response: DaemonLocalServiceLauncherStartResponseV1 }
@@ -126,6 +127,7 @@ async function readSnapshot(
             // owner below. Listener/suggestion discovery contributes no authority;
             // retain the supervisor's current binding and scope checks directly.
             ...(managedBindingsOnly ? { projection: 'managed_bindings' as const } : {}),
+            ...(cachedDiscovery ? { discovery: 'cached' as const } : {}),
             ...(actualWorkspaceId ? { scope: 'machine' as const }
                 : request.workspace ? { workspaceRoot: request.workspace.rootPath } : {}),
         });
@@ -174,7 +176,7 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
             // Action responses are published as complete launcher snapshots by
             // clients. A mutation-only preflight projection must not erase sibling
             // declarations or presentation targets from that response.
-            const complete = await readSnapshot({ feed: input.feed, now }, request);
+            const complete = await phase('response_snapshot', () => readSnapshot({ feed: input.feed, now }, request, undefined, false, true));
             return response({ ...value, snapshot: complete.ok ? complete.snapshot : emptyRequestBoundSnapshot(request, now()) });
         };
         if (!snapshotResult.machineMatches) {
@@ -242,15 +244,18 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
 
         let outcome: LocalServiceLauncherStartExecutionOutcome;
         try {
-            outcome = await input.startManagedDeclaration(resolution.declaration, request, ingress, actionContext, executeCanonicalAction);
+            outcome = await phase('managed_start', () => input.startManagedDeclaration!(resolution.declaration, request, ingress, actionContext, executeCanonicalAction));
         } catch {
             outcome = { status: 'failed', reasonCode: 'managed_start_failed' };
         }
         if (outcome.status === 'succeeded') input.history?.record(request.targetId);
 
-        const postStartSnapshot = await readSnapshot({ feed: input.feed, now }, request,
+        // The supervisor has just settled readiness. Return its current state with
+        // every admitted sibling target; unrelated listener discovery is not a
+        // prerequisite for acknowledging this exact Project mutation.
+        const postStartSnapshot = await phase('response_snapshot', () => readSnapshot({ feed: input.feed, now }, request,
             outcome.status === 'succeeded' && request.workspace?.machineId !== request.machineId
-                ? outcome.currentTarget?.workspaceId : undefined);
+                ? outcome.currentTarget?.workspaceId : undefined, false, exactDeclaration));
         const responseSnapshot = postStartSnapshot.ok
             ? postStartSnapshot.snapshot
             : emptyRequestBoundSnapshot(request, now());

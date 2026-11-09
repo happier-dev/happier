@@ -310,6 +310,7 @@ export async function enqueueWorkflowSessionInput(params: Readonly<{
       : {}),
   };
   const result = await sendSessionMessage({
+    explicitMessageSend: true,
     credentials: params.credentials,
     idOrPrefix: params.sessionId,
     message: params.text,

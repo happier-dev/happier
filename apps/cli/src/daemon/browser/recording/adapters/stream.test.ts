@@ -52,7 +52,7 @@ describe('browser recording stream-frame adapter', () => {
   it.each(['producer', 'encoder'] as const)('refuses a failed %s drain and suppresses late human-view frames while held', async (failure) => {
     const [{ createMachineLiveStreamCaptureRegistry }, { createBrowserRecordingStreamFrameCaptureAdapter }] = await Promise.all([
       import('../../../peer/mediation/stream/captureRegistry'),
-      import('./stream'),
+      import('../../../recording/stream'),
     ]);
     const control = createSurfaceInputControl();
     const encodedFrames: Buffer[] = [];
@@ -97,7 +97,7 @@ describe('browser recording stream-frame adapter', () => {
       { createBrowserRecordingStreamFrameCaptureAdapter },
     ] = await Promise.all([
       import('../../../peer/mediation/stream/captureRegistry'),
-      import('./stream'),
+      import('../../../recording/stream'),
     ]);
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-stream-recording-'));
 
@@ -197,7 +197,7 @@ describe('browser recording stream-frame adapter', () => {
       { createBrowserRecordingStreamFrameCaptureAdapter },
     ] = await Promise.all([
       import('../../../peer/mediation/stream/captureRegistry'),
-      import('./stream'),
+      import('../../../recording/stream'),
     ]);
     const discard = vi.fn(async () => {});
     const adapter = createBrowserRecordingStreamFrameCaptureAdapter({
@@ -233,7 +233,7 @@ describe('browser recording stream-frame adapter', () => {
       { createBrowserRecordingStreamFrameCaptureAdapter },
     ] = await Promise.all([
       import('../../../peer/mediation/stream/captureRegistry'),
-      import('./stream'),
+      import('../../../recording/stream'),
     ]);
     const registry = createMachineLiveStreamCaptureRegistry();
     const sourceStart = vi.fn(async () => ({ ok: true as const, session: { stop: vi.fn(async () => {}) } }));
@@ -286,7 +286,7 @@ describe('browser recording stream-frame adapter', () => {
       { createBrowserRecordingStreamFrameCaptureAdapter },
     ] = await Promise.all([
       import('../../../peer/mediation/stream/captureRegistry'),
-      import('./stream'),
+      import('../../../recording/stream'),
     ]);
     const registry = createMachineLiveStreamCaptureRegistry();
     registry.register({
@@ -346,7 +346,7 @@ describe('browser recording stream-frame adapter', () => {
       { createBrowserRecordingStreamFrameCaptureAdapter },
     ] = await Promise.all([
       import('../../../peer/mediation/stream/captureRegistry'),
-      import('./stream'),
+      import('../../../recording/stream'),
     ]);
     const registry = createMachineLiveStreamCaptureRegistry();
     registry.register({
@@ -414,7 +414,7 @@ describe('browser recording stream-frame adapter', () => {
       { createBrowserRecordingStreamFrameCaptureAdapter },
     ] = await Promise.all([
       import('../../../peer/mediation/stream/captureRegistry'),
-      import('./stream'),
+      import('../../../recording/stream'),
     ]);
     const registry = createMachineLiveStreamCaptureRegistry();
     registry.register({
@@ -475,7 +475,7 @@ describe('browser recording stream-frame adapter', () => {
       { createBrowserRecordingStreamFrameCaptureAdapter },
     ] = await Promise.all([
       import('../../../peer/mediation/stream/captureRegistry'),
-      import('./stream'),
+      import('../../../recording/stream'),
     ]);
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-stream-recording-discard-'));
 

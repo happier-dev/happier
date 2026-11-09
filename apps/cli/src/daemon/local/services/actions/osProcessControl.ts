@@ -1,4 +1,6 @@
 import { createProcessTreeTerminator, terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
+import type { createProcessOwnershipRuntime } from '@/daemon/processes/ownership/processOwnershipRuntime';
+import { equalProcessStart, resolveRawProcessControlRefusal } from '@/daemon/processes/ownership/types';
 import type { NormalizedLocalServiceInventorySnapshot } from '../inventory/scanner';
 import type { TerminateListenerProbeInput, TerminateListenerProbeResult, TerminateProcessControl } from './terminate';
 
@@ -9,6 +11,8 @@ export type CreateOsProcessControlInput = Readonly<{
     wait?: (ms: number) => Promise<void>;
     /** Genuine OS signal boundary, passed directly to the shared process owner. */
     kill?: (pid: number, signal: NodeJS.Signals | 0) => void;
+    /** The installed daemon's one ownership owner; consumes the terminator's census. */
+    processOwnershipRuntime?: Pick<ReturnType<typeof createProcessOwnershipRuntime>, 'resolveSnapshot'>;
 }>;
 
 function hostsCompatible(scanned: string, requested: string): boolean {
@@ -73,5 +77,22 @@ export function createOsProcessControl(input: CreateOsProcessControlInput): Term
         };
     }
 
-    return { probeListener, terminateTree, wait };
+    const ownership = input.processOwnershipRuntime;
+    const terminateWithOwnership: TerminateProcessControl['terminateTree'] = ownership ? async request => {
+        let refusal: string | null = null;
+        const result = await terminateTree({ ...request, authorizeSnapshot: async (snapshot, targets) => {
+            if (request.authorizeSnapshot && !await request.authorizeSnapshot(snapshot, targets)) return false;
+            const observed = await ownership.resolveSnapshot(snapshot, undefined, { requesterAttribution: 'retained' });
+            if (observed.status !== 'ok') { refusal = 'ownership_unavailable'; return false; }
+            if (!targets) { refusal = 'ownership_unavailable'; return false; }
+            const captured = new Map(targets.map(target => [target.pid, target.start]));
+            for (const row of observed.rows) if (captured.has(row.pid) && equalProcessStart(captured.get(row.pid)!, row.start)) {
+                refusal = resolveRawProcessControlRefusal(row.owner) ?? (row.level === 'unknown' ? 'ownership_unavailable' : null);
+                if (refusal) return false;
+            }
+            return true;
+        } });
+        return refusal ? { ...result, outcomes: result.outcomes.map(row => row.outcome === 'refused' ? { ...row, reason: refusal! } : row) } : result;
+    } : terminateTree;
+    return { probeListener, terminateTree: terminateWithOwnership, wait };
 }

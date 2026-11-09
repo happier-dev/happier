@@ -10,3 +10,17 @@ export function startMemoryWorker(params: Parameters<typeof startDaemonMemoryWor
     })),
   } });
 }
+
+/** Preserve the same HTTP fixture for the separate id-only visibility reader. */
+export async function fetchMemorySessionListVisibilityFixture(params: Readonly<{
+  token: string;
+  cursor?: string;
+  limit?: number;
+  archivedOnly?: boolean;
+  activeOnly?: boolean;
+  signal?: AbortSignal;
+}>) {
+  const { fetchSessionsPage } = await import('@/session/transport/http/sessionsHttp');
+  const page = await fetchSessionsPage(params);
+  return { ...page, sessions: page.sessions.map(({ id }) => ({ id })) };
+}

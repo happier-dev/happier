@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createIdleTerminalPolicyFixture } from './idleTerminalPolicy.testkit';
+import { terminalClose } from './actuators/terminalClose';
 const releases: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const release of releases.splice(0).reverse()) await release(); });
 const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
@@ -10,6 +11,21 @@ const epoch = Date.UTC(2026, 9, 11);
 const fixture = () => createIdleTerminalPolicyFixture(releases);
 
 describe('Idle terminal policy at the actual PTY owner', () => {
+  it('reports no close when its final native admission loses foreground evidence', async () => {
+    const f = await fixture(); f.enable();
+    await f.terminals.ensure({ terminalKey: 'changed-final-target', cwd: '/project', custody });
+    f.now(120_000);
+    expect((await f.readPlan()).run).toBeDefined();
+    const terminal = f.terminals.readGuardResources()[0]!;
+    const native = f.holdNativeRead();
+    const closing = terminalClose({ terminals: f.terminals, terminal, signal: new AbortController().signal,
+      verifyCurrent: async () => (await f.readPlan()).run !== undefined });
+    await native.entered; f.foreground(undefined); native.release();
+    expect(await closing).toBe(false);
+    expect(f.terminals.list()).toHaveLength(1);
+    expect(f.processes[0]?.kills).toBe(0);
+    expect((await f.activityLog.list({ range: 'today' })).entries).toEqual([]);
+  });
   it('reads the actual shell foreground fact behind a native PTY relay, not its carrier', async () => {
     const f = await createIdleTerminalPolicyFixture(releases, { relay: true }); f.enable();
     await f.terminals.ensure({ terminalKey: 'relay-shell', cwd: '/project', custody }); f.now(120_000);

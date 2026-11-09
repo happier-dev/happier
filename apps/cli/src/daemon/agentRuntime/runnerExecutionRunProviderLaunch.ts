@@ -18,7 +18,7 @@ import {
 } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 
 export type RunnerExecutionRunProviderPreparation = Omit<ExecutionRunProviderSelectionInput,
-    'selection' | 'backendTarget' | 'agentId' | 'runId' | 'connectedServices' | 'runtimeRegistryLease'> & Readonly<{
+    'selection' | 'sessionConfigOptionOverrides' | 'backendTarget' | 'agentId' | 'runId' | 'connectedServices' | 'runtimeRegistryLease'> & Readonly<{
     prepareManagedEndpoint?: DirectManagedProviderEndpointPreparer;
     prepareTeamCredentialProviderBinding?: ExecutionRunTeamCredentialProviderBindingPreparer;
     isCurrent(): boolean | Promise<boolean>;

@@ -1,8 +1,9 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { randomUUID } from 'node:crypto';
 import { hashProcessCommand, processIdentityMatches } from '@happier-dev/cli-common/processInstance';
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import * as z from 'zod/mini';
@@ -15,6 +16,7 @@ import {
 import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
 import { processGenerationMatches, readProcessIdentityByPid } from './processIdentity';
 import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
+import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { AgentSessionStartupInstructionsMarkerV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { AgentSessionStartupInstructionsMarkerV1, PluginSourceCustodyV1 } from '@happier-dev/protocol';
@@ -35,7 +37,7 @@ import { RequesterWorkAttributionStoredReadV1Schema, RequesterWorkAttributionV1S
   type RequesterWorkAttributionV1 } from './lifecycle/requesterWorkAttribution';
 import type { ConnectedServiceMaterializedStateObservationBinding } from './connectedServices/materialization/materializer';
 
-const ConnectedServiceMaterializedStateObservationBindingSchema = z.strictObject({
+const ConnectedServiceMaterializedStateObservationBindingSchema = lazyZodSchema(() => z.strictObject({
   agentId: z.string().check(z.minLength(1)),
   pluginId: z.string().check(z.minLength(1)),
   sourceCustody: PluginSourceCustodyV1Schema,
@@ -45,9 +47,9 @@ const ConnectedServiceMaterializedStateObservationBindingSchema = z.strictObject
     sourceEntryRoot: z.string().check(z.minLength(1)),
     materializedEntryPath: z.string().check(z.minLength(1)),
   })),
-});
+}));
 
-const DaemonSessionMarkerSchema = z.object({
+const DaemonSessionMarkerSchema = lazyZodSchema(() => z.object({
   pid: z.number().check(z.int(), z.positive()),
   happySessionId: z.string(),
   happyHomeDir: z.string(),
@@ -113,7 +115,7 @@ const DaemonSessionMarkerSchema = z.object({
         'Runner Agent daemon-service admission must match the active turn',
     });
   }
-}));
+})));
 
 export type DaemonSessionMarker = Omit<z.infer<typeof DaemonSessionMarkerSchema>, 'materializedStateObservationBinding'> & {
   materializedStateObservationBinding?: ConnectedServiceMaterializedStateObservationBinding;
@@ -215,37 +217,6 @@ async function runWithSessionMarkerMutationLocks<T>(
 
 async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
-}
-
-async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    await writeFile(tmpPath, JSON.stringify(value, null, 2), 'utf-8');
-    try {
-      await rename(tmpPath, filePath);
-    } catch (e) {
-      const err = e as NodeJS.ErrnoException;
-      // On Windows, rename may fail if destination exists.
-      if (err?.code === 'EEXIST' || err?.code === 'EPERM') {
-        try {
-          await unlink(filePath);
-        } catch {
-          // ignore unlink failure (e.g. ENOENT)
-        }
-        await rename(tmpPath, filePath);
-        return;
-      }
-      throw e;
-    }
-  } catch (e) {
-    // Best-effort cleanup to avoid leaving behind orphaned temp files on failure.
-    try {
-      await unlink(tmpPath);
-    } catch {
-      // ignore cleanup failure
-    }
-    throw e;
-  }
 }
 
 export type WriteSessionMarkerOptions = Readonly<{

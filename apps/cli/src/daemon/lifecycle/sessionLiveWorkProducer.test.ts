@@ -4,7 +4,7 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { registerSessionProviderInputAdmissionRpc, requestSessionInputLiveWork } from '@/agent/runtime/session/input/sessionProviderInputAdmissionRpc';
 import type { RpcHandler } from '@/api/rpc/types';
 import type { TrackedSession } from '../types';
-import { createManagedActivityInventory, readWorkspaceSessionIdle } from './managedActivity';
+import { createLiveWorkProducerGroup, createManagedActivityInventory, readWorkspaceSessionIdle } from './managedActivity';
 import { createSessionLiveWorkProducer } from './sessionLiveWorkProducer';
 import { createSpawnRequestCoalescer, computeDaemonSpawnRequestKey } from '../spawn/spawnRequestCoalescer';
 import { createDeferred } from '@/testkit/async/deferred';
@@ -75,7 +75,7 @@ describe('live Session producer at the host input RPC boundary', () => {
     inventory.dispose();
   });
   it('keeps accepted startup preparation busy before any runner PID exists', async () => {
-    const startup = createSpawnRequestCoalescer({ recentSuccessTtlMs: 0 });
+    const startup = createSpawnRequestCoalescer();
     const source = createSessionLiveWorkProducer({ startup, readSessions: () => [], readActivity: async () => {
       throw new Error('no runner exists');
     } });
@@ -125,6 +125,40 @@ describe('live Session producer at the host input RPC boundary', () => {
     source.notifyChanged();
     expect((await inventory.readDecision()).kind).toBe('idle');
     inventory.dispose();
+  });
+
+  it('rereads only the Session whose runner reported a change, while explicit confirmations still read every runner', async () => {
+    const sessions: TrackedSession[] = ['s1', 's2', 's3'].map((id, index) => ({ pid: index + 1, startedBy: 'daemon', happySessionId: id }));
+    const reads: string[] = [];
+    let s2Input: 'active' | 'settled' = 'settled';
+    const source = createSessionLiveWorkProducer({ readSessions: () => sessions, readActivity: async tracked => {
+      reads.push(tracked.happySessionId!);
+      return { session: 'settled', input: tracked.happySessionId === 's2' ? s2Input : 'settled',
+        agents: 'settled', attention: 'settled', settledAt: 1 };
+    } });
+    // Production shape: the daemon wraps the owner in a late-bound group under the managed inventory.
+    const group = createLiveWorkProducerGroup(() => [source]);
+    const inventory = createManagedActivityInventory({ producers: [group] });
+    expect((await inventory.readDecision()).kind).toBe('idle');
+    expect(reads.sort()).toEqual(['s1', 's2', 's3']);
+    const decisions: string[] = [];
+    inventory.subscribe(decision => decisions.push(decision.kind));
+    reads.length = 0;
+    s2Input = 'active';
+    source.notifySessionChanged('s2');
+    for (let turn = 0; turn < 5; turn += 1) await new Promise(resolve => setTimeout(resolve, 0));
+    // One runner reported a change: the passive refresh reads that runner only.
+    expect({ reads: [...reads].sort(), decisions }).toEqual({ reads: ['s2'], decisions: ['busy'] });
+    reads.length = 0;
+    // An unattributed (structural) change and an explicit confirmation still read every runner.
+    source.notifyChanged();
+    for (let turn = 0; turn < 5; turn += 1) await new Promise(resolve => setTimeout(resolve, 0));
+    expect([...reads].sort()).toEqual(['s1', 's2', 's3']);
+    reads.length = 0;
+    expect(await inventory.readDecision()).toEqual({ kind: 'busy', reasons: ['input'] });
+    expect([...reads].sort()).toEqual(['s1', 's2', 's3']);
+    inventory.dispose();
+    group.dispose();
   });
 
   it('keeps unreported startup and failed live transport unknown even when activeTurnId is absent', async () => {

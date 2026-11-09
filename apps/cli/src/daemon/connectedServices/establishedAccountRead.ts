@@ -56,3 +56,4 @@ export function createEstablishedAccountReadScope(params: Readonly<{
   }
   return { isAccountRuntimeCurrent, assertAccountRuntimeCurrent, runMaterialization, runCurrentAccountRead, runIndependentAccountRead };
 }
+

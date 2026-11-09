@@ -25,6 +25,16 @@ const contained = (root: string, path: string) => {
 };
 const refusal = (): never => { throw Object.assign(new Error('Deployment data path escaped its owner'), { code: 'deployment_source_unavailable' }); };
 
+async function readWriterBindSource(source: string): Promise<string> {
+    try { return await realpathWithAbsentSuffix(source); }
+    catch (error) {
+        if (!record(error) || error.code !== 'EACCES' && error.code !== 'EPERM') throw error;
+        // Accept visible workload sharing through an unresolved private symlink on a
+        // person-managed Machine so private directories do not block mixed-user deployments.
+        return resolve(source);
+    }
+}
+
 /** Every actual bind source must remain physical, including an existing target
  * needing no seed. Ordinary links inside a mounted data tree are not traversed. */
 export async function assertNativeComposeSharedDataPaths(input: Readonly<{
@@ -127,7 +137,7 @@ export function createNativeComposeIncumbentBindReader(input: Readonly<{
             if (!record(row.State) || ['created', 'exited', 'dead'].includes(String(row.State.Status)) || !Array.isArray(row.Mounts)) continue;
             for (const mount of row.Mounts) {
                 if (!record(mount) || mount.Type !== 'bind' || typeof mount.Source !== 'string' || mount.RW === false) continue;
-                const source = await realpathWithAbsentSuffix(mount.Source);
+                const source = await readWriterBindSource(mount.Source);
                 if (!selected.some(path => path === source || contained(source, path) || contained(path, source))) continue;
                 if (!record(row.Config) || !record(row.Config.Labels)
                     || row.Config.Labels['com.docker.compose.project'] !== input.projectName

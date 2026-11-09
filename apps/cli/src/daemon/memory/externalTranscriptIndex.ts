@@ -1,4 +1,4 @@
-import type { AgentExternalSessionTranscriptItem, AgentExternalSessionTerminalObservation, AgentExternalSessionsPageTranscriptRequest } from '@happier-dev/plugin-sdk/sessions/external';
+import type { AgentExternalSessionTranscriptItem, AgentExternalSessionTerminalObservation, AgentExternalSessionsPageTranscriptRequest, AgentExternalSessionsReadAfterDiagnostic } from '@happier-dev/plugin-sdk/sessions/external';
 import type { MemoryContentPolicyV1, MemorySettingsV1 } from '@happier-dev/protocol/memory/memorySettings';
 import type { MemoryExternalTranscriptSourceV1 } from '@happier-dev/protocol/memory/memorySearch';
 import { MemoryNativeReadFailureReasonV1Schema, type MemoryIndexSourceStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
@@ -42,6 +42,13 @@ export function memoryExternalSourceFailure(error: unknown): Pick<MemoryIndexSou
     errorReason: reason.success ? reason.data : 'external_sessions_operation_rejected' };
 }
 
+const unreadableTranscriptFailure = { errorCode: 'unsupported', errorReason: 'external_sessions_transcript_read_failed' } as const;
+
+/** The existing opaque frontier also retains an unavailable read across child lifetimes. */
+export function readExternalMemoryUnavailableFailure(cursor: string | null | undefined) {
+  return cursor && (JSON.parse(cursor) as { type?: unknown }).type === 'unavailable' ? unreadableTranscriptFailure : undefined;
+}
+
 export function resolveExternalMemoryIndexPolicy(settings: MemorySettingsV1): Readonly<{
   policy: ReturnType<typeof resolveMemoryIndexPolicy>;
   key: string;
@@ -79,7 +86,7 @@ export type MemoryExternalSourceReader = Readonly<{
   readObservation?(): AgentExternalSessionsPageTranscriptRequest['observation'];
 }>;
 
-type Frontier = Readonly<{ type: 'page' | 'tail'; cursor?: string; tailCursor?: string }>;
+type Frontier = Readonly<{ type: 'page' | 'tail' | 'unavailable'; cursor?: string; tailCursor?: string }>;
 
 /** Runs only the candidates already selected by the worker's shared tick budget. */
 export async function syncExternalMemoryTranscriptsBatch(input: Readonly<
@@ -98,7 +105,7 @@ export async function syncExternalMemoryTranscriptsBatch(input: Readonly<
     if (failureState && failureState.nextDeepEligibleAtMs > operation.nowMs) {
       // A fresh demand child has no predecessor traversal Map. Persisted
       // backoff defers this source; it is not an admitted continuation.
-      onSourceResult?.(candidate.source, 'error');
+      onSourceResult?.(candidate.source, 'error', readExternalMemoryUnavailableFailure(operation.db.getExternalSourceState({ sessionId })?.cursor));
       continue;
     }
     try {
@@ -136,6 +143,8 @@ export async function syncExternalMemoryTranscriptOnce(input: Readonly<{
   if (input.db.hasSessionArtifactsOutsidePolicy({ sessionId, policyKey })) input.db.deleteSessionIndexData({ sessionId });
   const state = input.db.getExternalSourceState({ sessionId });
   let frontier: Frontier = state?.cursor ? JSON.parse(state.cursor) : { type: 'page' };
+  // Normal worker retry/observation can recover it; it is not a sticky partial bit.
+  if (frontier.type === 'unavailable') frontier = { type: 'page' };
   // Readers without a tail watermark can refresh only from the page head.
   // That read replaces their snapshot; it is not an append at new ordinals.
   const restartSnapshot = frontier.type === 'tail' && !frontier.cursor;
@@ -150,6 +159,7 @@ export async function syncExternalMemoryTranscriptOnce(input: Readonly<{
     maxSerializedBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.pageTranscript.maxSerializedBytes, signal: input.signal };
   let pageCursor: string | undefined;
   let items: readonly (AgentExternalSessionTranscriptItem | AgentExternalSessionTerminalObservation)[];
+  let diagnostics: readonly AgentExternalSessionsReadAfterDiagnostic[] | undefined;
   let nextFrontier: Frontier;
   let hasMore: boolean;
   if (frontier.type === 'tail' && frontier.cursor) {
@@ -167,6 +177,7 @@ export async function syncExternalMemoryTranscriptOnce(input: Readonly<{
     }
     if (result.value.outcome !== 'advanced') throw new Error('memory_external_transcript_read_failed');
     items = result.value.items;
+    diagnostics = result.value.diagnostics;
     nextFrontier = { type: 'tail', cursor: result.value.nextCursor };
     hasMore = result.value.hasMore;
   } else {
@@ -181,12 +192,20 @@ export async function syncExternalMemoryTranscriptOnce(input: Readonly<{
       throw memoryExternalSourceReadError(input.source, result);
     }
     items = result.value.items;
+    diagnostics = result.value.diagnostics;
     hasMore = result.value.hasMore === true || result.value.truncated === true;
     if (hasMore && !result.value.nextCursor) throw new Error('memory_external_transcript_missing_continuation');
     const tailCursor = frontier.tailCursor ?? result.value.tailCursor ?? undefined;
     nextFrontier = hasMore && result.value.nextCursor
       ? { type: 'page', cursor: result.value.nextCursor, ...(tailCursor ? { tailCursor } : {}) }
       : { type: 'tail', ...(tailCursor ? { cursor: tailCursor } : {}) };
+  }
+  if (diagnostics?.some(diagnostic => diagnostic.severity === 'required')) {
+    // This decoder cannot represent the conversation. A scan uses the same
+    // decoder, so expose an unavailable read, not incomplete indexed coverage.
+    input.db.deleteSessionIndexData({ sessionId });
+    input.db.setExternalSourceState({ sessionId, source: input.source, cursor: JSON.stringify({ type: 'unavailable' }), nextOrdinal: 1 });
+    throw memoryExternalSourceReadError(input.source, { code: unreadableTranscriptFailure.errorCode, message: unreadableTranscriptFailure.errorReason });
   }
   // Preserve the previous searchable snapshot when the boundary read fails.
   // Once a replacement page is available, retire its old text and cursor as

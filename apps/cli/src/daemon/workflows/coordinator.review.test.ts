@@ -67,8 +67,7 @@ describe('workflow review pipeline', () => {
     await store.ensureIntent({ key, recordId: 'person-row', runId: 'continue', blockKind: 'wait', blockId: 'person', memberOrdinal: '0',
       path: { blockId: 'person', scope: [] }, attempt: 0, acceptedAtMs: 1, lifecycle: 'pending' });
     await store.commitFact({ key, lifecycle: 'completed', ...(value === undefined ? {} : { result: value }) });
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
-      executeStep: async (params) => {
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async (params) => {
         expect(params.input.values).toEqual(value === undefined ? [] : [null]);
         await params.beforeInputAdmission();
         await params.onInputAccepted({ kind: 'session', sessionId: 'session', localInputId: 'input' });
@@ -87,8 +86,7 @@ describe('workflow review pipeline', () => {
       path: { blockId: 'review-ready', scope: [] }, attempt: 0, acceptedAtMs: 1, lifecycle: 'pending' });
     await store.commitFact({ key, lifecycle: 'completed' });
     const workflow = definition([{ kind: 'wait', id: 'review-ready', document: { text: 'Confirm readiness', references: [], attachments: [] } }]);
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
-      executeStep: async () => { throw new Error('Wait must not launch an Agent'); } });
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async () => { throw new Error('Wait must not launch an Agent'); } });
     await expect(coordinator.run({ runId, definition: { ...workflow,
       finalOutput: { kind: 'result', producer: { blockId: 'review-ready', scope: { kind: 'current' } }, path: [] } },
       inputs: {}, executionTarget, authorization })).resolves.toMatchObject({ state: 'failed', reason: 'missing_reference' });
@@ -119,8 +117,7 @@ describe('workflow review pipeline', () => {
   });
   it('supplies exact draft publication context without changing authored inputs', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
-      executeStep: async (params) => {
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async (params) => {
         expect(params.input.text).toContain('workflow.run.invocations.publish_draft');
         expect(params.input.text).toContain('context-run');
         expect(params.input.text).toContain(params.invocationRecordId!);
@@ -138,12 +135,15 @@ describe('workflow review pipeline', () => {
     await store.ensureIntent({ key, recordId: 'held-row', runId: 'generate', blockKind: 'step', blockId: 'held', memberOrdinal: '0',
       path: { blockId: 'held', scope: [] }, attempt: 0, acceptedAtMs: 1, lifecycle: 'pending' });
     await store.commitFact({ key, lifecycle: 'waiting_for_review', result: 'prior',
+      input: { document: leaf('held', true).document, input: [], renderedText: 'STALE_ORIGINAL_RENDERED_INPUT' },
       execution: { kind: 'session', sessionId: 'session', localInputId: 'prior-input' }, workspace: { descriptor: workspace },
       review: { resultSource: { kind: 'execution_input' }, decision: { kind: 'generate', requestedFromContentRevision: '0' } } });
     const inputs: string[] = [];
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
-      executeStep: async (params) => {
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async (params) => {
         inputs.push(params.invocationRecordId!);
+        expect(params.input.renderedText).toBeUndefined();
+        expect(params.input.text).toContain('Generate the required result');
+        expect(params.input.text).not.toContain('STALE_ORIGINAL_RENDERED_INPUT');
         expect(params.recoveryPreviousExecution).toMatchObject({ sessionId: 'session', localInputId: 'prior-input' });
         expect(params.invocation.review).toBeUndefined();
         if (terminal !== 'cancelled') expect(params.invocation.observationDeadline).toBeUndefined();
@@ -182,7 +182,7 @@ describe('workflow review pipeline', () => {
       resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
       buildActionContext: () => ({ surface: 'rpc', authority: 'account_automation', callerPermissionMode: 'default' }) });
     const coordinator = createWorkflowCoordinator({ store, executeStep,
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true });
+      resolveWorkspace: async () => ({ ok: true, workspace }) });
     expect((await coordinator.run({ runId: 'lost-generation', definition: authored, inputs: {},
       executionTarget: { kind: 'detached_run' }, authorization })).state).toBe('waiting_for_review');
     expect(sent).toBe(false);
@@ -240,7 +240,7 @@ describe('workflow review pipeline', () => {
           throw new Error(`unexpected_native_action:${actionId}`);
         } } });
     const coordinator = createWorkflowCoordinator({ store, executeStep,
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true });
+      resolveWorkspace: async () => ({ ok: true, workspace }) });
     const params = { runId: 'restored-generation', definition: authored, inputs: {}, executionTarget: { kind }, authorization };
     expect((await coordinator.run(params)).state).toBe('waiting_for_review');
     const held = [...store.records.values()].find(row => row.attempt === 1)!;
@@ -281,7 +281,7 @@ describe('workflow review pipeline', () => {
       } }, resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
       buildActionContext: () => ({ surface: 'rpc', authority: 'account_automation', callerPermissionMode: 'default' }) });
     const coordinator = createWorkflowCoordinator({ store, executeStep,
-      resolveWorkspace: async () => ({ ok: true, workspace }), isAcceptedAuthorizationCurrent: async () => true });
+      resolveWorkspace: async () => ({ ok: true, workspace }) });
     expect((await coordinator.run({ runId: 'refused-generation', definition: authored, inputs: {},
       executionTarget: { kind: 'detached_run' }, authorization })).state).toBe(scenario.state);
     expect(actions).toEqual(['execution.run.send']);
@@ -309,8 +309,7 @@ describe('workflow review pipeline', () => {
         return await original.confirmReviewHolds(params);
       },
     };
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
-      executeStep: async (params) => {
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async (params) => {
         await params.beforeInputAdmission();
         await params.onInputAccepted({ kind: 'session', sessionId: params.step.id, localInputId: params.step.id });
         return { kind: 'completed', result: 'value' };
@@ -336,8 +335,7 @@ describe('workflow review pipeline', () => {
       review: { decision: { kind: 'generate', requestedFromContentRevision: '0' } } });
     const controller = new AbortController();
     let reviewEntries = 0;
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
-      onReviewEntered: async () => { reviewEntries++; },
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }), onReviewEntered: async () => { reviewEntries++; },
       executeStep: async (params) => {
         await params.beforeInputAdmission();
         await params.onInputAccepted({ kind: 'session', sessionId: 'session', localInputId: 'generated-input' });
@@ -353,8 +351,7 @@ describe('workflow review pipeline', () => {
 
   it('holds a successful initial turn whose required structured result is invalid', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
-      executeStep: async (params) => {
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async (params) => {
         await params.beforeInputAdmission();
         await params.onInputAccepted({ kind: 'session', sessionId: 'session', localInputId: 'input' });
         return { kind: 'completed', result: 'not JSON' };
@@ -370,8 +367,7 @@ describe('workflow review pipeline', () => {
   it('holds before its successor and parks with an immutable parent token', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const started: string[] = [];
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
-      executeStep: async (params) => {
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async (params) => {
         started.push(params.step.id);
         await params.beforeInputAdmission();
         await params.onInputAccepted({ kind: 'session', sessionId: 'session', localInputId: params.step.id });
@@ -387,8 +383,7 @@ describe('workflow review pipeline', () => {
   it('keeps a held slot occupied and never activates the capped sibling during park unwind', async () => {
     const store = createInMemoryWorkflowCoordinatorStore();
     const started: string[] = [];
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
-      executeStep: async (params) => {
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async (params) => {
         started.push(params.step.id);
         await params.beforeInputAdmission();
         await params.onInputAccepted({ kind: 'session', sessionId: 'session', localInputId: params.step.id });
@@ -409,8 +404,7 @@ describe('workflow review pipeline', () => {
     const slow = deferred<void>();
     const held = deferred<void>();
     const next = deferred<void>();
-    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }),
-      executeStep: async (params) => {
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace: async () => ({ ok: true, workspace }), executeStep: async (params) => {
         await params.beforeInputAdmission();
         await params.onInputAccepted({ kind: 'session', sessionId: params.step.id, localInputId: params.step.id });
         if (params.step.id === 'slow') await slow.promise;

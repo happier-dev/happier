@@ -1,6 +1,7 @@
+import { isDeepStrictEqual } from 'node:util';
 import { getMachineLiveStreamPayloadDecodedByteLength } from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
 import { isMachineLiveStreamTerminalReceiptV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/receipts';
-import { MachineLiveStreamStartRequestV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import { MachineLiveStreamStartRequestV1Schema, createMachineLiveStreamRelayAuthorizationSigningInputV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
 import { validateMachineLiveStreamControlLeaseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 import type { ActionExecutorContext, MachineLiveStreamControlLeaseV1, MachineLiveStreamControlSourceV1, MachineLiveStreamCaptureSourceKindV1, MachineLiveStreamControlV1, MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1, MachineLiveStreamReceiptV1, MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol';
@@ -13,6 +14,7 @@ import {
     type MachineLiveStreamCaptureStartResult,
 } from './captureAdapter';
 import { createMachineLiveStreamSession } from './session';
+import { findRouteGrantTrustRoot, verifyRouteGrantSignature, type DirectRouteGrantTrustRoot } from '../verifyRouteGrantSignature';
 import {
     createDaemonPeerMediationFlowEvent,
     type DaemonPeerMediationObservabilityEmitter,
@@ -102,6 +104,8 @@ function startEnvelope(startRequest: MachineLiveStreamStartRequestV1): MachineLi
 // Renewal changes authorization time only. Capture identity, routing, codec and admitted caps
 // are immutable for an active stream; the authenticated server ingress verifies the signature.
 function hasSameRenewalScope(previous: MachineLiveStreamStartRequestV1, next: MachineLiveStreamStartRequestV1): boolean {
+    const previousAuthorization = previous.authorization?.payload;
+    const nextAuthorization = next.authorization?.payload;
     const fields = [
         'streamId', 'streamFamily', 'sourceId', 'routeKind', 'sourceMachineId', 'targetMachineId',
         'viewerSocketId', 'codecId', 'maxBitrateBps', 'maxFramesPerSecond',
@@ -109,11 +113,19 @@ function hasSameRenewalScope(previous: MachineLiveStreamStartRequestV1, next: Ma
     ] as const;
     return fields.every((field) => previous[field] === next[field])
         && JSON.stringify(previous.viewerCodecs) === JSON.stringify(next.viewerCodecs)
-        && previous.authorization?.payload.accountId === next.authorization?.payload.accountId;
+        && previousAuthorization?.accountId === nextAuthorization?.accountId
+        && previousAuthorization?.v === nextAuthorization?.v
+        && (previousAuthorization?.v !== 2 || (nextAuthorization?.v === 2
+            && previousAuthorization.viewerAccountId === nextAuthorization.viewerAccountId
+            && previousAuthorization.sourceMachineInstallationId === nextAuthorization.sourceMachineInstallationId
+            && isDeepStrictEqual(previousAuthorization.personalSourceAdmission, nextAuthorization.personalSourceAdmission)));
 }
 
 export function createMachineLiveStreamRelayTerminator(input: Readonly<{
     machineId: string;
+    accountId?: string | null;
+    sourceMachineInstallationId?: string;
+    resolveRelayAuthorizationTrustRoots?: () => readonly DirectRouteGrantTrustRoot[];
     captureAdapter?: MachineLiveStreamCaptureAdapter;
     nowMs: () => number;
     emitEnvelope: (envelope: MachineLiveStreamRelayEnvelopeV1) => void;
@@ -230,6 +242,19 @@ export function createMachineLiveStreamRelayTerminator(input: Readonly<{
             if (startRequest.sourceMachineId !== input.machineId) {
                 emitObservability({ kind: 'flow.denied', startRequest, reasonCode: 'source_machine_mismatch' });
                 return { ok: false, reasonCode: 'source_machine_mismatch' };
+            }
+            const authorization = startRequest.authorization;
+            if (authorization?.payload.v === 2) {
+                if (authorization.payload.accountId !== input.accountId
+                    || authorization.payload.sourceMachineInstallationId !== input.sourceMachineInstallationId) {
+                    return { ok: false, reasonCode: 'capture_source_denied' };
+                }
+                const publicKey = findRouteGrantTrustRoot(input.resolveRelayAuthorizationTrustRoots?.() ?? [],
+                    authorization.signature.keyId, input.nowMs());
+                if (!publicKey || !verifyRouteGrantSignature({ publicKey,
+                    signingInput: createMachineLiveStreamRelayAuthorizationSigningInputV1(authorization.payload),
+                    signatureBase64Url: authorization.signature.valueBase64Url,
+                })) return { ok: false, reasonCode: 'grant_bad_signature' };
             }
 
             const captureAdapter = input.captureAdapter;

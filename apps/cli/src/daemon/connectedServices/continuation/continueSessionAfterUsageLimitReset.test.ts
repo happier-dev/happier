@@ -1,3 +1,14 @@
+import { join } from 'node:path';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { createDaemonControlApp } from '@/daemon/controlServer';
+import type { TrackedSession } from '@/daemon/types';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { authorizeConnectedServiceRuntimeAuthFailureSource, handleConnectedServiceRuntimeAuthFailureForSession } from '../runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
+import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
+import type { RuntimeAuthRecoveryIntent } from '../runtimeAuth/RuntimeAuthRecoveryScheduler';
+import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry, type ConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { buildConnectedServiceAuthGroupObservedFailureMemberState } from '../accountGroups/runtimeState/buildConnectedServiceAuthGroupObservedFailureMemberState';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionRuntimeIssueV1, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -8,11 +19,16 @@ import { createSessionConnectedServiceRuntimeAuthRefreshHandler } from '../sessi
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import { readQualifiedConnectedAccountCredentialMaterial } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import type { ConnectedServiceRuntimeFailureClassification } from '../runtimeAuth/types';
+import { createConnectedServiceContinuationMessageDispatcher } from './createConnectedServiceContinuationMessageDispatcher';
+import { RuntimeAuthRecoveryScheduler } from '../runtimeAuth/RuntimeAuthRecoveryScheduler';
+import { resolveRoutedUsageLimitRecoveryResumePromptMode } from '@/session/usageLimitRecoveryControls/resolveRoutedUsageLimitRecoveryResumePromptMode';
+import { createConnectedServiceContinuationHandler } from './switchRecovery';
+import { USAGE_LIMIT_CONTINUATION_RESUME_PROMPT } from './continuationResumePrompt';
 
 // HTTP is the process boundary. Keep issue validation, continuation identity,
 // Session authoring, envelopes and ordinary Pending transport real.
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
-vi.mock('axios', () => ({ default: { ...http, isAxiosError: () => false } }));
+vi.mock('axios', () => ({ default: { ...http, defaults: {}, isAxiosError: () => false } }));
 
 const sessionId = 'c123456789012345678901234';
 const serviceId = 'happier.agent.claude/claude-subscription';
@@ -56,6 +72,250 @@ function fixture(overrides: Partial<RawSessionRecord> = {}) {
 }
 
 describe('continueSessionAfterUsageLimitReset', () => {
+
+  it.each(['stopped', 'predecessor', 'provider_capacity', 'newer_work', 'completed', 'cancelled', 'not_failed', 'archived', 'unknown_quota', 'exhausted_quota'] as const)(
+    'keeps an adopted successor report under durable guarded admission (%s)', async projection => {
+    const directory = await createTempDir('happier-adopted-report-');
+    let now = 110;
+    const input = fixture({ latestTurnId: 'interrupted-turn', latestTurnStatus: 'in_progress', lastRuntimeIssue: null,
+      latestTurnStatusObservedAt: 100 });
+    const revisionA = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
+    const revisionB = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
+    const tracked: TrackedSession = { startedBy: 'daemon', happySessionId: sessionId, pid: 123,
+      activeTurnId: 'interrupted-turn', ...(projection === 'predecessor' ? { reattachedFromDiskMarker: true } : {}),
+      spawnOptions: { directory, backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }, connectedServices: {
+        v: 2, bindingsByServiceId: { [serviceId]: { source: 'connected', selection: 'group', groupId: 'pool', profileId: 'A' } },
+      } } };
+    const classification: ConnectedServiceRuntimeFailureClassification = { kind: projection === 'provider_capacity' ? 'capacity' : 'plan',
+      limitCategory: projection === 'provider_capacity' ? 'capacity' : 'plan_invalid',
+      quotaScope: projection === 'provider_capacity' ? 'provider' : 'model', providerLimitId: 'fixture-model',
+      serviceId, groupId: 'pool', profileId: 'A', groupGeneration: 1,
+      expectedCredentialRevision: projection === 'predecessor' ? null : revisionA,
+      resetsAtMs: 604_800_000, planType: null, rateLimits: null, source: 'structured_provider_error' };
+    let runtime = { serviceId, groupId: 'pool', profileId: 'A', generation: 1, credentialRevision: revisionA };
+    let state: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'pool', activeProfileId: 'A', generation: 1,
+      credentialRevision: revisionA, runtimeStateRevision: 0,
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: true, strategy: 'priority', softSwitchRemainingPercent: 15 },
+      members: ['A', 'B'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map(['A', 'B'].map(profileId => [profileId, {
+        quotaSnapshot: { capturedAtMs: now, staleAfterMs: 60_000, effectiveRemainingPercent: profileId === 'A' ? 10 : 80 },
+      }])) };
+    let commits = 0;
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => now,
+      loadState: async () => state,
+      commitSwitch: async value => { commits++; state = { ...state, activeProfileId: value.toProfileId,
+        generation: state.generation + 1, credentialRevision: revisionB }; return state; },
+      // Home CAS, provider apply and Home member-state persistence are system boundaries.
+      applyGeneration: async value => { runtime = { ...runtime, profileId: value.activeProfileId!, generation: value.generation, credentialRevision: revisionB };
+        return { ok: true, mode: 'hot_apply' }; },
+      recordObservedFailureState: async value => {
+        const memberStatesByProfileId = new Map(state.memberStatesByProfileId);
+        const profileId = value.observedProfileId!;
+        const existing = memberStatesByProfileId.get(profileId) ?? {};
+        const observed = buildConnectedServiceAuthGroupObservedFailureMemberState({ existing, reason: value.reason,
+          limitCategory: value.limitCategory, quotaScope: value.quotaScope, providerLimitId: value.providerLimitId,
+          retryAtMs: value.resetsAtMs ?? null, cooldownMs: state.policy.cooldownMs,
+          autoDisablePlanInvalidAccounts: state.policy.autoDisablePlanInvalidAccounts, planType: value.planType, observedAtMs: now });
+        memberStatesByProfileId.set(profileId, { ...existing, ...observed });
+        state = { ...state, memberStatesByProfileId };
+      },
+    });
+    const consumed = new Set<string>();
+    const sends: string[] = [];
+    http.post.mockImplementation(async (_url: string, body: { localId: string }) => {
+      sends.push(body.localId); const didWrite = !consumed.has(body.localId); consumed.add(body.localId);
+      return { status: 200, data: { didWrite, terminal: false } };
+    });
+    let scheduler: RuntimeAuthRecoveryScheduler;
+    const run = async (value: Parameters<NonNullable<Parameters<typeof createDaemonControlApp>[0]['handleConnectedServiceRuntimeAuthFailure']>>[0] & { recoveryInvocationSource?: 'scheduler_retry' }) => {
+      const intent = scheduler.readForSession(sessionId)[0];
+      return await handleConnectedServiceRuntimeAuthFailureForSession({ ...value, getChildren: () => [tracked],
+        switchCoordinator: coordinator, resolveRegisteredRuntimeAuthFailureSource: () => runtime,
+        resolveCurrentRuntimeAuthFailureSource: async () => runtime,
+        continueAfterRuntimeAuthSwitch: createConnectedServiceContinuationHandler({ credentials,
+          interruptedOriginId: value.interruptedOriginId, resumePromptMode: 'standard', resolveInterruption: () => 'provider_failed_turn',
+          ...(intent ? { runtimeAuthRecovery: { armedAtMs: intent.armedAtMs,
+            isCurrent: () => scheduler.readForSession(sessionId).some(current => current.attemptId === value.interruptedOriginId
+              && ['waiting', 'checking', 'resumed_awaiting_proof'].includes(current.status)),
+            readActiveTurnId: () => tracked.activeTurnId ?? null } } : {}),
+        }),
+      });
+    };
+    const createScheduler = () => new RuntimeAuthRecoveryScheduler({ nowMs: () => now, jitterMs: () => 0,
+      durableStore: createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(join(directory, 'recoveries.json')),
+      recover: value => run({ ...value, switchesThisTurn: value.switchesThisTurn ?? 0 }) });
+    scheduler = createScheduler();
+    const createApp = () => createDaemonControlApp({ getChildren: () => [tracked], machineId: 'machine', controlToken: 'token',
+      stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'unused' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, runtimeAuthRecoveryScheduler: scheduler,
+      authorizeConnectedServiceRuntimeAuthFailure: value => authorizeConnectedServiceRuntimeAuthFailureSource({ ...value,
+        getChildren: () => [tracked], resolveRegisteredRuntimeAuthFailureSource: () => runtime,
+        resolveCurrentRuntimeAuthFailureSource: async () => runtime }), handleConnectedServiceRuntimeAuthFailure: run });
+    let app = createApp();
+    const report = (reportId = 'adopted-A-report') => app.inject({ method: 'POST', url: '/connected-service-runtime-auth/failure',
+      headers: { 'x-happier-daemon-token': 'token' }, payload: { sessionId, classification, reportId } });
+    try {
+      expect(await coordinator.switchBeforeTurn({ sessionId, serviceId, groupId: 'pool', reason: 'soft_threshold', observedProfileId: 'A' }))
+        .toMatchObject({ status: 'switched', activeProfileId: 'B', generation: 2 });
+      expect(input.rawSession.latestTurnStatus).toBe('in_progress');
+      tracked.activeTurnId = projection === 'newer_work' ? 'new-user-turn' : 'interrupted-turn';
+      const read = http.get.getMockImplementation()!;
+      http.get.mockImplementation(async (url: string) => url.includes(`/v2/sessions/${sessionId}`)
+        ? { status: 200, data: { session: { ...input.rawSession,
+          latestTurnStatus: projection === 'not_failed' ? 'in_progress' : projection === 'completed' || projection === 'cancelled' ? projection : 'failed',
+          latestTurnStatusObservedAt: projection === 'completed' || projection === 'cancelled' ? now + 1 : 100,
+          archivedAt: projection === 'archived' ? now : null,
+          lastRuntimeIssue: ['completed', 'cancelled', 'not_failed'].includes(projection) ? null : issue } } } : read(url));
+      if (projection === 'unknown_quota' || projection === 'exhausted_quota') state = { ...state,
+        memberStatesByProfileId: new Map([...state.memberStatesByProfileId, ['B', projection === 'unknown_quota' ? {} : {
+          quotaSnapshot: { capturedAtMs: now, staleAfterMs: 60_000, effectiveRemainingPercent: 0,
+            meters: [{ meterId: 'weekly', limitCategory: 'usage_limit', remainingPct: 0, resetAtMs: 180_000, providerLimitId: null }] },
+        }]]) };
+      const [response, duplicate] = await Promise.all([report(), report()]);
+      expect(response.statusCode).toBe(200); expect(duplicate.json()).toEqual(response.json());
+      expect(response.json()).toMatchObject({ ok: true, result: { status: 'recovery_retry_scheduled' },
+        recoveryReceipt: { reportId: 'adopted-A-report', attemptId: expect.any(String) } });
+      const initial = scheduler.readForSession(sessionId)[0]!;
+      expect(initial).toMatchObject({ status: 'waiting', lastSettledTransition: 'scheduled',
+        classification: { kind: classification.kind, serviceId, profileId: 'A', groupId: 'pool', groupGeneration: 1,
+          resetsAtMs: classification.resetsAtMs, limitCategory: classification.limitCategory, quotaScope: classification.quotaScope } });
+      expect(initial.classification.expectedCredentialRevision ?? null).toBe(classification.expectedCredentialRevision);
+      expect(initial.nextRetryAtMs).toBe(1_110); expect(sends).toEqual([]);
+      now = initial.nextRetryAtMs!; await scheduler.wake({ sessionId, reason: 'timer' });
+      if (projection === 'unknown_quota' || projection === 'exhausted_quota') {
+        const wait = scheduler.readForSession(sessionId)[0]!;
+        expect(wait.status).toBe('waiting'); expect(sends).toEqual([]);
+        expect(wait.lastError).toBe(projection === 'unknown_quota' ? 'quota_proof_unavailable' : 'no_eligible_member');
+        expect(wait.nextRetryAtMs).toBe(projection === 'unknown_quota' ? now + 30_000 : 180_000);
+        now = wait.nextRetryAtMs!; state = { ...state, memberStatesByProfileId: new Map([...state.memberStatesByProfileId,
+          ['B', { quotaSnapshot: { capturedAtMs: now, staleAfterMs: 60_000, effectiveRemainingPercent: 80 } }]]) };
+        await scheduler.wake({ sessionId, reason: 'timer' });
+      }
+      const shouldSend = !['newer_work', 'completed', 'cancelled', 'not_failed', 'archived'].includes(projection);
+      expect(consumed.size).toBe(shouldSend ? 1 : 0);
+      expect(state.memberStatesByProfileId.get('A')?.lastFailureKind).toBe(projection === 'provider_capacity' ? undefined : 'plan');
+      expect(state.memberStatesByProfileId.get('B')?.lastFailureKind).toBeUndefined();
+      const firstSends = sends.length;
+      scheduler.dispose(); scheduler = createScheduler(); scheduler.hydratePassive(); await app.close(); app = createApp();
+      await report(); expect(scheduler.readForSession(sessionId)[0]!.attemptId).toBe(initial.attemptId);
+      await scheduler.wake({ sessionId, reason: 'manual' }); expect(consumed.size).toBe(shouldSend ? 1 : 0);
+      if (shouldSend) {
+        expect(scheduler.readForSession(sessionId)[0]).toMatchObject({ status: 'resumed_awaiting_proof',
+          pendingTargetProfileId: 'B', pendingTargetGeneration: 2, pendingTargetCredentialRevision: revisionB });
+        expect(new Set(sends).size).toBe(1); expect(sends.length).toBeGreaterThanOrEqual(firstSends);
+        expect(await scheduler.markProviderOutcomeProofByIdentity({ sessionId, serviceId, groupId: 'pool', profileId: 'A',
+          groupGeneration: 1, credentialRevision: revisionA, proofKind: 'provider_activity', observedAtMs: now })).toEqual([]);
+        await scheduler.markProviderOutcomeProofByIdentity({ sessionId, serviceId, groupId: 'pool', profileId: 'B',
+          groupGeneration: 2, credentialRevision: revisionB, proofKind: 'provider_activity', observedAtMs: now });
+        expect(scheduler.readForSession(sessionId)[0]!.status).toBe('recovered');
+        const settledSends = sends.length; await app.close(); app = createApp(); await report();
+        await scheduler.wake({ sessionId, reason: 'manual' });
+        expect(scheduler.readForSession(sessionId)[0]!.status).toBe('recovered'); expect(sends.length).toBe(settledSends);
+        if (projection === 'stopped') {
+          tracked.activeTurnId = 'next-interrupted-turn';
+          const failedAtMs = now;
+          const currentRead = http.get.getMockImplementation()!;
+          http.get.mockImplementation(async (url: string) => url.includes(`/v2/sessions/${sessionId}`)
+            ? { status: 200, data: { session: { ...input.rawSession, latestTurnId: tracked.activeTurnId,
+              latestTurnStatus: 'failed', latestTurnStatusObservedAt: failedAtMs,
+              lastRuntimeIssue: { ...issue, agentTurnId: tracked.activeTurnId, occurredAt: failedAtMs } } } }
+            : currentRead(url));
+          const fresh = await report('next-adopted-A-report');
+          expect(fresh.json()).toMatchObject({ ok: true, result: { status: 'recovery_retry_scheduled' } });
+          const next = scheduler.readForSession(sessionId)[0]!;
+          expect(next.attemptId).not.toBe(initial.attemptId); expect(next.status).toBe('waiting');
+          now = next.nextRetryAtMs!; await scheduler.wake({ sessionId, reason: 'timer' });
+          expect(consumed.size).toBe(2);
+        }
+      }
+      expect(commits).toBe(1);
+    } finally { scheduler.dispose(); await app.close(); await removeTempDir(directory); }
+  });
+
+  it('reads the policy after a deferred account switch before sending its continuation', async () => {
+    fixture();
+    const read = http.get.getMockImplementation()!;
+    let policyAvailable = false;
+    let resumePromptMode: 'off' | 'standard' = 'off';
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/continuation-policy')) {
+        if (!policyAvailable) throw new Error('Home policy unavailable');
+        return { data: { resumePromptMode } };
+      }
+      return read(url);
+    });
+    const options = { credentials, interruptedOriginId: 'interrupted-turn', resumePromptMode: 'standard' as const,
+      resolveInterruption: () => 'provider_failed_turn' as const,
+      resolveResumePromptMode: () => resolveRoutedUsageLimitRecoveryResumePromptMode({
+        loadGroupPolicy: async () => (await http.get('/continuation-policy')).data,
+      }),
+    };
+    const continueAfterSwitch = createConnectedServiceContinuationHandler(options);
+    const switched = { sessionId, attemptId: 'deferred-switch', action: 'restart_requested' as const };
+    await expect(continueAfterSwitch(switched)).rejects.toThrow('Home policy unavailable');
+    expect(http.post).not.toHaveBeenCalled();
+    policyAvailable = true;
+    await continueAfterSwitch(switched);
+    expect(http.post).not.toHaveBeenCalled();
+    resumePromptMode = 'standard';
+    await continueAfterSwitch(switched);
+    expect(http.post).toHaveBeenCalledOnce();
+  });
+  it.each([90, 150])('retains recovery until the same failed turn projects (observedAt=%s)', async observedAt => {
+    const input = fixture({ latestTurnId: 'interrupted-turn', latestTurnStatus: 'in_progress',
+      latestTurnStatusObservedAt: observedAt, lastRuntimeIssue: null });
+    const classification: ConnectedServiceRuntimeFailureClassification = { kind: 'usage_limit', serviceId, groupId: 'pool', profileId: 'A',
+      resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' };
+    const dispatcher = createConnectedServiceContinuationMessageDispatcher({ credentials });
+    const consumedIds = new Set<string>();
+    // The server retains local-ID dedupe after a Pending row is consumed.
+    http.post.mockImplementation(async (_url: string, body: { localId: string }) => {
+      const didWrite = !consumedIds.has(body.localId);
+      consumedIds.add(body.localId);
+      return { status: 200, data: { didWrite, terminal: false } };
+    });
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 110,
+      recover: async ({ interruptedOriginId }) => {
+          await dispatcher.enqueueInterruptedOriginContinuation({ sessionId, attemptId: 'switch-B', interruptedOriginId: interruptedOriginId ?? 'durable-recovery-A',
+            interruption: 'provider_failed_turn', resumePromptMode: 'standard',
+            runtimeAuthRecovery: { armedAtMs: 110, isCurrent: () => true, readActiveTurnId: () => 'interrupted-turn' } });
+        return { status: 'switch_attempted', result: { status: 'observed_generation', activeProfileId: 'B', generation: 2 } };
+      },
+    });
+    try {
+      await scheduler.enqueueHandlerFailure({ sessionId, classification, switchesThisTurn: 0,
+        error: Object.assign(new Error('endpoint unavailable'), { code: 'ECONNRESET' }) });
+      await scheduler.wake({ sessionId, reason: 'manual' });
+      expect(http.post).not.toHaveBeenCalled();
+      expect(scheduler.readForSession(sessionId)[0]).toMatchObject({ status: 'waiting' });
+      const read = http.get.getMockImplementation()!;
+      http.get.mockImplementation(async (url: string) => url.includes(`/v2/sessions/${sessionId}`)
+        ? { status: 200, data: { session: { ...input.rawSession, latestTurnStatus: 'failed', latestTurnStatusObservedAt: 150, lastRuntimeIssue: issue } } }
+        : read(url));
+      await scheduler.wake({ sessionId, reason: 'manual' });
+      await scheduler.wake({ sessionId, reason: 'manual' });
+      expect(consumedIds.size).toBe(1);
+      expect(scheduler.readForSession(sessionId)[0]).toMatchObject({ status: 'resumed_awaiting_proof' });
+    } finally { scheduler.dispose(); }
+  });
+
+  it.each([
+    { status: 'in_progress', observedAt: 150, failureAt: 100, activeTurn: 'new-user-turn', admitted: false },
+    { status: 'completed', observedAt: 150, failureAt: 100, activeTurn: null, admitted: false },
+    { status: 'failed', observedAt: 150, failureAt: 150, activeTurn: null, admitted: false },
+    { status: 'failed', observedAt: 100, failureAt: 100, activeTurn: 'new-user-turn', admitted: false },
+    { status: 'failed', observedAt: 150, failureAt: 100, activeTurn: 'interrupted-turn', admitted: true },
+  ] as const)('protects newer consumed user work ($status/$activeTurn)', async ({ status, observedAt, failureAt, activeTurn, admitted }) => {
+    fixture({ latestTurnId: 'interrupted-turn', latestTurnStatus: status, latestTurnStatusObservedAt: observedAt,
+      lastRuntimeIssue: { ...issue, occurredAt: failureAt } });
+    const dispatcher = createConnectedServiceContinuationMessageDispatcher({ credentials });
+    const result = await dispatcher.enqueueInterruptedOriginContinuation({ sessionId, attemptId: 'switch-B', interruptedOriginId: 'durable-recovery-A',
+      interruption: 'provider_failed_turn', resumePromptMode: 'standard',
+      runtimeAuthRecovery: { armedAtMs: 110, isCurrent: () => true, readActiveTurnId: () => activeTurn } });
+    expect(result.status).toBe(admitted ? 'enqueued' : 'suppressed_newer_user_input');
+    expect(http.post).toHaveBeenCalledTimes(admitted ? 1 : 0);
+  });
   beforeEach(() => {
     vi.resetAllMocks();
     http.post.mockResolvedValue({ status: 200, data: { didWrite: true, terminal: false } });
@@ -179,7 +439,7 @@ describe('continueSessionAfterUsageLimitReset', () => {
     expect(await continueSessionAfterUsageLimitReset(input)).toEqual({ status: 'suppressed' });
   });
 
-  it('keeps the owner prompt mode when its fresh projection has not caught up', async () => {
+  it('honors continuation turned off during an owned usage-limit wait', async () => {
     const input = fixture();
     const currentRecovery = { ...recovery, resumePromptMode: 'custom' as const };
     input.metadata.sessionUsageLimitRecoveryV1 = { ...input.metadata.sessionUsageLimitRecoveryV1, ...recovery, resumePromptMode: 'off' };
@@ -188,10 +448,29 @@ describe('continueSessionAfterUsageLimitReset', () => {
     http.get.mockImplementation(async (url: string) => url.includes(`/v2/sessions/${sessionId}`)
       ? { status: 200, data: { session: { ...input.rawSession, metadata: JSON.stringify(freshMetadata) } } } : read(url));
     expect(await continueSessionAfterUsageLimitReset({ ...input, recovery: currentRecovery,
-      customResumePrompt: 'Continue from the authoritative custom mode' })).toEqual({ status: 'continued' });
-    expect(http.post.mock.calls[0]?.[1]).toMatchObject({ content: { t: 'plain', v: { content: {
-      type: 'text', text: 'Continue from the authoritative custom mode',
-    } } } });
+      customResumePrompt: 'Continue from the authoritative custom mode' })).toEqual({ status: 'disabled' });
+    expect(http.post).not.toHaveBeenCalled();
+  });
+
+  it('reads current policy at continuation and leaves an unreadable policy retryable', async () => {
+    const input = fixture();
+    const read = http.get.getMockImplementation()!;
+    let policyAvailable = false;
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/continuation-policy')) {
+        if (!policyAvailable) throw new Error('Home policy unavailable');
+        return { data: { resumePromptMode: 'off' } };
+      }
+      return read(url);
+    });
+    const continuation = { ...input, resolveResumePromptMode: () => resolveRoutedUsageLimitRecoveryResumePromptMode({
+      loadGroupPolicy: async () => (await http.get('/continuation-policy')).data,
+    }) };
+    await expect(continueSessionAfterUsageLimitReset(continuation)).rejects.toThrow('Home policy unavailable');
+    expect(http.post).not.toHaveBeenCalled();
+    policyAvailable = true;
+    expect(await continueSessionAfterUsageLimitReset(continuation)).toEqual({ status: 'disabled' });
+    expect(http.post).not.toHaveBeenCalled();
   });
 
   it('does not continue after the qualified Session account binding changes', async () => {
@@ -208,14 +487,18 @@ describe('continueSessionAfterUsageLimitReset', () => {
     expect(http.post).not.toHaveBeenCalled();
   });
 
-  it('freezes custom continuation text before Pending custody', async () => {
+  it.each([
+    ['Resume the interrupted work', 'Resume the interrupted work'],
+    ['', USAGE_LIMIT_CONTINUATION_RESUME_PROMPT],
+    ['   ', USAGE_LIMIT_CONTINUATION_RESUME_PROMPT],
+  ])('freezes custom continuation or its default before Pending custody (%j)', async (customResumePrompt, expectedPrompt) => {
     const input = fixture();
     const customRecovery = { ...recovery, resumePromptMode: 'custom' as const };
     input.metadata.sessionUsageLimitRecoveryV1 = { ...input.metadata.sessionUsageLimitRecoveryV1, ...customRecovery };
     await continueSessionAfterUsageLimitReset({ ...input, recovery: customRecovery,
-      customResumePrompt: 'Resume the interrupted work' });
+      customResumePrompt });
     expect(http.post.mock.calls[0]?.[1]).toMatchObject({ content: { t: 'plain', v: { content: {
-      type: 'text', text: 'Resume the interrupted work',
+      type: 'text', text: expectedPrompt,
     } } } });
   });
 

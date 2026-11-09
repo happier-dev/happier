@@ -2,7 +2,7 @@ import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import { createConnectedAccountAttemptTransactionAdapters } from '@happier-dev/cli-common/connectedAccounts';
 import { StoredJsonContentEnvelopeSchema, isStoredJsonContentEnvelopeModeCompatible } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { openQualifiedConnectedAccountContentEnvelopeResult, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { createConnectedAccountAttemptTransactionApi, type ConnectedAccountAttemptTransactionStoreApi } from '@/api/client/connectedAccountAttemptTransactionApi';
 import type { AccountEncryptionModeReadOptions, ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import { generatePkceCodes } from '@/cloud/pkce';
@@ -46,13 +46,15 @@ export function createQualifiedConnectedAccountAttemptTransactionAdapters(params
         throw new Error('Connected-account attempt transaction content does not match the persisted Account encryption mode');
       }
       const opened = accountMode === 'plain'
-        ? openQualifiedConnectedAccountContentEnvelope({ kind: 'attempt', accountMode: 'plain', envelope })
-        : openQualifiedConnectedAccountContentEnvelope({
+        ? openQualifiedConnectedAccountContentEnvelopeResult({ kind: 'attempt', accountMode: 'plain', envelope })
+        : openQualifiedConnectedAccountContentEnvelopeResult({
           kind: 'attempt', accountMode: 'e2ee', envelope,
           material: requireConnectedAccountCryptoMaterial(params.credentials, material),
         });
-      if (opened === null) throw new Error('Connected-account attempt transaction content is unavailable for the current account mode');
-      return opened;
+      if (opened.status !== 'opened') {
+        throw new Error('Connected-account attempt transaction content is unavailable for the current account mode');
+      }
+      return opened.value;
     },
   });
 }

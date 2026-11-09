@@ -11,16 +11,40 @@ export function createSessionLiveWorkProducer(params: Readonly<{
   /** The daemon composition owns exact current requester-safe Session transport. */
   readActivity: (tracked: TrackedSession) => Promise<SessionInputLiveWork>;
   startup?: Pick<ReturnType<typeof createSpawnRequestCoalescer>, 'readInFlightRequests' | 'subscribeChanges'>;
-}>): LiveWorkProducerV1 & Readonly<{ notifyChanged: LiveWorkListenerV1 }> {
+}>): LiveWorkProducerV1 & Readonly<{ notifyChanged: LiveWorkListenerV1; notifySessionChanged(sessionId: string | null): void }> {
   const listeners = new Set<LiveWorkListenerV1>();
+  // Runners push an invalidation naming their own Session after every live-work change
+  // (`subscribeLiveWork` → `/session-activity-changed`). A passive refresh therefore rereads
+  // only invalidated runners; failed/unknown observations are never retained.
+  const retained = new WeakMap<TrackedSession, Readonly<{ sessionId: string; activity: SessionInputLiveWork }>>();
+  const invalidatedSessionIds = new Set<string>();
+  let invalidatedAll = true;
+  const invalidate = (sessionId: string | null) => {
+    if (sessionId === null) invalidatedAll = true;
+    else invalidatedSessionIds.add(sessionId);
+    for (const listener of listeners) listener();
+  };
   return {
-    async read() {
+    async read(scope) {
       const sessions = params.readSessions();
+      // Explicit confirmations and unattributed (structural) changes read every runner.
+      const rereadAll = scope !== 'changed' || invalidatedAll;
+      const invalidated = new Set(invalidatedSessionIds);
+      invalidatedAll = false;
+      invalidatedSessionIds.clear();
       const observations = await Promise.all(sessions.map(async tracked => {
         const sessionId = tracked.happySessionId;
         let activity: SessionInputLiveWork = { session: 'unknown', input: 'unknown' };
         if (sessionId) {
-          try { activity = await params.readActivity(tracked); } catch { /* Missing live coverage stays unknown. */ }
+          const previous = retained.get(tracked);
+          if (!rereadAll && previous?.sessionId === sessionId && !invalidated.has(sessionId)) {
+            return { tracked, sessionId, activity: previous.activity };
+          }
+          retained.delete(tracked);
+          try {
+            activity = await params.readActivity(tracked);
+            retained.set(tracked, { sessionId, activity });
+          } catch { /* Missing live coverage stays unknown. */ }
         }
         return { tracked, sessionId, activity };
       }));
@@ -56,6 +80,11 @@ export function createSessionLiveWorkProducer(params: Readonly<{
       const unsubscribeStartup = params.startup?.subscribeChanges(listener);
       return () => { listeners.delete(listener); unsubscribeStartup?.(); };
     },
-    notifyChanged(change) { for (const listener of listeners) listener(change); },
+    /** Unattributed edges (process set, transport) reread every runner. */
+    notifyChanged(change) {
+      invalidatedAll = true;
+      for (const listener of listeners) listener(change);
+    },
+    notifySessionChanged: invalidate,
   };
 }

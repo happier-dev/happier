@@ -25,6 +25,7 @@ import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY, readConnectedServiceChild
 import { requestPlannedRunnerRestart } from '@/daemon/plannedRunnerRestart/requestPlannedRunnerRestart';
 import { isPidSafeHappySessionProcess } from '@/daemon/pidSafety';
 import { adoptTrackedSessionRunnerIdentity } from '@/daemon/sessions/sessionReportCorrelation';
+import { resolveSessionConnectedServiceSwitchContinuity } from '@/daemon/startup/startDaemonSessionControlRuntime';
 import { createConnectedServiceSwitchDeferralQueue } from './connectedServiceSwitchDeferralQueue';
 import { createVersionRuntimeRefreshAttemptHandoff } from '@/daemon/plannedRunnerRestart/versionRuntimeRefreshAttemptHandoff';
 import type { RestartSessionRunnerCompletion } from '@/daemon/plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
@@ -52,6 +53,13 @@ import { createConnectedAccountPurposeBindingOwner } from '../purposeBindings/Co
 import { canResumeFromMaterializedState } from '../stateSharing/canResumeFromMaterializedState';
 import { materializeSessionConnectedServiceRuntimeAuthSelection } from './materializeSessionConnectedServiceRuntimeAuthSelection';
 import { resolveTrackedConnectedServiceSwitchContinuityContext } from './resolveTrackedConnectedServiceSwitchContinuityContext';
+import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry, type ConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { handleConnectedServiceRuntimeAuthFailureForSession } from '../runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
+import { RuntimeAuthRecoveryScheduler, type RuntimeAuthRecoveryIntent } from '../runtimeAuth/RuntimeAuthRecoveryScheduler';
+import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
+import { createConnectedServiceContinuationHandler } from '../continuation/switchRecovery';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 let catalogRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => {
@@ -380,6 +388,235 @@ function expectMaterializationIdentity(value: unknown): ConnectedServiceMaterial
 }
 
 describe('switchSessionConnectedServiceAuth', () => {
+  it('applies every committed group revision through one native effect when binding intent is unchanged', async () => {
+    const serviceIds = ['happier.agent.claude/anthropic', 'happier.agent.claude/claude-subscription'] as const;
+    const selectedBindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: Object.fromEntries(
+      serviceIds.map(serviceId => [serviceId, { source: 'connected', selection: 'group', groupId: 'work', profileId: 'selected' }]),
+    ) };
+    const tracked = trackedSession({ spawnOptions: { directory: '/tmp/project',
+      backendTarget: { kind: 'backend', backendId: 'claude' }, connectedServices: selectedBindings } });
+    const appliedServices: string[][] = [];
+    const api = {
+      listConnectedServiceProfiles: async ({ serviceId }: { serviceId: string }) => ({ serviceId,
+        profiles: [{ profileId: 'selected', status: 'connected' as const }] }),
+      getConnectedServiceAuthGroup: async () => group({ activeProfileId: 'selected', generation: 8,
+        members: [{ ...group().members[0]!, profileId: 'selected' }] }),
+    };
+    const result = await switchSessionConnectedServiceAuth({ core: createCore(), getChildren: () => [tracked], api,
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      resolveContinuity: context => resolveSessionConnectedServiceSwitchContinuity({
+        sessionId: context.sessionId, agentId: context.agentId, serviceId: context.serviceId,
+        previousBinding: context.previous, nextBinding: context.next, tracked,
+        fromBindingsRaw: context.previousBindings, toBindings: context.normalizedBindings, accountSettings: null,
+      }),
+      // Process replacement is the external effect. Both accepted services must
+      // already be projected in the spawn environment before replacing the runner.
+      restartSession: async child => { appliedServices.push(Array.from(readConnectedServiceChildSelectionsFromEnv(
+        child.spawnOptions?.environmentVariables ?? {},
+      )?.keys() ?? [])); },
+      hotApply: async () => { throw new Error('Claude same-group continuity requires restart'); },
+      persistSessionBindings: async () => {}, registerHotApplyTargets: () => {}, emitSessionEvent: () => {},
+      request: { sessionId: 'sess_1', agentId: 'claude', bindings: selectedBindings,
+        expectedGroupGenerationByServiceId: Object.fromEntries(serviceIds.map(serviceId => [serviceId, 8])) },
+    });
+    expect(result).toMatchObject({ ok: true, action: 'restart_requested', continuityByServiceId: {
+      [serviceIds[0]]: 'restart_rematerialize', [serviceIds[1]]: 'restart_rematerialize',
+    } });
+    expect(appliedServices).toEqual([expect.arrayContaining([...serviceIds])]);
+  });
+
+  it.each([
+    ['hot_apply', 'failed', 'exact', false], ['restart_rematerialize', 'failed', 'exact', false],
+    ['hot_apply', 'newer_work', 'exact', false], ['restart_rematerialize', 'newer_work', 'exact', false],
+    ['hot_apply', 'delayed_projection', 'exact', false], ['restart_rematerialize', 'delayed_projection', 'exact', false],
+    ['hot_apply', 'failed', 'weak', false], ['hot_apply', 'failed', 'account_only', false],
+    ['restart_unchanged', 'failed', 'exact', false],
+    ['restart_rematerialize', 'failed', 'exact', true], ['restart_unchanged', 'failed', 'exact', true],
+  ] as const)('uses only recovery continuation identity and admission through the real primitive (%s, %s, %s, replacement refresh=%s)', async (mode, projection, verification, replacementRefresh) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-primitive-recovery-'));
+    const agentId = mode === 'hot_apply' ? 'codex' : 'claude';
+    const serviceId = mode === 'hot_apply' ? 'happier.agent.codex/openai-codex' : 'happier.agent.claude/anthropic';
+    const sessionId = 'c123456789012345678901234';
+    const revision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
+    const handedRevision = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
+    const replacementRevision = replacementRefresh ? 'csr_cccccccccccccccccccccc' : handedRevision;
+    let materializationRevision = handedRevision;
+    let stagedSelection: Parameters<typeof materializeSessionConnectedServiceRuntimeAuthSelection>[0]['input'] | undefined;
+    const credentials = { token: 'fixture', encryption: null };
+    const makeBindings = (profileId: string): ConnectedServiceBindingsV2 => ({ v: 2, bindingsByServiceId: {
+      [serviceId]: { source: 'connected', selection: 'group', groupId: 'work', profileId },
+    } });
+    const tracked = trackedSession({ happySessionId: sessionId,
+      activeTurnId: projection === 'newer_work' ? 'new-user-turn' : 'interrupted-turn',
+      spawnOptions: { directory, backendTarget: { kind: 'backend', backendId: agentId }, connectedServices: makeBindings(mode === 'restart_unchanged' ? 'B' : 'A') } });
+    let current: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'work', activeProfileId: 'A', generation: 1,
+      credentialRevision: revision,
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: true, strategy: 'priority' },
+      members: ['A', 'B'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
+      memberStatesByProfileId: new Map([['B', { quotaSnapshot: { capturedAtMs: 1_000, staleAfterMs: 60_000, effectiveRemainingPercent: 60 } }]]),
+    };
+    let runtime = { serviceId, groupId: 'work', profileId: 'A', generation: 1, credentialRevision: revision };
+    const consumed = new Set<string>();
+    const sends: string[] = [];
+    let restarts = 0;
+    let appliedResult: Awaited<ReturnType<typeof applyConnectedServiceAuthGenerationToTrackedSession>> | undefined;
+    // Only Home HTTP, binding persistence, and provider/process application are replaced.
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      if (String(url).includes('/v4/connect/qualified/credential')) return { status: 200,
+        data: QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+          ref: { service: mode === 'hot_apply' ? { pluginId: 'happier.agent.codex', localId: 'openai-codex' }
+            : { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'B' },
+          authenticationModeId: mode === 'hot_apply' ? 'oauth' : 'api-key', revisionSemantics: 'revisioned', credentialRevision: materializationRevision,
+          configurationRevision: null, content: { t: 'plain', v: { v: 1, values: mode === 'hot_apply'
+            ? { accessToken: 'fixture-access', refreshToken: 'fixture-refresh' } : { apiKey: 'fixture-key' } } }, metadata: { scopes: [] },
+        }) };
+      if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+        recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
+      } };
+      return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain',
+        latestTurnId: 'interrupted-turn', latestTurnStatus: projection === 'delayed_projection' ? 'in_progress' : 'failed',
+        latestTurnStatusObservedAt: 900, lastRuntimeIssue: null }) } };
+    });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
+      if (!body || typeof body !== 'object' || !('localId' in body) || typeof body.localId !== 'string') {
+        throw new Error('Expected continuation message at the HTTP boundary');
+      }
+      sends.push(body.localId);
+      const didWrite = !consumed.has(body.localId);
+      consumed.add(body.localId);
+      return { status: 200, data: { didWrite, terminal: false } };
+    });
+    let interruptedOriginId: string | undefined;
+    const api = { getAccountEncryptionMode: async () => 'plain' as const,
+      listConnectedServiceProfiles: async () => ({ serviceId, profiles: ['A', 'B'].map(profileId => ({ profileId, status: 'connected' as const })) }),
+      getConnectedServiceAuthGroup: async () => group({ activeProfileId: current.activeProfileId, generation: current.generation,
+        members: ['A', 'B'].map(profileId => ({ ...group().members[0]!, profileId })) }) };
+    const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 1_000,
+      loadState: async () => current,
+      commitSwitch: async ({ toProfileId }) => current = { ...current, activeProfileId: toProfileId, generation: 2 },
+      applyGeneration: async input => {
+        const adopted = () => { runtime = { ...runtime, profileId: input.activeProfileId!, generation: input.generation, credentialRevision: handedRevision }; };
+        const result = await applyConnectedServiceAuthGenerationToTrackedSession({
+          getChildren: () => [tracked], api, qualifiedConnectedAccountApi: qualifiedAuthGroupApiFromLegacyTestApi(api),
+          reason: 'automatic_runtime_failure', runtimeAuthApplyReason: 'usage_limit',
+          materializeRuntimeAuthSelection: selection => {
+            stagedSelection = selection;
+            return materializeSessionConnectedServiceRuntimeAuthSelection({
+              credentials, api: api as unknown as ApiClient, input: selection,
+            });
+          },
+          resolveContinuity: context => resolveSessionConnectedServiceSwitchContinuity({
+            sessionId: context.sessionId, agentId: context.agentId, serviceId: context.serviceId,
+            previousBinding: context.previous, nextBinding: context.next, tracked,
+            fromBindingsRaw: context.previousBindings, toBindings: context.normalizedBindings, accountSettings: null,
+          }),
+          restartSession: async child => {
+            restarts++;
+            expect(readConnectedServiceChildSelectionsFromEnv(child.spawnOptions?.environmentVariables ?? {})?.get(serviceId))
+              .toMatchObject({ credentialRevision: handedRevision });
+            // Replacement launch resolves credentials again. Refresh Home between staging
+            // and that resolution, retaining the same selected account and generation.
+            materializationRevision = replacementRevision;
+            if (!stagedSelection) throw new Error('Expected staged materialization input');
+            const replacementSelection = await materializeSessionConnectedServiceRuntimeAuthSelection({
+              credentials, api: api as unknown as ApiClient, input: stagedSelection,
+            });
+            expect(replacementSelection).toMatchObject({ credentialRevision: replacementRevision });
+            if (!replacementSelection || typeof replacementSelection !== 'object'
+              || !('credentialRevision' in replacementSelection) || typeof replacementSelection.credentialRevision !== 'string') {
+              throw new Error('Expected replacement credential revision');
+            }
+            runtime = { ...runtime, profileId: input.activeProfileId!, generation: input.generation,
+              credentialRevision: replacementSelection.credentialRevision };
+            return { signaled: true, completion: { ok: true } };
+          },
+          persistSessionBindings: async () => {}, registerHotApplyTargets: () => {}, emitSessionEvent: () => {},
+          hotApply: async () => { adopted(); return { ok: true }; },
+          verifyProviderAccountAdoption: async () => verification === 'weak'
+            ? { status: 'weakly_verified', providerAccountId: 'provider-B', reason: 'account_email_only' }
+            : { status: 'verified', proofStrength: 'exact', providerAccountId: 'provider-B',
+                ...(verification === 'exact' ? { generationApplication: { serviceId, groupId: 'work', profileId: 'B', generation: 2, credentialRevision: handedRevision,
+                  credentialFingerprint: 'fixture-provider-B' } } : {}) },
+          continueAfterRuntimeAuthSwitch: createConnectedServiceContinuationHandler({ credentials, interruptedOriginId,
+            resumePromptMode: 'standard', resolveInterruption: () => 'provider_failed_turn' }),
+          request: { sessionId, agentId, bindings: makeBindings(input.activeProfileId!),
+            expectedGroupGenerationByServiceId: { [serviceId]: input.generation } },
+        });
+        appliedResult = result;
+        if (!result.ok) return result;
+        return { ...result, mode: result.action === 'restart_requested' ? 'restart_resume' : 'hot_apply' };
+      },
+    });
+    const makeScheduler = () => {
+      const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1_000, jitterMs: () => 0,
+        durableStore: createRecoveryIntentFileStore<RuntimeAuthRecoveryIntent>(join(directory, 'recovery.json')),
+        recover: input => {
+          interruptedOriginId = input.interruptedOriginId;
+          return handleConnectedServiceRuntimeAuthFailureForSession({ ...input, getChildren: () => [tracked], switchCoordinator: coordinator,
+            resolveRegisteredRuntimeAuthFailureSource: async () => runtime,
+            continueAfterRuntimeAuthSwitch: createConnectedServiceContinuationHandler({ credentials, interruptedOriginId,
+              resumePromptMode: 'standard', resolveInterruption: () => 'provider_failed_turn',
+              runtimeAuthRecovery: { armedAtMs: 1_000,
+                isCurrent: () => scheduler.readForSession(sessionId).some(intent => intent.attemptId === interruptedOriginId
+                  && (intent.status === 'waiting' || intent.status === 'checking' || intent.status === 'resumed_awaiting_proof')),
+                readActiveTurnId: () => tracked.activeTurnId ?? null } }),
+          });
+        },
+      });
+      return scheduler;
+    };
+    const first = makeScheduler();
+    let replacement: RuntimeAuthRecoveryScheduler | undefined;
+    try {
+      await first.beginClassifiedFailure({ reportId: 'runtime-auth-report:primitive-continuation', sessionId, switchesThisTurn: 0, classification: { kind: 'usage_limit', limitCategory: 'usage_limit',
+        quotaScope: 'account', serviceId, profileId: 'A', groupId: 'work', groupGeneration: 1, expectedCredentialRevision: revision,
+        resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error' } });
+      await first.wake({ sessionId, reason: 'manual' });
+      expect(runtime.profileId).toBe('B');
+      expect(restarts).toBe(mode === 'hot_apply' ? 0 : 1);
+      expect(appliedResult?.ok).toBe(true);
+      if (!appliedResult?.ok) throw new Error('Expected successful application');
+      if (mode === 'hot_apply') {
+        expect(appliedResult.materializedTargetByServiceId?.[serviceId]).toMatchObject({ profileId: 'B', generation: 2, credentialRevision: handedRevision });
+      } else {
+        // Process completion carries no replacement credential receipt. The staged
+        // revision is not a fact about the replacement's actual materialization.
+        expect(appliedResult.materializedTargetByServiceId).toBeUndefined();
+        expect(appliedResult.verificationByServiceId).toBeUndefined();
+      }
+      if (mode === 'hot_apply' && verification !== 'exact') {
+        expect(appliedResult.verificationByServiceId?.[serviceId]?.status).toBe(verification === 'weak' ? 'weakly_verified' : 'verified');
+        expect(appliedResult.verificationByServiceId?.[serviceId]?.generationApplication).toBeUndefined();
+      }
+      expect(consumed.size).toBe(projection === 'failed' ? 1 : 0);
+      expect(sends).toHaveLength(projection === 'failed' ? 1 : 0);
+      if (projection === 'failed') {
+        expect(first.readForSession(sessionId)[0]).toMatchObject({ pendingTargetCredentialRevision: mode === 'hot_apply' ? handedRevision : null });
+        if (mode !== 'hot_apply') {
+          expect(await first.markProviderOutcomeProofByIdentity({ sessionId, serviceId, groupId: 'work', profileId: 'B', groupGeneration: 2,
+            credentialRevision: replacementRevision, proofKind: 'provider_activity', observedAtMs: 1_001 })).toEqual([]);
+        }
+      }
+      // Existing retry/registration settlement reconstructs the replacement target
+      // once Home catches up; the unproven result itself must not admit activity.
+      current = { ...current, credentialRevision: replacementRevision };
+      first.dispose();
+      replacement = makeScheduler();
+      replacement.hydratePassive();
+      await replacement.wake({ sessionId, reason: 'manual' });
+      expect(consumed.size).toBe(projection === 'failed' ? 1 : 0);
+      if (projection === 'failed') expect(sends).toHaveLength(2);
+      if (projection === 'delayed_projection') expect(replacement.readForSession(sessionId)[0]).toMatchObject({ status: 'waiting' });
+      if (projection === 'failed') {
+        expect(replacement.readForSession(sessionId)[0]).toMatchObject({ pendingTargetCredentialRevision: replacementRevision });
+        expect(await replacement.markProviderOutcomeProofByIdentity({ sessionId, serviceId, groupId: 'work', profileId: 'B', groupGeneration: 2,
+          credentialRevision: replacementRevision, proofKind: 'provider_activity', observedAtMs: 1_001 }))
+          .toEqual([expect.objectContaining({ status: 'recovered' })]);
+      }
+    } finally { first.dispose(); replacement?.dispose(); get.mockRestore(); post.mockRestore(); await rm(directory, { recursive: true, force: true }); }
+  });
   it.each(['manual', 'automatic', 'rematerialize', 'rollback_failed'] as const)('retains a deferred executable replacement refusal (%s)', async mode => {
     const tracked = trackedSession({ processStartTimeMs: 100, processCommandHash: 'launcher-hash' });
     const runner = { pid: 124, processStartTimeMs: 200, processCommandHash: 'runner-hash', processCommand: 'runner' };
@@ -394,7 +631,7 @@ describe('switchSessionConnectedServiceAuth', () => {
     const restartRequestedPids = new Set<number>();
     let deferred!: () => void;
     const pendingBoundary = new Promise<void>(resolve => { deferred = resolve; });
-    const queue = createConnectedServiceSwitchDeferralQueue({ timeoutMs: 60_000, disableDeferral: false,
+    const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false,
       emitSessionEvent: (_sessionId, event) => {
         if (typeof event === 'object' && event !== null && 'type' in event
           && event.type === 'connected_service_account_switch_deferred') deferred();
@@ -404,7 +641,6 @@ describe('switchSessionConnectedServiceAuth', () => {
     const persisted: ConnectedServiceBindingsV2[] = [];
     // Process identity observations and signalling are the OS boundaries.
     const signals = vi.spyOn(process, 'kill').mockImplementation(() => true);
-    const { resolveSessionConnectedServiceSwitchContinuity } = await import('@/daemon/startup/startDaemonSessionControlRuntime');
     const selectedGroup = group({ activeProfileId: profileId, members: ['old-profile', profileId].map(id => ({
       ...group().members[0]!, profileId: id,
     })) });
@@ -2130,7 +2366,7 @@ describe('switchSessionConnectedServiceAuth', () => {
     expect(restartSession).toHaveBeenCalledWith(tracked);
   });
 
-  it('reconsumes current group truth once when plugin hot apply is superseded before provider mutation', async () => {
+  it('returns pre-effect supersession to the source owner without replaying the selection locally', async () => {
     const tracked = trackedSession({
       spawnOptions: {
         directory: '/tmp/project',
@@ -2219,7 +2455,7 @@ describe('switchSessionConnectedServiceAuth', () => {
     const persistSessionBindings = vi.fn(async () => {});
     const restartSession = vi.fn(async () => {});
 
-    const result = await switchSessionConnectedServiceAuth({
+    const input: SwitchTestInput = {
       core: createCore(),
       postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
       getChildren: () => [tracked],
@@ -2255,37 +2491,28 @@ describe('switchSessionConnectedServiceAuth', () => {
           },
         },
       },
-    });
+    };
 
-    expect(result).toMatchObject({
-      ok: true,
-      action: 'hot_applied',
-      normalizedBindings: {
-        bindingsByServiceId: {
-          'happier.agent.claude/anthropic': {
-            source: 'connected',
-            selection: 'group',
-            groupId: 'work',
-          },
-        },
-      },
-    });
-    expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(2);
+    const result = await switchSessionConnectedServiceAuth(input);
+    expect(result).toMatchObject({ ok: false, errorCode: 'credential_revision_superseded' });
+    expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('old-profile'));
+    expect(getConnectedServiceAuthGroup).toHaveBeenCalledTimes(1);
     expect(materializeRuntimeAuthSelection).toHaveBeenNthCalledWith(1, expect.objectContaining({
       groupMetadata: expect.objectContaining({
         activeProfileId: 'first-active',
         generation: 337,
       }),
     }));
-    expect(materializeRuntimeAuthSelection).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      groupMetadata: expect.objectContaining({
-        activeProfileId: 'second-active',
-        generation: 338,
-      }),
+    expect(hotApply).toHaveBeenCalledTimes(1);
+    expect(restartSession).not.toHaveBeenCalled();
+    expect(persistSessionBindings).toHaveBeenLastCalledWith(expect.objectContaining({ normalizedBindings: bindings('old-profile') }));
+    // The source owner can admit the newly committed target as a fresh apply;
+    // supersession is not a Session retry budget and must not poison later work.
+    await expect(switchSessionConnectedServiceAuth(input)).resolves.toMatchObject({ ok: true, action: 'hot_applied' });
+    expect(materializeRuntimeAuthSelection).toHaveBeenLastCalledWith(expect.objectContaining({
+      groupMetadata: expect.objectContaining({ activeProfileId: 'second-active', generation: 338 }),
     }));
     expect(hotApply).toHaveBeenCalledTimes(2);
-    expect(restartSession).not.toHaveBeenCalled();
-    expect(persistSessionBindings).toHaveBeenCalledTimes(3);
   });
 
   it('keeps the strict generation check for dry-run preflights (prospective generations only)', async () => {
@@ -3973,7 +4200,7 @@ describe('switchSessionConnectedServiceAuth', () => {
     expect(resolveContinuity).toHaveBeenCalledOnce();
     expect(hotApply).toHaveBeenCalledOnce();
     expect(verifyProviderAccountAdoption).toHaveBeenCalledOnce();
-    expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledOnce();
+    expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
   });
 
   it('reports an unchanged-group hot-apply adoption mismatch without replacing the provider runtime', async () => {
@@ -4964,7 +5191,7 @@ describe('switchSessionConnectedServiceAuth', () => {
       },
     })).resolves.toMatchObject({
       ok: false,
-      errorCode: 'hot_apply_failed',
+      errorCode: 'credential_revision_superseded',
     });
 
     expect(persistSessionBindings).toHaveBeenNthCalledWith(2, expect.objectContaining({

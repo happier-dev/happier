@@ -3,6 +3,9 @@ import {
     type BrowserDiagnosticEventV1,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { createSidecarCdpBrowserContextSource } from './productSource';
 import { createBrowserDiagnosticsDaemonStore } from '../../diagnostics/store';
@@ -10,6 +13,9 @@ import { createBrowserContextDiagnosticsSummarySource } from '../diagnostics/sum
 import type { BrowserSidecarContextCaptureSurface } from '../../sidecar/controlAdapter';
 import type { TransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { buildSidecarSummaryContextItem } from '../../sidecar/context/capture';
+import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
+import { createBrowserContextRoutes } from '../routes';
+import { createSnapshotMaskingFixture } from './snapshotMasking.testkit';
 
 const VIEW = { browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 3 } as const;
 
@@ -47,6 +53,42 @@ function networkEvent(): BrowserDiagnosticEventV1 {
 }
 
 describe('sidecar cdp browser context source (production wiring)', () => {
+    it('persists screenshots for URL-derived view identities through the real capture route', async () => {
+        const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-url-capture-'));
+        const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=';
+        try {
+            const source = createSidecarCdpBrowserContextSource({
+                workingDirectory, pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+                contextCapture: captureSurface(method => {
+                    if (method === 'DOMSnapshot.captureSnapshot') return createSnapshotMaskingFixture();
+                    if (method === 'Page.captureScreenshot') return { data: pngBase64 };
+                    if (method === 'Runtime.evaluate') return { result: { value: { width: 1, height: 1 } } };
+                    return {};
+                }),
+            });
+            const routes = createBrowserContextRoutes({ ownerAccountId: 'owner', source,
+                resolveGate: () => ({ featureEnabled: true, policyAllowed: true, runtimeAvailable: true }) });
+            const paths: string[] = [];
+            for (const viewId of [
+                'browser_view:externalUrl:https://example.com/?QA-BROWSER-1109-r57-main',
+                'browser_view:externalUrl:https:\\example.com\\?QA-BROWSER-1109-r57-main',
+            ]) {
+                const result = await routes.dispatch('browser.context.captureScreenshot', {
+                    ...VIEW, viewId, contextId: `capture_${paths.length}`,
+                });
+                expect(result).toMatchObject({ kind: 'browserScreenshot', sourceViewId: viewId,
+                    media: { width: 1, height: 1, file: { sessionId: VIEW.browserSessionId, storage: 'session' } },
+                    viewport: { width: 1, height: 1 } });
+                if (Array.isArray(result) || !('kind' in result) || result.kind !== 'browserScreenshot' || !result.media.file) {
+                    throw new Error('Screenshot route did not return persisted media');
+                }
+                paths.push(result.media.file.path);
+                expect(await readFile(join(workingDirectory, result.media.file.path))).toEqual(Buffer.from(pngBase64, 'base64'));
+            }
+            expect(new Set(paths).size).toBe(2);
+        } finally { await rm(workingDirectory, { recursive: true, force: true }); }
+    });
+
     it('serves diagnostics summaries from the store-backed summary source when present', async () => {
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1' });
         store.publishEvent(networkEvent());

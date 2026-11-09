@@ -43,6 +43,7 @@ describe('requester execution-run materialization', () => {
         store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }),
           subscribe: () => ({ dispose() {} }) },
         qualifiedApi: {
+          listAccountsForServices: (services, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, services, signal }),
           listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, service, signal }),
           listGroups: (service, signal) => listQualifiedConnectedAccountGroupsV4({ token: credentials.token, service, signal }),
           readGroup: (group, signal) => readQualifiedConnectedAccountGroupV4({ token: credentials.token, group, signal }),
@@ -151,7 +152,7 @@ describe('requester execution-run materialization', () => {
         },
         recoverRejectedStart: async ({ parentSessionId, selection, modelId, isCurrent }) => {
           const coordinator = createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
-            token: parentSessionId === 'bob-session' ? 'bob-token' : 'alice-token', quotaFreshnessMs: 60_000,
+            token: parentSessionId === 'bob-session' ? 'bob-token' : 'alice-token',
             nowMs: () => 1_000, applyGeneration: async () => ({ ok: true }),
           });
           return await coordinator.switchAfterClassifiedFailure({ serviceId: service, groupId: selection.groupId,

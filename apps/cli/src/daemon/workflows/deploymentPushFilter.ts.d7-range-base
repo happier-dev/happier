@@ -1,0 +1,33 @@
+import { posix } from 'node:path';
+import type { ScmComparison, ScmRevisionRangeV1 } from '@happier-dev/protocol/scm/comparison';
+
+export type DeploymentPushRangeEvidence = Readonly<{
+  range: ScmRevisionRangeV1;
+  comparison: ScmComparison | null;
+  history: Readonly<{ complete: boolean; before: string; after: string; commitCount: number; allCommitsSkipped: boolean }> | null;
+}>;
+
+export function summarizeDeploymentPushCommitMessages(messages: readonly string[]) {
+  return { commitCount: messages.length, allCommitsSkipped: messages.every(message => /\[skip (?:ci|cd)\]/iu.test(message)) };
+}
+
+/** A negative decision needs complete, agreeing file and commit witnesses. */
+export function shouldDeployPushRange(input: DeploymentPushRangeEvidence & Readonly<{ paths?: readonly string[] }>): boolean {
+  const { range, comparison, history } = input;
+  if (!comparison || comparison.inventory.state !== 'complete' || !history?.complete
+    || comparison.inventory.files.some(file => file.evidence.state !== 'available')
+    || comparison.endpoints.before !== range.before || comparison.endpoints.after !== range.after
+    || history.before !== range.before || history.after !== range.after) return true;
+  if (history.commitCount > 0 && history.allCommitsSkipped) return false;
+  if (!input.paths?.length) return true;
+  const initiallyIncluded = !input.paths.some(rule => !rule.startsWith('!'));
+  const matches = (path: string) => {
+    let included = initiallyIncluded;
+    for (const rule of input.paths!) {
+      const excluded = rule.startsWith('!');
+      if (posix.matchesGlob(path, excluded ? rule.slice(1) : rule)) included = !excluded;
+    }
+    return included;
+  };
+  return comparison.inventory.files.some(file => matches(file.path) || (file.previousPath !== undefined && matches(file.previousPath)));
+}

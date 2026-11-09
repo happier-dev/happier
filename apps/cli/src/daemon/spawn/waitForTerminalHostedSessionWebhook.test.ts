@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { configuration } from '@/configuration';
-import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import type { TrackedSession } from '../types';
 import { readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
 import { createOnChildExited } from '../sessions/onChildExited';
@@ -13,6 +13,49 @@ import { createSpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { waitForTerminalHostedSessionWebhook } from './waitForTerminalHostedSessionWebhook';
 
 describe('terminal hosted startup custody', () => {
+  it('preserves a webhook timeout when the tracked PID now belongs to another Session', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS', '25');
+    const pid = 4833;
+    const sessions = new Map<number, TrackedSession>();
+    const awaiters = new Map<number, (session: TrackedSession) => void>();
+    const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
+    const timeouts = new Map<number, NodeJS.Timeout>();
+    const spawnCleanups = new Map<number, () => void | Promise<void>>();
+    const attachCleanups = new Map<number, () => Promise<void>>();
+    const callbacks = createSpawnLifecycleCallbacks({
+      connectedServicesBindingsRaw: null, catalogAgentId: null, materializationKey: 'fixture', hasConnectedServiceAuth: () => false,
+      getSpawnResourceCleanupOnExit: () => null, onSpawnResourceCleanupArmed: () => {}, spawnResourceCleanupByPid: spawnCleanups,
+      getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {}, sessionAttachCleanupByPid: attachCleanups,
+      // Persistent marker storage is the external boundary; startup orchestration stays real.
+      persistAcceptedSpawnMarker: async () => {},
+    });
+    const exit = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: spawnCleanups,
+      sessionAttachCleanupByPid: attachCleanups, getApiMachineForSessions: () => null });
+    const started = waitForTerminalHostedSessionWebhook({ pid, label: 'herdr', normalizedExistingSessionId: '',
+      trackedSpawnOptions: { directory: os.tmpdir() }, effectiveResume: '', directoryCreated: false,
+      pidToTrackedSession: sessions, pidToAwaiter: awaiters, pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts,
+      onChildExited: exit, spawnLifecycleCallbacks: callbacks, cleanupSpawnResources: async () => {}, cancelOwnedHost: async () => true,
+      bindCanonicalSession: async () => {}, logDebug: () => {}, warn: () => {} });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      const replacement: TrackedSession = { startedBy: 'daemon', pid, happySessionId: 'replacement-session' };
+      sessions.set(pid, replacement);
+      await vi.advanceTimersByTimeAsync(25);
+      await expect(started).resolves.toMatchObject({
+        type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+      });
+      expect(sessions.get(pid)).toBe(replacement);
+      expect(replacement.sessionWebhookTimedOutAtMs).toBeUndefined();
+    } finally {
+      resolvers.get(pid)?.({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: 'Fixture cleanup' });
+      await Promise.allSettled([started]);
+      for (const timeout of timeouts.values()) clearTimeout(timeout);
+      vi.unstubAllEnvs();
+      vi.useRealTimers();
+    }
+  });
+
   it.each([false, true])('settles an actual early exit immediately and retires a held accepted marker after its commit (first report after exit %s)', async (firstReportAfterExit) => {
     const previousHome = configuration.happyHomeDir;
     const home = await mkdtemp(path.join(os.tmpdir(), 'happier-hosted-acceptance-'));

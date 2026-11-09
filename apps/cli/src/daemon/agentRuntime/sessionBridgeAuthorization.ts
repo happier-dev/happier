@@ -7,6 +7,8 @@ import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
 import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
+import { HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY } from '@/agent/runtime/session/process/agentRuntimeRunnerEnvironment';
+export { HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY } from '@/agent/runtime/session/process/agentRuntimeRunnerEnvironment';
 import {
   AgentRuntimeDaemonSessionDescriptorV1Schema,
   AgentRuntimeRunnerBootstrapV1Schema,
@@ -89,9 +91,6 @@ export type RunnerAgentSessionBootstrapAuthorization = Readonly<{
   bootstrapFilePath: string;
   authorityFilePath: string;
 }>;
-
-export const HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY =
-  'HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE';
 
 type AgentRuntimeDaemonServiceAuthorityPathInput = Readonly<{
   happyHomeDir: string;

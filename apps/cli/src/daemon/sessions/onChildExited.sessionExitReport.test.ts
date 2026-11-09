@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { TrackedSession } from '../types';
+import { createOnChildExited } from './onChildExited';
 
 const mocks = vi.hoisted(() => ({
   writeSessionExitReport: vi.fn(async () => '/tmp/session-exit.json'),
@@ -13,7 +14,6 @@ vi.mock('@/session/diagnostics/sessionExitReport', () => ({
 describe('createOnChildExited session exit reports', () => {
   it('records a person-requested SIGKILL as intentional rather than crash recovery', async () => {
     mocks.writeSessionExitReport.mockClear();
-    const { createOnChildExited } = await import('./onChildExited');
     const tracked: TrackedSession = { pid: 5152, startedBy: 'daemon', happySessionId: 'session-killed',
       activeTurnId: 'turn-killed', stopRequestedAtMs: 1234, stopRequestedReason: 'user_process_kill' };
     let crashSettlement = 0;
@@ -44,7 +44,6 @@ describe('createOnChildExited session exit reports', () => {
 
   it('persists bounded child stderr diagnostics from the observed exit', async () => {
     mocks.writeSessionExitReport.mockClear();
-    const { createOnChildExited } = await import('./onChildExited');
     const pid = 5151;
     const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-1' };
     const apiMachine = { enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined) };

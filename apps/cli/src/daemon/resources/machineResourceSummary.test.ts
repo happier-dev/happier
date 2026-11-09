@@ -9,6 +9,7 @@ import type { MachineVitalsReaderResult } from '../vitals/readers/types';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { MachinePublishedDaemonStateV1Schema, StoredMachinePublishedDaemonStateV1Schema,
     type MachinePublishedDaemonStateV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { MachineResourceSummaryV1Schema, projectMachineResourceSummaryV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 
 describe('Machine resource summary through the real sampler', () => {
     let directory: string;
@@ -19,18 +20,21 @@ describe('Machine resource summary through the real sampler', () => {
     async function setup(initialThreshold: { freeFraction: number } | null = { freeFraction: 0.1 }, initialFailure?: 'helper_missing' | 'reader_failed') {
         let pressure: 'calm' | 'critical' = 'calm';
         let failure = initialFailure;
+        let load1 = 2.314;
+        let filesUsed: number | undefined;
         let threshold = initialThreshold;
         const historyStore = await createMinuteHistoryStore({ directory });
         let summary: ReturnType<typeof createMachineResourceSummary> | undefined;
         const sampler = createMachineVitalsSampler({ historyStore,
             // The reader is the OS boundary; counter aggregation/history/lifecycle remain real.
             readers: { read: async (input): Promise<MachineVitalsReaderResult> => failure ? { state: 'unavailable', reason: failure } : {
-                state: 'reporting', host: { logicalCores: 4, memoryTotalBytes: 1000, bootedAt: initialTime - 1000 },
+                state: 'reporting', host: { logicalCores: 4, effectiveCores: 0.5, memoryTotalBytes: 1000, bootedAt: initialTime - 1000 },
                 sample: { v: 1, sampledAt: input.sampledAt, intervalMs: input.intervalMs,
-                    cpu: { reported: true, busyPct: input.sampledAt % 100 },
+                    cpu: { reported: true, busyPct: input.sampledAt % 100, load1 },
                     memory: { reported: true, totalBytes: 1000, availableBytes: 800, usedBytes: 200, pressure: { level: pressure, source: 'events' } },
                     disk: { reported: true, volumes: [{ id: 'home', label: 'Home', mount: '/home', totalBytes: 1000, availableBytes: 150 }] },
-                    network: { reported: false, reason: 'unavailable' } },
+                    network: { reported: false, reason: 'unavailable' },
+                    ...(filesUsed === undefined ? {} : { limits: { files: { used: filesUsed, max: 100 } } }) },
                 minuteCounters: { monotonicMs: input.monotonicMs, cpu: null, network: null },
             } }, onTick: () => summary?.refresh(),
         });
@@ -58,20 +62,59 @@ describe('Machine resource summary through the real sampler', () => {
         const tick = async () => { await vi.advanceTimersByTimeAsync(60_000); await sampler.start(); };
         return { sampler, summary, writes, release, setConnection, tick,
             pressure: (next: typeof pressure) => { pressure = next; }, fail: (next: typeof failure) => { failure = next; },
+            load: (next: number) => { load1 = next; },
+            files: (next: number) => { filesUsed = next; },
             threshold: (next: typeof threshold) => { threshold = next; summary?.refresh(); } };
     }
+
+    it('projects readable load and observed core capacity without publishing sample changes to daemonState', async () => {
+        const f = await setup();
+        f.setConnection('online');
+        const valueSummary = () => MachineResourceSummaryV1Schema.parse(projectMachineResourceSummaryV1({
+            state: 'reporting', sample: f.sampler.latest(),
+            series5m: { cpu: [], memory: [], networkRx: [], networkTx: [] },
+        }, f.summary.getSummary()?.host));
+        try {
+            expect(valueSummary().cpu).toMatchObject({ load1: 2.31, logicalCores: 4, effectiveCores: 0.5 });
+            const publications = f.writes.length;
+            for (let sample = 0; sample < 12; sample++) {
+                f.load(2.3101 + sample * 0.0001);
+                await f.tick();
+                expect(valueSummary().cpu).toMatchObject({ load1: 2.31 });
+            }
+            expect(f.writes).toHaveLength(publications);
+            f.load(2.326); await f.tick();
+            expect(valueSummary().cpu).toMatchObject({ load1: 2.33 });
+            expect(f.writes).toHaveLength(publications);
+            f.pressure('critical'); await f.tick();
+            expect(f.writes).toHaveLength(publications + 1);
+            expect(f.writes.at(-1)?.resources?.attention.level).toBe('needs_you');
+            f.files(100); await f.tick();
+            const withLimit = f.writes.length;
+            f.files(101); await f.tick();
+            expect(f.writes).toHaveLength(withLimit);
+            expect(f.summary.getSummary()?.attention.reasons).toContainEqual(expect.objectContaining({
+                kind: 'limit_reached', limit: 'files', used: 101, max: 100,
+            }));
+        } finally { f.release(); f.summary.stop(); await f.sampler.stop(); }
+    });
 
     it('publishes transitions only, preserves other state, retains typed guard way-back, and republishes on reconnect', async () => {
         const f = await setup();
         f.setConnection('online');
         expect(f.writes).toHaveLength(1);
         expect(f.writes[0].localServices).toMatchObject({ state: 'ready', runningCount: 2 });
+        const initial = f.summary.getSummary();
         await f.tick();
         expect(f.writes).toHaveLength(1);
+        expect(f.summary.getSummary()).toBe(initial);
         f.pressure('critical'); await f.tick();
         expect(f.writes).toHaveLength(2);
         expect(f.writes.at(-1)?.resources?.attention.level).toBe('needs_you');
+        expect(f.summary.getSummary()?.host).toBe(initial?.host);
+        const critical = f.summary.getSummary();
         await f.tick(); expect(f.writes).toHaveLength(2);
+        expect(f.summary.getSummary()).toBe(critical);
         f.summary.reportAutomaticAction({ at: Date.now(), kind: 'stopped_session', entryId: 'entry', undoable: true,
             facts: { rule: 'memory_guard', freedBytes: 100, count: 1 } });
         expect(f.writes.at(-1)?.resources?.lastAutomaticAction).toMatchObject({ entryId: 'entry', undoable: true, facts: { freedBytes: 100 } });

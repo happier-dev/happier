@@ -11,10 +11,12 @@ import { ConnectedServiceCredentialHttpClient } from '@/api/client/connectedServ
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { createConnectedAccountAttemptTransactionApiBoundary } from '@/testkit/connectedAccountAttemptTransactionApi';
+import type { ConnectedAccountAttemptTransactionScope } from '@/api/client/connectedAccountAttemptTransactionApi';
 import { createConnectedAccountContributionRegistry } from '@/plugins/runtime/connectedAccounts/contributionRegistry';
 import { createConnectedAccountHostRuntimeInvoker } from '@/plugins/runtime/connectedAccounts/runtimeInvoker';
 import type { HostConnectedAccountReadContext } from '@/plugins/runtime/connectedAccounts/hostRuntime';
-import { createLoggerAndEventsAvailablePluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
+import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { StoredCredentials } from '@/persistence';
 import { createQualifiedConnectedAccountDaemonPersistence } from './qualifiedConnectedAccountDaemonPersistence';
@@ -42,8 +44,7 @@ async function authorityFixture(initialMode: 'plain' | 'e2ee' = 'plain') {
         payload: { v: 1, values: { token: 'private-token' } }, randomBytes: length => new Uint8Array(length) })
       : sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'e2ee', material,
         payload: { v: 1, values: { token: 'private-token' } }, randomBytes: length => new Uint8Array(length) }), metadata: { scopes: [] } };
-  let attemptContent: unknown;
-  let attemptExpiresAtMs = 0;
+  const attempts = createConnectedAccountAttemptTransactionApiBoundary();
   const server = createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json');
     const path = request.url?.split('?')[0];
@@ -57,17 +58,28 @@ async function authorityFixture(initialMode: 'plain' | 'e2ee' = 'plain') {
       response.statusCode = 404;
       response.end(JSON.stringify({ error: 'not-found' }));
     } else if (request.method === 'GET' && path?.startsWith('/v2/connect/connected-account-attempt-transactions/')) {
-      response.end(JSON.stringify({ revision: 1, content: attemptContent, expiresAtMs: attemptExpiresAtMs }));
+      const attemptId = decodeURIComponent(path.slice('/v2/connect/connected-account-attempt-transactions/'.length));
+      const record = await attempts.read({ attemptId });
+      if (!record) {
+        response.statusCode = 404;
+        response.end(JSON.stringify({ error: 'connected_account_attempt_transaction_not_found' }));
+      } else response.end(JSON.stringify(record));
     } else if (request.method === 'POST' && path?.startsWith('/v2/connect/connected-account-attempt-transactions/')) {
       mutations.push(`${request.method} ${path}`);
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body: unknown = JSON.parse(Buffer.concat(chunks).toString());
-      if (typeof body !== 'object' || body === null || !('content' in body) || !('expiresAtMs' in body)) throw new Error('Invalid attempt body');
-      attemptContent = StoredJsonContentEnvelopeSchema.parse(body.content);
-      if (typeof body.expiresAtMs !== 'number') throw new Error('Invalid attempt expiry');
-      attemptExpiresAtMs = body.expiresAtMs;
-      response.end(JSON.stringify({ revision: 1, content: attemptContent, expiresAtMs: body.expiresAtMs }));
+      if (typeof body !== 'object' || body === null || !('content' in body) || !('scope' in body)) throw new Error('Invalid attempt body');
+      const [kind, attemptId] = path.slice('/v2/connect/connected-account-attempt-transactions/'.length).split('/');
+      if ((kind !== 'manual' && kind !== 'oauth' && kind !== 'device') || !attemptId) throw new Error('Invalid attempt identity');
+      const expiresAtMs = 'expiresAtMs' in body ? body.expiresAtMs : undefined;
+      if (expiresAtMs !== undefined && typeof expiresAtMs !== 'number') throw new Error('Invalid attempt expiry');
+      // This HTTP fixture preserves scope emitted by the real typed writer; route validation is covered by its server harness.
+      const scope = body.scope as ConnectedAccountAttemptTransactionScope;
+      const record = await attempts.create({ kind, attemptId: decodeURIComponent(attemptId),
+        content: StoredJsonContentEnvelopeSchema.parse(body.content), scope,
+        ...(expiresAtMs === undefined ? {} : { expiresAtMs }) });
+      response.end(JSON.stringify(record));
     } else if (request.method !== 'GET') {
       mutations.push(`${request.method} ${path}`);
       response.statusCode = 500;
@@ -106,7 +118,7 @@ async function authorityFixture(initialMode: 'plain' | 'e2ee' = 'plain') {
   const invoker = createConnectedAccountHostRuntimeInvoker({ resolveRuntime: async () => runtimeLease,
     resolvePlugin: () => ({ version: '1.0.0', hostAccessRequests: [] }),
     resolveHostPolicy: () => ({ hostAccess: [], serviceBinding:
-      createLoggerAndEventsAvailablePluginInvocationServiceBinding('fixture', 'producer', []) }),
+      createPluginInvocationServiceBinding('fixture', 'producer') }),
     // This host contribution calls no platform services; invocation and guards remain real.
     createServices: () => ({}) as PluginInvocationContext['services'], registerRawForRedaction() {}, });
   const registry = { connectedAccountContributions: contributions, resolveConnectedAccountRuntime: async () => runtimeLease,
@@ -118,7 +130,7 @@ async function authorityFixture(initialMode: 'plain' | 'e2ee' = 'plain') {
     getAccountEncryptionMode: (signal, options) => api.getAccountEncryptionMode({ ...options, signal }),
     configuration: persistence.configuration });
   return { account, credentials, persistence, owner, getAccountEncryptionMode, channel, material,
-    attemptContent: () => StoredJsonContentEnvelopeSchema.parse(attemptContent),
+    attemptContent: () => StoredJsonContentEnvelopeSchema.parse(attempts.records.get('attempt')?.content),
     run: <T>(operation: () => T) => runWithServerHttpBaseUrl(base, operation),
     reads: () => currentnessReads, mutations,
     async warm() {
@@ -157,8 +169,8 @@ it.each(['plain', 'e2ee'] as const)('freshly seals and reopens a durable attempt
   const f = await authorityFixture(mode);
   try {
     await f.warm();
-    const adapters = createQualifiedConnectedAccountAttemptTransactionAdapters({ credentials: f.credentials,
-      getAccountEncryptionMode: f.getAccountEncryptionMode, getMachineId: () => 'machine' });
+    const adapters = f.run(() => createQualifiedConnectedAccountAttemptTransactionAdapters({ credentials: f.credentials,
+      getAccountEncryptionMode: f.getAccountEncryptionMode, getMachineId: () => 'machine' }));
     await f.run(() => adapters.oauth.create({ attemptId: 'attempt', service: f.account.service,
       callbackUrl: 'https://provider.example/callback', snapshot: { attemptId: 'attempt', createdAtMs: Date.now(),
         intent: 'connect', service: f.account.service, modeId: 'token', sourceCustody: { kind: 'host' }, phase: 'starting',
@@ -193,8 +205,8 @@ it('refuses durable attempt sealing with retired observed plain authority before
   const f = await authorityFixture();
   try {
     await f.warm(); f.flip();
-    const adapters = createQualifiedConnectedAccountAttemptTransactionAdapters({ credentials: f.credentials,
-      getAccountEncryptionMode: f.getAccountEncryptionMode, getMachineId: () => 'machine' });
+    const adapters = f.run(() => createQualifiedConnectedAccountAttemptTransactionAdapters({ credentials: f.credentials,
+      getAccountEncryptionMode: f.getAccountEncryptionMode, getMachineId: () => 'machine' }));
     await expect(f.run(() => adapters.oauth.create({ attemptId: 'attempt', service: f.account.service,
       callbackUrl: 'https://provider.example/callback', snapshot: { attemptId: 'attempt', createdAtMs: Date.now(),
         intent: 'connect', service: f.account.service, modeId: 'token', sourceCustody: { kind: 'host' }, phase: 'starting',

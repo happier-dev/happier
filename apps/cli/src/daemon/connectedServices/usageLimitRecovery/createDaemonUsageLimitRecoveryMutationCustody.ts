@@ -204,6 +204,7 @@ export function createDaemonSessionMutationCustody(params: Readonly<{
       const resolved = await (params.resolveSessionTransportContext ?? resolveSessionTransportContext)({ reason: 'session-control',
         credentials: params.credentials,
         idOrPrefix: sessionId,
+        exact: true,
       });
       if (!resolved.ok) {
         if (resolved.code === 'encryption_material_unavailable') {
@@ -285,6 +286,7 @@ export function createDaemonSessionMutationCustody(params: Readonly<{
             resolved = await (params.resolveSessionTransportContext ?? resolveSessionTransportContext)({ reason: 'session-control',
               credentials: params.credentials,
               idOrPrefix: sessionId,
+              exact: true,
             });
           } catch {
             continue;

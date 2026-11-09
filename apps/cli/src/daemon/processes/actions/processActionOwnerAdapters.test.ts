@@ -1,7 +1,7 @@
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 // Select the canonical procfs fixture before a browser import creates the census singleton.
 import { localServiceProcfsFixture, installLocalServiceCensusFixture } from '@/daemon/local/services/inventory/platform/censusFixture.testkit';
@@ -117,7 +117,7 @@ describe('Process Actions through retained lifecycle owners', () => {
             onExit: listener => { exitListeners.add(listener); return { dispose: () => exitListeners.delete(listener) }; } };
         const manager = createTerminalPtySessionManager({ ptyProvider: { spawn: () => pty }, platform: 'linux', env: {},
             probeProcessGroup: () => 'absent', config: { bufferMaxBytes: 1000,
-                bufferMaxEvents: 100, bufferRetentionMs: 1000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000,
+                bufferMaxEvents: 100, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000,
                 defaultCols: 80, defaultRows: 24 } });
         try {
             const opened = await manager.ensure({ terminalKey: 'fixture', cwd: '/fixture' });

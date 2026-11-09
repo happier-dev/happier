@@ -1,3 +1,7 @@
+import type { StoredCredentials } from '@/persistence';
+import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
+import type { ExternalSessionOperationAccountScope } from '@/session/actions/externalSessions/operationRecordStore';
+
 export const HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY =
   'HAPPIER_PERSISTED_TAKEOVER_ADMISSION';
 
@@ -16,16 +20,24 @@ export type PersistedTakeoverAdmissionOutcome =
   | Readonly<{ status: 'failed'; errorCode: string }>;
 
 export type PersistedTakeoverAdmissionWaitRegistration = Readonly<{
+  /** In-memory authority of this exact admitted attempt; never serialized. */
+  context?: PersistedTakeoverAdmissionContext;
   outcome: Promise<PersistedTakeoverAdmissionOutcome>;
   readOutcome(): PersistedTakeoverAdmissionOutcome | null;
   cancel(): void;
+}>;
+
+export type PersistedTakeoverAdmissionContext = Readonly<{
+  credentials?: StoredCredentials;
+  accountScope?: ExternalSessionOperationAccountScope;
+  linked?: LoadedLinkedExternalSession;
 }>;
 
 export type PersistedTakeoverAdmissionWaiter = Readonly<{
   isPending(correlation: HostPrivatePersistedTakeoverAdmission): boolean;
   register(
     correlation: HostPrivatePersistedTakeoverAdmission,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: Readonly<{ signal?: AbortSignal; context?: PersistedTakeoverAdmissionContext }>,
   ): PersistedTakeoverAdmissionWaitRegistration;
   getRegistration(
     correlation: HostPrivatePersistedTakeoverAdmission,
@@ -106,6 +118,7 @@ export function createPersistedTakeoverAdmissionWaiter(): PersistedTakeoverAdmis
         });
       };
       const registration: PersistedTakeoverAdmissionWaitRegistration = Object.freeze({
+        ...(options.context ? { context: options.context } : {}),
         outcome,
         readOutcome: () => pending.settledOutcome,
         cancel,

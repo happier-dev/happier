@@ -1,5 +1,6 @@
 import { ConnectedServiceAuthGroupPolicyV1Schema, isConnectedServiceCredentialHealthStatusUsable } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
+import type { ConnectedServicePoolSelectionV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import type { ConnectedServiceAuthGroupPolicyV1, ConnectedServiceCredentialHealthStatusV1, ConnectedServiceLimitCategoryV1, ProviderAccountSubscriptionV1 } from '@happier-dev/protocol';
 
 import {
@@ -123,24 +124,7 @@ export type ConnectedServiceAuthGroupSwitchReasonEvidenceInput = Readonly<{
   memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
 }>;
 
-type ConnectedServiceAuthGroupCandidateExclusion = Readonly<{
-  profileId: string;
-  reason:
-    | 'quota_probe_deferred'
-    | 'current_active'
-    | 'disabled'
-    | 'cooldown'
-    | 'quota_exhausted'
-      | 'capacity_limited'
-      | 'auth_invalid'
-      | 'credential_unavailable'
-      | 'plan_unavailable'
-      | 'validation_blocked'
-      | 'policy_wait_until_reset'
-      | 'quota_evidence_unavailable'
-      | 'not_meaningfully_better';
-  retryAtMs?: number | null;
-}>;
+type ConnectedServiceAuthGroupCandidateExclusion = Readonly<ConnectedServicePoolSelectionV1['excluded'][number]>;
 
 function numberOrNull(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;

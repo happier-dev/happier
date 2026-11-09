@@ -18,6 +18,8 @@ import { projectStartingServiceTargets } from './starting';
 type ProjectManagedServicesFeed = Pick<ReturnType<typeof createManagedServicesOwner>, 'listProjectServices' | 'readProcessRoots'>;
 
 export type LocalServiceLauncherFeedSnapshotRequest = Readonly<{
+    /** Host-only lifetime of the requesting launcher observation. */
+    signal?: AbortSignal;
     sessionId?: string;
     /** Host-only mutation read: an unresolved Workspace must not broaden to Machine scope. */
     requireWorkspaceScope?: true;
@@ -271,7 +273,7 @@ export function createLocalServiceLauncherFeed(
             // Complete bindings read cached listener evidence without waiting for discovery.
             // Both projections must retain the same managed identity and preview presentation.
             if (!bindingsOnly && request?.discovery !== 'cached') {
-                await refreshRunTargets(workspaceScopePaths, undefined, { includePackageScripts }, true);
+                await refreshRunTargets(workspaceScopePaths, request?.signal, { includePackageScripts }, true);
             }
             const runTargets = bindingsOnly ? [] : includePackageScripts
                 ? [...observedDeclarations, ...observedPackageScripts] : observedDeclarations;

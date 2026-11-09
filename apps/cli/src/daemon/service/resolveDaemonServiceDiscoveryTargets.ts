@@ -8,6 +8,7 @@ export function resolveDaemonServiceDiscoveryTargets(params: Readonly<{
   mode: DaemonServiceMode | undefined;
   userHomeDir: string;
   happierHomeDir: string;
+  deadlineMs?: number;
 }>): readonly Readonly<{
   mode: DaemonServiceMode;
   userHomeDir: string;
@@ -26,7 +27,7 @@ export function resolveDaemonServiceDiscoveryTargets(params: Readonly<{
   const invokerPaths = sudoUser
     ? (() => {
         try {
-          return resolveLinuxSystemUserPaths({ systemUser: sudoUser });
+          return resolveLinuxSystemUserPaths({ systemUser: sudoUser, deadlineMs: params.deadlineMs });
         } catch {
           return null;
         }

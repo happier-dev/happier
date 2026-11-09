@@ -1,8 +1,7 @@
 import type { RequesterWorkAttributionV1 } from './requesterWorkAttribution';
+import type { MachineServiceIdentityV1 } from '@happier-dev/protocol';
 import type { ActivityDecisionV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { isCanonicalAbsolutePathInsideRoot, resolveCanonicalAbsolutePathComparisonIdentity } from '@/utils/path/expandHomeDirPath';
-import type { MachineServiceIdentityV1 } from '@happier-dev/protocol';
-
 
 /** Private composition of incumbent work owners; never a persisted liveness store. */
 export type LiveWorkCategoryV1 = 'session' | 'finite' | 'terminal' | 'service'
@@ -40,14 +39,20 @@ export type LiveWorkInventoryV1 = Readonly<{
 /** Observations retire pending reads without claiming a material work edge. */
 export type LiveWorkListenerV1 = (change?: 'observation') => void;
 
+/** `changed`: a passive refresh after this owner's own change edge; owners may reuse unchanged rows. */
+export type LiveWorkReadScopeV1 = 'changed';
+
 export type LiveWorkProducerV1 = Readonly<{
-    read(): Omit<LiveWorkInventoryV1, 'idleSince'> | Promise<Omit<LiveWorkInventoryV1, 'idleSince'>>;
+    read(scope?: LiveWorkReadScopeV1): Omit<LiveWorkInventoryV1, 'idleSince'> | Promise<Omit<LiveWorkInventoryV1, 'idleSince'>>;
     subscribe(listener: LiveWorkListenerV1): () => void;
 }>;
 
 export type ManagedActivityInventory = Readonly<{
     read(): Promise<LiveWorkInventoryV1>;
     readDecision(): Promise<ActivityDecisionV1>;
+    /** Accepted projection only; does not start observations or retain an invalid idle proof. */
+    getCurrentDecision(): ActivityDecisionV1;
+    /** Aggregate retention decisions, published only when their value changes. */
     subscribe(listener: (decision: ActivityDecisionV1) => void): () => void;
     /** Per-item facts, excluding the aggregate Machine retention anchor. */
     subscribeFacts(listener: (facts: LiveWorkInventoryV1) => void): () => void;
@@ -106,7 +111,7 @@ export function createLiveWorkProducerGroup(resolve: () => readonly LiveWorkProd
     let observing = false;
     let disposed = false;
     const notifyChanged: LiveWorkListenerV1 = change => { if (!disposed) for (const listener of listeners) listener(change); };
-    const read = () => {
+    const read = (scope?: LiveWorkReadScopeV1) => {
         const owners = resolve();
         if (observing) {
             const current = new Set(owners ?? []);
@@ -119,7 +124,7 @@ export function createLiveWorkProducerGroup(resolve: () => readonly LiveWorkProd
         }
         if (!owners?.length || disposed) return { items: [], coverage: 'unknown' as const };
         const snapshots = owners.map(owner => {
-            try { return owner.read(); } catch (error) { return Promise.reject(error); }
+            try { return owner.read(scope); } catch (error) { return Promise.reject(error); }
         });
         return Promise.allSettled(snapshots).then(results => {
             const items: LiveWorkItemV1[] = [];
@@ -184,7 +189,6 @@ export function createManagedActivityInventory(params: Readonly<{
     let publishedFacts: Omit<LiveWorkInventoryV1, 'idleSince'> | undefined;
     let idleSince: number | undefined;
     let priorDecision: ActivityDecisionV1 | undefined;
-    let publishedOwnerEdge = -1;
     let disposed = false;
     let ownerEdge = 0;
     const producerObservations = new Map<LiveWorkProducerV1, Promise<Omit<LiveWorkInventoryV1, 'idleSince'>>>();
@@ -220,7 +224,8 @@ export function createManagedActivityInventory(params: Readonly<{
             }
             let observation: Promise<Omit<LiveWorkInventoryV1, 'idleSince'>>;
             try {
-                observation = Promise.resolve(producer.read()).catch(() => ({ items: [], coverage: 'unknown' as const }));
+                observation = Promise.resolve(producer.read(producer === changedProducer ? 'changed' : undefined))
+                    .catch(() => ({ items: [], coverage: 'unknown' as const }));
             } catch {
                 observation = Promise.resolve({ items: [], coverage: 'unknown' as const });
             }
@@ -265,8 +270,7 @@ export function createManagedActivityInventory(params: Readonly<{
                     try { listener(inventory); } catch { /* Observation cannot change work custody. */ }
                 }
             }
-            if (observedEdge !== publishedOwnerEdge || JSON.stringify(decision) !== JSON.stringify(priorDecision)) {
-                publishedOwnerEdge = observedEdge;
+            if (JSON.stringify(decision) !== JSON.stringify(priorDecision)) {
                 priorDecision = decision;
                 if (!disposed) for (const listener of listeners) {
                     try { listener(decision); } catch { /* Observation cannot change work custody. */ }
@@ -282,6 +286,8 @@ export function createManagedActivityInventory(params: Readonly<{
     return {
         read,
         readDecision: async () => projectManagedActivityDecision(await read()),
+        getCurrentDecision: () => priorDecision === undefined || (priorDecision.kind === 'idle' && idleSince === undefined)
+            ? { kind: 'unknown', reasons: ['coverage_unknown'] } : priorDecision,
         subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
         subscribeFacts(listener) {
             factListeners.add(listener);

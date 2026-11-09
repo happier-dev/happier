@@ -16,6 +16,7 @@ type LocalGenerationSession = Readonly<{
   activity: 'live' | 'idle' | 'offline';
   fromProfileId?: string | null;
   applicationOwnerId?: string | null;
+  isCurrent?: () => boolean;
 }>;
 
 type ConnectedServiceAuthGenerationRecipientApplyReason =
@@ -32,7 +33,8 @@ function resolveGenerationRecipientApplyReason(
 }
 
 type RecipientResult = Readonly<{
-  disposition: 'applied_hot' | 'deferred_persisted' | 'restart_requested' | 'failed' | 'unavailable';
+  providerAdoptedTarget?: ConnectedServiceProviderAdoptedGenerationTarget;
+  disposition: 'applied_hot' | 'inactive' | 'deferred_restart' | 'restart_requested' | 'failed' | 'unavailable';
   reconciliationDisposition: ConnectedServiceAuthGenerationReconciliationDisposition;
   errorCode: string | null;
   pendingRecorded: boolean;
@@ -50,18 +52,11 @@ export type ConnectedServiceAuthGroupGenerationConsumptionOutcome =
   | 'superseded_by_newer_truth'
   | 'action_required_restart_required';
 
-type PendingInput = Readonly<{
-  sessionId: string;
-  committedGeneration: ConnectedServiceAuthGroupCommittedGenerationFact;
-  disposition: Exclude<ConnectedServiceAuthGenerationReconciliationDisposition, 'converged'>;
-  errorCode: string | null;
-}>;
-
 /**
  * Pure lower owner for at-least-once server-generation consumption. It deliberately has no quota,
  * candidate-selection or server-commit dependency: by the time this owner runs, group truth is an
- * immutable committed fact. Binding discovery decides membership; every reachable live runner
- * applies now and every non-live session records that exact desired generation before cursor ack.
+ * committed fact. Binding discovery decides membership; reachable live runners apply now.
+ * Inactive sessions resolve the current selection on their next start and require no local write.
  * Provider adoption proof is evaluated by the apply/clear owner after dispatch, never as a
  * pre-dispatch recipient veto.
  */
@@ -169,26 +164,6 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
     return { acknowledgeable, recordedSessionCount };
   }
 
-  async decideAndConsume(input: Readonly<{
-    decideCommittedGeneration: () => Promise<ConnectedServiceAuthGroupCommittedGenerationFact>;
-    switchReason: ConnectedServiceSessionAuthSwitchReason;
-    sessions: readonly LocalGenerationSession[];
-    signal?: AbortSignal;
-    executionAuthority: ConnectedServiceGenerationExecutionAuthority;
-  }>): Promise<ConnectedServiceAuthGroupGenerationConsumptionResult> {
-    // The decision callback is invoked exactly once here, before recipient scheduling begins.
-    // The immutable result—not the callback—is passed into consume, so no recipient can re-enter
-    // candidate selection or server commit under stale quota/identity evidence.
-    const committedGeneration = await input.decideCommittedGeneration();
-    return await this.consume({
-      committedGeneration,
-      switchReason: input.switchReason,
-      sessions: input.sessions,
-      ...(input.signal ? { signal: input.signal } : {}),
-      executionAuthority: input.executionAuthority,
-    });
-  }
-
   async consume(input: Readonly<{
     committedGeneration: ConnectedServiceAuthGroupCommittedGenerationFact;
     switchReason: ConnectedServiceSessionAuthSwitchReason;
@@ -198,25 +173,36 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
   }>): Promise<ConnectedServiceAuthGroupGenerationConsumptionResult> {
     input.signal?.throwIfAborted();
     const resultsBySessionId: Record<string, RecipientResult> = {};
+    const sessionsById = new Map(input.sessions.map(session => [session.sessionId, session]));
     const liveTargets: Array<Readonly<{
       sessionId: string;
       fromProfileId: string | null;
       applicationScope: 'per_session_runtime' | 'shared_group_auth_surface';
       applicationOwnerId: string;
+      isCurrent?: () => boolean;
     }>> = [];
 
-    const recordPending = async (pending: PendingInput): Promise<void> => {
-      input.signal?.throwIfAborted();
-      resultsBySessionId[pending.sessionId] = {
-        disposition: pending.disposition === 'deferred_restart' ? 'deferred_persisted' : 'failed',
-        reconciliationDisposition: pending.disposition,
-        errorCode: pending.errorCode,
+    const recordFailure = (sessionId: string, errorCode: string): void => {
+      resultsBySessionId[sessionId] = {
+        disposition: 'failed',
+        reconciliationDisposition: 'failed',
+        errorCode,
         pendingRecorded: false,
       };
     };
 
     for (const session of input.sessions) {
       input.signal?.throwIfAborted();
+      if (session.isCurrent?.() === false) continue;
+      if (session.activity !== 'live') {
+        resultsBySessionId[session.sessionId] = {
+          disposition: 'inactive',
+          reconciliationDisposition: 'deferred_restart',
+          errorCode: null,
+          pendingRecorded: false,
+        };
+        continue;
+      }
       // Recipient filtering is owned by the projection reconciler using exact revision proof.
       // The consumer never treats profile+generation alone as convergence because A rev1 -> A rev2
       // is an ABA change with the same group tuple.
@@ -230,21 +216,11 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
         input.signal?.throwIfAborted();
       } catch (error) {
         if (input.signal?.aborted) throw error;
-        await recordPending({
-          sessionId: session.sessionId,
-          committedGeneration: input.committedGeneration,
-          disposition: 'failed',
-          errorCode: 'generation_application_scope_unavailable',
-        });
+        recordFailure(session.sessionId, 'generation_application_scope_unavailable');
         continue;
       }
       if (application.status !== 'supported') {
-        await recordPending({
-          sessionId: session.sessionId,
-          committedGeneration: input.committedGeneration,
-          disposition: 'failed',
-          errorCode: application.errorCode,
-        });
+        recordFailure(session.sessionId, application.errorCode);
         continue;
       }
       // The projection reconciler installs the committed group truth before invoking this
@@ -259,20 +235,12 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
         };
         continue;
       }
-      if (session.activity !== 'live' && application.scope !== 'shared_group_auth_surface') {
-        await recordPending({
-          sessionId: session.sessionId,
-          committedGeneration: input.committedGeneration,
-          disposition: 'deferred_restart',
-          errorCode: null,
-        });
-        continue;
-      }
       liveTargets.push({
         sessionId: session.sessionId,
         fromProfileId: session.fromProfileId ?? null,
         applicationScope: application.scope,
         applicationOwnerId: application.ownerId,
+        ...(session.isCurrent ? { isCurrent: session.isCurrent } : {}),
       });
     }
 
@@ -294,6 +262,7 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
     });
     input.signal?.throwIfAborted();
     for (const [sessionId, result] of Object.entries(fanout.resultsBySessionId ?? {})) {
+      if (sessionsById.get(sessionId)?.isCurrent?.() === false) continue;
       resultsBySessionId[sessionId] = {
         ...result,
         disposition: result.reconciliationDisposition === 'converged'
@@ -301,15 +270,16 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
           : result.reconciliationDisposition === 'deferred_restart'
             ? result.restartRequested === true
               ? 'restart_requested'
-              : 'deferred_persisted'
+              : 'deferred_restart'
             : result.errorCode === 'committed_generation_apply_unavailable'
               ? 'unavailable'
               : 'failed',
       };
     }
     const acknowledgeable = input.sessions.every((session) => {
+      if (session.isCurrent?.() === false) return true;
       const result = resultsBySessionId[session.sessionId];
-      return result?.reconciliationDisposition === 'converged';
+      return result?.disposition === 'inactive' || result?.reconciliationDisposition === 'converged';
     });
     const outcome: ConnectedServiceAuthGroupGenerationConsumptionOutcome = acknowledgeable
       ? 'adopted_current'
@@ -328,7 +298,7 @@ export class ConnectedServiceAuthGroupGenerationConsumer {
       ok: failures.length === 0,
       appliedSessionCount: recipients.filter(([, result]) => result.disposition === 'applied_hot').length,
       restartRequestedSessionCount: recipients.filter(([, result]) => result.disposition === 'restart_requested').length,
-      skippedIdleSessionCount: recipients.filter(([, result]) => result.disposition === 'deferred_persisted').length,
+      skippedIdleSessionCount: recipients.filter(([, result]) => result.disposition === 'inactive' || result.disposition === 'deferred_restart').length,
       failedSessionCount: failures.length,
       failures,
       resultsBySessionId,

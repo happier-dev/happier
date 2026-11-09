@@ -13,6 +13,15 @@ import { createDisconnectedTerminalHostResumeLifecycle } from '../../startup/dis
 import { createSessionRunnerRespawnManager } from '../../processSupervision/sessionRunnerRespawn';
 import { createStopSession } from '../../sessions/stopSession';
 import type { TrackedSession } from '../../types';
+import { localServiceProcfsFixture } from '@/daemon/local/services/inventory/platform/censusFixture.testkit';
+import { listHappierProcessRoots } from '../roots/listHappierProcessRoots';
+import { createLeftBehindPass } from '../leftBehind/leftBehindPass';
+import { createMachineProcessesView } from '../view/createMachineProcessesView';
+import { createMachineVitalsSampler } from '@/daemon/vitals/createMachineVitalsSampler';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
+import { registerDaemonProcessesRpcHandlers } from '@/rpc/handlers/daemonProcesses';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 const scope = '123456789abc';
 const principal = { kind: 'uid', value: '501' } as const;
@@ -27,6 +36,7 @@ function fixture(ports: Partial<Pick<ProcessActionExecutorInput, 'stopOwner' | '
     let visible = false;
     const partial: { pid: number; missing: string[] }[] = [];
     const censusRows: number[] = [];
+    const censusArgs: string[][] = [];
     const owner = { kind: 'session', sessionId: 'guest-session' } as const;
     const row = (pid: number, ppid: number, ownerTag?: string): ProcessCensusRow => ({
         pid, ppid, pgid: pid, start: { startTimeMs: pid * 10, native: `darwin-proc:${pid}:0:${pid}` },
@@ -47,8 +57,9 @@ function fixture(ports: Partial<Pick<ProcessActionExecutorInput, 'stopOwner' | '
     // Native helper reads, clock and signals are the only substituted system boundaries.
     const censusDependencies: ProcessCensusDependencies = { platform: 'darwin', selfPid: process.pid,
         helperExecutablePath: '/fixture/helper', now: () => now,
-        async execFile() {
+        async execFile(_file, args) {
             if (!available) throw new Error('native read unavailable');
+            censusArgs.push([...args]);
             censusRows.push(rows.size);
             native?.onCensusRead?.();
             return { stdout: JSON.stringify({ v: 1, capturedAtMs: now, logicalCpus: 4, rows: [...rows.values()], partial }) };
@@ -66,12 +77,67 @@ function fixture(ports: Partial<Pick<ProcessActionExecutorInput, 'stopOwner' | '
             async wait() { if (native) { await native.beforeVerification(); for (const pid of signals) rows.delete(pid); } } }, ...ports,
     });
     const target = (pid: number) => ({ ref: processRef(pid, rows.get(pid)!.start), expect: { level: 'proven' as const, owner } });
-    return { executor, rows, roots, ownership, tracker, signals, target, row, owner, partial, censusRows,
+    return { executor, rows, roots, ownership, tracker, signals, target, row, owner, partial, censusRows, censusArgs,
         advance: (ms: number) => { now += ms; }, setVisible: (value: boolean) => { visible = value; },
         setAvailable: (value: boolean) => { available = value; } };
 }
 
 describe('process Actions through the canonical ownership and tree owners', () => {
+    it('refuses an ordinary process tree containing an admitted native service before any signal', async () => {
+        const containerId = 'a'.repeat(64);
+        const killed = new Set<number>();
+        const signals: number[] = [];
+        const procfs = () => localServiceProcfsFixture([
+            { pid: 30 },
+            { pid: 20, ppid: 30, cgroup: `0::/system.slice/docker-${containerId}.scope` },
+            { pid: 21, ppid: 20, cgroup: `0::/system.slice/docker-${containerId}.scope` },
+        ].filter(row => !killed.has(row.pid)));
+        const censusDependencies: ProcessCensusDependencies = { platform: 'linux', linuxBoundary: {
+            readdir: path => procfs().readdir(path), readFile: path => procfs().readFile(path), readlink: path => procfs().readlink(path),
+        } };
+        const ownership = createProcessOwnershipRuntime({ platform: 'linux', daemonScopeKey: scope, censusDependencies,
+            listRoots: snapshot => listHappierProcessRoots({ snapshot, platform: 'linux',
+                trackedSessions: [{ pid: 30, happySessionId: 'ordinary',
+                    processStartTimeMs: snapshot.rows.find(row => row.pid === 30)?.start.startTimeMs }],
+                nativeContainers: [{ pid: 20, owner: { kind: 'container', serverId: 'home', machineId: 'machine',
+                    serviceId: 'production/web', containerId, composeProject: 'production', composeService: 'web', environmentId: 'environment' } }] }) });
+        const read = await ownership.readOwners({ freshness: 'fresh' });
+        if (read.status !== 'ok') throw new Error('Expected readable native process identities');
+        expect(read.rows.find(row => row.pid === 20)?.owner?.kind).toBe('container');
+        const session = read.rows.find(row => row.pid === 30)!;
+        const executor = createProcessActionExecutor({ ownership, leftBehind: createLeftBehindTracker(), platform: 'linux',
+            requesterForOwner: () => null, allProcessesVisible: () => true,
+            systemBoundary: { platform: 'linux', censusDependencies, kill(pid) { signals.push(pid); killed.add(pid); }, wait: async () => {} } });
+        expect(await executor.executeKill({ machineId: 'machine', tree: true, targets: [{ ref: processRef(session.pid, session.start),
+            expect: { level: 'proven', owner: { kind: 'session', sessionId: 'ordinary' } } }] }, custodian))
+            .toMatchObject({ status: 'refused', outcomes: [{ reasonCode: 'native_service_control_required' }] });
+        const native = read.rows.find(row => row.pid === 20)!;
+        const nativeTarget = { ref: processRef(native.pid, native.start), expect: { level: 'proven' as const, owner: native.owner! } };
+        expect(await executor.executeStop({ machineId: 'machine', targets: [nativeTarget] }, custodian))
+            .toMatchObject({ status: 'refused', outcomes: [{ reasonCode: 'native_service_control_required' }] });
+        expect(await executor.executeKill({ machineId: 'machine', tree: false, targets: [nativeTarget] }, custodian))
+            .toMatchObject({ status: 'refused', outcomes: [{ reasonCode: 'native_service_control_required' }] });
+        expect(await executor.executeStop({ machineId: 'machine', targets: [{ ref: processRef(session.pid, session.start),
+            expect: { level: 'proven', owner: { kind: 'session', sessionId: 'ordinary' } } }] }, custodian))
+            .toMatchObject({ status: 'refused', outcomes: [{ reasonCode: 'native_service_control_required' }] });
+        expect(signals).toEqual([]);
+    });
+
+    it('answers Session Start again from identity-only custody while retaining requester and generation checks', async () => {
+        const f = fixture();
+        const ref = f.target(30).ref;
+        expect(await f.executor.startAgain({ machineId: 'machine', ref }, guest)).toEqual({ status: 'already_wakes_on_next_message' });
+        // A Session no-op needs neither commands/environment nor resource observations.
+        expect(f.censusArgs).toHaveLength(1);
+        expect(f.censusArgs[0]).toContain('--identity-only=true');
+        expect(await f.executor.startAgain({ machineId: 'machine', ref }, { accountId: 'peer', isCustodian: false }))
+            .toMatchObject({ status: 'refused', reasonCode: 'access_denied' });
+        f.roots[1] = { ...f.roots[1], start: { startTimeMs: 999 } };
+        expect(await f.executor.startAgain({ machineId: 'machine', ref }, guest))
+            .toMatchObject({ status: 'refused', reasonCode: 'access_denied' });
+        expect(f.signals).toEqual([]);
+    });
+
     it('keeps Resume behind native kill verification and gives concurrent Stop callers their real coalesced acknowledgement', async () => {
         const signalled = createDeferred();
         const releaseNative = createDeferred();
@@ -88,7 +154,7 @@ describe('process Actions through the canonical ownership and tree owners', () =
         const lifecycle = createSessionProcessActionLifecycle({ pidToTrackedSession: sessions,
             markStopRequested: respawn.markStopRequested,
             // Metadata transport is outside the process owner; exact binding and lifecycle stay real.
-            recordExplicitStopIntent: async () => { writes++; }, stopSession: stopCore,
+            prepareStopIntent: async () => { writes++; }, stopSession: stopCore,
             registerPhysicalStopEffect: (sessionId, completion) => barrier.registerPhysicalStopEffect(sessionId, completion),
         });
         const f = fixture({ prepareKill: input => lifecycle.prepareKill(input) }, { beforeVerification: async () => {
@@ -188,13 +254,14 @@ describe('process Actions through the canonical ownership and tree owners', () =
         expect(f.rows.has(22)).toBe(true);
     });
 
-    it('reports read and withdrawn admission as refusal rather than success or signals', async () => {
+    it('reports unreadable facts and local cancellation as refusal rather than success or signals', async () => {
         const f = fixture();
         const input = { machineId: 'machine', targets: [f.target(20)], tree: true };
         f.setAvailable(false);
         expect((await f.executor.executeKill(input, custodian)).status).toBe('refused');
         f.setAvailable(true); f.advance(60_000);
-        expect((await f.executor.executeKill(input, custodian, { verifyCurrent: async () => false })).status).toBe('refused');
+        const controller = new AbortController(); controller.abort();
+        expect((await f.executor.executeKill(input, custodian, { signal: controller.signal })).status).toBe('refused');
         expect(f.signals).toEqual([]);
     });
 
@@ -260,9 +327,8 @@ describe('process Actions through the canonical ownership and tree owners', () =
         called = false;
         const g = fixture({ stopOwner: async () => { called = true; return true; } });
         const old = g.target(30);
-        let admissions = 0;
+        g.rows.set(30, { ...g.rows.get(30)!, start: { startTimeMs: 999 } });
         const response = await g.executor.executeStop({ machineId: 'machine', targets: [old] }, guest, {
-            verifyCurrent: async () => { if (++admissions === 2) g.rows.set(30, { ...g.rows.get(30)!, start: { startTimeMs: 999 } }); return true; },
         });
         expect(response.status).toBe('refused');
         expect(called).toBe(false);
@@ -306,20 +372,45 @@ describe('process Actions through the canonical ownership and tree owners', () =
             .toMatchObject({ status: 'ended', outcomes: [{ outcome: 'ended', freedBytes: 3000 }] });
         expect(f.signals).toEqual([]);
         const cost = { inventoryPasses: f.censusRows.length, cumulativeRows: f.censusRows.reduce((sum, count) => sum + count, 0) };
+        console.info(JSON.stringify({ phase: 'owner_stop_census', processCount, ...cost }));
         expect(cost).toEqual({ inventoryPasses: 2, cumulativeRows: processCount * 2 - 1 });
     });
 
-    it('refuses Stop when requester admission is withdrawn during its fresh census', async () => {
+    it('finishes admitted Stop with one authorization after revoke during census and refuses the next request', async () => {
         let current = true;
         let stopped = false;
+        let verifications = 0;
         const f = fixture(createProcessActionOwnerAdapters({}), {
             beforeVerification: async () => {}, onCensusRead: () => { current = false; },
         });
         f.roots[1] = { ...f.roots[1]!, stop: async () => { stopped = true; f.rows.delete(30); return true; } };
-        expect(await f.executor.executeStop({ machineId: 'machine', targets: [f.target(30)] }, guest,
-            { verifyCurrent: async () => current })).toMatchObject({ status: 'refused' });
-        expect(stopped).toBe(false);
-        expect(f.rows.has(30)).toBe(true);
+        const pass = createLeftBehindPass({ processOwnershipRuntime: f.ownership });
+        const sampler = createMachineVitalsSampler({ readers: { read: async () => ({ state: 'unavailable', reason: 'helper_missing' }) },
+            historyStore: { read: async () => [], append: async () => true, prune: async () => undefined,
+                appendAlert: async () => undefined, minutes: () => [], alerts: () => [] } });
+        const view = createMachineProcessesView({ processOwnershipRuntime: f.ownership, leftBehind: pass, machineVitals: sampler,
+            platform: 'darwin', allProcessesVisible: () => false, requesterForOwner: () => ({ accountId: guest.accountId }) });
+        const manager = new RpcHandlerManager({ scopePrefix: machineTarget.machineId, localMachineId: machineTarget.machineId,
+            encryptionMode: 'plain', logger: () => {}, authorizeRequest: request => authorizeMachineRpcRequest(request, {
+                machineId: machineTarget.machineId, resolveCustodianAccountId: async () => custodian.accountId,
+                resolveInstallationId: () => machineTarget.installationId,
+                // Home currentness and the fixture's native census/stop are system boundaries.
+                verifyMachineAdmission: async () => { verifications++; return current; },
+            }) });
+        registerDaemonProcessesRpcHandlers(manager, { view, actions: f.executor,
+            target: () => ({ ...machineTarget, custodianAccountId: custodian.accountId }) });
+        const request = { method: `${machineTarget.machineId}:${RPC_METHODS.MACHINES_PROCESSES_STOP}`,
+            params: { machineId: machineTarget.machineId, targets: [f.target(30)] }, callerAuthority: 'present_user' as const,
+            machineAdmission: { machineId: machineTarget.machineId, installationId: machineTarget.installationId, custodianAccountId: custodian.accountId,
+                actorAccountId: guest.accountId, role: 'use' as const, encryptionMode: 'plain' as const } };
+        try {
+            expect(await manager.handleRequest(request)).toMatchObject({ status: 'ended', outcomes: [{ outcome: 'ended', freedBytes: 3000 }] });
+            expect(stopped).toBe(true);
+            expect(f.rows.has(30)).toBe(false);
+            expect(verifications).toBe(1);
+            expect(await manager.handleRequest(request)).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+            expect(verifications).toBe(2);
+        } finally { view.dispose(); pass.dispose(); await sampler.stop(); }
     });
 
     it('counts ended owned members in a Stop receipt while excluding a surviving child', async () => {

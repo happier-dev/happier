@@ -1,8 +1,9 @@
 import axios from 'axios';
-import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { expect, it, vi } from 'vitest';
+import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { reconcileExternalActionTarget, resolveExternalActionMachineTarget, resolveManagedControlControllerTarget } from './reconcileExternalActionTarget';
+import { BotTemplateInstantiateInputV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
+import { reconcileExternalActionTarget, resolveExternalActionMachineTarget, resolveSelectedExternalActionMachineTarget, resolveManagedControlControllerTarget } from './reconcileExternalActionTarget';
 
 it.each([
   ['machines.managed.power.set', { when: 'now', intent: 'stop', expectedRevision: 1 }, true],
@@ -35,6 +36,25 @@ it.each([
   expect(getActionSpec(actionId).inputSchema.safeParse(rawInput).success).toBe(true);
   expect(reconcileExternalActionTarget({ actionId,
     rawInput, currentMachineId: '', target: undefined }))
+    .toMatchObject({ kind: 'ready' });
+});
+
+it('routes template creation to its declared runtime Machine and refuses conflicting receiver custody', () => {
+  const request = { actionId: 'template.instantiate' as const,
+    rawInput: BotTemplateInstantiateInputV1Schema.parse({
+      source: { kind: 'artifact', serverId: 'source-home', artifactId: 'released-template' }, expectedVersion: '1.0.0',
+      creation: { creationKey: 'independent-bot', executionTarget: { serverId: 'destination-home', machineId: 'worker' },
+        directory: { kind: 'managed' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+    }), target: undefined };
+  expect(resolveSelectedExternalActionMachineTarget(request)).toEqual({ kind: 'ready', machineId: 'worker' });
+  expect(resolveSelectedExternalActionMachineTarget({ ...request, fallbackMachineId: 'ambient' }))
+    .toEqual({ kind: 'ready', machineId: 'worker' });
+  expect(resolveSelectedExternalActionMachineTarget({ ...request, target: { kind: 'machine', machineId: 'ambient' } }))
+    .toMatchObject({ kind: 'rejected', execution: { errorCode: 'target_not_local' } });
+  expect(reconcileExternalActionTarget({ ...request, currentMachineId: 'ambient' }))
+    .toMatchObject({ kind: 'rejected', execution: { errorCode: 'target_not_local' } });
+  expect(reconcileExternalActionTarget({ ...request, currentMachineId: 'worker' }))
     .toMatchObject({ kind: 'ready' });
 });
 
@@ -79,9 +99,9 @@ const contribution = { pluginId: 'acme.compute', localId: 'machine' };
 it.each([
   ['machines.provisioners.check', { homeId: 'home', controller, contribution }],
   ['machines.provisioners.options', { homeId: 'home', controller, contribution, selectors: {} }],
-  ['machines.managed.acquire', { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
+  ['machines.managed.acquire', { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
     controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }],
-  ['machines.managed.acquire', { selection: { kind: 'one-off', homeId: 'home', controller,
+  ['machines.managed.acquire', { enrollmentIdentity: { kind: 'existingUser', role: 'personal' }, selection: { kind: 'one-off', homeId: 'home', controller,
     launch: { provider: contribution, schemaVersion: 1, name: 'worker', choices: {} },
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }],
 ] as const)('routes %s through its declared controller and refuses another envelope Machine', (actionId, rawInput) => {
@@ -91,6 +111,22 @@ it.each([
     .toMatchObject({ kind: 'rejected', execution: { errorCode: 'target_not_local' } });
   expect(reconcileExternalActionTarget({ ...request, target: { kind: 'machine', machineId: 'ambient' }, currentMachineId: 'ambient' }))
     .toMatchObject({ kind: 'rejected', execution: { errorCode: 'target_not_local' } });
+});
+
+it.each([
+  { enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
+    selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
+    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+  { enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
+    selection: { kind: 'one-off', homeId: 'home',
+      launch: { provider: contribution, schemaVersion: 1, name: 'worker', choices: {} },
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } },
+] as const)('keeps controllerless managed creation Account-owned without selecting a Machine', rawInput => {
+  const request = { actionId: 'machines.managed.acquire' as const, rawInput, target: undefined };
+  expect(getActionSpec(request.actionId).inputSchema.safeParse(rawInput).success).toBe(true);
+  expect(resolveSelectedExternalActionMachineTarget(request)).toBeNull();
+  expect(reconcileExternalActionTarget({ ...request, currentMachineId: 'ambient' }))
+    .toMatchObject({ kind: 'ready', target: undefined, executionPlacement: 'account' });
 });
 
 it.each([
@@ -123,7 +159,8 @@ it('ignores incidental nested Machine data retained by a permissive Action schem
 
 it('selects an inherited spawn Machine before creation choices are resolved while retaining explicit locality', () => {
   const spawn = { actionId: 'session.spawn_new' as const,
-    rawInput: { directory: { kind: 'path', path: '/tmp' } }, fallbackMachineId: 'caller-machine' };
+    rawInput: { directory: { kind: 'path', path: '/tmp' },
+      organizationPlacement: { sectionId: 'leads', tagIds: ['inbound'] } }, fallbackMachineId: 'caller-machine' };
   expect(resolveExternalActionMachineTarget(spawn)).toEqual({ kind: 'ready', machineId: 'caller-machine' });
   const selected = { ...spawn, rawInput: { ...spawn.rawInput,
     executionTarget: { serverId: 'home', machineId: 'selected-machine' } } };
@@ -135,7 +172,14 @@ it('selects an inherited spawn Machine before creation choices are resolved whil
     currentMachineId: 'other' })).toMatchObject({ kind: 'rejected', execution: { errorCode: 'target_not_local',
       details: { phase: 'target_machine_locality' } } });
   expect(resolveExternalActionMachineTarget({ ...spawn, rawInput: { ...spawn.rawInput, agentTarget: null } }))
-    .toMatchObject({ kind: 'rejected', execution: { errorCode: 'invalid_parameters' } });
+    .toMatchObject({ kind: 'rejected', execution: { errorCode: 'invalid_parameters',
+      details: { issues: expect.arrayContaining([
+        expect.objectContaining({ code: 'invalid_type', path: ['agentTarget'] }),
+      ]) } } });
+  expect(resolveExternalActionMachineTarget({ ...spawn, rawInput: { ...spawn.rawInput,
+    organizationPlacement: { folderId: 'leads', tagIds: ['inbound'] } } }))
+    .toMatchObject({ kind: 'rejected', execution: { errorCode: 'invalid_parameters',
+      details: { issues: expect.any(Array) } } });
 });
 
 it('identifies a conflicting Session selector without disclosing either target', () => {

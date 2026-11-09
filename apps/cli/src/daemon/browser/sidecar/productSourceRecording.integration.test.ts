@@ -26,6 +26,8 @@ import { createBrowserStoragePartitionOwner } from '../storage/partitions';
 import { resolveManagedBrowserSidecarCandidate } from './source';
 import { createBrowserCdpScreencastProducer } from '../capture/cdpScreencast';
 import { createBrowserRecordingCdpScreencastTransport } from '../recording/adapters/cdpScreencastTransport';
+import { createBrowserRecordingCdpScreencastCaptureAdapter } from '../recording/adapters/cdpScreencast';
+import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from '../../recording/ffmpegStreamEncoder';
 import type { BrowserRecordingCdpScreencastSession } from '../recording/adapters/cdpScreencast';
 import type { BrowserRecordingDaemonRuntime } from '../recording/runtime';
 import { resolveBrowserRecordingStartContext } from '../recording/startContext';
@@ -43,6 +45,71 @@ import type { DaemonSessionMutationCustody } from '@/daemon/connectedServices/us
 import { SessionMediaMessageMetaV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 
 describe.skipIf(!process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME)('managed browser recording capture', () => {
+    it.each([false, true])('records a static managed page with an existing viewer=%s through real CDP and FFmpeg', async existingViewer => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-static-recording-'));
+        environment.directory = process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME ?? root;
+        const server = createServer((request, response) => {
+            response.setHeader('Content-Type', 'text/html');
+            response.end(`<!doctype html><h1>Recording fixture ${request.url === '/next' ? 'next' : 'initial'}</h1>`);
+        });
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Static fixture did not bind');
+        const url = `http://127.0.0.1:${address.port}`;
+        const profiles = createBrowserProfileStore({ storageRootDirectory: root,
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+        const runtime = await createProductBrowserSidecarControlAdapterFactory({ profileStore: profiles })({ machineId: 'static-recording-machine' });
+        if (!runtime.ok || !runtime.contextCapture) throw new Error('Managed browser unavailable');
+        const capture = runtime.contextCapture;
+        const producer = createBrowserCdpScreencastProducer({ contextCapture: capture });
+        const adapter = createBrowserRecordingCdpScreencastCaptureAdapter({
+            transport: createBrowserRecordingCdpScreencastTransport({ contextCapture: capture, producer }),
+            encoderFactory: createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory: root }),
+        });
+        const view = { browserSessionId: 'static-session', viewId: 'static-view' };
+        const recording = { v: 1, ...view, recordingId: 'static-recording', profileId: 'static-profile',
+            targetKind: 'externalUrl', adapterKind: 'chromiumSidecar', renderEngineKind: 'unavailable', captureKind: 'cdpScreencast',
+            fidelity: 'cdp', startedAtMs: Date.now(), status: 'recording', navigationGenerationStart: 0, durationMs: 0,
+            byteSize: 0, frameCount: 0, fps: 12, mimeType: 'video/webm', retentionClass: 'preSend', redactionLevel: 'metadataOnly',
+            policyState: 'allowed', actionChapters: [], relatedReferences: [],
+        } satisfies BrowserRecordingSessionV1;
+        let viewer: Awaited<ReturnType<typeof producer.start>> = null;
+        let rawFrames = 0;
+        const unsubscribe = capture.subscribeCdpEvents?.(event => { if (event.method === 'Page.screencastFrame') rawFrames += 1; });
+        try {
+            expect(await runtime.adapter.dispatchCommand({ kind: 'openView', commandId: 'static-open', focus: true, ...view,
+                platform: 'web', target: { kind: 'externalUrl', targetId: 'fixture', url } })).toMatchObject({ status: 'dispatched' });
+            const handle = capture.resolvePageHandle(view);
+            if (!handle) throw new Error('Static view not bound');
+            const settle = () => capture.transport.dispatchPageCommand({ ...handle, method: 'Runtime.evaluate',
+                params: { expression: 'new Promise(resolve=>setTimeout(resolve,500))', awaitPromise: true } });
+            if (existingViewer) viewer = await producer.start({ view, purpose: 'humanViewer', onFrame: () => {} });
+            await settle();
+            const beforeRecording = rawFrames;
+            expect(await adapter.start({ recording })).toMatchObject({ status: 'started' });
+            await settle();
+            console.info('RECORDING-FRAMES-1108 CDP delivery', JSON.stringify({ existingViewer, beforeRecording, rawFrames,
+                recordingFrames: rawFrames - beforeRecording }));
+            const artifact = await adapter.stop({ recordingId: recording.recordingId, recording });
+            console.info('RECORDING-FRAMES-1108 static capture', JSON.stringify({ existingViewer, rawFrames,
+                frames: artifact.frameCount, bytes: artifact.byteSize }));
+            expect(artifact.frameCount).toBeGreaterThan(0);
+            expect(artifact.byteSize).toBeGreaterThan(0);
+            if (artifact.source.kind !== 'local-file') throw new Error('Encoded recording file unavailable');
+            const ffmpeg = await resolveFfmpegStaticBinaryPath();
+            if (!ffmpeg) throw new Error('Installed encoder unavailable');
+            await promisify(execFile)(ffmpeg, ['-v', 'error', '-i', artifact.source.path, '-f', 'null', '-']);
+            await artifact.cleanup?.();
+        } finally {
+            unsubscribe?.();
+            await adapter.discard({ recordingId: recording.recordingId, recording, reason: 'user_canceled' });
+            await viewer?.stop();
+            await producer.dispose();
+            await runtime.dispose?.();
+            await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+            await rm(root, { recursive: true, force: true });
+        }
+    });
     it('keeps the shared recorded and human-viewed page rendering behind a popup without stealing its foreground', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-browser-recording-'));
         environment.directory = process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME ?? root;

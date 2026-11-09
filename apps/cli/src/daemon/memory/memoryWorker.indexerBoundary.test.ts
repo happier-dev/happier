@@ -135,7 +135,7 @@ describe('Memory daemon/indexer boundary', () => {
       // Only the external native transcript transport is replaced. The engine,
       // inventory, scheduler, traversal, frontiers and SQLite are real.
       resolveExternalReader: async () => ({
-        async listCandidates() { return { ok: true, value: { candidates: Array.from({ length: 3 }, (_, index) => ({ remoteSessionId: `native-${index}` })), nextCursor: null } }; },
+        async listCandidates() { return { ok: true, value: { candidates: Array.from({ length: 3 }, (_, index) => ({ remoteSessionId: `native-${index}`, updatedAtMs: 0 })), nextCursor: null } }; },
         async resolveLinkIdentity({ source, remoteSessionId }) { return { ok: true, value: { source, remoteSessionId, linkData: {} } }; },
         async pageTranscript({ cursor }) {
           pageReads++;
@@ -553,6 +553,42 @@ export function activate(api) { api.agents.register('fixture', createFixtureAgen
       expect(ticks).toBe(2);
       await vi.advanceTimersByTimeAsync(15 * 60_000);
       expect(ticks).toBe(2);
+    } finally { await worker.stop(); Object.assign(configuration, { isDaemonProcess: previous }); }
+  });
+
+  it('opens and prepares no SQLite readers for 1000 never-indexed transcript appends while retaining real revision work', async () => {
+    await seedSession('retained');
+    await seedSession('unrelated-deep', 'chunk');
+    const revisions: string[] = [];
+    const { worker, requests, enable } = await setup({ revise: async change => { revisions.push(change.sessionId); } });
+    const sqlite = await import('@/daemon/persistence/sqliteSync');
+    const openReader = sqlite.openProtectedSqliteDatabaseReaderSync;
+    let prepares = 0;
+    const readers = vi.spyOn(sqlite, 'openProtectedSqliteDatabaseReaderSync').mockImplementation(path => {
+      const db = openReader(path);
+      const prepare = db.prepare.bind(db);
+      vi.spyOn(db, 'prepare').mockImplementation(sql => { prepares++; return prepare(sql); });
+      return db;
+    });
+    for (let index = 0; index < 1000; index++) await worker.noteSessionTranscriptRevised!({ sessionId: `never-${index}`, seq: 1 });
+    expect({ opens: readers.mock.calls.length, prepares }).toEqual({ opens: 0, prepares: 0 });
+    expect(requests).toEqual([]);
+    await worker.noteSessionTranscriptRevised!({ sessionId: 'retained', seq: 2 });
+    const { configuration } = await import('@/configuration');
+    const previous = configuration.isDaemonProcess;
+    Object.assign(configuration, { isDaemonProcess: true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      await enable();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(revisions).toEqual(['retained']);
+      readers.mockClear(); prepares = 0;
+      for (let index = 0; index < 1000; index++) await worker.noteSessionTranscriptRevised!({ sessionId: `never-${index}`, seq: 2 });
+      expect({ opens: readers.mock.calls.length, prepares }).toEqual({ opens: 0, prepares: 0 });
+      await worker.removeSessions(['retained']);
+      await worker.noteSessionTranscriptRevised!({ sessionId: 'retained', seq: 3 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(revisions).toEqual(['retained']);
     } finally { await worker.stop(); Object.assign(configuration, { isDaemonProcess: previous }); }
   });
 

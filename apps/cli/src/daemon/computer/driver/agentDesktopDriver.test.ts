@@ -7,9 +7,12 @@ import { createAgentDesktopComputerDriver } from './agentDesktopDriver';
 import { createManagedComputerDriver } from './managedComputerDriver';
 import { createComputerCaptureSource } from '../source';
 
-const boundary = vi.hoisted(() => ({ spawn: vi.fn(), calls: [] as string[][] }));
+const boundary = vi.hoisted(() => ({ spawn: vi.fn(), resolveExecutable: vi.fn(), calls: [] as string[][] }));
 // Only the native subprocess boundary is replaced; schemas, grounding and settlement run normally.
 vi.mock('node:child_process', async original => ({ ...await original<typeof import('node:child_process')>(), spawn: boundary.spawn }));
+// Executable discovery is an OS environment boundary; driver policy stays real.
+vi.mock('@happier-dev/cli-common/process', async original => ({ ...await original<typeof import('@happier-dev/cli-common/process')>(),
+  resolveExecutableCommand: boundary.resolveExecutable }));
 
 const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 'atspi:1.42:/window/1' } as const;
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAMgAAABk';
@@ -24,13 +27,16 @@ function nativeResponse(args: string[]): unknown {
       : args.includes('screenshot') ? { data: png, format: 'png', width: 200, height: 100, scale_factor: 1 }
         : { action: args[0], disposition: { delivery: 'delivered_unverified', retry: 'unsafe' } };
 }
-function setup(respond: (args: string[]) => unknown = nativeResponse) {
+function setup(respond: (args: string[], input: string) => unknown = nativeResponse) {
   boundary.calls.length = 0;
+  boundary.resolveExecutable.mockReset().mockImplementation((name: string) => `/managed/${name}`);
   boundary.spawn.mockImplementation((_path: string, args: string[]) => {
     boundary.calls.push(args);
     const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(), kill: vi.fn(), exitCode: null });
+    let input = '';
+    child.stdin.on('data', chunk => { input += chunk.toString(); });
     queueMicrotask(async () => {
-      const data = await respond(args);
+      const data = await respond(args, input);
       const envelope = typeof data === 'object' && data !== null && 'ok' in data ? data : { version: '2.5', ok: true, command: args.find(a => !a.startsWith('--')), data };
       child.stdout.end(JSON.stringify(envelope));
       child.emit('close', 0, null);
@@ -153,11 +159,11 @@ describe('agent-desktop native driver', () => {
       expect(boundary.calls.some(args => args.includes('mouse-down') || args.includes('mouse-up'))).toBe(false);
     } finally { await stream.session.stop(); await source.close(); }
   });
-  it('refuses clipboard writes without exposing text in native argv and preserves clipboard reads', async () => {
+  it.skipIf(process.platform !== 'linux')('writes clipboard text only through stdin on the selected X11 desktop and preserves reads', async () => {
     let clipboard: string | null = 'remote 日本';
-    setup(args => {
+    setup((args, input) => {
       if (args.includes('clipboard-get')) return clipboard === null ? { type: 'text', found: false } : { type: 'text', text: clipboard };
-      if (args.includes('clipboard-set')) { clipboard = args.at(-1) ?? ''; return { type: 'text', disposition: { delivery: 'delivered_unverified', retry: 'unsafe' } }; }
+      if (args.includes('-selection')) clipboard = input;
       return {};
     });
     const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
@@ -166,12 +172,61 @@ describe('agent-desktop native driver', () => {
       const text = '--local 👋 password\nwith whitespace';
       const result = await driver.clipboard?.(target, { kind: 'write', text });
       expect(boundary.calls.flat().some(arg => arg.includes(text))).toBe(false);
-      expect(result).toEqual({ ok: false, code: 'input_not_supported' });
-      expect(clipboard).toBe('remote 日本');
+      expect(result).toEqual({ ok: true });
+      expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: true, text });
+      const write = boundary.spawn.mock.calls.find(([path]) => path === '/managed/xclip');
+      expect(write?.[1]).toEqual(['-selection', 'clipboard', '-in']);
+      expect(write?.[2].env.DISPLAY).toBe(':73');
+      expect(write?.[2].env.WAYLAND_DISPLAY).toBeUndefined();
+      expect(await driver.clipboard?.(target, { kind: 'write', text: '' })).toEqual({ ok: true });
+      expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: true, text: '' });
       expect(boundary.calls.some(args => args.includes('clipboard-set'))).toBe(false);
       clipboard = null;
       expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: false, code: 'clipboard_text_unavailable' });
     } finally { await driver.close(); }
+  });
+  it.skipIf(process.platform !== 'linux')('keeps Wayland clipboard writes on Wayland and refuses an absent native tool', async () => {
+    let written = '';
+    setup((_args, input) => { written = input; return {}; });
+    const driver = await createAgentDesktopComputerDriver({ displayId: 'wayland-73', executablePath: '/managed/agent-desktop' });
+    const selected = { kind: 'display', displayId: 'wayland-73' } as const;
+    try {
+      expect(await driver.clipboard?.(selected, { kind: 'write', text: 'canary 日本\n' })).toEqual({ ok: true });
+      expect(written).toBe('canary 日本\n');
+      const write = boundary.spawn.mock.calls.find(([path]) => path === '/managed/wl-copy');
+      expect(write?.[2].env.WAYLAND_DISPLAY).toBe('wayland-73');
+      expect(write?.[2].env.DISPLAY).toBeUndefined();
+      boundary.resolveExecutable.mockReturnValue(null);
+      expect(await driver.clipboard?.(selected, { kind: 'write', text: 'never argv' })).toEqual({ ok: false, code: 'input_not_supported' });
+      expect(boundary.calls).toHaveLength(1);
+    } finally { await driver.close(); }
+  });
+  it.skipIf(process.platform !== 'linux')('does not report a rejected native stdin write as successful', async () => {
+    setup();
+    boundary.spawn.mockImplementationOnce(() => {
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stdin: new PassThrough() });
+      queueMicrotask(() => child.emit('close', 1, null));
+      return child;
+    });
+    const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
+    try {
+      expect(await driver.clipboard?.(target, { kind: 'write', text: 'canary' })).toEqual({ ok: false, code: 'driver_refused' });
+    } finally { await driver.close(); }
+  });
+  it.skipIf(process.platform !== 'linux')('refuses a broken stdin pipe and keeps close waiting for native process settlement', async () => {
+    setup();
+    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stdin: new PassThrough() });
+    boundary.spawn.mockImplementationOnce(() => child);
+    const driver = await createAgentDesktopComputerDriver({ displayId: ':73', executablePath: '/managed/agent-desktop' });
+    const writing = driver.clipboard!(target, { kind: 'write', text: 'canary' });
+    child.stdin.emit('error', new Error('EPIPE'));
+    let closed = false;
+    const closing = driver.close().then(() => { closed = true; });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    child.emit('close', 0, null);
+    expect(await writing).toEqual({ ok: false, code: 'driver_refused' });
+    await closing;
   });
   it('reports unsupported Fn before native input instead of silently dropping the modifier', async () => {
     setup();

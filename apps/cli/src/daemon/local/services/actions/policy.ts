@@ -78,6 +78,10 @@ export function resolveLocalServiceActionEligibility(
     input: ResolveLocalServiceActionEligibilityInput,
 ): LocalServiceActionDecisionV1 {
     if (input.target.kind === 'managed_service') {
+        if (input.target.handle.kind === 'environment'
+            && (input.action === 'stop_managed' || input.action === 'restart_managed')) {
+            return deniedDecision(input.action, 'use_machines_services_control');
+        }
         const snapshot = input.target.handle.snapshot();
         if (input.action === 'stop_managed') return snapshot.state === 'stopped'
             ? deniedDecision(input.action, 'managed_service_stopped')

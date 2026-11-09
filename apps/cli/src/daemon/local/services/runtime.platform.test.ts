@@ -40,6 +40,52 @@ describe('createLocalServicesDaemonRuntime platform scanner dispatch', () => {
         vi.resetModules();
     });
 
+    it.each([
+        ['/proc/net/tcp', 'EACCES'],
+        ['/proc/net/tcp6', 'EIO'],
+        ['both', 'EACCES'],
+    ])('retains prior inventory when Linux socket table %s fails with %s, but accepts a valid empty scan', async (failedTable, code) => {
+        const restorePlatform = mockProcessPlatform('linux');
+        const processes = [{ pid: 321, command: ['node', 'vite'], cwd: '/repo/web' }];
+        installLocalServiceCensusFixture(processes);
+        const census = localServiceProcfsFixture(processes);
+        const header = 'sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode';
+        const tcp = `${header}\n0: 0100007F:1435 00000000:0000 0A 0 0 0 501 0 12345`;
+        let scan: 'listening' | 'failed' | 'empty' = 'listening';
+        vi.mocked(fs.readFile).mockImplementation(async path => {
+            const name = String(path);
+            if (name === '/proc/net/tcp' || name === '/proc/net/tcp6') {
+                if (scan === 'failed' && (failedTable === 'both' || failedTable === name)) {
+                    throw Object.assign(new Error('Socket table unavailable'), { code });
+                }
+                return name.endsWith('/tcp') && scan !== 'empty' ? tcp : header;
+            }
+            return census.readFile(name);
+        });
+        vi.mocked(fs.readdir).mockImplementation(async path => (String(path) === '/proc' ? ['321'] : ['3']) as never);
+        vi.mocked(fs.readlink).mockImplementation(async path => String(path).includes('/fd/') ? 'socket:[12345]' : census.readlink(String(path)));
+        const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine-linux', startLoop: false,
+            inventoryEnabled: () => true, workspaceFacts: () => [],
+            endpointEnricher: createLocalServiceEndpointEnricher({ now: Date.now, probe: async () => true }) });
+        try {
+            const prior = await runtime.refreshInventoryNow();
+            expect(prior.entries).toHaveLength(1);
+            expect(prior.entries[0]).toMatchObject({ port: 5173, state: 'listening' });
+            scan = 'failed';
+            const failed = await runtime.refreshInventoryNow();
+            expect(failed).toMatchObject({ refreshState: 'error', entries: prior.entries,
+                diagnostics: expect.arrayContaining([expect.objectContaining({ code: 'linux_procfs_scan_failed' })]) });
+            scan = 'empty';
+            const empty = await runtime.refreshInventoryNow();
+            expect(empty.refreshState).toBe('idle');
+            expect(empty.diagnostics).toEqual([]);
+            expect(empty.entries.every(entry => entry.state !== 'listening')).toBe(true);
+        } finally {
+            await runtime.stop();
+            restorePlatform();
+        }
+    });
+
     it('opens no listener owners for passive summaries and fully attributes an actual inventory reader', async () => {
         vi.useFakeTimers();
         const restorePlatform = mockProcessPlatform('linux');
@@ -74,8 +120,7 @@ describe('createLocalServicesDaemonRuntime platform scanner dispatch', () => {
         const runtime = createLocalServicesDaemonRuntime({
             machineId: 'machine-a', inventoryEnabled: () => true, internalProcessPids: () => [100],
             workspaceFacts: () => [], refreshIntervalMs: 1_000,
-            endpointEnricher: createLocalServiceEndpointEnricher({ now: Date.now, timeoutMs: 250,
-                concurrency: 1, successTtlMs: 30_000, failureTtlMs: 5_000, probe: async () => true }),
+            endpointEnricher: createLocalServiceEndpointEnricher({ now: Date.now, probe: async () => true }),
         });
         const unsubscribe = runtime.subscribeSummary(() => {});
         try {
@@ -86,7 +131,7 @@ describe('createLocalServicesDaemonRuntime platform scanner dispatch', () => {
             const snapshot = await runtime.inventoryRoutes.getSnapshot();
             expect(snapshot.entries.find(entry => entry.port === 5173)?.provenance?.process)
                 .toMatchObject({ pid: 321, cwd: '/repo/web' });
-            expect(snapshot.entries.find(entry => entry.port === 8081)?.classification?.kind).toBe('happier');
+            expect(snapshot.entries.find(entry => entry.port === 8081)).toBeUndefined();
             expect(openedFdOwners).toContain('/proc/321/fd');
             expect(runtime.getSummary()).toEqual({ v: 1, state: 'ready', runningCount: 1 });
             unsubscribe();

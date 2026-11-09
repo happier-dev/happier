@@ -305,6 +305,7 @@ function createSessionHostServiceOwners(): NativeAgentSessionHostServiceOwners {
         features: Object.freeze({ isEnabled: () => false }),
         happierTools: Object.freeze({ readPluginToolCatalog: async () => Object.freeze([]) }),
         sessionHooks: Object.freeze({
+            observeSessionHook: async () => undefined,
             startServer: async () => Object.freeze({
                 port: 4312,
                 stop: () => undefined,

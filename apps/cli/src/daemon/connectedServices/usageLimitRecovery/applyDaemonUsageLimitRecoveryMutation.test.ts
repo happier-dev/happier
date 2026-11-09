@@ -20,6 +20,15 @@ function recovery(status: 'waiting' | 'cancelled', armedAtMs = 1) {
 }
 
 describe('applyDaemonUsageLimitRecoveryMutation', () => {
+  it('retains cancellation when an unbased older pending SET arrives', () => {
+    const cancelled = recovery('cancelled');
+    expect(applyDaemonUsageLimitRecoveryMutation({ sessionUsageLimitRecoveryV1: cancelled }, {
+      v: 1, sessionId: 'session', mutationId: 'stale-set', fieldId: 'runtime.usageLimitRecovery',
+      deliveryClass: 'durable_required', source: 'daemon', observedAt: 10,
+      op: { kind: 'set', value: recovery('waiting') },
+    })).toEqual({ sessionUsageLimitRecoveryV1: cancelled });
+  });
+
   it('preserves reset credits on an updated runtime-auth wait, but not a new attempt', () => {
     const recoveryCredits = {
       availableCount: 1, totalCount: 1,

@@ -494,6 +494,9 @@ export function createBrowserAutomationDaemonService(input: Readonly<{
       try {
         return await runtime.inputControl.execute({
           requestedBy: authority === 'present_user' ? 'human' : 'agent',
+          // Control commands address the view/history/URL, never coordinates or a DOM
+          // locator from a previous observation. Native page changes must not gate them.
+          requiresObservation: false,
           effect: async () => {
             emitController(view);
             // The broker awaits the actual CDP acknowledgement. Keep admission until it settles;

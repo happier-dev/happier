@@ -1,4 +1,4 @@
-import { moveProcessOutOfDaemonServiceCgroup } from './migrateTrackedSessionsOutOfDaemonServiceCgroup';
+import type { moveProcessOutOfDaemonServiceCgroup } from './migrateTrackedSessionsOutOfDaemonServiceCgroup';
 
 export const HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY = 'HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP';
 
@@ -26,6 +26,7 @@ export async function selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCg
   }
 
   const pid = params.pid ?? process.pid;
+  const { moveProcessOutOfDaemonServiceCgroup } = await import('./migrateTrackedSessionsOutOfDaemonServiceCgroup');
   return await moveProcessOutOfDaemonServiceCgroup({
     pid,
     daemonPid: pid,

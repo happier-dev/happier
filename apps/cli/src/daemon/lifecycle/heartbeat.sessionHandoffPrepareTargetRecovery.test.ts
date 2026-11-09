@@ -2,11 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-vi.mock('@/persistence', () => ({
-    readDaemonState: vi.fn(),
-    writeDaemonState: vi.fn(),
-}));
+import { configuration, reloadConfiguration } from '@/configuration';
+import { createSessionHandoffPrepareTargetJobStore } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
+import { releaseSessionHandoffPrepareTargetJobLease, tryAcquireSessionHandoffPrepareTargetJobLease } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobLease';
+import { startDaemonHeartbeatLoop } from './heartbeat';
 
 describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () => {
     const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
@@ -19,8 +18,7 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
         );
         process.env.HAPPIER_HOME_DIR = happyHomeDir;
         process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL = '1';
-        vi.useFakeTimers();
-        vi.resetModules();
+        reloadConfiguration();
     });
 
     afterEach(() => {
@@ -33,6 +31,7 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
         } else {
             process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
         }
+        reloadConfiguration();
         vi.useRealTimers();
         vi.restoreAllMocks();
     });
@@ -42,11 +41,6 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
             (globalThis as any).__tick = handler;
             return 1 as any;
         }) as any);
-
-        const { configuration } = await import('@/configuration');
-        const { createSessionHandoffPrepareTargetJobStore } = await import(
-            '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore',
-        );
 
         const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir: configuration.activeServerDir });
         const jobId = 'prepare_restart_stale_1';
@@ -88,8 +82,6 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
                 endpointCandidates: [],
             },
         });
-
-        const { startDaemonHeartbeatLoop } = await import('./heartbeat');
 
         startDaemonHeartbeatLoop({
             pidToTrackedSession: new Map(),
@@ -146,15 +138,6 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
             return 1 as any;
         }) as any);
 
-        const { configuration } = await import('@/configuration');
-        const { createSessionHandoffPrepareTargetJobStore } = await import(
-            '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore',
-        );
-        const {
-            releaseSessionHandoffPrepareTargetJobLease,
-            tryAcquireSessionHandoffPrepareTargetJobLease,
-        } = await import('@/session/handoff/prepare/sessionHandoffPrepareTargetJobLease');
-
         const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir: configuration.activeServerDir });
         const jobId = 'prepare_restart_late_runner_exit_1';
         const handoffId = 'handoff_restart_late_runner_exit_1';
@@ -190,15 +173,15 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
                 endpointCandidates: [],
             },
         });
-        await expect(tryAcquireSessionHandoffPrepareTargetJobLease({
+        const leaseAttempt = await tryAcquireSessionHandoffPrepareTargetJobLease({
             activeServerDir: configuration.activeServerDir,
             jobId,
             ownerId: runnerOwnerId,
             nowMs: Date.now(),
-            ttlMs: 60_000,
-        })).resolves.toMatchObject({ acquired: true });
+        });
+        expect(leaseAttempt.acquired).toBe(true);
+        if (!leaseAttempt.acquired) throw new Error('Missing live target owner');
 
-        const { startDaemonHeartbeatLoop } = await import('./heartbeat');
         startDaemonHeartbeatLoop({
             pidToTrackedSession: new Map(),
             spawnResourceCleanupByPid: new Map(),
@@ -228,6 +211,7 @@ describe('startDaemonHeartbeatLoop session handoff prepare-target recovery', () 
             activeServerDir: configuration.activeServerDir,
             jobId,
             ownerId: runnerOwnerId,
+            leaseId: leaseAttempt.lease.leaseId,
         });
         await tick!();
 

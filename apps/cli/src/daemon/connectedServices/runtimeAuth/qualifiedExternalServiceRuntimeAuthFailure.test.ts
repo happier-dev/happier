@@ -6,7 +6,6 @@ import {
 } from './handleConnectedServiceRuntimeAuthFailureForSession';
 import { resolveConnectedServiceRuntimeAuthRecoverySelection } from './resolveConnectedServiceRuntimeAuthRecoverySelection';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './sanitizeConnectedServiceRuntimeFailureClassification';
-import { ConnectedServiceRuntimeAuthSwitchAttemptTracker } from './ConnectedServiceRuntimeAuthSwitchAttemptTracker';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
 
 /**
@@ -207,10 +206,6 @@ describe('qualified external connected-service runtime-auth failure contract', (
         const result = await handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [tracked],
             switchCoordinator: { switchAfterClassifiedFailure } as never,
-            switchAttemptTracker: new ConnectedServiceRuntimeAuthSwitchAttemptTracker({
-                nowMs: () => 1_000,
-                windowMs: 60_000,
-            }),
             emitSessionEvent: async () => undefined,
             restartSession,
             continueAfterRuntimeAuthSwitch,

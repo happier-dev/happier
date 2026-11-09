@@ -59,7 +59,7 @@ export async function readRetainedConnectedServiceMaterializationKeys(params: Re
   const seenKeys = new Set<string>();
   const accountEncryptionCurrentness = await (
     params.getAccountEncryptionCurrentness
-    ?? (async () => await fetchAccountEncryptionCurrentness({ token: params.credentials.token }))
+    ?? (async () => await fetchAccountEncryptionCurrentness({ credentials: params.credentials, token: params.credentials.token }))
   )();
 
   for (const archivedOnly of [false, true]) {

@@ -19,7 +19,7 @@ const classifiedFailure = {
 } as const;
 
 describe('runtimeAuthFailureReportOutboxDrain', () => {
-  it.each(['usage_limit', 'auth_expired'] as const)('drops an obsolete persisted native %s report without daemon recovery', async (kind) => {
+  it.each(['usage_limit', 'auth_expired'] as const)('replays unattributed %s reports for daemon binding authorization', async (kind) => {
     const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-native-');
     try {
       await enqueueRuntimeAuthFailureReportOutboxItem({ outboxDir,
@@ -27,9 +27,9 @@ describe('runtimeAuthFailureReportOutboxDrain', () => {
           classification: { ...classifiedFailure, kind, profileId: null, groupId: null } },
         nowMs: () => 1_700_000_000_000 });
       expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toHaveLength(1);
-      const notify = vi.fn(async () => ({ ok: true, result: { status: 'recovery_action_required' } }));
+      const notify = vi.fn(async () => ({ ok: true, result: { status: 'not_applicable', reason: 'no_connected_service_binding' } }));
       expect(await drainRuntimeAuthFailureReportOutboxToDaemon({ outboxDir, notify })).toEqual({ delivered: 0, dropped: 1, retried: 0 });
-      expect(notify).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledOnce();
       expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toEqual([]);
     } finally { await removeTempDir(outboxDir); }
   });

@@ -4,8 +4,10 @@ import { parseProcessCustodyStartIdentity } from '@/subprocess/supervision/proce
 import { createProcessCensusReader, readProcessCensus, type ProcessCensusDependencies } from '@/processes/census/processCensus';
 import { censusRowToProcessFact } from '@/processes/census/processFacts';
 import type { LocalServiceProcessFact } from './local/services/inventory/provenance';
+import { readProcessRunState } from './processRunState';
 
 export type ProcessGenerationWitness = Readonly<{ pid: number; processStartTimeMs: number }>;
+export type ProcessGenerationLiveness = 'verified_running' | 'verified_stopped' | 'unknown';
 
 export function parseProcessGenerationWitness(value: unknown): ProcessGenerationWitness | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -13,6 +15,33 @@ export function parseProcessGenerationWitness(value: unknown): ProcessGeneration
     if (!Number.isSafeInteger(record.pid) || (record.pid as number) <= 0
         || !Number.isSafeInteger(record.processStartTimeMs) || (record.processStartTimeMs as number) < 0) return null;
     return Object.freeze({ pid: record.pid as number, processStartTimeMs: record.processStartTimeMs as number });
+}
+
+/** A legacy PID without a birth witness can prove death, but never a live generation. */
+export async function inspectProcessGeneration(
+    ownerProcess: Readonly<{ pid: number; processStartTimeMs?: number }>,
+    dependencies: Readonly<{
+        readProcessRunState?: typeof readProcessRunState;
+        readProcessIdentityByPid?: typeof readProcessIdentityByPid;
+    }> = {},
+): Promise<ProcessGenerationLiveness> {
+    if (!Number.isSafeInteger(ownerProcess.pid) || ownerProcess.pid <= 0) return 'unknown';
+    let runState: Awaited<ReturnType<typeof readProcessRunState>>;
+    try {
+        runState = await (dependencies.readProcessRunState ?? readProcessRunState)(ownerProcess.pid);
+    } catch {
+        return 'unknown';
+    }
+    if (runState === 'dead' || runState === 'zombie') return 'verified_stopped';
+    if (runState !== 'servable' || ownerProcess.processStartTimeMs === undefined) return 'unknown';
+    const currentIdentity = await (dependencies.readProcessIdentityByPid ?? readProcessIdentityByPid)(ownerProcess.pid).catch(() => null);
+    if (currentIdentity?.processStartTimeMs === undefined) return 'unknown';
+    const comparison = compareProcessGenerationIdentities(
+        `${ownerProcess.pid}:${ownerProcess.processStartTimeMs}`,
+        `${currentIdentity.pid}:${currentIdentity.processStartTimeMs}`,
+    );
+    return comparison === 'same' ? 'verified_running'
+        : comparison === 'reused' ? 'verified_stopped' : 'unknown';
 }
 
 type SupportedProcessIdentityPlatform = 'darwin' | 'linux' | 'win32';

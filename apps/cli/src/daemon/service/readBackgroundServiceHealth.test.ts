@@ -13,7 +13,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
-import { readBackgroundServiceHealth, readBackgroundServiceAutostartMode, readBackgroundServiceActivity } from './readBackgroundServiceHealth';
+import { readBackgroundServiceHealth, readBackgroundServiceAutostartMode, readBackgroundServiceActivity, readBackgroundServiceStartupFailure } from './readBackgroundServiceHealth';
 
 describe('readBackgroundServiceHealth', () => {
   const envScope = createEnvKeyScope(['XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS']);
@@ -22,6 +22,24 @@ describe('readBackgroundServiceHealth', () => {
     envScope.patch({ XDG_RUNTIME_DIR: undefined, DBUS_SESSION_BUS_ADDRESS: undefined });
   });
   afterEach(() => envScope.restore());
+  it.each(['linux', 'darwin', 'win32'] as const)('bounds %s startup reads by the containing deadline and skips expired IO', platform => {
+    let now = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const stdout = platform === 'darwin' ? 'state = running\nruns = 1\n'
+      : platform === 'linux' ? 'ActiveState=active\nSubState=running\nResult=success\n'
+      : JSON.stringify({ exists: true, enabled: true, active: true });
+    spawnSyncMock.mockReturnValue({ pid: 1, status: 0, signal: null, output: [null, stdout, ''], stdout, stderr: '' });
+    const params = { platform, uid: 501, label: 'happier-daemon.default', mode: 'user' as const,
+      startedAtMs: 1_000, deadlineMs: 1_100 };
+    try {
+      expect(readBackgroundServiceStartupFailure(params)).toBeNull();
+      expect(spawnSyncMock).toHaveBeenCalledWith(expect.any(String), expect.any(Array), expect.objectContaining({ timeout: 100 }));
+      spawnSyncMock.mockClear();
+      now = params.deadlineMs;
+      expect(readBackgroundServiceStartupFailure(params)).toBeNull();
+      expect(spawnSyncMock).not.toHaveBeenCalled();
+    } finally { vi.restoreAllMocks(); }
+  });
   it('distinguishes denied and timed-out launchd queries from loaded and proven unloaded services', () => {
     const params = { platform: 'darwin' as const, uid: 501, label: 'com.happier.cli.daemon.company' };
     spawnSyncMock.mockReturnValue({ status: 1, stdout: '', stderr: 'Operation not permitted' } as never);

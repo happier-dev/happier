@@ -14,12 +14,15 @@ import {
   resolveRequesterSessionExecutionIdentityForHost,
 } from './requesterSessionCredentials';
 
+type OrdinaryRequesterSessionAccountCustody = RequesterAccountActionCustody
+  & Required<Pick<RequesterAccountActionCustody, 'getBoundSessionId'>>;
+
 /** A new ordinary launch captures today's sign-in, not the daemon's startup
  * bearer. Home still qualifies the exact Machine/Session; the bound Account
  * cannot change, and the captured sign-in stays exact through admission. */
 export async function captureOrdinaryRequesterSessionAccountCustodyForHost(
   input: Omit<Parameters<typeof readOrdinaryRequesterSessionAccountCustodyForHost>[0], 'captured'>,
-): Promise<RequesterAccountActionCustody | null> {
+): Promise<OrdinaryRequesterSessionAccountCustody | null> {
   input.signal?.throwIfAborted();
   const credentials = await readStoredCredentialsForServerId(input.serverId);
   const accountId = input.sessionCustodianAccountId ?? readAccountIdFromToken(input.credentials.token);
@@ -41,7 +44,7 @@ export async function readOrdinaryRequesterSessionAccountCustodyForHost(
     captured?: Readonly<{ session: RawSessionRecord; homeServerIdentityId: string;
       hostAccountAgent: NonNullable<HostRequesterExecutionIdentityInput['hostAccountAgent']> }>;
   }>,
-): Promise<RequesterAccountActionCustody | null> {
+): Promise<OrdinaryRequesterSessionAccountCustody | null> {
   input.signal?.throwIfAborted();
   const captured = input.captured;
   if (captured && ('requesterSessionCredentialScope' in input.credentials

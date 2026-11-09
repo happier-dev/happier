@@ -1,14 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { configuration } from '@/configuration';
 import { createComputerRoutes } from './routes';
 import { createMachineLiveStreamCaptureRegistry } from '../peer/mediation/stream/captureRegistry';
 import { createDaemonRuntimeActionExecutor } from '../runtimeActionExecutor';
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '../externalActions/daemonExternalActionTargetResolver';
-import { accountSettingsParse, ActionsSettingsV1Schema, ComputerCaptureResponseV1Schema, ComputerQueryResponseV1Schema, createActionExecutor, type ApprovalRequest } from '@happier-dev/protocol';
+import { accountSettingsParse, ActionsSettingsV1Schema, ComputerCaptureResponseV1Schema, ComputerQueryResponseV1Schema, createActionExecutor, type ActionExecutorDeps, type ApprovalRequest } from '@happier-dev/protocol';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createComputerCaptureSource } from './source';
-import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { native, target as cuaTarget, captureResult, png } from './driver/nativeComputerBoundary.testkit';
 
 const processBoundary = vi.hoisted(() => ({ spawn: vi.fn(), calls: [] as string[][] }));
@@ -18,15 +21,16 @@ vi.mock('node:child_process', async original => ({ ...await original<typeof impo
 const agentContext = { authority: 'account_automation' as const, surface: 'agent' as const,
   defaultSessionId: 'session', defaultSessionMachineId: 'machine', serverId: 'home', actionRequestId: 'computer-policy' };
 
-function policyExecutor(routes: ReturnType<typeof createComputerRoutes>) {
+function policyExecutor(routes: ReturnType<typeof createComputerRoutes>, decisionBoundary: Partial<Pick<ActionExecutorDeps, 'approvalsWaitForDecision'>> = {}) {
   const requests: ApprovalRequest[] = [];
   const effects: string[] = [];
   const runtimeActionExecute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' },
     resolveRouteOwners: () => ({ computer: routes }), resolveServerFeaturesSnapshot: () => undefined });
-  const { executor } = createCliActionExecutorHarness({ token: 'test', sessionId: 'session', mode: 'plain', ctx: null }, {
+  const executor = createActionExecutor({
     runtimeActionExecute: async args => { effects.push(args.actionId); return runtimeActionExecute(args); },
     // Approval persistence and the person's decision are the external boundaries.
     approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'computer-approval' }; },
+    prepareApprovalExecutionOriginContext: async () => ({ serverIdentityId: 'stable-home' }),
     approvalsGet: async () => requests[0] ?? null,
     approvalsUpdate: async ({ request }) => {
       const current = requests[0];
@@ -45,6 +49,7 @@ function policyExecutor(routes: ReturnType<typeof createComputerRoutes>) {
       resolveCurrentSessionAgentSpawnPolicyV1: async () => accountSettingsParse({}).sessionAgentSpawnPolicyV1,
       listAccountApiTokens: async () => { throw new Error('Unsigned host approval has no API-token lookup'); },
     }),
+    ...decisionBoundary,
   });
   const decide = (decision: 'approve' | 'reject') => executor.execute('approval.request.decide', {
     artifactId: 'computer-approval', decision,
@@ -60,6 +65,96 @@ function selectUnsupportedTarget(registry: ReturnType<typeof createMachineLiveSt
 }
 
 describe('native computer route authority', () => {
+  it.each([false, true])('binds the approval picture to its persisted capture when a newer media write fails (%s)', async failNextWrite => {
+    const home = await mkdtemp(join(tmpdir(), 'computer-approval-capture-'));
+    const homeDescriptor = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
+    // The host's storage-root configuration and native subprocess are system boundaries.
+    Object.defineProperty(configuration, 'happyHomeDir', { ...homeDescriptor, value: home });
+    const registry = createMachineLiveStreamCaptureRegistry();
+    const source = createComputerCaptureSource({ sessionId: 'session', target: cuaTarget, executablePath: '/managed/cua-driver' });
+    registry.register({ sourceId: source.sourceId, streamFamily: 'screen', computer: source, adapter: source.adapter,
+      capabilities: { v: 1, sourceId: source.sourceId, sourceKind: 'screen', supportedCodecs: ['image.frame.v1'], inputMode: 'shared', sidebands: [], health: { status: 'available' } } });
+    let captureNumber = 0;
+    native.call.mockImplementation(async ({ name }) => {
+      if (name === 'list_windows') return { structuredContent: { windows: [{ pid: cuaTarget.pid, window_id: cuaTarget.windowId, title: 'Canary' }] } };
+      if (name !== 'get_window_state') return { structuredContent: { x11: true, xsend_event: true } };
+      const result = captureResult();
+      return { ...result,
+        content: [{ type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=' }],
+        structuredContent: { ...result.structuredContent, capture_id: `capture-${++captureNumber}`, screenshot_width: 1, screenshot_height: 1 } };
+    });
+    const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/cua-driver' });
+    try {
+      expect(await routes.dispatch('computer.capture', { machineId: 'machine' },
+        { ...agentContext, authority: 'present_user' })).toMatchObject({ status: 'captured', captureId: 'capture-1' });
+      if (failNextWrite) {
+        // A file occupying the next capture's directory makes real persistence fail.
+        const blocked = join(home, '.happier/uploads/artifacts/session/capture-2');
+        await mkdir(dirname(blocked), { recursive: true });
+        await writeFile(blocked, 'occupied');
+        expect(await routes.dispatch('computer.query', { machineId: 'machine' },
+          { ...agentContext, authority: 'present_user' })).toMatchObject({ status: 'queried', captureId: 'capture-2' });
+      }
+      const { executor, requests, decide } = policyExecutor(routes);
+      const asked = await executor.execute('computer.input', { machineId: 'machine',
+        captureId: failNextWrite ? 'capture-2' : 'capture-1', operation: { kind: 'click', x: 0, y: 0 } },
+      { ...agentContext, surface: 'mcp' });
+      expect(asked, JSON.stringify(asked)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(requests[0]).toMatchObject({ preview: { computerApprovalDisplay: {
+        captureId: 'capture-1', captureMedia: { width: 1, height: 1,
+          file: { path: expect.stringContaining('/capture-1/') } } } } });
+      expect(await decide('reject')).toMatchObject({ ok: true, result: { status: 'rejected' } });
+    } finally {
+      await routes.dispose();
+      Object.defineProperty(configuration, 'happyHomeDir', homeDescriptor);
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+  it.each(['see', 'control'] as const)('replays an unchanged MCP clipboard Ask on its admitted Machine with %s access', async access => {
+    const registry = createMachineLiveStreamCaptureRegistry();
+    const source = createComputerCaptureSource({ sessionId: 'session', target: cuaTarget, access: access === 'see' ? 'see' : 'control', executablePath: '/managed/cua-driver' });
+    registry.register({ sourceId: source.sourceId, streamFamily: 'screen', computer: source, adapter: source.adapter,
+      capabilities: { v: 1, sourceId: source.sourceId, sourceKind: 'screen', supportedCodecs: ['image.frame.v1'], inputMode: 'shared', sidebands: [], health: { status: 'available' } } });
+    const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/cua-driver' });
+    try {
+      const controllersAtWrite: string[] = [];
+      native.call.mockImplementation(async ({ name }) => {
+        if (name === 'get_window_state') return captureResult();
+        if (name === 'clipboard_write') {
+          controllersAtWrite.push(source.status().controller);
+          return { structuredContent: { supported: true, written_type: 'text' } };
+        }
+        return { structuredContent: { x11: true, xsend_event: true } };
+      });
+      await source.observe();
+      native.tools.length = 0;
+      let created!: () => void;
+      const waiting = new Promise<void>(resolve => { created = resolve; });
+      let approve!: () => void;
+      const decision = new Promise<void>(resolve => { approve = resolve; });
+      const { executor, requests } = policyExecutor(routes, { approvalsWaitForDecision: async ({ request }) => {
+        created();
+        await decision;
+        return { decision: 'approve', request };
+      } });
+      const pending = executor.execute('computer.clipboard.write', { machineId: 'machine', text: 'COMPUTER-FIX-1107-canary' },
+        { ...agentContext, surface: 'mcp' });
+      await waiting;
+      approve();
+      expect(await pending).toMatchObject(access === 'see'
+        ? { ok: false, errorCode: 'computer_access_read_only' }
+        : { ok: true, result: { ok: true } });
+      expect(requests[0]).toMatchObject({ executionOriginV1: { target: { kind: 'machine', machineId: 'machine' } } });
+      if (access === 'see') expect(native.tools).toEqual([]);
+      else {
+        expect(native.tools).toContainEqual({ name: 'clipboard_write', arguments: { text: 'COMPUTER-FIX-1107-canary' } });
+        expect(controllersAtWrite).toEqual(['agent']);
+        expect(source.status()).toMatchObject({ controller: 'idle' });
+      }
+    } finally {
+      await routes.dispose();
+    }
+  });
   it.each(['agent', 'mcp'] as const)('executes private clipboard transfers on %s after the user waives default Ask', async surface => {
     const registry = createMachineLiveStreamCaptureRegistry();
     const source = createComputerCaptureSource({ sessionId: 'session', target: cuaTarget, executablePath: '/managed/cua-driver' });

@@ -5,6 +5,7 @@ import { RPC_ERROR_CODES, isRpcMethodNotFoundResult } from '@happier-dev/protoco
 import { clientActionAmbiguous, withoutClientActionInput } from '@happier-dev/protocol/actions/clientDispatchV1';
 
 import type { ReverseCaptureMachineRpcClient } from '../recording/reverseChannel/desktopReverseCaptureUiCall';
+import { browserCommandDispatchFailure } from '../control/types';
 
 const unavailable = { ok: false, errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_ui_automation_unavailable' } as const;
 
@@ -59,7 +60,13 @@ export function createBrowserAutomationReverseDispatcher(input: Readonly<{
       // inside its decoded ACK. Either receipt proves the handler never ran.
       if ((!response.ok && (response.errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
         || response.errorCode === RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE))
-        || (response.ok && isRpcMethodNotFoundResult(response.result))) return unavailable;
+        || (response.ok && isRpcMethodNotFoundResult(response.result))) {
+        return (EXISTING_VIEW_BROWSER_CONTROL_ACTION_IDS as readonly string[]).includes(args.actionId)
+          && typeof record.commandId === 'string'
+          ? browserCommandDispatchFailure({ commandId: record.commandId, code: 'view_not_found',
+            message: 'No mounted Browser client owns this view.', completion: 'known' })
+          : unavailable;
+      }
       if (!response.ok && response.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
         return { ok: false, errorCode: 'client_routing_update_required', error: 'Update the Home server to support answering-client routing' };
       }

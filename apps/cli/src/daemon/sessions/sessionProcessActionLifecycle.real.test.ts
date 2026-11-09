@@ -67,7 +67,7 @@ describe.skipIf(process.platform === 'win32')('native Session process Action int
     });
     const lifecycle = createSessionProcessActionLifecycle({ pidToTrackedSession: sessions,
       registerPhysicalStopEffect: createSessionStopOperationBarrier().registerPhysicalStopEffect,
-      markStopRequested: respawn.markStopRequested, recordExplicitStopIntent: async () => {},
+      markStopRequested: respawn.markStopRequested, prepareStopIntent: async () => {},
       stopSession: createStopSession({ pidToTrackedSession: sessions }) });
     const actions = createProcessActionExecutor({ ownership, leftBehind,
       requesterForOwner: owner => owner.kind === 'session' ? { accountId: 'guest' } : { accountId: 'custodian' },
@@ -120,7 +120,7 @@ describe.skipIf(process.platform === 'win32')('native Session process Action int
       logDebug: () => {}, logWarn: () => {} });
     const lifecycle = createSessionProcessActionLifecycle({ pidToTrackedSession: sessions,
       registerPhysicalStopEffect: createSessionStopOperationBarrier().registerPhysicalStopEffect,
-      markStopRequested: respawn.markStopRequested, recordExplicitStopIntent: async () => {},
+      markStopRequested: respawn.markStopRequested, prepareStopIntent: async () => {},
       stopSession: createStopSession({ pidToTrackedSession: sessions }) });
     try {
       const stamp = await lifecycle.prepareKill({ targets: capture.capturedTargets });

@@ -34,6 +34,18 @@ describe('native primary-display and macOS contract', () => {
       expect(await driver.clipboard?.(target, { kind: 'read' })).toEqual({ ok: false, code: 'clipboard_text_unavailable' });
     } finally { await driver.close(); }
   });
+  it('refuses modified clicks when the pinned native click contract cannot represent modifiers', async () => {
+    native.call.mockImplementation(async ({ name }) => name === 'get_window_state' ? captureResult()
+      : name === 'check_permissions' ? { structuredContent: { x11: true, xsend_event: true } }
+        : { structuredContent: { effect: 'unverifiable' } });
+    const driver = await createManagedComputerDriver({ displayId: ':73', executablePath: '/managed/native-driver' });
+    try {
+      const capture = await driver.capture(target);
+      expect(await driver.input(target, capture.captureId, { kind: 'click', x: 10, y: 20, modifiers: ['control'] }))
+        .toEqual({ status: 'failed', code: 'input_not_supported' });
+      expect(native.tools.some(tool => tool.name === 'click')).toBe(false);
+    } finally { await driver.close(); }
+  });
   it('admits X11 input permissions once per connection and leaves later refusals to the native operation', async () => {
     const display = { kind: 'display', displayId: ':73' } as const;
     native.call.mockImplementation(async ({ name }) => name === 'check_permissions'
@@ -47,6 +59,24 @@ describe('native primary-display and macOS contract', () => {
       expect(native.tools.filter(tool => tool.name === 'press_key' || tool.name === 'type_text')).toHaveLength(2);
     } finally { await driver.close(); }
   });
+  it('consumes admitted agent authority without a second present-user floor at the Computer route', async () => {
+    native.call.mockImplementation(async ({ name }) => name === 'list_windows' ? { structuredContent: {
+      windows: [{ pid: target.pid, window_id: target.windowId, title: 'Fixture' }],
+    } } : name === 'get_window_state' ? captureResult() : { structuredContent: {} });
+    const registry = createMachineLiveStreamCaptureRegistry();
+    const routes = createComputerRoutes({ machineId: 'machine', registry,
+      executablePath: '/managed/native-driver', defaultDisplayId: target.displayId });
+    const context = { authority: 'account_automation' as const, defaultSessionId: 'session' };
+    try {
+      expect(await routes.dispatch('computer.targets.list', { machineId: 'machine', displayId: target.displayId }, context))
+        .toMatchObject({ targets: [{ target, title: 'Fixture' }] });
+      expect(await routes.dispatch('computer.targets.list', { machineId: 'another-machine' }, context))
+        .toMatchObject({ ok: false, errorCode: 'computer_machine_mismatch' });
+      expect(await routes.dispatch('computer.targets.list', { machineId: 'machine' }, { authority: 'account_automation' }))
+        .toMatchObject({ ok: false, errorCode: 'computer_session_required' });
+    } finally { await routes.dispose(); }
+  });
+
   function desktopResult(platform: 'linux' | 'macos' = 'linux') {
     return { content: [{ type: 'image', mimeType: 'image/png', data: png }], structuredContent: {
       platform, display: 'primary', capture_id: 'desktop-capture', screenshot_width: 200, screenshot_height: 100,

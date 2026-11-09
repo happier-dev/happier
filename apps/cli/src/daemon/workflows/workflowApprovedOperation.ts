@@ -9,16 +9,13 @@ export { prepareWorkflowApprovedOperationSnapshot } from '@happier-dev/protocol/
 import { bindWorkflowApprovedOperationSteps, matchesApprovedOperationStepV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { sameStrictJsonValue, StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowApprovedOperationV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
-import { WorkflowRunSummaryV1Schema, WorkflowRunInvocationIndexV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { resolveWorkflowInvocationStructureV1, type WorkflowInvocationBindingRowV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
 import { readWorkflowInvocationMembersV1 } from '@happier-dev/protocol/workflows';
-import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
-import { resolveWorkflowRunDataKeyV1, type WorkflowRunReadEncryptionV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
-import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1,
-  parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import type { WorkflowRunReadEncryptionV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import type { createWorkflowRunStorageClient } from './workflowRunStorageClient';
 import { createWorkflowProducerBinding } from './workflowScopeBinding';
 import { resolveWorkflowValueReference, WorkflowInputResolutionError } from './input';
+import { createWorkflowActionAdmissionReader } from './workflowActionAdmission';
 
 function record(value: unknown): Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};
@@ -45,6 +42,7 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
   }>) => Promise<WorkflowApprovedOperationV1 | null>;
 }>): (request: Readonly<{ runId: string; actionId?: string; input?: unknown; semanticInput?: unknown;
   context: ActionExecutorContext; phase: 'prepare' | 'dispatch' }>) => Promise<ActionApprovedOperationAdmissionV1 | null> {
+  const readAdmission = createWorkflowActionAdmissionReader(params);
   return async ({ runId, actionId, input, semanticInput, context, phase }) => {
     try {
       // Coordinator correspondence names the contributed leaf; its ordinary
@@ -60,41 +58,18 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
         actionId = operand.actionId;
         input = operand.input;
       }
-      const requestId = context.actionRequestId;
-      const externalOrigin = context.externalActionExecutionAuthorization?.binding.workflowActionOrigin;
-      const localCaller = context.actionCaller;
-      if (!requestId || !(externalOrigin?.runId === runId && externalOrigin.requestId === requestId
-        || !context.externalActionExecutionAuthorization && localCaller?.kind === 'workflowRun'
-          && localCaller.runId === runId && context.executionRunWorkflowRunId === runId)) return null;
-      if (!requestId.startsWith(`${runId}/`)) return null;
-      const identity = requestId.slice(runId.length + 1);
-      const separator = identity.lastIndexOf('/');
-      const logicalInvocationId = identity.slice(0, separator);
-      const attempt = identity.slice(separator + 1);
-      if (separator <= 0 || !/^(0|[1-9][0-9]*)$/.test(attempt)) return null;
-      context.signal?.throwIfAborted();
+      const admission = await readAdmission({ runId, context });
+      if (!admission?.accepted.approvedOperation) return null;
+      const { logicalInvocationId, accepted } = admission;
+      const requestId = context.actionRequestId!;
       const options = context.signal ? { signal: context.signal } : {};
-      const stored = record(await params.storage.execute({ operation: 'get', runId }, options));
-      const run = WorkflowRunSummaryV1Schema.safeParse(stored.run);
-      const census = WorkflowRunRecipientCensusResponseV1Schema.safeParse(stored.keyCensus);
-      if (!run.success || run.data.id !== runId || !['claimed', 'running'].includes(run.data.state)
-        || run.data.workflowCustodyState !== 'pending' || !census.success || census.data.runId !== runId
-        || census.data.ownerAccountId !== run.data.ownerAccountId || typeof stored.acceptedEnvelope !== 'string') return null;
-      const material = await params.resolveEncryption(context);
-      if (!material) return null;
-      const key = resolveWorkflowRunDataKeyV1({ encryption: material, census: census.data });
-      if (key.kind !== 'available') return null;
-      const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...key.encryption.runCrypto,
-        binding: { v: 1, purpose: 'accepted_snapshot', accountId: census.data.ownerAccountId, runId },
-        envelope: parseWorkflowStoredContentEnvelopeV1(stored.acceptedEnvelope) });
-      if (opened.kind !== 'available' || !opened.content.approvedOperation) return null;
-      let operation = opened.content.approvedOperation;
+      let operation = admission.accepted.approvedOperation;
       const savedTrigger = operation.parent.actionId === 'workflow.trigger.add' || operation.parent.actionId === 'workflow.trigger.update';
       if (savedTrigger) {
-        const origin = run.data.origin;
+        const origin = admission.run.origin;
         if (origin.kind !== 'automation' || origin.cause?.kind !== 'trigger' || !params.readSavedTriggerConsent) return null;
         const selected = await params.readSavedTriggerConsent({ automationId: origin.automationId,
-          triggerId: origin.cause.triggerId, ownerAccountId: run.data.ownerAccountId, operation, context });
+          triggerId: origin.cause.triggerId, ownerAccountId: admission.run.ownerAccountId, operation, context });
         if (!selected) return null;
         operation = selected;
       }
@@ -105,27 +80,10 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
         const input = z.record(z.string(), StrictJsonValueSchema).safeParse(operand?.input);
         return operand?.actionId && input.success ? { actionId: operand.actionId, input: input.data } : step;
       }) };
-      let detail = record(record(await params.storage.execute({ operation: 'invocations.get', runId,
-        invocationId: logicalInvocationId }, options)).invocation);
-      let index = WorkflowRunInvocationIndexV1Schema.safeParse(detail.index);
-      // Recovery retains the logical request identity while the ordinary slot
-      // owner selects its newest physical attempt. No inventory scan is needed.
-      if (index.success && index.data.attempt !== attempt && index.data.parentRecordId) {
-        detail = record(record(await params.storage.execute({ operation: 'invocations.current', runId,
-          parentRecordId: index.data.parentRecordId, memberOrdinal: index.data.memberOrdinal }, options)).invocation);
-        index = WorkflowRunInvocationIndexV1Schema.safeParse(detail.index);
-      }
-      if (!index.success || index.data.runId !== runId || index.data.attempt !== attempt
-        || typeof detail.contentEnvelope !== 'string'
-        || !(index.data.lifecycle === 'admitting' || phase === 'prepare' && index.data.lifecycle === 'pending')) return null;
-      const progress = openWorkflowProgressStoredEnvelopeV1({ ...key.encryption.runCrypto,
-        binding: { v: 1, purpose: 'invocation_progress', accountId: census.data.ownerAccountId, runId,
-          recordId: index.data.id, sequence: index.data.sequence, parentRecordId: index.data.parentRecordId,
-          memberOrdinal: index.data.memberOrdinal, attempt: index.data.attempt },
-        envelope: parseWorkflowStoredContentEnvelopeV1(detail.contentEnvelope) });
-      if (progress.kind !== 'available') return null;
-      const invocation = progress.content;
-      if (invocation.logicalInvocationRecordId !== logicalInvocationId || invocation.blockKind !== 'action') return null;
+      const admitted = await admission.readActionInvocation(phase);
+      if (!admitted) return null;
+      const index = admitted.index;
+      const invocation = admitted.progress;
       const execution = invocation.execution;
       const admitReviewedChild = (bound: WorkflowApprovedOperationV1, childAction: string,
         childInput: Readonly<Record<string, JsonValue>>): ActionApprovedOperationAdmissionV1 => {
@@ -151,17 +109,8 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
         type Row = WorkflowInvocationBindingRowV1 & Readonly<{ key: string; path: typeof invocation.invocationPath }>;
         const rows = new Map<string, Promise<Row | undefined>>();
         const openRow = (value: unknown): Row | undefined => {
-          const detail = record(value);
-          const parsed = WorkflowRunInvocationIndexV1Schema.safeParse(detail.index);
-          if (!parsed.success || parsed.data.runId !== runId || typeof detail.contentEnvelope !== 'string') return undefined;
-          const index = parsed.data;
-          const content = openWorkflowProgressStoredEnvelopeV1({ ...key.encryption.runCrypto,
-            binding: { v: 1, purpose: 'invocation_progress', accountId: census.data.ownerAccountId, runId,
-              recordId: index.id, sequence: index.sequence, parentRecordId: index.parentRecordId,
-              memberOrdinal: index.memberOrdinal, attempt: index.attempt },
-            envelope: parseWorkflowStoredContentEnvelopeV1(detail.contentEnvelope) });
-          if (content.kind !== 'available' || content.content.attempt !== index.attempt) return undefined;
-          return { index, progress: content.content, key: index.id, path: content.content.invocationPath };
+          const row = admission.openInvocation(value);
+          return row ? { ...row, key: row.index.id, path: row.progress.invocationPath } : undefined;
         };
         const readInvocation = (id: string): Promise<Row | undefined> => {
           let pending = rows.get(id);
@@ -175,10 +124,10 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
           }
           return pending;
         };
-        const current: Row = { index: index.data, progress: invocation, key: index.data.id, path: invocation.invocationPath };
+        const current: Row = { index, progress: invocation, key: index.id, path: invocation.invocationPath };
         rows.set(current.index.id, Promise.resolve(current));
-        const structure = await resolveWorkflowInvocationStructureV1({ definition: opened.content.definition,
-          frozenChildren: opened.content.frozenChildren, inputs: opened.content.inputs,
+        const structure = await resolveWorkflowInvocationStructureV1({ definition: accepted.definition,
+          frozenChildren: accepted.frozenChildren, inputs: accepted.inputs,
           invocation: current, readInvocation, keyOfInvocation: row => row.index.id });
         if (structure?.leaf.kind !== 'action' || structure.leaf.actionId !== actionId) return null;
         const actionLeaf = structure.leaf;
@@ -207,10 +156,10 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
         } });
         const actual = z.record(z.string(), StrictJsonValueSchema).safeParse(semanticInput ?? input);
         const prepared = z.record(z.string(), StrictJsonValueSchema).safeParse(input);
-        if (!actual.success || !prepared.success || index.data.lifecycle === 'admitting'
+        if (!actual.success || !prepared.success || index.lifecycle === 'admitting'
           && (execution?.kind !== 'action' || execution.actionId !== actionId || execution.actionRequestId !== requestId
             || !sameStrictJsonValue(execution.input, actual.data))
-          || index.data.lifecycle === 'pending' && execution !== undefined) return null;
+          || index.lifecycle === 'pending' && execution !== undefined) return null;
         for (const step of operation.steps) {
           if (step.actionId !== actionId || step.binding?.kind !== 'producer_result') continue;
           if (!Object.entries(step.binding.references).every(([field, reference]) =>
@@ -233,7 +182,7 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
             // Preparation already validated these concrete effects. Only this
             // exact semantic match may carry consent onto its prepared input.
             context.signal?.throwIfAborted();
-            return admitReviewedChild(bindWorkflowApprovedOperationSteps({ operation, materializedLeaves: opened.content.materializedLeaves,
+            return admitReviewedChild(bindWorkflowApprovedOperationSteps({ operation, materializedLeaves: accepted.materializedLeaves,
               steps: [{ actionId, input: prepared.data }] }), actionId, prepared.data);
           }
         }
@@ -241,14 +190,14 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
       let matchingSteps: WorkflowApprovedOperationV1['steps'];
       let originalActionId: string;
       let originalInput: Readonly<Record<string, JsonValue>>;
-      if (index.data.lifecycle === 'admitting') {
+      if (index.lifecycle === 'admitting') {
         if (execution?.kind !== 'action' || execution.actionRequestId !== requestId) return null;
         originalActionId = execution.actionId;
         originalInput = z.record(z.string(), StrictJsonValueSchema).parse(execution.input);
         matchingSteps = operation.steps.filter(step => matchesApprovedOperationStepV1(step, execution.actionId, execution.input));
       } else {
         if (execution !== undefined) return null;
-        const leaves = opened.content.materializedLeaves.filter(leaf => leaf.kind === 'action'
+        const leaves = accepted.materializedLeaves.filter(leaf => leaf.kind === 'action'
           && leaf.blockId === invocation.invocationPath.blockId);
         // A pending row has no resolved correspondence yet. Only an unambiguous
         // exact frozen input can consent before the admitting write; deferred
@@ -263,14 +212,14 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
       if (matchingSteps.length === 0) return null;
       context.signal?.throwIfAborted();
       if (!actionId) return { ...operation, steps: matchingSteps };
-      const admittedActionId = actionId;
+      const preparedActionId = actionId;
       const prepared = z.record(z.string(), StrictJsonValueSchema).safeParse(input);
-      if (actionId !== originalActionId || !prepared.success
+      if (preparedActionId !== originalActionId || !prepared.success
         || matchingSteps.some(step => step.binding) && semanticInput === undefined
         || !sameStrictJsonValue(semanticInput ?? input, originalInput)
-        || !matchingSteps.some(step => matchesApprovedOperationStepV1(step, admittedActionId, semanticInput ?? input))) return null;
-      return admitReviewedChild(bindWorkflowApprovedOperationSteps({ operation, materializedLeaves: opened.content.materializedLeaves,
-        steps: [{ actionId, input: prepared.data }] }), actionId, prepared.data);
+        || !matchingSteps.some(step => matchesApprovedOperationStepV1(step, preparedActionId, semanticInput ?? input))) return null;
+      return admitReviewedChild(bindWorkflowApprovedOperationSteps({ operation, materializedLeaves: accepted.materializedLeaves,
+        steps: [{ actionId: preparedActionId, input: prepared.data }] }), preparedActionId, prepared.data);
     } catch {
       // Absent/revoked/unreadable evidence restores ordinary approval policy.
       return null;

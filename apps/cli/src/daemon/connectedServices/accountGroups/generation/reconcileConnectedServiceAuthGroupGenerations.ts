@@ -12,6 +12,7 @@ import type { ConnectedServiceProjectedCredentialPresence } from './connectedSer
 
 export type ConnectedServiceGenerationRuntimeTarget = Readonly<{
   sessionId: string | null;
+  isCurrent?: () => boolean;
   agentId?: string | null;
   connectedServiceMaterializationIdentityV1?: Readonly<{ id: string }> | null;
   connectedServicesBindingsRaw: unknown;
@@ -176,6 +177,7 @@ export async function reconcileConnectedServiceAuthGroupGenerationForRuntimeTarg
   let reconciledGroupCount = 0;
   let sessionDispositionCount = 0;
   for (const [key, scope] of scopes) {
+    if (params.target.isCurrent?.() === false) continue;
     const group = groupsByScope.get(key);
     const activeProfileId = readNonEmptyString(group?.activeProfileId);
     if (!group || !activeProfileId) {
@@ -195,6 +197,7 @@ export async function reconcileConnectedServiceAuthGroupGenerationForRuntimeTarg
     const exactAdoptedTarget = credentialPresence.status === 'present'
       && credentialRevision !== null
       && adopted
+      && adopted.proof.status === 'verified'
       && adopted.profileId === activeProfileId
       && adopted.generation === group.generation
       && adopted.credentialRevision === credentialRevision
@@ -212,22 +215,21 @@ export async function reconcileConnectedServiceAuthGroupGenerationForRuntimeTarg
       continue;
     }
     if (
-      (
         credentialPresence.status === 'present'
         && credentialRevision !== null
         && (materialized
           && materialized.profileId === activeProfileId
           && materialized.generation === group.generation
           && materialized.credentialRevision === credentialRevision)
-      )
-      || (
-        credentialPresence.status === 'legacy_unfenced'
-        && materialized
-        && materialized.profileId === activeProfileId
-        && materialized.generation === group.generation
-        && materialized.credentialRevision == null
-      )
-    ) continue;
+    ) {
+      const settlement = await params.consumer.settleExactRecipientApplication({ sessionId,
+        providerAdoptedTarget: { serviceId: group.serviceId, groupId: group.groupId, profileId: activeProfileId,
+          generation: group.generation, credentialRevision,
+          proof: { status: 'verified', source: 'spawn_materialization', credentialRevision } },
+      });
+      if (settlement?.status === 'superseded') throw new ConnectedServiceGenerationReconciliationNotAcknowledgeableError();
+      continue;
+    }
     const decisionCommittedTarget = {
       serviceId: group.serviceId,
       groupId: group.groupId,
@@ -250,6 +252,7 @@ export async function reconcileConnectedServiceAuthGroupGenerationForRuntimeTarg
         activity: 'live',
         fromProfileId: scope.fromProfileId,
         applicationOwnerId: readNonEmptyString(params.target.agentId),
+        ...(params.target.isCurrent ? { isCurrent: params.target.isCurrent } : {}),
       }],
     });
     if (!result.acknowledgeable) throw new ConnectedServiceGenerationReconciliationNotAcknowledgeableError();

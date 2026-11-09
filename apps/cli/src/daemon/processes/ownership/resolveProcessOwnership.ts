@@ -22,13 +22,22 @@ export function resolveProcessOwnership(input: Readonly<{
     const index = indexCensus(input.snapshot.rows);
     const rootsByOwner = new Map<string, HappierProcessRoot>();
     const liveByPid = new Map<number, HappierProcessRoot[]>();
+    const ordinaryFenceRoots: HappierProcessRoot[] = [];
+    const nativePrefixes = new Map<string, Readonly<{ root: HappierProcessRoot; prefix: string }> | null>();
     for (const root of input.roots) {
+        if (root.owner.kind !== 'container') ordinaryFenceRoots.push(root);
         const previous = rootsByOwner.get(processOwnerKey(root.owner));
         if (!previous || root.live && !previous.live) rootsByOwner.set(processOwnerKey(root.owner), root);
         const current = index.byPid.get(root.pid);
         if (root.live && current && equalProcessStart(current.start, root.start)) {
             const roots = liveByPid.get(root.pid) ?? [];
             roots.push(root); liveByPid.set(root.pid, roots);
+            const containment = root.containment;
+            if (platform === 'linux' && root.owner.kind === 'container' && containment?.kind === 'linux_container') {
+                const previous = nativePrefixes.get(containment.prefix);
+                nativePrefixes.set(containment.prefix, previous === null
+                    || previous && processOwnerKey(previous.root.owner) !== processOwnerKey(root.owner) ? null : { root, prefix: containment.prefix });
+            }
         }
     }
     const listening = new Set(input.listeners?.flatMap(item => item.pid === undefined ? [] : [item.pid]) ?? []);
@@ -37,19 +46,30 @@ export function resolveProcessOwnership(input: Readonly<{
     const baseResults: ResolvedProcessOwnership[] = input.snapshot.rows.map(row => {
         const principal = compareProcessPrincipals(row.principal, input.daemonPrincipal);
         const lineage = [row, ...ancestorsOf(index, row.pid)];
-        const chain = [...lineage].reverse().map(item => ({ pid: item.pid, name: item.name }));
         const evidence: ProcessEvidence[] = [
             { kind: 'fence', state: 'not_available', reason: platform === 'darwin' ? 'macos_no_fence' : platform === 'win32' ? 'job_join_failed' : 'no_systemd_user_manager' },
             { kind: 'parent_chain', state: 'not_met', reason: 'no_live_root' },
             { kind: 'marker', state: 'not_met', reason: 'marker_cleared' },
             { kind: 'group_and_port', state: 'not_met', reason: 'no_group_or_port_match' },
         ];
-        let fence: HappierProcessRoot | undefined;
+        let nativeFence: Readonly<{ root: HappierProcessRoot; prefix: string }> | null | undefined;
+        // Deepest admitted cgroup wins, including a genuinely nested container.
+        // The immutable native root facts are indexed once, never rescanned per process.
+        if (nativePrefixes.size) for (let path = row.cgroup; path && nativeFence === undefined; path = path.slice(0, path.lastIndexOf('/'))) {
+            nativeFence = nativePrefixes.get(path);
+        }
+        const nativeConflict = nativeFence === null;
+        const nativePrefix = nativeFence?.prefix;
+        const outsideNativeFence = nativePrefix ? lineage.findIndex(item => item.cgroup !== nativePrefix
+            && !item.cgroup?.startsWith(`${nativePrefix}/`)) : -1;
+        const chain = [...(outsideNativeFence < 0 ? lineage : lineage.slice(0, outsideNativeFence))]
+            .reverse().map(item => ({ pid: item.pid, name: item.name }));
+        let fence = nativeFence?.root;
         let parent: HappierProcessRoot | undefined;
         let marker: HappierProcessRoot | undefined;
-        let markerUnknown = false;
-        if (principal === 'self') {
-            fence = input.roots.find(root => root.containment?.kind === 'linux_unit'
+        let markerUnknown = nativeConflict;
+        if (principal === 'self' && nativeFence === undefined) {
+            fence = ordinaryFenceRoots.find(root => root.containment?.kind === 'linux_unit'
                 ? row.cgroup === root.containment.prefix || row.cgroup?.startsWith(`${root.containment.prefix.replace(/\/+$/u, '')}/`)
                 : root.containment?.kind === 'windows_job' && row.jobs?.includes(root.containment.name));
             // A native fence survives its spawning root. Decode only the canonical
@@ -65,7 +85,7 @@ export function resolveProcessOwnership(input: Readonly<{
             }
             if (fence) evidence[0] = { kind: 'fence', state: 'met', reason: platform === 'win32' ? 'windows_job' : 'linux_scope' };
             else if (row.cgroup || row.jobs) evidence[0] = { kind: 'fence', state: 'not_met', reason: 'outside_fence' };
-            parent = lineage.flatMap(item => liveByPid.get(item.pid) ?? []).find(root => row.start.startTimeMs >= root.start.startTimeMs);
+            parent = lineage.flatMap(item => liveByPid.get(item.pid) ?? []).find(root => root.owner.kind !== 'container' && row.start.startTimeMs >= root.start.startTimeMs);
             if (parent) evidence[1] = { kind: 'parent_chain', state: 'met', reason: 'live_root_chain' };
             {
                 const tagged = lineage.find(item => item.ownerTag !== undefined);
@@ -96,6 +116,7 @@ export function resolveProcessOwnership(input: Readonly<{
                 }
             }
         }
+        if (fence?.owner.kind === 'container') evidence[0] = { kind: 'fence', state: 'met', reason: 'linux_container' };
         let selected = fence ?? parent ?? marker;
         // A lifecycle owner can end one captured subtree while its daemon owner
         // remains live. Only the exact native generation is ended; a shared tag
@@ -128,9 +149,10 @@ export function resolveProcessOwnership(input: Readonly<{
         }
         const ownerEnded = selected ? !selected.live : false;
         const missing = partial.get(row.pid) ?? [];
-        const observationsIncomplete = markerUnknown || missing.some(field => ['principal', 'start', 'ownerTag', 'environ', 'argv', 'cmdline', 'commandLine', 'ppid'].includes(field));
+        const observationsIncomplete = markerUnknown || missing.some(field => ['principal', 'start', 'ownerTag', 'environ', 'argv', 'cmdline', 'commandLine', 'ppid', 'cgroup'].includes(field));
         const result: ResolvedProcessOwnership = { pid: row.pid, start: row.start, owner: selected?.owner ?? null, ownerEnded,
-            level: resolveProcessOwnershipLevel({ samePrincipal: principal === undefined ? undefined : principal === 'self', ownerEnded, evidence, observationsIncomplete }),
+            level: resolveProcessOwnershipLevel({ samePrincipal: nativeConflict ? undefined
+                : principal === undefined ? undefined : principal === 'self', ownerEnded, evidence, observationsIncomplete }),
             evidence, chain: prior && selected && !selected.live && equalProcessStart(prior.start, row.start) ? prior.chain : chain,
             ...(selected?.workspacePath ? { workspacePath: selected.workspacePath } : {}) };
         return result;
@@ -140,7 +162,7 @@ export function resolveProcessOwnership(input: Readonly<{
     for (const item of baseResults) {
         const row = index.byPid.get(item.pid);
         const root = item.owner ? rootsByOwner.get(processOwnerKey(item.owner)) : undefined;
-        if (item.level === 'proven' && row?.pgid !== undefined && root) {
+        if (item.level === 'proven' && row?.pgid !== undefined && root && root.owner.kind !== 'container') {
             const previous = provenGroupOwners.get(row.pgid);
             if (!provenGroupOwners.has(row.pgid)) provenGroupOwners.set(row.pgid, root);
             else if (previous && processOwnerKey(previous.owner) !== processOwnerKey(root.owner)) provenGroupOwners.set(row.pgid, null);
@@ -152,7 +174,7 @@ export function resolveProcessOwnership(input: Readonly<{
         const row = index.byPid.get(item.pid)!;
         const workspaceCandidates = listening.has(row.pid) && row.cwd ? [...rootsByOwner.values()].flatMap(root => {
             const remainder = root.workspacePath ? getPathRemainderWithinBase(row.cwd!, root.workspacePath) : null;
-            return remainder !== null
+            return root.owner.kind !== 'container' && remainder !== null
                 && row.start.startTimeMs >= (platform === 'linux' ? root.ownerCreatedStartTimeMs ?? Number.POSITIVE_INFINITY : root.ownerCreatedAtMs)
                 && (root.endedAtMs === undefined || (platform === 'linux'
                     ? root.ownerCreatedAtMs + row.start.startTimeMs - (root.ownerCreatedStartTimeMs ?? Number.POSITIVE_INFINITY)

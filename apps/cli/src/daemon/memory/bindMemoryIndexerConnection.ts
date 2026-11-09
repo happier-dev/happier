@@ -4,6 +4,7 @@ import type { MemoryIndexerConnection } from './memoryIndexerBoundary';
 /** One operation and writer-drain contract for both placement bindings. */
 export function bindMemoryIndexerConnection(engine: MemoryIndexerEngine, options: Readonly<{
   beforeRetire?(): Promise<void>;
+  beforeOperation?(): void;
   afterOperation?(signal: AbortSignal): Promise<void>;
 }> = {}): MemoryIndexerConnection {
   let retired = false;
@@ -12,13 +13,13 @@ export function bindMemoryIndexerConnection(engine: MemoryIndexerEngine, options
   const invoke = <T>(run: (signal: AbortSignal) => Promise<T>, callerSignal?: AbortSignal): Promise<T> => {
     if (retired) return Promise.reject(new Error('memory_indexer_retired'));
     callerSignal?.throwIfAborted();
+    options.beforeOperation?.();
     const controller = new AbortController();
     const signal = callerSignal ? AbortSignal.any([callerSignal, controller.signal]) : controller.signal;
     let completed = false;
     const settled = Promise.resolve().then(async () => {
       signal.throwIfAborted();
       const running = run(signal);
-      engine.publishSnapshot();
       const result = await running;
       signal.throwIfAborted();
       completed = true;
@@ -31,7 +32,7 @@ export function bindMemoryIndexerConnection(engine: MemoryIndexerEngine, options
           signal.throwIfAborted();
           await options.afterOperation?.(signal);
         }
-      } finally { operations.delete(operation); engine.publishSnapshot(); }
+      } finally { operations.delete(operation); }
     });
     const operation = { controller, settled };
     operations.add(operation);
@@ -39,7 +40,7 @@ export function bindMemoryIndexerConnection(engine: MemoryIndexerEngine, options
   };
   return {
     applySettings: (settings, signal) => invoke(signal => engine.applySettings(settings, signal), signal),
-    inventory: signal => invoke(signal => engine.inventory(signal), signal),
+    inventory: (signal, observations) => invoke(signal => engine.inventory(signal, observations), signal),
     tick: signal => invoke(signal => engine.tick(signal), signal),
     refresh: (sessionId, signal) => invoke(signal => engine.ensureUpToDate(sessionId, signal), signal),
     revise: (change, signal) => invoke(async () => { await engine.noteSessionTranscriptRevised(change); }, signal),

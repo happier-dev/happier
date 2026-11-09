@@ -2,14 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { API_TOKEN_FULL_GRANT_V1, createActionExecutor, deriveSessionCreationTagV1 } from '@happier-dev/protocol';
 
-const terminalPolicy = vi.hoisted(() => ({ value: 'allowed' as 'allowed' | 'disallowed' }));
-vi.mock('@/configuration', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/configuration')>();
-  return { ...actual, configuration: { ...actual.configuration,
-    get terminalPresentUserPolicy() { return terminalPolicy.value; },
-  } };
-});
-
 import type { DaemonPatVerifier } from './auth/daemonPatVerifier';
 import type {
   ExternalActionExecutor,
@@ -173,7 +165,7 @@ describe('createDaemonControlApp external Action ingress', () => {
       expect(approval.json()).toMatchObject({ ok: false, errorCode: 'present_user_required' });
     } finally { get.mockRestore(); post.mockRestore(); await app.close(); }
   });
-  it('refuses root approval decisions when terminal policy is disallowed and admits them when allowed', async () => {
+  it('admits root approval decisions from the terminal as the person and keeps the agent attribution ceiling', async () => {
     const app = createApp({
       currentServerId: 'server-local', verifyPat: vi.fn(), resolveTarget: async () => ({ kind: 'machine', machineId: 'machine-local' }),
       executor: createActionExecutor(createCliActionDeps({
@@ -185,16 +177,13 @@ describe('createDaemonControlApp external Action ingress', () => {
         headers: { 'x-happier-daemon-token': 'private-control-token' },
         payload: { actionId: 'approval.request.decide', input: { artifactId: 'missing', decision: 'approve' } },
       });
-      terminalPolicy.value = 'disallowed';
-      expect((await invoke()).json()).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-      terminalPolicy.value = 'allowed';
       expect((await invoke()).json()).not.toHaveProperty('errorCode', 'present_user_required');
       const narrowed = await app.inject({ method: 'POST', url: '/actions/root/execute',
         headers: { 'x-happier-daemon-token': 'private-control-token', 'x-happier-authority-ceiling': 'account_automation' },
         payload: { actionId: 'approval.request.decide', input: { artifactId: 'missing', decision: 'approve' } },
       });
       expect(narrowed.json()).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    } finally { terminalPolicy.value = 'allowed'; await app.close(); }
+    } finally { await app.close(); }
   });
   it('fails closed when a daemon-owned meta Action produces a non-JSON result', async () => {
     const execute = vi.fn<ExternalActionExecutor['execute']>(

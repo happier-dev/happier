@@ -37,6 +37,7 @@ export function registerMachinePeerTcpTunnelRelayRuntime(input: Readonly<{
   voiceBinaryAppendConsumer?: RegisterPeerTcpTunnelRelayTerminatorOptions['voiceBinaryAppendConsumer'];
   voiceBinaryTerminalConsumer?: RegisterPeerTcpTunnelRelayTerminatorOptions['voiceBinaryTerminalConsumer'];
   resolveProviderBrokerApplicationTarget?: RegisterPeerTcpTunnelRelayTerminatorOptions['resolveProviderBrokerApplicationTarget'];
+  resolvePreviewApplication?: RegisterPeerTcpTunnelRelayTerminatorOptions['resolvePreviewApplication'];
   onHandlerError?: (error: unknown) => void;
   dependencies?: Dependencies;
 }>): Readonly<{ dispose(): Promise<void> }> | null {
@@ -76,6 +77,7 @@ export function registerMachinePeerTcpTunnelRelayRuntime(input: Readonly<{
     nowMs: input.nowMs,
     relayAuthorizationTrustRoots,
     connectTcp: connectPeerTcpTunnelTcp,
+    ...(input.resolvePreviewApplication ? { resolvePreviewApplication: input.resolvePreviewApplication } : {}),
     maxFrameBytes: caps.maxFrameBytes,
     maxBinaryHeaderBytes: caps.maxBinaryHeaderBytes,
     maxRawPayloadBytes: caps.maxRawPayloadBytes,

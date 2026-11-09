@@ -40,7 +40,7 @@ const derived = deriveAgentIsolationMemberIdentity(requester);
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
-describe.skipIf(process.platform !== 'linux')('member failed launch recovery', () => {
+describe.skipIf(process.platform !== 'linux')('member failed launch recovery (simulated UIDs and RunAs)', () => {
   it.each([
     { consumer: 'exec', broken: false, session: false }, { consumer: 'exec', broken: true, session: false },
     { consumer: 'pty', broken: false, session: false }, { consumer: 'pty', broken: true, session: false },

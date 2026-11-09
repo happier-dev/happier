@@ -80,7 +80,6 @@ function buildReportKey(input: Readonly<{
     retryAfterMs: input.classification.retryAfterMs ?? null,
     quotaScope: input.classification.quotaScope ?? null,
     providerLimitId: input.classification.providerLimitId ?? null,
-    sourceProviderAccountId: input.classification.sourceProviderAccountId ?? null,
     action: input.classification.action ?? null,
     recoveryAction: input.classification.recoveryAction ?? null,
     connectedServiceRecovery: input.classification.connectedServiceRecovery ?? null,

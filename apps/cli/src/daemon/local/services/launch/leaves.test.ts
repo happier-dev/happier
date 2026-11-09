@@ -97,6 +97,7 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
     });
 
     it('reuses Session previews through the real Action, launcher feed, preview admission and history owners', async () => {
+        const accountId = 'account-1';
         const inventoryRegistry = createLocalServiceInventoryRegistry();
         inventoryRegistry.replaceSnapshot({
             v: 1, machineId: MACHINE_ID, generatedAt: 1_000, refreshState: 'idle', diagnostics: [],
@@ -112,7 +113,7 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
         const previewRegistry = createLocalServicePreviewRegistry();
         let admission = 0;
         const previewRoutes = createLocalServicePreviewRoutes({
-            machineId: MACHINE_ID, accountId: 'account-1', inventoryRegistry, registry: previewRegistry,
+            machineId: MACHINE_ID, accountId, inventoryRegistry, registry: previewRegistry,
             server: {
                 token: 'daemon-token', serverBaseUrl: 'https://home.example.test',
                 // Only the server HTTP boundary is substituted; feed, binding and registration are real.
@@ -125,7 +126,7 @@ describe('createLocalServiceLauncherLeafRoutes', () => {
                 },
             },
         });
-        const feed = createLocalServiceLauncherFeed({ machineId: MACHINE_ID, inventoryRegistry, previewRegistry });
+        const feed = createLocalServiceLauncherFeed({ machineId: MACHINE_ID, accountId, inventoryRegistry, previewRegistry });
         const target = (await feed.getSnapshot()).targets.find(candidate => candidate.sourceClass?.kind === 'inventory_entry');
         if (!target) throw new Error('Expected canonical inventory launch target');
         const history = createLocalServiceLauncherHistoryStore();

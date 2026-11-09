@@ -67,6 +67,7 @@ async function fixture() {
   const notifications: unknown[] = [];
   let runnerLive = true;
   let reads = 0;
+  let eligibilityReads = 0;
   let notifyFails = false;
   let cancelAfterNotice = false;
   let cancelAfterStop = false;
@@ -109,6 +110,7 @@ async function fixture() {
     },
     hasSessionOverrides: () => readSessionMemoryCeilingOverride(target.metadata) != null,
     readEligibility: async runner => {
+      eligibilityReads++;
       // The final admission reads draft state through a network boundary before real eligibility evaluation.
       if (heldDraftRead && notifications.length > 0) { const held = heldDraftRead; heldDraftRead = undefined; held.entered(); await held.wait; }
       const inventory: LiveWorkInventoryV1 = { coverage: 'complete', items: [{ category: 'session', ownerRef: runner,
@@ -172,6 +174,7 @@ async function fixture() {
     exitUnavailable: () => { exitUnavailable = true; },
     retire: (collect = true) => { target = { ...target, root: { ...target.root, live: false } }; scopeGone = collect; for (const listener of watchers.values()) listener(); },
     reads: () => reads,
+    eligibilityReads: () => eligibilityReads,
     stopSucceeds: (value: boolean) => { stopSucceeds = value; },
     usage: (value: number) => { usage = value; }, active: (value: boolean) => { active = value; },
     usageReadFails: (value: boolean) => { usageReadFails = value; },
@@ -291,7 +294,7 @@ describe('per-Session soft memory ceiling owner', () => {
     f.capturedExit(); f.retire();
     expect(await f.owner.observeRunnerExit(f.readTarget().tracked)).toEqual({ status: 'recorded' });
     expect((await f.log.list({ range: 'today' })).entries).toMatchObject([{ kind: 'system_oom_kill', rule: 'system',
-      outcome: 'done', subject: { kind: 'session', sessionId: 'session' } }]);
+      outcome: 'done', subject: { kind: 'session', sessionId: 'session', title: null } }]);
     expect(f.exitReads[0]).toBe(join(f.dir, `scope-exit-${f.unit}.json`));
     expect(f.stops).toHaveLength(0);
     expect(f.watchers.size).toBe(0);
@@ -424,6 +427,7 @@ describe('per-Session soft memory ceiling owner', () => {
   });
   it.each(['working', 'policy_off', 'override_none'] as const)('re-admits the current ceiling and fresh work after a pending notification becomes %s', async change => {
     const f = await fixture(); await f.run(); const notification = f.holdNotification(); f.edge(1);
+    const before = f.eligibilityReads();
     const running = f.run(); await notification.entered;
     if (change === 'working') f.active(true);
     else if (change === 'policy_off') f.clearPolicy();
@@ -436,6 +440,9 @@ describe('per-Session soft memory ceiling owner', () => {
     expect(f.stops).toHaveLength(0);
     expect(f.notices.at(-1)).toEqual({ kind: 'clear' });
     expect((await f.log.list({ range: 'today' })).entries.some(entry => entry.kind === 'stopped_session')).toBe(false);
+    // One final exact-target observation after the awaited notification, not
+    // repeated draft/inventory reads before that boundary can settle.
+    expect(f.eligibilityReads() - before).toBe(change === 'working' ? 1 : 0);
   });
   it('commits the actual stopped Session receipt when cancellation follows the native stop acknowledgement', async () => {
     const f = await fixture(); await f.run(); f.cancelAfterStop(); f.edge(1);
@@ -514,6 +521,7 @@ describe('per-Session soft memory ceiling owner', () => {
     expect(f.stops).toHaveLength(0);
     await f.run();
     expect(f.stops).toEqual([f.readTarget().tracked]);
+    expect(f.eligibilityReads()).toBe(1);
     expect(f.notices).toEqual([expect.objectContaining({ rule: 'ceiling', ceilingBytes: 1000 })]);
     const receipt = (await f.log.list({ range: 'today' })).entries.find(entry => entry.kind === 'stopped_session');
     expect(receipt).toMatchObject({ rule: 'ceiling', outcome: 'done', wayBack: [{ label: 'resume', actionId: 'session.open' }] });

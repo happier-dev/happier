@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
-import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { spawnAuthorizedHostExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 import type { NativeServiceCommandCaptureForHost, ServiceCommandResultV1 } from './serviceCommand';
+import { assertServiceOutputRedactionForHost } from './serviceOutputRedaction';
 
 type Child = ReturnType<typeof spawnAuthorizedHostExecLaunchForHost>;
 
@@ -46,8 +46,7 @@ export async function executeServiceCommandStream(input: Readonly<{
             await launch.recheckInputs?.();
             await capture.assertCurrent();
             signal.throwIfAborted();
-            if (!launch.secretRedactionLease?.isActive()) throw new PluginError({
-                code: 'secret_redaction_unavailable', message: 'Service stream redaction is unavailable' });
+            assertServiceOutputRedactionForHost(launch);
         }
         for (const [index, launch] of launches.entries()) children.push(spawnAuthorizedHostExecLaunchForHost(launch, {
             ...(index === 1 ? { pipeStdout: true } : {}), retainLaunch(release) { releases[index] = release; },

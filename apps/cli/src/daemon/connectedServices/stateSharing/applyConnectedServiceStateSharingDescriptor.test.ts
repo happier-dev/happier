@@ -10,6 +10,7 @@ import { parse, stringify } from 'smol-toml';
 import { codexStateSharingDescriptor } from '../../../../../../packages/plugins/codex/src/agent/auth/services/state/sharing/descriptor';
 import { reconcileCodexSharedJsonlState } from '../../../../../../packages/plugins/codex/src/agent/auth/services/home/sync/fixedJsonlState';
 import { verifyResumeReachableCodex } from '../../../../../../packages/plugins/codex/src/agent/auth/services/runtime/control/verifyResumeReachable';
+import { AGENT_STATE_SHARING_DESCRIPTOR } from '../../../../../../packages/plugins/claude/src/agent/definition';
 import { claudeAuthStateSharingDescriptor } from '../../../../../../packages/plugins/claude/src/agent/auth/services/stateSharing';
 import { verifyDeclaredResumeFileReachability } from './verifyDeclaredResumeFileReachability';
 
@@ -44,6 +45,40 @@ function createDescriptor(params: Readonly<{
 }
 
 describe('applyConnectedServiceStateSharingDescriptor', () => {
+  it('honors the declared Claude fallback native-home override before the platform default', () => {
+    const homeDir = join(tmpdir(), 'claude-native-home-default');
+    const native = join(tmpdir(), 'claude-native-home-custom');
+    expect(resolveConnectedServiceNativeHomeRoot({
+      nativeHome: AGENT_STATE_SHARING_DESCRIPTOR.nativeHome,
+      sourceEnvironment: { HAPPIER_CLAUDE_CONFIG_DIR: native }, homeDir,
+    })).toBe(native);
+    expect(resolveConnectedServiceNativeHomeRoot({
+      nativeHome: AGENT_STATE_SHARING_DESCRIPTOR.nativeHome,
+      sourceEnvironment: { HAPPIER_CLAUDE_CONFIG_DIR: native, CLAUDE_CONFIG_DIR: homeDir }, homeDir,
+    })).toBe(homeDir);
+  });
+
+  it('preserves the configured native source home through a shared account materialization and rematerialization', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'claude-native-source-'));
+    const sourceRoot = join(root, 'custom-native');
+    const targetRoot = join(root, 'account');
+    try {
+      await mkdir(join(sourceRoot, 'projects'), { recursive: true });
+      const result = await applyConnectedServiceStateSharingDescriptor({
+        descriptor: { ...AGENT_STATE_SHARING_DESCRIPTOR, providerId: 'claude' },
+        nativeSourceContext: { sourceRoot, sourceEnv: { CLAUDE_CONFIG_DIR: sourceRoot } },
+        target: { targetMaterializedRoot: targetRoot, targetMaterializedEnv: {} },
+        configMode: 'isolated', requestedStateMode: 'shared', effectiveStateMode: 'shared', cwd: root,
+      });
+      expect(await realpath(join(targetRoot, 'projects'))).toBe(await realpath(join(sourceRoot, 'projects')));
+      expect(result.envOverrides.HAPPIER_CLAUDE_NATIVE_CONFIG_DIR).toBe(sourceRoot);
+      expect(resolveConnectedServiceNativeHomeRoot({
+        nativeHome: AGENT_STATE_SHARING_DESCRIPTOR.nativeHome,
+        sourceEnvironment: { ...result.envOverrides, CLAUDE_CONFIG_DIR: targetRoot }, homeDir: root,
+      })).toBe(sourceRoot);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it.each(['shared', 'isolated'] as const)('recovers late native writes from displaced sessions before %s replacement', async (replacementMode) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-displaced-rollout-'));
     const sourceRoot = join(root, 'native');

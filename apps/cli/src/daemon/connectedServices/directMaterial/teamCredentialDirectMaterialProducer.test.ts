@@ -65,7 +65,6 @@ describe('produceTeamCredentialDirectMaterial', () => {
     const expectedVersion = snapshot.currentness.sourceVersion;
     expect(result).toEqual({ ok: true, sourceVersion: expectedVersion });
     expect(params.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      resourceId: 'resource-1',
       recipientAccountId: 'recipient-1',
       sourceMemberKey: computeTeamCredentialSourceMemberKeyV1(sourceMember),
       sourceVersion: expectedVersion,

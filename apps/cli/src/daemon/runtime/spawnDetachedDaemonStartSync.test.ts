@@ -91,7 +91,7 @@ describe('spawnDetachedDaemonStartSync', () => {
     expect(args.join(' ')).not.toMatch(/happier-jobs|--nice|MemoryMax|MemoryHigh|MemoryLimit/u);
     expect(options).toEqual(expect.objectContaining({
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', expect.any(Number)],
       env: expect.objectContaining({
         DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/501/bus',
       }),
@@ -152,6 +152,9 @@ describe('spawnDetachedDaemonStartSync', () => {
     expect(script).toContain('-WorkingDirectory');
     expect(script).toContain('-WindowStyle Hidden');
     expect(script).toContain('-PassThru');
+    expect(script).toContain('-RedirectStandardError');
+    expect(script).toContain('-stderr-daemon.log');
+    expect(script).toContain("-RedirectStandardOutput 'NUL'");
     expect(options).toEqual(expect.objectContaining({
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

@@ -1,10 +1,11 @@
 import { appendFile, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
-import axios from 'axios';
+import fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 
 const accountingDiscovery = vi.hoisted(() => ({ openedDirectories: [] as string[], abortRead: null as (() => void) | null }));
 // Count real native directory reads without replacing discovery or observation logic.
@@ -27,6 +28,9 @@ await import('@/api/session/external/leases/createExternalSessionObservationDaem
 describe('registered native transcript source observation', () => {
   let directory: string;
   let env: ReturnType<typeof createEnvKeyScope>;
+  let homeHttp: FastifyInstance;
+  let restoreHomeHttp: (() => void) | undefined;
+  let connectedServicesV2: unknown[];
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'happier-memory-source-observation-'));
     const agentDir = join(directory, 'agent');
@@ -39,6 +43,17 @@ describe('registered native transcript source observation', () => {
       CODEX_HOME: join(directory, '.codex'), HAPPIER_CODEX_HOME: join(directory, '.codex'),
       CLAUDE_CONFIG_DIR: join(directory, '.claude'), HAPPIER_CLAUDE_CONFIG_DIR: join(directory, '.claude') });
     vi.resetModules();
+    connectedServicesV2 = [];
+    // Own the real HTTP adapter for every scenario, including top-level backfill.
+    // Request/get/create clients all reach these routes; domain readers stay real.
+    homeHttp = fastify({ logger: false });
+    homeHttp.get('/v1/account/profile', async () => ({ id: 'account', connectedServicesV2 }));
+    homeHttp.get('/v1/account/encryption/currentness', async () => ({
+      mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+    }));
+    homeHttp.get('/v2/sessions', async () => ({ sessions: [], nextCursor: null, hasNext: false }));
+    await homeHttp.ready();
+    restoreHomeHttp = installAxiosFastifyAdapter({ app: homeHttp, origin: 'https://home.test' });
     // Reset first, then load the real graph against this case's isolated Home.
     // Loading it before reset charged a second cold graph to the reader test.
     await import('@/plugins/testkit/admittedRuntime');
@@ -47,6 +62,9 @@ describe('registered native transcript source observation', () => {
   });
   afterEach(async () => {
     accountingDiscovery.abortRead = null;
+    restoreHomeHttp?.();
+    restoreHomeHttp = undefined;
+    await homeHttp?.close();
     env?.restore();
     vi.resetModules();
     if (directory) await rm(directory, { recursive: true, force: true });
@@ -68,10 +86,6 @@ describe('registered native transcript source observation', () => {
       await mkdir(day, { recursive: true });
       await Promise.all(Array.from({ length: 16 }, (_, file) => writeFile(join(day, `${file}.jsonl`), '{}\n')));
     }));
-    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
-      if (new URL(String(url)).pathname === '/v1/account/profile') return { status: 200, data: { id: 'account', connectedServicesV2: [] } };
-      throw new Error('Unexpected HTTP request in accounting discovery fixture');
-    });
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
       runtimeOptions: { contributes: createResolvedContributionRegistry(resolveBuiltInContributions()),
         pluginIds: ['happier.agent.claude', 'happier.agent.codex'] } });
@@ -134,7 +148,6 @@ describe('registered native transcript source observation', () => {
       await sources.dispose();
       await observation.dispose();
       await runtime.dispose();
-      get.mockRestore();
     }
   });
   it.each(['all_history', 'new_only'] as const)('publishes pre-opt-in Codex history, append and rewrite in both linked and user partitions with %s Happier backfill', async backfillPolicy => {
@@ -144,8 +157,8 @@ describe('registered native transcript source observation', () => {
     const { resolveBuiltInContributions } = await import('@/plugins/projection/registry/resolveBuiltInContributions');
     const { configuration } = await import('@/configuration');
     const { resolveConnectedServiceHomeDir } = await import('@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir');
-    const { CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } = await import('@happier-dev/plugin-sdk/first-party/connected-accounts');
-    const { createMemoryExternalTranscriptSources } = await import('./externalTranscriptSources');
+    const { CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } = await import('@happier-dev/protocol/agents/codex/native-home-policy');
+    const { createMemoryExternalTranscriptSources } = await import('./testkit/externalTranscriptSources');
     const { createExternalSessionObservationDaemonProjection } = await import('@/api/session/external/leases/createExternalSessionObservationDaemonProjection');
     const { normalizeMemorySettings } = await import('@happier-dev/protocol/memory/memorySettings');
     const { openDeepIndexDb } = await import('./deepIndex/deepIndexDb');
@@ -176,13 +189,10 @@ describe('registered native transcript source observation', () => {
         + '{"type":"response_item","payload":{"type":"message","role":"user","content":"'),
       Buffer.from([0xff]), Buffer.from('"}}\n'),
     ]));
-    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
-      if (new URL(String(url)).pathname === '/v1/account/profile') return { status: 200, data: { id: 'account', connectedServicesV2: [{
+    connectedServicesV2 = [{
         serviceId: 'openai-codex', profiles: [{ profileId, status: 'connected', kind: 'oauth', providerEmail: null,
           providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null }], groups: [],
-      }] } };
-      throw new Error('Unexpected HTTP request in two-partition fixture');
-    });
+    }];
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
       runtimeOptions: { contributes: createResolvedContributionRegistry(resolveBuiltInContributions()), pluginIds: ['happier.agent.codex'] } });
     const observation = createExternalSessionObservationDaemonProjection({
@@ -253,7 +263,6 @@ describe('registered native transcript source observation', () => {
       await observation.dispose();
       await runtime.dispose();
       db.close();
-      get.mockRestore();
     }
   });
   it('discovers a real Codex sibling during multi-page backfill through native directory delivery', async () => {
@@ -261,7 +270,7 @@ describe('registered native transcript source observation', () => {
     const { createAdmittedPluginRuntimeFixture } = await import('@/plugins/testkit/admittedRuntime');
     const { createResolvedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
     const { resolveBuiltInContributions } = await import('@/plugins/projection/registry/resolveBuiltInContributions');
-    const { createMemoryExternalTranscriptSources } = await import('./externalTranscriptSources');
+    const { createMemoryExternalTranscriptSources } = await import('./testkit/externalTranscriptSources');
     const { createExternalSessionObservationDaemonProjection } = await import('@/api/session/external/leases/createExternalSessionObservationDaemonProjection');
     const { normalizeMemorySettings } = await import('@happier-dev/protocol/memory/memorySettings');
     const { openDeepIndexDb } = await import('./deepIndex/deepIndexDb');
@@ -280,10 +289,6 @@ describe('registered native transcript source observation', () => {
     await put(main, 200, 'r261main');
     await Promise.all(Array.from({ length: 100 }, (_, index) => put(
       `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, 1, 'r261backlog')));
-    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
-      if (new URL(String(url)).pathname === '/v1/account/profile') return { status: 200, data: { id: 'account', connectedServicesV2: [] } };
-      throw new Error('Unexpected HTTP request in native source fixture');
-    });
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
       runtimeOptions: { contributes: createResolvedContributionRegistry(resolveBuiltInContributions()), pluginIds: ['happier.agent.codex'] } });
     const observation = createExternalSessionObservationDaemonProjection({
@@ -353,7 +358,6 @@ describe('registered native transcript source observation', () => {
       await observation.dispose();
       await runtime.dispose();
       db.close();
-      get.mockRestore();
     }
   });
   describe.each([
@@ -380,16 +384,7 @@ describe('registered native transcript source observation', () => {
     let codexCorpus: Readonly<{ prepare(): Promise<void>; demand(): Promise<void>; appendSibling(): Promise<void> }> | undefined;
     beforeEach(async () => {
       const agentDir = join(directory, 'agent');
-      // Home HTTP and OS watch delivery are the only controlled boundaries.
-      const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
-        const path = new URL(String(url)).pathname;
-        if (path === '/v1/account/profile') return { status: 200, data: { id: 'account', connectedServicesV2: [] } };
-        if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
-          mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
-        } };
-        if (path === '/v2/sessions') return { status: 200, data: { sessions: [], nextCursor: null, hasNext: false } };
-        throw new Error(`Unexpected native worker HTTP path: ${path}`);
-      });
+      // The outer fixture owns Home HTTP; only OS watch delivery is controlled here.
       let runtime: Awaited<ReturnType<typeof import('@/plugins/testkit/admittedRuntime').createAdmittedPluginRuntimeFixture>> | undefined;
       let worker: Awaited<ReturnType<typeof import('./memoryWorker').startMemoryWorker>> | undefined;
       let observation: ReturnType<typeof import('@/api/session/external/leases/createExternalSessionObservationDaemonProjection').createExternalSessionObservationDaemonProjection> | undefined;
@@ -401,7 +396,6 @@ describe('registered native transcript source observation', () => {
         await observation?.dispose();
         await runtime?.dispose();
         devinFixture?.close();
-        get.mockRestore();
       };
       const isCodex = agentId === 'codex';
       const isAntigravity = agentId === 'antigravity';
@@ -561,7 +555,7 @@ describe('registered native transcript source observation', () => {
         const { loadBundledPluginLocatorResult } = await import('@/plugins/projection/registry/builtIn/locators');
         const { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } = await import('@/plugins/projection/registry/sources/generatedBundledPluginManifests');
         const { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } = await import('@/plugins/projection/registry/sources/generatedBundledPlugins');
-        const { projectLoadedPluginContributes } = await import('@/plugins/projection/registry/resolvePluginContributions');
+        const { projectLoadedPluginContributes } = await import('@/plugins/projection/registry/fullProjection');
         const { projectBuiltInAgents } = await import('@/plugins/projection/registry/builtIn/agents');
         const projected = projectLoadedPluginContributes({ provenance: 'first_party', loadResult: {
           loadedPlugins: loadBundledPluginLocatorResult(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.map(locator =>

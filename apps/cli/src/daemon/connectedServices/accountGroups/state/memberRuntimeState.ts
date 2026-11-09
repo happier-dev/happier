@@ -1,5 +1,5 @@
 import { clearConnectedServiceAuthGroupMemberRuntimeBlockers } from '@happier-dev/protocol/connect/connectedServiceAuthGroupMemberRuntimeStatePolicy';
-import { compareConnectedServiceQuotaObservationRecency } from '@happier-dev/protocol/connect/quotaObservationTime';
+import { compareConnectedServiceQuotaObservationRecency, isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
 import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
 
 import { buildConnectedServiceAuthGroupRuntimeStateFromMeters } from '../quotas/projection';
@@ -92,6 +92,7 @@ export function projectConnectedServiceQuotaSnapshotToAuthGroupQuotaEvidence(
 ): ConnectedServiceAuthGroupQuotaSnapshot {
   return buildConnectedServiceAuthGroupRuntimeStateFromMeters({
     capturedAtMs: snapshot.fetchedAt,
+    staleAfterMs: snapshot.staleAfterMs,
     meters: snapshot.meters,
   }).quotaSnapshot!;
 }
@@ -99,30 +100,46 @@ export function projectConnectedServiceQuotaSnapshotToAuthGroupQuotaEvidence(
 export function reconcileMemberRuntimeStateWithFreshQuotaEvidence(params: Readonly<{
   state: ConnectedServiceAuthGroupMemberRuntimeState | null;
   quotaSnapshot: ConnectedServiceAuthGroupQuotaSnapshot | null;
-  policy?: ConnectedServiceAuthGroupPolicyV1;
+  policy: ConnectedServiceAuthGroupPolicyV1;
   nowMs: number;
   authenticatedProbe?: boolean;
 }>): ConnectedServiceAuthGroupMemberRuntimeState | null {
-  void params.policy;
-  void params.nowMs;
   const state = params.state;
   const quotaSnapshot = params.quotaSnapshot;
   if (!state || !quotaSnapshot || !isSnapshotNewerThanFailure(quotaSnapshot, state, params.nowMs)) return state;
+  if (!isConnectedServiceQuotaObservationFresh({ observedAtMs: quotaSnapshot.capturedAtMs,
+    nowMs: params.nowMs, maxAgeMs: quotaSnapshot.staleAfterMs })) return state;
   if (quotaSnapshot.planUnavailable) return state;
+  const lastObservedAtMs = numberOrNull(state.lastObservedAtMs);
+  // The observation itself must follow the existing cooldown; consuming an early probe later
+  // cannot turn potentially lagging provider quota into evidence that the failure recovered.
+  if (state.lastFailureKind === 'usage_limit' && lastObservedAtMs !== null
+    && lastObservedAtMs <= params.nowMs
+    && quotaSnapshot.capturedAtMs < lastObservedAtMs + params.policy.cooldownMs) return state;
+  const failureLimitId = state.lastFailureProviderLimitId?.trim();
+  const matchingQuotaMeters = (quotaSnapshot.meters ?? []).filter(meter => isQuotaMeter(meter)
+    && (!failureLimitId || meter.providerLimitId === failureLimitId));
+  const quotaUsable = state.lastFailureKind === 'usage_limit'
+    ? !quotaSnapshot.exhausted && matchingQuotaMeters.length > 0
+      && matchingQuotaMeters.every(meter => meter.reliable !== false && meterHasRemainingQuota(meter))
+    : (state.lastFailureKind === undefined || state.lastFailureKind === null)
+      && snapshotProvesQuotaUsable(quotaSnapshot, false);
+  if (state.lastFailureKind === 'usage_limit' && !quotaUsable) return state;
   if (
     params.authenticatedProbe
     && snapshotProvesRuntimeUsable(quotaSnapshot)
   ) {
-    return clearConnectedServiceAuthGroupMemberRuntimeBlockers(
-      state,
-    );
+    const cleared = clearConnectedServiceAuthGroupMemberRuntimeBlockers(state);
+    if (state.lastFailureKind === 'usage_limit' || state.lastFailureKind === 'rate_limit') {
+      delete cleared.providerResetsAtMs;
+    }
+    // A generic authenticated quota response proves neither entitlement nor success for a rejected model.
+    return { ...cleared,
+      ...(state.modelUnavailableUntilMsByModelId ? { modelUnavailableUntilMsByModelId: state.modelUnavailableUntilMsByModelId } : {}),
+      ...(state.autoDisabledReason ? { autoDisabledReason: state.autoDisabledReason } : {}),
+    };
   }
 
-  const quotaUsable = (
-    state.lastFailureKind === 'usage_limit'
-    || state.lastFailureKind === undefined
-    || state.lastFailureKind === null
-  ) && snapshotProvesQuotaUsable(quotaSnapshot, state.lastFailureKind === 'usage_limit');
   const rateUsable = (
     state.lastFailureKind === 'rate_limit'
     || state.lastFailureKind === undefined
@@ -143,6 +160,7 @@ export function reconcileMemberRuntimeStateWithFreshQuotaEvidence(params: Readon
     }
     if (state.lastFailureKind === 'usage_limit') {
       delete next.lastFailureKind;
+      delete next.lastFailureProviderLimitId;
       delete next.lastObservedAtMs;
       changed = true;
     }
@@ -156,6 +174,7 @@ export function reconcileMemberRuntimeStateWithFreshQuotaEvidence(params: Readon
     }
     if (state.lastFailureKind === 'rate_limit') {
       delete next.lastFailureKind;
+      delete next.lastFailureProviderLimitId;
       delete next.lastObservedAtMs;
       changed = true;
     }

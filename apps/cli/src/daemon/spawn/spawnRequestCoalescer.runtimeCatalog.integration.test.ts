@@ -12,7 +12,7 @@ import type { RpcHandler } from '@/api/rpc/types';
 
 describe('spawn preparation live custody', () => {
   it('publishes coalesced accepted work through actual settlement without counting retained success', async () => {
-    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 1000 });
+    const coalescer = createSpawnRequestCoalescer();
     const work = createDeferred<SpawnSessionResult>();
     const observations: number[] = [];
     const dispose = coalescer.subscribeChanges(() => observations.push(coalescer.readInFlightRequests().length));
@@ -758,7 +758,7 @@ describe('computeDaemonSpawnRequestKey', () => {
 
 describe('createSpawnRequestCoalescer', () => {
   it('serializes a fresh admission behind retired same-key work and coalesces its current duplicates', async () => {
-    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 0 });
+    const coalescer = createSpawnRequestCoalescer();
     const key = computeAuthorizedExistingSessionKey('same');
     const retiredWork = createDeferred<SpawnSessionResult>();
     const currentWork = createDeferred<SpawnSessionResult>();
@@ -790,10 +790,8 @@ describe('createSpawnRequestCoalescer', () => {
     expect(coalescer.readInFlightRequests()).toHaveLength(0);
   });
 
-  it('coalesces concurrent calls for the same key and caches recent new-session success', async () => {
-    let now = 10_000;
-    const nowMs = () => now;
-    const coalescer = createSpawnRequestCoalescer({ nowMs, recentSuccessTtlMs: 2_000 });
+  it('coalesces only active new-session calls and reads the durable owner again after settlement', async () => {
+    const coalescer = createSpawnRequestCoalescer();
 
     const result = {
       type: 'success' as const,
@@ -811,15 +809,16 @@ describe('createSpawnRequestCoalescer', () => {
     expect(r1).toEqual(result);
     expect(r2).toEqual(result);
 
-    now += 500;
-    const r3 = await coalescer.run(key, work);
-    expect(work).toHaveBeenCalledTimes(1);
-    expect(r3).toEqual(result);
+    const rejoined = {
+      ...result,
+      sessionCreationOutcome: { ...result.sessionCreationOutcome, disposition: 'rejoined' as const },
+    };
+    const readDurableOwner = async () => rejoined;
 
     const handlers = new Map<string, RpcHandler>();
     registerPrivateSpawnSessionRpcHandlers({
       rpcHandlerManager: { registerHandler: (method, handler) => { handlers.set(method, handler); } },
-      spawnLifecycleHandler: async () => coalescer.run(key, work),
+      spawnLifecycleHandler: async () => coalescer.run(key, readDurableOwner),
       requireSessionCreationOutcome: true,
     });
     await expect(handlers.get(RPC_METHODS.SPAWN_HAPPY_SESSION)?.({
@@ -827,47 +826,29 @@ describe('createSpawnRequestCoalescer', () => {
       directory: '/tmp/project',
       spawnNonce: 'new-creation',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-    })).resolves.toEqual(result);
+    })).resolves.toEqual(rejoined);
     expect(work).toHaveBeenCalledTimes(1);
-
-    now += 5_000;
-    const r4 = await coalescer.run(key, work);
-    expect(work).toHaveBeenCalledTimes(2);
-    expect(r4).toEqual(result);
   });
 
-  it('keeps a timed-out nonce admitted as pending so retries do not spawn duplicate provider work', async () => {
-    let now = 10_000;
-    const nowMs = () => now;
-    const coalescer = createSpawnRequestCoalescer({
-      nowMs,
-      recentSuccessTtlMs: 2_000,
-      pendingTimeoutTtlMs: 5_000,
-    });
+  it('lets the process-startup owner resolve a same-nonce retry after an unknown timeout', async () => {
+    const coalescer = createSpawnRequestCoalescer();
     const key = { kind: 'new' as const, key: 'new:nonce:abc' };
     const timeoutResult = {
       type: 'error' as const,
       errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
       errorMessage: 'Session startup timed out',
     };
-    const work = vi.fn()
-      .mockResolvedValueOnce(timeoutResult)
-      .mockResolvedValueOnce({ type: 'success' as const, sessionId: 'sess_duplicate' });
-
-    await expect(coalescer.run(key, work)).resolves.toEqual(timeoutResult);
-    await expect(coalescer.run(key, work)).resolves.toEqual(timeoutResult);
-    expect(work).toHaveBeenCalledTimes(1);
-
-    now += 5_001;
-    await expect(coalescer.run(key, work)).resolves.toEqual({
+    await expect(coalescer.run(key, async () => timeoutResult)).resolves.toEqual(timeoutResult);
+    await expect(coalescer.run(key, async () => ({
+      type: 'success', sessionId: 'sess_rejoined',
+    }))).resolves.toEqual({
       type: 'success',
-      sessionId: 'sess_duplicate',
+      sessionId: 'sess_rejoined',
     });
-    expect(work).toHaveBeenCalledTimes(2);
   });
 
   it('coalesces a concurrent replay of the same authorized existing-session request', async () => {
-    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 0 });
+    const coalescer = createSpawnRequestCoalescer();
     const key = computeAuthorizedExistingSessionKey('same');
     const work = vi.fn(async () => ({ type: 'success' as const, sessionId: 'sess_1' }));
 
@@ -879,7 +860,7 @@ describe('createSpawnRequestCoalescer', () => {
   });
 
   it('serializes and executes distinct rearmed revisions of the same request id', async () => {
-    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 2_000 });
+    const coalescer = createSpawnRequestCoalescer();
     const firstKey = computeAuthorizedExistingSessionKey('same', 10);
     const rearmedKey = computeAuthorizedExistingSessionKey('same', 20);
     let releaseFirst!: () => void;
@@ -904,8 +885,8 @@ describe('createSpawnRequestCoalescer', () => {
     expect(rearmedWork).toHaveBeenCalledOnce();
   });
 
-  it('caches a sequential replay of the same exact authorized existing-session success', async () => {
-    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 2_000 });
+  it('reads current startup settlement on a sequential replay of the same exact authorization', async () => {
+    const coalescer = createSpawnRequestCoalescer();
     const key = computeAuthorizedExistingSessionKey('same');
     const work = vi.fn(async () => ({
       type: 'success' as const,
@@ -918,16 +899,16 @@ describe('createSpawnRequestCoalescer', () => {
       spawnNonce: 'spawn-1',
       sessionIdStatus: 'pending',
     });
-    await expect(coalescer.run(key, work)).resolves.toEqual({
-      type: 'success',
-      spawnNonce: 'spawn-1',
-      sessionIdStatus: 'pending',
-    });
-    expect(work).toHaveBeenCalledTimes(1);
+    const failure = {
+      type: 'error' as const,
+      errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
+      errorMessage: 'The startup owner observed the runner exit',
+    };
+    await expect(coalescer.run(key, async () => failure)).resolves.toEqual(failure);
   });
 
   it('serializes but does not coalesce confirmation-bearing and ordinary existing-session requests', async () => {
-    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 0 });
+    const coalescer = createSpawnRequestCoalescer();
     let releaseOrdinary!: () => void;
     const ordinaryBlocked = new Promise<void>((resolve) => {
       releaseOrdinary = resolve;
@@ -960,7 +941,7 @@ describe('createSpawnRequestCoalescer', () => {
   });
 
   it('rejects changed execution options instead of joining the same authorization', async () => {
-    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 0 });
+    const coalescer = createSpawnRequestCoalescer();
     let releaseFirst!: () => void;
     const firstBlocked = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -1001,7 +982,7 @@ describe('createSpawnRequestCoalescer', () => {
   });
 
   it('rejects changed machine hook context instead of joining the same exact authorization', async () => {
-    const coalescer = createSpawnRequestCoalescer({ recentSuccessTtlMs: 0 });
+    const coalescer = createSpawnRequestCoalescer();
     let releaseFirst!: () => void;
     const firstBlocked = new Promise<void>((resolve) => {
       releaseFirst = resolve;

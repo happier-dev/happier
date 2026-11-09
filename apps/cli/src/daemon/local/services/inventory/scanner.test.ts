@@ -8,6 +8,26 @@ import { configuration } from '@/configuration';
 import type { LocalServiceProcessFact } from './provenance';
 
 describe('normalizeLocalServiceScan', () => {
+    it('does not classify a browser debug listener or shell/agent listeners as their dev-server ancestor', () => {
+        const snapshot = normalizeLocalServiceScan({ machineId: 'machine-a', now: 1_000, previous: null,
+            workspaces: [], ownership: [],
+            processRoleCatalog: { agentExecutables: [{ name: 'Claude', executable: 'claude' }], mcpServers: [] },
+            listeners: [{ address: '127.0.0.1', port: 9222, protocol: 'tcp', pid: 200 },
+                { address: '127.0.0.1', port: 9223, protocol: 'tcp', pid: 201 },
+                { address: '127.0.0.1', port: 9224, protocol: 'tcp', pid: 202 },
+                { address: '127.0.0.1', port: 9225, protocol: 'tcp', pid: 203 },
+                { address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 300 }],
+            processes: new Map([[100, { pid: 100, command: 'npm run dev' }],
+                [200, { pid: 200, ppid: 100, command: 'chrome --remote-debugging-port=9222' }],
+                [201, { pid: 201, ppid: 100, command: 'ssh -L 9223:localhost:22 host' }],
+                [202, { pid: 202, ppid: 100, command: 'tmux' }],
+                [203, { pid: 203, ppid: 100, command: 'claude' }],
+                [300, { pid: 300, ppid: 100, command: 'node server.js' }]]) });
+        expect(snapshot.entries.filter(entry => entry.port !== 5173).map(entry => entry.classification?.kind))
+            .toEqual([undefined, undefined, undefined, undefined]);
+        expect(snapshot.entries.find(entry => entry.port === 5173)?.classification?.kind).toBe('npm-dev');
+    });
+
     it('reads the previous inventory linearly when refreshing a thousand listeners', () => {
         const listeners = Array.from({ length: 1_000 }, (_, index) => ({
             address: '127.0.0.1', port: 10_000 + index, protocol: 'tcp' as const,
@@ -113,8 +133,8 @@ describe('normalizeLocalServiceScan', () => {
         expect(snapshot.entries[0]?.provenance?.process?.lineagePids).toContain(100);
         expect(LocalServiceInventoryClassificationV1Schema.safeParse(snapshot.entries[0]?.classification).success).toBe(true);
     });
-    it('marks only listeners owned by exact Happier process or endpoint evidence', () => {
-        const snapshot = normalizeLocalServiceScan({
+    it('excludes only listeners owned by exact Happier process or endpoint evidence, keeping their app descendants', () => {
+        const input: Parameters<typeof normalizeLocalServiceScan>[0] = {
             machineId: 'machine-a', now: 1_000, previous: null, workspaces: [],
             internalProcessPids: [100, 200],
             internalEndpointUrls: ['http://127.0.0.1:19364', 'https://example.com:9999', 'not a URL'],
@@ -133,12 +153,16 @@ describe('normalizeLocalServiceScan', () => {
                 [300, { pid: 300, ppid: 200, command: 'node happier-demo.js', cwd: '/repo/.happier' }],
                 [400, { pid: 400, command: 'node web.js' }],
             ]),
-        });
-        expect(snapshot.entries.filter((entry) => entry.classification?.kind === 'happier').map((entry) => entry.port)).toEqual([3000, 3001, 19364]);
+        };
+        const snapshot = normalizeLocalServiceScan(input);
+        expect(snapshot.entries.map(entry => entry.port)).toEqual([5173, 9999, 19364, 19364]);
         expect(snapshot.entries.find((entry) => entry.port === 5173)?.classification?.kind).not.toBe('happier');
         expect(snapshot.entries.find((entry) => entry.address.kind === 'lan')?.classification?.kind).not.toBe('happier');
         expect(snapshot.entries.find((entry) => entry.address.host === '127.0.0.2')?.classification?.kind).not.toBe('happier');
         expect(snapshot.entries.find((entry) => entry.port === 9999)?.classification?.kind).not.toBe('happier');
+        const previouslyDetected = normalizeLocalServiceScan({ ...input, internalProcessPids: [], internalEndpointUrls: [] });
+        const refreshed = normalizeLocalServiceScan({ ...input, previous: previouslyDetected });
+        expect(refreshed.entries.map(entry => entry.port)).toEqual(snapshot.entries.map(entry => entry.port));
     });
 
     it('normalizes adapter listeners into stable sanitized inventory entries', () => {

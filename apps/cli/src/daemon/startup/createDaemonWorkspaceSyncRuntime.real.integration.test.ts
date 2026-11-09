@@ -354,16 +354,13 @@ function createLiveConflictApprovalAuthority(artifactDirectory: string): LiveCon
       await persist(artifactId, request);
       return { ok: true };
     },
-    assertAuthorized: createWorkspaceSyncConflictResolutionAuthorizer({
-      approvalsGet,
-      serverId: 'server-1',
-    }),
+    assertAuthorized: createWorkspaceSyncConflictResolutionAuthorizer(),
   };
   return authority;
 }
 
 describe('workspace sync conflict Action persistence fixture', () => {
-  it('reopens the approved receipt from disk at the destructive execution boundary', async () => {
+  it('persists and replays Ask through the Action runner without a second effect-site decision', async () => {
     const root = await mkdtemp(join(tmpdir(), 'hwsa-'));
     const artifactDirectory = join(root, 'approval-artifacts');
     const authority = createLiveConflictApprovalAuthority(artifactDirectory);
@@ -388,7 +385,7 @@ describe('workspace sync conflict Action persistence fixture', () => {
       };
       const executor = createActionExecutor({
         workspaceSyncConflictResolve,
-        isActionApprovalRequired: () => false,
+        isActionApprovalRequired: () => true,
         approvalsCreate: authority.approvalsCreate,
         approvalsGet: authority.approvalsGet,
         approvalsUpdate: authority.approvalsUpdate,
@@ -473,7 +470,7 @@ async function resolveConflictThroughApprovedAction(
       actionReceiptId,
       actionInput: input,
     }) as WorkspaceSyncConflictResolutionResultV1,
-    isActionApprovalRequired: () => false,
+    isActionApprovalRequired: () => true,
     approvalsCreate: approvalAuthority.approvalsCreate,
     approvalsGet: approvalAuthority.approvalsGet,
     approvalsUpdate: approvalAuthority.approvalsUpdate,

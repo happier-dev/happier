@@ -12,16 +12,8 @@ export type ConnectedServiceCredentialRefreshReason =
   | 'quota_bridge';
 
 export type CredentialHealthReprobeState = Readonly<{
-  failureCount: number;
   nextProbeAt: number;
 }>;
-
-const CREDENTIAL_HEALTH_REPROBE_BACKOFF_MS = [
-  60_000,
-  5 * 60_000,
-  15 * 60_000,
-  60 * 60_000,
-] as const;
 
 export function shouldReadCredentialHealthForRefresh(reason: ConnectedServiceCredentialRefreshReason): boolean {
   return reason === 'scheduled'
@@ -37,14 +29,6 @@ export function canReprobeCredentialHealth(
 ): boolean {
   if (options.force === true) return true;
   return reason === 'scheduled' || reason === 'quota_bridge';
-}
-
-export function credentialHealthReprobeDelayMs(failureCount: number): number {
-  const index = Math.max(0, Math.min(
-    CREDENTIAL_HEALTH_REPROBE_BACKOFF_MS.length - 1,
-    Math.trunc(failureCount),
-  ));
-  return CREDENTIAL_HEALTH_REPROBE_BACKOFF_MS[index]!;
 }
 
 export async function readCredentialHealthStatusForRefresh(input: Readonly<{

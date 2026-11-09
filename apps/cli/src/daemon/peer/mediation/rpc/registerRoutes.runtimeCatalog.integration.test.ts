@@ -8,10 +8,8 @@ import {
     PEER_MACHINE_RPC_DIRECT_PATH_V2,
     PeerMachineRpcDirectResponseV2Schema,
     createDirectRouteGrantSigningInputV2,
-    createPeerMachineRpcRequestHashV1,
     createPeerRouteProofSigningInputV2,
     digestSignedDirectRouteGrantV2,
-    resolveMachineRpcRoutePolicy,
     type DirectRouteGrantPayloadV2,
     type PeerMachineRpcDirectRequestV2,
     type PeerRouteEphemeralProofV2,
@@ -181,7 +179,6 @@ function createRequest(input: Readonly<{
 }>): PeerMachineRpcDirectRequestV2 {
     const method = input.method ?? RPC_METHODS.DAEMON_MEMORY_STATUS;
     const params = input.params ?? {};
-    const replayKey = `receipt:${input.requestId}`;
     return {
         v: 2,
         requestId: input.requestId,
@@ -192,12 +189,6 @@ function createRequest(input: Readonly<{
         endpointFingerprint: 'endpoint_1',
         grant: input.grant,
         proof: input.proof,
-        ...(resolveMachineRpcRoutePolicy(method).commandReceiptRequired ? { commandReceipt: {
-            v: 1 as const, issuer: 'ui' as const, issuedAtMs: 2_000,
-            requestHash: createPeerMachineRpcRequestHashV1({ method, params,
-                grantId: input.grant.payload.grantId, endpointFingerprint: 'endpoint_1', replayKey }),
-            replayKey,
-        } } : {}),
     };
 }
 
@@ -493,7 +484,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
     });
     // MACH-CHALLENGE-MECH M5/M6: one-shot consumption is the sole replay owner.
     it('executes commands without receipts once per grant and keeps distinct grants independent', async () => {
-        const method = RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START;
+        const method = RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR;
         let invoked = 0;
         const rpc = new RpcHandlerManager({ scopePrefix: 'machine_1', encryptionMode: 'plain', logger: () => {} });
         rpc.registerHandler(method, async () => ({ effect: ++invoked }));
@@ -501,7 +492,7 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
         const signed = createGrant({ method });
         const fresh = createGrant({ method, grantId: 'independent_grant', ephemeralSeed: 9 });
         const post = async (grant: typeof signed, nonceByte: number) => {
-            const { commandReceipt: _receipt, ...request } = createRequest({
+            const request = createRequest({
                 method, requestId: `command_${grant.grant.payload.grantId}_${nonceByte}`,
                 grant: grant.grant, proof: createProof({ ...grant, nonceByte }),
             });
@@ -817,29 +808,11 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
                     },
                 },
             };
-            const replayKey = 'direct_action_cancel_replay';
-            const request = {
-                ...createRequest({
-                    requestId: 'request_direct_action_cancel',
-                    grant: signed.grant,
-                    proof: createProof({ ...signed, nonceByte: 1 }),
-                    method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-                    params,
-                }),
-                commandReceipt: {
-                    v: 1 as const,
-                    issuer: 'ui' as const,
-                    issuedAtMs: 2_000,
-                    requestHash: createPeerMachineRpcRequestHashV1({
-                        method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-                        params,
-                        grantId: signed.grant.payload.grantId,
-                        endpointFingerprint: 'endpoint_1',
-                        replayKey,
-                    }),
-                    replayKey,
-                },
-            };
+            const request = createRequest({
+                requestId: 'request_direct_action_cancel', grant: signed.grant,
+                proof: createProof({ ...signed, nonceByte: 1 }),
+                method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE, params,
+            });
             const controller = new AbortController();
             const requestPromise = fetch(`${baseUrl}${PEER_MACHINE_RPC_DIRECT_PATH_V2}`, {
                 method: 'POST',

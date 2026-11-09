@@ -380,12 +380,13 @@ describe('tracked session handoff coordinator', () => {
     }), expect.any(AbortSignal));
   });
 
-  it('polls a pending prepare result and never treats nested ok:false as success', async () => {
+  it('observes the canonical job status and fetches the prepared result only after readiness', async () => {
     const { deps } = createDeps({
       prepareTarget: vi.fn(async () => ({ handoffId: 'handoff-1', status: status('staging_target') })),
-      getPreparedTargetResult: vi.fn()
-        .mockResolvedValueOnce({ ok: false, errorCode: 'not_found' })
-        .mockResolvedValueOnce(prepared),
+      getPreparedTargetResult: vi.fn(async () => prepared),
+      getTargetStatus: vi.fn()
+        .mockResolvedValueOnce({ status: status('staging_target') })
+        .mockResolvedValueOnce({ status: prepared.status }),
     });
     const result = await coordinateTrackedSessionHandoff({
       input: { sessionId: 'session-1', targetMachineId: 'target-machine' },
@@ -393,8 +394,26 @@ describe('tracked session handoff coordinator', () => {
       ...deps,
     });
     expect(result.ok).toBe(true);
-    expect(deps.getPreparedTargetResult).toHaveBeenCalledTimes(2);
+    expect(deps.getTargetStatus).toHaveBeenCalledTimes(2);
+    expect(deps.getPreparedTargetResult).toHaveBeenCalledTimes(1);
     expect(deps.wait).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles a terminal preparation failure with its producer code and zero further polls', async () => {
+    const { deps } = createDeps({
+      prepareTarget: async () => ({ handoffId: 'handoff-1', status: status('staging_target') }),
+      getTargetStatus: vi.fn(async () => ({ status: { ...status('staging_target'), status: 'awaiting_recovery' } })),
+      getPreparedTargetResult: vi.fn(async () => ({ ok: false, errorCode: 'source_export_failed', error: 'Source export failed' })),
+    });
+    const result = await coordinateTrackedSessionHandoff({
+      input: { sessionId: 'session-1', targetMachineId: 'target-machine' },
+      signal: new AbortController().signal, ...deps,
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'source_export_failed' });
+    expect(deps.getTargetStatus).toHaveBeenCalledTimes(1);
+    expect(deps.getPreparedTargetResult).toHaveBeenCalledTimes(1);
+    expect(deps.wait).not.toHaveBeenCalled();
+    expect(deps.resumeTarget).not.toHaveBeenCalled();
   });
 
   it('projects authoritative workspace byte transfer into the parent action operation', async () => {
@@ -411,10 +430,10 @@ describe('tracked session handoff coordinator', () => {
     };
     const { deps } = createDeps({
       prepareTarget: vi.fn(async () => ({ handoffId: 'handoff-1', status: transferStatus })),
-      getPreparedTargetResult: vi.fn()
-        .mockResolvedValueOnce({ ok: false, errorCode: 'not_found' })
-        .mockResolvedValueOnce(prepared),
-      getTargetStatus: vi.fn(async () => ({ handoffId: 'handoff-1', transitionRevision: 1, status: transferStatus })),
+      getPreparedTargetResult: vi.fn(async () => prepared),
+      getTargetStatus: vi.fn()
+        .mockResolvedValueOnce({ status: transferStatus })
+        .mockResolvedValueOnce({ status: prepared.status }),
     });
 
     await coordinateTrackedSessionHandoff({
@@ -448,7 +467,7 @@ describe('tracked session handoff coordinator', () => {
     const { deps } = createDeps({
       prepareTarget: vi.fn(async () => ({ handoffId: 'handoff-1', status: transferStatus })),
       getPreparedTargetResult: vi.fn(async () => prepared),
-      getTargetStatus: vi.fn(async () => ({ handoffId: 'handoff-1', transitionRevision: 1, status: transferStatus })),
+      getTargetStatus: vi.fn(async () => ({ status: prepared.status })),
     });
 
     await coordinateTrackedSessionHandoff({
@@ -472,20 +491,14 @@ describe('tracked session handoff coordinator', () => {
     const waitForResume = new Promise<void>((resolve) => {
       releaseWait = resolve;
     });
-    const getPreparedTargetResult = vi.fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        errorCode: 'awaiting_user_resume',
-        error: 'Prepare-target job is awaiting_user_resume',
-      })
-      .mockResolvedValueOnce(prepared);
+    const getPreparedTargetResult = vi.fn(async () => prepared);
     const { deps, calls } = createDeps({
       prepareTarget: vi.fn(async () => ({
         handoffId: 'handoff-1',
         status: status('staging_target'),
       })),
       getPreparedTargetResult,
-      getTargetStatus: vi.fn(async () => ({
+      getTargetStatus: vi.fn().mockResolvedValueOnce({
         handoffId: 'handoff-1',
         transitionRevision: 7,
         status: {
@@ -493,7 +506,7 @@ describe('tracked session handoff coordinator', () => {
           jobId: 'prepare_handoff-1',
           status: 'awaiting_user_resume',
         },
-      })),
+      }).mockResolvedValueOnce({ status: prepared.status }),
       wait: vi.fn(async () => await waitForResume),
     });
 
@@ -522,7 +535,7 @@ describe('tracked session handoff coordinator', () => {
     const result = await resultPromise;
 
     expect(result.ok).toBe(true);
-    expect(getPreparedTargetResult).toHaveBeenCalledTimes(2);
+    expect(getPreparedTargetResult).toHaveBeenCalledTimes(1);
     expect(calls).toEqual(['resume', 'confirm', 'commit-target', 'cleanup-source']);
     expect(deps.resumeTarget).toHaveBeenCalledTimes(1);
     expect(deps.confirmTarget).toHaveBeenCalledTimes(1);

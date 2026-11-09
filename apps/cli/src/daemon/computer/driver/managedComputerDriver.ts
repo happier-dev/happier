@@ -2,8 +2,8 @@ import { isAbsolute } from 'node:path';
 
 import { z } from 'zod/mini';
 
-import type { ComputerClipboardOperationV1, ComputerClipboardResultV1 } from '@happier-dev/protocol/computer/v1';
 import { ComputerAccessibilityNodeV1Schema, ComputerCaptureGeometryV1Schema, computerTargetKeyV1 } from '@happier-dev/protocol/computer/v1';
+import type { ComputerClipboardOperationV1, ComputerClipboardResultV1 } from '@happier-dev/protocol/computer/v1';
 import type { ComputerAccessibilityNodeV1, ComputerCaptureGeometryV1, ComputerTargetV1, ComputerInputOperationV1, ComputerTargetsListResponseV1, ComputerProviderIdV1, ComputerUseSettingsV1 } from '@happier-dev/protocol';
 import { createAgentDesktopComputerDriver } from './agentDesktopDriver';
 import { resolveComputerProvider, resolveComputerProviderId } from './provider';

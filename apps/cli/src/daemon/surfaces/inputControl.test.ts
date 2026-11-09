@@ -3,6 +3,34 @@ import { describe, expect, it } from 'vitest';
 import { createSurfaceInputControl } from './inputControl';
 
 describe('surface input control', () => {
+  it('admits observation-independent effects without clearing observation or bypassing human recovery and confidentiality', async () => {
+    const control = createSurfaceInputControl({ requireObservation: true });
+    const input = { requestedBy: 'agent', requiresObservation: false,
+      effect: async () => 'navigate', classifyCompletion: () => 'known' } as const;
+    expect(await control.execute(input)).toMatchObject({ ok: true, value: 'navigate' });
+    expect(control.getAdmissionFailure('agent')).toBe('observation_required');
+    await control.takeOver();
+    expect(await control.execute(input)).toMatchObject({ ok: false, errorCode: 'human_interrupted' });
+    control.handBack();
+    expect(await control.execute(input)).toMatchObject({ ok: false, errorCode: 'observation_required' });
+    expect(control.observe(control.getStatus().controlEpoch)).toBe(true);
+    expect(await control.execute({ ...input, classifyCompletion: () => 'unknown' })).toMatchObject({ ok: true });
+    expect(await control.execute(input)).toMatchObject({ ok: false, errorCode: 'uncertain' });
+    await control.beginConfidentialityHold();
+    expect(await control.execute(input)).toMatchObject({ ok: false, errorCode: 'observation_held' });
+    await control.close();
+    expect(await control.execute(input)).toMatchObject({ ok: false, errorCode: 'closed' });
+  });
+
+  it('owns the typed observation refusal while preserving human input during a hold', async () => {
+    const control = createSurfaceInputControl();
+    await control.beginConfidentialityHold();
+    expect(control.getObservationFailure('agent')).toBe('observation_held');
+    expect(control.getObservationFailure('human')).toBeUndefined();
+    expect(control.getAdmissionFailure('agent')).toBe('observation_held');
+    expect(await control.execute({ requestedBy: 'human', effect: async () => 'typed', classifyCompletion: () => 'known' }))
+      .toMatchObject({ ok: true, value: 'typed' });
+  });
   it('drains queued observations and capture before confidential input while retaining human admission', async () => {
     const control = createSurfaceInputControl();
     let finishRead: (value: string) => void = () => undefined;
@@ -14,7 +42,7 @@ describe('surface input control', () => {
     const hold = control.beginConfidentialityHold().then(() => { drained = true; });
     expect(control.isObservationHeld()).toBe(true);
     expect(control.clearConfidentialityHold()).toBe(false);
-    expect(control.getAdmissionFailure('agent')).toBe('observation_required');
+    expect(control.getAdmissionFailure('agent')).toBe('observation_held');
     expect(control.getAdmissionFailure('human')).toBeUndefined();
     expect(await control.observeWhile(async () => 'fixture-secret')).toBeUndefined();
     finishRead('fixture-secret');

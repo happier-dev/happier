@@ -1,5 +1,5 @@
 import fastify, { type FastifyInstance } from 'fastify';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { doesRunnerBrokerReadinessResponseMatchRequestV1, RunnerBrokerReadinessResponseV1Schema } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import { RunnerBrokerReadinessRequestV1Schema } from '@happier-dev/protocol/ephemeralRunner/brokerReadinessRequestV1';
 import type { RunnerBrokerReadinessRequestV1, RunnerBrokerReadinessResponseV1 } from '@happier-dev/protocol/teams';
@@ -17,7 +17,7 @@ export type RunnerBrokerReadinessLocalCurrentnessCheck = (
     modelId: RunnerBrokerReadinessRequestV1['modelId'];
   }>,
   signal: AbortSignal,
-) => Promise<'available' | 'source_unavailable' | 'update_required'>;
+) => Promise<RunnerBrokerReadinessResponseV1['readiness']>;
 
 export function registerRunnerBrokerReadinessApplication(
   app: FastifyInstance,
@@ -49,7 +49,7 @@ export function registerRunnerBrokerReadinessApplication(
           },
           abort.signal,
         );
-        if (currentness !== 'available') response = { ...response, readiness: { kind: currentness } };
+        if (currentness.kind !== 'available') response = { ...response, readiness: currentness };
       }
       abort.signal.throwIfAborted();
       return reply.code(200).send(response);

@@ -70,7 +70,7 @@ function qualifiedGroupForCanonicalRefresh(input: Readonly<{
 }
 
 describe('ConnectedServiceRefreshCoordinator canonical group distribution', () => {
-  it('can bypass cached group truth for a provider-materialization decision', async () => {
+  it('reads current group truth for every provider-materialization decision', async () => {
     const now = 3_000_000;
     let activeProfileId = 'work';
     let generation = 7;
@@ -130,16 +130,13 @@ describe('ConnectedServiceRefreshCoordinator canonical group distribution', () =
     const internals = coordinator as unknown as {
       canonicalizeTargetSelectionsForRefresh(
         inputTarget: typeof target,
-        options?: Readonly<{ requireFreshGroupState?: boolean }>,
       ): Promise<typeof target | null>;
     };
 
     await internals.canonicalizeTargetSelectionsForRefresh(target);
     activeProfileId = 'backup';
     generation = 8;
-    const current = await internals.canonicalizeTargetSelectionsForRefresh(target, {
-      requireFreshGroupState: true,
-    });
+    const current = await internals.canonicalizeTargetSelectionsForRefresh(target);
 
     expect(current?.bindings).toContainEqual({
       serviceId: 'happier.agent.codex/openai-codex',

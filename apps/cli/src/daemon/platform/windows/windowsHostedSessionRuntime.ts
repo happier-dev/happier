@@ -1,3 +1,4 @@
+import { withTerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import type { Metadata } from '@/api/types';
 import { randomBytes } from 'node:crypto';
 import { DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME, normalizeWindowsTerminalWindowName as normalizeProtocolWindowsTerminalWindowName } from '@happier-dev/protocol/sessions/metadata/windowsTerminalWindowName';
@@ -97,8 +98,7 @@ export function buildWindowsHostedTerminalArgs(params: {
   launchCorrelation?: string;
   fallbackReason?: string;
 }): string[] {
-  return [
-    ...params.baseArgs,
+  return withTerminalRuntimeFlags(params.baseArgs, [
     '--happy-terminal-mode',
     params.actualMode,
     '--happy-terminal-requested',
@@ -119,7 +119,7 @@ export function buildWindowsHostedTerminalArgs(params: {
     ...(typeof params.fallbackReason === 'string' && params.fallbackReason.trim().length > 0
       ? ['--happy-terminal-fallback-reason', params.fallbackReason]
       : []),
-  ];
+  ]);
 }
 
 export function buildWindowsHostedTerminalAttachment(params: {

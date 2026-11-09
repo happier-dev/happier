@@ -83,7 +83,7 @@ describe('connectedServiceAuthSwitchOutcome', () => {
     expect(withoutProof.errorCode).toBe('provider_adoption_unproven');
   });
 
-  it('never reports adoption when the desired revision is missing or provider proof names another revision', () => {
+  it('never reports adoption when the actual revision is missing or provider proof names another revision', () => {
     const unknownRevision = buildConnectedServiceAuthGroupCommittedGenerationFact({
       decisionId: 'old-shape',
       provenance: 'reconciliation',
@@ -116,7 +116,7 @@ describe('connectedServiceAuthSwitchOutcome', () => {
         proof: { status: 'verified', source: 'provider_read', credentialRevision: null },
       },
       observedAfterApplyTarget: unknownRevision.decisionCommittedTarget,
-    })).toMatchObject({ reconciliationDisposition: 'failed', errorCode: 'credential_revision_unproven' });
+    })).toMatchObject({ reconciliationDisposition: 'failed', errorCode: 'credential_revision_missing' });
 
     expect(finalizeConnectedServiceAuthGenerationApplication({
       sessionId: 'wrong',
@@ -132,5 +132,21 @@ describe('connectedServiceAuthSwitchOutcome', () => {
       },
       observedAfterApplyTarget: wrongRevision.decisionCommittedTarget,
     })).toMatchObject({ reconciliationDisposition: 'failed', errorCode: 'credential_revision_mismatch' });
+  });
+
+  it.each([null, 'csr_aaaaaaaaaaaaaaaaaaaaaa'])('accepts current same-account proof after commit revision %s', (revision) => {
+    const committed = buildConnectedServiceAuthGroupCommittedGenerationFact({ decisionId: 'refresh', provenance: 'manual',
+      decisionCommittedTarget: { serviceId: 'openai-codex', groupId: 'team', profileId: 'same', generation: 9,
+        credentialRevision: revision } });
+    const adopted = { ...committed.decisionCommittedTarget, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+      proof: { status: 'verified' as const, source: 'provider_read', credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' } };
+    expect(finalizeConnectedServiceAuthGenerationApplication({ sessionId: 'current', committedGeneration: committed,
+      normalizedAtApplyTarget: committed.decisionCommittedTarget, providerAdoptedTarget: adopted,
+      observedAfterApplyTarget: committed.decisionCommittedTarget })).toMatchObject({
+      reconciliationDisposition: 'converged', errorCode: null, providerAdoptedTarget: adopted,
+    });
+    expect(finalizeConnectedServiceAuthGenerationApplication({ sessionId: 'replaced', committedGeneration: committed,
+      normalizedAtApplyTarget: committed.decisionCommittedTarget, providerAdoptedTarget: adopted,
+      observedAfterApplyTarget: { ...adopted, profileId: 'other' } })).toMatchObject({ reconciliationDisposition: 'superseded_after_apply' });
   });
 });

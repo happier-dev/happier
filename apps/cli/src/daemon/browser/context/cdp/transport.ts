@@ -11,6 +11,8 @@ import type { BrowserSidecarCdpCommandScope } from '../../sidecar/controlAdapter
 export type BrowserContextCdpPageHandle = Readonly<{
     targetId: string;
     sessionId?: string;
+    /** Profile bound to this capture's page, retained only in daemon context state. */
+    profileId?: string;
 }>;
 
 export type BrowserContextCdpTransport = Readonly<{

@@ -60,11 +60,10 @@ it('opens owner metadata only for creation correspondence while retaining fresh 
     signingKeyFingerprint: null, contentKeyFingerprint: null }));
   app.get('/v2/account/settings', async () => ({ content: null, version: 1 }));
   app.get('/v1/access-keys/session/machine', async () => ({ accessKey: { id: 'existing' } }));
-  app.get('/v1/machines/machine/access', async (_request, reply) => access ? {
-    machineId: 'machine', custodian: { accountId: 'alice', displayName: 'Custodian' },
+  app.get('/v1/machines/machine', async (_request, reply) => access ? { machine: {
+    id: 'machine', installationId: 'installation', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
     access: { custodian: { accountId: 'alice', displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
-    canManage: false, grants: [], ownDirectGrant: true, ownAccessSources: [],
-  } : reply.code(403).send({ kind: 'refused', code: 'access_denied' }));
+  } } : reply.code(403).send({ kind: 'refused', code: 'access_denied' }));
   app.post('/v1/machines/machine/admission/verify', async (request, reply) => {
     // The Home HTTP service is the boundary; signing and verification stay real.
     const body = request.body as { context: SocketRpcMachineAdmissionContextV1;
@@ -93,10 +92,10 @@ it('opens owner metadata only for creation correspondence while retaining fresh 
       }) };
     expect(await verifyRequesterSessionCredentialBinding(binding), JSON.stringify(responses)).toBe(true);
     console.info('single binding HTTP reads', { profile: requests.filter(path => path === '/v1/account/profile').length,
-      access: requests.filter(path => path === '/v1/machines/machine/access').length,
+      access: requests.filter(path => path === '/v1/machines/machine').length,
       signed: requests.filter(path => path === '/v1/machines/machine/admission/verify').length });
     expect(requests.filter(path => path === '/v1/account/profile')).toHaveLength(1);
-    expect(requests.filter(path => path === '/v1/machines/machine/access')).toHaveLength(1);
+    expect(requests.filter(path => path === '/v1/machines/machine')).toHaveLength(1);
     expect(requests.filter(path => path === '/v1/machines/machine/admission/verify')).toHaveLength(2);
     expect(materialReads).toBe(0);
     const phaseLog = vi.spyOn(logger, 'debug').mockImplementation(() => {});
@@ -123,7 +122,7 @@ it('opens owner metadata only for creation correspondence while retaining fresh 
     expect(await pendingBinding).toBe(false);
     // Revocation must be decided by the fresh second signed proof, even though
     // its unchanged discovery context came from the admitted first proof.
-    expect(requests.filter(path => path === '/v1/machines/machine/access')).toHaveLength(1);
+    expect(requests.filter(path => path === '/v1/machines/machine')).toHaveLength(1);
     expect(requests.filter(path => path === '/v1/machines/machine/admission/verify')).toHaveLength(2);
     access = true;
     expect(requests).toEqual(expect.arrayContaining(['/v1/account/profile', '/v1/account/encryption/currentness',
@@ -198,11 +197,10 @@ it.each([
   app.get('/v1/account/profile', async () => ({ id: 'bob' }));
   app.get('/v1/account/encryption/currentness', async () => ({ mode, version: 1, updatedAt: 1,
     signingKeyFingerprint: null, contentKeyFingerprint: null }));
-  app.get('/v1/machines/machine/access', async (_request, reply) => current ? {
-    machineId: 'machine', custodian: { accountId: 'alice', displayName: 'Custodian' },
+  app.get('/v1/machines/machine', async (_request, reply) => current ? { machine: {
+    id: 'machine', installationId: 'installation', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
     access: { custodian: { accountId: 'alice', displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
-    canManage: false, grants: [], ownDirectGrant: true, ownAccessSources: [],
-  } : reply.code(403).send({ kind: 'refused', code: 'access_denied' }));
+  } } : reply.code(403).send({ kind: 'refused', code: 'access_denied' }));
   app.post('/v1/machines/machine/admission/verify', async (request, reply) => {
     const body = request.body as { context: SocketRpcMachineAdmissionContextV1;
       purpose: { kind: 'requester_session_currentness'; sessionId: string };
@@ -276,13 +274,13 @@ it.each([
         const verificationReads = sessionReads();
         console.info('requester preparation HTTP reads', { scenario, invocation, session: verificationReads,
           profile: requests.filter(path => path === 'GET /v1/account/profile').length,
-          access: requests.filter(path => path === 'GET /v1/machines/machine/access').length,
+          access: requests.filter(path => path === 'GET /v1/machines/machine').length,
           signed: requests.filter(path => path === 'POST /v1/machines/machine/admission/verify').length,
           encryption: requests.filter(path => path === 'GET /v1/account/encryption/currentness').length });
         expect(verificationReads).toBeGreaterThan(0);
         expect(requests.filter(path => !path.startsWith('GET ') && path !== 'POST /v1/machines/machine/admission/verify')).toEqual([]);
         expect(requests.filter(path => path === 'GET /v1/account/profile')).toHaveLength(verificationReads);
-        expect(requests.filter(path => path === 'GET /v1/machines/machine/access')).toHaveLength(verificationReads);
+        expect(requests.filter(path => path === 'GET /v1/machines/machine')).toHaveLength(verificationReads);
         expect(requests.filter(path => path === 'POST /v1/machines/machine/admission/verify')).toHaveLength(2 * verificationReads);
         if (scenario === 'spawn preparation' && invocation === 1) {
           // Built-in Role sources only read Artifacts and captured Settings. No

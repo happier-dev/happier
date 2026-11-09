@@ -14,7 +14,7 @@ const roots: string[] = [];
 afterEach(async () => { vi.useRealTimers(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 describe('machine vitals alert lifecycle', () => {
-  it('persists transitions before delivery, restores without duplicate fire, applies metadata changes, and retires demand-free', async () => {
+  it('suppresses within one daemon lifetime, starts fresh after restart, applies metadata changes, and retires demand-free', async () => {
     vi.useFakeTimers();
     const initialTime = Date.UTC(2026, 9, 10);
     vi.setSystemTime(initialTime);
@@ -40,7 +40,7 @@ describe('machine vitals alert lifecycle', () => {
     let history = await createMinuteHistoryStore({ directory });
     let sampler = createMachineVitalsSampler({ readers: reader, historyStore: history, monotonicMs: () => Date.now() - initialTime });
     const deliveries: MachineVitalsAlertTransitionV1[] = [];
-    // Notification delivery is an outward boundary; verify its durable precondition.
+    // Notification delivery is an outward boundary; suppression is already in memory.
     const notify = async (transition: MachineVitalsAlertTransitionV1) => {
       expect(MachineVitalsAlertEpisodeV1Schema.parse(transition.episode)).toEqual(transition.episode);
       expect(history.alerts()).toContainEqual(transition.episode);
@@ -53,7 +53,7 @@ describe('machine vitals alert lifecycle', () => {
     await alerts.stop();
     await sampler.stop();
     expect(deliveries.map(value => value.episode.state)).toEqual(['fired']);
-    // A continuously active episode must outlive display history, including daemon downtime.
+    // Owner-approved deletion: a new daemon has no persisted alert-suppression state.
     vi.setSystemTime(initialTime + 8 * 86_400_000);
     history = await createMinuteHistoryStore({ directory });
     sampler = createMachineVitalsSampler({ readers: reader, historyStore: history, monotonicMs: () => Date.now() - initialTime });
@@ -61,12 +61,12 @@ describe('machine vitals alert lifecycle', () => {
     await sampler.start();
     await vi.advanceTimersByTimeAsync(60_000);
     await sampler.start();
-    expect(deliveries).toHaveLength(1);
+    expect(deliveries).toHaveLength(2);
     pressure = 'calm';
     await vi.advanceTimersByTimeAsync(60_000);
     await sampler.start();
     await alerts.stop();
-    expect(deliveries.map(value => value.episode.state)).toEqual(['fired', 'recovered']);
+    expect(deliveries.map(value => value.episode.state)).toEqual(['fired', 'fired', 'recovered']);
     enabled = false;
     await policy.reload();
     alerts = createMachineVitalsAlerts({ sampler, historyStore: history, policy, notify });
@@ -76,9 +76,9 @@ describe('machine vitals alert lifecycle', () => {
     await alerts.stop();
     await vi.advanceTimersByTimeAsync(60_000);
     await sampler.stop();
-    expect(deliveries).toHaveLength(2);
+    expect(deliveries).toHaveLength(3);
     expect(sampler.latest()?.intervalMs).toBe(60_000);
-    expect(history.alerts().map(value => value.state)).toEqual(['recovered']);
+    expect(history.alerts().map(value => value.state)).toEqual(['fired', 'recovered']);
     policy.stop();
   });
 });

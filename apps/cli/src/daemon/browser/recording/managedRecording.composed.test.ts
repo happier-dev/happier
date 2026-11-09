@@ -7,7 +7,7 @@ import { Writable } from 'node:stream';
 import { promisify } from 'node:util';
 
 import { createActionExecutor, FeaturesResponseSchema, type ActionExecuteResult, type ActionExecutorDeps, type ActionId } from '@happier-dev/protocol';
-import { DaemonBrowserRecordingStopResultV1Schema } from '@happier-dev/protocol/browser/recording/v1';
+import { DaemonBrowserRecordingStartResultV1Schema, DaemonBrowserRecordingStopResultV1Schema } from '@happier-dev/protocol/browser/recording/v1';
 import { resolveBrowserRecordingCaptureProfile } from '@happier-dev/protocol/browser/recording/captureProfiles';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as persistence from '@/persistence';
@@ -20,7 +20,7 @@ import { createCliBrowserRuntimeActionExecutor } from '../actions/controlTranspo
 import { createBrowserCdpScreencastProducer } from '../capture/cdpScreencast';
 import type { BrowserSidecarCdpEventSubscriber } from '../sidecar/controlAdapter';
 import { createBrowserRecordingCdpScreencastTransport } from './adapters/cdpScreencastTransport';
-import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from './adapters/ffmpegStreamEncoder';
+import { createFfmpegBrowserRecordingStreamFrameEncoderFactory } from '../../recording/ffmpegStreamEncoder';
 import { createBrowserRecordingDaemonRuntime } from './runtime';
 import { resolveBrowserRecordingStartContext } from './startContext';
 import { resolveFfmpegStaticBinaryPath } from '../../runtime/ffmpegStatic';
@@ -123,21 +123,19 @@ async function setup(options: { startupFrame?: boolean; missingEncoder?: boolean
     const app = createDaemonControlApp({ getChildren: () => [], machineId: 'machine',
         stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'session' }),
         requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'fixture-control', runtimeActionExecute });
-    vi.spyOn(persistence, 'readDaemonState').mockResolvedValue({ pid: 123, httpPort: 12345,
+    // Use the actual loopback HTTP boundary: daemon control can use bundled Undici
+    // independently of global fetch. Recording assertions and routing stay unchanged.
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    vi.spyOn(persistence, 'readDaemonState').mockResolvedValue({ pid: 123, httpPort: Number(new URL(address).port),
         controlToken: 'fixture-control', startedAt: 1, startedWithCliVersion: '0.3.0' });
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
-        const response = await app.inject({ method: 'POST', url: new URL(String(url)).pathname,
-            headers: init?.headers as Record<string, string>, payload: String(init?.body) });
-        return new Response(response.body, { status: response.statusCode });
-    });
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
         runtimeActionExecute: createCliBrowserRuntimeActionExecutor({ sessionId: 'session' }),
     }));
-    const execute = (id: ActionId, input: unknown) => executor.execute(id, input, {
-        surface: 'agent', defaultSessionId: 'session', bypassApprovals: true,
+    const execute = (id: ActionId, input: unknown, sessionId = 'session') => executor.execute(id, input, {
+        surface: 'agent', defaultSessionId: sessionId, bypassApprovals: true,
     });
     return { execute, frame, commands, directory, encoded, control, attachments, setNow: (value: number) => { now = value; },
-        dispose: async () => { recording.stop(); await producer.dispose(); await app.close(); await rm(directory, { recursive: true, force: true }); } };
+        dispose: async () => { await recording.stop(); await producer.dispose(); await app.close(); await rm(directory, { recursive: true, force: true }); } };
 }
 
 const start = { browserSessionId: 'session', viewId: 'view', profileId: 'profile', targetKind: 'externalUrl',
@@ -153,6 +151,42 @@ async function startRecording(runtime: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('managed recording Action → private daemon IPC → capture → Session media', () => {
+    it('accepts returned recording operands in their Session and explains another Session’s refusal', async () => {
+        const runtime = await setup();
+        try {
+            const { recordingId: _requestedId, ...request } = start;
+            const started = await runtime.execute('browser.recording.start', request);
+            expect(started).toMatchObject({ ok: true, result: { status: 'started' } });
+            if (!started.ok) throw new Error('Start refused');
+            const result = DaemonBrowserRecordingStartResultV1Schema.parse(started.result);
+            if (result.status !== 'started') throw new Error('Start unavailable');
+            const { recordingId } = result.recording;
+            runtime.frame();
+            for (const [action, input] of [
+                ['browser.recording.status', { recordingId }],
+                ['browser.recording.stop', { recordingId, navigationGenerationEnd: 0 }],
+            ] as const) {
+                expect(await runtime.execute(action, input, 'another-session'))
+                    .toMatchObject({ ok: false, errorCode: 'permission_denied' });
+            }
+            expect(await runtime.execute('browser.recording.status', { recordingId }))
+                .toMatchObject({ ok: true, result: { recordingId, status: 'recording' } });
+            expect(await runtime.execute('browser.recording.stop', { recordingId, navigationGenerationEnd: 0 }))
+                .toMatchObject({ ok: true, result: { status: 'finalized', recording: { frameCount: 1 } } });
+        } finally { await runtime.dispose(); }
+    });
+
+    it('reports a canceled recording as inactive when an agent subsequently stops it', async () => {
+        const runtime = await setup();
+        try {
+            const recordingId = await startRecording(runtime);
+            expect(await runtime.execute('browser.recording.cancel', { recordingId, reason: 'user_canceled' }))
+                .toMatchObject({ ok: true, result: { status: 'canceled' } });
+            expect(await runtime.execute('browser.recording.stop', { recordingId, navigationGenerationEnd: 0 }))
+                .toMatchObject({ ok: true, result: { status: 'unavailable', reason: { code: 'browser_recording_not_active' } } });
+        } finally { await runtime.dispose(); }
+    });
+
     it.each(['captureStop', 'transcriptCommit'] as const)('keeps an admitted Stop prefix when private entry begins during %s', async phase => {
         const entered = createDeferred<void>();
         const release = createDeferred<void>();

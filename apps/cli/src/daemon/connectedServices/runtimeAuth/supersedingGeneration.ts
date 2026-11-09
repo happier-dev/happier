@@ -1,4 +1,5 @@
 import type { ConnectedAccountServiceKey } from '@happier-dev/protocol';
+import type { ConnectedServiceProviderAdoptedGenerationTarget } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import { ConnectedServiceAuthGroupGenerationConsumer } from "@/daemon/connectedServices/accountGroups/generation/ConnectedServiceAuthGroupGenerationConsumer";
 import { resolveCommittedGenerationFromRuntimeAuthRecovery } from "@/daemon/connectedServices/sessionAuthSwitch/resolveCommittedGenerationFromRuntimeAuthRecovery";
 
@@ -37,11 +38,11 @@ export async function settleSupersedingRuntimeAuthGenerationForSource(
         Awaited<
           ReturnType<ConnectedServiceAuthGroupGenerationConsumer['consume']>
         >,
-        'outcome'
+        'outcome' | 'resultsBySessionId'
       >
     >;
   }>,
-): Promise<void> {
+): Promise<ConnectedServiceProviderAdoptedGenerationTarget> {
   const resolved = resolveCommittedGenerationFromRuntimeAuthRecovery({
     serviceId: input.serviceId,
     groupId: input.groupId,
@@ -83,4 +84,13 @@ export async function settleSupersedingRuntimeAuthGenerationForSource(
       },
     );
   }
+  const recipient = consumption.resultsBySessionId[input.sessionId];
+  const adopted = recipient?.providerAdoptedTarget;
+  if (recipient?.reconciliationDisposition !== 'converged' || !adopted
+    || adopted.serviceId !== resolved.committedGeneration.decisionCommittedTarget.serviceId
+    || adopted.groupId !== resolved.committedGeneration.decisionCommittedTarget.groupId) {
+    const code = 'connected_service_runtime_auth_superseding_generation_target_not_settled';
+    throw Object.assign(new Error(code), { code, retryable: true });
+  }
+  return adopted;
 }

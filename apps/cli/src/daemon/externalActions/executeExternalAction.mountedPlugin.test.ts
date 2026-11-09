@@ -26,7 +26,10 @@ import { createPluginAccountBundledSelectionV1 } from '@happier-dev/protocol/plu
 import { readCurrentMountedAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
 
 // Network and on-disk machine credentials are the only replaced boundaries.
-vi.mock('axios', () => ({ default: { post: vi.fn(), get: vi.fn() } }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, post: vi.fn(), get: vi.fn() } };
+});
 
 const disposers: Array<() => Promise<void>> = [];
 afterEach(async () => {

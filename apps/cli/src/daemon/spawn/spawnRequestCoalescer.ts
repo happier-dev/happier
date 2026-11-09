@@ -66,6 +66,7 @@ function normalizeCapabilitySelectionForFingerprint(value: SpawnSessionOptions['
     ...(mcp ? { mcp: {
       v: mcp.v,
       managedServersEnabled: mcp.managedServersEnabled,
+      happierToolsEnabled: mcp.happierToolsEnabled ?? true,
       forceIncludeServerIds: [...mcp.forceIncludeServerIds].sort(),
       forceExcludeServerIds: [...mcp.forceExcludeServerIds].sort(),
     } } : {}),
@@ -153,6 +154,7 @@ function buildSpawnSemanticFingerprint(options: SpawnSessionOptions): Json {
     manager: options.manager ?? null,
     identity: options.identity ?? null,
     memoryEnabled: options.memoryEnabled ?? null,
+    approvalProfileId: options.approvalProfileId ?? null,
     authoringOriginHash: options.authoringOrigin === undefined ? null : sha256Hex(stableJsonStringify(options.authoringOrigin)),
     initialSessionRolesHash: options.initialSessionRolesV1 === undefined
       ? null
@@ -226,15 +228,7 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
   return { kind: 'new', key: `new:${sha256Hex(stableJsonStringify(buildSpawnSemanticFingerprint(options)))}` };
 }
 
-function isSpawnWebhookTimeoutResult(result: SpawnSessionResult): boolean {
-  return result.type === 'error' && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT;
-}
-
-export function createSpawnRequestCoalescer(params: Readonly<{
-  recentSuccessTtlMs: number;
-  pendingTimeoutTtlMs?: number;
-  nowMs?: () => number;
-}>) {
+export function createSpawnRequestCoalescer() {
   const inFlightByKey = new Map<string, {
     promise: Promise<SpawnSessionResult>;
     isAdmissionCurrent?: () => boolean;
@@ -243,44 +237,6 @@ export function createSpawnRequestCoalescer(params: Readonly<{
   const notifyChanged = () => { for (const listener of changeListeners) listener(); };
   const inFlightKeyByAuthorizationKey = new Map<string, string>();
   const serializationTailByKey = new Map<string, Promise<SpawnSessionResult>>();
-  const recentSuccessByKey = new Map<string, { result: SpawnSessionResult; atMs: number }>();
-  const pendingTimeoutByKey = new Map<string, { result: SpawnSessionResult; atMs: number }>();
-  const nowMs = params.nowMs ?? (() => Date.now());
-  const ttlMs = Math.max(0, Math.floor(Number(params.recentSuccessTtlMs)));
-  const pendingTimeoutTtlMs = Math.max(0, Math.floor(Number(params.pendingTimeoutTtlMs ?? 0)));
-
-  const tryGetRecent = (
-    map: Map<string, { result: SpawnSessionResult; atMs: number }>,
-    key: DaemonSpawnRequestKey,
-    ttl: number,
-  ): SpawnSessionResult | null => {
-    if (key.kind === 'existing' && !key.authorizationKey) return null;
-    if (ttl <= 0) return null;
-    const cached = map.get(key.key);
-    if (!cached) return null;
-    const age = nowMs() - cached.atMs;
-    if (!Number.isFinite(age) || age < 0 || age > ttl) {
-      map.delete(key.key);
-      return null;
-    }
-    return cached.result;
-  };
-
-  const recordRecentSuccess = (key: DaemonSpawnRequestKey, result: SpawnSessionResult) => {
-    if (key.kind === 'existing' && !key.authorizationKey) return;
-    if (ttlMs <= 0) return;
-    if (result.type !== 'success') return;
-    if (key.kind === 'new' && !normalizeNonEmptyString(result.sessionId)) return;
-    recentSuccessByKey.set(key.key, { result, atMs: nowMs() });
-    pendingTimeoutByKey.delete(key.key);
-  };
-
-  const recordPendingTimeout = (key: DaemonSpawnRequestKey, result: SpawnSessionResult) => {
-    if (key.kind !== 'new') return;
-    if (pendingTimeoutTtlMs <= 0) return;
-    if (!isSpawnWebhookTimeoutResult(result)) return;
-    pendingTimeoutByKey.set(key.key, { result, atMs: nowMs() });
-  };
 
   return {
     readInFlightRequests: () => [...inFlightByKey.values()].map(request => request.promise),
@@ -293,12 +249,6 @@ export function createSpawnRequestCoalescer(params: Readonly<{
       work: () => Promise<SpawnSessionResult>,
       isAdmissionCurrent?: () => boolean,
     ): Promise<SpawnSessionResult> => {
-      const recentSuccess = tryGetRecent(recentSuccessByKey, key, ttlMs);
-      if (recentSuccess) return recentSuccess;
-
-      const pendingTimeout = tryGetRecent(pendingTimeoutByKey, key, pendingTimeoutTtlMs);
-      if (pendingTimeout) return pendingTimeout;
-
       const existing = inFlightByKey.get(key.key);
       // A fresh Resume must wait for retired work through the existing Session
       // lane, then run with its own admission instead of inheriting a refusal.
@@ -328,10 +278,7 @@ export function createSpawnRequestCoalescer(params: Readonly<{
               // A failed predecessor must not poison subsequent exact requests.
             }
           }
-          const result = await work();
-          recordRecentSuccess(key, result);
-          recordPendingTimeout(key, result);
-          return result;
+          return await work();
         } finally {
           const ownsInFlightKey = inFlightByKey.get(key.key)?.promise === promise;
           if (ownsInFlightKey) {

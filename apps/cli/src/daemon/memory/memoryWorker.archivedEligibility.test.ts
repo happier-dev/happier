@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fetchMemorySessionListVisibilityFixture } from './testkit/startMemoryWorker';
 
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
 import { createDeferred } from '@/testkit/async/deferred';
@@ -104,7 +105,7 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
       calls.push(args);
       return handler(args);
     });
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage,
       fetchSessionById: vi.fn(async () => ({})),
     }));
@@ -486,7 +487,7 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
       archivedAt: null,
     }));
     const fetchSessionsPage = vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false }));
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionsPage, fetchSessionById }));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture, fetchSessionsPage, fetchSessionById }));
     vi.doMock('@/session/systemRecords/memory/fetchMemorySystemRecords', () => ({
       fetchMemorySummaryShardSystemRecords: vi.fn(async () => []),
     }));
@@ -543,7 +544,7 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
         ? { sessions: [sessionRow('deep-kept', { archivedAt: null })], nextCursor: null, hasNext: false }
         : { sessions: [], nextCursor: 'active-2', hasNext: true };
     });
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage,
       fetchSessionById,
     }));
@@ -611,7 +612,7 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
   it('aborts and waits for in-flight indexing before purging a removed Session', async () => {
     const transcriptStarted = createDeferred();
     let transcriptSignal: AbortSignal | undefined;
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false })),
       fetchSessionById: vi.fn(async () => sessionRow('removed-in-flight', { archivedAt: null })),
     }));
@@ -678,7 +679,7 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
       content: { type: 'text' as const, text: 'archived explicit history' },
       meta: null,
     }]);
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false })),
       fetchSessionById: vi.fn(async () => sessionRow('archived-explicit', { archivedAt: 9_000 })),
     }));
@@ -711,7 +712,7 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
         content: { t: 'plain', v: { role: row.role, content: row.content } },
       })), hasMore: false, nextBeforeSeq: null, nextAfterSeq: null })),
     }));
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false })),
       fetchSessionById: vi.fn(async () => sessionRow('old-explicit', {
         seq: rows.at(-1)!.seq,
@@ -757,7 +758,7 @@ describe('memoryWorker archived eligibility and derived-index removal', () => {
           text: sessionId === 'old-bulk' ? 'excluded obsolete bulk history' : 'admitted garnet bulk history' } } },
       }], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null })),
     }));
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       fetchSessionsPage: vi.fn(async ({ archivedOnly }: SessionsPageArgs) => ({
         sessions: archivedOnly
           ? []

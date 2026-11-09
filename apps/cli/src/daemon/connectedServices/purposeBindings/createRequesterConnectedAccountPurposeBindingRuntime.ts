@@ -7,7 +7,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { createAccountSettingsConnectedAccountSecrets, createQualifiedConnectedAccountDaemonPersistence } from '../qualifiedConnectedAccountDaemonPersistence';
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { createConnectedAccountDaemonConfigurationOwner } from '../ConnectedAccountDaemonRuntime';
-import { createActiveAccountSettingsConnectedAccountPurposeBindingStore, type ConnectedAccountPurposeBindingStore } from './ConnectedAccountPurposeBindingOwner';
+import { createActiveAccountSettingsConnectedAccountPurposeBindingStore } from './ConnectedAccountPurposeBindingOwner';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from './createDaemonConnectedAccountPurposeBindingRuntime';
 
 /** One requester-qualified purpose composition for finite Actions and retained Sessions. */
@@ -18,7 +18,6 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
   reloadController: Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'tryAcquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'>;
   getAccountEncryptionMode: ApiClient['getAccountEncryptionMode'];
   isCurrent(signal?: AbortSignal): Promise<boolean>;
-  subscribe?: ConnectedAccountPurposeBindingStore['subscribe'];
   signal?: AbortSignal;
   resolveQualifiedConnectedAccountV4Support: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['resolveQualifiedConnectedAccountV4Support'];
   allowNativeAccountCredentials: boolean;
@@ -34,8 +33,7 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
     signal?.throwIfAborted();
     return result;
   };
-  const store = createActiveAccountSettingsConnectedAccountPurposeBindingStore({ credentials, operationContext,
-    ...(input.subscribe ? { subscribe: input.subscribe } : {}) });
+  const store = createActiveAccountSettingsConnectedAccountPurposeBindingStore({ credentials, operationContext });
   const persistence = createQualifiedConnectedAccountDaemonPersistence({ credentials,
     getAccountEncryptionMode: input.getAccountEncryptionMode, operationContext,
     secrets: createAccountSettingsConnectedAccountSecrets({ expectedScopeKey: runWithServerHttpBaseUrl(operationContext.serverHttpBaseUrl,
@@ -49,7 +47,7 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
     configuration: persistence.configuration, configurationOwner });
   const assertCurrent = async (signal?: AbortSignal) => {
     signal?.throwIfAborted();
-    if (!await input.isCurrent(signal)) throw Object.assign(new Error('requester_account_context_unavailable'), { code: 'requester_account_context_unavailable' });
+    if (input.signal?.aborted || !operationContext.readSnapshot()) throw Object.assign(new Error('requester_account_context_unavailable'), { code: 'requester_account_context_unavailable' });
   };
   const qualifiedConnectedAccountApi = {
     readGroup: async ({ service, groupId, signal }: Parameters<typeof readQualifiedConnectedAccountGroupV4>[0]['group'] & { signal?: AbortSignal }) => {
@@ -58,7 +56,8 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
     },
     listAccounts: async ({ service, signal }: Pick<Parameters<typeof listQualifiedConnectedAccountsV4>[0], 'service' | 'signal'>) => {
       await assertCurrent(signal);
-      return await withHome(() => listQualifiedConnectedAccountsV4({ token: credentials.token, service, ...(signal ? { signal } : {}) }));
+      return await withHome(() => listQualifiedConnectedAccountsV4({ token: credentials.token, service,
+        requestPurpose: 'connected-accounts:requester-qualification', ...(signal ? { signal } : {}) }));
     },
   };
   const purposes = createDaemonConnectedAccountPurposeBindingRuntime({ establishedRuntimeOwner: established,
@@ -68,6 +67,11 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
     resolveQualifiedConnectedAccountV4Support: input.resolveQualifiedConnectedAccountV4Support,
     resolveConnectedAccountEndpoints: async request => await withHome(() => established.readConfiguredEndpoints(request)),
     qualifiedApi: {
+      listAccountsForServices: async (services, signal) => {
+        await assertCurrent(signal);
+        return await withHome(() => listQualifiedConnectedAccountsV4({ token: credentials.token, services, signal,
+          requestPurpose: 'connected-accounts:requester-coordinator' }));
+      },
       listAccounts: async (service, signal) => await qualifiedConnectedAccountApi.listAccounts({ service, signal }),
       listGroups: async (service, signal) => {
         await assertCurrent(signal);

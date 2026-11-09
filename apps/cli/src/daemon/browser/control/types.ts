@@ -45,10 +45,33 @@ export type BrowserDaemonControlViewIdentity = Readonly<{
   viewId: string;
 }>;
 
+/** Session-owned Actions need profile custody without manufacturing a control command. */
+export type BrowserExistingProfile = Readonly<{
+  profileId?: string;
+  adapterKind: BrowserSemanticAdapterKindV1;
+}>;
+
+export type BrowserCommandAccessTarget = BrowserCommandV1 | Readonly<{
+  commandId: string;
+  browserSessionId: string;
+  /** Captured provenance, distinct from selecting a profile for a new view. */
+  existingProfile?: BrowserExistingProfile;
+}>;
+
+export type BrowserDaemonViewWatch = Readonly<{
+  browserSessionId: string;
+  knownViewIds: readonly string[];
+  signal?: AbortSignal;
+  scope?: BrowserCommandScope;
+}>;
+
 export type BrowserDaemonControlAdapter = Readonly<{
   adapterKind: BrowserDaemonControlAdapterKind;
   ownsView(input: BrowserDaemonControlViewIdentity): boolean;
-  listViews?(browserSessionId: string): readonly BrowserDaemonViewV1[];
+  listViews?(browserSessionId: string, scope?: BrowserCommandScope): readonly BrowserDaemonViewV1[];
+  /** Profile custody also governs controller effects executed outside native dispatch. */
+  getCommandAccessFailure?(command: BrowserCommandAccessTarget, scope?: BrowserCommandScope): Extract<BrowserCommandDispatchResultV1, { status: 'failed' }> | undefined;
+  subscribeViewLifecycle?(listener: (event: BrowserDaemonControlViewIdentity) => void): () => void;
   supportsOpenView(command: Extract<BrowserCommandV1, { kind: 'openView' }>): boolean;
   dispatchCommand(command: BrowserCommandV1, scope?: BrowserCommandScope): Promise<BrowserCommandDispatchResultV1> | BrowserCommandDispatchResultV1;
 }>;
@@ -58,7 +81,9 @@ export type BrowserDaemonControlBroker = Readonly<{
   ownsView(input: BrowserDaemonControlViewIdentity): boolean;
   dispatchCommand(command: BrowserCommandV1, scope?: BrowserCommandScope): Promise<BrowserCommandDispatchResultV1>;
   hasExecutableAdapters(): boolean;
-  listViews(browserSessionId: string): readonly BrowserDaemonViewV1[];
+  listViews(browserSessionId: string, scope?: BrowserCommandScope): readonly BrowserDaemonViewV1[];
+  getCommandAccessFailure(command: BrowserCommandAccessTarget, scope?: BrowserCommandScope): Extract<BrowserCommandDispatchResultV1, { status: 'failed' }> | undefined;
+  watchViews(input: BrowserDaemonViewWatch): Promise<void>;
 }>;
 
 export function browserCommandDispatchFailure(
@@ -70,7 +95,7 @@ export function browserCommandDispatchFailure(
     retryable?: boolean;
     completion?: 'known' | 'unknown';
   }>,
-): BrowserCommandDispatchResultV1 {
+): Extract<BrowserCommandDispatchResultV1, { status: 'failed' }> {
   return {
     v: 1,
     commandId: input.commandId,

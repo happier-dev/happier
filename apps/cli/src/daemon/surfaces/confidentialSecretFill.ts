@@ -12,17 +12,15 @@ import type { SavedSecretMaterializerV1, SavedSecretResolutionFailureStatusV1 } 
 import { refreshSavedSecretCatalogForOperation, savedSecretOperationAdmissionStatus } from "@/settings/secrets/hydrateSavedSecretCatalog";
 import { acquireSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
-
 import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
 
-/** A verified physical target retained only by the current confidential invocation. */
+/** A physical target retained only by the current invocation; delivery owns its final proof. */
 export type ConfidentialSecretFillTarget = Readonly<{
   /** Established only by the actual managed producer, never by public request data. */
   nativeObservation?: 'not_observable';
-  recheck(): Promise<boolean>;
   isSafe?(): Promise<boolean>;
-  fill(value: Uint8Array, signal?: AbortSignal, beforeDelivery?: () => Promise<boolean>): Promise<SecretFillSettlementV1>;
-  submit?(signal?: AbortSignal, beforeDelivery?: () => Promise<boolean>): Promise<NonNullable<Extract<SecretFillSettlementV1, { status: 'filled' }>['submit']>>;
+  fill(value: Uint8Array, signal?: AbortSignal): Promise<SecretFillSettlementV1>;
+  submit?(signal?: AbortSignal): Promise<NonNullable<Extract<SecretFillSettlementV1, { status: 'filled' }>['submit']>>;
   /** Cleanup does not release observation while the filled document can reveal material. */
   finish(): Promise<void>;
 }>;
@@ -46,6 +44,7 @@ type ConfidentialMaterialOwner = Readonly<{
   secretSources?: TargetSecretSourcesV1;
 }>;
 
+/** Both private delivery forms consume exactly the same catalog/mode/revision decision. */
 function resolvePrivateChoice(materializer: SavedSecretMaterializerV1,
   choice: PrivateSecretChoiceV1, mode: 'plain' | 'e2ee'):
   Readonly<{ status: 'ready'; value: string }> | Extract<SecretFillSettlementV1, { status: 'refused' }> {
@@ -138,7 +137,6 @@ export function createConfidentialSecretFillExecutor(input: ConfidentialMaterial
 }>): NonNullable<ActionExecutorDeps['confidentialSecretFill']> {
   return async (args) => {
     const machineId = typeof input.machineId === 'function' ? input.machineId() : input.machineId;
-    if (args.context.authority !== 'present_user') return refused('approval_required');
     // A personal reference is meaningful only in its deciding Account. Until a
     // requester-scoped catalog is supplied, never fall back to custodian material.
     if (args.choice.kind === 'saved'

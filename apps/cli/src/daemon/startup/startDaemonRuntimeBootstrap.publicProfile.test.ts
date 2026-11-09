@@ -1,3 +1,4 @@
+import { InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from "@/daemon/connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator";
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
@@ -5,6 +6,8 @@ import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connected
 import { createProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
 import { startDaemonRuntimeBootstrap } from './startDaemonRuntimeBootstrap';
 import { createNativePublicProfileRefreshFixture } from '../account/publicProfileRefresh.testkit';
+
+const healthSwitchContext = { credentialHealthSwitchLeases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<import("@happier-dev/protocol").QualifiedConnectedAccountServiceRef>(), };
 
 describe('native public-profile bootstrap composition', () => {
   const accounts: Awaited<ReturnType<typeof createNativePublicProfileRefreshFixture>>[] = [];
@@ -41,7 +44,7 @@ describe('native public-profile bootstrap composition', () => {
       publishDaemonState: () => true, happyHomeDir: '/tmp/profile-bootstrap-home', activeServerDir: '/tmp/profile-bootstrap-server',
       filesystemAccessPolicy: { kind: 'osUser' as const }, publicReleaseChannel: 'dev' as const,
       connectedServicesRestartRequestedPids: new Set<number>(), pidToTrackedSession: new Map(),
-      connectedServiceAuthGroupPreTurnSwitchCoordinator: { switchBeforeTurn: unsupported, applyCommittedGeneration: unsupported, applyCredentialUpdate: unsupported },
+      connectedServiceAuthGroupPreTurnSwitchCoordinator: { ...healthSwitchContext, switchBeforeTurn: unsupported, applyCommittedGeneration: unsupported, applyCredentialUpdate: unsupported },
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore: createProviderAccountUsageStore(),
       publicProfileRefresh: { signal: lifetime.signal, isCurrent: account.isCurrent, actions: account.actions },

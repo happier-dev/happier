@@ -53,6 +53,9 @@ describe('systemd user resource governor', () => {
     const readFile = vi.fn(async () => 'memory\n');
     await expect(readGuardCeilingCapability({ platform: 'darwin', execFile, readFile }))
       .resolves.toEqual({ status: 'unavailable', reason: 'not_linux' });
+    await expect(readGuardCeilingCapability({ platform: 'win32', execFile, readFile }))
+      .resolves.toEqual({ status: 'unavailable', reason: 'not_linux' });
+    expect(execFile).not.toHaveBeenCalled();
     await expect(readGuardCeilingCapability({ platform: 'linux', environment: { DBUS_SESSION_BUS_ADDRESS: 'hint' }, execFile, readFile }))
       .resolves.toEqual({ status: 'unavailable', reason: 'no_user_manager' });
     expect(readFile).not.toHaveBeenCalled();
@@ -76,6 +79,7 @@ describe('systemd user resource governor', () => {
     ['linux self-restart', 'linux', 'self-restart', true],
     ['linux manual daemon', 'linux', 'manual', true],
     ['non-linux self-restart', 'darwin', 'self-restart', false],
+    ['Windows manual daemon', 'win32', 'manual', false],
   ] as const)('selects the session governor for %s', (_label, platform, startupSource, expected) => {
     expect(shouldUseSystemdUserSessionResourceGovernor({ platform, startupSource })).toBe(expected);
   });

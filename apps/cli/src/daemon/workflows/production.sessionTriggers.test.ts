@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, admitAgentStartV1,
-  AutomationTriggerIdSchema, deriveAutomationOccurrenceKeyV1,
+  AutomationTriggerIdSchema, AutomationSourceSelectorIdV1Schema, deriveAutomationOccurrenceKeyV1, PluginJsonValueV2Schema,
   openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1,
   type WorkflowDefinitionV1,
 } from '@happier-dev/protocol';
@@ -10,6 +10,8 @@ import { createProductionWorkflowRunCoordinator, type WorkflowProductionExecutio
 import { createPlainWorkflowRunKeyCensusFixture } from './workflowRunStorage.testkit';
 import { prepareWorkflowAcceptedWorkspaceTarget } from './resolveWorkflowWorkspace';
 import type { WorkflowClaimForCoordination } from './worker';
+import { AutomationRunPluginEventTriggerEvidenceV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import { normalizeGithubWebhookDelivery } from '../../../../../packages/plugins/scm-github/src/observations/githubWebhookNormalization';
 
 const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
 const previousRunId = '1d4dd16c-d69b-4115-a3b0-e3c92f47f3bd';
@@ -85,6 +87,33 @@ function admissionHarness(prepareWorkspace: typeof prepareWorkflowAcceptedWorksp
 afterEach(() => vi.restoreAllMocks());
 
 describe('scoped workflow claim admission', () => {
+  it('settles normalized wrong-branch and deleted pushes before Environment, Source, SCM or snapshot effects', async () => {
+    const harness = admissionHarness();
+    const triggerId = AutomationTriggerIdSchema.parse('deployment-trigger');
+    for (const pushed of [{ ref: 'refs/heads/feature', after: 'b'.repeat(40) },
+      { ref: 'refs/heads/release', after: '0'.repeat(40) }]) {
+      const event = normalizeGithubWebhookDelivery({ rawBody: new TextEncoder().encode(JSON.stringify({ ...pushed,
+        before: 'a'.repeat(40), repository: { id: 77, full_name: 'acme/widgets' } })), eventType: 'push',
+        providerDeliveryId: 'push-1', receivedAtMs: 1 }).automationEvent!;
+      const base = { v: 1 as const, kind: 'pluginEvent' as const, eventRef: event.eventRef,
+        sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('9d5af559-2c82-4c22-b6a0-ecabce38a631'), occurrenceId: event.occurrenceId,
+        occurredAt: event.occurredAtMs, payload: PluginJsonValueV2Schema.parse(event.payload) };
+      const evidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse({ ...base,
+        sourceInstanceId: event.sourceInstanceId, sourceContractVersion: 1, observationReceivedAt: 1,
+        filter: { version: null, result: 'matched' } });
+      const original = claim(definition);
+      await expect(harness.coordinate({ ...original, definitionEnvelope: JSON.stringify({ t: 'plain', v: {
+        inlineDefinition: definition, workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
+        deploymentTriggers: [{ triggerId, branch: 'release' }],
+      } }), automationEvidenceEnvelope: JSON.stringify({ t: 'plain', v: evidence }),
+        automationCause: { kind: 'trigger', triggerKind: 'pluginEvent', triggerId, triggerRevision: 1,
+          occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: base }), occurredAt: 1,
+          evidence: { eventRef: event.eventRef, sourceSelectorId: base.sourceSelectorId } },
+      })).resolves.toEqual({ state: 'skipped', reason: 'filtered', admission: 'refused' });
+    }
+    expect(harness.effects).toEqual([]);
+    expect(harness.snapshots).toEqual([]);
+  });
   it('admits a manually invoked habit into its scoped destination Session', async () => {
     const harness = admissionHarness();
     await expect(harness.coordinate(claim({ ...definition, defaults: { ...definition.defaults,

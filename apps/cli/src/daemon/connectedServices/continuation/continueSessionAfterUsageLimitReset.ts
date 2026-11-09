@@ -97,6 +97,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
   recovery: SessionUsageLimitRecoveryV1;
+  resolveResumePromptMode?: () => Promise<SessionUsageLimitRecoveryV1['resumePromptMode']>;
   customResumePrompt?: string | null;
   readiness?: 'provider_ready';
   nowMs: number;
@@ -111,10 +112,9 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
     const current = currentParsed.data;
     if (isTerminal(current) || !hasSameUsageLimitRecoveryIdentity(current, recovery) || current.resetAtMs !== recovery.resetAtMs
       || !matchesAuth(current.selectedAuth, recovery.selectedAuth)) return { status: 'superseded' };
-    // An owned callback carries the authoritative mode; its metadata projection may lag.
-    if (!recovery.runtimeAuthRecoveryAttemptId && current.resumePromptMode === 'off') return { status: 'disabled' };
+    if (current.resumePromptMode === 'off') return { status: 'disabled' };
   }
-  if (recovery.resumePromptMode === 'off') return { status: 'disabled' };
+  if (!input.resolveResumePromptMode && recovery.resumePromptMode === 'off') return { status: 'disabled' };
 
   const issue = input.rawSession.latestTurnStatus === 'failed'
     ? readLatestUsageLimitFailureIssue(input.rawSession) : null;
@@ -137,15 +137,20 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   const dueAtMs = owned ? recovery.resetAtMs : recovery.nextCheckAtMs ?? recovery.resetAtMs
     ?? (recovery.status === 'paused' ? input.nowMs : null);
   if (input.readiness !== 'provider_ready' && (dueAtMs === null || input.nowMs < dueAtMs)) return { status: 'not_ready' };
+  // The wait may outlive a policy change. A failed policy read remains retryable
+  // through the recovery scheduler rather than silently enabling continuation.
+  const resumePromptMode = await input.resolveResumePromptMode?.() ?? recovery.resumePromptMode;
+  if (resumePromptMode === 'off') return { status: 'disabled' };
   const dispatcher = createConnectedServiceContinuationMessageDispatcher({ credentials: input.credentials });
   const enqueued = await dispatcher.enqueueInterruptedOriginContinuation({
     sessionId: input.sessionId,
     attemptId: recovery.runtimeAuthRecoveryAttemptId ?? JSON.stringify([recovery.issueFingerprint, recovery.armedAtMs]),
     interruptedOriginId,
     interruption: 'provider_failed_turn',
-    resumePromptMode: recovery.resumePromptMode,
+    resumePromptMode,
     customResumePrompt: input.customResumePrompt,
     recoveryKind: 'usage_limit',
+    afterUsageLimitReset: true,
     isCurrent: async ({ rawSession, metadata }) => {
       if (!(await input.isCurrent()) || rawSession.id !== input.sessionId || rawSession.latestTurnStatus !== 'failed'
         || rawSession.archivedAt != null || !metadata || rawSession.latestTurnId !== input.rawSession.latestTurnId) return false;
@@ -158,7 +163,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
         || source?.groupId !== freshSource?.groupId) return false;
       const current = createStoredReadSchema(SessionUsageLimitRecoveryV1Schema).safeParse(metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
       return (!current.success && metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY] === undefined)
-        || (current.success && !isTerminal(current.data) && (owned || current.data.resumePromptMode !== 'off')
+        || (current.success && !isTerminal(current.data) && current.data.resumePromptMode !== 'off'
         && current.data.armedAtMs <= recovery.armedAtMs
         && (!current.data.runtimeAuthRecoveryAttemptId || current.data.runtimeAuthRecoveryAttemptId === recovery.runtimeAuthRecoveryAttemptId));
     },

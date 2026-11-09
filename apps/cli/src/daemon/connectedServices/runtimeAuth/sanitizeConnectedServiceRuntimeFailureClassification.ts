@@ -100,16 +100,6 @@ function readServiceKeyIngress(value: unknown): ConnectedAccountServiceKey | nul
   return readBuiltInLegacyConnectedAccountServiceKeyIngress(normalized);
 }
 
-/** Report admission only: daemon intake may separately enrich an account binding. */
-export function isConnectedServiceRuntimeFailureReportApplicable(value: unknown): boolean {
-  if (!isRecord(value)) return true;
-  const kind = readKind(value.kind);
-  const needsConnectedAccount = kind === 'usage_limit' || kind === 'auth_expired'
-    || kind === 'refresh_failed' || kind === 'account_changed' || kind === 'account_disabled'
-    || kind === 'permission_denied';
-  return !needsConnectedAccount || Boolean(readNullableString(value.profileId) || readNullableString(value.groupId));
-}
-
 function readLimitCategory(value: unknown): ConnectedServiceRuntimeLimitCategory | undefined {
   return readConnectedServiceLimitCategoryV1(value) ?? undefined;
 }
@@ -175,6 +165,7 @@ export function sanitizeConnectedServiceRuntimeFailureClassification(
   const providerLimitId = readNullableSafeProviderString(providerLimitIdSource);
   const sourceProviderAccountId = readNullableSafeProviderString(value.sourceProviderAccountId);
   const sourceProviderOrganizationId = readNullableSafeProviderString(value.sourceProviderOrganizationId);
+  const providerReportedOrganizationId = readNullableSafeProviderString(value.providerReportedOrganizationId);
   const sourceAccountLabel = sourceProviderAccountId
     ? readNullableSafeProviderString(value.sourceAccountLabel)
     : null;
@@ -199,8 +190,11 @@ export function sanitizeConnectedServiceRuntimeFailureClassification(
     ...(value.retryAfterMs === undefined ? {} : { retryAfterMs }),
     ...(quotaScope ? { quotaScope } : {}),
     ...(providerLimitIdSource === undefined ? {} : { providerLimitId }),
-    ...(sourceProviderAccountId ? { sourceProviderAccountId } : {}),
-    ...(sourceProviderAccountId && sourceProviderOrganizationId ? { sourceProviderOrganizationId } : {}),
+    ...(value.sourceProviderAccountId === null ? { sourceProviderAccountId: null }
+      : sourceProviderAccountId ? { sourceProviderAccountId } : {}),
+    ...(value.sourceProviderOrganizationId === null ? { sourceProviderOrganizationId: null }
+      : sourceProviderAccountId && sourceProviderOrganizationId ? { sourceProviderOrganizationId } : {}),
+    ...(value.providerReportedOrganizationId === undefined ? {} : { providerReportedOrganizationId }),
     ...(sourceProviderAccountId && value.sourceAccountLabel !== undefined ? { sourceAccountLabel } : {}),
     ...(failingAccessTokenFingerprint ? { failingAccessTokenFingerprint } : {}),
     ...(groupGeneration === null ? {} : { groupGeneration }),

@@ -3,6 +3,17 @@ import { captureResult, native, target } from './nativeComputerBoundary.testkit'
 import { createManagedComputerDriver } from './managedComputerDriver';
 
 describe('Cua snapshot element delivery', () => {
+  it('refuses window hover instead of pretending the native overlay moved the app pointer', async () => {
+    native.call.mockImplementation(async ({ name }) => name === 'get_window_state' ? captureResult()
+      : { structuredContent: { effect: 'unverifiable' } });
+    const driver = await createManagedComputerDriver({ displayId: ':73', executablePath: '/managed/cua-driver' });
+    try {
+      const capture = await driver.capture(target);
+      expect(await driver.input(target, capture.captureId, { kind: 'move', x: 10, y: 20 }))
+        .toEqual({ status: 'failed', code: 'input_not_supported' });
+      expect(native.tools.some(tool => tool.name === 'move_cursor')).toBe(false);
+    } finally { await driver.close(); }
+  });
   it('settles a native pre-delivery stale-token refusal without unknown completion', async () => {
     native.call.mockImplementation(async ({ name }) => name === 'get_window_state'
       ? { ...captureResult(), structuredContent: { ...captureResult().structuredContent,

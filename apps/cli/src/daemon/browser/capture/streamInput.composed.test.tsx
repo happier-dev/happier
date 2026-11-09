@@ -17,13 +17,13 @@ import { createMachineLiveStreamRelayTerminator } from '../../peer/mediation/str
 import { createBrowserCdpScreencastProducer } from './cdpScreencast';
 import { registerBrowserLiveCapture } from './registration';
 
-// This composition exercises real browser gestures, rather than the UI renderer host stub.
-vi.mock('react-native', () => vi.importActual('../../../../../ui/node_modules/react-native-web/dist/index.js'));
-
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('streamed browser human input composition', () => {
-    it('delivers a focused viewer click and typing through the real input, relay and daemon owners to CDP', async () => {
+    it('coalesces unpressed hover to one real relayed CDP move per frame and retains click and typing', async () => {
+        const frames: FrameRequestCallback[] = [];
+        vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => { frames.push(callback); return frames.length; });
+        vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(() => {});
         const listeners = new Set<BrowserSidecarCdpEventSubscriber>();
         const commands: Array<{ method: string; params?: Record<string, unknown> }> = [];
         // Chromium is the external boundary; the UI gesture, wire schema, relay and arbitration are real.
@@ -78,6 +78,22 @@ describe('streamed browser human input composition', () => {
                 }} />));
             const capture = container.querySelector<HTMLElement>('[data-testid="viewer-capture"]');
             expect(capture).not.toBeNull();
+            const pointer = (x: number, pointerType = 'mouse', buttons = 0) => {
+                const event = new MouseEvent('pointermove', { bubbles: true, clientX: x, clientY: 100, buttons });
+                Object.defineProperty(event, 'pointerType', { value: pointerType });
+                capture!.dispatchEvent(event);
+            };
+            await act(async () => {
+                for (let x = 1; x <= 100; x++) pointer(x);
+                pointer(700, 'touch');
+                pointer(750, 'mouse', 1);
+            });
+            expect(admissions).toHaveLength(0);
+            expect(frames).toHaveLength(1);
+            await act(async () => frames.shift()!(0));
+            expect(admissions).toEqual([{ ok: true }]);
+            await vi.waitFor(() => expect(commands.filter(command => command.method === 'Input.dispatchMouseEvent')
+                .map(command => command.params)).toEqual([{ type: 'mouseMoved', x: 50, y: 50 }]));
             await act(async () => {
                 capture!.focus();
                 capture!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 400, clientY: 200 }));
@@ -85,8 +101,8 @@ describe('streamed browser human input composition', () => {
                 for (const key of 'HUMAN') capture!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
                 capture!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
             });
-            expect(admissions).toHaveLength(7);
-            expect(admissions).toEqual(Array.from({ length: 7 }, () => ({ ok: true })));
+            expect(admissions).toHaveLength(8);
+            expect(admissions).toEqual(Array.from({ length: 8 }, () => ({ ok: true })));
             await vi.waitFor(() => expect(commands.filter(command => command.method === 'Input.insertText')
                 .map(command => command.params?.text).join('')).toBe('HUMAN'));
             expect(commands).toEqual(expect.arrayContaining([
@@ -97,6 +113,7 @@ describe('streamed browser human input composition', () => {
         } finally {
             await act(async () => root.unmount()); container.remove();
             await relay.dispose(); registration.dispose(); await producer.dispose(); automation.dispose(); adapter.dispose();
+            vi.restoreAllMocks();
         }
     });
 });

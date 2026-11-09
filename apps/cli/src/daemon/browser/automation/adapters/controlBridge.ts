@@ -1,7 +1,7 @@
 import { basename } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { BrowserActiveTargetV1Schema, normalizeBrowserActiveTargetRect, readBrowserActiveTargetLabel } from '@happier-dev/protocol/browser/events/activeTarget';
-import { browserViewContextId } from '@happier-dev/protocol/browser/view/key';
+import { browserViewContextId, browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { normalizeBrowserAutomationLocator, parseLocator, type ParsedLocator } from '@happier-dev/protocol/browser/automation/locators';
 import type { BrowserAutomationSecretFillRequestV1, BrowserAutomationActionRequestV1, BrowserAutomationJavaScriptDialogSummaryV1 } from '@happier-dev/protocol/browser/automation/v1';
 import type { SecretFillSettlementV1 } from '@happier-dev/protocol/computer/v1';
@@ -102,7 +102,7 @@ function waitForLocatorExpression(selector: string | ParsedLocator): string {
   return `(() => !!(${elementExpression}))()`;
 }
 
-// Resolves a selector to its center viewport point + focuses it (so keyboard verbs target it).
+// Resolves a selector to a rendered fragment's center + focuses it (so keyboard verbs target it).
 // Returns null when the selector is invalid/absent. Read+focus only; never carries field values.
 function elementCenterExpression(selector: string | ParsedLocator, prepareInput = true, requireFocus = false): string {
   const locator = parseLocator(selector);
@@ -112,13 +112,16 @@ function elementCenterExpression(selector: string | ParsedLocator, prepareInput 
     if (!el) return null;
     ${prepareInput ? "el.scrollIntoView({ block: 'center', inline: 'center' });" : ''}
     const r = el.getBoundingClientRect();
+    // An inline element can wrap: its union rectangle's center may hit empty
+    // space between lines. Pointer input belongs inside an actual fragment.
+    const pointRect = el.getClientRects()[0] ?? r;
     ${prepareInput ? "if (typeof el.focus === 'function') { try { el.focus(); } catch {} }" : ''}
     ${requireFocus ? 'if (document.activeElement !== el) return null;' : ''}
     const w = typeof innerWidth === 'number' ? innerWidth : 0;
     const h = typeof innerHeight === 'number' ? innerHeight : 0;
     const activeTarget = (${normalizeBrowserActiveTargetRect.toString()})({ x: r.left, y: r.top, width: r.width, height: r.height }, { width: w, height: h });
     const label = (${readBrowserActiveTargetLabel.toString()})(el, 512, ${JSON.stringify(locatorLabel ?? '')});
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2,
+    return { x: pointRect.left + pointRect.width / 2, y: pointRect.top + pointRect.height / 2,
       ...(activeTarget ? { activeTarget: { ...activeTarget, ...(label ? { label } : {}) } } : {}) };
   })()`;
 }
@@ -184,6 +187,15 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
   }>) => Readonly<{ summary: string; truncated?: boolean }> | null;
 }>): BrowserAutomationCdpTransport {
   const contextCapture = input.contextCapture;
+  // A viewer's held pointer spans admitted commands; its custody owner releases this on yield/close.
+  const viewerPointers = new Map<string, { handle: BrowserSidecarCdpPageHandle; mouse: Record<string, unknown> }>();
+  const releaseInput = async (view: BrowserAutomationViewRef): Promise<void> => {
+    const key = browserViewKey(view);
+    const held = viewerPointers.get(key);
+    if (!held) return;
+    await dispatchPageCommand(held.handle, 'Input.dispatchMouseEvent', { ...held.mouse, type: 'mouseReleased', buttons: 0 });
+    viewerPointers.delete(key);
+  };
 
   type CredentialTarget = Pick<BrowserAutomationSecretFillRequestV1,
     'browserSessionId' | 'viewId' | 'tabId' | 'frameId' | 'documentId' | 'navigationGeneration' | 'origin' | 'field'>;
@@ -214,7 +226,8 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
     }
   }
 
-  async function proveCredentialTarget(target: CredentialTarget, objects: string[], signal?: AbortSignal): Promise<Readonly<{
+  async function proveCredentialTarget(target: CredentialTarget, objects: string[], signal?: AbortSignal,
+    focus: 'require' | 'acquire' | 'ignore' = 'require'): Promise<Readonly<{
     handle: BrowserSidecarCdpPageHandle; fieldObjectId: string; executionContextId: number;
   }> | null> {
     const handle = currentCredentialHandle(target);
@@ -244,18 +257,28 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       return objectId;
     };
     const fieldObjectId = await resolve(elementExpression);
-    const activeObjectId = await resolve('document.activeElement');
-    if (!fieldObjectId || !activeObjectId || !isCurrent()) return null;
-    for (const objectId of [fieldObjectId, activeObjectId]) {
+    if (!fieldObjectId || !isCurrent()) return null;
+    const matchesField = async (objectId: string) => {
       const node = record(record(await read('DOM.describeNode', { objectId, depth: 0 }))?.node);
-      if (String(node?.backendNodeId) !== target.field.fieldId) return null;
+      return String(node?.backendNodeId) === target.field.fieldId;
+    };
+    if (!await matchesField(fieldObjectId)) return null;
+    if (focus === 'acquire') {
+      // Query discovery can identify an unfocused input. Focus only that proven node,
+      // through isolated-world native bindings, before the final delivery proof.
+      await read('Runtime.callFunctionOn', { objectId: fieldObjectId, returnByValue: true, silent: true,
+        functionDeclaration: 'function() { HTMLElement.prototype.focus.call(this); }' });
+    }
+    if (focus !== 'ignore') {
+      const activeObjectId = await resolve('document.activeElement');
+      if (!activeObjectId || !await matchesField(activeObjectId)) return null;
     }
     const finalFrame = findFrame(record(await read('Page.getFrameTree'))?.frameTree, target.frameId);
     if (finalFrame?.loaderId !== target.documentId || finalFrame?.securityOrigin !== target.origin) return null;
     const valid = evaluateValue(await read('Runtime.callFunctionOn', {
       objectId: fieldObjectId, returnByValue: true, silent: true,
       functionDeclaration: `function() { return this.isConnected && this.ownerDocument === document
-        && document.hasFocus() && document.activeElement === this && (${elementExpression}) === this
+        ${focus !== 'ignore' ? '&& document.hasFocus() && document.activeElement === this' : ''} && (${elementExpression}) === this
         && location.origin === ${JSON.stringify(target.origin)} && !this.disabled && !this.readOnly
         && (this instanceof HTMLTextAreaElement || (this instanceof HTMLInputElement
           && ['text','password','email','search','tel','url','number'].includes(this.type))); }`,
@@ -268,15 +291,6 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
     const handle = contextCapture.resolvePageHandle(request);
     if (!handle) return { status: 'refused', code: 'target_unavailable' };
     const objects: string[] = [];
-    try {
-      if (!await proveCredentialTarget(request, objects)) {
-        await releaseCredentialObjects(handle, objects);
-        return { status: 'refused', code: 'target_changed' };
-      }
-    } catch {
-      await releaseCredentialObjects(handle, objects);
-      return { status: 'refused', code: 'field_verification_unsupported' };
-    }
     let finished = false;
     let fillStarted = false;
     let settlement: SecretFillSettlementV1 | undefined;
@@ -285,16 +299,12 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
     return {
       ...(contextCapture.resolveNativeObservation?.(request) === 'not_observable'
         ? { nativeObservation: 'not_observable' as const } : {}),
-      async recheck() {
-        if (finished) return false;
-        try { return !!await proveCredentialTarget(request, objects); } catch { return false; }
-      },
       async isSafe() {
         // A live invocation still needs its hold. Clearing a field or changing loaders cannot
         // establish safety after delivery: page script and Chromium's back/forward cache can retain it.
         return finished && settlement?.status !== 'filled' && settlement?.status !== 'unknown';
       },
-      async fill(value, signal, beforeDelivery) {
+      async fill(value, signal) {
         let text: string | undefined;
         let parameters: Record<string, unknown> | undefined;
         let issued = false;
@@ -303,15 +313,7 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           fillStarted = true;
           if (signal?.aborted) return settlement = { status: 'canceled', code: 'canceled' };
           if (finished) return settlement = { status: 'refused', code: 'target_changed' };
-          if (!await proveCredentialTarget(request, objects, signal)) {
-            return settlement = signal?.aborted ? { status: 'canceled', code: 'canceled' }
-              : { status: 'refused', code: 'target_changed' };
-          }
-          if (beforeDelivery && !await beforeDelivery()) {
-            return settlement = signal?.aborted ? { status: 'canceled', code: 'canceled' }
-              : { status: 'refused', code: 'approval_changed' };
-          }
-          if (!await proveCredentialTarget(request, objects, signal)) {
+          if (!await proveCredentialTarget(request, objects, signal, 'acquire')) {
             return settlement = signal?.aborted ? { status: 'canceled', code: 'canceled' }
               : { status: 'refused', code: 'target_changed' };
           }
@@ -333,7 +335,7 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           text = undefined;
         }
       },
-      ...(request.submit ? { async submit(signal?: AbortSignal, beforeDelivery?: () => Promise<boolean>) {
+      ...(request.submit ? { async submit(signal?: AbortSignal) {
         if (submitStarted) return submitSettlement ?? { status: 'unknown' as const, code: 'submit_unknown' as const };
         if (finished || settlement?.status !== 'filled' || signal?.aborted) {
           return { status: 'refused' as const, code: 'submit_refused' as const };
@@ -353,7 +355,6 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           if (String(node?.backendNodeId) !== submit.controlId || !currentCredentialHandle(request) || signal?.aborted) {
             return { status: 'refused' as const, code: 'submit_refused' as const };
           }
-          if (beforeDelivery && !await beforeDelivery()) return { status: 'refused' as const, code: 'submit_refused' as const };
           const finalProof = await proveCredentialTarget(request, objects, signal);
           if (!finalProof) return { status: 'refused' as const, code: 'submit_refused' as const };
           submitStarted = true;
@@ -388,7 +389,7 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
     };
   }
 
-  async function readFocusedCredentialTarget(view: BrowserAutomationViewRef): Promise<CredentialTarget | undefined> {
+  async function readFocusedCredentialTarget(view: BrowserAutomationViewRef, requestedLocator?: ParsedLocator): Promise<CredentialTarget | undefined> {
     const handle = contextCapture?.resolvePageHandle(view);
     const navigation = contextCapture?.getNavigationState?.(view);
     if (!handle || !navigation || navigation.loadingState !== 'ready' || !input.adapter.ownsView(view)) return undefined;
@@ -409,7 +410,8 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       if (!frameId || !documentId || !origin || !/^https?:\/\//u.test(origin)) return undefined;
       const world = record(await dispatchPageCommand(handle, 'Page.createIsolatedWorld', { frameId, worldName: 'happier-confidential-input' }));
       if (!current() || typeof world?.executionContextId !== 'number') return undefined;
-      const remote = await dispatchPageCommand(handle, 'Runtime.evaluate', { expression: 'document.activeElement',
+      const remote = await dispatchPageCommand(handle, 'Runtime.evaluate', {
+        expression: requestedLocator ? synthesizeLocatorElementExpression(requestedLocator) : 'document.activeElement',
         contextId: world.executionContextId, returnByValue: false, awaitPromise: false, silent: true });
       const objectId = stringField(record(remote)?.result, 'objectId');
       if (objectId) objects.push(objectId);
@@ -430,7 +432,9 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
         tabId: handle.targetId, frameId, documentId,
         navigationGeneration: navigation.navigationGeneration, origin,
         field: { fieldId: String(node.backendNodeId), focusId: String(node.backendNodeId), locator } };
-      return await proveCredentialTarget(target, objects) ? target : undefined;
+      // Query discovery identifies the requested field without moving focus. Delivery still
+      // proves the exact focused node after the person's confidential choice.
+      return await proveCredentialTarget(target, objects, undefined, requestedLocator === undefined ? 'require' : 'ignore') ? target : undefined;
     } catch { return undefined; }
     finally { await releaseCredentialObjects(handle, objects); }
   }
@@ -601,11 +605,17 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           if (r?.error === 'invalid_selector') {
             return { ok: false, errorCode: 'selector_not_found' };
           }
+          // Reuse snapshot's isolated-world identity producer for the exact queried input.
+          // Discovery proves the node, frame and document; focus is proved at delivery.
+          const focusedCredentialTarget = r?.count === 1 && Array.isArray(r.elements)
+            && r.elements.some(element => ['input', 'textarea'].includes(String(record(element)?.tag)))
+            ? await readFocusedCredentialTarget(query, selector) : undefined;
           return {
             ok: true,
             data: {
               count: typeof r?.count === 'number' ? r.count : 0,
               elements: Array.isArray(r?.elements) ? r.elements : [],
+              ...(focusedCredentialTarget ? { focusedCredentialTarget } : {}),
               truncated: r?.truncated === true || typeof r?.count === 'number' && Array.isArray(r.elements) && r.count > r.elements.length,
             },
           };
@@ -667,7 +677,10 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       return { ok: false, errorCode: 'view_closed' };
     }
     const selector = normalizeBrowserAutomationLocator(command.payload) ?? '';
-    const heldInput: { mouse: Record<string, unknown> | null; key: Record<string, unknown> | null } = { mouse: null, key: null };
+    const pointerKey = browserViewKey(command);
+    const pointerPhase = command.actionKind === 'drag' && typeof command.payload.phase === 'string' ? command.payload.phase : null;
+    const priorPointer = pointerPhase ? viewerPointers.get(pointerKey) : undefined;
+    const heldInput: { mouse: Record<string, unknown> | null; key: Record<string, unknown> | null } = { mouse: priorPointer?.mouse ?? null, key: null };
     let uncertainEffect = false;
     let cleanupFailed = false;
     const send = async (method: string, params?: Record<string, unknown>) => {
@@ -731,9 +744,15 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       const point = hasCoordinates ? readPoint(command.payload)
         : await targetPoint();
       if (!point) return { ok: false, errorCode: 'selector_not_found' };
+      const mask = cdpModifiers(command.payload.modifiers);
+      if (mask === null) return { ok: false, errorCode: 'unsupported_action' };
+      const modifiers = Array.isArray(command.payload.modifiers) ? { modifiers: mask } : {};
+      const button = command.payload.button === 'right' || command.payload.button === 'middle' ? command.payload.button : 'left';
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
-      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 });
-      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+      for (let clickCount = 1; clickCount <= (command.payload.clickCount === 2 ? 2 : 1); clickCount += 1) {
+        await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button, clickCount, ...modifiers });
+        await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button, clickCount, ...modifiers });
+      }
       return { ok: true };
     };
 
@@ -743,8 +762,9 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
         case 'tap':
           return await clickAtSelector();
         case 'hover': {
-          if (!selector) return { ok: false, errorCode: 'unsupported_action' };
-          const point = await targetPoint();
+          const hasCoordinates = command.payload.x !== undefined || command.payload.y !== undefined;
+          if (!selector && !hasCoordinates) return { ok: false, errorCode: 'unsupported_action' };
+          const point = hasCoordinates ? readPoint(command.payload) : await targetPoint();
           if (!point) return { ok: false, errorCode: 'selector_not_found' };
           await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
           return { ok: true };
@@ -806,11 +826,32 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
           }
         }
         case 'drag': {
+          if (pointerPhase) {
+            const point = readPoint(command.payload);
+            if (!point || !['down', 'move', 'up', 'cancel'].includes(pointerPhase)) return { ok: false, errorCode: 'unsupported_action' };
+            if (pointerPhase === 'down') {
+              if (priorPointer) await releaseInput(command);
+              await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', buttons: 1, clickCount: 1 });
+            } else if (pointerPhase === 'move') {
+              if (!priorPointer) return { ok: false, errorCode: 'unsupported_action' };
+              await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'left', buttons: 1 });
+            } else {
+              if (priorPointer) await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', buttons: 0, clickCount: 1 });
+              viewerPointers.delete(pointerKey);
+            }
+            if (heldInput.mouse && !command.signal?.aborted) {
+              viewerPointers.set(pointerKey, { handle, mouse: heldInput.mouse });
+              heldInput.mouse = null;
+            }
+            return { ok: true };
+          }
           const source = normalizeBrowserAutomationLocator({ locator: command.payload.from ?? command.payload.source ?? command.payload.locator });
           const target = normalizeBrowserAutomationLocator({ locator: command.payload.to ?? command.payload.target ?? command.payload.destination });
-          if (!source || !target) return { ok: false, errorCode: 'unsupported_action' };
-          const from = await targetPoint(source);
-          const to = await targetPoint(target);
+          const fromCoordinates = readPoint(command.payload.from);
+          const toCoordinates = readPoint(command.payload.to);
+          if ((!fromCoordinates && !source) || (!toCoordinates && !target)) return { ok: false, errorCode: 'unsupported_action' };
+          const from = fromCoordinates ?? (source ? await targetPoint(source) : null);
+          const to = toCoordinates ?? (target ? await targetPoint(target) : null);
           if (!from || !to) return { ok: false, errorCode: 'selector_not_found' };
           await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...from });
           await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...from, button: 'left', buttons: 1, clickCount: 1 });
@@ -862,8 +903,13 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
       // Cleanup is not another action phase: it must release held input even after the containing
       // action's abort/deadline. A failed acknowledgement is reported as uncertain, never stopped.
       if (heldInput.mouse) {
-        try { await dispatchPageCommand(handle, 'Input.dispatchMouseEvent', { ...heldInput.mouse, type: 'mouseReleased', buttons: 0 }); }
-        catch { cleanupFailed = true; }
+        try {
+          await dispatchPageCommand(handle, 'Input.dispatchMouseEvent', { ...heldInput.mouse, type: 'mouseReleased', buttons: 0 });
+          if (pointerPhase) viewerPointers.delete(pointerKey);
+        } catch {
+          cleanupFailed = true;
+          if (pointerPhase) viewerPointers.set(pointerKey, { handle, mouse: heldInput.mouse });
+        }
       }
       if (heldInput.key) {
         try { await dispatchPageCommand(handle, 'Input.dispatchKeyEvent', { ...heldInput.key, type: 'keyUp' }); }
@@ -880,6 +926,7 @@ export function createControlAdapterAutomationTransport(input: Readonly<{
 
   return {
     ownsView: (view) => input.adapter.ownsView(view),
+    releaseInput,
     getNavigationGeneration: (view) => contextCapture?.getNavigationState?.(view)?.navigationGeneration ?? null,
     dispatchControlCommand: async (command, context) => await input.adapter.dispatchCommand(command, context),
     dispatchPageQuery,

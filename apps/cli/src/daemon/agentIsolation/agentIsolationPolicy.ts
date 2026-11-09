@@ -1,4 +1,7 @@
-import { MachineAgentIsolationStatusV1Schema, readMachineAgentIsolationPolicyV1, type MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
+import {
+  MachineAgentIsolationStatusV1Schema, readMachineAgentIsolationPolicyV1,
+  type MachineAgentIsolationStatusV1,
+} from '@happier-dev/protocol';
 import type { MachineMetadataFieldReadV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 
 export type AgentIsolationSnapshot = Readonly<{ enabled: boolean; memberProvisioning?: 'linuxUsersV1'; status: MachineAgentIsolationStatusV1 }>;

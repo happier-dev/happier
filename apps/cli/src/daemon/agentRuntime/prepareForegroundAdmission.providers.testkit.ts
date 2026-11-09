@@ -8,7 +8,6 @@ import {
   AccountSettingsSchema,
   DEFAULT_PROVIDER_SETTINGS_V1,
   FeaturesResponseSchema,
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   ProviderConnectionIdSchema,
   ProviderContributionV1Schema,
   ProviderSettingsV1Schema,
@@ -62,6 +61,7 @@ import { createRequesterSessionControlRuntimeFixture } from '../testkit/requeste
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { createProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
 import type { TrackedSession } from '../types';
+import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryReadResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 
 type BaseContext = Parameters<Parameters<typeof withRealForegroundAdmissionFixture>[1]>[0];
 type RequestOverrides = NonNullable<Parameters<BaseContext['prepare']>[0]>;
@@ -78,6 +78,8 @@ type FixtureOptions = Readonly<{
   projectManifest?: ProjectManifestV1;
   providersFeatureEnabled?: boolean;
   configFileAgent?: boolean;
+  agentId?: 'codex' | 'claude';
+  runtimeOptions?: NonNullable<Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]>['runtimeOptions'];
   settings?: SettingsOptions;
   sharedSecretRevision?: number;
   sharedSecretFailure?: SharedFailure;
@@ -93,17 +95,18 @@ const providerSecretReference = 'happier:shared-secret:v1:resource-provider';
 const externalAgentPluginId = 'acme.foreground';
 const externalAgentId = 'acme.foreground/fixture';
 
-function providerPlugin(agentTargetKey: string) {
+function providerPlugin(agentTargetKey: string, claude: boolean) {
+  const protocol = claude ? 'anthropic' : 'openai-responses';
   const definition = ProviderContributionV1Schema.parse({
     v: 1, id: 'gateway', name: 'Gateway', kind: 'cloud',
     // Numeric public identity exercises the actual OS DNS adapter without an
     // external resolver or a provider network request during launch admission.
-    endpointTemplates: [{ id: 'responses', protocol: 'openai-responses', baseUrl: 'https://1.1.1.1/v1',
+    endpointTemplates: [{ id: 'responses', protocol, baseUrl: 'https://1.1.1.1/v1',
       capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } }],
-    credential: { kind: 'apiKey', required: true, transports: [{ id: 'bearer', protocols: ['openai-responses'], uses: ['runtime'],
+    credential: { kind: 'apiKey', required: !claude, transports: [{ id: 'bearer', protocols: [protocol], uses: ['runtime'],
       destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' } }] },
     catalog: { source: 'static', manualModelPolicy: 'allowed', staticModels: [{ id: 'model-a', name: 'Model A', capabilities: { toolRoundTrips: 'supported' } }] },
-    compatibilityOverrides: [{ agentTargetKey, protocol: 'openai-responses', status: 'verified', reason: 'Physical foreground fixture',
+    compatibilityOverrides: [{ agentTargetKey, protocol, status: 'verified', reason: 'Physical foreground fixture',
       evidence: { sourceUrls: ['https://example.test/provider'], verifiedAt: '2026-07-10', testIds: ['foreground-admission'] } }],
   });
   return { manifest: createPluginManifestV2Fixture({ id: 'acme.gateway', contributes: { providers: [definition] } }),
@@ -198,15 +201,15 @@ type ProviderContext = BaseContext & Readonly<{
 
 /** Physical plugins plus actual settings/secret codecs; only Home HTTP is replaced. */
 export async function withForegroundProviderFixture<T>(options: FixtureOptions, run: (context: ProviderContext) => Promise<T>): Promise<T> {
-  const agentId = options.configFileAgent ? externalAgentId : 'codex';
-  const agentPluginId = options.configFileAgent ? externalAgentPluginId : 'happier.agent.codex';
+  const agentId = options.configFileAgent ? externalAgentId : options.agentId ?? 'codex';
+  const agentPluginId = options.configFileAgent ? externalAgentPluginId : `happier.agent.${agentId}`;
   const agentTargetKey = buildBackendTargetKeyV2({ kind: 'backend', backendId: agentId });
-  const plugins = [providerPlugin(agentTargetKey), ...(options.configFileAgent ? [configFileAgentPlugin()] : [])];
+  const plugins = [providerPlugin(agentTargetKey, agentId === 'claude'), ...(options.configFileAgent ? [configFileAgentPlugin()] : [])];
   return await withRealForegroundAdmissionFixture({
     createRuntime: ({ home, controller }) => createAuthoredAdmittedPluginRuntimeFixture({
-      plugins, happyHomeDir: home, controller, coldStart: true,
+      plugins, happyHomeDir: home, controller, coldStart: true, runtimeOptions: options.runtimeOptions,
       async resolveContributes(happyHomeDir) {
-        const bundledPluginIds = new Set(options.configFileAgent ? [] : ['happier.agent.codex']);
+        const bundledPluginIds = new Set(options.configFileAgent ? [] : [agentPluginId]);
         const bundled = projectLoadedPluginContributes({
           loadResult: {
             loadedPlugins: loadCurrentBundledPluginLocatorResult().loadedPlugins
@@ -260,6 +263,7 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
     app.get('/v1/features', async () => features);
     app.get('/v1/features/authenticated', async () => features);
     app.get('/v2/account/settings', async () => settingsResponse);
+    app.get(`${AUTHORING_MEMORY_ROUTE_V1}/lastUsedProfile`, async () => AuthoringMemoryReadResponseV1Schema.parse({ status: 'absent' }));
     app.get('/v1/artifacts', async (request) => artifactListResponse(request.url, []));
     app.get('/v1/account/encryption', async () => ({ mode: 'e2ee', updatedAt: 0 }));
     app.get('/v1/account/profile', async () => ({ id: 'foreground-account' }));
@@ -320,14 +324,14 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
       const registry = { providersByContributionKey };
       const dnsEvidenceByEndpointUrl = await collectProviderConnectionDnsEvidence({ connectionId, machineId: 'machine-1',
         providerSettings: initialProviderSettings, registry,
-        lifetime: createProviderOperationLifetime({ wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs }),
+        lifetime: createProviderOperationLifetime({}),
       });
       const resolved = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-1',
         providerSettings: initialProviderSettings, registry, dnsEvidenceByEndpointUrl });
       if (resolved.status !== 'resolved') throw new Error('Physical Provider connection did not resolve');
       const providerSettings = ProviderSettingsV1Schema.parse({ ...initialProviderSettings,
         accountGrants: [{ v: 1, connectionId, connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint, confirmedAt: 1 }],
-        secretBindingsByConnectionId: { [connectionId]: { account: { apiKey: providerSecretReference } } },
+        secretBindingsByConnectionId: options.agentId === 'claude' ? {} : { [connectionId]: { account: { apiKey: providerSecretReference } } },
       });
       providerRow = ProviderConnectionsRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
         content: sealProviderConnectionsContentV1({ mode: 'e2ee', material, catalog: splitProviderSettingsV1(providerSettings).catalog }),
@@ -414,7 +418,7 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
         const profileId = Object.hasOwn(overrides, 'profileId') ? overrides.profileId : 'profile-1';
         return base.request({
           agentId, backendTarget: options.configFileAgent ? { kind: 'backend', backendId: agentId }
-            : { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+            : { kind: 'backend', backendId: agentId, sourceKind: 'built_in' },
           profileId, accountSettingsScopeKey: scopeKey, accountSettingsVersion: currentVersion,
           profileRecordRevision: profileId === undefined ? undefined : profileRow?.revision,
           selection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: connectionId, modelId: 'model-a' } },

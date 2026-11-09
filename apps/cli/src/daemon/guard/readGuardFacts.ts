@@ -8,6 +8,7 @@ import type { GuardFacts, GuardOwnership, GuardTarget } from './guardPlanner';
 import { equalProcessStart, processOwnerKey, type HappierProcessRoot } from '../processes/ownership/types';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { readTrackedSessionProcessIdentity } from '../processes/roots/listHappierProcessRoots';
+import { readGuardSessionTitle } from './readGuardSessionTitle';
 
 export type ReadGuardFactsDependencies = Readonly<{
   readBrowsers: () => readonly BrowserSidecarResourceTarget[];
@@ -40,8 +41,7 @@ export function createReadGuardFacts(dependencies: ReadGuardFactsDependencies) {
     const targets: GuardTarget[] = await Promise.all(sessionRoots.map(async ({ root, session, sessionId }) => ({
       kind: 'session' as const, root, tracked: session,
       eligibility: await dependencies.readSessionEligibility(session, initialInventory, input.signal),
-      label: session.happySessionMetadataFromLocalWebhook?.summary?.text
-        ?? session.happySessionMetadataFromLocalWebhook?.name ?? 'Session',
+      label: readGuardSessionTitle(session.happySessionMetadataFromLocalWebhook),
       wayBack: [{ label: 'resume' as const, actionId: 'session.open' as const,
         input: { sessionId, intent: 'resume', ...(session.requesterWorkAttributionV1?.serverId
           ? { serverId: session.requesterWorkAttributionV1.serverId } : {}) } }],
@@ -61,7 +61,7 @@ export function createReadGuardFacts(dependencies: ReadGuardFactsDependencies) {
         && processOwnerKey(target.root.owner) === processOwnerKey(root.owner)
         && (!target.root.start || equalProcessStart(target.root.start, root.start))
         && (target.root.processStartTimeMs === undefined || target.root.processStartTimeMs === root.start.startTimeMs));
-      if (!original?.project) continue;
+      if (!original?.project || original.lifecyclePurpose !== 'development') continue;
       const project = original.project;
       const isOwnedListenerMember = (pid: number): boolean => {
         const member = ownershipByPid.get(pid);

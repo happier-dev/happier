@@ -62,7 +62,9 @@ export function createBrowserExtensionService(input: Readonly<{
             if (!result.ok) return unavailable(result.reason);
             entries.push(...result.extensions.map(extension => entryFor(selected.profileId, extension)));
           }
-          return { status: 'ready', entries };
+          return { status: 'ready', entries, profiles: profiles.map(({ profileId, displayName }) => ({
+            profileId, ...(displayName === undefined ? {} : { displayName }),
+          })) };
         }
         const profileId = request.profileId!;
         const profile = store.getProfile(profileId) ?? await store.loadPersistentProfile(profileId);

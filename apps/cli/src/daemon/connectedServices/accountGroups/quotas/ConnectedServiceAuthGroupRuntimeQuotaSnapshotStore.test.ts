@@ -50,7 +50,6 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
 
     store.retainProfileSnapshots({ ...binding, context });
     expect(store.getSnapshot(binding)).toEqual(latest);
-    expect(store.getRecentBurn(binding)).not.toBeNull();
     store.retainProfileSnapshots({ ...binding, context: null });
     expect(store.getSnapshot(binding)).toEqual(latest);
     store.retainProfileSnapshots({ ...binding, context, verifiedCredentialFingerprint: 'credential-one' });
@@ -58,7 +57,6 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
 
     store.retainProfileSnapshots({ ...binding, context: { ...context, providerAccountId: 'other-user' } });
     expect(store.getSnapshot(binding)).toBeNull();
-    expect(store.getRecentBurn(binding)).toBeNull();
 
     store.recordProfileSnapshot({ ...binding, snapshot: latest, verifiedCredentialFingerprint: 'credential-one' });
     store.retainProfileSnapshots({ ...binding, context, verifiedCredentialFingerprint: null });
@@ -115,36 +113,9 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
     expect(store.getSnapshot(binding)).toBeNull();
   });
 
-  it('starts new unscoped burn history when its verified credential changes', () => {
-    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
-    const binding = { serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 1 } as const;
-    const snapshot = (fetchedAt: number, utilizationPct: number) => ({
-      ...quotaSnapshot({ profileId: 'primary', fetchedAt, utilizationPct }), activeAccountId: 'account-user',
-    });
-    store.recordSnapshot({ ...binding, snapshot: snapshot(1_000, 10), verifiedCredentialFingerprint: 'credential-one' });
-    store.recordSnapshot({ ...binding, snapshot: snapshot(2_000, 30), verifiedCredentialFingerprint: 'credential-two' });
-    expect(store.getRecentBurn(binding)).toBeNull();
-    store.recordSnapshot({ ...binding, snapshot: snapshot(3_000, 31), verifiedCredentialFingerprint: 'credential-two' });
-    expect(store.getRecentBurn(binding)?.remainingPercentPerMs).toBeCloseTo(1 / 1_000, 8);
-    store.recordSnapshot({ ...binding, snapshot: snapshot(4_000, 32) });
-    expect(store.getRecentBurn(binding)).toBeNull();
-  });
 
-  it('starts new burn history after an organization change in the same profile and generation', () => {
-    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
-    const binding = { serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 1 } as const;
-    const snapshot = (fetchedAt: number, utilizationPct: number, providerOrganizationId: string) => ({
-      ...quotaSnapshot({ profileId: 'primary', fetchedAt, utilizationPct }),
-      activeAccountId: 'account-user', providerOrganizationId,
-    });
-    store.recordSnapshot({ ...binding, snapshot: snapshot(1_000, 10, 'org-a') });
-    store.recordSnapshot({ ...binding, snapshot: snapshot(2_000, 30, 'org-b') });
-    expect(store.getRecentBurn(binding)).toBeNull();
-    store.recordSnapshot({ ...binding, snapshot: snapshot(3_000, 31, 'org-b') });
-    expect(store.getRecentBurn(binding)?.remainingPercentPerMs).toBeCloseTo(1 / 1_000, 8);
-  });
 
-  it('drops mismatching profile projections and group burn while retaining matching and other-profile snapshots', () => {
+  it('drops mismatching profile projections while retaining matching and other-profile snapshots', () => {
     const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
     const binding = { serviceId: 'openai-codex', profileId: 'primary', groupGeneration: 1 } as const;
     const snapshot = (profileId: string, fetchedAt: number, utilizationPct: number, providerOrganizationId: string) => ({
@@ -155,14 +126,12 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
     store.recordSnapshot({ ...binding, groupId: 'old-group', snapshot: snapshot('primary', 3_000, 30, 'org-a') });
     store.recordSnapshot({ ...binding, groupId: 'current-group', snapshot: snapshot('primary', 2_000, 20, 'org-b') });
     store.recordSnapshot({ ...binding, groupId: 'old-group', profileId: 'other', snapshot: snapshot('other', 3_000, 40, 'org-a') });
-    expect(store.getRecentBurn({ ...binding, groupId: 'old-group' })).not.toBeNull();
 
     store.retainProfileSnapshots({ ...binding, context: {
       providerAccountId: 'account-user', providerOrganizationId: 'org-b',
     } });
 
     expect(store.getSnapshot({ ...binding, groupId: 'old-group' })).toBeNull();
-    expect(store.getRecentBurn({ ...binding, groupId: 'old-group' })).toBeNull();
     expect(store.getSnapshot({ ...binding, groupId: 'current-group' })).toMatchObject({ providerOrganizationId: 'org-b' });
     expect(store.getSnapshot({ ...binding, groupId: 'old-group', profileId: 'other' })).toMatchObject({ providerOrganizationId: 'org-a' });
     store.retainProfileSnapshots({ ...binding, context: null });
@@ -220,6 +189,7 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
       providerResetsAtMs: 5_000,
       subscription: undefined,
       quotaSnapshot: {
+        staleAfterMs: 60_000,
         capturedAtMs: 1_000,
         effectiveMeterId: 'primary',
         effectiveRemainingPercent: 0,
@@ -295,6 +265,7 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
       providerResetsAtMs: 9_000,
       subscription: undefined,
       quotaSnapshot: {
+        staleAfterMs: 60_000,
         capturedAtMs: 3_000,
         effectiveMeterId: 'weekly',
         effectiveRemainingPercent: 5,
@@ -386,7 +357,6 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
 
     const selected = selectConnectedServiceAuthGroupCandidate({
       nowMs: 2_500,
-      quotaFreshnessMs: 60_000,
       activeProfileId: null,
       policy: {
         ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
@@ -455,6 +425,7 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
       providerResetsAtMs: 10_000,
       subscription: undefined,
       quotaSnapshot: {
+        staleAfterMs: 60_000,
         capturedAtMs: 4_000,
         effectiveMeterId: null,
         effectiveRemainingPercent: null,
@@ -528,98 +499,10 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
     }).get('primary')?.quotaSnapshot?.effectiveRemainingPercent).toBe(85);
   });
 
-  it('reports a positive recent burn velocity from the two most recent decreasing snapshots', () => {
-    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
-    // remaining 80% at t=1000, remaining 40% at t=2000 → burn 40% over 1000ms = 0.04 %/ms.
-    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 20 }) });
-    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 2_000, utilizationPct: 60 }) });
 
-    const burn = store.getRecentBurn({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary' });
-    expect(burn?.remainingPercentPerMs).toBeCloseTo(0.04, 6);
-    expect(burn?.observedAtMs).toBe(2_000);
-  });
 
-  it('returns null burn when remaining% is flat or replenishes (reset), failing closed', () => {
-    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
-    // remaining 40% at t=1000, remaining 90% at t=2000 → replenish (reset), not a burn.
-    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 60 }) });
-    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 2_000, utilizationPct: 10 }) });
 
-    expect(store.getRecentBurn({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary' })).toBeNull();
-  });
 
-  it('returns null burn until at least two distinct-time observations exist', () => {
-    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
-    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 20 }) });
-    expect(store.getRecentBurn({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary' })).toBeNull();
-    // A duplicate/stale fetchedAt must not poison the delta with a zero time window.
-    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 60 }) });
-    expect(store.getRecentBurn({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary' })).toBeNull();
-  });
-
-  it('requires burn to match the current generation, canonical snapshot, and bounded horizon', () => {
-    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
-    store.recordSnapshot({
-      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
-      snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 20 }),
-    });
-    store.recordSnapshot({
-      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
-      snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 2_000, utilizationPct: 60 }),
-    });
-    const currentQuotaSnapshot = store.buildMemberStates({
-      serviceId: 'openai-codex', groupId: 'main', capturedAtMs: 2_000,
-    }).get('primary')?.quotaSnapshot;
-
-    expect(store.getRecentBurn({
-      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
-      nowMs: 2_000,
-      maxAgeMs: 1_000,
-      currentQuotaSnapshot,
-    })).not.toBeNull();
-    expect(store.getRecentBurn({
-      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 4,
-      nowMs: 2_000,
-      maxAgeMs: 1_000,
-      currentQuotaSnapshot,
-    })).toBeNull();
-    expect(store.getRecentBurn({
-      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
-      nowMs: 3_001,
-      maxAgeMs: 1_000,
-      currentQuotaSnapshot,
-    })).toBeNull();
-    expect(store.getRecentBurn({
-      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
-      nowMs: 2_001,
-      maxAgeMs: 1_000,
-      currentQuotaSnapshot: currentQuotaSnapshot
-        ? { ...currentQuotaSnapshot, capturedAtMs: currentQuotaSnapshot.capturedAtMs + 1 }
-        : currentQuotaSnapshot,
-    })).toBeNull();
-  });
-
-  it('rejects burn evidence after its quota window has elapsed even when the last sample is fresh', () => {
-    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
-    store.recordSnapshot({
-      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
-      snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 20, resetAtMs: 2_500 }),
-    });
-    store.recordSnapshot({
-      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
-      snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 2_000, utilizationPct: 60, resetAtMs: 2_500 }),
-    });
-    const currentQuotaSnapshot = store.buildMemberStates({
-      serviceId: 'openai-codex', groupId: 'main', capturedAtMs: 2_000,
-    }).get('primary')?.quotaSnapshot;
-
-    expect(store.getRecentBurn({
-      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
-      nowMs: 2_500,
-      maxAgeMs: 10_000,
-      currentQuotaSnapshot,
-    })).toBeNull();
-  });
 
   it('replaces a retained future-dated snapshot with a current observation', () => {
     vi.useFakeTimers();

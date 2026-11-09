@@ -123,6 +123,13 @@ export type MachineCarrierTransportOpenInput = Readonly<{
     handshake: ReturnType<typeof IrohMachineHandshakeV1Schema.parse>;
 }>;
 
+/** Fixed host-private facts, with no peer identities, URLs or native messages. */
+export type MachineCarrierFailureDiagnostic = Readonly<{
+    closingSide: 'initiator' | 'broker' | 'peer_or_transport' | 'unknown';
+    closingStage: 'local_http_head' | 'local_capability' | 'stream_decision'
+      | 'stream_admission' | 'pre_application_custody' | 'transport' | 'unknown';
+}>;
+
 /**
  * Provider-broker machine/1 opens deliberately have no same-account flow or
  * operation id. They are carried by the existing native framing and are

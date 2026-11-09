@@ -187,7 +187,7 @@ describe.skipIf(process.platform !== 'linux')('plain runner Stop retirement thro
             const callback = vi.fn();
             await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method: `${machineId}:${RPC_METHODS.STOP_SESSION}`,
                 params: 'fixture-request', authorization: { kind: 'session.write', sessionId: session.id } }, callback);
-            const raw = await fetchSessionByIdCompat({ token: credentials.token, sessionId: session.id }).catch(error => {
+            const raw = await fetchSessionByIdCompat({ reason: 'session-query', token: credentials.token, sessionId: session.id }).catch(error => {
                 if (detailFailure) throw new Error('Composed Session detail failed', { cause: detailFailure });
                 throw error;
             });

@@ -8,7 +8,7 @@ export function buildRuntimeAuthUsageLimitRecoveryProjection(
 ): SessionUsageLimitRecoveryV1 | null {
   const attemptId = intent.attemptId;
   const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(intent.classification.serviceId);
-  if (intent.classification.kind !== 'usage_limit' || !attemptId || !intent.profileId || !serviceId) return null;
+  if (intent.classification.kind !== 'usage_limit' || !attemptId || (!intent.groupId && !intent.profileId) || !serviceId) return null;
   const status: SessionUsageLimitRecoveryV1['status'] = intent.status === 'recovered'
     ? 'paused'
     : intent.status === 'resumed_awaiting_proof' ? 'waiting' : intent.status;
@@ -26,6 +26,6 @@ export function buildRuntimeAuthUsageLimitRecoveryProjection(
     resumePromptMode: intent.resumePromptMode ?? 'standard',
     selectedAuth: intent.groupId
       ? { kind: 'group', serviceId, groupId: intent.groupId, profileId: intent.profileId }
-      : { kind: 'profile', serviceId, profileId: intent.profileId },
+      : { kind: 'profile', serviceId, profileId: intent.profileId! },
   };
 }

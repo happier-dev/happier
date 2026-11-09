@@ -31,11 +31,14 @@ export const BrowserRuntimeActionControlResponseSchema = z.strictObject({
 /** Session processes reach the daemon's current browser owner through its authenticated control transport. */
 export function createCliBrowserRuntimeActionExecutor(params: Readonly<{ sessionId: string }>): RuntimeActionExecute {
   const unavailable = createUnavailableRuntimeActionExecutor();
-  const sessionId = params.sessionId.trim();
+  const fallbackSessionId = params.sessionId.trim();
   return async (args) => {
     if (args.context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     const family = resolveRuntimeActionExecutionFamily(args.actionId);
     if (family !== 'browser' && family !== 'computer') return await unavailable(args);
+    // Replay may be hosted by a global CLI executor. Keep the invoking Happier
+    // Session separate from the Browser surface identity in semantic input.
+    const sessionId = args.context.defaultSessionId?.trim() || fallbackSessionId;
     if (!sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     const response: unknown = await daemonPost(BROWSER_RUNTIME_ACTION_CONTROL_PATH, {
       actionId: args.actionId, input: args.input, sessionId,

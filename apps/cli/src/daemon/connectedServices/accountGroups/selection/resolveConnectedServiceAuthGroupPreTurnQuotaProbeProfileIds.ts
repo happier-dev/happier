@@ -14,15 +14,15 @@ function isQuotaSnapshotStale(input: Readonly<{
     state: ConnectedServiceAuthGroupMemberRuntimeState | null;
     policy: ConnectedServiceAuthGroupPolicyV1;
     nowMs: number;
-    quotaFreshnessMs: number;
 }>): boolean {
-    const capturedAtMs = input.state?.quotaSnapshot?.capturedAtMs;
-    if (typeof capturedAtMs !== 'number' || !Number.isFinite(capturedAtMs)) return true;
+    const snapshot = input.state?.quotaSnapshot;
+    const capturedAtMs = snapshot?.capturedAtMs;
+    if (!snapshot || typeof capturedAtMs !== 'number' || !Number.isFinite(capturedAtMs)) return true;
     const probeIfSnapshotOlderThanMs =
         typeof input.policy.probeIfSnapshotOlderThanMs === 'number'
         && Number.isFinite(input.policy.probeIfSnapshotOlderThanMs)
-            ? Math.max(0, Math.trunc(input.policy.probeIfSnapshotOlderThanMs))
-            : input.quotaFreshnessMs;
+            ? Math.min(snapshot.staleAfterMs, Math.max(0, Math.trunc(input.policy.probeIfSnapshotOlderThanMs)))
+            : snapshot.staleAfterMs;
     return !isConnectedServiceQuotaObservationFresh({
         observedAtMs: capturedAtMs,
         nowMs: input.nowMs,
@@ -36,7 +36,6 @@ export function resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds(inpu
     memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
     policy: ConnectedServiceAuthGroupPolicyV1;
     nowMs: number;
-    quotaFreshnessMs: number;
     allowCurrentProfileRetry: boolean;
 }>): ReadonlyArray<string> {
     const mode = input.policy.preTurnProbeMode;
@@ -57,7 +56,6 @@ export function resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds(inpu
             state: input.memberStatesByProfileId.get(member.profileId) ?? null,
             policy: input.policy,
             nowMs: input.nowMs,
-            quotaFreshnessMs: input.quotaFreshnessMs,
         }))
         .map((member) => member.profileId);
     return Array.from(new Set(profileIds));

@@ -8,7 +8,8 @@ export function resolveProcessOwnershipLevel(input: Readonly<{
     observationsIncomplete: boolean;
 }>): ProcessOwnershipLevel {
     if (input.samePrincipal === undefined) return 'unknown';
-    if (!input.samePrincipal) return 'not_happier';
+    const nativeContainer = input.evidence.some(item => item.kind === 'fence' && item.state === 'met' && item.reason === 'linux_container');
+    if (!input.samePrincipal && !nativeContainer) return 'not_happier';
     const proof = input.evidence.some(item => item.kind !== 'group_and_port' && item.state === 'met');
     const likely = input.evidence.some(item => item.kind === 'group_and_port' && item.state === 'met');
     if (proof || likely) return input.ownerEnded ? 'left_behind' : proof ? 'proven' : 'likely';

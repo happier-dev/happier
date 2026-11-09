@@ -21,7 +21,7 @@ describe('Runner broker readiness application', () => {
       credentialSelectionBinding,
       readiness: { kind: 'available' as const },
     }));
-    const checkLocalCurrentness = vi.fn(async () => 'available' as const);
+    const checkLocalCurrentness = vi.fn(async () => ({ kind: 'available' as const }));
     const app = fastify();
     registerRunnerBrokerReadinessApplication(app, { authorize, checkLocalCurrentness });
     const body = {
@@ -42,8 +42,9 @@ describe('Runner broker readiness application', () => {
   });
 
   it.each([
-    ['source_unavailable', 'source_unavailable'],
-    ['update_required', 'update_required'],
+    [{ kind: 'source_unavailable' }, { kind: 'source_unavailable' }],
+    [{ kind: 'update_required' }, { kind: 'update_required' }],
+    [{ kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' }, { kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' }],
   ] as const)('downgrades Home availability when exact local currentness is %s', async (local, expected) => {
     const authorize = vi.fn(async () => ({
       v: 1 as const,
@@ -61,9 +62,30 @@ describe('Runner broker readiness application', () => {
       v: 1, kind: 'provider_broker_readiness', homeServerIdentityId: 'srv_home', activationId: '00000000-0000-4000-8000-000000000010', launchManifestCommitment: 'A'.repeat(43), resourceId: 'resource-1', agentTargetKey: 'agent:happier.agent.codex/codex', protocol: 'openai-responses', modelId: 'gpt-5',
       initiator: { installationId: 'installation-1', endpointId: 'a'.repeat(64) }, target: { machineId: 'broker-machine', endpointId: 'b'.repeat(64) }, activationSignature: 'A'.repeat(86), installationSignature: 'A'.repeat(86),
     } });
-    expect(response.json().readiness).toEqual({ kind: expected });
+    expect(response.json().readiness).toEqual(expected);
     expect(checkLocalCurrentness).toHaveBeenCalledWith({ selection: credentialSelectionBinding, modelId: 'gpt-5' }, expect.any(AbortSignal));
     await app.close();
+  });
+
+  it('retains a confirmed Home source reconnect without asking local currentness', async () => {
+    const readiness = { kind: 'source_unavailable' as const, reason: 'connected_service_credential_reconnect_required' as const };
+    const body = {
+      v: 1, kind: 'provider_broker_readiness', homeServerIdentityId: 'srv_home', activationId: '00000000-0000-4000-8000-000000000010', launchManifestCommitment: 'A'.repeat(43), resourceId: 'resource-1', agentTargetKey: 'agent:happier.agent.codex/codex', protocol: 'openai-responses' as const, modelId: 'gpt-5',
+      initiator: { installationId: 'installation-1', endpointId: 'a'.repeat(64) }, target: { machineId: 'broker-machine', endpointId: 'b'.repeat(64) }, activationSignature: 'A'.repeat(86), installationSignature: 'A'.repeat(86),
+    };
+    const checkLocalCurrentness = vi.fn();
+    const app = fastify();
+    registerRunnerBrokerReadinessApplication(app, { authorize: async () => ({ v: 1,
+      binding: { homeServerIdentityId: body.homeServerIdentityId, activationId: body.activationId,
+        launchManifestCommitment: body.launchManifestCommitment, resourceId: body.resourceId, agentTargetKey: body.agentTargetKey,
+        protocol: body.protocol, modelId: body.modelId, initiator: body.initiator, target: body.target },
+      credentialSelectionBinding, readiness }), checkLocalCurrentness });
+    try {
+      const response = await app.inject({ method: 'POST', url: '/readiness', payload: body });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().readiness).toEqual(readiness);
+      expect(checkLocalCurrentness).not.toHaveBeenCalled();
+    } finally { await app.close(); }
   });
 
   it('rejects a substituted Home response before inspecting local source currentness', async () => {
@@ -76,7 +98,7 @@ describe('Runner broker readiness application', () => {
       credentialSelectionBinding: { ...credentialSelectionBinding, resourceId: 'other-resource' },
       readiness: { kind: 'available' as const },
     }));
-    const checkLocalCurrentness = vi.fn(async () => 'available' as const);
+    const checkLocalCurrentness = vi.fn(async () => ({ kind: 'available' as const }));
     const app = fastify();
     registerRunnerBrokerReadinessApplication(app, { authorize, checkLocalCurrentness });
     const response = await app.inject({ method: 'POST', url: '/readiness', payload: {

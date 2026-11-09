@@ -13,6 +13,7 @@ import {
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import * as persistence from '@/persistence';
 import { createLocalServicesDaemonRuntime } from '../runtime';
+import { createPlainProjectAccountRefRow, mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -75,16 +76,24 @@ describe('readLocalServiceWorkspaceFacts', () => {
     }
 
     it('discovers accepted roots without Sessions and excludes other Homes and Machines', async () => {
-        const post = networkRows([
+        const refs = [
             acceptedRef,
             { ...acceptedRef, id: 'another-home', serverId: 'home-b', rootPath: '/repo/other-home' },
             { ...acceptedRef, id: 'another-machine', machineId: 'machine-b', rootPath: '/repo/other-machine' },
+        ];
+        const post = mockProjectAccountRowsHttpBoundary([
+            ...refs.map(ref => createPlainProjectAccountRefRow(ref)),
+            ...Array.from({ length: 1024 }, (_, index) => {
+                const key = { kind: 'project-organization', serverId: 'home-a', projectKey: `unrelated-${index}` };
+                return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+            }),
         ]);
 
         expect(await readLocalServiceWorkspaceFacts(input)).toEqual({
             facts: [{ id: acceptedRef.id, path: '/repo/app' }], acceptedWorkspaceRefs: [acceptedRef], diagnostics: [],
         });
         expect(post.mock.calls[0]?.[0]).toBe(`https://selected-home.example.test${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`);
+        expect(post.mock.calls.map(([, body]) => body)).toEqual([{ kinds: ['workspace-ref'], serverId: 'home-a' }]);
         expect(vi.mocked(axios.get).mock.calls[0]?.[0]).toBe('https://selected-home.example.test/v1/account/encryption');
     });
 

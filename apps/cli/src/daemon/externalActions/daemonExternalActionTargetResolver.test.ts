@@ -310,12 +310,15 @@ describe('createDaemonExternalActionTargetResolver', () => {
     await expect(isCurrent({ origin: executionOrigin })).resolves.toBe(false);
   });
 
-  it('rechecks a managed guest Session approval through Home source custody without inventing a guest-local source runner', async () => {
+  it.each([false, true])('rechecks a managed guest Session approval through Home source custody without inventing a guest-local source runner (cause=%s)', async hasCause => {
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
     const caller = { kind: 'session' as const, sessionId: 'source-session', starterDepth: 1, turnDepth: 2 };
     const causalPermissionAuthority = { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'yolo' as const };
+    const cause = hasCause ? { requestRef: 'authenticated-input', requester: { serverId: 'srv_home', accountId: 'account-1' },
+      persona: { serverId: 'srv_home', sessionId: caller.sessionId }, origin: null } : undefined;
     const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1, caller, sourceTurnId: 'accepted-turn',
-      callerPermissionMode: 'yolo', causalPermissionAuthority, requestId: 'managed-creation' });
+      callerPermissionMode: 'yolo', causalPermissionAuthority, requestId: 'managed-creation',
+      ...(cause ? { actionRequestAttributionV1: cause } : {}) });
     const target = { kind: 'machine' as const, machineId: 'guest' };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-child-proof', binding: {
       serverIdentityId: 'srv_home', accountId: 'account-1', custodianAccountId: 'account-1',
@@ -335,6 +338,7 @@ describe('createDaemonExternalActionTargetResolver', () => {
       serverIdentityId: 'srv_home', runtimeAccountId: 'account-1', actionRequestId: sessionActionOrigin.requestId,
       externalActionTarget: target, externalActionExecutionAuthorization: authorization,
       callerPermissionMode: 'yolo', causalPermissionAuthority, sessionAgentSpawnPolicyV1: spawnPolicy,
+      ...(sessionActionOrigin.actionRequestAttributionV1 ? { actionRequestAttributionV1: sessionActionOrigin.actionRequestAttributionV1 } : {}),
       sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: sessionActionOrigin.sourceTurnId, via: 'action' },
       signExternalActionApprovalInput: ({ actionId, input, target: signedTarget }) => signExternalActionApprovalInputV1({
         authorizationToken: authorization.token, actionId, input, target: signedTarget, privateKey: keys.secretKey }),
@@ -366,6 +370,11 @@ describe('createDaemonExternalActionTargetResolver', () => {
     const staleReasons: string[] = [];
     const check = () => isCurrent({ origin, actionInput: spawnInput, reportStale: (reason: string) => { staleReasons.push(reason); } });
     await expect(check()).resolves.toBe(true);
+    // Editable Artifact content cannot replace the original Home-bound cause.
+    await expect(isCurrent({ origin: { ...origin, actionRequestAttributionV1: {
+      requestRef: 'forged-input', requester: { serverId: 'srv_home', accountId: 'other-person' },
+      persona: { serverId: 'srv_home', sessionId: caller.sessionId }, origin: null,
+    } }, actionInput: spawnInput })).resolves.toBe(false);
     homeCurrent = false;
     await expect(check()).resolves.toBe(false);
     homeCurrent = true;

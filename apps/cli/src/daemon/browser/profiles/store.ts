@@ -51,10 +51,10 @@ export type BrowserProfileStore = Readonly<{
   getProfile(profileId: string): BrowserProfileV1 | null;
   listProfiles(): readonly BrowserProfileV1[];
   resolveProfileDirectory(profileId: string): string;
-  listExtensions(profileId: string): Promise<BrowserProfileExtensionsResult>;
+  listExtensions(profileId: string, extensionIds?: readonly string[]): Promise<BrowserProfileExtensionsResult>;
   setExtension(profileId: string, extension: BrowserExtensionRecordV1): Promise<BrowserProfileExtensionsResult>;
   recordExtensionUpstream(profileId: string, extensionId: string, expectedVersion: string,
-    upstream: NonNullable<BrowserExtensionRecordV1['upstream']>): Promise<BrowserProfileExtensionsResult>;
+    upstream: NonNullable<BrowserExtensionRecordV1['upstream']>): Promise<Readonly<{ ok: true }> | Extract<BrowserProfileExtensionsResult, { ok: false }>>;
   removeExtension(profileId: string, extensionId: string): Promise<BrowserProfileExtensionsResult>;
   purgeForSessionDeleted(input: Readonly<{ sessionId: string }>): Promise<BrowserProfilePurgeOutcome>;
   purgeForLogout(): Promise<BrowserProfilePurgeOutcome>;
@@ -262,10 +262,10 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
       return [...profilesById.values()].filter(profile => profile.storageMode === 'user' || profile.storageMode === 'plugin');
     },
 
-    async listExtensions(profileId) {
+    async listExtensions(profileId, extensionIds) {
       const storage = admitExtensionStorage(profileId);
       if (!storage.ok) return storage;
-      return { ok: true, extensions: await readProfileExtensions(storage.directory) };
+      return { ok: true, extensions: await readProfileExtensions(storage.directory, extensionIds) };
     },
 
     async setExtension(profileId, extension) {
@@ -283,14 +283,14 @@ export function createBrowserProfileStore(options: BrowserProfileStoreOptions): 
     async recordExtensionUpstream(profileId, extensionId, expectedVersion, upstream) {
       const storage = admitExtensionStorage(profileId);
       if (!storage.ok) return storage;
-      const previous = await readProfileExtensions(storage.directory);
+      const previous = await readProfileExtensions(storage.directory, [extensionId]);
       const installed = previous.find(extension => extension.id === extensionId);
       // An observation belongs to the version checked, never to a newer install
       // or a removed record. Merge into the current record to retain user choices.
-      if (!installed || installed.version !== expectedVersion) return { ok: true, extensions: previous };
+      if (!installed || installed.version !== expectedVersion) return { ok: true };
       const record = BrowserExtensionRecordV1Schema.parse({ ...installed, upstream });
       await writeProfileExtension(storage.directory, record);
-      return { ok: true, extensions: previous.map(extension => extension.id === record.id ? record : extension) };
+      return { ok: true };
     },
 
     async removeExtension(profileId, extensionId) {

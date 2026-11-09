@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { localServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { createDeferred } from '@/testkit/async/deferred';
 
 type PreviewRegistryModule = typeof import("./registry");
 
@@ -7,6 +9,77 @@ async function loadPreviewRegistryModule(): Promise<PreviewRegistryModule | null
 }
 
 describe("daemon local service preview registry", () => {
+    it('publishes a proved end once and retains the exact ended binding without reviving it', async () => {
+        const mod = await import('./registry');
+        let publications = 0;
+        const registry = mod.createLocalServicePreviewRegistry(() => { publications++; });
+        const input = {
+            previewId: 'managed-preview', machineId: 'machine_123', owner: { kind: 'user', id: 'account_123' },
+            target: { scheme: 'http', host: 'localhost', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Web', addressLabel: 'Web' }, originMode: 'host',
+        } as const;
+        let current = true;
+        const registered = mod.registerLocalServicePreview(registry, input, { isCurrent: () => current });
+        if (!registered.ok) throw new Error(registered.reasonCode);
+        const binding = localServicePreviewDirectBindingV1(registered.resource);
+        const afterRegistration = publications;
+        await mod.resolveLocalServicePreviewApplication(registry, binding);
+        expect(publications).toBe(afterRegistration);
+        current = false;
+        await expect(mod.resolveLocalServicePreviewApplication(registry, binding)).rejects.toMatchObject({ reasonCode: 'preview_not_found' });
+        expect(mod.listLocalServicePreviewResources(registry)).toEqual([]);
+        expect(registry.previewsById.has(binding.previewId)).toBe(true);
+        expect(publications).toBe(afterRegistration + 1);
+        await expect(mod.resolveLocalServicePreviewApplication(registry, binding)).rejects.toMatchObject({ reasonCode: 'preview_not_found' });
+        mod.registerLocalServicePreview(registry, input, { isCurrent: () => true });
+        await expect(mod.resolveLocalServicePreviewApplication(registry, binding)).rejects.toMatchObject({ reasonCode: 'preview_not_found' });
+        expect(publications).toBe(afterRegistration + 1);
+    });
+
+    it.each([false, true] as const)('does not retire a same-binding replacement after a delayed %s observation of its predecessor', async observed => {
+        const mod = await import('./registry');
+        let publications = 0;
+        const registry = mod.createLocalServicePreviewRegistry(() => { publications++; });
+        const input = {
+            previewId: 'managed-preview', machineId: 'machine_123', owner: { kind: 'user', id: 'account_123' },
+            target: { scheme: 'http', host: 'localhost', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Web', addressLabel: 'Web' }, originMode: 'host',
+        } as const;
+        const observation = createDeferred<boolean>();
+        const registered = mod.registerLocalServicePreview(registry, input, { isCurrent: () => observation.promise });
+        if (!registered.ok) throw new Error(registered.reasonCode);
+        const resolving = mod.resolveLocalServicePreviewApplication(registry, localServicePreviewDirectBindingV1(registered.resource));
+        const replacement = mod.registerLocalServicePreview(registry, input, { isCurrent: () => true });
+        if (!replacement.ok) throw new Error(replacement.reasonCode);
+        const afterReplacement = publications;
+        observation.resolve(observed);
+        await expect(resolving).rejects.toMatchObject({ reasonCode: 'preview_not_found' });
+        expect(publications).toBe(afterReplacement);
+        expect(mod.listLocalServicePreviewResources(registry)).toEqual([replacement.resource]);
+        await expect(mod.resolveLocalServicePreviewApplication(registry, localServicePreviewDirectBindingV1(replacement.resource)))
+            .resolves.toEqual(replacement.resource);
+    });
+
+    it('keeps unknown occurrence evidence live in snapshots and recovers without publishing an end', async () => {
+        const mod = await import('./registry');
+        let publications = 0;
+        let unavailable = true;
+        const registry = mod.createLocalServicePreviewRegistry(() => { publications++; });
+        const registered = mod.registerLocalServicePreview(registry, {
+            previewId: 'managed-preview', machineId: 'machine_123', owner: { kind: 'user', id: 'account_123' },
+            target: { scheme: 'http', host: 'localhost', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Web', addressLabel: 'Web' }, originMode: 'host',
+        }, { isCurrent: () => { if (unavailable) throw new Error('native observation unavailable'); return true; } });
+        if (!registered.ok) throw new Error(registered.reasonCode);
+        const binding = localServicePreviewDirectBindingV1(registered.resource);
+        const afterRegistration = publications;
+        await expect(mod.resolveLocalServicePreviewApplication(registry, binding)).rejects.toThrow('native observation unavailable');
+        expect(mod.listLocalServicePreviewResources(registry)).toEqual([registered.resource]);
+        expect(registry.previewsById.get(binding.previewId)?.occurrence?.ended).not.toBe(true);
+        unavailable = false;
+        await expect(mod.resolveLocalServicePreviewApplication(registry, binding)).resolves.toEqual(registered.resource);
+        expect(publications).toBe(afterRegistration);
+    });
     it('never lends an occurrence-bound preview to a scanned listener on the same endpoint', async () => {
         const mod = await import('./registry');
         const registry = mod.createLocalServicePreviewRegistry();

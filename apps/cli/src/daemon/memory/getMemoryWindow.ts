@@ -14,7 +14,6 @@ import { normalizeMemoryContentPolicy, type MemoryContentPolicy } from './transc
 import { externalMemoryStorageId, extractExternalMemoryTranscriptItems } from './externalTranscriptIndex';
 import type { DeepIndexDbHandle } from './deepIndex/deepIndexDb';
 
-import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { FetchEncryptedTranscriptMessagesPageResult } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
@@ -42,7 +41,6 @@ async function getExternalMemoryWindow(params: ExternalMemoryWindowRequest): Pro
   });
   let indexedStart = params.cursor === undefined && cursor !== undefined;
   let recoverNewerPadding = params.cursor !== undefined;
-  const visited = new Set<string>();
   let newerContext: MemoryExternalSnippetV1[] = [];
   let before: MemoryExternalSnippetV1[] = [];
   let target: MemoryExternalSnippetV1 | undefined;
@@ -91,7 +89,6 @@ async function getExternalMemoryWindow(params: ExternalMemoryWindowRequest): Pro
       cursor = neighbor === cursor ? undefined : neighbor;
       indexedStart = cursor !== undefined;
       newerContext = []; before = []; target = undefined; after = [];
-      visited.clear();
       continue;
     }
     if (target && before.length >= padding) break;
@@ -101,8 +98,6 @@ async function getExternalMemoryWindow(params: ExternalMemoryWindowRequest): Pro
       if (page.hasMore === true || page.truncated === true) throw new Error('memory_external_transcript_cursor_missing');
       break;
     }
-    if (next === cursor || visited.has(next)) throw new Error('memory_external_transcript_cursor_stalled');
-    visited.add(next);
     cursor = next;
   }
   return { v: 1, snippets: [], citations: [], externalSnippets: target
@@ -118,7 +113,7 @@ type SessionMemoryWindowRequest = Readonly<{
   contentPolicy?: MemoryContentPolicy | null;
   signal?: AbortSignal;
   deps?: Readonly<{
-    fetchSessionById: (args: Readonly<{ token: string; sessionId: string; signal?: AbortSignal }>) => Promise<RawSessionRecord | null>;
+    fetchSessionById: typeof fetchSessionById;
     fetchEncryptedTranscriptMessagesPage?: (args: Readonly<{
       token: string;
       sessionId: string;

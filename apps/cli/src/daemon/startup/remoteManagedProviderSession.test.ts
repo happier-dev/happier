@@ -61,6 +61,25 @@ it('attests the current development Gateway source for a peer without acquiring 
       expect(RunnerDaemonManagedProviderBootstrapV1Schema.parse(projection.bootstrap)).toMatchObject({
         custody: 'daemonShared', requestAuth: null, scope: { sourceCustody: runtime.sourceCustody },
       });
+      // One admission opens the broker and the next read decides again; a
+      // withdrawn selection is refused and cleaned up at that next read.
+      let selectionCurrent = true;
+      let currentnessReads = 0;
+      let cleanups = 0;
+      const opened = await createRemoteManagedProviderSessionProjection({ ...input,
+        isCurrent: async () => { currentnessReads += 1; return selectionCurrent; },
+        openBroker: async () => ({ isCurrent: () => true, cleanup: async () => {},
+          readHttpBinding: async () => ({ endpointUrl: 'http://127.0.0.1:1/gateway' }) }) as never,
+        cleanup: async () => { cleanups += 1; },
+      });
+      await opened.readSharedGatewayAccess();
+      expect(currentnessReads).toBe(2);
+      await opened.readSharedGatewayAccess();
+      await opened.readSharedGatewayAccess();
+      selectionCurrent = false;
+      await expect(opened.readSharedGatewayAccess())
+        .rejects.toMatchObject({ code: 'plugin_services_managed_provider_authority_unavailable' });
+      expect(cleanups).toBe(1);
       // A missing broker binding is a wiring defect even with current source.
       await expect(createRemoteManagedProviderSessionProjection({ ...input, openBroker: undefined }))
         .rejects.toMatchObject({ code: 'plugin_services_managed_provider_authority_unavailable' });

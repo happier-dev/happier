@@ -1,8 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { PEER_MACHINE_RPC_DIRECT_PATH_V2 } from '@happier-dev/protocol/machines/peer/mediation/rpc/directV2';
 import { PEER_MEDIATION_RECEIPTS } from '@happier-dev/protocol/machines/peer/mediation/receipts';
-import { createPeerMachineRpcResultHashV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/commandReceiptV1';
-import type { PeerMachineRpcCommandReceiptSuccessV1, PeerMachineRpcDirectResponseV2 } from '@happier-dev/protocol';
+import type { PeerMachineRpcDirectResponseV2 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import type { DaemonPeerMediationDirectFlowObserver } from '../observability/events';
@@ -12,10 +11,6 @@ import {
     type PeerMachineRpcDirectExpectedBinding,
     validatePeerMachineRpcDirectRequest,
 } from './validateRequest';
-import {
-    createPeerMachineRpcReplayKeyCache,
-    type PeerMachineRpcReplayKeyCache,
-} from './replayKeys';
 
 export type PeerMachineRpcDirectHandlerManager = Readonly<{
     invokeLocal(
@@ -32,7 +27,6 @@ export type PeerMachineRpcDirectHandlerManager = Readonly<{
 
 export type PeerMachineRpcDirectRuntimeOptions = Readonly<{
     rpcHandlerManager: PeerMachineRpcDirectHandlerManager;
-    replayKeyCache?: PeerMachineRpcReplayKeyCache;
     /** Scope-bound PMS-9 observer supplied by the loopback composition root (P1-9). */
     observability?: DaemonPeerMediationDirectFlowObserver;
 }>;
@@ -50,22 +44,6 @@ function isMethodNotFoundResult(value: unknown): boolean {
         && typeof value === 'object'
         && (value as { errorCode?: unknown }).errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND,
     );
-}
-
-function createCommandReceipt(input: Readonly<{
-    requestHash: string;
-    replayKey: string;
-    issuedAtMs: number;
-    result: unknown;
-}>): PeerMachineRpcCommandReceiptSuccessV1 {
-    return {
-        v: 1,
-        issuer: 'daemon',
-        issuedAtMs: input.issuedAtMs,
-        requestHash: input.requestHash,
-        replayKey: input.replayKey,
-        resultHash: createPeerMachineRpcResultHashV1(input.result),
-    };
 }
 
 function createDirectPeerRequestLifetime(
@@ -104,9 +82,6 @@ export function registerPeerMediationMachineRpcDirectRoutes(
     app: FastifyInstance,
     options: RegisterPeerMediationMachineRpcDirectRoutesOptions,
 ): void {
-    const replayKeyCache = options.replayKeyCache ?? createPeerMachineRpcReplayKeyCache({
-        nowMs: options.nowMs,
-    });
     const grantConsumption = createAtomicRouteGrantConsumption({ activationFailurePolicy: 'release' });
     app.addHook('onClose', async () => {
         grantConsumption.clear();
@@ -134,7 +109,6 @@ export function registerPeerMediationMachineRpcDirectRoutes(
             expected: options.expected,
             trustRoots: options.resolveTrustRoots?.() ?? options.trustRoots,
             nowMs: options.nowMs(),
-            replayKeyCache,
         });
         if (!validation.ok) {
             observe({
@@ -211,16 +185,6 @@ export function registerPeerMediationMachineRpcDirectRoutes(
             method: validation.request.method,
             routeKind: validation.request.routeKind,
             result,
-            ...(validation.commandReceiptRequired && validation.request.commandReceipt
-                ? {
-                    commandReceipt: createCommandReceipt({
-                        requestHash: validation.request.commandReceipt.requestHash,
-                        replayKey: validation.request.commandReceipt.replayKey,
-                        issuedAtMs: options.nowMs(),
-                        result,
-                    }),
-                }
-                : {}),
         };
     };
 

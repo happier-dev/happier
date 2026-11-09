@@ -3,6 +3,7 @@ import type { TeamCredentialDirectMaterialPreparationResponseV1, TeamCredentialD
 
 import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 import { produceTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialProducer';
+import { TeamCredentialDirectMaterialHttpContractError } from './teamCredentialDirectMaterialContractError';
 
 type PreparationInput = Readonly<{
   teamId: string;
@@ -165,7 +166,8 @@ export async function reconcileTeamCredentialDirectMaterial(input: Readonly<{
         prepared += 1;
       }
       cursor = page.nextCursor ?? undefined;
-    } catch {
+    } catch (error) {
+      if (!input.signal?.aborted && error instanceof TeamCredentialDirectMaterialHttpContractError) throw error;
       return input.signal?.aborted
         ? { ok: false, reason: 'cancelled', prepared }
         : { ok: false, reason: 'source_unavailable', prepared };

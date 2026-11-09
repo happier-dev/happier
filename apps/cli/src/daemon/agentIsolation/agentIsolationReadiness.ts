@@ -37,7 +37,7 @@ export function createAgentIsolationNativeReadinessQualification(input: Readonly
 /** Startup restores only the incumbent native proof. It never changes policy,
  * provisions a member, reapplies setup, or retires a predecessor Session. */
 export async function observeUnqualifiedAgentIsolationNativeReadiness(input: Readonly<{
-  snapshot: ReturnType<HostAgentIsolationLaunchContext['read']>;
+  snapshot: Pick<NonNullable<ReturnType<HostAgentIsolationLaunchContext['read']>>, 'enabled' | 'status'> | undefined;
   effects: AgentIsolationEffectDependencies;
   signal?: AbortSignal;
 }>): Promise<MachineAgentIsolationStatusV1 | undefined> {

@@ -11,12 +11,12 @@ export type AccountServerPatEncryptionAccessReader = (
 export function createAccountServerPatEncryptionAccessReader(options: Readonly<{
   accountId: string; serverBaseUrl: string;
 }>): AccountServerPatEncryptionAccessReader {
-  const url = `${normalizeServerHttpBaseUrl(options.serverBaseUrl)}${ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1}`;
   return async (token, signal) => {
     const bearer = parseAccountApiTokenBearerV1(token);
     if (!bearer) return { statusCode: 401, body: { error: 'invalid_token' } };
     try {
       signal?.throwIfAborted();
+      const url = `${normalizeServerHttpBaseUrl(options.serverBaseUrl)}${ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1}`;
       const response = await axios.post<unknown>(url, {}, {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         ...(signal ? { signal } : {}), validateStatus: () => true,

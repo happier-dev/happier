@@ -49,7 +49,7 @@ import {
   type SpawnWorkspaceSyncSidecar,
   type WorkspaceSyncSidecarLifecycleDependencies,
 } from '@/workspaces/sync/workspaceSyncSidecarLifecycle';
-import type { ManagedWorkspaceSync, WorkspaceSyncRelationshipPreparation } from '@/workspaces/sync/workspaceSyncTypes';
+import type { ManagedWorkspaceSync } from '@/workspaces/sync/workspaceSyncTypes';
 import type { WorkspaceSyncRelationshipOwner } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
 import type { Duplex } from 'node:stream';
 import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
@@ -75,9 +75,7 @@ export type DaemonWorkspaceSyncRuntimeDependencies = Readonly<{
   releaseChannel: PublicReleaseRingId;
   resolveWorkspaceRef(id: string, copyOperationId?: string): WorkspaceSyncResolvedRef | null | Promise<WorkspaceSyncResolvedRef | null>;
   rootOwnershipManager: WorkspaceRootOwnershipManager;
-  prepareRelationshipTarget(definition: WorkspaceSyncRelationshipV1, signal?: AbortSignal, preparation?: WorkspaceSyncRelationshipPreparation): Promise<Readonly<{
-    ownershipHandles?: readonly WorkspaceRootOwnershipHandle[];
-  }> | void>;
+  prepareRelationshipTarget: NonNullable<WorkspaceSyncControllerOptions['prepareRelationshipTarget']>;
   recoverCopyOnceTarget?(operation: WorkspaceSyncCopyOnceV1): Promise<Readonly<{
     release(reason: 'abort' | 'commit'): Promise<void>;
   }>>;
@@ -118,12 +116,6 @@ export type DaemonWorkspaceSyncRuntimeDependencies = Readonly<{
   ensurePrivateDirectory?: (path: string) => Promise<void>;
   randomBytes?: (length: number) => Uint8Array;
   randomId?: () => string;
-  /**
-   * Retired legacy-state availability assertion derived by the production
-   * composition from its one startup inspection; enforced by the controller
-   * before every state-touching entry point.
-   */
-  assertLegacyStateAvailable?: () => void;
   onStatusPublished?: (status: WorkspaceSyncStatusV1) => void;
   onEngineReadinessPublished?: (readiness: WorkspaceSyncRuntimeReadinessV1['engine']) => void;
 }>;
@@ -239,7 +231,9 @@ export function createDaemonWorkspaceSyncRuntime(
   });
   const adapter = createWorkspaceSyncMutagenAdapter({
     send: async (command, signal, operationId) => await lifecycle.command(command, signal, operationId),
-    resolveWorkspaceRef: dependencies.resolveWorkspaceRef,
+    resolveWorkspaceRef: (id, operationId) => controller
+      ? controller.resolveWorkspaceRef(id, operationId)
+      : dependencies.resolveWorkspaceRef(id, operationId),
   });
   const openRootedAgent: WorkspaceSyncLocalAgentStreamOpen = async (input) => {
     const runtime = await resolveRuntime();
@@ -284,7 +278,6 @@ export function createDaemonWorkspaceSyncRuntime(
     ...(dependencies.readFileAtTarget ? { readFileAtTarget: dependencies.readFileAtTarget } : {}),
     ...(dependencies.observeEntryAtTarget ? { observeEntryAtTarget: dependencies.observeEntryAtTarget } : {}),
     ...(dependencies.assertConflictResolutionAuthorized ? { assertConflictResolutionAuthorized: dependencies.assertConflictResolutionAuthorized } : {}),
-    ...(dependencies.assertLegacyStateAvailable ? { assertLegacyStateAvailable: dependencies.assertLegacyStateAvailable } : {}),
     ...(dependencies.onStatusPublished ? { onStatusPublished: dependencies.onStatusPublished } : {}),
   });
   const handoffAdapter = createWorkspaceSyncHandoffAdapter({

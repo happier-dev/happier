@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 import { API_TOKEN_FULL_GRANT_V1, AutomationV3RunMutationResponseSchema } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -41,8 +42,12 @@ describe('installed API-token approval HTTP custody', () => {
           target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
         },
       }),
-      request: async request => {
-        if (request.path.endsWith('/verify')) return { status: 200, data: { ok: requesterCurrent } };
+      request: request => {
+        // Artifact persistence is the existing Home boundary in this harness;
+        // only the Action effect and currentness are supplied by this case.
+        if (request.path.startsWith('/v1/artifacts')) return null;
+        if (request.path.endsWith('/verify')) return Promise.resolve({ status: 200,
+          data: { ok: request.path.includes('/workflow.trigger.run_now/') ? requesterCurrent : true } });
         expect(request.path).toBe('/v3/automations/automation-1/run-now');
         expect(request.headers).not.toHaveProperty('Authorization');
         expect(request.headers['Idempotency-Key']).toBe(key);
@@ -53,24 +58,66 @@ describe('installed API-token approval HTTP custody', () => {
           signature: request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]!,
           publicKey: Buffer.from(h.installation.publicKey, 'base64url') })).toBe(true);
         effects++;
-        return { status: 200, data: receipt };
+        return Promise.resolve({ status: 200, data: receipt });
       },
     });
+    const originalPost = vi.mocked(axios.post).getMockImplementation();
+    const originalGet = vi.mocked(axios.get).getMockImplementation();
+    if (!originalPost || !originalGet) throw new Error('Missing Home HTTP boundary');
+    const approvalWrites: Array<Record<string, string>> = [];
+    const approvalReads: Array<Record<string, string>> = [];
+    const effectWrites: Array<Record<string, string>> = [];
+    vi.mocked(axios.get).mockImplementation(async (...args) => {
+      if (new URL(String(args[0])).pathname.startsWith('/v1/artifacts/')) {
+        approvalReads.push({ ...args[1]?.headers } as Record<string, string>);
+      }
+      return originalGet(...args);
+    });
+    vi.mocked(axios.post).mockImplementation(async (...args) => {
+      const path = new URL(String(args[0])).pathname;
+      if (path.startsWith('/v1/artifacts')) {
+        approvalWrites.push({ ...args[2]?.headers } as Record<string, string>);
+      }
+      if (path === '/v3/automations/automation-1/run-now') effectWrites.push({ ...args[2]?.headers } as Record<string, string>);
+      return originalPost(...args);
+    });
     try {
-      expect(await h.run({ automationId: 'automation-1', ...(key === undefined ? {} : { idempotencyKey: key }) }, 'cli')).toMatchObject({ ok: true,
+      const created = await h.run({ automationId: 'automation-1', ...(key === undefined ? {} : { idempotencyKey: key }) }, 'cli');
+      expect(created, JSON.stringify(created)).toMatchObject({ ok: true,
         result: { kind: 'approval_request_created' } });
       expect(effects).toBe(0);
+      expect(approvalWrites).toEqual([expect.objectContaining({
+        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'synthetic-home-root',
+      })]);
+      expect(approvalWrites[0]?.Authorization).toBeUndefined();
       const stored = await h.approval();
       expect(stored.executionOriginV1.externalActionExecutionAuthorization).not.toHaveProperty('requesterHttpProjection');
+      const readsBeforeDecision = approvalReads.length;
       requesterCurrent = !revoked;
-      await h.decide('approve');
+      const decision = await h.decide('approve');
+      expect(approvalReads.slice(readsBeforeDecision).some(headers =>
+        headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] === 'synthetic-home-root' && !headers.Authorization),
+      ).toBe(true);
+      expect(approvalWrites.at(-1), JSON.stringify(approvalWrites)).toMatchObject({
+        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'synthetic-home-root',
+      });
+      expect(approvalWrites.at(-1)?.Authorization).toBeUndefined();
+      if (!revoked) {
+        expect(effectWrites, JSON.stringify(effectWrites)).toEqual([expect.objectContaining({
+          [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'synthetic-home-root',
+        })]);
+        expect(effectWrites[0]?.Authorization).toBeUndefined();
+      }
       const settled = await h.approval();
       if (revoked) {
-        expect(settled).toMatchObject({ execution: { ok: false, errorCode: 'approval_stale' } });
+        expect(settled, JSON.stringify({ decision, status: settled.status, execution: settled.execution })).toMatchObject({
+          execution: { ok: false, errorCode: 'approval_stale' },
+        });
         expect(effects).toBe(0);
         return;
       }
-      expect(settled, JSON.stringify({ status: settled.status, execution: settled.execution })).toMatchObject({
+      expect(settled, JSON.stringify({ status: settled.status, execution: settled.execution,
+        networkPaths: h.networkPaths, effects, effectWrites })).toMatchObject({
         status: 'executed', execution: { ok: true, result: receipt },
       });
       expect(effects).toBe(1);

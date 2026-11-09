@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import axios from 'axios';
-import { QualifiedConnectedAccountListResponseV4Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountListResponseV4Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { ApiClient } from '@/api/api';
+import { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { deriveConnectedServiceRunMaterializeToken, isValidConnectedServiceRunMaterializeToken } from './capabilityToken';
 
@@ -26,10 +27,16 @@ import {
 import {
     createConnectedAccountRequestAuthSubjectRegistry,
 } from '../requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
-import { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
-import { ConnectedServiceRunMaterializationFailureResponseSchema } from './materializeContract';
 import { createExecutionRunConnectedServicesBridge } from './executionRunMaterialization';
 import type { CreateExecutionRunConnectedServicesBridgeDeps } from './executionRunMaterialization';
+import { createAdoptedExecutionRunRootCleanup } from './createAdoptedExecutionRunRootCleanup';
+import { resolveConnectedServiceMaterializedRootDir } from '../materialize/resolveConnectedServiceMaterializedRootDir';
+import { logger } from '@/ui/logger';
+import { ConnectedServiceQuotasCoordinator } from '../quotas/ConnectedServiceQuotasCoordinator';
+import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
+import { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from '../runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
+import { resolveConnectedServiceAuthForLaunch } from '../resolveConnectedServiceAuthForLaunch';
+import { ConnectedServiceRunMaterializationFailureResponseSchema, ConnectedServiceRunRejectedStartResultSchema } from './materializeContract';
 
 type ResolveAuthForSpawnInput = Parameters<
     CreateExecutionRunConnectedServicesBridgeDeps['resolveAuthForSpawn']
@@ -125,7 +132,6 @@ function createBridge(overrides: Partial<Parameters<typeof createExecutionRunCon
         }),
         acquireAgentPurposeContributions: async () => ({
             contributions: { agentDefinitionsById: new Map() },
-            resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
             isCurrent: () => true,
             release: async () => undefined,
         }),
@@ -215,13 +221,24 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         }));
         if (second.ok) await h.bridge.release({ runId: MATERIALIZE_INPUT.runId, runnerPid: MATERIALIZE_INPUT.runnerPid, activationId: second.activationId });
     });
-    it('retries exact terminal cleanup custody after a failed root removal', async () => {
-        const cleanup = vi.fn()
-            .mockRejectedValueOnce(new Error('busy'))
-            .mockResolvedValueOnce(undefined);
-        const createAdoptedRootCleanup = vi.fn(() => cleanup);
+    it.each([true, false])('reports a real terminal root-removal failure at warn and retains cleanup (runner current: %s)', async (runnerCurrent) => {
+        const base = await mkdtemp(join(tmpdir(), 'happier-run-cleanup-'));
+        const root = resolveConnectedServiceMaterializedRootDir({
+            baseDir: base, agentId: MATERIALIZE_INPUT.agentId, materializationKey: MATERIALIZE_INPUT.runId,
+        });
+        await mkdir(root, { recursive: true });
+        // Directory removal and file logging are the system boundaries; root
+        // validation, retention and bridge cleanup run their production logic.
+        const removeRoot = vi.fn()
+            .mockRejectedValueOnce(Object.assign(new Error(`EBUSY: ${root}; accessToken=fixture-private-value`), { code: 'EBUSY' }))
+            .mockImplementation(async (path: string) => { await rm(path, { recursive: true, force: true }); });
+        const warning = vi.spyOn(logger, 'warn').mockImplementation(() => {});
         const { bridge, clearTerminalCleanupReceipt } = createBridge({
-            createAdoptedRootCleanup,
+            resolveRunMaterializedRoot: () => root,
+            createAdoptedRootCleanup: input => createAdoptedExecutionRunRootCleanup({
+                ...input, materializationKey: input.runKey, materializationBaseDir: base, removeRoot,
+            }),
+            captureRunnerIdentity: () => ({ identity: {}, parentSessionId: 'session-1', isCurrent: () => runnerCurrent }),
         });
         const receipt = {
             v: 1 as const,
@@ -230,22 +247,33 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             agentId: MATERIALIZE_INPUT.agentId,
         };
 
-        await expect(bridge.cleanupTerminalMaterialization({
-            runId: MATERIALIZE_INPUT.runId,
-            runnerPid: MATERIALIZE_INPUT.runnerPid,
-            sessionId: 'session-1',
-            receipt,
-        })).resolves.toBe(false);
-        await expect(bridge.cleanupTerminalMaterialization({
-            runId: MATERIALIZE_INPUT.runId,
-            runnerPid: MATERIALIZE_INPUT.runnerPid,
-            sessionId: 'session-1',
-            receipt,
-        })).resolves.toBe(true);
+        try {
+            await expect(bridge.cleanupTerminalMaterialization({
+                runId: MATERIALIZE_INPUT.runId,
+                runnerPid: MATERIALIZE_INPUT.runnerPid,
+                sessionId: 'session-1',
+                receipt,
+            })).resolves.toBe(false);
+            await expect(stat(root)).resolves.toBeDefined();
+            expect(warning).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                runId: MATERIALIZE_INPUT.runId, error: expect.stringContaining('EBUSY'),
+            }));
+            expect(JSON.stringify(warning.mock.calls)).not.toContain('fixture-private-value');
+            expect(JSON.stringify(warning.mock.calls)).not.toContain(root);
+            await expect(bridge.cleanupTerminalMaterialization({
+                runId: MATERIALIZE_INPUT.runId,
+                runnerPid: MATERIALIZE_INPUT.runnerPid,
+                sessionId: 'session-1',
+                receipt,
+            })).resolves.toBe(true);
 
-        expect(createAdoptedRootCleanup).toHaveBeenCalledTimes(1);
-        expect(cleanup).toHaveBeenCalledTimes(2);
-        expect(clearTerminalCleanupReceipt).not.toHaveBeenCalled();
+            await expect(stat(root)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(removeRoot).toHaveBeenCalledTimes(2);
+            expect(clearTerminalCleanupReceipt).not.toHaveBeenCalled();
+        } finally {
+            warning.mockRestore();
+            await rm(base, { recursive: true, force: true });
+        }
     });
 
     it.each([
@@ -369,7 +397,6 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             resolveAuthForSpawn: resolveAuthForSpawn as never,
             acquireAgentPurposeContributions: async () => ({
                 contributions,
-                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => generationCurrent,
                 release: async () => undefined,
             }),
@@ -493,7 +520,6 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             resolveAuthForSpawn: resolveAuthForSpawn as never,
             acquireAgentPurposeContributions: async () => ({
                 contributions: REQUEST_AUTH_CONTRIBUTIONS,
-                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => true,
                 release: async () => undefined,
             }),
@@ -544,9 +570,6 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             activationId: result.activationId,
             runKey: 'run_abc',
             agentId: 'codex',
-            // The routing id alone cannot say which build the runner is executing; the exact
-            // contribution generation is what restart adoption later demands correspondence with.
-            agentContribution: AGENT_CONTRIBUTION_IDENTITY,
             materializationKey: 'run_abc',
             connectedServicesBindings: RUN_BINDINGS,
             connectedServiceSelectionsEnv: {
@@ -584,6 +607,80 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         expect(result.ok).toBe(false);
         expect(resolveAuthForSpawn).not.toHaveBeenCalled();
         expect(registerRunTargets).not.toHaveBeenCalled();
+    });
+
+    it('preserves retryable incomplete quota proof in the materialized Run refusal', async () => {
+        const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
+        const serviceId = 'happier.agent.codex/openai-codex';
+        const credentials = { token: 'fixture-home-token', encryption: null };
+        const api = await ApiClient.create(credentials);
+        const group = QualifiedConnectedAccountGroupV4Schema.parse({
+            v: 1, ref: { service, groupId: 'pool' }, incarnation: 'pool-row', displayName: 'Pool',
+            policy: { autoSwitch: true }, activeConnectedAccountId: 'first', generation: 7,
+            runtimeStateRevision: 0, state: {}, createdAt: 1, updatedAt: 1,
+            members: ['first', 'second'].map((connectedAccountId, priority) => ({
+                v: 1, connectedAccountId, priority, enabled: true,
+                state: { quotaExhaustedUntilMs: 60_000 }, createdAt: 1, updatedAt: 1,
+            })),
+        });
+        const accounts = QualifiedConnectedAccountListResponseV4Schema.parse({ service,
+            accounts: ['first', 'second'].map(accountId => ({
+                ref: { service, accountId }, status: 'connected', authenticationModeId: 'oauth',
+                revisionSemantics: 'revisioned', credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+                configurationReady: true, configurationRevision: null, scopes: [],
+            })),
+        });
+        // Only Home HTTP is substituted. Quota completeness, group selection,
+        // spawn resolution and materializer failure projection stay real.
+        const home = vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v4/connect/qualified/group') return { status: 200, data: { group } };
+            if (path === '/v4/connect/qualified/accounts') return { status: 200, data: accounts };
+            throw new Error(`Unexpected Home read: ${path}`);
+        });
+        const unexpected = async (): Promise<never> => { throw new Error('Quota refusal must precede credential materialization'); };
+        const purposes = createConnectedAccountPurposeBindingOwner({
+            store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }),
+                subscribe: () => ({ dispose() {} }) },
+            selectTarget: unexpected, resolveTarget: unexpected, materializeAccount: unexpected,
+            projectTargetAccounts: unexpected, assertTargetAccountMaterializable: unexpected,
+        });
+        // The real unavailable quota runtime produces probe_unavailable; no
+        // internal coordinator or thrown domain error is stubbed.
+        const quotas = new ConnectedServiceQuotasCoordinator({ api, credentials,
+            quotaFetchers: [], now: () => 1_000, randomBytes: length => new Uint8Array(length) });
+        const registry = new ConnectedServiceRuntimeRegistry();
+        const { bridge } = createBridge({
+            acquireAgentPurposeContributions: async () => ({
+                contributions: REQUEST_AUTH_CONTRIBUTIONS,
+                isCurrent: () => true, release: async () => undefined,
+            }),
+            purposeBindingOwner: { activatePurposeBindings: async input => ({ lease: await purposes.activatePurposeBindings(input) }) },
+            requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(),
+            registerRunTargets: input => { registry.registerRunTarget({ ...input, pid: input.runnerPid }); },
+            unregisterRunTargets: runKey => { registry.unregisterRunKey(runKey); },
+            resolveAuthForSpawn: input => resolveConnectedServiceAuthForLaunch({ ...input, api, credentials,
+                activeServerDir: '/unused-home', baseDir: '/unused-materialization', nowMs: () => 1_000,
+            }, async selection => createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator({
+                token: credentials.token, nowMs: () => 1_000,
+                applyGeneration: selection.applyGeneration,
+                probeQuotaSnapshotsForGroup: request => quotas.probeGroupQuotaSnapshots({ ...request, serviceId }),
+            })),
+        });
+        const runId = `quota-refusal-${randomUUID()}`;
+        try {
+            const result = await bridge.materialize({ ...MATERIALIZE_INPUT, runId, activationId: randomUUID(),
+                connectedServices: { v: 2, bindingsByServiceId: {
+                    [serviceId]: { source: 'connected', selection: 'group', groupId: 'pool' },
+                } },
+            });
+            expect(result).toMatchObject({ ok: false, errorCode: 'connected_service_auth_group_quota_probe_incomplete' });
+            expect(ConnectedServiceRunMaterializationFailureResponseSchema.parse(result)).toEqual(result);
+            expect(ConnectedServiceRunRejectedStartResultSchema.parse(result)).toEqual(result);
+            expect(registry.getRunTargetByRunKey(runId)).toBeNull();
+        } finally {
+            home.mockRestore();
+        }
     });
 
     it('maps blocked materialization to a fail-closed blocked result', async () => {
@@ -723,7 +820,6 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             }),
             acquireAgentPurposeContributions: async () => ({
                 contributions: { agentDefinitionsById: new Map() },
-                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => true,
                 release: contributionRelease,
             }),
@@ -792,7 +888,6 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             unregisterRunTargets,
             acquireAgentPurposeContributions: async () => ({
                 contributions: { agentDefinitionsById: new Map() },
-                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => true,
                 release: contributionRelease,
             }),
@@ -1070,7 +1165,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         expect(failureSerialized).not.toContain(localPath);
     });
 
-    it('rotates the old capability during exact restart adoption and retires the new authority on release', async () => {
+    it('adopts the same live Run after a plugin update, rotates its capability and retires authority on exact release', async () => {
         const materializedRoot = await mkdtemp(
             join(tmpdir(), 'happier-run-request-auth-'),
         );
@@ -1163,7 +1258,6 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             createAdoptedRootCleanup: () => adoptedCleanup,
             acquireAgentPurposeContributions: async () => ({
                 contributions: REQUEST_AUTH_CONTRIBUTIONS,
-                resolveAgentContributionIdentity: async () => AGENT_CONTRIBUTION_IDENTITY,
                 isCurrent: () => true,
                 release: async () => undefined,
             }),
@@ -1230,74 +1324,9 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         }
     });
 
-    // Restart adoption reconstructs purposes and request-auth uses from the registry current at
-    // restart. Accepting a live G1 runner while deriving G2 declarations would run Agent code
-    // against a different credential/request-auth ABI, so the two must correspond exactly.
-    it.each([
-        {
-            label: 'the Agent generation moved from G1 to G2',
-            currentIdentity: { ...AGENT_CONTRIBUTION_IDENTITY, sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'gen-2', installSource: 'npm' as const } },
-            launched: AGENT_CONTRIBUTION_IDENTITY,
-        },
-        {
-            label: 'the Agent now comes from a different plugin',
-            currentIdentity: { ...AGENT_CONTRIBUTION_IDENTITY, pluginId: 'someone.else.codex' },
-            launched: AGENT_CONTRIBUTION_IDENTITY,
-        },
-        {
-            label: 'the registry can no longer prove any generation',
-            currentIdentity: null,
-            launched: AGENT_CONTRIBUTION_IDENTITY,
-        },
-        {
-            label: 'the persisted record never proved a generation',
-            currentIdentity: AGENT_CONTRIBUTION_IDENTITY,
-            launched: undefined,
-        },
-    ])('refuses restart adoption when $label', async ({ currentIdentity, launched }) => {
-        const activatePurposeBindings = vi.fn();
-        const requestAuthRegistry = { activate: vi.fn(), retire: vi.fn() };
-        const release = vi.fn(async () => undefined);
-        const { bridge, registerRunTargets } = createBridge({
-            acquireAgentPurposeContributions: async () => ({
-                contributions: REQUEST_AUTH_CONTRIBUTIONS,
-                resolveAgentContributionIdentity: async () => currentIdentity,
-                isCurrent: () => true,
-                release,
-            }),
-            purposeBindingOwner: { activatePurposeBindings } as never,
-            requestAuthRegistry: requestAuthRegistry as never,
-        });
-
-        await expect(bridge.adoptLiveMaterialization({
-            runId: 'run_abc',
-            runnerPid: 4242,
-            sessionId: 'session-1',
-            persistedLaunch: {
-                v: 1 as const,
-                activationId: '33333333-3333-4333-8333-333333333333',
-                runKey: 'run_abc',
-                agentId: 'codex' as const,
-                ...(launched ? { agentContribution: launched } : {}),
-                materializationKey: 'run_abc',
-                connectedServicesBindings: PERSISTED_RUN_BINDINGS,
-                connectedServiceSelectionsEnv: {
-                    [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: '[]',
-                },
-                sessionDirectory: '/tmp/project',
-                materializedRoot: null,
-            },
-        })).resolves.toBe(false);
-
-        expect(activatePurposeBindings).not.toHaveBeenCalled();
-        expect(requestAuthRegistry.activate).not.toHaveBeenCalled();
-        expect(registerRunTargets).not.toHaveBeenCalled();
-        expect(release).toHaveBeenCalled();
-    });
-
     it('retains exact adopted-root cleanup when authority activation is rejected', async () => {
         const adoptedCleanup = vi.fn(async () => undefined);
-        const activatePurposeBindings = vi.fn();
+        const activatePurposeBindings = vi.fn(async () => { throw new Error('requester unavailable'); });
         const requestAuthRegistry = { activate: vi.fn(), retire: vi.fn() };
         const release = vi.fn(async () => undefined);
         const {
@@ -1312,10 +1341,6 @@ describe('createExecutionRunConnectedServicesBridge', () => {
                     : null,
             acquireAgentPurposeContributions: async () => ({
                 contributions: REQUEST_AUTH_CONTRIBUTIONS,
-                resolveAgentContributionIdentity: async () => ({
-                    ...AGENT_CONTRIBUTION_IDENTITY,
-                    sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'gen-2', installSource: 'npm' as const },
-                }),
                 isCurrent: () => true,
                 release,
             }),
@@ -1344,9 +1369,9 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             persistedLaunch: registration,
         })).resolves.toBe(false);
 
-        // A rejected authority adoption is cleanup-only: it must not activate
-        // targets, purpose bindings, or fresh request-auth capability state.
-        expect(activatePurposeBindings).not.toHaveBeenCalled();
+        // A rejected purpose activation retains cleanup without publishing targets
+        // or fresh request-auth capability state.
+        expect(activatePurposeBindings).toHaveBeenCalledOnce();
         expect(requestAuthRegistry.activate).not.toHaveBeenCalled();
         expect(registerRunTargets).not.toHaveBeenCalled();
         expect(adoptedCleanup).not.toHaveBeenCalled();
@@ -1465,9 +1490,8 @@ describe('createExecutionRunConnectedServicesBridge', () => {
         expect(incumbentCleanup).toHaveBeenCalledOnce();
     });
 
-    // A predecessor-shaped record carries no Agent generation at all, so it is unproven by
-    // construction. Its runner keeps running; it simply does not receive fresh authority.
-    it('refuses to upgrade a predecessor-shaped record into fresh request-auth authority', async () => {
+    // Plugin source identity does not excuse a mismatched retained Run identity.
+    it('refuses a predecessor-shaped record whose Run identity differs', async () => {
         const { bridge, registerRunTargets } = createBridge();
         const predecessorLaunch = {
             v: 1 as const,

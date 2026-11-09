@@ -177,7 +177,7 @@ describe('daemon machine RPC route attachments', () => {
     cache.attachApiMachineForSessions(replacement as never);
     expect(await installed(request)).toEqual(projection);
   });
-  it('caches route families and reattaches browser recording routes when machine RPC becomes available later', async () => {
+  it('caches local-service and simulator routes when machine RPC becomes available later', async () => {
     const { createDaemonMachineRpcRouteAttachmentCache } = await import('./machineRpcRouteAttachments');
     const localServicesPreview = { getSnapshot: vi.fn() };
     const localServices = {
@@ -186,9 +186,6 @@ describe('daemon machine RPC route attachments', () => {
       localServicesPreview,
       localServicesActions: { execute: vi.fn() },
     };
-    const browserDiagnostics = { getSnapshot: vi.fn() };
-    const browserContext = { dispatch: vi.fn() };
-    const browserRecording = { startRecording: vi.fn() };
     const simulatorPreview = { getSnapshot: vi.fn(), dispatchAction: vi.fn() };
     let apiMachineForSessions: null | {
       registerLocalServicesPreviewRoutes: ReturnType<typeof vi.fn>;
@@ -204,9 +201,6 @@ describe('daemon machine RPC route attachments', () => {
 
     cache.attachLocalServicesPreviewRoutes(localServicesPreview as never);
     cache.attachLocalServicesRoutes(localServices as never);
-    cache.attachBrowserContextRoutes(browserContext as never);
-    cache.attachBrowserDiagnosticsRoutes(browserDiagnostics as never);
-    cache.attachBrowserRecordingRoutes(browserRecording as never);
     cache.attachSimulatorPreviewRoutes(simulatorPreview as never);
 
     apiMachineForSessions = {
@@ -225,30 +219,7 @@ describe('daemon machine RPC route attachments', () => {
       localServicesLauncher: localServices.localServicesLauncher,
       localServicesActions: localServices.localServicesActions,
     });
-    expect(apiMachineForSessions.registerBrowserContextRoutes).toHaveBeenCalledWith(browserContext);
-    expect(apiMachineForSessions.registerBrowserDiagnosticsRoutes).toHaveBeenCalledWith(browserDiagnostics);
-    expect(apiMachineForSessions.registerBrowserRecordingRoutes).toHaveBeenCalledWith(browserRecording);
     expect(apiMachineForSessions.registerSimulatorPreviewRoutes).toHaveBeenCalledWith(simulatorPreview);
-  });
-
-  it('registers browser recording routes immediately when machine RPC is already available', async () => {
-    const { createDaemonMachineRpcRouteAttachmentCache } = await import('./machineRpcRouteAttachments');
-    const apiMachineForSessions = {
-      registerLocalServicesPreviewRoutes: vi.fn(),
-      registerLocalServicesRoutes: vi.fn(),
-      registerBrowserContextRoutes: vi.fn(),
-      registerBrowserDiagnosticsRoutes: vi.fn(),
-      registerBrowserRecordingRoutes: vi.fn(),
-      registerSimulatorPreviewRoutes: vi.fn(),
-    };
-    const cache = createDaemonMachineRpcRouteAttachmentCache({
-      getApiMachineForSessions: () => apiMachineForSessions as never,
-    });
-    const browserRecording = { startRecording: vi.fn() };
-
-    cache.attachBrowserRecordingRoutes(browserRecording as never);
-
-    expect(apiMachineForSessions.registerBrowserRecordingRoutes).toHaveBeenCalledWith(browserRecording);
   });
 
   it('caches the connected-account daemon runtime and reattaches it to a replacement machine client', async () => {

@@ -36,6 +36,7 @@ import { createRunnerAgentSessionRuntimeSource } from '@/agent/runtime/session/p
 import {
     AGENT_RUNTIME_DAEMON_SERVICES_PATH,
     AgentRuntimeDaemonServiceRequestV1Schema,
+    type AgentRuntimeDaemonServiceRequestV1,
 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { registerSessionClientRuntimeHandlers } from '@/api/session/client/executionRuns/registerSessionClientRuntimeHandlers';
 import { applySessionRuntimeControls } from '@/api/session/sessionRuntimeControls';
@@ -85,6 +86,7 @@ function createSessionHostServiceOwners(): NativeAgentSessionHostServiceOwners {
         features: Object.freeze({ isEnabled: () => false }),
         happierTools: Object.freeze({ readPluginToolCatalog: async () => Object.freeze([]) }),
         sessionHooks: Object.freeze({
+            observeSessionHook: async () => undefined,
             startServer: async () => Object.freeze({ port: 4312, stop: () => undefined, dispose: async () => undefined }),
             resolveForwarderAssets: async () => Object.freeze({
                 nodeExecutable: '/runtime/node',
@@ -383,7 +385,7 @@ export async function composeAttachedRunJourney(params: Readonly<{
     });
 
     // --- Loopback HTTP boundary: runner requests reach the real dispatcher. ---
-    const daemonRequests: Array<ReturnType<typeof AgentRuntimeDaemonServiceRequestV1Schema.parse>> = [];
+    const daemonRequests: AgentRuntimeDaemonServiceRequestV1[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         const url = new URL(input instanceof Request ? input.url : input.toString());
         if (url.pathname !== AGENT_RUNTIME_DAEMON_SERVICES_PATH) {
@@ -585,9 +587,10 @@ export async function composeAttachedRunJourney(params: Readonly<{
         await runtime.provisionRuntime({ initialPrompt: 'delegate' });
         return runtime;
     };
-    const runOpenOperations = () => daemonRequests
+    const runOpenOperations = (): Array<Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'provider_broker.binding.open' }>> => daemonRequests
         .map((request) => request.operation)
-        .filter((operation) => operation.kind === 'provider_broker.binding.open' && operation.consumer);
+        .filter((operation): operation is Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'provider_broker.binding.open' }> =>
+            operation.kind === 'provider_broker.binding.open' && operation.consumer !== undefined);
     return {
         sessionId,
         session,

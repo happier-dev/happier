@@ -1,4 +1,5 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
+import { generateConnectedServiceMaterializationIdentityV1 as generateMaterializationIdentity } from '@happier-dev/agents/session/state/metadataWriters';
 
 import { ConnectedServiceMaterializationIdentityV1Schema, readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
 import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
@@ -9,8 +10,6 @@ import {
   parseSessionConnectedServiceMaterializationIdentityJson,
   serializeSessionConnectedServiceMaterializationIdentityForEnv,
 } from '@/agent/runtime/sessionConnectedServiceMaterializationIdentityEnv';
-
-const MATERIALIZATION_ID_RANDOM_BYTES = 8;
 
 type SpawnOptionsWithMaterializationIdentity = SpawnSessionOptions & Readonly<{
   connectedServiceMaterializationIdentityV1?: unknown;
@@ -46,16 +45,7 @@ export function generateConnectedServiceMaterializationIdentityV1(params?: Reado
   now?: () => number;
   randomBytes?: (length: number) => Uint8Array;
 }>): ConnectedServiceMaterializationIdentityV1 {
-  const now = Math.max(0, Math.trunc(params?.now?.() ?? Date.now()));
-  const bytes = params?.randomBytes?.(MATERIALIZATION_ID_RANDOM_BYTES)
-    ?? nodeRandomBytes(MATERIALIZATION_ID_RANDOM_BYTES);
-  const hex = Buffer.from(bytes).toString('hex');
-  return {
-    v: 1,
-    id: `csm_${now}_${hex}`,
-    createdAt: now,
-    source: 'first_spawn',
-  };
+  return generateMaterializationIdentity({ now: params?.now, randomBytes: params?.randomBytes ?? nodeRandomBytes });
 }
 
 export function resolveConnectedServiceMaterializationIdentityForSpawn(params: Readonly<{

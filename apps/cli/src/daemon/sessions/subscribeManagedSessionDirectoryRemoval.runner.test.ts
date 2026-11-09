@@ -104,7 +104,7 @@ it.each(['live', 'preparing'] as const)('retires an inactive Session’s %s succ
           return receipt;
         },
         onSessionDeletedChange: listener => { deleted = listener; return () => { deleted = undefined; }; },
-        onSessionAccessReset: () => () => {}, onConnectionStateChange: () => () => {},
+        onSessionAccessReset: () => () => {},
         fetchInventoryPage: async () => ({ sessions: [], hasNext: false, nextCursor: null }),
       });
       await deleted!({ sessionId });

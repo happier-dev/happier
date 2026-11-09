@@ -93,7 +93,7 @@ export type BrowserRecordingDaemonService<R extends RecordingSession = BrowserRe
   startRecording(input: S, context?: RecordingOperationContext): Promise<BrowserRecordingRuntimeStartResult<R>>;
   stopRecording(input: BrowserRecordingRuntimeStopInput): Promise<BrowserRecordingRuntimeStopResult<R>>;
   cancelRecording(input: BrowserRecordingRuntimeCancelInput): Promise<BrowserRecordingRuntimeTerminalResult<R>>;
-  cleanupExpiredRecordings(input: Readonly<{ nowMs: number; target?: Q; beforeEffect?: () => Promise<void> }>): Promise<Readonly<{
+  cleanupExpiredRecordings(input: Readonly<{ nowMs: number; target?: Q; includeRecording?: (recording: R) => boolean; beforeEffect?: () => Promise<void> }>): Promise<Readonly<{
     discardedRecordingIds: readonly string[];
     failedRecordingIds: readonly string[];
   }>>;
@@ -564,8 +564,17 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
         return { status: 'failed', recording, reason: recording.outcomeReason };
       }
 
+      if (!isActiveStatus(recording.status)) {
+        return {
+          status: 'unavailable',
+          reason: createUnavailable(
+            'browser_recording_not_active',
+            `Recording is ${recording.status} (${recording.outcomeReason}). Start a new recording to capture again.`,
+          ),
+        };
+      }
       const adapter = activeAdapterByRecordingId.get(recording.recordingId)?.adapter;
-      if (!adapter || !isActiveStatus(recording.status)) {
+      if (!adapter) {
         return {
           status: 'unavailable',
           reason: createUnavailable(
@@ -620,6 +629,7 @@ export function createRecordingDaemonService<R extends RecordingSession, S exten
         if (recording && cleanupInput.target && input.model.targetKey(recording) !== input.model.targetKey(cleanupInput.target)) continue;
         if (!recording || recording.expiresAtMs === undefined || recording.expiresAtMs > cleanupInput.nowMs) continue;
         if (recording.status !== 'completed' && recording.status !== 'finalized') continue;
+        if (cleanupInput.includeRecording && !cleanupInput.includeRecording(recording)) continue;
         try {
           await input.mediaWriter.discardRecording({
             recording,

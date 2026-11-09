@@ -1,15 +1,26 @@
 import { readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { BrowserExtensionRecordV1Schema, type BrowserExtensionRecordV1 } from '@happier-dev/protocol/browser/profile/v1';
+import { BrowserExtensionIdV1Schema, BrowserExtensionRecordV1Schema, type BrowserExtensionRecordV1 } from '@happier-dev/protocol/browser/profile/v1';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 function recordsDirectory(profileDirectory: string): string {
   return join(profileDirectory, 'extensions', 'records');
 }
 
-export async function readProfileExtensions(profileDirectory: string): Promise<BrowserExtensionRecordV1[]> {
+export async function readProfileExtensions(profileDirectory: string, extensionIds?: readonly string[]): Promise<BrowserExtensionRecordV1[]> {
   const directory = recordsDirectory(profileDirectory);
+  if (extensionIds) {
+    const ids = [...new Set(extensionIds)].filter(id => BrowserExtensionIdV1Schema.safeParse(id).success);
+    const records = await Promise.all(ids.map(async id => {
+      const content = await readFile(join(directory, `${id}.json`), 'utf8').catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
+        throw error;
+      });
+      return content === null ? null : BrowserExtensionRecordV1Schema.parse(JSON.parse(content));
+    }));
+    return records.filter((record): record is BrowserExtensionRecordV1 => record !== null).sort((left, right) => left.id.localeCompare(right.id));
+  }
   const entries = await readdir(directory, { withFileTypes: true }).catch((error: unknown) => {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
     throw error;

@@ -31,8 +31,7 @@ describe('native Account public-profile refresh participant', () => {
       gate: () => online ? { status: 'open' } : { status: 'deferred', reason: 'offline' },
     });
     const start = () => {
-      const handle = startPublicProfileRefresh({ actions: account.actions, scheduler,
-        signal: lifetime.signal, isCurrent: account.isCurrent });
+      const handle = startPublicProfileRefresh({ actions: account.actions, scheduler, signal: lifetime.signal });
       handles.push(handle);
       return handle;
     };
@@ -53,7 +52,7 @@ describe('native Account public-profile refresh participant', () => {
     if (before.kind !== 'ready' || after.kind !== 'ready') throw new Error('Expected remote published record');
     expect(after.record.layout).toEqual(before.record.layout);
     expect(after.record.appearance).toEqual(before.record.appearance);
-    expect(f.requests.filter(request => request.method !== 'GET' && request.path !== '/v2/usage/query')).toEqual([
+    expect(f.requests.filter(request => request.method !== 'GET' && !['/v2/usage/query', '/v2/sessions/read-batch'].includes(request.path))).toEqual([
       { method: 'PUT', path: '/v1/account/public-profile/snapshot' },
     ]);
     expect(Object.keys(f.refreshes[0]!).sort()).toEqual(['query', 'snapshot']);
@@ -84,7 +83,7 @@ describe('native Account public-profile refresh participant', () => {
     expect(f.scheduler.getSnapshot().purposes.accountMaintenance?.counters.written).toBe(1);
   });
 
-  it('uses real source computedAt, not a delayed HTTP acknowledgement, for the next daily deadline', async () => {
+  it('uses snapshot computation time, not source lag or a delayed HTTP acknowledgement, for the next daily deadline', async () => {
     const f = await fixture();
     const startedAt = Date.now();
     f.setSourceLag(500);
@@ -92,14 +91,14 @@ describe('native Account public-profile refresh participant', () => {
     f.start();
     await vi.advanceTimersByTimeAsync(0);
     await pending.accepted;
-    expect(f.refreshes[0]?.snapshot.computedAtMs).toBe(startedAt - 500);
+    expect(f.refreshes[0]?.snapshot.computedAtMs).toBe(startedAt);
     expect(f.scheduler.getSnapshot().purposes.accountMaintenance?.counters.written).toBe(0);
     await vi.advanceTimersByTimeAsync(1_000);
     pending.release();
     await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => expect(f.scheduler.getSnapshot().purposes.accountMaintenance?.counters.written).toBe(1), { interval: 0 });
     expect(f.scheduler.getSnapshot().purposes.accountMaintenance?.counters.written).toBe(1);
-    await vi.advanceTimersByTimeAsync(DAY_MS - 1_501);
+    await vi.advanceTimersByTimeAsync(DAY_MS - 1_001);
     expect(f.refreshes).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     await vi.waitFor(() => expect(f.scheduler.getSnapshot().purposes.accountMaintenance?.counters.written).toBe(2), { interval: 0 });
@@ -150,21 +149,20 @@ describe('native Account public-profile refresh participant', () => {
   });
 
   it.each([
-    { name: 'Ask', settings: { v: 1 } },
-    { name: 'UI/Agent-only waiver', settings: { v: 1, approvalWaivedSurfaces: { 'account.public_profile.refresh': ['ui', 'agent'] } } },
+    { name: 'Ask', settings: { v: 1, actions: { 'account.public_profile.refresh': { approvalRequiredSurfaces: ['cli'] } } } },
     { name: 'Off', settings: { v: 1, actions: { 'account.public_profile.refresh': { enabled: false } } } },
-  ])('does not prepare or write under $name CLI policy', async ({ settings }) => {
+  ])('does not write or open an approval under $name CLI policy', async ({ settings }) => {
     const f = await fixture();
     f.setSettings(settings);
     f.start();
     await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => expect(f.scheduler.getSnapshot().purposes.accountMaintenance?.counters.suppressed).toBe(1), { interval: 0 });
-    // Only the maintenance read reaches the Account; native policy rejects
-    // refresh before shared preparation can issue its own read.
-    expect(f.requests).toEqual([{ method: 'GET', path: '/v1/account/public-profile' }]);
+    expect(f.refreshes).toEqual([]);
+    expect(f.requests.filter(request => request.method !== 'GET' && !['/v2/usage/query', '/v2/sessions/read-batch'].includes(request.path))).toEqual([]);
     expect(f.scheduler.getSnapshot().purposes.accountMaintenance?.counters).toMatchObject({ written: 0, suppressed: 1 });
+    const requestCount = f.requests.length;
     await vi.advanceTimersByTimeAsync(DAY_MS - 1);
-    expect(f.requests).toHaveLength(1);
+    expect(f.requests).toHaveLength(requestCount);
   });
 
   it('rejects a response after captured credentials retire and never dispatches preparation', async () => {

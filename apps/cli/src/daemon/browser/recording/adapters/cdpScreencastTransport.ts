@@ -1,6 +1,6 @@
 import type { BrowserCdpScreencastProducer } from '../../capture/cdpScreencast';
 import type { BrowserSidecarContextCaptureSurface } from '../../sidecar/controlAdapter';
-import type { BrowserRecordingInputControlResolver } from '../service';
+import type { BrowserRecordingInputControlResolver } from '../../../recording/service';
 import type { BrowserRecordingCdpScreencastSession, BrowserRecordingCdpScreencastTransport } from './cdpScreencast';
 import { startBrowserRecordingOverlay } from './overlay';
 

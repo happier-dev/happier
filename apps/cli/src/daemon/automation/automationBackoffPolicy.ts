@@ -2,18 +2,14 @@ import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemo
 
 export type AutomationWorkerErrorClass = 'transient' | 'permanent';
 
-const PERMANENT_RETRY_DELAY_MS = 300_000;
-
 /**
  * The Automation worker owns cadence, not semantics. Every endpoint failure it
  * sees is classified by the one daemon server-work classifier, so an auth
  * failure, a generation conflict, a rate limit and a network fault mean the
  * same thing here as they do in every other daemon server call.
  *
- * `protocol_error` is the classifier's "nothing recognised this" result rather
- * than a positive statement that retrying is pointless. The claim loop is the
- * worker's only liveness path, so an unrecognised failure keeps the ordinary
- * backoff curve instead of dropping to the long permanent cadence.
+ * `protocol_error` remains unknown coverage. Recovery uses an actual server
+ * deadline or the daemon's existing reconnect, push and explicit catch-up.
  */
 function isRetryableAutomationWorkerFailure(
   classification: ReturnType<typeof classifyDaemonServerWorkError>,
@@ -27,24 +23,12 @@ export function classifyAutomationWorkerError(error: unknown): AutomationWorkerE
     : 'permanent';
 }
 
-export function nextAutomationBackoffMs(failureCount: number): number {
-  const normalized = Number.isFinite(failureCount) ? Math.max(0, Math.floor(failureCount)) : 0;
-  const base = 500;
-  const exp = Math.min(normalized, 8);
-  return Math.min(base * (2 ** exp), 60_000);
-}
-
 export function nextAutomationRetryDelayMs(params: {
-  failureCount: number;
   error: unknown;
-}): number {
+}): number | null {
   const classification = classifyDaemonServerWorkError(params.error);
-  if (!isRetryableAutomationWorkerFailure(classification)) {
-    return PERMANENT_RETRY_DELAY_MS;
-  }
-  const backoff = nextAutomationBackoffMs(params.failureCount);
-  if (classification.retryAfterMs === undefined) return backoff;
-  // An authoritative server wait outranks the worker's own curve, while the
-  // normal backoff remains the minimum delay.
-  return Math.max(backoff, classification.retryAfterMs);
+  // Without an owning future deadline, retain unknown coverage and wait for
+  // the existing push, reconnect or explicit catch-up recovery edge.
+  return classification.retryable && classification.retryAfterMs !== undefined && classification.retryAfterMs > 0
+    ? classification.retryAfterMs : null;
 }

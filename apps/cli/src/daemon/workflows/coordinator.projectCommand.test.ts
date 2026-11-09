@@ -29,8 +29,9 @@ import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema } f
 import { createCoordinatorWorkspaceResolver } from './resolveWorkflowWorkspace';
 import { createGitWorkflowWorkspaceTestDependencies } from './workflowWorkspace.testkit';
 import { createProjectSetupTrustClient } from '@/workspaces/projectSetup/projectSetupTrust';
-import { createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { ProjectTrustMutationRequestV1Schema, type ProjectTrustContentV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 // Only the OS process and authenticated HTTP transport are substituted.
 // Preparation, final Exec authorization, PTY custody, Actions, operation owner,
@@ -117,7 +118,7 @@ describe('finite Project command Workflow completion', () => {
       // The OS boundary fixture has no surviving descendants after exit.
       probeProcessGroup: () => 'absent',
       config: { bufferMaxBytes: 100000, bufferMaxEvents: 1000,
-        bufferRetentionMs: 600000, urlParseBufferLimit: 32768, maxWriteChunkBytes: 16384, defaultCols: 80, defaultRows: 24 } });
+        urlParseBufferLimit: 32768, maxWriteChunkBytes: 16384, defaultCols: 80, defaultRows: 24 } });
     managers.push(terminals);
     let operationSequence = 0;
     const operations = createHostActionOperationRuntime({ serverId: 'home', machineId, resolveAccountId: async () => 'account',
@@ -136,7 +137,7 @@ describe('finite Project command Workflow completion', () => {
       operationRuntime: operations, workerAdmission, resolveWorkspaceExecutionConfig: async () => config,
       nativeIo: preparation.nativeIo, terminalSessions: terminals, platform: 'linux' as const, arch: 'x64',
       hostEnvironment: { NODE_ENV: 'test' as const, SHELL: '/bin/bash' }, successHomeDir: preparation.successHomeDir,
-      environmentIo: createProjectNativeEnvironmentIoForHost({ resolveTool: async () => null }),
+      environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
     };
     const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'projects.script.run': ['agent', 'api'] } });
     const keys = tweetnacl.sign.keyPair();
@@ -158,7 +159,8 @@ describe('finite Project command Workflow completion', () => {
         return createCliActionExecutorHarness({ mode: 'plain', ctx: null, token: runtime.credentials.token, credentials: runtime.credentials,
           sessionId: 'cli-global', serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
           actionsSettingsProvider: { getActionsSettings: () => settings },
-        }, { projectAction: createProjectFiniteAction(runtime, ingress) }).executor;
+        }, { projectAction: createProjectFiniteAction({ ...runtime,
+          requesterIdentity: selectHostRequesterExecutionIdentity({ rpcContext: ingress, hostHomeServerIdentityId: 'home' }) }, ingress) }).executor;
       } });
     const machineAdmission = { actorAccountId: 'account', custodianAccountId: 'account', machineId,
       installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };

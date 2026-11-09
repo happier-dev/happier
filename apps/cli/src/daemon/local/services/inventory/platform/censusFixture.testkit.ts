@@ -16,6 +16,7 @@ export function localServiceProcfsFixture(rows: readonly Readonly<{
     uid?: string;
     command?: readonly string[];
     cwd?: string;
+    cgroup?: string;
 }>[]) {
     const processes = new Map(rows.map((row) => [row.pid, row]));
     if (!processes.has(process.pid)) processes.set(process.pid, { pid: process.pid, uid: String(process.getuid?.() ?? 501) });
@@ -40,7 +41,7 @@ export function localServiceProcfsFixture(rows: readonly Readonly<{
                 case 'status': return `Name:\tnode\nUid:\t${row.uid ?? String(process.getuid?.() ?? 501)}\t0\t0\t0\n`;
                 case 'cmdline': return (row.command ?? ['node']).join('\0');
                 case 'environ': return '';
-                case 'cgroup': return '0::/user.slice';
+                case 'cgroup': return row.cgroup ?? '0::/user.slice';
                 case 'children': return [...processes.values()].filter(child => child.ppid === row.pid).map(child => child.pid).join(' ');
                 default: throw new Error(`Unexpected file ${path}`);
             }

@@ -341,7 +341,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                     errorMessage: error.code,
                     errorDetail: { kind: 'launch_error', code: error.code,
                         message: 'No connected account in the selected pool is available.',
-                        connectedAccountPool: { serviceId: error.serviceId, excluded: error.excluded } },
+                        connectedAccountPool: { serviceId: error.serviceId, excluded: [...error.excluded] } },
                 } };
             }
             if (error instanceof ConnectedServiceQualifiedPurposeAuthorityError) {

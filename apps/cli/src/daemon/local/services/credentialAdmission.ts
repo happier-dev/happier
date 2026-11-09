@@ -1,28 +1,13 @@
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 
-/** Daemon HTTP credentials may serve only their actual Account, not a shared Machine actor. */
-export async function assertLocalServiceCredentialAdmission(input: Readonly<{
+type LocalServiceCredentialScope = Readonly<{
     accountId?: string;
     machineId: string;
     context?: RpcHandlerContext;
-}>): Promise<void> {
-    const context = input.context;
-    // Local calls use the daemon's own credentials. Transport authority is host-private.
-    if (!context?.machineAdmission && !context?.authorization && !context?.transportRequestId) return;
-    const admission = context.machineAdmission;
-    const requester = context.callerInputAuthorization?.binding.actionId === 'projects.service.relocate'
-        && context.workspaceSyncSourceExecution?.originalActionEnvelope
-        ? readRequesterAccountActionContext(context.callerInputAuthorization) : null;
-    const privateMove = requester?.authorization.binding.accountId === admission?.actorAccountId && await requester?.isCurrent();
-    if (!input.accountId || !admission || admission.actorAccountId !== input.accountId && !privateMove
-        || admission.machineId !== input.machineId || context.signal.aborted
-        || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()
-        || context.signal.aborted) {
-        throw new Error('requester_credentials_unavailable');
-    }
-}
+}>;
 
+/** Finite metadata reads retain admitted Account custody and local cancellation. */
 export async function assertLocalServiceReadCustody(
     input: LocalServiceCredentialScope,
     /** Host-only launcher read; credential-bearing callers retain custodian scope. */
@@ -46,8 +31,12 @@ export async function assertLocalServiceReadCustody(
     return requesterOnly ? admission.actorAccountId : undefined;
 }
 
-type LocalServiceCredentialScope = Readonly<{
-    accountId?: string;
-    machineId: string;
-    context?: RpcHandlerContext;
-}>;
+/** Credential-bearing finite work retains admitted Account custody and checks local cancellation. */
+export async function assertLocalServiceCredentialAdmission(input: LocalServiceCredentialScope): Promise<void> {
+    await assertLocalServiceReadCustody(input);
+    const context = input.context;
+    if (!context?.machineAdmission && !context?.authorization && !context?.transportRequestId) return;
+    if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent() || context.signal.aborted) {
+        throw new Error('requester_credentials_unavailable');
+    }
+}

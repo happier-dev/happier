@@ -13,6 +13,15 @@ const intent = {
 } satisfies RuntimeAuthRecoveryIntent;
 
 describe('daemon recovery intent metadata projection', () => {
+  it('projects a pool wait whose failing member is unknown', () => {
+    expect(buildRuntimeAuthUsageLimitRecoveryProjection({ ...intent, profileId: null,
+      classification: { ...intent.classification, profileId: null } })).toMatchObject({
+      runtimeAuthRecoveryAttemptId: 'attempt-1', selectedAuth: {
+        kind: 'group', serviceId: intent.serviceId, groupId: 'pool', profileId: null,
+      },
+    });
+    expect(buildRuntimeAuthUsageLimitRecoveryProjection({ ...intent, profileId: null, groupId: null })).toBeNull();
+  });
   it('projects the actual failure fingerprint separately from its runtime attempt', () => {
     expect(buildRuntimeAuthUsageLimitRecoveryProjection({
       ...intent, classification: { ...intent.classification, runtimeIssueFingerprint: 'usage-limit:codex:turn-b:2000:5000' },

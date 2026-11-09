@@ -28,19 +28,20 @@ const classification = {
 } satisfies ConnectedServiceRuntimeFailureClassification;
 
 describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
-  it.each(['usage_limit', 'auth_expired', 'refresh_failed', 'account_changed', 'account_disabled', 'permission_denied'] as const)('keeps native %s failures with their session without creating a Connected Account report', async (kind) => {
+  it.each(['usage_limit', 'auth_expired', 'refresh_failed', 'account_changed', 'account_disabled', 'permission_denied'] as const)('lets daemon binding authority decline unattributed %s reports and retires the outbox', async (kind) => {
     const outboxDir = await createTempDir('happier-native-quota-report-');
-    const notify = vi.fn(async () => ({ ok: true, result: { status: 'recovery_action_required', action: { kind: 'connected_service_required' } } }));
+    const notify = vi.fn(async () => ({ ok: true, result: { status: 'not_applicable', reason: 'no_connected_service_binding' } }));
     try {
       const result = await reportConnectedServiceRuntimeAuthFailureToDaemon({ sessionId: 'native-quota-session',
         classification: { ...classification, kind, profileId: null, groupId: null },
         notify, reportOutboxDir: outboxDir });
-      expect(result).toMatchObject({ handled: false, report: null, statusMessage: null });
-      expect(notify).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ report: { ok: true, result: { status: 'not_applicable' } } });
+      expect(result.recoveryReceipt).toBeUndefined();
+      expect(notify).toHaveBeenCalledOnce();
       expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toEqual([]);
     } finally { await removeTempDir(outboxDir); }
   });
-  it('distinguishes fresh accepted failures while coalescing duplicate observations', async () => {
+  it('reports every settled failure with a fresh accepted report identity', async () => {
     const reportIds: string[] = [];
     const outboxDir = await createTempDir('accepted-failure-occurrences');
     try {
@@ -53,8 +54,8 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         await reportConnectedServiceRuntimeAuthFailureToDaemon({ sessionId: 'accepted-failure-occurrences',
           classification: { ...classification, runtimeIssueFingerprint: fingerprint }, notify, reportOutboxDir: outboxDir, nowMs: () => 4000 });
       }
-      expect(reportIds).toHaveLength(2);
-      expect(new Set(reportIds).size).toBe(2);
+      expect(reportIds).toHaveLength(3);
+      expect(new Set(reportIds).size).toBe(3);
       expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toEqual([]);
     } finally { await removeTempDir(outboxDir); }
   });
@@ -110,23 +111,24 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     }
   });
 
-  it('coalesces the same provider failure independently of legacy daemon environment changes', async () => {
+  it('joins concurrent observations independently of legacy daemon environment changes', async () => {
     const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
     process.env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1 = 'daemon-old';
-    await reportConnectedServiceRuntimeAuthFailureToDaemon({
+    const firstReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
       sessionId: 'session-generation-dedupe',
       classification,
       notify,
       nowMs: () => 1_000,
     });
     process.env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1 = 'daemon-current';
-    await reportConnectedServiceRuntimeAuthFailureToDaemon({
+    const secondReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
       sessionId: 'session-generation-dedupe',
       classification,
       notify,
       nowMs: () => 1_001,
     });
 
+    await Promise.all([firstReport, secondReport]);
     expect(notify).toHaveBeenCalledOnce();
     delete process.env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1;
   });
@@ -308,8 +310,8 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
       source: 'provider_runtime_marker',
     } as const;
 
-    it('suppresses duplicate identical reports within the dedupe window and reuses the first daemon result', async () => {
-      const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
+    it('reports a new failed retry five seconds after the previous report settles', async () => {
+      const notify = vi.fn(async () => ({ ok: true, result: { status: 'session_not_found' } }));
 
       const first = await reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_1',
@@ -324,10 +326,10 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         switchesThisTurn: 0,
         classification: { ...limitClassification, retryAfterMs: 11_437_958 },
         notify,
-        nowMs: () => 1_300,
+        nowMs: () => 6_000,
       });
 
-      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notify).toHaveBeenCalledTimes(2);
       expect(second).toEqual(first);
     });
 
@@ -362,39 +364,39 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     it('does not suppress reports with a different stable identity', async () => {
       const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
 
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const firstReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_2',
         switchesThisTurn: 0,
         classification: limitClassification,
         notify,
         nowMs: () => 1_000,
       });
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const secondReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_2',
         switchesThisTurn: 0,
         classification: { ...limitClassification, kind: 'auth_expired' },
         notify,
         nowMs: () => 1_100,
       });
+      await Promise.all([firstReport, secondReport]);
 
       expect(notify).toHaveBeenCalledTimes(2);
     });
 
     it('does not coalesce failures from different organizations of the same provider user', async () => {
       const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
-      for (const sourceProviderOrganizationId of ['org-one', 'org-two']) {
-        await reportConnectedServiceRuntimeAuthFailureToDaemon({ sessionId: 'session-org',
+      await Promise.all(['org-one', 'org-two'].map(sourceProviderOrganizationId =>
+        reportConnectedServiceRuntimeAuthFailureToDaemon({ sessionId: 'session-org',
           classification: { ...limitClassification, sourceProviderAccountId: 'same-user', sourceProviderOrganizationId },
           notify, nowMs: () => 1000,
-        });
-      }
+        })));
       expect(notify).toHaveBeenCalledTimes(2);
     });
 
     it('does not suppress usage-limit reports from different source provider accounts', async () => {
       const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
 
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const firstReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_source_account',
         switchesThisTurn: 0,
         classification: {
@@ -404,7 +406,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_000,
       });
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const secondReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_source_account',
         switchesThisTurn: 0,
         classification: {
@@ -414,6 +416,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_100,
       });
+      await Promise.all([firstReport, secondReport]);
 
       expect(notify).toHaveBeenCalledTimes(2);
     });
@@ -421,7 +424,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     it('does not suppress usage-limit reports from different failure-time group generations', async () => {
       const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
 
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const firstReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_generation',
         switchesThisTurn: 0,
         classification: {
@@ -432,7 +435,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_000,
       });
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const secondReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_generation',
         switchesThisTurn: 0,
         classification: {
@@ -443,6 +446,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_100,
       });
+      await Promise.all([firstReport, secondReport]);
 
       expect(notify).toHaveBeenCalledTimes(2);
     });
@@ -450,7 +454,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     it('does not suppress reports for different failing access token fingerprints', async () => {
       const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
 
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const firstReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_failing_token_fingerprint',
         switchesThisTurn: 0,
         classification: {
@@ -460,7 +464,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_000,
       });
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const secondReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_failing_token_fingerprint',
         switchesThisTurn: 0,
         classification: {
@@ -470,14 +474,15 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_100,
       });
+      await Promise.all([firstReport, secondReport]);
 
       expect(notify).toHaveBeenCalledTimes(2);
     });
 
-    it('suppresses repeated reports for the same failing access token fingerprint', async () => {
+    it('joins concurrent observations with the same failing access token fingerprint', async () => {
       const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
 
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const firstReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_same_failing_token_fingerprint',
         switchesThisTurn: 0,
         classification: {
@@ -487,7 +492,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_000,
       });
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const secondReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_same_failing_token_fingerprint',
         switchesThisTurn: 0,
         classification: {
@@ -497,14 +502,15 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_100,
       });
+      await Promise.all([firstReport, secondReport]);
 
       expect(notify).toHaveBeenCalledTimes(1);
     });
 
-    it('dedupes on sanitized provider identity instead of raw unsafe provider values', async () => {
+    it('joins concurrent observations on sanitized provider identity', async () => {
       const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
 
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const firstReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_sanitized',
         switchesThisTurn: 0,
         classification: {
@@ -514,7 +520,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_000,
       });
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const secondReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_sanitized',
         switchesThisTurn: 0,
         classification: {
@@ -524,6 +530,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_100,
       });
+      await Promise.all([firstReport, secondReport]);
 
       expect(notify).toHaveBeenCalledTimes(1);
     });
@@ -531,7 +538,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     it('does not suppress reports with different stable recovery actions', async () => {
       const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
 
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const firstReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_recovery_action',
         switchesThisTurn: 0,
         classification: {
@@ -541,7 +548,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_000,
       });
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const secondReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_recovery_action',
         switchesThisTurn: 0,
         classification: {
@@ -551,6 +558,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_100,
       });
+      await Promise.all([firstReport, secondReport]);
 
       expect(notify).toHaveBeenCalledTimes(2);
     });
@@ -579,20 +587,21 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     it('treats a changed switchesThisTurn as a new failure generation (not a duplicate)', async () => {
       const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
 
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const firstReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_4',
         switchesThisTurn: 0,
         classification: limitClassification,
         notify,
         nowMs: () => 1_000,
       });
-      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      const secondReport = reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_dedupe_4',
         switchesThisTurn: 1,
         classification: limitClassification,
         notify,
         nowMs: () => 1_100,
       });
+      await Promise.all([firstReport, secondReport]);
 
       expect(notify).toHaveBeenCalledTimes(2);
     });

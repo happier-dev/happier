@@ -4,7 +4,7 @@ import type {
   BrowserRecordingCaptureAdapter,
   BrowserRecordingCapturedArtifact,
   BrowserRecordingDaemonUnavailableReason,
-} from '../service';
+} from '../../../recording/service';
 
 /**
  * Reference-only native still-capture result. The native producer writes the capture to a

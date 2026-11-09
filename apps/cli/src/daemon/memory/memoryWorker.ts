@@ -43,7 +43,8 @@ export type MemoryWorkerHandle = Readonly<{
   clearIndex: (signal?: AbortSignal) => Promise<void>;
   ensureUpToDate: (sessionId?: string, signal?: AbortSignal) => Promise<void>;
   /** Exact authorized changes arrive through the incumbent Account carrier. */
-  noteSessionChanged?: (change: Readonly<{ sessionId: string }>) => Promise<void>;
+  /** `memoryInputsChanged: false` is the change feed's proof that no eligibility input moved. */
+  noteSessionChanged?: (change: Readonly<{ sessionId: string; memoryInputsChanged?: false }>) => Promise<void>;
   /** Transcript revisions arrive through the incumbent durable Account change stream. */
   noteSessionTranscriptRevised?: (change: Readonly<{ sessionId: string; seq: number; messageId?: string }>) => Promise<void>;
   attachExternalObservation?: (observation: MemoryExternalObservation) => () => void;
@@ -122,6 +123,9 @@ export async function prepareMemoryWorker(params: Readonly<{
   let externalNeedsRefresh = true;
   let retireForPluginChange = false;
   const observedSessionIds = new Set<string>();
+  // Retained rows predate this worker's volatile admissions. Read their identities
+  // once at startup; subsequent writers are represented by the indexer projection.
+  const startupRetainedSessionIds = new Set<string>();
   // Exact requests are owned here before their first await or child publication.
   const activeSessionRequests = new Set<{ sessionId: string; removed: boolean }>();
   const pendingRevisions = new Map<string, Readonly<{
@@ -145,6 +149,7 @@ export async function prepareMemoryWorker(params: Readonly<{
     publish: next => {
       const priorDeadline = snapshot.nextWorkAtMs;
       snapshot = applyMemoryIndexerPublication(snapshot, next);
+      for (const id of next.removedSessionIds ?? []) startupRetainedSessionIds.delete(id);
       if (snapshot.nextWorkAtMs !== priorDeadline) workLoop?.trigger();
     },
     failed: markFailure,
@@ -400,7 +405,10 @@ export async function prepareMemoryWorker(params: Readonly<{
     if (!next.enabled) {
       await retireIndexer();
       await observation.refresh(next, signal ?? new AbortController().signal);
-      if (next.deleteOnDisable) await rm(paths.memoryDir, { recursive: true, force: true });
+      if (next.deleteOnDisable) {
+        await rm(paths.memoryDir, { recursive: true, force: true });
+        startupRetainedSessionIds.clear();
+      }
       snapshot = { ...snapshot, settings: next, indexesQualified: false,
         embeddings: buildUnavailableMemoryEmbeddingsDiagnostics(next.embeddings),
         worker: { ...snapshot.worker, state: 'disabled', currentSessionId: null, currentPhase: null, idleGraceUntilMs: null, activeOperations: [] } };
@@ -475,6 +483,7 @@ export async function prepareMemoryWorker(params: Readonly<{
     if (stopped) return;
     const initialSettings = await timeWebLatencyPhase('memory.startup.settingsRead', readMemorySettingsFromDisk);
     if (stopped) return;
+    for (const id of withReaders(retainedIds)) startupRetainedSessionIds.add(id);
     snapshot = { ...snapshot, settings: initialSettings,
       embeddings: buildUnavailableMemoryEmbeddingsDiagnostics(initialSettings.embeddings),
       worker: { ...snapshot.worker, state: initialSettings.enabled ? 'indexing' : 'disabled' } };
@@ -517,6 +526,7 @@ export async function prepareMemoryWorker(params: Readonly<{
           snapshot = { ...snapshot, indexesQualified: false, candidateSessionIds: [], observedSeqBySessionId: [], editedSessionIds: [], externalSources: [] };
           observedSessionIds.clear();
           pendingRevisions.clear();
+          startupRetainedSessionIds.clear();
         } finally { externalNeedsRefresh = true; settingsApplied = false; await applySettings(prior); }
       }).finally(() => { clearPromise = null; });
       return clearPromise;
@@ -546,6 +556,9 @@ export async function prepareMemoryWorker(params: Readonly<{
       } finally { if (request) activeSessionRequests.delete(request); }
     },
     noteSessionChanged: async change => {
+      // Activity, presence and ready writes cannot move eligibility or observedSeq; transcript,
+      // archive and removal facts arrive through their own carriers. Unknown or missing proofs read.
+      if (change.memoryInputsChanged === false) return;
       await waitForReady();
       if (stopped || !desired.enabled) return;
       const request = { sessionId: change.sessionId, removed: false };
@@ -570,7 +583,10 @@ export async function prepareMemoryWorker(params: Readonly<{
           forgetPendingSessionObservations([change.sessionId]);
           const loop = workLoop; loop?.pause();
           // Removal stays in the Account cursor's custody window.
-          try { await call((indexer, signal) => indexer.inventory(signal, [{ sessionId: change.sessionId, eligibility: null }])); }
+          try {
+            await call((indexer, signal) => indexer.inventory(signal, [{ sessionId: change.sessionId, eligibility: null }]));
+            startupRetainedSessionIds.delete(change.sessionId);
+          }
           finally { if (!stopped && desired.enabled && workLoop === loop) loop?.resume(); }
           return;
         }
@@ -586,7 +602,9 @@ export async function prepareMemoryWorker(params: Readonly<{
     noteSessionTranscriptRevised: async change => {
       await waitForReady();
       if (stopped) return;
-      if (!hasSessionWork(change.sessionId)) return;
+      // Append hints are cursor-blocking and must never open SQLite readers.
+      // A never-admitted Session reads current content on its first normal admission.
+      if (!startupRetainedSessionIds.has(change.sessionId) && !hasAdmittedSessionWork(change.sessionId)) return;
       pendingRevisions.set(change.sessionId, { ...pendingRevisions.get(change.sessionId), ...change, revised: true });
       // Receipt must not hold the Account change stream behind transcript IO.
       // The incumbent single-flight work pump carries this fact to the child.
@@ -623,6 +641,7 @@ export async function prepareMemoryWorker(params: Readonly<{
         withdrawal.sessionIds = selected;
         forgetPendingSessionObservations(selected);
         await call((indexer, signal) => indexer.removeSessions(selected, signal));
+        for (const id of selected) startupRetainedSessionIds.delete(id);
       }, withdrawal).finally(() => { if (!stopped && desired.enabled && workLoop === loop) loop?.resume(); });
     },
     reconcileRetainedSessionAccess: () => serializeSettings(async () => {
@@ -650,6 +669,7 @@ export async function prepareMemoryWorker(params: Readonly<{
         forgetPendingSessionObservations([change.sessionId]);
         loop?.pause();
         await call((indexer, signal) => indexer.archive(change, signal));
+        startupRetainedSessionIds.delete(change.sessionId);
       }, change.archived ? { kind: 'archive', sessionId: change.sessionId } : undefined)
         .finally(() => { if (!stopped && desired.enabled && workLoop === loop) loop?.resume(); });
     },

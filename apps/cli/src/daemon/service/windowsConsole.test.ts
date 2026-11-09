@@ -1,6 +1,9 @@
 import { ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
+import { SYSTEM_TASK_PROTOCOL_VERSION } from '@happier-dev/protocol';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -61,6 +64,50 @@ describe('Windows background CLI process consoles', () => {
       expect(resolveCliVersionFromBinary({ binaryPath: join(directory, 'happier.exe'), platform: 'win32' })).toBe('0.2.15');
       expect(spawnSyncMock.mock.calls.some(([command]) => command === 'schtasks')).toBe(true);
       for (const [, , options] of spawnSyncMock.mock.calls) expect(options.windowsHide).toBe(true);
+    });
+  });
+
+  it('runs live system-task service controls hidden and reports OS command failures', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-system-task-console-', env: {
+      HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux', HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+    } }, async ({ homeDir }) => {
+      await writeDaemonSettingsFixture(homeDir);
+      const commandPath = join(homeDir, 'systemctl');
+      writeFileSync(commandPath, '#!/bin/sh\nexit 0\n');
+      chmodSync(commandPath, 0o755);
+      vi.stubEnv('PATH', homeDir);
+      const { resolveDaemonServiceCliRuntimeFromEnv } = await import('./cli');
+      const { resolveDaemonServicePaths } = await import('./paths');
+      const runtime = resolveDaemonServiceCliRuntimeFromEnv({ mode: 'user' });
+      const paths = resolveDaemonServicePaths(runtime, { mode: 'user' });
+      const { dirname } = await import('node:path');
+      mkdirSync(dirname(paths.installedPath), { recursive: true });
+      writeFileSync(paths.installedPath, renderSystemdServiceUnit({
+        description: 'Happier daemon', execStart: ['/fixture/happier', 'daemon', 'start-sync'],
+        env: { HAPPIER_HOME_DIR: runtime.happierHomeDir,
+          HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: runtime.happierHomeDir,
+          HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service' },
+      }));
+      spawnSyncMock.mockImplementation((_command: string, args: readonly string[] = []) => ({
+        status: args.includes('stop') ? 23 : 0, stdout: 'enabled', stderr: args.includes('stop') ? 'access denied' : '',
+      }));
+      const { getLiveSystemTasksRunnerAdapter } = await import('@/capabilities/systemTasks/liveSystemTasksRunner');
+      const adapter = getLiveSystemTasksRunnerAdapter();
+      const started = await adapter.start({ spec: {
+        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION, kind: 'daemon.service.stop.v1',
+        params: { target: { kind: 'local' }, mode: 'user', channel: 'stable' },
+      } });
+      if (!started || typeof started !== 'object' || !('taskId' in started) || typeof started.taskId !== 'string') {
+        throw new Error('System task start did not return a task id.');
+      }
+      const task = { taskId: started.taskId };
+      try {
+        const result = await adapter.wait(task);
+        const stop = spawnSyncMock.mock.calls.find(([, args]) => args.includes('stop'));
+        expect(stop?.[2].windowsHide).toBe(true);
+        expect(result).toMatchObject({ ok: false });
+        expect(JSON.stringify(result)).toContain('Background service command failed');
+      } finally { await adapter.cancel(task); }
     });
   });
 

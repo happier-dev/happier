@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MachineResourcesPolicyV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 
 import { createMachineResourceSummary } from '@/daemon/resources/machineResourceSummary';
 import { createMachineVitalsSampler } from '@/daemon/vitals/createMachineVitalsSampler';
@@ -26,7 +27,9 @@ describe('Guard state publication through sampler and resource summary owners', 
         let failed = false;
         let publication: GuardStatePublication | undefined;
         const intervals: number[] = [];
+        const policy = MachineResourcesPolicyV1Schema.parse({ v: 1, monitoring: { mode: 'always', intervalMs: 60_000 } });
         const sampler = createMachineVitalsSampler({ historyStore: await createMinuteHistoryStore({ directory }),
+            readPolicy: () => policy,
             // OS reader boundary; sampling, history, publication and summary owners are real.
             readers: { read: async (input): Promise<MachineVitalsReaderResult> => {
                 intervals.push(input.intervalMs);

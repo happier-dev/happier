@@ -1,10 +1,12 @@
 import { z } from 'zod/mini';
+export { HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY } from '@/agent/runtime/session/process/agentRuntimeRunnerEnvironment';
 
 import { AgentIdV1Schema } from '@happier-dev/protocol/agents/agentIdV1';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { BackendTargetRefV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
+import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/spawnSession';
 import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { SecretReferenceOverlayV1Schema } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
@@ -27,8 +29,6 @@ export const FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH =
   '/agent-runtime/foreground/admit';
 export const FOREGROUND_AGENT_RUNTIME_CLAIM_PATH =
   '/agent-runtime/foreground/claim';
-export const HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY =
-  'HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE';
 export const FOREGROUND_AGENT_RUNTIME_RELEASE_PATH =
   '/agent-runtime/foreground/release';
 export const FOREGROUND_AGENT_RUNTIME_SESSION_OPTIONS_PATH =
@@ -83,12 +83,11 @@ export const ForegroundAgentRuntimeAdmissionRequestV1Schema = z.strictObject({
    * launch. It carries references and revisions only; the daemon materializer
    * stays the sole resolver and the selected Profile is never written.
    *
-   * This seam needs no capability negotiation: the admission client calls
-   * `ensureDaemonRunningForSessionCommand()` first, which restarts the daemon
-   * unless it already runs the exact installed CLI version
-   * (`isDaemonRunningCurrentlyInstalledHappyVersion`). A predecessor daemon
-   * therefore cannot receive this request, and this schema is `.strict()` so
-   * it would reject rather than silently launch with different credentials.
+   * The admission client checks daemon ownership with
+   * `ensureDaemonRunningForSessionCommand()` first. A conflicting or
+   * service-managed daemon may remain, so strict request parsing must reject
+   * unsupported credential intent rather than silently launch differently.
+   * The control client also refuses unsupported or invalid responses.
    */
   secretReferenceOverlay: z.optional(SecretReferenceOverlayV1Schema),
 }).check(z.superRefine((value, ctx) => {
@@ -167,7 +166,7 @@ export const ForegroundAgentRuntimeAdmissionResponseV1Schema =
     }),
     z.strictObject({
       ok: z.literal(false),
-      error: z.union([ProviderErrorV1Schema, ForegroundProjectAgentLaunchRefusalV1Schema]),
+      error: z.union([ProviderErrorV1Schema, ForegroundProjectAgentLaunchRefusalV1Schema, SessionSpawnLaunchErrorV1Schema]),
     }),
   ]);
 

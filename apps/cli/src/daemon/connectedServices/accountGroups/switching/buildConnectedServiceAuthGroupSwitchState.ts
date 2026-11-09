@@ -77,6 +77,7 @@ function memberStateFromApiState(
         ...(readNumberState(state.validationBlockedUntilMs) === undefined ? {} : { validationBlockedUntilMs: readNumberState(state.validationBlockedUntilMs) }),
         ...(readNumberState(state.providerResetsAtMs) === undefined ? {} : { providerResetsAtMs: readNumberState(state.providerResetsAtMs) }),
         ...(readStringState(state.lastFailureKind) === undefined ? {} : { lastFailureKind: readStringState(state.lastFailureKind) }),
+        ...(readStringState(state.lastFailureProviderLimitId) === undefined ? {} : { lastFailureProviderLimitId: readStringState(state.lastFailureProviderLimitId) }),
         ...(readStringState(state.lastFailureCode) === undefined ? {} : { lastFailureCode: readStringState(state.lastFailureCode) }),
         ...(state.autoDisabledReason === undefined ? {} : { autoDisabledReason: state.autoDisabledReason }),
         ...(readNumberState(state.lastObservedAtMs) === undefined ? {} : { lastObservedAtMs: readNumberState(state.lastObservedAtMs) }),

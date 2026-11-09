@@ -3,15 +3,59 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   fetchTeamCredentialDirectMaterial,
+  fetchTeamCredentialDirectMaterialPreparation,
+  fetchTeamCredentialDirectMaterialCensus,
   withdrawTeamCredentialDirectMaterial,
   TeamCredentialDirectMaterialHttpContractError,
   TeamCredentialDirectMaterialHttpTransportError,
+  fetchTeamCredentialNativeBinding,
 } from './teamCredentialDirectMaterialHttp';
+import tweetnacl from 'tweetnacl';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { computeTeamCredentialNativeBindingReadDigestV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 
-vi.mock('axios', () => ({ default: { post: vi.fn(), delete: vi.fn() } }));
+vi.mock('axios', () => ({ default: { post: vi.fn(), delete: vi.fn(), get: vi.fn() } }));
 
 describe('fetchTeamCredentialDirectMaterial', () => {
-  beforeEach(() => vi.mocked(axios.post).mockReset());
+  beforeEach(() => {
+    vi.mocked(axios.post).mockReset();
+    vi.mocked(axios.get).mockReset();
+    vi.mocked(axios.delete).mockReset();
+  });
+
+  it('never reinterprets an older direct response as native binding material', async () => {
+    const body = { purpose: 'vendor_native_binding' as const, homeId: 'home', teamId: 'team', resourceId: 'resource',
+      sessionId: 'session', managedId: 'managed', bindingKey: 'binding', expectedResourceRevision: 1,
+      expectedSourceRevision: 'source', expectedProviderTicket: 'ticket', machineId: 'guest', installationId: 'installation' };
+    const keys = tweetnacl.sign.keyPair();
+    const proof = signMachineInstallationProof({ payload: { version: 1, accountId: 'account',
+      machineId: body.machineId, installationId: body.installationId,
+      nativeCredentialBindingRead: { requestBodyDigest: computeTeamCredentialNativeBindingReadDigestV1(body) } }, privateKey: keys.secretKey });
+    vi.mocked(axios.post).mockResolvedValue({ status: 200, data: { status: 'unavailable', reason: 'preparing' } });
+    await expect(fetchTeamCredentialNativeBinding({ token: 'token', request: { ...body, proof } }))
+      .rejects.toBeInstanceOf(TeamCredentialDirectMaterialHttpContractError);
+    vi.mocked(axios.post).mockResolvedValue({ status: 404, data: { error: 'resource_not_found' } });
+    await expect(fetchTeamCredentialNativeBinding({ token: 'token', request: { ...body, proof } }))
+      .resolves.toEqual({ status: 'unavailable', reason: 'binding_unavailable' });
+  });
+
+  it.each(['preparation', 'census', 'withdraw_request', 'withdraw_response'] as const)(
+    'uses the existing typed contract failure at the %s boundary', async phase => {
+      vi.mocked(axios.get).mockResolvedValue({ data: {} });
+      vi.mocked(axios.delete).mockResolvedValue({ data: {} });
+      const params = { token: 'fixture-token', teamId: 'team', resourceId: 'resource' };
+      const result = phase === 'preparation'
+        ? fetchTeamCredentialDirectMaterialPreparation({ ...params, sourceMemberKey: 'member' })
+        : phase === 'census'
+          ? fetchTeamCredentialDirectMaterialCensus(params)
+          : withdrawTeamCredentialDirectMaterial({ ...params, body: {
+              sourceMemberKey: phase === 'withdraw_request' ? '' : 'member',
+              expectedResourceRevision: 1, expectedPublishedSourceVersion: 'source-v1',
+            } });
+      await expect(result).rejects.toBeInstanceOf(TeamCredentialDirectMaterialHttpContractError);
+      expect(vi.mocked(axios.delete)).toHaveBeenCalledTimes(phase === 'withdraw_response' ? 1 : 0);
+    },
+  );
 
   it('accepts slow valid direct material within its caller lifetime and propagates cancellation', async () => {
     vi.useFakeTimers();

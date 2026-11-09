@@ -1,5 +1,6 @@
 import {
   BrowserAutomationActionResultV1Schema,
+  BrowserAutomationActionRequestV1Schema,
   BrowserAutomationCancelActiveResultV1Schema,
   BrowserAutomationTimelineV1Schema,
   type BrowserAutomationActionRequestV1,
@@ -72,6 +73,17 @@ function clickRequest(
 }
 
 describe('browser automation routes', () => {
+  it('admits one request once through the route and service', async () => {
+    const { routes: r, service } = routes();
+    const parse = vi.spyOn(BrowserAutomationActionRequestV1Schema, 'safeParse');
+    try {
+      expect(await r.dispatch('browser.automation.snapshot', snapshotRequest(), accountAutomationContext))
+        .toMatchObject({ status: 'succeeded' });
+      expect(parse).not.toHaveBeenCalled();
+      expect(await r.dispatch('browser.automation.click', snapshotRequest(), accountAutomationContext))
+        .toMatchObject({ errorCode: 'invalid_parameters' });
+    } finally { parse.mockRestore(); service.dispose(); }
+  });
   it('refuses confidential entry when the actual adapter cannot prove a focused field', async () => {
     const { routes: r, service } = routes();
     try {
@@ -86,7 +98,7 @@ describe('browser automation routes', () => {
     } finally { service.dispose(); }
   });
 
-  it('never admits an Agent confidential continuation or a value-bearing request', async () => {
+  it('rejects a value-bearing confidential preparation request', async () => {
     const { routes: r, service } = routes();
     const request = {
       serverId: 'home', sessionId: 'session', machineId: 'machine', purpose: 'Sign in',
@@ -95,8 +107,6 @@ describe('browser automation routes', () => {
       field: { fieldId: '1', focusId: '1', locator: '#password' },
     };
     try {
-      expect(await r.prepareConfidentialFill(request, accountAutomationContext))
-        .toEqual({ status: 'refused', code: 'approval_required' });
       expect(await r.prepareConfidentialFill({ ...request, value: 'private-fixture' }, presentUserContext))
         .toEqual({ status: 'refused', code: 'target_changed' });
     } finally { service.dispose(); }
@@ -250,7 +260,7 @@ describe('browser automation routes', () => {
         .toMatchObject({ status: 'failed', errorCode: 'runtime_unavailable' });
       await service.recordHumanInput({ ...request, authority: 'present_user' });
       handedBack = true;
-      expect(service.handBack({ ...request, authority: 'present_user' })).toEqual({ ok: true });
+      expect(await service.handBack({ ...request, authority: 'present_user' })).toEqual({ ok: true });
       expect(service.getStatus(request)).toMatchObject({ controller: 'none', uncertain: true });
       expect(await r.dispatch('browser.automation.click', clickRequest({ automationRequestId: 'after_handback' })))
         .toMatchObject({ status: 'failed', errorCode: 'stale_navigation' });
@@ -371,7 +381,7 @@ describe('browser automation routes', () => {
 
   it.each([
     { authority: 'present_user' as const },
-    { authority: 'account_automation' as const, bypassApprovals: true },
+    { authority: 'account_automation' as const },
   ])('lets policy-admitted $authority cancellation drain active automation and advance its control epoch', async context => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => {
@@ -449,7 +459,7 @@ describe('browser automation routes', () => {
     }
   });
 
-  it('does not let account automation take over an action whose requester matches the old synthetic identity', async () => {
+  it('lets admitted account automation cancel without borrowing the active requester identity', async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -470,14 +480,15 @@ describe('browser automation routes', () => {
     }));
 
     try {
-      const canceled = await r.dispatch('browser.automation.cancelActive', {
+      const canceling = r.dispatch('browser.automation.cancelActive', {
         browserSessionId: 'browser_session_1',
         viewId: 'view_1',
       }, accountAutomationContext);
-
-      expect(canceled).toEqual({ v: 1, outcome: 'owner_mismatch', canceledCount: 0 });
       release();
-      await expect(pending).resolves.toMatchObject({ status: 'succeeded' });
+      const canceled = await canceling;
+
+      expect(canceled).toEqual({ v: 1, outcome: 'canceled', canceledCount: 1, completion: 'uncertain' });
+      await expect(pending).resolves.toMatchObject({ status: 'canceled' });
     } finally {
       release();
     }

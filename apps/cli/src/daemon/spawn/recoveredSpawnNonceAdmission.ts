@@ -3,7 +3,7 @@ import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { readTerminalAttachmentInfo, readTerminalHostAttachmentState, terminalMetadataMatchesHostHandle } from '@/terminal/attachment/terminalAttachmentInfo';
 import { windowsHostedAttachmentMatchesRunner } from '../platform/windows/windowsHostedSessionRuntime';
 import { readSessionMarkerForPid } from '../sessionRegistry';
-import { isCanonicalSpawnSessionId } from '../sessions/resolveSpawnWebhookResult';
+import { isCanonicalSpawnSessionId } from '../sessions/isCanonicalSpawnSessionId';
 import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
 import type { SessionRunnerServiceabilityProbe } from '../sessions/isSessionRunnerActive';
 import type { TrackedSession } from '../types';

@@ -39,6 +39,28 @@ function harness() {
 
 afterEach(() => vi.useRealTimers());
 describe('shared browser screencast encoding owner', () => {
+    it('requests one fresh frame for a new recording on a settled shared page and stays idle', async () => {
+        vi.useFakeTimers();
+        const h = harness();
+        const recordingFrames: BrowserCdpScreencastFrame[] = [];
+        try {
+            const human = await h.producer.start({ view, purpose: 'humanViewer', onFrame: f => h.frames.push(f) });
+            h.emit();
+            const recording = await h.producer.start({ view, onFrame: f => recordingFrames.push(f) });
+            // A recording needs current pixels, never the viewer's cached observation.
+            expect(recordingFrames).toEqual([]);
+            expect(h.starts()).toHaveLength(2);
+            expect(h.commands.filter(c => c.method === 'Page.stopScreencast')).toHaveLength(1);
+            h.emit();
+            expect(recordingFrames).toHaveLength(1);
+            const commands = h.commands.length;
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(h.commands).toHaveLength(commands);
+            await recording?.stop();
+            await human?.stop();
+        } finally { await h.producer.dispose(); h.viewportOwner.dispose(); }
+    });
+
     it('keeps subscriptions on native rebind, ignores equal binding facts, and stops the current source on last release', async () => {
         vi.useFakeTimers();
         const h = harness();

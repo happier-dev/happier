@@ -192,6 +192,31 @@ function strategy(overrides: {
 const MAX_SAFE_TIMER_DELAY_MS = 2_147_483_647;
 
 describe('DurableBackoffRecoveryScheduler', () => {
+  it('carries the pre-write basis across asynchronous pruning so a late transition cannot replace cancellation', async () => {
+    const { DurableBackoffRecoveryScheduler } = await loadModule();
+    const previous = intent();
+    const cancelled = intent({ status: 'cancelled', nextRetryAtMs: null });
+    let stored = previous;
+    let reads = 0;
+    const store = {
+      read: () => stored,
+      readAuthoritative: () => { reads += 1; return stored; },
+      write: (_sessionId: string, next: TestIntent, expectedCurrent?: TestIntent | null) => {
+        if (expectedCurrent === undefined || stored === expectedCurrent) stored = next;
+      },
+    };
+    const scheduler = new DurableBackoffRecoveryScheduler<TestIntent>(strategy({ store }));
+    try {
+      const writing = scheduler.transact({ sessionId: 'causal-base', transaction: () => ({
+        intent: intent({ nextRetryAtMs: null }), result: null,
+      }) });
+      stored = cancelled;
+      await writing;
+      expect(stored).toBe(cancelled);
+      expect(reads).toBe(1);
+    } finally { scheduler.dispose(); }
+  });
+
   it('refuses a replaced intent at authoritative wake admission without touching its recovery state', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-exact-wake-'));
     const { DurableBackoffRecoveryScheduler } = await loadModule();

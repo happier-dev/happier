@@ -10,7 +10,7 @@ import { waitForChangeOrDeadline } from '../lifecycle/waitForChangeOrDeadline';
 import { createActivityLog, type ActivityLog } from './activityLog';
 import { createGuardRuntime, type GuardPolicyWork, type GuardRuntimeInput } from './guardRuntime';
 import { createGuardStatePublication, type GuardStatePublication } from './guardStatePublication';
-import { createGuardWatch, type GuardWatchInput } from './view/guardWatch';
+import { createGuardWatch, type GuardWatchInput, type GuardViewRequester } from './view/guardWatch';
 
 export type DaemonGuardPolicyWork = GuardPolicyWork & Readonly<{
     refreshOnTick?(): void;
@@ -46,6 +46,8 @@ export type DaemonGuard = Readonly<{
     runtime: ReturnType<typeof createGuardRuntime>;
     watch: ReturnType<typeof createGuardWatch>;
     state: GuardStatePublication;
+    keepRunning(request: Readonly<{ sessionId?: string }>, requester: GuardViewRequester,
+        signal?: AbortSignal): Promise<Readonly<{ status: 'kept' | 'not_pending' }>>;
     refreshOnTick(): void;
     subscribeInvalidation(listener: () => void): () => void;
     stop(): Promise<void>;
@@ -140,6 +142,13 @@ export async function createDaemonGuard(input: DaemonGuardInput): Promise<Daemon
     input.signal?.addEventListener('abort', onAbort, { once: true });
     if (input.signal?.aborted) await stop();
     return { activityLog, runtime, watch, state, subscribeInvalidation, stop,
+        async keepRunning(request, requester, signal) {
+            if (signal?.aborted) return { status: 'not_pending' };
+            if (!request.sessionId) return { status: 'not_pending' };
+            if (!requester.isCustodian && !(await watch.readView(requester, signal)).idle
+                .some(row => row.sessionRef === request.sessionId)) return { status: 'not_pending' };
+            return { status: await runtime.keepRunning(request.sessionId) };
+        },
         refreshOnTick() {
             if (lifetime.signal.aborted) return;
             state.refresh();

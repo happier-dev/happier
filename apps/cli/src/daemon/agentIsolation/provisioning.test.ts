@@ -3,6 +3,7 @@ import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveSeparateUserToolsLayout } from '@happier-dev/cli-common/firstPartyRuntime';
 import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend,
   createCaddyContainerSetupSteps } from '@happier-dev/cli-common/machineSetup';
@@ -14,6 +15,27 @@ import { resolveAgentIsolationEffectIntentResult } from './effectIntent';
 afterEach(() => vi.unstubAllEnvs());
 
 describe('agent isolation provisioning', () => {
+  it.skipIf(process.platform !== 'linux').each(['shared', 'member'] as const)('converts a personal install through the reviewed setup without opening its home (%s)', placement => {
+    vi.stubEnv('HOME', '/home/alice');
+    vi.stubEnv('HAPPIER_HOME_DIR', '/home/alice/.happier');
+    vi.stubEnv('HAPPIER_FIRST_PARTY_INSTALL_HOME', '');
+    vi.stubEnv('HAPPIER_MANAGED_TOOLS_ROOT', '');
+    const requesterIdentity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> & { homeServerIdentityId: string } = {
+      kind: 'isolated', separationRequired: true, homeServerIdentityId: 'home-server',
+      requester: { serverId: 'server', machineId: 'machine', installationId: 'install', accountId: 'member' },
+    };
+    const steps = buildAgentIsolationProvisioningSteps({ daemonUsername: 'alice', daemonPrimaryGroup: 'alice',
+      ...(placement === 'member' ? { requesterIdentity } : {}),
+      binaryPath: '/opt/happier/cli/current/happier', legacyPluginCodeRoot: '/home/alice/.happier/plugins/plugins/generations' });
+    const tools = steps.find(step => step.id === 'tools-root');
+    expect(tools).toMatchObject({ kind: 'directory', owner: 'alice', group: 'alice', mode: 0o711 });
+    expect(tools?.kind === 'directory' && tools.path.startsWith('/var/lib/happier/')).toBe(true);
+    expect(steps).toContainEqual(expect.objectContaining({ kind: 'file', id: 'tools-layout',
+      path: '/home/alice/.happier/install-layout.json', owner: 'alice', group: 'alice', mode: 0o600 }));
+    expect(steps.filter(step => step.kind === 'pathTraversal' && step.path.startsWith('/home/alice')
+      && step.state !== 'absent')).toEqual([]);
+  });
+
   it.skipIf(process.platform !== 'linux')('keeps one traversal effect for an explicitly admitted shared Workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-common-ancestor-'));
     try {
@@ -174,7 +196,8 @@ describe('agent isolation provisioning', () => {
       expect.objectContaining({ kind: 'user', username: 'happier-agent', locked: true }),
       expect.objectContaining({ kind: 'group', name: 'happier-workspace', members: ['happier', 'happier-agent'] }),
       expect.objectContaining({ kind: 'directory', path: '/srv/happier', owner: 'happier', group: 'happier-workspace', mode: 0o2770 }),
-      expect.objectContaining({ kind: 'directory', path: resolveManagedToolsRoot(), owner: 'happier', group: 'happier', mode: 0o711 }),
+      expect.objectContaining({ kind: 'directory', path: resolveSeparateUserToolsLayout({ machineStateRoot: '/var/lib/happier' }).toolsRoot,
+        owner: 'happier', group: 'happier', mode: 0o711 }),
     ]));
     const rule = steps.find(step => step.kind === 'file' && step.path === '/etc/sudoers.d/91-happier-agent');
     expect(rule).toMatchObject({ kind: 'file', owner: 'root', group: 'root', mode: 0o440, validate: 'sudoers' });

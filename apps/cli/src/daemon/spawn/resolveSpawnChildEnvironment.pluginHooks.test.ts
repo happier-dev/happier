@@ -195,7 +195,6 @@ async function writeSpawnHookPluginFixture(params: Readonly<{
           : {}),
         hooks: [
           {
-            hookApiVersion: 1,
             id: 'resolve-prerequisites',
             on: 'agent.resolvePrerequisites',
             category: 'decision',
@@ -203,7 +202,6 @@ async function writeSpawnHookPluginFixture(params: Readonly<{
             executionKind: 'decide',
           },
           {
-            hookApiVersion: 1,
             id: 'augment-spawn-env',
             on: 'agent.spawnEnv.augment',
             category: 'augmentation',
@@ -426,7 +424,6 @@ describe('resolveSpawnChildEnvironment (plugin hooks)', () => {
           contributes: {
             hooks: [
               {
-                hookApiVersion: 1,
                 id: 'unrelated-prerequisite',
                 on: 'agent.resolvePrerequisites',
                 category: 'decision',

@@ -4,6 +4,7 @@ import type {
   AutomationTriggerId,
   AutomationV3WorkerResultDelivery,
   AutomationRunLifecycleSource,
+  AutomationV3WorkerAssignmentsResponse,
 } from '@happier-dev/protocol';
 
 export type AutomationV3ClaimedRun = Readonly<{
@@ -13,7 +14,7 @@ export type AutomationV3ClaimedRun = Readonly<{
   attempt: number;
   revision: number;
   workflowResumeRequestedRevision?: number;
-  recipeKind: 'legacy' | 'workflow-v2';
+  recipeKind: 'legacy' | 'workflow-v2' | 'action-v1';
   triggerId: AutomationTriggerId | null;
   /** Null is a retained pre-recipe Run and must fail closed in the worker. */
   executionInputEnvelope: string | null;
@@ -80,6 +81,8 @@ export type AutomationClaimRunResponse =
  */
 export type AutomationWorkerAssignmentsResponse = Readonly<{
   runLifecycleSources?: ReadonlyArray<Extract<AutomationRunLifecycleSource, { kind: 'execution_run' }>>;
+  /** Omission is unknown deadline evidence from an older V3 server. */
+  directRunClaimDeadlines?: AutomationV3WorkerAssignmentsResponse['directRunClaimDeadlines'];
   assignments: Array<{
     machineId: string;
     automationId: string;

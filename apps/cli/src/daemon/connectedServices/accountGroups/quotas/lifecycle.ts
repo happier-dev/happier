@@ -78,7 +78,6 @@ function readMemberRuntimeStates(input: Readonly<{
   changedGroupGeneration: number;
   snapshotsByProfileId: ReadonlyMap<string, ProviderAccountUsageSnapshotV1>;
   nowMs: number;
-  quotaFreshnessMs: number;
   allowUnconfirmedConfidence?: boolean;
 }>): Readonly<
   | { status: 'ready'; memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState> }
@@ -97,7 +96,6 @@ function readMemberRuntimeStates(input: Readonly<{
       expectedGroupGeneration: input.group.generation,
       observedGroupGeneration: input.changedGroupGeneration,
       nowMs: input.nowMs,
-      quotaFreshnessMs: input.quotaFreshnessMs,
       allowUnconfirmedConfidence: input.allowUnconfirmedConfidence,
     });
     if (!decision.ok) return { status: 'insufficient_evidence', decision };
@@ -129,7 +127,6 @@ export function evaluateConnectedServiceAuthGroupQuotaLifecycle(input: Readonly<
   snapshotsByProfileId: ReadonlyMap<string, ProviderAccountUsageSnapshotV1>;
   activeSessionIds: ReadonlyArray<string>;
   nowMs: number;
-  quotaFreshnessMs: number;
   allowUnconfirmedConfidence?: boolean;
 }>): ConnectedServiceAuthGroupQuotaLifecycleEvaluation {
   void input.changedProfileId;
@@ -142,7 +139,6 @@ export function evaluateConnectedServiceAuthGroupQuotaLifecycle(input: Readonly<
     changedGroupGeneration: input.changedGroupGeneration,
     snapshotsByProfileId: input.snapshotsByProfileId,
     nowMs: input.nowMs,
-    quotaFreshnessMs: input.quotaFreshnessMs,
     allowUnconfirmedConfidence: input.allowUnconfirmedConfidence,
   });
   if (evidence.status !== 'ready') return noEdge(input.previousState);
@@ -152,7 +148,6 @@ export function evaluateConnectedServiceAuthGroupQuotaLifecycle(input: Readonly<
 
   const selection = selectConnectedServiceAuthGroupCandidate({
     nowMs: input.nowMs,
-    quotaFreshnessMs: input.quotaFreshnessMs,
     activeProfileId: input.group.activeProfileId,
     policy,
     lastSwitchReason: input.group.lastSwitchReason,

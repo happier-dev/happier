@@ -23,6 +23,18 @@ import { prepareDaemonSpawnChildEnvironment } from './prepareDaemonSpawnChildEnv
 import { commitDaemonLaunchSession } from './commitDaemonLaunchSession';
 import { createAccountEncryptionCurrentnessFixture, createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
+import { applyStartupMetadataUpdateToSession, buildModelOverride } from '@/agent/runtime/startupMetadataUpdate';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { resolveExistingSessionAttachContext } from '@/daemon/sessionEncryption/resolveExistingSessionAttachContext';
+import { createSessionModelTransitionCoordinator } from '@/providers/sessions/sessionModelTransitionCoordinator';
+import { createSessionModelTransitionAuthorizer } from '@/providers/sessions/authorizeSessionModelTransitionTarget';
+import { createModelIntentMetadataCasCandidate, createModelIntentV2MetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionTeamCredentialBindingMetadataPatchV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 
 async function createPinnedSpawnAgentRegistry(): Promise<ResolvedExecutablePluginRuntimeRegistry> {
   const manifests = [CODEX_MANIFEST, ANTIGRAVITY_MANIFEST].map((manifest) => PluginManifestV2Schema.parse(manifest));
@@ -326,7 +338,7 @@ process.exit(auth.tokens.access_token === 'fixture-access' ? 0 : 1); } catch { p
         options: { directory: home, existingSessionId: 'accepted-session', teamCredentialBindings: [binding],
           backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const } },
         profileEnvironmentVariables: {}, daemonSpawnHooks: null,
-        processEnv: { PATH: '', HOME: home, USERPROFILE: home, CODEX_HOME: home, HAPPIER_HOME_DIR: home,
+        processEnv: { NODE_ENV: 'test' as const, PATH: '', HOME: home, USERPROFILE: home, CODEX_HOME: home, HAPPIER_HOME_DIR: home,
           HAPPIER_CODEX_PATH: cli, HAPPIER_JS_RUNTIME_PATH: process.execPath },
         logDebug: () => {}, logInfo: () => {}, logWarn: () => {} };
       expect(await resolveSpawnChildEnvironment(params)).toMatchObject({ ok: false, errorCode: 'agent_signed_out' });
@@ -334,7 +346,151 @@ process.exit(auth.tokens.access_token === 'fixture-access' ? 0 : 1); } catch { p
       expect(await resolveSpawnChildEnvironment({ ...params, acceptedTeamCredentialBinding: { ...binding,
         slot: { kind: 'connected_service_purpose', purpose: { consumer: { pluginId: 'acme.other', localId: 'other' }, purpose: 'mcp' } },
       } })).toMatchObject({ ok: false, errorCode: 'agent_signed_out' });
+      const metadata = createTestMetadata(buildCommittedLaunchMetadata({ directory: home, options: { directory: home,
+        modelSelection: { v: 1, updatedAt: 10, ref: {
+          agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'team-model',
+        } }, teamCredentialBindings: [binding],
+      } }));
+      for (const acceptedTeamCredentialBinding of [undefined, { ...binding, resourceId: 'another-resource' },
+        { ...binding, deliveryMode: 'direct' as const }]) {
+        expect(await resolveSpawnChildEnvironment({ ...params, existingSessionMetadata: metadata, acceptedTeamCredentialBinding }))
+          .toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: 'team_credential_provider_binding_unavailable' });
+      }
+      expect(await resolveSpawnChildEnvironment({ ...params, existingSessionMetadata: metadata, acceptedTeamCredentialBinding: binding }))
+        .toMatchObject({ ok: true });
+      const nativeDelivery = { managedId: 'managed', controllerInstallationId: 'controller-installation',
+        guestInstallationId: 'guest-installation', bindingKey: 'binding', placeholderRef: 'placeholder',
+        sourceRevision: 'source-1', providerTicket: 't'.repeat(43) };
+      const nativeBinding = { ...binding, deliveryMode: 'vendor-native' as const, nativeDelivery,
+        providerModelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model',
+          nativeSource: { sourceRevision: nativeDelivery.sourceRevision, providerTicket: nativeDelivery.providerTicket } } };
+      const nativeMetadata = createModelIntentV2MetadataCasCandidate({ nowMs: () => 10, selection: { v: 2, updatedAt: 10, ref: {
+        source: 'team_resource', resourceId: binding.resourceId, teamId: binding.teamId,
+        expectedResourceRevision: binding.expectedResourceRevision, deliveryMode: 'vendor-native',
+        agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model', nativeDelivery,
+      } } }).update(metadata);
+      expect(await resolveSpawnChildEnvironment({ ...params, existingSessionMetadata: nativeMetadata,
+        acceptedTeamCredentialBinding: nativeBinding })).toMatchObject({ ok: true });
+      for (const acceptedTeamCredentialBinding of [{ ...nativeBinding, nativeDelivery: undefined }, {
+        ...nativeBinding, nativeDelivery: { ...nativeDelivery, placeholderRef: 'another-placeholder' },
+      }]) {
+        expect(await resolveSpawnChildEnvironment({ ...params, existingSessionMetadata: nativeMetadata,
+          acceptedTeamCredentialBinding }))
+          .toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+            errorMessage: 'team_credential_provider_binding_unavailable' });
+      }
+      const pendingNativeMetadata = createModelIntentV2MetadataCasCandidate({ nowMs: () => 10, selection: { v: 2, updatedAt: 10, ref: {
+        source: 'team_resource', resourceId: binding.resourceId, teamId: binding.teamId,
+        expectedResourceRevision: binding.expectedResourceRevision, deliveryMode: 'vendor-native',
+        agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model',
+      } } }).update(nativeMetadata);
+      for (const existingSessionMetadata of [nativeMetadata, pendingNativeMetadata]) {
+      const tracked = await prepareDaemonSpawnChildEnvironment({ ...params, existingSessionMetadata,
+        options: { ...params.options, teamCredentialBindings: [{ ...nativeBinding,
+          nativeDelivery: { ...nativeDelivery, placeholderRef: 'caller-stale' } }] },
+        sessionAttachPayload: { v: 2, encryptionMode: 'plain', snapshot: { metadata: existingSessionMetadata,
+          metadataVersion: 1, agentState: null, agentStateVersion: 1, acceptedTeamCredentialBinding: nativeBinding } },
+        effectiveModelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'team-model' } },
+        terminal: undefined, connectedServiceAuth: null, connectedServiceMaterializationIdentity: null,
+        providerBindingAttempt: null, providerAgentTargetKey: null,
+        providerDiagnosticRedactionLease: createProviderRedactionLease({ values: [] }), launchResourceScope: createProviderLaunchResourceScope(),
+      });
+      expect(tracked).toMatchObject({ ok: true, trackedSpawnOptions: { teamCredentialBindings: [nativeBinding] } });
+      }
     } finally { await removeTempDir(home); }
+  });
+
+  it('resumes a Team selection after failed prompt dispatch and startup replay through the real metadata and attach owners', async () => {
+    const home = await createTempDir('happier-team-retained-attach-', tmpdir());
+    const credentials = { token: 'fixture-token', encryption: null } as const;
+    const binding = { v: 1 as const, slot: { kind: 'provider_model' as const }, resourceId: 'resource-1', teamId: 'team-1',
+      expectedResourceRevision: 3, deliveryMode: 'brokered' as const };
+    const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'team-model' } as const;
+    const modelSelection = { v: 1 as const, updatedAt: 10, ref: selection };
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
+      metadata: buildCommittedLaunchMetadata({ directory: home, options: { directory: home,
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }, modelSelection, teamCredentialBindings: [binding] } }), agentState: null });
+    let rawSession = createSessionRecordFixture({ id: 'team-retained', encryptionMode: 'plain', dataEncryptionKey: null, share: null,
+      metadataLayoutVersion: 1, metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata,
+      metadataVersion: 1, agentState: null, agentStateVersion: 1, acceptedTeamCredentialBinding: binding });
+    // Substitute only Home HTTP. All serializers, intent/tuple writers, startup
+    // merge, attach reader, model authorizer and native sign-in admission run.
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (String(url).endsWith('/v2/sessions/team-retained')) return { status: 200, data: { session: rawSession } };
+      throw new Error('Unexpected Home read');
+    });
+    const patch = vi.spyOn(axios, 'patch').mockImplementation(async (_url, body: unknown) => {
+      const team = SessionTeamCredentialBindingMetadataPatchV1Schema.safeParse(body);
+      const request = team.success ? team.data : SessionMetadataTuplePatchV1Schema.parse(body);
+      if (request.mode !== 'owner' && request.mode !== 'owner_team_credential_binding') throw new Error('Expected owner write');
+      // These metadata-only writes preserve the server producer's AgentState version.
+      rawSession = { ...rawSession, metadata: request.sharedMetadata.ciphertext, ownerMetadata: request.ownerMetadata,
+        metadataVersion: rawSession.metadataVersion + 1, agentStateVersion: request.agentState.expectedVersion,
+        ...(team.success && team.data.teamCredentialBindings.some(item => item.slot.kind === 'provider_model' && item.resourceId === null)
+          ? { acceptedTeamCredentialBinding: null } : {}) };
+      return { status: 200, data: { success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: rawSession.metadataVersion }, agentState: { version: rawSession.agentStateVersion } } };
+    });
+    const currentness = createAccountEncryptionCurrentnessFixture();
+    const session: Parameters<typeof applyStartupMetadataUpdateToSession>[0]['session'] = { updateMetadata: async updater => {
+      await updateSessionMetadataWithRetry({ token: credentials.token, credentials, sessionId: rawSession.id, rawSession,
+        accountEncryptionCurrentness: currentness, updater: (current, context) => updater(createTestMetadata(current), context) });
+    } };
+    const initialTarget = { selection, policy: 'live' as const, providerBinding: null, sessionBindingMetadata: null,
+      runtimeBindingBasis: null, revalidateBeforeEffect: async () => true,
+      readAppliedTeamCredentialModel: () => ({ kind: 'team_credential_provider_model' as const,
+        resourceId: binding.resourceId, teamId: binding.teamId, expectedResourceRevision: binding.expectedResourceRevision,
+        deliveryMode: binding.deliveryMode, agentTargetKey: selection.agentTargetKey, modelId: selection.modelId }) };
+    const authorize = createSessionModelTransitionAuthorizer({ sessionId: rawSession.id, machineId: 'machine-1', agentId: 'codex',
+      agentTargetKey: selection.agentTargetKey, nativeModelApplyPolicy: 'restart_session', readActiveTarget: () => initialTarget });
+    const coordinator = createSessionModelTransitionCoordinator({ runId: 'run-1', agentTargetKey: selection.agentTargetKey,
+      initialActiveTarget: initialTarget, initialActiveTargetConfirmed: true, isCurrentRun: () => true,
+      readModelSelectionIntent: () => readSessionModelSelectionV2FromMetadata(tryDecryptSessionOwnerMetadataView({
+        credentials, rawSession, accountEncryptionMode: 'plain',
+      })),
+      checkCurrentPublisherAuthority: async () => true, authorize,
+      publishIntent: async requested => {
+        const candidate = createModelIntentMetadataCasCandidate({ selection: requested, nowMs: () => 20 });
+        await session.updateMetadata(candidate.update);
+        return { accepted: candidate.readState().accepted, updatedAt: candidate.readState().updatedAt! };
+      }, applyRuntime: async () => { throw new Error('Carried model must not be reapplied'); },
+      publishActive: async () => { throw new Error('Carried model must not publish new active facts'); },
+      revokeActiveSelectionProof: async () => {}, fencePromptAdmission: async () => {}, clearPromptAdmission: async () => {},
+      transferPromptAdmission: async (_epoch, options) => { await options.dispatch(); return { status: 'dispatched', value: undefined }; },
+    });
+    try {
+      const cli = writeExecutableShimSync({ dir: home, fileName: process.platform === 'win32' ? 'codex.cmd' : 'codex',
+        contents: process.platform === 'win32' ? '@echo off\r\nexit /b 1\r\n' : '#!/bin/sh\nexit 1\n' });
+      const registry = await createPinnedSpawnAgentRegistry();
+      await expect(coordinator.submit(selection, { source: 'prompt', runWithActiveSelection: async transfer => {
+        await transfer({ abortSignal: new AbortController().signal, dispatch: async () => { throw new Error('controlled turn failure'); } });
+      } })).rejects.toThrow('controlled turn failure');
+      expect(patch).not.toHaveBeenCalled();
+      await applyStartupMetadataUpdateToSession({ session, next: createTestMetadata({ flavor: 'codex', hostPid: 42 }),
+        nowMs: 30, permissionModeOverride: null, modelOverride: buildModelOverride({ modelSelection: { ...modelSelection, updatedAt: 25 } }),
+        capturedTeamCredentialBinding: binding, mode: 'attach' });
+      expect(rawSession.acceptedTeamCredentialBinding).toEqual(binding);
+      const attach = await resolveExistingSessionAttachContext({ token: credentials.token, credentials, sessionId: rawSession.id });
+      expect(attach.ok, attach.ok ? '' : JSON.stringify(attach)).toBe(true);
+      if (!attach.ok) throw new Error(attach.reason);
+      expect(attach.metadata).toHaveProperty('modelSelectionIntentV2.ref.source', 'team_resource');
+      const spawnInput = { pluginRuntimeRegistry: registry, options: { directory: home, existingSessionId: rawSession.id,
+        backendTarget: { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const } },
+        profileEnvironmentVariables: {}, daemonSpawnHooks: null,
+        processEnv: { NODE_ENV: 'test' as const, PATH: '', HOME: home, USERPROFILE: home, CODEX_HOME: home, HAPPIER_HOME_DIR: home,
+          HAPPIER_CODEX_PATH: cli, HAPPIER_JS_RUNTIME_PATH: process.execPath }, logDebug() {}, logInfo() {}, logWarn() {} };
+      expect(await resolveSpawnChildEnvironment({ ...spawnInput, existingSessionMetadata: attach.metadata,
+        acceptedTeamCredentialBinding: attach.attachPayload.snapshot?.acceptedTeamCredentialBinding })).toMatchObject({ ok: true });
+      await expect(coordinator.submit(selection, { source: 'command' })).resolves.toMatchObject({ ok: false, status: 'restart_required' });
+      expect(rawSession.acceptedTeamCredentialBinding).toBeNull();
+      const nativeAttach = await resolveExistingSessionAttachContext({ token: credentials.token, credentials, sessionId: rawSession.id });
+      if (!nativeAttach.ok) throw new Error(nativeAttach.reason);
+      expect(nativeAttach.metadata).not.toHaveProperty('modelSelectionIntentV2');
+      expect(await resolveSpawnChildEnvironment({ ...spawnInput, existingSessionMetadata: nativeAttach.metadata,
+        acceptedTeamCredentialBinding: nativeAttach.attachPayload.snapshot?.acceptedTeamCredentialBinding }))
+        .toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
+    } finally { await coordinator.dispose(); get.mockRestore(); patch.mockRestore(); await removeTempDir(home); }
   });
 
   it('refuses a signed-out Agent and preserves cleanup for its prepared credentials', async () => {

@@ -1,14 +1,54 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import type { LocalServicePreviewResourceV1, LocalServicePreviewSnapshotRowV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { localServicePreviewDirectBindingV1, type LocalServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import type { BrowserLocalServicePreviewTargetV1 } from '@happier-dev/protocol';
 import { isLiteralLoopbackHostname, normalizeHostnameForLoopbackCheck } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 
+type PreviewOccurrenceObservation = 'fresh' | 'retained';
+type PreviewOccurrence = { isCurrent(observation?: PreviewOccurrenceObservation): boolean | Promise<boolean>; ended?: boolean };
 export type LocalServicePreviewRegistry = Readonly<{
-    previewsById: Map<string, LocalServicePreviewSnapshotRowV1>;
+    previewsById: Map<string, LocalServicePreviewSnapshotRowV1 & { occurrence?: PreviewOccurrence }>;
+    onRegistrationsChanged?: () => void;
 }>;
+
+/** The registration owner alone decides whether its occurrence can still serve bytes.
+ * Unknown observations throw and fail closed without marking a live occurrence ended.
+ * An ended occurrence cannot become live again just because its endpoint is reused.
+ */
+export async function resolveLocalServicePreviewApplication(
+    registry: LocalServicePreviewRegistry,
+    binding: LocalServicePreviewDirectBindingV1,
+    observation: PreviewOccurrenceObservation = 'fresh',
+): Promise<LocalServicePreviewResourceV1> {
+    const row = registry.previewsById.get(binding.previewId);
+    const unavailable = () => Object.assign(new Error('preview_not_found'), { reasonCode: 'preview_not_found' as const });
+    if (!row || !isDeepStrictEqual(localServicePreviewDirectBindingV1(row.resource), binding)) throw unavailable();
+    if (row.occurrence?.ended) throw unavailable();
+    const serving = row.occurrence ? await row.occurrence.isCurrent(observation) : true;
+    // Resolution can await an OS observation while Open/revoke changes the registration.
+    const current = registry.previewsById.get(binding.previewId);
+    if (!current || current.occurrence?.ended || current.occurrence !== row.occurrence
+        || !isDeepStrictEqual(localServicePreviewDirectBindingV1(current.resource), binding)) throw unavailable();
+    if (!serving && current.occurrence) {
+        current.occurrence.ended = true;
+        registry.onRegistrationsChanged?.();
+        throw unavailable();
+    }
+    return current.resource;
+}
+
+/** Managed activity carries its exact supervisor's observation; scanned/native listeners
+ * still require their request-owned fresh native evidence. Unknowns retain registration.
+ */
+export async function refreshManagedLocalServicePreviewOccurrences(registry: LocalServicePreviewRegistry): Promise<void> {
+    await Promise.allSettled([...registry.previewsById.values()]
+        .filter(row => row.resource.serviceTarget && row.occurrence && !row.occurrence.ended)
+        .map(row => resolveLocalServicePreviewApplication(registry, localServicePreviewDirectBindingV1(row.resource), 'retained')));
+}
 
 export type RegisterLocalServicePreviewInput = Omit<LocalServicePreviewResourceV1, "browserTarget">;
 
@@ -37,15 +77,17 @@ export function buildLocalServicePreviewBrowserTarget(resource: RegisterLocalSer
     };
 }
 
-export function createLocalServicePreviewRegistry(): LocalServicePreviewRegistry {
+export function createLocalServicePreviewRegistry(onRegistrationsChanged?: () => void): LocalServicePreviewRegistry {
     return {
         previewsById: new Map(),
+        onRegistrationsChanged,
     };
 }
 
 export function registerLocalServicePreview(
     registry: LocalServicePreviewRegistry,
     input: RegisterLocalServicePreviewInput,
+    occurrence?: PreviewOccurrence,
 ): RegisterLocalServicePreviewResult {
     const normalizedHost = normalizeHostnameForLoopbackCheck(input.target.host);
     if (!isLiteralLoopbackHostname(normalizedHost)) {
@@ -64,13 +106,19 @@ export function registerLocalServicePreview(
         return { ok: false, reasonCode: "invalid_resource" };
     }
 
+    const previous = registry.previewsById.get(parsed.data.previewId);
+    const retainedOccurrence = previous?.occurrence?.ended
+        && isDeepStrictEqual(localServicePreviewDirectBindingV1(previous.resource), localServicePreviewDirectBindingV1(parsed.data))
+        ? previous.occurrence : occurrence;
     registry.previewsById.set(parsed.data.previewId, {
         previewId: parsed.data.previewId,
         resource: parsed.data,
         accessUrl: null,
         expiresAt: null,
         diagnostics: [],
+        ...(retainedOccurrence ? { occurrence: retainedOccurrence } : {}),
     });
+    if (!previous || !isDeepStrictEqual(previous.resource, parsed.data)) registry.onRegistrationsChanged?.();
     return { ok: true, resource: parsed.data };
 }
 
@@ -81,13 +129,14 @@ export function unregisterLocalServicePreview(
     if (!registry.previewsById.delete(previewId)) {
         return { ok: false, reasonCode: "not_found" };
     }
+    registry.onRegistrationsChanged?.();
     return { ok: true };
 }
 
 export function listLocalServicePreviewResources(
     registry: LocalServicePreviewRegistry,
 ): readonly LocalServicePreviewResourceV1[] {
-    return Array.from(registry.previewsById.values(), (preview) => preview.resource);
+    return [...registry.previewsById.values()].filter(preview => !preview.occurrence?.ended).map(preview => preview.resource);
 }
 
 export function previewIdForInventoryEntry(accountId: string, machineId: string, sessionId: string | undefined, entryId: string): string {

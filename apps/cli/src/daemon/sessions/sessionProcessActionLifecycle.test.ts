@@ -6,7 +6,7 @@ import { createStopSession } from './stopSession';
 import { createOnChildExited } from './onChildExited';
 import { createSessionStopOperationBarrier } from './sessionStopOperationBarrier';
 
-function fixture(recordExplicitStopIntent: (sessionId: string) => Promise<void> = async () => {}) {
+function fixture(prepareStopIntent: (sessionId: string) => Promise<void> = async () => {}) {
   const tracked: TrackedSession = { pid: 300, startedBy: 'daemon', happySessionId: 'session-a',
     processStartTimeMs: 100, vendorResumeId: 'vendor-a', spawnOptions: { directory: '/repo' } };
   const peer: TrackedSession = { ...tracked, pid: 301, happySessionId: 'session-b' };
@@ -19,7 +19,7 @@ function fixture(recordExplicitStopIntent: (sessionId: string) => Promise<void> 
   const lifecycle = createSessionProcessActionLifecycle({ pidToTrackedSession: sessions,
     markStopRequested: respawn.markStopRequested,
     registerPhysicalStopEffect: createSessionStopOperationBarrier().registerPhysicalStopEffect,
-    recordExplicitStopIntent,
+    prepareStopIntent,
     stopSession: createStopSession({ pidToTrackedSession: sessions }) });
   return { tracked, peer, sessions, lifecycle, respawn, spawned: () => spawned };
 }
@@ -75,7 +75,7 @@ describe('Session process Action lifecycle', () => {
     expect(f.spawned()).toBe(0);
   });
 
-  it('refuses a recycled PID, replacement tracked generation, or revoked authority without stamping either owner', async () => {
+  it('refuses a recycled PID, replacement tracked generation, or local cancellation without stamping either owner', async () => {
     const f = fixture();
     expect(await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 101 } }] })).toBeNull();
     const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }] });
@@ -84,20 +84,21 @@ describe('Session process Action lifecycle', () => {
     expect(await stamp?.()).toBe(false);
     expect(f.tracked.stopRequestedAtMs).toBeUndefined();
     expect(replacement.stopRequestedAtMs).toBeUndefined();
+    const controller = new AbortController(); controller.abort();
     expect(await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }],
-      verifyCurrent: async () => false })).toBeNull();
+      signal: controller.signal })).toBeNull();
   });
 
-  it('rechecks authority after an async check and preserves the first intentional-kill timestamp', async () => {
+  it('retains local cancellation and preserves the first intentional-kill timestamp', async () => {
     const f = fixture();
-    let allowed = true;
+    const controller = new AbortController();
     const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }],
-      verifyCurrent: async () => allowed });
+      signal: controller.signal });
     expect(await stamp?.()).toBe(true);
     const first = f.tracked.stopRequestedAtMs;
     expect(await stamp?.()).toBe(true);
     expect(f.tracked.stopRequestedAtMs).toBe(first);
-    allowed = false;
+    controller.abort();
     expect(await stamp?.()).toBe(false);
   });
 
@@ -110,18 +111,13 @@ describe('Session process Action lifecycle', () => {
     expect(adopted.stopRequestedAtMs).toBeUndefined();
   });
 
-  it('refuses same-object PID promotion during an awaited execution check', async () => {
-    const f = fixture();
-    let checks = 0;
-    const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }],
-      verifyCurrent: async () => {
-        if (++checks === 2) {
-          f.sessions.delete(300);
-          f.tracked.pid = 302;
-          f.sessions.set(302, f.tracked);
-        }
-        return true;
-      } });
+  it('refuses same-object PID promotion during the Stop metadata transport', async () => {
+    const f = fixture(async () => {
+      f.sessions.delete(300);
+      f.tracked.pid = 302;
+      f.sessions.set(302, f.tracked);
+    });
+    const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }] });
     expect(await stamp?.()).toBe(false);
     expect(f.tracked.stopRequestedAtMs).toBeUndefined();
   });

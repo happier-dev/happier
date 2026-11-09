@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/cli-common/tailscale';
 
 import type { DaemonTransferListenerState } from '@/api/types';
+import { tailscaleCommandFailureDiagnostic } from '@/integrations/tailscale/tailscaleCommand';
 
 type ResolveTailscaleTransferListenerStateDeps = Readonly<{
   runTailscaleStatusJson?: (params?: Readonly<{ env?: NodeJS.ProcessEnv }>) => Promise<TailscaleStatusSnapshot>;
@@ -44,12 +45,14 @@ export async function resolveTailscaleTransferListenerState(params: Readonly<{
     status = await (params.runTailscaleStatusJson ?? runTailscaleStatusJson)({
       ...(params.env ? { env: params.env } : {}),
     });
-  } catch {
+  } catch (error) {
+    const diagnostic = tailscaleCommandFailureDiagnostic(error);
     return {
       enabled: params.enabled,
       configured: false,
       active: false,
       available: false,
+      ...(diagnostic ? { diagnostic } : {}),
     };
   }
 
@@ -72,12 +75,14 @@ export async function resolveTailscaleTransferListenerState(params: Readonly<{
     serveStatus = await (params.runTailscaleServeStatus ?? runTailscaleServeStatus)({
       ...(params.env ? { env: params.env } : {}),
     });
-  } catch {
+  } catch (error) {
+    const diagnostic = tailscaleCommandFailureDiagnostic(error);
     return {
       enabled: params.enabled,
       configured: false,
       active: false,
       available: false,
+      ...(diagnostic ? { diagnostic } : {}),
     };
   }
 
@@ -103,8 +108,16 @@ export async function resolveTailscaleTransferListenerState(params: Readonly<{
         active: false,
         available: true,
       };
-    } catch {
-      // Best-effort enforcement only; fail open to reporting the configured state.
+    } catch (error) {
+      const diagnostic = tailscaleCommandFailureDiagnostic(error);
+      // Keep reporting the configured mapping when best-effort removal failed.
+      return {
+        enabled: false,
+        configured: true,
+        active: false,
+        available: true,
+        ...(diagnostic ? { diagnostic } : {}),
+      };
     }
   }
 

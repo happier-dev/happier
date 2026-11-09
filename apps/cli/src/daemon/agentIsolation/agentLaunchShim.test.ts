@@ -2,10 +2,13 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PassThrough, Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { executeAgentLaunchPayload, publishAgentLaunchMaterials } from './agentLaunchShim';
-import type { AgentLaunchPayload } from './agentLaunchFrame';
+import { readAgentLaunchFrame, type AgentLaunchPayload } from './agentLaunchFrame';
+import { createUnixAgentIdentityLaunch } from './unixAgentIdentityAdapter';
 import { userInfo } from 'node:os';
 import { runAgentLaunchShim } from '../../cli/commands/agentLaunch';
 
@@ -55,6 +58,77 @@ async function expectTransientMaterialRemoved(launch: AgentLaunchPayload): Promi
 }
 
 describe('Agent launch runtime home', () => {
+  it.skipIf(process.platform !== 'linux')('executes a Provider-key frame from the Unix adapter without consuming the child stdin', async () => {
+    const agentHome = await home();
+    const selectedKey = 'synthetic-selected-provider-\n"é\\value';
+    const launch = createUnixAgentIdentityLaunch({
+      managedHappierBinaryPath: '/opt/happier/cli/current/happier',
+      executable: process.execPath,
+      args: ['-e', `
+        process.stdout.write(JSON.stringify({
+          selectedDigest: require('node:crypto').createHash('sha256').update(process.env.HAPPIER_CODEX_PROVIDER_API_KEY ?? '').digest('hex'),
+          ambient: 'RANDOM_SECRET' in process.env,
+          custodian: 'HAPPIER_DAEMON_TOKEN' in process.env
+        }) + '\\n');
+        process.stdin.pipe(process.stdout);
+      `],
+      cwd: agentHome, runtimeHome: join(agentHome, 'runtime', 'provider-frame'),
+      environment: { PATH: process.env.PATH, HAPPIER_CODEX_PROVIDER_API_KEY: selectedKey,
+        RANDOM_SECRET: 'ambient-value', HAPPIER_DAEMON_TOKEN: 'custodian-value' },
+      selectedEnvironmentKeys: [], providerEnvironmentKeys: ['HAPPIER_CODEX_PROVIDER_API_KEY'],
+      selectedMaterials: [{ relativePath: 'files/config', contentBase64: Buffer.alloc(70_000, 65).toString('base64') }],
+    });
+    expect(launch.args.join('\0')).not.toContain(selectedKey);
+    expect(launch.env).toEqual({});
+    const transport = spawn(process.execPath, ['-e', 'process.stdin.pipe(process.stdout)'], { stdio: 'pipe' });
+    try {
+      const reading = readAgentLaunchFrame(transport.stdout);
+      // Fragmented writes, a frame beyond the former wire-string ceiling,
+      // and native bytes coalesced with its tail exercise the OS pipe boundary.
+      transport.stdin.write(launch.stdinPreamble.subarray(0, 9));
+      transport.stdin.write(launch.stdinPreamble.subarray(9, 37));
+      const nativeInput = Buffer.from([0, 255, 10, 13, 128, 65]);
+      transport.stdin.write(Buffer.concat([launch.stdinPreamble.subarray(37), nativeInput]));
+      const frame = await reading;
+      const output = new PassThrough();
+      const chunks: Buffer[] = [];
+      output.on('data', chunk => {
+        chunks.push(Buffer.from(chunk));
+        // The native child has started and replied while its input remains open.
+        // EOF then settles the finite test without a phase-local launch timeout.
+        transport.stdin.end();
+      });
+      const result = await executeAgentLaunchPayload(frame, {
+        agentHome, input: transport.stdout, stdout: output, stderr: new PassThrough(),
+      });
+      const bytes = Buffer.concat(chunks);
+      const newline = bytes.indexOf(10);
+      expect(JSON.parse(bytes.subarray(0, newline).toString())).toEqual({
+        selectedDigest: createHash('sha256').update(selectedKey).digest('hex'), ambient: false, custodian: false,
+      });
+      expect(bytes.subarray(newline + 1)).toEqual(nativeInput);
+      expect(result).toEqual({ code: 0, signal: null });
+    } finally {
+      transport.kill();
+    }
+  });
+
+  it('provides an empty private native home before a credential-free Provider child starts', async () => {
+    const agentHome = await home();
+    const runtimeHome = join(agentHome, 'runtime', 'provider-only');
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    const result = await executeAgentLaunchPayload({
+      v: 1, executable: process.execPath,
+      args: ['-e', 'const s=require("node:fs").statSync(process.env.CODEX_HOME);process.stdout.write(JSON.stringify({directory:s.isDirectory(),mode:s.mode&511}))'],
+      cwd: agentHome, runtimeHome, environment: { CODEX_HOME: join(runtimeHome, 'native-home') },
+      selectedMaterials: [{ relativePath: '.happier/session-mcp.json', contentBase64: 'e30=' }],
+    }, { agentHome, input: Readable.from([]), stdout: output, stderr: new PassThrough() });
+    expect(result).toEqual({ code: 0, signal: null });
+    expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual({ directory: true, mode: 0o700 });
+  });
+
   it.skipIf(userInfo().username === 'happier-agent')('refuses the command before reading a frame unless the OS identity is happier-agent', async () => {
     await expect(runAgentLaunchShim([])).rejects.toMatchObject({ code: 'agent_launch_identity_unavailable' });
   });
@@ -71,7 +145,7 @@ describe('Agent launch runtime home', () => {
     expect((await stat(launch.runtimeHome)).ino).toBe(firstPublication.ino);
     expect((await stat(join(launch.runtimeHome, '.provider/auth'))).ino).toBe(firstFile.ino);
     await publishAgentLaunchMaterials({ ...launch, selectedMaterials: [{ relativePath: 'new', contentBase64: 'bmV3' }] }, agentHome);
-    expect((await readdir(launch.runtimeHome)).sort()).toEqual(['.happier', '.provider', 'files', 'new']);
+    expect((await readdir(launch.runtimeHome)).sort()).toEqual(['.happier', '.provider', 'files', 'native-home', 'new']);
     expect(await readdir(join(agentHome, 'runtime'))).toEqual(['lease-owned']);
   });
 

@@ -11,6 +11,8 @@ import type {
 
 import type { BrowserDiagnosticsInteractionTransport } from './actionRoutes';
 import type { SurfaceInputControl } from '../../surfaces/inputControl';
+import { buildBrowserElementAtPointExpression } from '@happier-dev/peer-mediation/browser/collector/elements';
+import { BrowserDiagnosticsElementPickerResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
 
 /**
  * DIAG-INTERACTION: the LIVE managed-Chromium sidecar CDP interaction transport. It is the producer
@@ -644,6 +646,25 @@ export function createBrowserDiagnosticsInteractionTransport(
     const handle = resolveHandle(request);
     if (!handle) return pickerResult(request, 'failed', { errorCode: 'target_detached' });
     if (disposed) return pickerResult(request, 'failed', { errorCode: 'target_detached' });
+    if (request.point) {
+      let response: Record<string, unknown> | null;
+      try {
+        response = record(await pageCommand(handle, 'Runtime.evaluate', {
+          expression: buildBrowserElementAtPointExpression(request.point), returnByValue: true,
+        }));
+      } catch (error) {
+        if (!control?.isObservationHeld()) reportError(error, handle);
+        return pickerResult(request, 'failed', { errorCode: 'collector_degraded' });
+      }
+      if (control?.isObservationHeld()) return pickerResult(request, 'cancelled');
+      const selected = record(record(response?.result)?.value);
+      if (!selected) return pickerResult(request, 'cancelled');
+      const result = BrowserDiagnosticsElementPickerResultV1Schema.safeParse({
+        ...selected, v: 1, pickerRequestId: request.pickerRequestId, viewId: request.viewId,
+        navigationGeneration: request.navigationGeneration, tier: request.tier, audited: true, status: 'selected',
+      });
+      return result.success ? result.data : pickerResult(request, 'failed', { errorCode: 'collector_degraded' });
+    }
     if (!contextCapture.subscribeCdpEvents) {
       // No event stream ⇒ no way to observe the selection ⇒ honest unavailable (never a fake select).
       return pickerResult(request, 'failed', { errorCode: 'collector_unavailable' });

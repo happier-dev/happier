@@ -28,6 +28,7 @@ export async function spawnPublicInstalledProjectAgentSession(input: Readonly<{
   teamCredentialBindings?: SpawnSessionOptions['teamCredentialBindings'];
   modelSelection?: SpawnSessionOptions['modelSelection'];
   agentTarget?: ReturnType<typeof SessionSpawnNewInputV2Schema.parse>['agentTarget'];
+  initialInput?: ReturnType<typeof SessionSpawnNewInputV2Schema.parse>['initialInput'];
   publicIngress?: Readonly<{
     manager: RpcHandlerManager;
     invoke(method: string, params: unknown): Promise<unknown>;
@@ -120,7 +121,7 @@ export async function spawnPublicInstalledProjectAgentSession(input: Readonly<{
     directory: { kind: 'path', path: h.cwd }, organizationPlacement: { folderId: null, tagIds: [] },
     agentTarget: input.agentTarget ?? { kind: 'agent', identity: { pluginId: h.retainedAgent.pluginId, localId: 'codex' } },
     connectedServices: { v: 2, bindingsByServiceId: {} },
-    initialInput: { text: 'UI_CODEX_FIRST_INPUT' },
+    initialInput: input.initialInput ?? { text: 'UI_CODEX_FIRST_INPUT' },
     ...(input.teamCredentialBindings ? { teamCredentialBindings: input.teamCredentialBindings } : {}),
     ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
   });

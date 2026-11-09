@@ -24,7 +24,7 @@ export function createMachineVitalsAlerts(input: Readonly<{
       const transitions = evaluateMachineVitalsAlertsV1({ policy: snapshot.policy.alerts, records,
         episodes: input.historyStore.alerts(), now: minute.t, disk: sample.disk });
       for (const transition of transitions) {
-        // Episode custody precedes outward delivery: a restart cannot duplicate an accepted fire.
+        // Retain suppression before delivery within this daemon lifetime; restart begins fresh.
         await input.historyStore.appendAlert(transition.episode);
         try { await input.notify(transition, sample, snapshot.policy); } catch (error) { input.onError?.(error); }
       }

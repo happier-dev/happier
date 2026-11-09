@@ -19,6 +19,7 @@ import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/upda
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from '@/api/client/credentialAxios';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/rpc/methods';
+import { handleActionsCommand } from '@/cli/commands/actions';
 
 it('delivers fresh beginConnect configuration through CLI, Home and the installed daemon approval executor', async () => {
   const cleanup: Array<() => unknown | Promise<unknown>> = [];
@@ -59,7 +60,7 @@ it('delivers fresh beginConnect configuration through CLI, Home and the installe
   const api = await runWithServerHttpBaseUrl(home.baseUrl, () => ApiClient.create(credentials));
   const registeredMachine = await runWithServerHttpBaseUrl(home.baseUrl, () => api.getMachine(home.machineId));
   if (!registeredMachine) throw new Error('Missing registered fixture Machine');
-  const machine = runWithServerHttpBaseUrl(home.baseUrl, () => api.machineSyncClient(registeredMachine,
+  const machine = await runWithServerHttpBaseUrl(home.baseUrl, () => api.machineSyncClient(registeredMachine,
     undefined, { resolveCurrentServerIdentityId: () => home.serverId }));
   const runtime = await startDaemonSessionControlRuntime({ machineId: home.machineId, credentials,
     serverId, serverBaseUrl: home.baseUrl, externalActionAccountId: home.accountId,
@@ -83,12 +84,17 @@ it('delivers fresh beginConnect configuration through CLI, Home and the installe
   const rpc: unknown = Reflect.get(machine, 'rpcHandlerManager');
   if (!(rpc instanceof RpcHandlerManager)) throw new Error('Missing installed RPC manager');
   const service = { pluginId: 'happier.channel.email', localId: 'email-imap-smtp' };
-  const nativeResult = ConnectedAccountAttemptResponseSchema.parse({ status: 'configurationRequired', attemptId: 'connect-attempt',
+  let nativeResult = ConnectedAccountAttemptResponseSchema.parse({ status: 'configurationRequired', attemptId: 'connect-attempt',
     target: { kind: 'attempt', attemptId: 'connect-attempt', service, modeId: 'password' }, missingFieldIds: ['mailbox'] });
   let effects = 0;
+  let nativeCompletion: Promise<void> | undefined;
   // Replace the native authentication effect only. CLI admission, daemon
   // startup/registration, Home, replay, custody and delivery remain real.
-  rpc.registerHandler(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, async () => { effects++; return nativeResult; });
+  rpc.registerHandler(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, async () => {
+    effects++;
+    await nativeCompletion;
+    return nativeResult;
+  });
   let connectionPhase: string | undefined;
   const unsubscribe = machine.onConnectionStateChange(state => { connectionPhase = state.phase; });
   cleanup.push(unsubscribe);
@@ -122,4 +128,50 @@ it('delivers fresh beginConnect configuration through CLI, Home and the installe
   expect(recorded).toMatchObject({ status: 'executed', execution: { ok: true } });
   expect(recorded.execution?.result).toEqual({ redacted: true });
   expect(effects).toBe(1);
+  // Manual input is retained by its original invocation. Approval can be
+  // acknowledged before that invocation finishes its native authentication.
+  nativeResult = ConnectedAccountAttemptResponseSchema.parse({ status: 'connected', account: { service, accountId: 'manual-account' } });
+  let finishManual!: () => void;
+  nativeCompletion = new Promise<void>(resolve => { finishManual = resolve; });
+  decision = undefined;
+  const manual = client.authenticate({ operation: 'submitManual', attemptId: 'connect-attempt',
+    fields: { token: 'private-manual-client-token' } });
+  void manual.catch(() => undefined);
+  try {
+    await expect.poll(() => effects).toBe(2);
+    finishManual();
+    await expect(manual).resolves.toEqual(nativeResult);
+  } finally { finishManual(); await manual.catch(() => undefined); }
+  nativeCompletion = undefined;
+  // Generic Actions use the same real CLI -> daemon approval path. Private
+  // input and output must settle after --yes without a second client.
+  let output = '';
+  const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { output += String(chunk); return true; });
+  const notices = vi.spyOn(console, 'error').mockImplementation(() => {});
+  const previousExitCode = process.exitCode;
+  cleanup.push(() => { stdout.mockRestore(); notices.mockRestore(); process.exitCode = previousExitCode; });
+  for (const [id, input] of [
+    ['connectedServices.authentication.submitManual', { attemptId: 'connect-attempt', fields: { token: 'private-manual-token' } }],
+    ['connectedServices.authentication.completeOAuth', { attemptId: 'connect-attempt', completion: {
+      code: 'private-oauth-code', callbackUrl: 'https://callback.invalid/', state: 'private-oauth-state' } }],
+  ] as const) {
+    output = '';
+    notices.mockClear();
+    await handleActionsCommand(['invoke', id, '--input-json', JSON.stringify(input), '--yes', '--json'], {
+      readCredentialsFn: async () => credentials,
+    });
+    expect(JSON.parse(output)).toMatchObject({ ok: true, kind: 'actions_invoke', data: nativeResult });
+    expect(notices.mock.calls.map(([message]) => JSON.parse(String(message))))
+      .toContainEqual(expect.objectContaining({ data: { kind: 'approval_request_created',
+        artifactId: expect.any(String), actionId: id } }));
+    expect(output).not.toContain('private-');
+    const notice = notices.mock.calls.map(([message]) => JSON.parse(String(message)))
+      .find(message => message.data?.actionId === id);
+    const completed = await createCliActionExecutorFromCredentials({ credentials, machineId: home.machineId })
+      .execute('approval.request.get', { artifactId: notice.data.artifactId }, { surface: 'cli', actionCaller: { kind: 'host' } });
+    if (!completed.ok) throw new Error('Missing generic Action approval receipt');
+    expect(ApprovalRequestGetResultV1Schema.parse(completed.result).request)
+      .toMatchObject({ status: 'executed', actionId: id, execution: { ok: true, result: { redacted: true } } });
+  }
+  expect(effects).toBe(4);
 }, 120_000);

@@ -24,6 +24,7 @@ function fakeContextCapture() {
     return {
         dispatchPageCommand: vi.fn(async () => ({})),
         contextCapture: {
+            getNavigationState: () => ({ navigationGeneration: 0, loadingState: 'ready' as const, canGoBack: false, canGoForward: false }),
             transport: {
                 dispatchPageCommand: vi.fn(async () => ({})),
             },

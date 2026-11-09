@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import {
     MachineResourceAutomaticActionV1Schema,
     type MachineResourceAutomaticActionV1,
@@ -50,18 +51,22 @@ export function createMachineResourceSummary(input: Readonly<{
         const common = { v: 1 as const, attention: composeMachineResourceAttentionV1([reasons, guardReasons]),
             ...(guard ? { guard } : {}),
             ...(lastAutomaticAction ? { lastAutomaticAction } : {}) };
-        if (unavailable && state.state === 'unavailable') current = { ...common,
+        let next = current;
+        if (unavailable && state.state === 'unavailable') next = { ...common,
             vitals: { state: 'unavailable', since: failureSince ?? nowMs(), reason: state.reason === 'helper_missing' ? 'helper_missing' : 'reader_failed' },
             ...(host ? { host } : {}) };
-        else if (host) current = { ...common, host, vitals: { state: 'reporting' } };
-        if (!current) return;
+        else if (host) next = { ...common, host, vitals: { state: 'reporting' } };
+        if (!next) return;
+        // Keep unchanged observations stable, including for in-process readers.
+        // A changed reason's facts still advance locally even within the same published transition.
+        if (!isDeepStrictEqual(current, next)) current = next;
         // Samples and changing byte counters stay in vitals; only resource transitions are public.
         const identity = JSON.stringify({
-            host: current.host,
-            vitals: current.vitals,
-            attention: { level: current.attention.level, reasons: current.attention.reasons.map(({ key, level }) => ({ key, level })) },
-            lastAutomaticAction: current.lastAutomaticAction,
-            guard: current.guard,
+            host: next.host,
+            vitals: next.vitals,
+            attention: { level: next.attention.level, reasons: next.attention.reasons.map(({ key, level }) => ({ key, level })) },
+            lastAutomaticAction: next.lastAutomaticAction,
+            guard: next.guard,
         });
         if (identity !== publishedIdentity) {
             publishedIdentity = identity;

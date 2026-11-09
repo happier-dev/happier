@@ -43,19 +43,10 @@ function createStartInput() {
 }
 
 describe('browser recording daemon runtime', () => {
-  it('keeps start fail-closed when capture adapters exist without durable media target policy', async () => {
+  it('reports unavailable capture without requiring an explicit media target', async () => {
     const { createBrowserRecordingDaemonRuntime } = await import('./runtime');
-    const captureAdapter = {
-      captureKind: 'streamFrameCapture' as const,
-      start: vi.fn(async () => ({ status: 'started' as const })),
-      stop: vi.fn(async () => {
-        throw new Error('unexpected stop');
-      }),
-      discard: vi.fn(async () => {}),
-    };
     const runtime = createBrowserRecordingDaemonRuntime({
       workingDirectory: '/tmp/happier-browser-recording-runtime-test',
-      captureAdapters: [captureAdapter],
       resolveStartContext: vi.fn(async () => ({
         browserRecordingEnabled: true,
         recordingCapabilities,
@@ -66,12 +57,11 @@ describe('browser recording daemon runtime', () => {
       await expect(runtime.routes.startRecording(createStartInput())).resolves.toMatchObject({
         status: 'unavailable',
         reason: {
-          code: 'browser_recording_disabled',
+          code: 'browser_recording_capture_unavailable',
         },
       });
-      expect(captureAdapter.start).not.toHaveBeenCalled();
     } finally {
-      runtime.stop();
+      await runtime.stop();
     }
   });
 
@@ -132,7 +122,7 @@ describe('browser recording daemon runtime', () => {
       });
       expect(sourceStart).not.toHaveBeenCalled();
     } finally {
-      runtime.stop();
+      await runtime.stop();
     }
   });
 
@@ -304,7 +294,7 @@ describe('browser recording daemon runtime', () => {
         expect(await runtime.routes.getRecordingStatus({ recordingId: started.recording.recordingId }))
           .toMatchObject({ status: 'discarded' });
       } finally {
-        runtime.stop();
+        await runtime.stop();
       }
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
@@ -351,7 +341,7 @@ describe('browser recording daemon runtime', () => {
       expect(result.status).toBe('started');
       expect(captureAdapter.start).toHaveBeenCalledTimes(1);
     } finally {
-      runtime.stop();
+      await runtime.stop();
     }
   });
 
@@ -401,7 +391,7 @@ describe('browser recording daemon runtime', () => {
         expect(result.status).toBe('started');
         expect(transportStart).toHaveBeenCalledTimes(1);
       } finally {
-        runtime.stop();
+        await runtime.stop();
       }
     });
 
@@ -422,7 +412,7 @@ describe('browser recording daemon runtime', () => {
           reason: { code: 'browser_recording_capture_adapter_missing' },
         });
       } finally {
-        runtime.stop();
+        await runtime.stop();
       }
     });
 
@@ -470,7 +460,7 @@ describe('browser recording daemon runtime', () => {
         expect(result.status).toBe('started');
         expect(captureCommand).toHaveBeenCalledTimes(1);
       } finally {
-        runtime.stop();
+        await runtime.stop();
       }
     });
 
@@ -576,7 +566,7 @@ describe('browser recording daemon runtime', () => {
           // Reference-only source file released after ingestion.
           await expect(readFile(capturePath)).rejects.toMatchObject({ code: 'ENOENT' });
         } finally {
-          runtime.stop();
+          await runtime.stop();
         }
       } finally {
         await rm(workingDirectory, { recursive: true, force: true });
@@ -585,7 +575,7 @@ describe('browser recording daemon runtime', () => {
     });
   });
 
-  it('uses command media targets to persist finalized recordings through session media', async () => {
+  it.each(['explicit', 'invokingSession', 'browserSession'] as const)('uses %s media targets to persist finalized recordings through session media', async targetKind => {
     const { createBrowserRecordingDaemonRuntime } = await import('./runtime');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-runtime-'));
     const captureDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-recording-runtime-capture-'));
@@ -625,16 +615,16 @@ describe('browser recording daemon runtime', () => {
       try {
         const started = await runtime.routes.startRecording({
           ...createStartInput(),
-          mediaTarget: {
+          ...(targetKind === 'explicit' ? { mediaTarget: {
             sessionId: 'session_1',
             messageLocalId: 'message_1',
-          },
+          } } : {}),
           captureSource: {
             kind: 'machineLiveStream',
             streamFamily: 'simulator.preview',
             sourceId: 'source_1',
           },
-        });
+        }, targetKind === 'invokingSession' ? { defaultSessionId: 'invoking_session' } : undefined);
         expect(started.status).toBe('started');
         if (started.status !== 'started') return;
         expect(captureAdapter.start).toHaveBeenCalledWith(expect.objectContaining({
@@ -668,8 +658,9 @@ describe('browser recording daemon runtime', () => {
           '.happier',
           'uploads',
           'artifacts',
-          'session_1',
-          'message_1',
+          targetKind === 'explicit' ? 'session_1'
+            : targetKind === 'invokingSession' ? 'invoking_session' : createStartInput().browserSessionId,
+          targetKind === 'explicit' ? 'message_1' : started.recording.recordingId,
           `${mediaId.slice(0, 12)}-recording.webm`,
         );
         await expect(readFile(persistedFile)).resolves.toEqual(webmBytes);
@@ -682,7 +673,7 @@ describe('browser recording daemon runtime', () => {
         });
         await expect(readFile(persistedFile)).rejects.toMatchObject({ code: 'ENOENT' });
       } finally {
-        runtime.stop();
+        await runtime.stop();
       }
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });

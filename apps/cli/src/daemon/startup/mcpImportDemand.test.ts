@@ -40,12 +40,14 @@ describe('daemon MCP import demand', () => {
       discoverySources: [], activateOnDemand: async () => {},
       readServer: () => ({
         occurrenceId: 'fixture-occurrence', qualifiedId: 'fixture.plugin/resources', isCurrent: () => true,
-        listTools: async () => ({ items: [] }), callTool: async () => null,
-        listResources: async () => ({ items: [resource] }),
-        listResourceTemplates: async () => ({ items: [] }),
-        readResource: async ({ uri }) => ({ contents: [{ uri, text: '' }] }),
+        listTools: async (_request, _seed, _options, project) => project({ items: [] }, value => value),
+        callTool: async (_request, _seed, _options, project) => project(null, value => value),
+        listResources: async (_request, _seed, _options, project) => project({ items: [resource] }, value => value),
+        listResourceTemplates: async (_request, _seed, _options, project) => project({ items: [] }, value => value),
+        readResource: async ({ uri }, _seed, _options, project) => project({ contents: [{ uri, text: '' }] }, value => value),
         subscribeResource: async () => ({ dispose: async () => {} }),
-        listPrompts: async () => ({ items: [] }), getPrompt: async () => ({ messages: [] }),
+        listPrompts: async (_request, _seed, _options, project) => project({ items: [] }, value => value),
+        getPrompt: async (_request, _seed, _options, project) => project({ messages: [] }, value => value),
       }),
       readDiscoverySource: () => null,
     });
@@ -55,7 +57,7 @@ describe('daemon MCP import demand', () => {
       contribution: { id: 'action', qualifiedId: 'fixture.caller/actions/action' },
       occurrenceId: 'fixture-occurrence', correlationId: 'fixture-request', surface: 'agent',
       signal: new AbortController().signal, isOccurrenceCurrent: () => true,
-    }, [{ serverRefs: [ref], discoverySourceRefs: [], operations: ['listTools'] }]);
+    });
     const client = await service.connect(ref, { elicitation: { mode: 'reject' } });
     expect([...evaluated]).toEqual([]);
     await expect(client.listResources()).resolves.toEqual({ items: [{ uri: 'file:///guide', name: 'guide' }] });

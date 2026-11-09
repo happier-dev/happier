@@ -13,6 +13,8 @@ import {
 } from '../controlClient';
 import type { DaemonStartupSource } from '../ownership/daemonOwnershipMetadata';
 import { configuration } from '@/configuration';
+import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
+import { runApprovalStartupPasses } from '@/session/actions/approvals/startupPasses';
 import {
     readOrCreateDeviceLocalSecretStorage,
     type DeviceLocalSecretStorage,
@@ -107,6 +109,23 @@ export async function prepareDaemonBootstrapContext(
     const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({
         path: configuration.deviceLocalSecretKeyFile,
     });
+
+    // Exclusive startup ownership proves this Machine's previous in-process
+    // executions are gone. Settle their claims before any ingress can claim new work.
+    const approvalsStore = createCliApprovalsArtifactStore({ credentials });
+    try {
+        const recovery = await approvalsStore.approvalsRecoverExecuting({ machineId });
+        if (recovery.settled || recovery.failed || recovery.coverage !== 'complete') {
+            logger.debug('[DAEMON RUN] Action approval startup recovery', recovery);
+        }
+    } catch {
+        logger.debug('[DAEMON RUN] Action approval startup recovery unavailable', {
+            code: 'approval_recovery_unavailable',
+        });
+    }
+
+    // One-time approval owner passes; never blocks startup and reports on default log paths.
+    void runApprovalStartupPasses(approvalsStore);
 
     return {
         daemonLockHandle,

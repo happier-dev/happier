@@ -160,7 +160,7 @@ describe('requestPlannedRunnerRestart', () => {
     let shuttingDown = false;
     let probes = 0;
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
-    const queue = createConnectedServiceSwitchDeferralQueue({ timeoutMs: 60_000, disableDeferral: false });
+    const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
     try {
       const request: RequestPlannedRunnerRestartParams = { sessionId: 'sess-1', tracked, restartRequestedPids,
         completion: { hasPending: () => handoff.has('sess-1', tracked.pid),
@@ -580,7 +580,6 @@ describe('requestPlannedRunnerRestart', () => {
     const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
     const requestSignal = vi.fn(async () => ({ status: 'requested' as const }));
     const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({
-      timeoutMs: 60_000,
       disableDeferral: false,
       emitSessionEvent: async (_sessionId, event) => {
         if ((event as { type?: string }).type === 'connected_service_account_switch_deferral_completed') {
@@ -789,7 +788,7 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
       hasPending: () => handoff.has('sess-1', tracked.pid),
       join: () => handoff.join(target), create: () => handoff.create(target),
     } });
-    const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({ timeoutMs: 60_000, disableDeferral: false });
+    const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
     turnDeferralQueue.recordTurnLifecycleEvent({ sessionId: 'sess-1', event: 'prompt_or_steer' });
     const overlap = requestPlannedRunnerRestart({ ...request, deferral: {
       kind: 'connected_service_switch', source: 'manual', policy: 'defer_until_turn_boundary',
@@ -848,7 +847,7 @@ describe('requestPlannedRunnerRestart selected deferral outcome', () => {
     const tracked = makeTracked();
     const restartRequestedPids = new Set<number>();
     const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
-    const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({ timeoutMs: 60_000, disableDeferral: false });
+    const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
     const requestSignal = vi.fn(async () => {
       // The real exit/respawn owner can retire the reservation before deferred callers resume.
       restartRequestedPids.delete(tracked.pid);
@@ -875,7 +874,7 @@ describe('requestPlannedRunnerRestart selected deferral outcome', () => {
 
   it('retains the selected signal when session_restarting arrives while its callback finishes', async () => {
     const tracked = makeTracked();
-    const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({ timeoutMs: 60_000, disableDeferral: false });
+    const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
     const requestSignal = vi.fn(async () => {
       await turnDeferralQueue.cancelSession('sess-1', 'session_restarting');
       return { status: 'requested' as const };
@@ -897,13 +896,13 @@ describe('requestPlannedRunnerRestart selected deferral outcome', () => {
 
 
 describe('requestPlannedRunnerRestart cancelled signal admission', () => {
-  it.each(['delay', 'process_identity', 'activity'] as const)('does not signal after the owning queue times out during %s', async (boundary) => {
+  it.each(['delay', 'process_identity', 'activity'] as const)('does not signal after daemon shutdown cancels the switch during %s', async (boundary) => {
     vi.useFakeTimers();
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     try {
       const tracked = makeTracked();
       const restartRequestedPids = new Set<number>();
-      const queue = createConnectedServiceSwitchDeferralQueue({ timeoutMs: 1_000, disableDeferral: false });
+      const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
       let release!: () => void;
       const held = new Promise<void>((resolve) => { release = resolve; });
       queue.recordTurnLifecycleEvent({ sessionId: 'sess-1', event: 'prompt_or_steer' });
@@ -926,9 +925,10 @@ describe('requestPlannedRunnerRestart cancelled signal admission', () => {
           onProcessAlreadyMissing: input.onProcessAlreadyMissing,
         }),
       });
-      const rejected = expect(result).rejects.toMatchObject({ code: 'switch_execution_timeout' });
+      const rejected = expect(result).rejects.toMatchObject({ code: 'daemon_shutdown' });
       queue.recordTurnLifecycleEvent({ sessionId: 'sess-1', event: 'assistant_message_end' });
       await vi.advanceTimersByTimeAsync(1_000);
+      await queue.cancelAll('daemon_shutdown');
       await rejected;
       expect(restartRequestedPids.has(tracked.pid)).toBe(false);
       release();

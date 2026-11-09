@@ -1004,7 +1004,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
     });
   });
 
-  it('never starts Console after a Windows Terminal dispatch failure may have committed', async () => {
+  it.each([false, true])('preserves a Windows Terminal dispatch failure without Console fallback (cleanup failure: %s)', async cleanupFails => {
     await withPackagedWindowsCli(async () => {
       mocks.startHappySessionInWindowsTerminal.mockResolvedValueOnce({
         ok: false,
@@ -1012,11 +1012,14 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
         errorMessage: 'wt.exe unavailable',
       });
 
-      await expect(spawnWindowsHostedSessionAndWaitForWebhook(createParams({
+      const params = createParams({
         windowsLaunchMode: 'windows_terminal',
-      }))).resolves.toMatchObject({
+      });
+      if (cleanupFails) params.cleanupSpawnResources = vi.fn(async () => { throw new Error('private cleanup failure'); });
+      await expect(spawnWindowsHostedSessionAndWaitForWebhook(params)).resolves.toMatchObject({
         type: 'error',
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorMessage: 'wt.exe unavailable',
       });
 
       expect(mocks.startHappySessionInVisibleWindowsConsole).not.toHaveBeenCalled();

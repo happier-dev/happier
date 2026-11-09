@@ -1,25 +1,21 @@
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('@/daemon/connectedServices/catalogHooks', () => ({
-  getConnectedServiceStateSharingDescriptor: async () => ({
-    authIsolation: {
-      secretEntries: [
-        '.credentials.json',
-        '.happier-claude-connected-service-home.json',
-      ],
-    },
-  }),
-}));
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 import { createConnectedServiceRuntimeAuthNativeHome } from './createRuntimeAuthNativeHome';
 
 describe('createConnectedServiceRuntimeAuthNativeHome', () => {
+  let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
+  beforeAll(async () => {
+    runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.claude'] } });
+  });
+  afterAll(async () => { await runtime?.dispose(); });
   it('keeps native credential paths and private writes in the host', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-runtime-auth-native-home-'));
+    const root = join(runtime.happyHomeDir, 'private-native-home');
     const nativeHome = await createConnectedServiceRuntimeAuthNativeHome({
       agentId: 'claude',
       root,
@@ -41,7 +37,8 @@ describe('createConnectedServiceRuntimeAuthNativeHome', () => {
   });
 
   it('rejects reads and writes outside the declared credential file set', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-runtime-auth-native-home-'));
+    const root = join(runtime.happyHomeDir, 'declared-native-home');
+    await mkdir(root);
     const nativeHome = await createConnectedServiceRuntimeAuthNativeHome({
       agentId: 'claude',
       root,

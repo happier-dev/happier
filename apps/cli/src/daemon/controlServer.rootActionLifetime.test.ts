@@ -1,5 +1,19 @@
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import { Server as SocketIoServer } from 'socket.io';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import axios from 'axios';
 import nacl from 'tweetnacl';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ApprovalRequestSchema, AutomationV3RunMutationResponseSchema, accountSettingsParse, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createDaemonExternalActionTargetResolver } from './externalActions/daemonExternalActionTargetResolver';
+import { createDaemonControlApp } from './controlServer';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -12,24 +26,6 @@ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveManagedControlControllerTarget } from './externalActions/reconcileExternalActionTarget';
-import { once } from 'node:events';
-import { createServer } from 'node:http';
-import axios from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ACCOUNT_SECURITY_PATH_V1, ApprovalRequestSchema, accountSettingsParse, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
-import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { refreshTerminalPresentUserPolicy } from '@/settings/accountSettings/resolveEffectiveTerminalPresentUserPolicy';
-import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
-import { createDaemonExternalActionTargetResolver } from './externalActions/daemonExternalActionTargetResolver';
-import { createDaemonControlApp } from './controlServer';
-import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-
-// Configuration is the environment boundary. Account policy, catalog and execution stay real.
-vi.mock('@/configuration', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/configuration')>();
-  return { ...actual, configuration: { ...actual.configuration, terminalPresentUserPolicy: 'allowed' as const } };
-});
 
 describe('signed root Action lifetime', () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -170,11 +166,139 @@ describe('signed root Action lifetime', () => {
     }
   });
 
+  it('keeps controllerless standalone MCP power with the Account provisioner owner', async () => {
+    const managed = ManagedMachineV1Schema.parse({ id: 'account-managed', homeId: 'srv_home', custodianAccountId: 'account',
+      launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+      allocation: 'unsubmitted', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    const paths: string[] = [];
+    const upstream = createServer(async (request, response) => {
+      paths.push(request.url ?? '');
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/v1/account/encryption') return void response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+      if (request.url === '/v1/account/encryption/currentness') return void response.end(JSON.stringify({ mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+      if (request.url === '/v1/machines/managed/actions/get') return void response.end(JSON.stringify(managed));
+      response.writeHead(404).end('{}');
+    });
+    upstream.listen(0, '127.0.0.1'); await once(upstream, 'listening');
+    const address = upstream.address();
+    if (!address || typeof address === 'string') throw new Error('Missing Account Home address');
+    const endpoint = `http://127.0.0.1:${address.port}`;
+    vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', JSON.stringify({ v: 1, actions: {},
+      approvalWaivedSurfaces: { 'machines.managed.power.set': ['mcp'] } }));
+    const { mcp } = runWithServerHttpBaseUrl(endpoint, () => createExternalMcpServer({
+      credentials: { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`,
+        encryption: null, credentialProvenance: 'stored_session' }, daemonControlTarget: null,
+      serverFeaturesSnapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: { machines: { enabled: true } },
+        capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } }) } }));
+    const client = new Client({ name: 'controllerless-power', version: '1' });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    await mcp.connect(serverTransport); await client.connect(clientTransport);
+    try {
+      const immediate = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+        actionId: 'machines.managed.power.set', input: { homeId: managed.homeId, managedId: managed.id,
+          expectedRevision: 1, when: 'now', intent: 'start' } } }));
+      const immediateText = immediate.content.find(entry => entry.type === 'text');
+      // This row has no admitted provider descriptor: the Account owner refuses
+      // that missing prerequisite without inventing or requiring a daemon.
+      expect(immediateText?.type === 'text' ? JSON.parse(immediateText.text) : null).toMatchObject({ errorCode: 'admission_unavailable' });
+      expect(paths).toContain('/v1/machines/managed/actions/get');
+      expect(paths.some(path => path.startsWith('/v1/actions/'))).toBe(false);
+    } finally {
+      await client.close(); await mcp.close(); upstream.closeAllConnections();
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
 
+  it('preserves one Run-now retry key across distinct signed CLI and MCP requests to Home', async () => {
+    const receipt = AutomationV3RunMutationResponseSchema.parse({ run: {
+      id: 'run-one', automationId: 'habit-one', revision: 0, triggerId: null, triggerRetired: false,
+      state: 'queued', cause: { kind: 'manual', invokedAt: 1 }, dueAt: 1,
+      claimedAt: null, startedAt: null, finishedAt: null, claimedByMachineId: null, leaseExpiresAt: null,
+      attempt: 0, errorCode: null, producedSessionId: null, executionDispatchState: null, executionAttempt: 0,
+      replyHandoffState: 'none', replyHandoffAttempt: 0, replyHandoffDueAt: null, createdAt: 1, updatedAt: 1,
+    }, workflowRun: { recipeKind: 'workflow-v2', workflowRunId: 'run-one' } });
+    const submittedKeys: Array<string | string[] | undefined> = [];
+    const requestedPaths: string[] = [];
+    const features = FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} });
+    // Home HTTP is the genuine system boundary. Root admission, Action dispatch,
+    // trigger semantics and the strict mutation-receipt decoder stay real.
+    const upstream = createServer((request, response) => {
+      response.setHeader('content-type', 'application/json');
+      requestedPaths.push(`${request.method} ${request.url}`);
+      if (request.url === '/v1/features' || request.url === '/v1/features/authenticated') {
+        response.end(JSON.stringify(features));
+        return;
+      }
+      if (request.url === '/v1/account/encryption/currentness') {
+        response.end(JSON.stringify({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+        return;
+      }
+      if (request.url === '/v3/automations/habit-one/run-now' && request.method === 'POST') {
+        submittedKeys.push(request.headers['idempotency-key']);
+        response.end(JSON.stringify(receipt));
+      } else response.writeHead(404).end(JSON.stringify({ error: 'unexpected_request' }));
+    });
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const address = upstream.address();
+    if (!address || typeof address === 'string') throw new Error('Missing server address');
+    const serverHttpBaseUrl = `http://127.0.0.1:${address.port}`;
+    const credentials = { token: 'boundary-token', encryption: null } as const;
+    const { executor } = createCliActionExecutorHarness({ token: credentials.token, credentials,
+      serverId: 'server-local', serverHttpBaseUrl, sessionId: '', mode: 'plain', ctx: null,
+      resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl: serverHttpBaseUrl, token: credentials.token }),
+      actionsSettingsProvider: createActionSettingsProvider({ scopeKey: 'habit-retry-root',
+        accountSettings: accountSettingsParse({ actionsSettingsV1: { v: 1, actions: {},
+          approvalWaivedSurfaces: { 'workflow.trigger.run_now': ['cli', 'mcp'] } } }) }),
+    });
+    const app = createDaemonControlApp({ getChildren: () => [], machineId: 'machine-local',
+      controlToken: 'private-control-token', stopSession: async () => { throw new Error('Unexpected stop'); },
+      spawnSession: async () => { throw new Error('Unexpected spawn'); }, requestShutdown: () => {},
+      onHappySessionWebhook: () => {}, externalActionApi: { currentServerId: 'server-local', executor,
+        verifyPat: async () => { throw new Error('Signed root does not verify PATs'); },
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: serverHttpBaseUrl }),
+      } });
+    try {
+      for (const { surface, actionRequestId } of [
+        { surface: 'cli', actionRequestId: 'first-transport' },
+        { surface: 'cli', actionRequestId: 'retry-transport' },
+        { surface: 'mcp', actionRequestId: 'agent-transport' },
+      ] as const) {
+        const response = await app.inject({ method: 'POST', url: '/actions/root/execute',
+          headers: { 'x-happier-daemon-token': 'private-control-token' },
+          payload: { actionId: 'workflow.trigger.run_now', surface, actionRequestId,
+            input: { automationId: 'habit-one', idempotencyKey: 'same-user-intent' } } });
+        expect(response.statusCode).toBe(200);
+        expect(response.json(), JSON.stringify(requestedPaths)).toEqual({ ok: true, result: receipt });
+      }
+      expect(submittedKeys).toEqual(['same-user-intent', 'same-user-intent', 'same-user-intent']);
+      const malformed = await app.inject({ method: 'POST', url: '/actions/root/execute',
+        headers: { 'x-happier-daemon-token': 'private-control-token' },
+        payload: { actionId: 'workflow.trigger.run_now', input: { automationId: 'habit-one', idempotencyKey: '' } } });
+      expect(malformed.statusCode).toBe(400);
+      expect(malformed.json()).toEqual({ ok: false, errorCode: 'invalid_envelope', error: 'invalid_envelope' });
+      expect(submittedKeys).toHaveLength(3);
+    } finally {
+      await app.close(); upstream.closeAllConnections();
+      await new Promise<void>(resolve => upstream.close(() => resolve()));
+    }
+  });
 
-  it('returns the durable pool approval before a human decision instead of retaining the root request', async () => {
+  it.each(['connectedServices.pools.create', 'mcp.servers.import', 'mcp.servers.signIn.start',
+    'connectedServices.authentication.submitManual', 'connectedServices.authentication.completeOAuth'] as const)(
+    'preserves canonical %s approval response custody before a human decision', async actionId => {
     let storedApproval: unknown;
+    let storedArtifact: Readonly<Record<string, unknown>> | undefined;
     let poolRequested = false;
+    let holdArtifactAcknowledgement = false;
+    let artifactWaiting!: () => void;
+    const waiting = new Promise<void>(resolve => { artifactWaiting = resolve; });
+    let releaseArtifact!: () => void;
+    const released = new Promise<void>(resolve => { releaseArtifact = resolve; });
+    let callerDisconnected!: () => void;
+    const disconnected = new Promise<void>(resolve => { callerDisconnected = resolve; });
     const upstream = createServer(async (request, response) => {
       response.setHeader('content-type', 'application/json');
       if (request.url === '/v1/account/encryption') {
@@ -191,20 +315,40 @@ describe('signed root Action lifetime', () => {
           return;
         }
         storedApproval = ApprovalRequestSchema.parse(JSON.parse(content.body));
-        response.end(JSON.stringify({ ...wire, headerVersion: 1, bodyVersion: 1 }));
+        storedArtifact = { ...wire, headerVersion: 1, bodyVersion: 1, seq: 1,
+          createdAt: 1, updatedAt: 1, ownerAccountId: 'account', access: 'owner', encryptionMode: 'plain', publicAudience: null };
+        if (holdArtifactAcknowledgement) {
+          artifactWaiting();
+          await released;
+        }
+        response.end(JSON.stringify(storedArtifact));
+        return;
+      }
+      if (request.method === 'GET' && request.url === `/v1/artifacts/${storedArtifact?.id}`) {
+        response.end(JSON.stringify(storedArtifact));
         return;
       }
       poolRequested ||= request.url === '/v4/connect/qualified/groups';
       response.writeHead(404).end(JSON.stringify({ error: 'unexpected_request' }));
     });
+    // Home socket I/O is the boundary; registration and the live approval owner remain real.
+    const sockets = new SocketIoServer(upstream, { path: '/v1/updates/' });
+    sockets.on('connection', socket => {
+      socket.on(SOCKET_RPC_EVENTS.REGISTER, ({ method }: { method: string }) => {
+        socket.emit(SOCKET_RPC_EVENTS.REGISTERED, { method });
+      });
+    });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const address = upstream.address();
     if (!address || typeof address === 'string') throw new Error('Missing server address');
-    const credentials = { token: 'boundary-token', encryption: null } as const;
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', provenance: {
+      v: 1, kind: 'account', authority: 'present_user',
+    } })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null } as const;
     const serverHttpBaseUrl = `http://127.0.0.1:${address.port}`;
     const { executor } = createCliActionExecutorHarness({
-      token: credentials.token, credentials, serverId: 'server-local', serverHttpBaseUrl,
+      token: credentials.token, credentials, serverId: 'server-local', serverIdentityId: 'srv_home', serverHttpBaseUrl,
       sessionId: '', mode: 'plain', ctx: null,
       actionsSettingsProvider: createActionSettingsProvider({
         scopeKey: 'root-pool-approval-boundary', accountSettings: accountSettingsParse({}),
@@ -217,7 +361,7 @@ describe('signed root Action lifetime', () => {
       requestShutdown: () => { throw new Error('Unexpected process shutdown'); },
       onHappySessionWebhook: () => {},
       externalActionApi: {
-        currentServerId: 'server-local', executor,
+        currentServerId: 'server-local', currentAccountId: 'account', executor,
         verifyPat: async () => { throw new Error('Signed root does not use PAT verification'); },
         resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: serverHttpBaseUrl }),
       },
@@ -225,35 +369,82 @@ describe('signed root Action lifetime', () => {
     const coordinator = getSharedBlockingApprovalCoordinator();
     let approvalCreated!: (artifactId: string) => void;
     const created = new Promise<string>((resolve) => { approvalCreated = resolve; });
+    let abandonedApprovalCreated!: (artifactId: string) => void;
+    const abandonedCreated = new Promise<string>(resolve => { abandonedApprovalCreated = resolve; });
     const subscription = coordinator.subscribeApprovalChanges(({ artifactId, request }) => {
-      if ('actionId' in request && request.actionId === 'connectedServices.pools.create') approvalCreated(artifactId);
+      if ('actionId' in request && request.actionId === actionId) {
+        if (holdArtifactAcknowledgement) abandonedApprovalCreated(artifactId);
+        else approvalCreated(artifactId);
+      }
     });
-    const response = runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => await app.inject({ method: 'POST', url: '/actions/root/execute',
-      headers: { 'x-happier-daemon-token': 'private-control-token' },
-      payload: { actionId: 'connectedServices.pools.create', actionRequestId: 'pool-approval-request', input: {
+    app.addHook('onRequest', async (request, reply) => {
+      if (request.headers['x-test-abandoned'] === 'true') reply.raw.once('close', callerDisconnected);
+    });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const rootAddress = app.server.address();
+    if (!rootAddress || typeof rootAddress === 'string') throw new Error('Missing daemon address');
+    const controller = new AbortController();
+    const response = runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => {
+      const reply = await axios.post(`http://127.0.0.1:${rootAddress.port}/actions/root/execute`, { actionId, actionRequestId: 'pool-approval-request', input: actionId === 'mcp.servers.import'
+        ? { source: { kind: 'paste', text: JSON.stringify({ mcpServers: {
+          'qa-cliparity-approval-only': { url: 'https://example.invalid/qa-cliparity' },
+        } }) }, dryRun: true, where: { kind: 'replace', rules: [] } }
+        : actionId === 'mcp.servers.signIn.start' ? { serverId: 'qa-sign-in', client: { clientId: 'private-client', clientSecret: 'private-secret' } }
+        : actionId === 'connectedServices.authentication.submitManual' ? { attemptId: 'manual-attempt', fields: { token: 'private-manual-token' } }
+        : actionId === 'connectedServices.authentication.completeOAuth' ? { attemptId: 'oauth-attempt', completion: { code: 'private-oauth-code', callbackUrl: 'https://callback.invalid/', state: 'private-oauth-state' } }
+        : {
         service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, group: { groupId: 'pool-approval' },
-      } },
-    }));
+      } }, { signal: controller.signal, headers: { 'x-happier-daemon-token': 'private-control-token' } });
+      return { json: () => reply.data };
+    });
     let artifactId: string | undefined;
     try {
       artifactId = await Promise.race([created, response.then((reply) => {
         throw new Error(`Root request ended before approval persistence: ${JSON.stringify(reply.json())}`);
       })]);
-      // Artifact acknowledgement has completed. Deferred response settlement is
-      // microtask-only; a blocking decision waiter survives the next event-loop turn.
-      const result = await Promise.race([response.then((reply) => reply.json()),
-        new Promise<'pending'>((resolve) => setImmediate(() => resolve('pending')))]);
-      expect(result).toEqual({ ok: true, result: { kind: 'approval_request_created', artifactId,
-        actionId: 'connectedServices.pools.create' } });
-      expect(storedApproval).toMatchObject({ status: 'open', approval: { flow: 'deferred', result: 'required' },
-        actionId: 'connectedServices.pools.create', requestedSurface: 'cli' });
+      let result: unknown;
+      void response.then(reply => { result = reply.json(); });
+      await expect.poll(() => result).toEqual({ ok: true,
+        result: { kind: 'approval_request_created', artifactId, actionId } });
+      expect(JSON.stringify(storedApproval)).not.toContain('private-manual-token');
+      expect(JSON.stringify(storedApproval)).not.toContain('private-oauth-code');
+      expect(storedApproval).toMatchObject({ status: 'open', approval: {
+        flow: actionId === 'connectedServices.pools.create' ? 'deferred' : 'blocking', result: 'required' },
+        actionId, requestedSurface: 'cli' });
       expect(poolRequested).toBe(false);
+      if (actionId === 'mcp.servers.import') {
+        // The caller has received its receipt and disconnects; private input stays with the daemon.
+        controller.abort();
+        expect(coordinator.getLiveWaiterCount(artifactId)).toBe(1);
+        holdArtifactAcknowledgement = true;
+        const abandoned = new AbortController();
+        const abortedResponse = runWithServerHttpBaseUrl(serverHttpBaseUrl, async () => await axios.post(
+          `http://127.0.0.1:${rootAddress.port}/actions/root/execute`, {
+            actionId, actionRequestId: 'paste-abandoned-before-receipt', input: { source: { kind: 'paste', text: JSON.stringify({
+              mcpServers: { 'qa-cliparity-approval-only': { url: 'https://example.invalid/qa-cliparity' } },
+            }) }, dryRun: true, where: { kind: 'replace', rules: [] } },
+          }, { signal: abandoned.signal, headers: { 'x-happier-daemon-token': 'private-control-token', 'x-test-abandoned': 'true' } },
+        )).catch((error: unknown) => error);
+        await waiting;
+        abandoned.abort();
+        expect(axios.isCancel(await abortedResponse)).toBe(true);
+        await disconnected;
+        releaseArtifact();
+        const abandonedArtifactId = await abandonedCreated;
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(coordinator.getLiveWaiterCount(abandonedArtifactId)).toBe(0);
+        await app.close();
+        expect(coordinator.getLiveWaiterCount(artifactId)).toBe(0);
+        expect(poolRequested).toBe(false);
+      }
     } finally {
+      releaseArtifact();
       if (artifactId) coordinator.cancelApproval(artifactId, 'test cleanup');
       subscription.dispose();
       await response;
+      await new Promise<void>(resolve => sockets.close(() => resolve()));
       upstream.closeAllConnections();
-      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+      if (upstream.listening) await new Promise<void>((resolve) => upstream.close(() => resolve()));
       await app.close();
     }
   });
@@ -263,20 +454,8 @@ describe('signed root Action lifetime', () => {
     let closed!: () => void;
     const accepted = new Promise<void>((resolve) => { received = resolve; });
     const cancelled = new Promise<void>((resolve) => { closed = resolve; });
-    let releasePolicy!: () => void;
-    let policyRequested!: () => void;
-    const policyAccepted = new Promise<void>((resolve) => { policyRequested = resolve; });
     let upstreamPath: string | undefined;
     const upstream = createServer((request, response) => {
-      if (request.url === ACCOUNT_SECURITY_PATH_V1) {
-        releasePolicy = () => {
-          response.setHeader('content-type', 'application/json');
-          response.end(JSON.stringify({ v: 1, encryptionMode: 'plain', nativeEmail: null,
-            password: { status: 'not_enrolled', revision: null }, terminalPresentUserPolicy: 'allowed' }));
-        };
-        policyRequested();
-        return;
-      }
       upstreamPath = request.url;
       request.resume();
       request.on('end', received);
@@ -303,7 +482,6 @@ describe('signed root Action lifetime', () => {
       onHappySessionWebhook: () => {},
       externalActionApi: {
         currentServerId: 'server-local', executor,
-        terminalPolicyScope: { token: credentials.token, serverHttpBaseUrl },
         verifyPat: async () => { throw new Error('Signed root does not use the PAT network verifier'); },
         resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: serverHttpBaseUrl }),
       },
@@ -321,17 +499,12 @@ describe('signed root Action lifetime', () => {
       const url = `http://127.0.0.1:${rootAddress.port}/actions/root/execute`;
       const headers = { 'x-happier-daemon-token': 'private-control-token' };
       const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
-      const policyRefresh = refreshTerminalPresentUserPolicy({ token: credentials.token, serverHttpBaseUrl });
-      await policyAccepted;
       const request = axios.post(url, { actionId: 'connectedServices.pools.create', input: { service, group: { groupId: 'pool-cancel' } } }, {
         signal: controller.signal, headers,
       });
       const outcome = request.catch((error: unknown) => error);
       await rootAccepted;
       expect((await app.inject({ method: 'POST', url: '/ping', payload: {}, headers })).statusCode).toBe(200);
-      expect(upstreamPath).toBeUndefined();
-      releasePolicy();
-      expect(await policyRefresh).toBe('allowed');
       await Promise.race([accepted, outcome.then((value) => {
         const data = value && typeof value === 'object' && 'data' in value ? value.data : value;
         throw new Error(`Root request ended before pool HTTP: ${axios.isAxiosError(value) ? value.message : JSON.stringify(data)}`);

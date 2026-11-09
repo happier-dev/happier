@@ -7,6 +7,32 @@ import { createBrowserProfileStore } from '../profiles/store';
 import { createBrowserExtensionService } from './service';
 
 describe('persistent profile extension application', () => {
+  it('lists saved profiles before extensions exist, including after the store is recreated', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-extension-profile-inventory-'));
+    const createStore = () => createBrowserProfileStore({ storageRootDirectory: root,
+      partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+    try {
+      const first = createStore();
+      await first.registerPersistentProfile({ profileId: 'personal', storageMode: 'user',
+        owner: { kind: 'user', id: 'person' }, displayName: 'Personal' });
+      await first.registerPersistentProfile({ profileId: 'work', storageMode: 'plugin',
+        owner: { kind: 'plugin', id: 'work-plugin' } });
+      const restarted = createStore();
+      restarted.register({ profileId: 'temporary', storageMode: 'ephemeral',
+        owner: { kind: 'session', id: 'session' } });
+      const service = createBrowserExtensionService({ profileStore: restarted });
+      const listed = await service.execute('browser.extensions.list', { machineId: 'machine' });
+      expect(listed).toMatchObject({ status: 'ready', entries: [], profiles: expect.arrayContaining([
+        { profileId: 'personal', displayName: 'Personal' }, { profileId: 'work' },
+      ]) });
+      expect(listed).toHaveProperty('profiles.length', 2);
+      expect(await service.execute('browser.extensions.list', { machineId: 'machine', profileId: 'personal' }))
+        .toEqual({ status: 'ready', entries: [], profiles: [{ profileId: 'personal', displayName: 'Personal' }] });
+      expect(await service.execute('browser.extensions.list', { machineId: 'machine', profileId: 'absent' }))
+        .toEqual({ status: 'unavailable', code: 'profile_not_found' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('reviews grants before installing, keeps identity on explicit update, and isolates profiles', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-extension-service-'));
     const source = join(root, 'source');

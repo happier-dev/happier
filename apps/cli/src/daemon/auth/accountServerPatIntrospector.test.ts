@@ -3,7 +3,7 @@ import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
 
 const post = vi.hoisted(() => vi.fn());
 
-vi.mock("axios", () => ({ default: { post } }));
+vi.mock("axios", () => ({ default: { post, defaults: {} } }));
 
 import { createAccountServerPatIntrospector } from "./accountServerPatIntrospector";
 
@@ -24,6 +24,7 @@ describe("createAccountServerPatIntrospector", () => {
     });
 
     it("uses the daemon's existing Account connection to request only the minimal verified PAT principal", async () => {
+        let serverBaseUrl = SERVER_BASE_URL;
         post.mockResolvedValue({
             status: 200,
             data: {
@@ -37,7 +38,8 @@ describe("createAccountServerPatIntrospector", () => {
                 embedConfig: null,
             },
         });
-        const introspect = createAccountServerPatIntrospector({ daemonConnectionToken: "daemon-connection-token", serverBaseUrl: SERVER_BASE_URL });
+        const introspect = createAccountServerPatIntrospector({ daemonConnectionToken: "daemon-connection-token",
+            get serverBaseUrl() { return serverBaseUrl; } });
 
         await expect(introspect(PAT)).resolves.toEqual({
             ok: true,
@@ -62,6 +64,9 @@ describe("createAccountServerPatIntrospector", () => {
             }),
         );
         expect(String(post.mock.calls[0]?.[0])).not.toContain(PAT);
+        serverBaseUrl = 'http://127.0.0.1:43361';
+        await expect(introspect(PAT)).resolves.toMatchObject({ ok: true, accountId: 'account-a' });
+        expect(post.mock.calls.at(-1)?.[0]).toBe(`${serverBaseUrl}/v1/auth/api-tokens/introspect`);
     });
 
     it("accepts invalid_token only from the strict authenticated-subject failure envelope", async () => {

@@ -10,8 +10,84 @@ import { createMachineLiveStreamCaptureRegistry } from './captureRegistry';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { registerMachineLiveStreamSourceAdmissionHandler } from './sourceAdmission';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createProductBrowserSidecarControlAdapterFactory } from '@/daemon/browser/sidecar/productSource';
+import { createBrowserSidecarLaunchOwnerControlAdapterFactory } from '@/daemon/browser/sidecar/launchOwner';
+import { createBrowserProfileStore } from '@/daemon/browser/profiles/store';
+import { createBrowserStoragePartitionOwner } from '@/daemon/browser/storage/partitions';
+import { createBrowserDaemonControlBroker } from '@/daemon/browser/control/broker';
+import { createBrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
+import { createBrowserCdpScreencastProducer } from '@/daemon/browser/capture/cdpScreencast';
+import { registerBrowserLiveCapture } from '@/daemon/browser/capture/registration';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 
 describe('personal live stream source admission RPC', () => {
+    it('refuses a Use viewer presenting another Account’s ephemeral Browser source while preserving owner and Manage', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'browser-source-admission-'));
+        const profiles = createBrowserProfileStore({ storageRootDirectory: root,
+            partitionOwner: createBrowserStoragePartitionOwner({ storageRootDirectory: root }) });
+        const runtime = await createProductBrowserSidecarControlAdapterFactory({ profileStore: profiles,
+            readSessionAccountId: sessionId => sessionId === 'guest-session' ? 'guest' : 'owner',
+            resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/fixture/chrome',
+                discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
+                    pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
+            createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
+                // Only the Chromium process and CDP connection are substituted.
+                spawnProcess: () => {
+                    const child = new EventEmitter();
+                    return Object.assign(child, { pid: 4242, stderr: new PassThrough(),
+                        stdio: [null, null, null, new PassThrough(), new PassThrough()],
+                        kill: () => { child.emit('exit', 0, 'SIGTERM'); return true; } });
+                },
+                connectTransport: async () => ({ transport: { openPage: async () => ({ targetId: 'page', sessionId: 'cdp' }),
+                    dispatchPageCommand: async () => ({}), dispatchBrowserCommand: async () => ({ success: true }) } }),
+            }),
+        })({ machineId: 'machine' });
+        if (!runtime.ok || !runtime.contextCapture) throw new Error('Browser runtime unavailable');
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const producer = createBrowserCdpScreencastProducer({ contextCapture: runtime.contextCapture });
+        const registration = registerBrowserLiveCapture({ registry, contextCapture: runtime.contextCapture, producer, automation: () => null });
+        const broker = createBrowserDaemonControlBroker();
+        broker.registerAdapter(runtime.adapter);
+        const browser = createBrowserDaemonControlRoutes({ broker, captureRegistry: registry });
+        const keys = tweetnacl.sign.keyPair();
+        const installation = MachineInstallationIdentityV1Schema.parse({ version: 1, installationId: 'installation', createdAt: 0,
+            publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url') });
+        const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+        registerMachineLiveStreamSourceAdmissionHandler({ registerHandler(method, handler) {
+            // Untyped RPC transport boundary; the production request parser and signing are real.
+            handlers.set(method, handler as RpcHandler<unknown, unknown>);
+        } }, { machineId: 'machine', resolveComputer: () => null, resolveBrowser: () => browser,
+            readInstallationIdentity: () => installation, readHomeServerIdentityId: () => 'home' });
+        const context = (actorAccountId: string, role: 'use' | 'manage'): RpcHandlerContext => ({
+            callerAuthority: 'present_user', machineAdmission: { actorAccountId, role,
+                custodianAccountId: 'owner', machineId: 'machine', installationId: 'installation', encryptionMode: 'plain' },
+        });
+        const invoke = async (browserSessionId: string, actorAccountId: string, role: 'use' | 'manage') =>
+            DaemonMachineLiveStreamSourceAdmitResponseV1Schema.parse(await handlers.get(RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT)?.({
+                protocolVersion: 1, machineId: 'machine', streamFamily: 'browser.streamed',
+                sourceId: browserViewKey({ browserSessionId, viewId: 'view' }),
+            }, context(actorAccountId, role)));
+        try {
+            for (const browserSessionId of ['owner-session', 'guest-session']) {
+                expect(await browser.dispatchCommand({ kind: 'openView', commandId: browserSessionId, browserSessionId,
+                    viewId: 'view', platform: 'web', target: { kind: 'externalUrl', targetId: 'fixture', url: 'https://fixture.test/' } }))
+                    .toMatchObject({ status: 'dispatched' });
+            }
+            expect(await invoke('guest-session', 'guest', 'use')).toMatchObject({ result: { ok: true } });
+            expect(await invoke('owner-session', 'owner', 'use')).toMatchObject({ result: { ok: true } });
+            expect(await invoke('owner-session', 'guest', 'manage')).toMatchObject({ result: { ok: true } });
+            expect(await invoke('owner-session', 'guest', 'use')).toMatchObject({ result: { ok: false, reasonCode: 'capture_source_denied' } });
+            expect(await invoke('guest-session', 'other-guest', 'use')).toMatchObject({ result: { ok: false, reasonCode: 'capture_source_denied' } });
+        } finally {
+            registration.dispose(); await producer.dispose(); await runtime.dispose?.();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
     it('signs the real Computer owner admission and refuses owner and other-person sources', async () => {
         const keys = tweetnacl.sign.keyPair();
         const installation = MachineInstallationIdentityV1Schema.parse({ version: 1, installationId: 'installation', createdAt: 0,

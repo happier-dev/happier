@@ -15,6 +15,7 @@ import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from './requestAu
 import { createBuiltInQualifiedNativeRefreshHarness } from './refresh/ConnectedServiceRefreshCoordinator.qualifiedRefresh.testkit';
 import { ConnectedServiceRuntimeRegistry } from './runtimeRegistry/registry';
 import { createSessionConnectedServiceRuntimeAuthRefreshHandler } from './sessionRuntimeAuthRefresh';
+import { resolveSharedStateRequiredSwitchContinuity } from './sessionAuthSwitch/sharedStateContinuity';
 
 
 afterEach(() => vi.unstubAllGlobals());
@@ -26,17 +27,38 @@ function oauthResponse(accessToken: string) {
 
 describe('registered Session native auth refresh through the canonical coordinator', () => {
     it.each([
-        ['provider', 200, null],
-        ['provider', 400, null],
-        ['busy', 400, 'connected_account_refresh_lease_not_acquired'],
-        ['owner', 400, 'connected_account_refresh_lease_owner_mismatch'],
-        ['revision', 400, 'connected_account_refresh_lease_revision_mismatch'],
-        ['home', 200, 'project_requester_home_unavailable'],
-    ] as const)('prepares a retryable profile through %s / HTTP %i and preserves its cause to the Action consumer', async (wiring, providerStatus, reason) => {
-        const h = await createBuiltInQualifiedNativeRefreshHarness({ controller: pluginReloadController });
+        ['provider', 200, null, 'profile'],
+        ['resume', 200, null, 'profile'],
+        ['resume', 400, null, 'profile'],
+        ['provider', 400, null, 'profile'],
+        ['busy', 400, 'connected_account_refresh_lease_not_acquired', 'profile'],
+        ['owner', 400, 'connected_account_refresh_lease_owner_mismatch', 'profile'],
+        ['revision', 400, 'connected_account_refresh_lease_revision_mismatch', 'profile'],
+        ['home', 200, 'project_requester_home_unavailable', 'profile'],
+        ['provider', 200, null, 'group'],
+    ] as const)('prepares retryable auth through %s / HTTP %i / cause %s / selection %s', async (wiring, providerStatus, reason, selection) => {
+        const applicationFailures: string[] = [];
+        const h = await createBuiltInQualifiedNativeRefreshHarness({ controller: pluginReloadController, groupBinding: selection === 'group',
+            ...(wiring === 'resume' ? { onQualifiedConnectedAccountCredentialUpdated: async () => {
+                // Real continuity owner, real absent native state. Bootstrap propagates
+                // this existing Session's refusal from its credential-update callback.
+                const continuity = await resolveSharedStateRequiredSwitchContinuity({
+                    agentId: 'codex', accountSettings: { connectedServicesProviderStateSharingSettingsV1: {
+                        v: 1, defaults: { configMode: 'linked', stateMode: 'shared' }, byAgentId: {},
+                    } },
+                    serviceId: 'happier.agent.codex/openai-codex',
+                });
+                if (continuity.mode === 'unsupported') {
+                    applicationFailures.push(continuity.errorCode);
+                    throw new Error(continuity.errorCode);
+                }
+            } } : {}),
+        });
         let materialized: Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>> = null;
         const bindings = ConnectedServiceBindingsV2IngressSchema.parse({ v: 2, bindingsByServiceId: {
-            'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+            'happier.agent.codex/openai-codex': selection === 'group'
+                ? { source: 'connected', selection: 'group', groupId: 'pool' }
+                : { source: 'connected', selection: 'profile', profileId: 'work' },
         } });
         try {
             // Persistent storage is the boundary: seed an expired synthetic grant, retaining
@@ -58,7 +80,7 @@ describe('registered Session native auth refresh through the canonical coordinat
                     code: 'project_requester_home_unavailable', retryable: true,
                     message: 'Home response token=must-not-leak',
                 }));
-            } else if (wiring !== 'provider') {
+            } else if (wiring !== 'provider' && wiring !== 'resume') {
                 // Lease transport/storage is a genuine boundary. A mis-bound owner or
                 // revision must refuse before the real plugin's provider exchange.
                 h.acquireRefreshLease.mockImplementation(async ({ lease: raw }) => {
@@ -69,14 +91,15 @@ describe('registered Session native auth refresh through the canonical coordinat
                 });
             }
             let failure: unknown;
+            const listAccounts = vi.fn(async () => {
+                const current = await h.qualifiedApi.listAccounts();
+                return { ...current, accounts: current.accounts.map(profile => ({ ...profile, status: 'refresh_failed_retryable' as const })) };
+            });
             try {
                 materialized = await resolveConnectedServiceAuthForSpawn({ agentId: 'codex', materializationKey: 'retryable-spawn',
                     connectedServicesBindingsRaw: bindings, credentials: h.credentials, api: h.api,
                     baseDir: join(h.happyHomeDir, 'materialized'), activeServerDir: join(h.happyHomeDir, 'active'),
-                    qualifiedConnectedAccountApi: { ...h.qualifiedApi, listAccounts: async () => {
-                        const current = await h.qualifiedApi.listAccounts();
-                        return { ...current, accounts: current.accounts.map(profile => ({ ...profile, status: 'refresh_failed_retryable' as const })) };
-                    } },
+                    qualifiedConnectedAccountApi: { ...h.qualifiedApi, listAccounts },
                     credentialRefreshService: h.coordinator,
                     resolveQualifiedPurposeBindingSnapshot: currentBindings => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
                         agentId: 'codex', bindings: currentBindings, contributions: h.registry.contributes,
@@ -88,10 +111,18 @@ describe('registered Session native auth refresh through the canonical coordinat
                     }), nowMs: () => h.now, processEnv: {},
                 });
             } catch (error) { failure = error; }
-            if (wiring === 'provider' && providerStatus === 200) {
+            if ((wiring === 'provider' || wiring === 'resume') && providerStatus === 200) {
                 expect(failure).toBeUndefined();
-                expect(materialized?.connectedServicesBindings).toEqual(bindings);
+                expect(materialized?.connectedServicesBindings).toMatchObject(bindings);
+                expect(listAccounts).toHaveBeenCalledOnce();
                 expect((await h.readCredential()).credentialRevision).toBe(h.thirdRevision);
+                if (wiring === 'resume') {
+                    expect(applicationFailures).toEqual(['provider_session_state_unavailable_for_resume']);
+                    const nativeHome = materialized?.env.CODEX_HOME;
+                    if (!nativeHome) throw new Error('Refreshed native home unavailable');
+                    expect(JSON.parse(await readFile(join(nativeHome, 'auth.json'), 'utf8')))
+                        .toMatchObject({ tokens: { access_token: 'access-new', refresh_token: '' } });
+                }
             } else {
                 expect(materialized).toBeNull();
                 const daemonFailure = buildConnectedServiceCredentialRefreshSpawnErrorResult({ agentId: 'codex', error: failure });
@@ -100,6 +131,7 @@ describe('registered Session native auth refresh through the canonical coordinat
                 const action = SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
                     errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
                 }));
+                if (wiring === 'resume') expect(applicationFailures).toEqual([]);
                 if (wiring === 'home') {
                     expect(action).toMatchObject({ type: 'error', retryable: true, launchError: {
                         code: 'project_requester_home_unavailable',

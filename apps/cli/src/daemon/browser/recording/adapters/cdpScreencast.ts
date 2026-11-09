@@ -4,11 +4,11 @@ import type {
   BrowserRecordingCaptureAdapter,
   BrowserRecordingCapturedArtifact,
   BrowserRecordingDaemonUnavailableReason,
-} from '../service';
+} from '../../../recording/service';
 import type {
   BrowserRecordingStreamFrameEncoder,
   BrowserRecordingStreamFrameEncoderFactory,
-} from './stream';
+} from '../../../recording/stream';
 
 /**
  * A single CDP `Page.screencastFrame` payload. Chromium emits these as base64 JPEG stills with a

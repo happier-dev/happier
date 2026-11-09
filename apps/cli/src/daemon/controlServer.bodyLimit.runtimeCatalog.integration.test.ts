@@ -10,7 +10,7 @@ describe('createDaemonControlApp /session-started body limit', () => {
         vi.restoreAllMocks();
     });
 
-    it('accepts large session-started metadata payloads', async () => {
+    it('accepts valid session-started metadata beyond the former local body threshold', async () => {
         const onHappySessionWebhook = vi.fn();
         const app = createDaemonControlApp({
             getChildren: () => [],
@@ -38,7 +38,7 @@ describe('createDaemonControlApp /session-started body limit', () => {
                 startedBy: 'terminal',
                 machineId: 'test-machine-large',
                 summary: {
-                    text: 'x'.repeat(2 * 1024 * 1024),
+                    text: 'x'.repeat(9 * 1024 * 1024),
                     updatedAt: Date.now(),
                 },
             };

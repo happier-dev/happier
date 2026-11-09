@@ -3,11 +3,12 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, type SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { createAccountEncryptionCurrentnessFixture, createSessionListResponseFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createCompactSessionListRowFixture, createSessionReadBatchResponseFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 import { createPendingSessionActivationRecovery } from '../../sessions/pendingSessionActivationRecovery';
 import { UsageLimitRecoveryScheduler } from './UsageLimitRecoveryScheduler';
 import { createInactiveUsageLimitRecoveryCheckOwner } from './inactiveUsageLimitRecoveryCheckOwner';
+import { resolveInactiveUsageLimitRecoverySchedulerResult } from './resolveInactiveUsageLimitRecoverySchedulerResult';
 
 const sessionId = 'c123456789012345678901234';
 const pending = (): SessionUsageLimitRecoveryV1 => ({ v: 1, status: 'waiting', issueFingerprint: 'limit', armedAtMs: 100,
@@ -31,6 +32,13 @@ function fixture(options: Readonly<{ unrelatedRows?: number }> = {}) {
   const row = () => createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', active, latestTurnStatus,
     ...(ownerAccess ? {} : { share: { accessLevel: 'edit' as const, canApprovePermissions: false } }),
     metadata: JSON.stringify({ machineId: 'machine-1', [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: intent }) });
+  const rows = () => [row(),
+    ...Array.from({ length: options.unrelatedRows ?? 0 }, (_, index) => createSessionRecordFixture({
+      id: `c${String(index).padStart(24, '0')}`, encryptionMode: 'plain', active: false, latestTurnStatus: 'completed',
+      metadata: JSON.stringify({ machineId: 'machine-1' }),
+    })),
+    createSessionRecordFixture({ ...row(), id: 'shared-editor-session', share: { accessLevel: 'edit', canApprovePermissions: false } }),
+  ];
   // The Home HTTP transport is external. Real selectors, envelope readers,
   // locality, reconnect scan, scheduler and registered local RPC remain live.
   vi.spyOn(axios, 'get').mockImplementation(async url => {
@@ -49,15 +57,14 @@ function fixture(options: Readonly<{ unrelatedRows?: number }> = {}) {
         id, encryptionMode: 'plain', active: false, latestTurnStatus: 'completed', metadata: JSON.stringify({ machineId: 'machine-1' }),
       }) } };
     }
-    if (path === '/v2/sessions') return { status: 200, data: createSessionListResponseFixture([
-      row(),
-      ...Array.from({ length: options.unrelatedRows ?? 0 }, (_, index) => createSessionRecordFixture({
-        id: `c${String(index).padStart(24, '0')}`, encryptionMode: 'plain', active: false, latestTurnStatus: 'completed',
-        metadata: JSON.stringify({ machineId: 'machine-1' }),
-      })),
-      createSessionRecordFixture({ ...row(), id: 'shared-editor-session', share: { accessLevel: 'edit', canApprovePermissions: false } }),
-    ]) };
+    if (path === '/v2/sessions') return { status: 200, data: {
+      sessions: rows().map(createCompactSessionListRowFixture), nextCursor: null, hasNext: false,
+    } };
     throw new Error(`Unexpected Home read: ${path}`);
+  });
+  vi.spyOn(axios, 'post').mockImplementation(async (url, request: unknown) => {
+    if (new URL(String(url)).pathname !== '/v2/sessions/read-batch') throw new Error('Unexpected Home write');
+    return { status: 200, data: createSessionReadBatchResponseFixture({ request, sessions: rows() }) };
   });
   installAxiosRequestMethodAdapter();
   const machine = new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain', logger: () => {} });
@@ -67,11 +74,11 @@ function fixture(options: Readonly<{ unrelatedRows?: number }> = {}) {
     return { ok: true, status: 'waiting', metadata: { [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: intent } };
   });
   const owner = createInactiveUsageLimitRecoveryCheckOwner();
-  const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000,
+  let nowMs = 1_000;
+  const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => nowMs,
     recover: async (_intent, context) => {
       const result = await owner.run(context.sessionId);
-      if (result && typeof result === 'object' && 'status' in result && result.status === 'cancelled') return { status: 'superseded' };
-      return { status: 'wait', nextCheckAtMs: 5_000 };
+      return resolveInactiveUsageLimitRecoverySchedulerResult({ result });
     } });
   const restoreInput = () => ({
     credentials: { token: 'fixture-token', encryption: null } as const, machineId: 'machine-1', scheduler,
@@ -87,6 +94,7 @@ function fixture(options: Readonly<{ unrelatedRows?: number }> = {}) {
   });
   return { owner, scheduler, reconnect, wakes: () => wakes,
     currentnessReads: () => currentnessReads, exactSessionReads: () => exactSessionReads,
+    setNow: (next: number) => { nowMs = next; },
     setActive: () => { active = true; }, setCompleted: () => { latestTurnStatus = 'completed'; },
     setIntent: (next: SessionUsageLimitRecoveryV1) => { intent = next; },
     disable: () => { enabled = false; }, revoke: () => { ownerAccess = false; },
@@ -132,6 +140,34 @@ it('restores ordinary waiting recovery through the owner reconnect scan and regi
   } finally { f.scheduler.dispose(); }
 });
 
+it('finishes a restored admitted wait after the feature is disabled', async () => {
+  const f = fixture();
+  try {
+    await f.reconnect.recoverAfterConnect();
+    f.disable();
+    await f.scheduler.wake({ sessionId, reason: 'check_now' });
+    expect(f.wakes()).toBe(1);
+  } finally { f.scheduler.dispose(); }
+});
+
+it('parks a failed admitted read without polling and resumes on reconnect availability', async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  try {
+    await f.reconnect.recoverAfterConnect();
+    f.unavailable();
+    await f.scheduler.wake({ sessionId, reason: 'check_now' });
+    expect(f.scheduler.read(sessionId)).toMatchObject({ status: 'waiting', nextCheckAtMs: null });
+    await vi.advanceTimersByTimeAsync(600_001);
+    expect(f.wakes()).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    f.available();
+    f.setNow(10_000);
+    await f.reconnect.recoverAfterConnect();
+    expect(f.wakes()).toBe(1);
+  } finally { f.scheduler.dispose(); vi.useRealTimers(); }
+});
+
 it.each(['cancelled', 'replacement', 'completed', 'revoked'] as const)('does not revive %s recovery on a restored wake', async change => {
   const f = fixture();
   try {
@@ -147,13 +183,12 @@ it.each(['cancelled', 'replacement', 'completed', 'revoked'] as const)('does not
   } finally { f.scheduler.dispose(); }
 });
 
-it.each(['active', 'terminal', 'runtime-auth', 'disabled', 'completed'] as const)('skips %s recovery during reconnect restoration', async state => {
+it.each(['active', 'terminal', 'runtime-auth', 'completed'] as const)('skips %s recovery during reconnect restoration', async state => {
   const f = fixture();
   try {
     if (state === 'active') f.setActive();
     if (state === 'terminal') f.setIntent({ ...pending(), status: 'exhausted', nextCheckAtMs: null });
     if (state === 'runtime-auth') f.setIntent({ ...pending(), runtimeAuthRecoveryAttemptId: 'auth-attempt' });
-    if (state === 'disabled') f.disable();
     if (state === 'completed') f.setCompleted();
     await f.reconnect.recoverAfterConnect();
     expect(f.owner.hasRunner(sessionId)).toBe(false);

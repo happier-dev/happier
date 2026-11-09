@@ -1,3 +1,4 @@
+import { InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from "@/daemon/connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator";
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -25,6 +26,8 @@ import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope }
 import { PreparedTransferRpcResponseV1Schema } from '@happier-dev/protocol/machines/transfer/preparedTransferRpcV1';
 import { TransferChunkEnvelopeSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+
+const healthSwitchContext = { credentialHealthSwitchLeases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<import("@happier-dev/protocol").QualifiedConnectedAccountServiceRef>(), };
 
 const sessionsHttp = vi.hoisted(() => ({
   fetchSessionByIdCompat: vi.fn(),
@@ -126,6 +129,7 @@ describe('startDaemonRuntimeBootstrap', () => {
     const encodeClaim = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
     const capturedToken = `${encodeClaim({ alg: 'none' })}.${encodeClaim({ sub: 'alice' })}.signature`;
     let published: unknown;
+    let recoveryActivated = false;
     const result = await startDaemonRuntimeBootstrap({
       api: {} as never,
       credentials: { token: capturedToken, encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) } },
@@ -137,18 +141,21 @@ describe('startDaemonRuntimeBootstrap', () => {
       // Persisting the daemon publication is an OS boundary. Its assembly and
       // Account projection run through the actual bootstrap owner.
       publishDaemonState: state => { published = state; return true; },
+      onDaemonStatePublished: () => { expect(published).toBeDefined(); recoveryActivated = true; },
       happyHomeDir: '/tmp/happy-home', activeServerDir: '/tmp/happy-active-server',
       filesystemAccessPolicy: { kind: 'osUser' }, publicReleaseChannel: 'dev',
       connectedServicesRestartRequestedPids: new Set(), pidToTrackedSession: new Map(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        ...healthSwitchContext,
         switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
-        applyCommittedGeneration: vi.fn(async input => ({ status: 'session_not_found', generation: input.generation })),
+        applyCommittedGeneration: vi.fn(async () => ({ reconciliationDisposition: 'failed' as const, errorCode: 'session_not_found' })),
         applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore: createProviderAccountUsageStore(),
     });
     expect(published).toMatchObject({ machineId: 'machine-1', runtimeId: 'runtime-1', accountId: 'alice' });
+    expect(recoveryActivated).toBe(true);
     expect(JSON.stringify(published)).not.toContain(capturedToken);
     const source = result.transferLiveWorkProducer;
     expect(result.initialDaemonState.transfer?.supported).toEqual({ import: true, export: true });
@@ -217,8 +224,9 @@ describe('startDaemonRuntimeBootstrap', () => {
       connectedServicesRestartRequestedPids: new Set(),
       pidToTrackedSession: new Map(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        ...healthSwitchContext,
         switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
-        applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
+        applyCommittedGeneration: vi.fn(async () => ({ reconciliationDisposition: 'failed' as const, errorCode: 'session_not_found' })),
         applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
@@ -290,13 +298,11 @@ describe('startDaemonRuntimeBootstrap', () => {
       pidToTrackedSession: new Map(),
       ...createQualifiedV4RuntimeFixture(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        ...healthSwitchContext,
         switchBeforeTurn: vi.fn(async () => ({
           status: 'session_not_found' as const,
         })),
-        applyCommittedGeneration: vi.fn(async (input) => ({
-          status: 'session_not_found',
-          generation: input.generation,
-        })),
+        applyCommittedGeneration: vi.fn(async () => ({ reconciliationDisposition: 'failed' as const, errorCode: 'session_not_found' })),
         applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
       connectedServiceRuntimeQuotaSnapshots:
@@ -381,8 +387,9 @@ describe('startDaemonRuntimeBootstrap', () => {
       connectedServicesRestartRequestedPids: new Set(),
       pidToTrackedSession: new Map(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        ...healthSwitchContext,
         switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
-        applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
+        applyCommittedGeneration: vi.fn(async () => ({ reconciliationDisposition: 'failed' as const, errorCode: 'session_not_found' })),
         applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
@@ -435,6 +442,7 @@ describe('startDaemonRuntimeBootstrap', () => {
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
     const applyCredentialUpdate = vi.fn(async () => ({ status: 'hot_applied' as const }));
     const authGroupCoordinator = Object.assign({
+      ...healthSwitchContext,
       switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
       applyCommittedGeneration: vi.fn(async (input: Readonly<{ generation: number }>) => ({
         status: 'session_not_found',
@@ -568,13 +576,11 @@ describe('startDaemonRuntimeBootstrap', () => {
       pidToTrackedSession: new Map(),
       ...createQualifiedV4RuntimeFixture(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        ...healthSwitchContext,
         switchBeforeTurn: vi.fn(async () => ({
           status: 'session_not_found' as const,
         })),
-        applyCommittedGeneration: vi.fn(async (input) => ({
-          status: 'session_not_found',
-          generation: input.generation,
-        })),
+        applyCommittedGeneration: vi.fn(async () => ({ reconciliationDisposition: 'failed' as const, errorCode: 'session_not_found' })),
         applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
       connectedServiceRuntimeQuotaSnapshots:
@@ -663,8 +669,9 @@ describe('startDaemonRuntimeBootstrap', () => {
       pidToTrackedSession: new Map(),
       ...createQualifiedV4RuntimeFixture(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        ...healthSwitchContext,
         switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
-        applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
+        applyCommittedGeneration: vi.fn(async () => ({ reconciliationDisposition: 'failed' as const, errorCode: 'session_not_found' })),
         applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
       },
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),

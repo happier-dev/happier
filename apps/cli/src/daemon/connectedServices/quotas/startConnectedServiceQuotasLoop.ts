@@ -5,13 +5,13 @@ export type ConnectedServiceQuotasLoopHandle = Readonly<{
   pause: () => void;
   resume: () => void;
   wake: () => void;
-  subscribeAfterTick: (listener: () => void | Promise<void>) => () => void;
+  subscribeAfterTick: (listener: (signal?: AbortSignal) => void | Promise<void>) => () => void;
 }>;
 
 export function startConnectedServiceQuotasLoop(params: Readonly<{
   enabled: boolean;
   tickMs: number;
-  coordinator: Readonly<{ tickOnce: () => Promise<void | SingleFlightLoopSchedule> }>;
+  coordinator: Readonly<{ tickOnce: (signal?: AbortSignal) => Promise<void | SingleFlightLoopSchedule> }>;
   subscribeWake?: (listener: () => void) => () => void;
   runImmediately?: boolean;
   onTickError: (error: unknown) => void;
@@ -21,12 +21,13 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
   if (!params.enabled) return null;
 
   let stopped = false;
-  const settledTickListeners = new Set<() => void | Promise<void>>();
+  const settledTickListeners = new Set<(signal?: AbortSignal) => void | Promise<void>>();
   const loop = startSingleFlightIntervalLoop({
     intervalMs: params.tickMs,
-    task: async () => {
-      const schedule = await params.coordinator.tickOnce();
-      if (!stopped) await Promise.all([...settledTickListeners].map(listener => listener()));
+    task: async signal => {
+      const schedule = await params.coordinator.tickOnce(signal);
+      signal.throwIfAborted();
+      if (!stopped) await Promise.all([...settledTickListeners].map(listener => listener(signal)));
       return schedule;
     },
     onError: params.onTickError,

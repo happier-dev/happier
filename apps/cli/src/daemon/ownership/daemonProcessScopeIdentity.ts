@@ -113,8 +113,7 @@ export function daemonProcessMatchesCurrentScope(
 
   const processLifecycleScopeId = normalizeScopeValue(env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID);
   const currentLifecycleScopeId = normalizeScopeValue(process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID);
-  // Standalone daemons have no explicit lifecycle env, but their spawn owner gives
-  // children the resolved active-server id as the lifecycle identity.
+  // Standalone callers resolve their lifecycle identity from the active server.
   const currentEffectiveLifecycleScopeId = currentLifecycleScopeId || configuration.activeServerId;
   if (processLifecycleScopeId) {
     // Explicit lifecycle scope is the canonical owner identity. Endpoint profiles and URLs are
@@ -125,11 +124,13 @@ export function daemonProcessMatchesCurrentScope(
       || processServerUrlMatchesCurrent(env.HAPPIER_SERVER_URL, true);
   }
 
-  // Released stack daemons predate the explicit lifecycle-scope variable. Only that old shape may
-  // fall back to the active-server identity and endpoint URL comparison.
+  // Published standalone owners may have neither launcher scope variable. Force-stop already
+  // binds their state and lifecycle lock, and still requires the exact home and endpoint here.
+  // Markerless recovery and explicitly scoped callers continue to require a recorded scope.
   const currentFallbackScope = currentEffectiveLifecycleScopeId;
   const processActiveServerId = normalizeScopeValue(env.HAPPIER_ACTIVE_SERVER_ID);
-  if (requireScopeIdentity && (!processActiveServerId || !currentFallbackScope)) return false;
+  if (requireScopeIdentity && (!currentFallbackScope
+    || (!processActiveServerId && (options.requireScopeIdentity === true || currentLifecycleScopeId)))) return false;
   if (!processEnvValueMatchesCurrent(env.HAPPIER_ACTIVE_SERVER_ID, currentFallbackScope)) {
     return false;
   }

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fetchMemorySessionListVisibilityFixture } from './testkit/startMemoryWorker';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -91,7 +92,7 @@ describe('memoryWorker retained removal while disabled', () => {
   });
 
   async function startSeededWorker() {
-    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
       // Cursor-reset reconciliation now uses the canonical paged visible-
       // Session inventory rather than one request per retained id. Keep the
       // still-authorized Session in that source so this fixture exercises

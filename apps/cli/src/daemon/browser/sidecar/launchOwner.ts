@@ -40,6 +40,7 @@ export type BrowserSidecarLaunchOwnerControlAdapterFactoryInput = Readonly<{
     profile: BrowserProfileV1;
     profileDirectory: string;
     extensionDirectories?: readonly string[];
+    presentation?: 'headless' | 'window';
     binaryResolution: SidecarBrowserBinaryResolution;
     deadlineMs?: number;
     signal?: AbortSignal;
@@ -117,6 +118,7 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
             profile: input.profile,
             profileDirectory: input.profileDirectory,
             extensionDirectories: input.extensionDirectories,
+            presentation: input.presentation,
             binaryResolution: input.binaryResolution,
         });
         if (!launchPlan.privateLaunch) {
@@ -232,7 +234,7 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
                 ...adapterResult.contextCapture,
                 // This exact transport uses the private inherited descriptors of
                 // the process above. Only an actually headless launch proves native non-observability.
-                resolveNativeObservation: (view) => !disposal && adapterResult.contextCapture?.resolvePageHandle(view)
+                resolveNativeObservation: (view) => input.presentation !== 'window' && !disposal && adapterResult.contextCapture?.resolvePageHandle(view)
                     ? 'not_observable' as const : undefined,
             } } : {}),
             dispose,

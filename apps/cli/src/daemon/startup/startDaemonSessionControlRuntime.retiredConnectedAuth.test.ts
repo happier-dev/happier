@@ -5,6 +5,7 @@ import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { configuration, reloadConfiguration } from '@/configuration';
+import type { ApiMachineClient } from '@/api/apiMachine';
 import type { StoredCredentials } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
@@ -14,7 +15,7 @@ import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeReg
 import { createDaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 import { startDaemonControlServer } from '../controlServer';
 import type { TrackedSession } from '../types';
-import { startDaemonSessionControlRuntime } from './startDaemonSessionControlRuntime';
+import { commitConnectedServiceHotApplyRuntimeTarget, startDaemonSessionControlRuntime } from './startDaemonSessionControlRuntime';
 
 // Replace only the loopback HTTP listener; startup and generation owners stay real.
 vi.mock('@/daemon/controlServer', () => ({
@@ -26,6 +27,39 @@ afterEach(() => {
     envScope.restore();
     reloadConfiguration();
     vi.restoreAllMocks();
+});
+
+it.each(['settlement', 'replacement', 'unbind'] as const)('commits group hot apply only for its own %s recipient', async (change) => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const bindings = { v: 2 as const, bindingsByServiceId: {
+        'happier.agent.codex/openai-codex': { source: 'connected' as const, selection: 'group' as const, groupId: 'pool', profileId: 'member' },
+    } };
+    const targetInput = { pid: 501, sessionId: 'group-applying', agentId: 'codex', connectedServicesBindingsRaw: bindings };
+    registry.registerTarget(targetInput);
+    const recipient = registry.getByPid(501)!;
+    const applying = registry.withdrawSessionGroupApplicationBindings(recipient)!;
+    if (change === 'replacement') {
+        registry.unregisterPid(501);
+        registry.registerTarget(targetInput);
+    } else if (change === 'unbind') {
+        registry.updateTarget({ pid: 501, sessionId: 'unbound' });
+    }
+    const beforeCommit = registry.getByPid(501);
+    const commit = commitConnectedServiceHotApplyRuntimeTarget({
+        tracked: { pid: 501, happySessionId: 'group-applying', startedBy: 'daemon' },
+        groupApplicationTarget: applying, agentId: 'codex', registry,
+        materializationIdentity: { v: 1, id: 'csm_group_apply', createdAt: 111 },
+        acceptedConnectedServicesBindingsRaw: bindings, acceptedConnectedServiceSelectionsEnv: {},
+    });
+    if (change === 'settlement') {
+        await commit;
+        expect(registry.resolveExactSessionGroupApplicationTarget(recipient)).toBe(registry.getByPid(501));
+        expect(registry.getByPid(501)?.connectedServicesBindingsRaw).toEqual(bindings);
+    } else {
+        await expect(commit).rejects.toThrow('credential_revision_superseded');
+        expect(registry.resolveExactSessionGroupApplicationTarget(recipient)).toBeNull();
+        expect(registry.getByPid(501)).toBe(beforeCommit);
+    }
 });
 
 it.each(['retained', 'removed'] as const)('skips connected credential reconciliation after runner exit leaves %s tracking custody', async (tracking) => {
@@ -52,6 +86,13 @@ it.each(['retained', 'removed'] as const)('skips connected credential reconcilia
     const trackedSessions = new Map([[retiredPid, retired], [activePid, active]]);
     const credentials = { token: 'fixture-daemon', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } } satisfies StoredCredentials;
     const mutationCustody = createDaemonSessionMutationCustody({ credentials });
+    // The machine transport is a network boundary. Its terminal receipt lets
+    // real exit staging finish instead of retaining an unconfirmed publisher.
+    const machine = {
+        captureMachineSessionTerminal: async (sessionId: string) => ({ v: 1, status: 'already_inactive', sessionId }),
+        enqueueDaemonTerminalExactTurnEnd: async () => undefined,
+    } as unknown as ApiMachineClient;
+    let reportingExit = false;
     const runtime = await startDaemonSessionControlRuntime({
         machineId: 'machine-retired-connected-auth', serverId: configuration.activeServerId,
         serverBaseUrl: configuration.apiServerUrl,
@@ -61,7 +102,7 @@ it.each(['retained', 'removed'] as const)('skips connected credential reconcilia
         connectedServicesMaterializationBaseDir: join(home, 'connected-services'),
         getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
         pidToTrackedSession: trackedSessions, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-        pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => null,
+        pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => reportingExit ? machine : null,
         spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
         connectedServicesRestartRequestedPids: new Set(),
         startupTerminalRecovery: { disconnectedTerminalHostCandidates: [], unresolvedTerminalHostSessionIds: [] },
@@ -118,10 +159,35 @@ it.each(['retained', 'removed'] as const)('skips connected credential reconcilia
             && typeof detail === 'object' && detail !== null && Reflect.get(detail, 'pid') === activePid
         ))).toBe(true));
         expect(accountReads).toHaveBeenCalledTimes(1);
+        accountReads.mockClear();
+        const unrelatedChange = await runtime.reconcileConnectedServicesProjection({
+            source: 'changes', executionAuthority: 'passive_projection', signal: new AbortController().signal,
+            connectedServiceRefs: [{ pluginId: 'happier.channel.email', localId: 'email-imap-smtp' }],
+            connectedServicesV2: [], connectedServiceCredentialRevisionsV1: [],
+        }).catch(error => error);
+        expect(accountReads, 'an email-only Account change must not reconcile a coding-agent Session').not.toHaveBeenCalled();
+        expect(unrelatedChange).toBeUndefined();
+        const matchingChange = await runtime.reconcileConnectedServicesProjection({
+            source: 'changes', executionAuthority: 'passive_projection', signal: new AbortController().signal,
+            connectedServiceRefs: [{ pluginId: 'happier.agent.claude', localId: 'claude-subscription' }],
+            connectedServicesV2: [], connectedServiceCredentialRevisionsV1: [],
+        }).catch(error => error);
+        expect(accountReads.mock.calls.some(([url]) => new URL(String(url)).pathname === `/v2/sessions/${activeSessionId}`),
+            'the affected service still performs its fresh Session admission').toBe(true);
+        expect(matchingChange).toBeInstanceOf(Error);
         expect(diagnostics.mock.calls.some(([message, detail]) => (
             message === '[DAEMON RUN] Failed to reconcile session startup follow-up'
             && typeof detail === 'object' && detail !== null && Reflect.get(detail, 'sessionId') === retiredSessionId
         ))).toBe(false);
+        // Final exit must finish Session cleanup after retiring its connected
+        // target, without consulting the removed switch-attempt counter.
+        reportingExit = true;
+        active.stopRequestedAtMs = Date.now();
+        await expect(runtime.onChildExited(activePid, {
+            reason: 'process-exited', code: 0, signal: null,
+        })).resolves.toBeUndefined();
+        expect(trackedSessions.has(activePid)).toBe(false);
+        expect(registry.getByPid(activePid)).toBeNull();
     } finally {
         await runtime.stopControlServer();
         await mutationCustody.close();

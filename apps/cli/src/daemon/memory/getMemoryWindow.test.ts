@@ -11,6 +11,21 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 describe('getMemoryWindow', () => {
+  it('leaves opaque native window continuation to the trusted reader until the hit arrives', async () => {
+    const source = { type: 'external_transcript' as const, agentId: 'pi', sourceKey: 'local', nativeSessionId: 'native' };
+    const cursors: (string | undefined)[] = [];
+    const window = await getMemoryWindow({ source, sourceItemId: 'wanted', paddingMessages: 0,
+      fetchExternalTranscriptPage: async request => {
+        cursors.push(request.cursor);
+        const found = cursors.length === 3;
+        return { items: found ? [{ id: 'wanted', createdAtMs: 1,
+          raw: { role: 'user', content: { type: 'text', text: 'native continuation hit' } } }] : [],
+          nextCursor: found ? null : 'opaque-next', hasMore: !found };
+      },
+    });
+    expect(cursors).toEqual([undefined, 'opaque-next', 'opaque-next']);
+    expect(window.externalSnippets?.map(item => item.text)).toEqual(['User: native continuation hit']);
+  });
   it('keeps an explicit native locator discontinuity instead of silently reading a different window', async () => {
     const source = { type: 'external_transcript' as const, agentId: 'pi', sourceKey: 'local', nativeSessionId: 'native' };
     const cursors: (string | undefined)[] = [];
@@ -75,7 +90,7 @@ describe('getMemoryWindow', () => {
       deps: { fetchSessionById, fetchEncryptedTranscriptMessagesPage },
     });
 
-    expect(fetchSessionById).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }));
+    expect(fetchSessionById).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal, reason: 'memory-change' }));
     expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }));
   });
   it('uses semantic extraction for provider messages and excludes events', async () => {

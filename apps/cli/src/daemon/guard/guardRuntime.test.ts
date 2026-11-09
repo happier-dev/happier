@@ -1,8 +1,11 @@
 import { mkdtemp, rm } from 'node:fs/promises';
+import * as filesystem from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MachineGuardPolicyV1Schema } from '@happier-dev/protocol/machines/guard/guardPolicyV1';
+import { MachineResourcesPolicyV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import { createGuardRuntime, type GuardPolicyWork } from './guardRuntime';
 import { createActivityLog } from './activityLog';
 import { createMachineVitalsSampler } from '../vitals/createMachineVitalsSampler';
@@ -20,6 +23,7 @@ import { createBrowserAutomationOwnerRegistry } from '../browser/automation/owne
 import { waitForChangeOrDeadline } from '../lifecycle/waitForChangeOrDeadline';
 import type { SessionDraftPresence } from '@/session/drafts/readSessionDraftPresence';
 import { createGuardSessionRestoration } from './sessionRestoration';
+import { sessionStop } from './actuators/sessionStop';
 import { createGuardLeftBehindFixture, guardLeftBehindAttribution } from './actuators/leftBehind.testkit';
 import { planLeftBehind } from './actuators/leftBehind';
 import { createProcessActionExecutor } from '../processes/actions/processActionExecutor';
@@ -39,14 +43,17 @@ describe('memory guard episode on the incumbent minute sampler', () => {
   beforeEach(async () => { vi.useFakeTimers(); vi.setSystemTime(0); directory = await mkdtemp(join(tmpdir(), 'happier-memory-guard-')); });
   afterEach(async () => { vi.useRealTimers(); await rm(directory, { recursive: true, force: true }); });
 
-  async function setup(kind: 'browser' | 'session' | 'service' = 'browser', initiallyEnabled = true, nativeLowMemorySignal?: boolean, sessionCount = 1, policyWork?: GuardPolicyWork) {
+  async function setup(kind: 'browser' | 'session' | 'service' = 'browser', initiallyEnabled = true, nativeLowMemorySignal?: boolean, sessionCount = 1, policyWork?: GuardPolicyWork, monitoringIntervalMs = 60_000) {
     let level: 'calm' | 'critical' | 'not_reported' = nativeLowMemorySignal === undefined ? 'critical' : 'not_reported';
     let lowMemorySignal = nativeLowMemorySignal;
     const pressureSource = nativeLowMemorySignal === undefined ? 'events' as const : 'none' as const;
     let available = 100;
     let missing = false;
     const sampled: number[] = [];
+    // Cadence is now an explicit Machine preference, never changed by opening Overview.
+    const resourcesPolicy = MachineResourcesPolicyV1Schema.parse({ v: 1, monitoring: { intervalMs: monitoringIntervalMs } });
     const sampler = createMachineVitalsSampler({ nowMs: Date.now, monotonicMs: Date.now,
+      readPolicy: () => resourcesPolicy,
       historyStore: await createMinuteHistoryStore({ directory: join(directory, 'minutes'), nowMs: Date.now }),
       // Native memory/counter adapter only. Minute bucketing and demand remain real.
       readers: { read: async input => {
@@ -70,6 +77,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
     let draft: SessionDraftPresence = { status: 'absent' };
     let footprint: number | undefined = 80;
     let reads = 0;
+    let activityReads = 0;
     let noticeAvailable = true;
     const browserOwners = createBrowserAutomationOwnerRegistry({ now: Date.now });
     const browserView = { browserSessionId: 'browser', viewId: 'view' };
@@ -78,11 +86,13 @@ describe('memory guard episode on the incumbent minute sampler', () => {
     let duringNativeRead: ((signal?: AbortSignal) => Promise<void>) | undefined;
     const errors: unknown[] = [];
     const background: TrackedSession = { pid: 30, happySessionId: 'background', startedBy: 'daemon', spawnOptions: { directory: '/project' } };
-    const producer = createSessionLiveWorkProducer({ readSessions: () => kind === 'session' ? sessions : [background],
-      // Session live-work RPC boundary; the canonical producer reconciles current occurrence and coverage.
-      readActivity: async session => { await duringActivityRead?.();
-        return { session: working || session !== tracked && otherSessionWorking ? 'active' : 'settled',
-          input: 'settled', agents: 'settled', attention: 'settled', settledAt: 0 }; } });
+    // Session live-work RPC boundary shared by aggregate and exact-target owners.
+    const readActivity: Parameters<typeof createSessionLiveWorkProducer>[0]['readActivity'] = async session => {
+      activityReads++; await duringActivityRead?.();
+      return { session: working || session !== tracked && otherSessionWorking ? 'active' : 'settled',
+        input: 'settled', agents: 'settled', attention: 'settled', settledAt: 0 };
+    };
+    const producer = createSessionLiveWorkProducer({ readSessions: () => kind === 'session' ? sessions : [background], readActivity });
     const inventory = createManagedActivityInventory({ producers: [producer], now: Date.now });
     const root: HappierProcessRoot = { owner: kind === 'session' ? { kind: 'session', sessionId: 's' }
       : kind === 'service' ? { kind: 'service', serviceId: 'project-service' } : { kind: 'browser_sidecar' },
@@ -99,6 +109,11 @@ describe('memory guard episode on the incumbent minute sampler', () => {
     let onNotice: ((state: SessionGuardNoticeStateV1, sessionId: string | undefined) => Promise<void>) | undefined;
     let onNativeStop: (() => Promise<void>) | undefined;
     let onStopRecorded: (() => Promise<void>) | undefined;
+    const eligibility = async (session: TrackedSession, facts: Awaited<ReturnType<typeof inventory.read>>) =>
+      evaluateSessionEligibility({ tracked: session, inventory: facts, draft,
+        resume: { sessionId: session.happySessionId!, rawSession: { machineId: 'm', path: '/project' },
+          metadata: { runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: { backendMode: 'appServer' } },
+            machineId: 'm', path: '/project', flavor: 'codex', codexSessionId: `native-${session.happySessionId}` } } });
     let policy = MachineGuardPolicyV1Schema.parse({ memoryGuard: { enabled: initiallyEnabled, sustainMs: 60000 } });
     const edges = new Set<() => void>();
     const changed = () => { for (const edge of edges) edge(); };
@@ -123,14 +138,25 @@ describe('memory guard episode on the incumbent minute sampler', () => {
               wayBack: [{ label: 'start_again', actionId: 'localServices.launcher.start', input: { machineId: 'm', serviceId: 'project-service' } }] }]
             : await Promise.all(sessions.map(async (tracked, index) => ({ kind: 'session' as const, root: roots[index], tracked, label: 'Session',
               wayBack: [{ label: 'resume' as const, actionId: 'session.open' as const, input: { sessionId: tracked.happySessionId!, intent: 'resume' } }],
-              eligibility: (await evaluateSessionEligibility({ tracked, inventory: facts,
-                draft, resume: { sessionId: tracked.happySessionId!, rawSession: { machineId: 'm', path: '/project' },
-                  metadata: { runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: { backendMode: 'appServer' } }, machineId: 'm', path: '/project', flavor: 'codex', codexSessionId: `native-${tracked.happySessionId}` } } })) }))) };
+              eligibility: await eligibility(tracked, facts) }))) };
       },
-      // Genuine native stop boundary. Acknowledgement cannot prove process absence.
-      stop: async candidate => { stops++; if (candidate.target.kind === 'session') stoppedIds.push(candidate.target.tracked.happySessionId!);
-        await onNativeStop?.();
-        return failed ? { status: 'failed', reason: 'native_stop_failed' } : { status: 'stopped' }; },
+      stop: async (candidate, signal) => {
+        // Compose the same final Session admission as startDaemon; only its
+        // native stop and Session activity transport are boundary fixtures.
+        if (candidate.target.kind === 'session') return sessionStop({ candidate, signal,
+          readCurrentTracked: id => present ? sessions.find(session => session.happySessionId === id) : undefined,
+          readCurrentEligibility: async session => {
+            const exact = createSessionLiveWorkProducer({ readSessions: () => present ? [session] : [], readActivity });
+            return eligibility(session, await exact.read());
+          },
+          stopSession: async (_id, session) => {
+            stops++; stoppedIds.push(session.happySessionId!); await onNativeStop?.(); return !failed;
+          },
+        });
+        // A native acknowledgement cannot prove process absence.
+        stops++; await onNativeStop?.();
+        return failed ? { status: 'failed', reason: 'native_stop_failed' } : { status: 'stopped' };
+      },
       onSessionStopRecorded: async () => { await onStopRecorded?.(); },
       notice: async (candidate, state) => { notices.push(state);
         await onNotice?.(state, candidate.target.kind === 'session' ? candidate.target.tracked.happySessionId : undefined);
@@ -143,10 +169,17 @@ describe('memory guard episode on the incumbent minute sampler', () => {
     const running = runtime.run(signal.signal).finally(() => { finished = true; });
     const drain = async () => {
       await sampler.start();
-      for (let i = 0; i < 4; i++) { await activity.list({ range: 'today' }); for (let turn = 0; turn < 20; turn++) await Promise.resolve(); }
+      for (let i = 0; i < 4; i++) {
+        await activity.list({ range: 'today' });
+        // A real minute append can finish after the fake clock's advance returns.
+        // Join that read, then fire only timers already due at the current time.
+        await sampler.start();
+        await vi.advanceTimersByTimeAsync(0);
+        for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+      }
     };
     await drain();
-    return { runtime, sampler, activity, sampled, notices, stoppedIds, drain, changed, get stops() { return stops; }, get notifications() { return notifications; }, get reads() { return reads; },
+    return { runtime, sampler, activity, sampled, notices, stoppedIds, drain, changed, get stops() { return stops; }, get notifications() { return notifications; }, get reads() { return reads; }, get activityReads() { return activityReads; },
       setPresent: (value: boolean, notify = true) => { present = value; if (notify) changed(); }, setFailed: (value: boolean) => { failed = value; },
       setLevel: (value: typeof level) => { level = value; }, setAvailable: (value: number) => { available = value; },
       setLowMemorySignal: (value: typeof lowMemorySignal) => { lowMemorySignal = value; },
@@ -175,7 +208,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
   }
 
   it('keeps automatic observations on minutes and owner changes while Overview samples every two seconds', async () => {
-    const fixture = await setup('service');
+    const fixture = await setup('service', true, undefined, 1, undefined, 2_000);
     const release = fixture.sampler.demandOverview();
     try {
       fixture.setLevel('calm');
@@ -369,7 +402,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
     } finally { await fixture.close(); }
   });
   it('observes an unannounced stop on the next live sample and verifies after its existing cooldown', async () => {
-    const fixture = await setup();
+    const fixture = await setup('browser', true, undefined, 1, undefined, 2_000);
     let release: (() => void) | undefined;
     try {
       await vi.advanceTimersByTimeAsync(60000); await fixture.drain();
@@ -471,12 +504,39 @@ describe('memory guard episode on the incumbent minute sampler', () => {
       expect(fixture.runtime.readEpisode()).toBeUndefined();
     } finally { await fixture.close(); }
   });
+  it('does not read Activity history when a newly started Session was never Guard-stopped', async () => {
+    const fixture = await setup('session', false);
+    const attribution = { serverId: 'home', accountId: 'owner', machineId: 'm', installationId: 'installation' };
+    await fixture.activity.append({ v: 1, id: 'unrelated', at: 0, kind: 'housekeeping', rule: 'housekeeping', outcome: 'done', attribution });
+    let journalReads = 0;
+    const realOpen = filesystem.open;
+    const observed = vi.spyOn(filesystem, 'open').mockImplementation(async (...args) => {
+      const [path, flags] = args;
+      if (String(path).startsWith(join(directory, 'machine-guard', 'activity-'))
+        && (flags === 'r' || typeof flags === 'number' && (flags & (constants.O_WRONLY | constants.O_RDWR)) === 0)) journalReads++;
+      return realOpen(...args);
+    });
+    try {
+      const restoration = createGuardSessionRestoration({ activity: fixture.activity, nowMs: Date.now });
+      for (let index = 0; index < 5; index++) await restoration.onSessionRunnerStarted({
+        pid: 40 + index, happySessionId: `fresh-${index}`, startedBy: 'daemon', requesterWorkAttributionV1: attribution,
+      });
+      expect(journalReads).toBe(0);
+      expect((await fixture.activity.list({ range: 'today' })).entries.map(row => row.id)).toEqual(['unrelated']);
+    } finally { observed.mockRestore(); await fixture.close(); }
+  });
   it.each(['idle', 'memory'] as const)('folds a %s stop receipt when the native replacement is ready before the receipt is appended', async rule => {
     const fixture = await setup('session', rule === 'memory');
     try {
       const attribution = { serverId: 'home', accountId: 'owner', machineId: 'm', installationId: 'installation' };
-      const restored: TrackedSession = { pid: 40, happySessionId: 's', startedBy: 'daemon', requesterWorkAttributionV1: attribution };
+      const restored: TrackedSession = { pid: 40, happySessionId: 's', startedBy: 'daemon', requesterWorkAttributionV1: attribution,
+        happySessionMetadataFromLocalWebhook: { path: '/project', host: 'host', homeDir: '/home/test', happyHomeDir: '/home/test/.happier',
+          happyLibDir: '/opt/happier', happyToolsDir: '/home/test/.happier/tools' } };
       const restoration = createGuardSessionRestoration({ activity: fixture.activity, nowMs: Date.now });
+      // The Session notice RPC publishes this same requested metadata before acknowledging the stop intent.
+      fixture.onNotice(async state => {
+        if (state.kind === 'stopped') restored.happySessionMetadataFromLocalWebhook!.sessionGuardStateV1 = { v: 1, ...state, kind: 'requested' };
+      });
       // OS launch/stop ordering: replacement webhook settles before the outgoing stop acknowledgement.
       fixture.onNativeStop(async () => {
         await restoration.onSessionRunnerStarted(restored);
@@ -492,6 +552,25 @@ describe('memory guard episode on the incumbent minute sampler', () => {
       const receipt = (await fixture.activity.list({ range: 'today' })).entries.find(row => row.kind === 'stopped_session');
       expect(receipt).toBeDefined();
       expect(receipt?.undoneAt).toBe(receipt?.at);
+    } finally { await fixture.close(); }
+  });
+  it('retains a failed wake receipt and marks the stopped Session undone only after it actually starts', async () => {
+    const fixture = await setup('session', false);
+    const attribution = { serverId: 'home', accountId: 'owner', machineId: 'm', installationId: 'installation' };
+    try {
+      await fixture.activity.append({ v: 1, id: 'prior-stop', at: 0, kind: 'stopped_session', rule: 'idle_sessions', outcome: 'done', attribution,
+        subject: { kind: 'session', sessionId: 'stopped', title: 'Authored title' },
+        wayBack: [{ label: 'resume', actionId: 'session.open', input: { sessionId: 'stopped' } }] });
+      const restoration = createGuardSessionRestoration({ activity: fixture.activity, nowMs: Date.now });
+      await restoration.onActivationRejected({ sessionId: 'stopped', reason: 'spawn-rejected', requester: attribution, failure: { reason: 'no_ptys' } });
+      expect((await fixture.activity.list({ range: 'today' })).entries).toContainEqual(expect.objectContaining({
+        kind: 'start_failed', ref: 'prior-stop', failure: { reason: 'no_ptys' }, nextStep: 'close_idle_terminals',
+      }));
+      expect((await fixture.activity.read('prior-stop'))?.undoneAt).toBeUndefined();
+      await restoration.onSessionRunnerStarted({ pid: 40, happySessionId: 'stopped', startedBy: 'daemon', requesterWorkAttributionV1: attribution,
+        happySessionMetadataFromLocalWebhook: { path: '/project', host: 'host', homeDir: '/home/test', happyHomeDir: '/home/test/.happier',
+          happyLibDir: '/opt/happier', happyToolsDir: '/home/test/.happier/tools', sessionGuardStateV1: { v: 1, kind: 'stopped', at: 0, rule: 'idle_sessions' } } });
+      expect((await fixture.activity.read('prior-stop'))?.undoneAt).toBe(0);
     } finally { await fixture.close(); }
   });
   it('keeps simultaneous Session countdowns separate while sharing the earliest real deadline', async () => {
@@ -570,7 +649,31 @@ describe('memory guard episode on the incumbent minute sampler', () => {
       expect(fixture.reads).toBe(reads);
       expect(fixture.stops).toBe(1);
       expect((await fixture.activity.list({ range: 'today' })).entries.filter(entry => entry.kind === 'stop_failed')).toEqual([
-        expect.objectContaining({ rule: 'idle_sessions', outcome: 'failed' })]);
+        // The final owner now settles the cancelled working intent as well as
+        // the later genuine native failure; neither means the Session stopped.
+        expect.objectContaining({ rule: 'idle_sessions', outcome: 'failed', note: 'stop_incomplete' }),
+        expect.objectContaining({ rule: 'idle_sessions', outcome: 'failed', note: 'working' })]);
+    } finally { await fixture.close(); }
+  });
+  it.each(['idle', 'memory'] as const)('uses only the final exact Session admission after an awaited %s stop notice', async rule => {
+    const fixture = await setup('session', rule === 'memory', undefined, 5);
+    let readsAtNotice = 0;
+    let readsAtNative: number | undefined;
+    try {
+      if (rule === 'idle') fixture.setIdlePolicy({ enabled: true, afterMs: 600000 });
+      fixture.onNotice(async state => {
+        if (state.kind !== 'stopped') return;
+        // The network ACK yields after planning; final admission must not
+        // re-observe four unrelated Session transports before this target.
+        readsAtNotice = fixture.activityReads;
+        await Promise.resolve();
+      });
+      fixture.onNativeStop(async () => { readsAtNative ??= fixture.activityReads - readsAtNotice; });
+      for (let minute = 0; minute < (rule === 'idle' ? 10 : 6); minute++) {
+        await vi.advanceTimersByTimeAsync(60000); await fixture.drain();
+      }
+      expect(fixture.stoppedIds).toContain('s');
+      expect(readsAtNative).toBe(1);
     } finally { await fixture.close(); }
   });
   it('uses canonical native low-memory pressure for admission, critical receipts and observed recovery', async () => {

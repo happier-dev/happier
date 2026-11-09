@@ -1,6 +1,3 @@
-import { createBrowserProfileCookieImporter } from "@/daemon/browser/profiles/importCookies";
-import { createBrowserProfilePasskeyImporter } from "@/daemon/browser/profiles/importPasskeys";
-import { createBrowserProfilePasskeyAuthenticator } from "@/daemon/browser/profiles/passkeys";
 import { invalidateProcessLaunchDiscovery } from "@/processes/launchNotification";
 import { join, resolve } from "node:path";
 import type { ApiMachineClient } from "@/api/apiMachine";
@@ -42,13 +39,17 @@ import type { BrowserRecordingRoutes } from "@/daemon/browser/recording/routes";
 import type { BrowserProfileStore } from "@/daemon/browser/profiles/store";
 import { createConfiguredBrowserProfileStore } from "@/daemon/browser/profiles/configuredStore";
 import { createBrowserExtensionService } from "@/daemon/browser/extensions/service";
+import { createBrowserProfilePasskeyImporter } from "@/daemon/browser/profiles/importPasskeys";
+import { createBrowserProfileCookieImporter } from "@/daemon/browser/profiles/importCookies";
+import { createBrowserProfilePasskeyAuthenticator } from "@/daemon/browser/profiles/passkeys";
 import type { BrowserSidecarContextCaptureSurface, BrowserSidecarControlAdapterFactory, BrowserSidecarControlAdapterFactoryInput, BrowserSidecarControlAdapterFactoryResult } from "@/daemon/browser/sidecar/controlAdapter";
 import { createProductBrowserSidecarControlAdapterFactory } from "@/daemon/browser/sidecar/productSource";
+import { createBrowserDaemonViewDiscovery } from './viewDiscovery';
 import { createBrowserDaemonFeatureGate, type BrowserDaemonFeatureGate } from "@/daemon/browser/featureGate";
 import type { MachineLiveStreamCaptureRegistry } from "@/daemon/peer/mediation/stream";
 import { type CliServerFeaturesSnapshot } from "@/features/serverFeaturesClient";
 import type { StoredCredentials } from '@/persistence';
-import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality';
+import { createRecordingSessionMediaHost } from '../../recording/sessionMediaHost';
 import type { DaemonSessionMutationCustody } from "@/daemon/connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody";
 
 export type DaemonBrowserStoragePurgeOwner = Readonly<{
@@ -130,7 +131,7 @@ setBrowserRecordingRoutesProvider?: (
     publishBrowserAutomationRuntimeProvisioner: () => void;
     retire: () => void;
     dispose: () => Promise<void>;
-    stopRecording: () => void;
+    stopRecording: () => Promise<void>;
     purgeBrowserStorageForSessionDeleted: (sessionId: string) => Promise<void>;
     purgeBrowserStorageForLogout: () => Promise<void>;
 }> {
@@ -176,6 +177,8 @@ setBrowserRecordingRoutesProvider?: (
     null;
   let browserDiagnosticsActionRoutesHasInteraction = false;
   const browserControlBroker = createBrowserDaemonControlBroker();
+  const browserViewDiscovery = createBrowserDaemonViewDiscovery({ broker: browserControlBroker,
+    captureRegistry: params.liveStreamCaptureRegistry });
   const browserAutomationOwners = createBrowserAutomationOwnerRegistry();
   let browserAutomationCdpTransport: BrowserAutomationCdpTransport | null =
     null;
@@ -218,6 +221,7 @@ setBrowserRecordingRoutesProvider?: (
   let browserRecordingRoutesPublished = false;
   let refreshBrowserRouteOwnersInFlight: Promise<void> | null = null;
   const publishBrowserRouteOwners = (): void => {
+    params.getApiMachineForSessions()?.registerBrowserViewDiscovery?.(browserViewDiscovery);
     if (browserControlRoutes && !browserControlRoutesPublished) {
       browserControlRoutesPublished = true;
       runtimeActionRouteProviderTarget.setBrowserDaemonControlRoutesProvider?.(
@@ -236,7 +240,7 @@ setBrowserRecordingRoutesProvider?: (
       params.onBrowserContextRoutesReady?.(browserContextRoutes);
       params
         .getApiMachineForSessions()
-        ?.registerBrowserContextRoutes?.(browserContextRoutes);
+        ?.registerBrowserContextRoutes?.(browserContextRoutes, () => browserControlRoutes);
     }
     if (browserAutomationRoutes && !browserAutomationRoutesPublished) {
       browserAutomationRoutesPublished = true;
@@ -250,7 +254,7 @@ setBrowserRecordingRoutesProvider?: (
       params.onBrowserDiagnosticsRoutesReady?.(browserDiagnosticsRoutes);
       params
         .getApiMachineForSessions()
-        ?.registerBrowserDiagnosticsRoutes(browserDiagnosticsRoutes);
+        ?.registerBrowserDiagnosticsRoutes(browserDiagnosticsRoutes, () => browserControlRoutes);
     }
     if (browserDiagnosticsActionRoutes) {
       runtimeActionRouteProviderTarget.setBrowserDiagnosticsActionRoutesProvider?.(
@@ -266,7 +270,7 @@ setBrowserRecordingRoutesProvider?: (
       params.onBrowserRecordingRoutesReady?.(browserRecordingRoutes);
       params
         .getApiMachineForSessions()
-        ?.registerBrowserRecordingRoutes(browserRecordingRoutes);
+        ?.registerBrowserRecordingRoutes(browserRecordingRoutes, () => browserControlRoutes);
     }
   };
   const refreshBrowserRouteOwners = async (): Promise<void> => {
@@ -357,6 +361,7 @@ setBrowserRecordingRoutesProvider?: (
               });
             }
             browserControlRoutes = createBrowserDaemonControlRoutes({
+              profiles: browserProfileStore,
               ...(browserSidecarControlAdapterResult.extensions ? {
                 extensions: createBrowserExtensionService({ profileStore: browserProfileStore,
                   runtime: browserSidecarControlAdapterResult.extensions }),
@@ -520,12 +525,14 @@ setBrowserRecordingRoutesProvider?: (
             browserDiagnosticsEnabled &&
             !browserSidecarDiagnosticsRuntime &&
             browserSidecarContextCapture?.subscribeCdpEvents &&
-            browserSidecarContextCapture.subscribeViewLifecycle
+            browserSidecarContextCapture.subscribeViewLifecycle &&
+            browserSidecarContextCapture.getNavigationState
           ) {
             const subscribeCdpEvents =
               browserSidecarContextCapture.subscribeCdpEvents;
             const subscribeViewLifecycle =
               browserSidecarContextCapture.subscribeViewLifecycle;
+            const getNavigationState = browserSidecarContextCapture.getNavigationState;
             browserSidecarDiagnosticsRuntime = createSidecarCdpDiagnosticsRuntime({
               ownerAccountId: params.machineId,
               store: browserDiagnosticsStore,
@@ -536,6 +543,7 @@ setBrowserRecordingRoutesProvider?: (
                   browserSidecarContextCapture.resolvePageHandle(view),
                 subscribeCdpEvents,
                 subscribeViewLifecycle,
+                getNavigationState,
               },
               isEnabled: () =>
                 browserDaemonFeatureGate.isEnabled('browser.diagnostics'),
@@ -612,7 +620,7 @@ setBrowserRecordingRoutesProvider?: (
         browserSidecarContextCaptureForRecording?.subscribeCdpEvents &&
         !browserRecordingRuntimeHasCdpScreencast
       ) {
-        browserRecordingRuntime.stop();
+        await browserRecordingRuntime.stop();
         browserRecordingRuntime = null;
         params.onBrowserRecordingRuntimeReady?.(null);
         browserRecordingRoutesPublished = false;
@@ -638,34 +646,12 @@ setBrowserRecordingRoutesProvider?: (
         browserRecordingRuntime = createBrowserRecordingDaemonRuntime({
           workingDirectory: configuration.happyHomeDir,
           resolveInputControl: resolveBrowserInputControl,
-          resolveWorkingDirectory: async ({ sessionId }) => {
-            const workspace = await readOwnSessionMachineWorkspace({
-              credentials: params.credentials,
-              serverHttpBaseUrl: params.serverBaseUrl,
-              sessionId,
-              machineId: params.machineId,
-              currentMachineHost: params.currentMachineHost ?? '',
-              currentMachineHomeDir: params.currentMachineHomeDir ?? '',
-              signal: shutdownSignal,
-            });
-            if (!workspace)
-              throw new Error(
-                'Browser recording session working directory is unavailable.',
-              );
-            return workspace.rootPath;
-          },
-          commitAttachment: async ({ sessionId, localId, meta }) => {
-            await params.daemonSessionMutationCustody.stageTranscriptMessage({
-              sessionId,
-              localId,
-              messageRole: 'user',
-              payload: {
-                role: 'user',
-                content: { type: 'text', text: 'Browser recording' },
-                meta,
-              },
-            });
-          },
+          ...createRecordingSessionMediaHost({
+            credentials: params.credentials, serverHttpBaseUrl: params.serverBaseUrl,
+            machineId: params.machineId, currentMachineHost: params.currentMachineHost ?? '',
+            currentMachineHomeDir: params.currentMachineHomeDir ?? '', signal: shutdownSignal,
+            mutationCustody: params.daemonSessionMutationCustody, title: 'Browser recording',
+          }),
           liveStreamCaptureRegistry: params.liveStreamCaptureRegistry,
           streamFrameEncoderFactory:
             params.browserRecordingStreamFrameEncoderFactory,
@@ -795,6 +781,7 @@ setBrowserRecordingRoutesProvider?: (
   };
   const retire = (): void => { controlRuntimeResourcesDisposed = true; };
   const dispose = async (): Promise<void> => {
+    await stopRecording();
     if (browserControlRoutes) {
       runtimeActionRouteProviderTarget.setBrowserDaemonControlRoutesProvider?.(
         null,
@@ -845,8 +832,8 @@ setBrowserRecordingRoutesProvider?: (
     browserProfilePasskeys = null;
     await disposeBrowserSidecarControlAdapter?.();
   };
-  const stopRecording = (): void => {
-    browserRecordingRuntime?.stop();
+  const stopRecording = async (): Promise<void> => {
+    await browserRecordingRuntime?.stop();
     browserRecordingRuntime = null;
     params.onBrowserRecordingRuntimeReady?.(null);
   };

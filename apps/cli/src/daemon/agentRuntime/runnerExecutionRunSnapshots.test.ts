@@ -12,10 +12,19 @@ import { reloadConfiguration } from '@/configuration';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import type { AgentRuntimeDaemonServiceRoutes } from '@/daemon/controlServer';
 import { createRunnerExecutionRunSnapshots } from './runnerExecutionRunSnapshots';
+import { assertExecutionRunStructuredOutputModelAllowed } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
+import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
 describe('runner execution-run snapshot SCM preparation', () => {
-  it('does not borrow native model evidence for an unavailable configured target', async () => {
-    const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
+  it('reads declared model variants through one retained snapshot and refuses unavailable configured targets', async () => {
+    const runtime = await createAuthoredAdmittedPluginRuntimeFixture({
+      // This RPC fixture owns one Agent; retain real physical admission without
+      // projecting the unrelated bundled contribution universe.
+      resolveContributes: async happyHomeDir => createResolvedContributionRegistry(await resolvePluginContributes({
+        happyHomeDir, agentIdentity: { pluginId: 'acme.snapshot-model', localId: 'agent' },
+      })),
+      plugins: [{
       manifest: createPluginManifestV2Fixture({ id: 'acme.snapshot-model', contributes: { agents: [{
         id: 'agent', title: 'Snapshot model Agent', runtime: { kind: 'custom' }, primary: 'sessions',
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
@@ -25,7 +34,11 @@ describe('runner execution-run snapshot SCM preparation', () => {
         'daemon.mjs': `import { createRuntime } from './agent.mjs';
           export function activate(api) { api.agents.register('agent', createRuntime, {
             sessionRunnerFactory: { module: './agent.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
-            preflightSessionControls: { probeModels: () => [{ id: 'default', name: 'Native default' }] }
+            preflightSessionControls: { probeModels: () => ({ source: 'static', refreshError: true,
+              availableModels: [{ id: 'default', name: 'Native default',
+                contextWindowTokens: 32768, capabilities: { structuredOutput: 'unknown' } },
+                { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6', contextWindowTokens: 200000,
+                  extendedContextModelId: 'claude-sonnet-4-6[1m]', capabilities: { structuredOutput: 'supported' } }] }) }
           }); }`,
       },
     }] });
@@ -52,20 +65,51 @@ describe('runner execution-run snapshot SCM preparation', () => {
         { kind: 'backend', backendId: agentId },
         { kind: 'backend', backendId: agentId, sourceKind: 'configured', configuredBackendId: 'absent-definition' },
       ] as const) {
+        const readsBeforeAcquisition = modelAccountReads;
         const acquisition = dispatch({ kind: 'execution_run.snapshot.acquire_v1', backendTarget });
         if ('sourceKind' in backendTarget && backendTarget.sourceKind === 'configured') {
           // A definition belongs to its declared Agent, never the unrelated
           // Agent whose routing id happened to accompany the retained ref.
           await expect(acquisition).rejects.toThrow();
-          expect(modelAccountReads).toBe(1);
+          expect(modelAccountReads).toBe(readsBeforeAcquisition);
           continue;
         }
         const acquired = await acquisition;
         if (!acquired.ok || acquired.result.kind !== 'execution_run.snapshot') throw new Error('Missing model snapshot');
+        const snapshotId = acquired.result.snapshotId;
         const result = dispatch({ kind: 'execution_run.native_offered_model.read_v1', backendTarget,
           modelId: 'default', cwd: runtime.happyHomeDir }, acquired.result.snapshotId);
         await expect(result).resolves.toMatchObject({ ok: true,
-          result: { kind: 'execution_run.native_offered_model', model: { id: 'default' } } });
+          result: { kind: 'execution_run.native_offered_model', model: { id: 'default',
+            contextWindowTokens: 32768, capabilities: { structuredOutput: 'unknown' } } } });
+        await expect(assertExecutionRunStructuredOutputModelAllowed({
+          backendTarget: { kind: 'builtInAgent', agentId }, modelId: 'default', cwd: runtime.happyHomeDir,
+          readNativeOfferedModel: async () => {
+            const response = await dispatch({ kind: 'execution_run.native_offered_model.read_v1', backendTarget,
+              modelId: 'default', cwd: runtime.happyHomeDir }, snapshotId);
+            if (!response.ok || response.result.kind !== 'execution_run.native_offered_model') throw new Error('Missing model fact');
+            return response.result.model ?? undefined;
+          },
+        })).rejects.toMatchObject({ code: 'model_structured_output_unsupported' });
+        const modelSnapshotId = acquired.result.snapshotId;
+        const readModel = async (modelId: string) => {
+          const response = await dispatch({ kind: 'execution_run.native_offered_model.read_v1', backendTarget,
+            modelId, cwd: runtime.happyHomeDir }, modelSnapshotId);
+          if (!response.ok || response.result.kind !== 'execution_run.native_offered_model') throw new Error('Missing model fact');
+          return response.result.model ?? undefined;
+        };
+        // A stale refresh retains both the base model and its explicitly declared
+        // variant. Undeclared bracket suffixes must not borrow that evidence.
+        await expect(readModel('claude-sonnet-4-6[1m]')).resolves.toMatchObject({
+          id: 'claude-sonnet-4-6[1m]', capabilities: { structuredOutput: 'supported' },
+        });
+        expect(await readModel('claude-sonnet-4-6[1m]')).not.toHaveProperty('contextWindowTokens');
+        await expect(readModel('claude-sonnet-4-6')).resolves.toMatchObject({ contextWindowTokens: 200000 });
+        await expect(assertExecutionRunStructuredOutputModelAllowed({
+          backendTarget: { kind: 'builtInAgent', agentId }, modelId: 'claude-sonnet-4-6[1m]',
+          cwd: runtime.happyHomeDir, readNativeOfferedModel: ({ modelId }) => readModel(modelId),
+        })).resolves.toBeUndefined();
+        await expect(readModel('claude-sonnet-4-6[2m]')).rejects.toMatchObject({ code: 'model_catalog_unavailable' });
         await dispatch({ kind: 'execution_run.snapshot.release_v1', snapshotId: acquired.result.snapshotId });
       }
     } finally {

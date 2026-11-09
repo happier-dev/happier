@@ -20,6 +20,12 @@ export type HappierProcessRootSource = Readonly<{
     startAgain?: HappierProcessRoot['startAgain'];
     requesterWorkAttributionV1?: HappierProcessRoot['requesterWorkAttributionV1'];
 }>;
+/** Current admitted engine observation; PID alone is not host process ownership. */
+export type NativeContainerProcessSource = Readonly<{
+    owner: Extract<ProcessOwnerRef, { kind: 'container' }>; pid: number;
+    requesterWorkAttributionV1?: HappierProcessRoot['requesterWorkAttributionV1'];
+    workspacePath?: string;
+}>;
 export type HappierProcessRootsInput = Readonly<{
     snapshot: Extract<ProcessCensusSnapshot, { status: 'ok' }>;
     selfPid?: number; happierHomeDir?: string; daemonScopeKey?: string; platform?: NodeJS.Platform; bootTimeMs?: number;
@@ -33,6 +39,7 @@ export type HappierProcessRootsInput = Readonly<{
     terminalRegistry?: TerminalProcessRegistry;
     terminalRequesterAttribution?: (terminalId: string) => HappierProcessRoot['requesterWorkAttributionV1'];
     managedServices?: readonly HappierProcessRootSource[];
+    nativeContainers?: readonly NativeContainerProcessSource[];
     executionRuns?: readonly HappierProcessRootSource[];
     helperProcesses?: readonly HappierProcessRootSource[];
     /** Existing lifecycle owners supply ended facts; an arbitrary tag is never proof of an owner. */
@@ -98,6 +105,19 @@ export function listHappierProcessRoots(input: HappierProcessRootsInput): readon
             ...(requesterWorkAttributionV1 ? { requesterWorkAttributionV1 } : {}) });
     }
     sources.push(...input.managedServices ?? [], ...input.executionRuns ?? [], ...input.helperProcesses ?? [], ...input.endedRoots ?? []);
+    if (platform === 'linux') for (const source of input.nativeContainers ?? []) {
+        const row = index.byPid.get(source.pid);
+        if (!row?.cgroup?.startsWith('/') || !/^[a-f0-9]{64}$/u.test(source.owner.containerId)) continue;
+        const parts = row.cgroup.split('/');
+        if (parts.some(part => part === '.' || part === '..')) continue;
+        // Docker's full-ID cgroupfs/systemd contract (observed 2026-10-27):
+        // https://docs.docker.com/engine/containers/runmetrics/#find-the-cgroup-for-a-given-container
+        // Match the complete native ID at a path boundary; a remote/Desktop PID or prefix is no proof.
+        const boundary = parts.findIndex((part, index) => part === `docker-${source.owner.containerId}.scope`
+            || part === source.owner.containerId && parts[index - 1] === 'docker');
+        if (boundary < 0) continue;
+        sources.push({ ...source, start: row.start, containment: { kind: 'linux_container', prefix: parts.slice(0, boundary + 1).join('/') } });
+    }
     // The component tag is written only by the named spawn owner. A current daemon chain
     // supplies its live lifetime without a parallel registration collection.
     for (const row of input.snapshot.rows) {
@@ -126,9 +146,12 @@ export function listHappierProcessRoots(input: HappierProcessRootsInput): readon
             if (!tag || tag.daemonScopeKey !== scope || processOwnerKey(tag.owner) !== processOwnerKey(source.owner)
                 || !self || compareProcessPrincipals(row?.principal ?? null, self.principal) !== 'self') continue;
         }
-        const start = source.start ?? (source.processStartTimeMs === undefined ? row?.start : { startTimeMs: source.processStartTimeMs });
-        if (!start) continue;
-        const currentGeneration = row !== undefined && equalProcessStart(start, row.start);
+        const witnessedStart = source.start ?? (source.processStartTimeMs === undefined ? row?.start : { startTimeMs: source.processStartTimeMs });
+        if (!witnessedStart) continue;
+        const currentGeneration = row !== undefined && equalProcessStart(witnessedStart, row.start);
+        // Lifecycle timestamps admit the birth; the matching native observation
+        // supplies its complete identity to every consumer, including Guard refs.
+        const start = currentGeneration && row ? row.start : witnessedStart;
         const live = source.live !== false && currentGeneration;
         const nativeCreatedAt = platform === 'linux' && input.bootTimeMs !== undefined
             ? input.bootTimeMs + start.startTimeMs : platform === 'linux' ? input.snapshot.capturedAtMs : start.startTimeMs;
@@ -188,9 +211,3 @@ export async function readProcessOwnershipBootTimeMs(platform: NodeJS.Platform =
         return value === undefined ? undefined : Number(value) * 1000;
     } catch { return undefined; }
 }
-
-export type NativeContainerProcessSource = Readonly<{
-    owner: Extract<ProcessOwnerRef, { kind: 'container' }>; pid: number;
-    requesterWorkAttributionV1?: HappierProcessRoot['requesterWorkAttributionV1'];
-    workspacePath?: string;
-}>;

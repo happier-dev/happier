@@ -4,6 +4,38 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import type { HappyProcessInfo } from '@/daemon/doctor';
 import { daemonProcessMatchesCurrentScope } from './daemonProcessScopeIdentity';
 
+it('binds a published standalone owner to its recorded home and endpoint without requiring launcher scope variables', () => {
+  const scope = createEnvKeyScope(['HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID']);
+  scope.patch({ HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: undefined });
+  try {
+    const candidate: HappyProcessInfo = {
+      pid: process.pid + 1, type: 'daemon', command: 'node /repo/apps/cli/src/index.ts daemon start-sync',
+      daemonOwnershipEnvironmentVariables: {
+        HAPPIER_HOME_DIR: configuration.happyHomeDir,
+        HAPPIER_SERVER_URL: configuration.serverUrl,
+      },
+    };
+    expect(daemonProcessMatchesCurrentScope(candidate, { requireRecordedScopeFacts: true })).toBe(true);
+    expect(daemonProcessMatchesCurrentScope(candidate, { requireScopeIdentity: true })).toBe(false);
+    for (const mismatch of [
+      { HAPPIER_HOME_DIR: `${configuration.happyHomeDir}-foreign` },
+      { HAPPIER_SERVER_URL: 'https://foreign.invalid' },
+      { HAPPIER_HOME_DIR: '' },
+      { HAPPIER_SERVER_URL: '' },
+      { HAPPIER_ACTIVE_SERVER_ID: 'foreign' },
+      { HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'foreign' },
+    ]) {
+      expect(daemonProcessMatchesCurrentScope({ ...candidate, daemonOwnershipEnvironmentVariables: {
+        ...candidate.daemonOwnershipEnvironmentVariables, ...mismatch,
+      } }, { requireRecordedScopeFacts: true })).toBe(false);
+    }
+    scope.patch({ HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'explicit-caller' });
+    expect(daemonProcessMatchesCurrentScope(candidate, { requireRecordedScopeFacts: true })).toBe(false);
+  } finally {
+    scope.restore();
+  }
+});
+
 it('requires home and lifecycle proof for recovery while retaining force-stop endpoint proof', () => {
   const scope = createEnvKeyScope(['HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID']);
   scope.patch({ HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'scope-test' });

@@ -178,6 +178,7 @@ import {
 } from './startup/createProductionDaemonWorkspaceSyncRuntime';
 import { createDaemonWorkspaceSyncRuntimeCustody } from './startup/daemonWorkspaceSyncRuntimeCustody';
 import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
+import { createProjectWorkerMemorySource } from '@/workspaces/execution/projectWorkerMemorySource';
 import { createProjectWorkerAction } from '@/workspaces/execution/projectWorkerAction';
 import { createAccountServerMachineFinitePolicyClient } from '@/api/machine/accountServerMachineFinitePolicyClient';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
@@ -431,6 +432,11 @@ export async function startDaemon(
   let daemonKeepAwake: ReturnType<typeof createDaemonKeepAwake> | null = null;
   let daemonGuard: Awaited<ReturnType<typeof createDaemonGuard>> | null = null;
   let stopProviderAccountSettings: (() => Promise<void>) | null = null;
+  const shutdownProviderAccountSettings = async () => {
+    await stopProviderAccountSettings?.().catch(stopError =>
+      logger.warn('[DAEMON RUN] Agent Account settings shutdown failed', stopError));
+    stopProviderAccountSettings = null;
+  };
   let sessionCeiling: ReturnType<typeof createSessionMemoryCeiling> | undefined;
   let guardSessionRestoration: ReturnType<typeof createGuardSessionRestoration> | null = null;
   let storageRoutes: DaemonStorageRoutes | null = null;
@@ -1138,9 +1144,7 @@ export async function startDaemon(
       }),
       drainBackgroundServerWork: async () => {
         homeTransportCancellation.abort();
-        await stopProviderAccountSettings?.().catch(stopError =>
-          logger.warn('[DAEMON RUN] Agent Account settings shutdown failed', stopError));
-        stopProviderAccountSettings = null;
+        await shutdownProviderAccountSettings();
         releaseAcpCatalogHydrationObserver?.();
         storageRoutes?.dispose();
         storageRoutes = null;
@@ -3198,7 +3202,7 @@ export async function startDaemon(
     const runtimeBootstrap = await startDaemonRuntimeBootstrap({
       secretSources: daemonSecretSources,
       publicProfileRefresh: nativeAccountRefresh,
-      artifactQueryHints: { signal: nativeAccountRefresh.signal, isCurrent: nativeAccountRefresh.isCurrent,
+      artifactQueryHints: { signal: nativeAccountRefresh.signal,
         resolveServerFeaturesSnapshot: () => serverFeaturesSnapshotStore.getSnapshot() },
       api,
       credentials,
@@ -3787,6 +3791,7 @@ export async function startDaemon(
         }) => {
           return await workspaceSyncRuntimeCustody.acquire(registeredMachineId, async () => {
             const finiteServerId = configuration.activeServerId;
+            const workspaceMachineIrohRuntime = machineIrohRuntime;
             const isCurrent = async () => {
               const refuse = (reason: string) => {
                 logger.debug('[ProjectFinite] Installed runtime refused', { reason });
@@ -3808,12 +3813,7 @@ export async function startDaemon(
             });
             const admission = createProjectWorkerAdmission({ machineId: registeredMachineId,
               readPolicy: policyClient.get, admissionDrain,
-              readMemory: () => {
-                const sample = machineVitals?.latest();
-                if (!sample || machineVitals?.state().state !== 'reporting' || !sample.memory.reported
-                  || Date.now() - sample.sampledAt > 2 * sample.intervalMs) return null;
-                return { totalBytes: sample.memory.totalBytes, availableBytes: sample.memory.availableBytes };
-              },
+              ...createProjectWorkerMemorySource(() => machineVitals),
             });
             projectWorkerAdmission = admission;
             const openMachineCarrierTunnel = machineIrohRuntime && externalActionAccountId
@@ -3863,13 +3863,13 @@ export async function startDaemon(
               onReadinessPublished,
               onStatusPublished,
               ...(openMachineCarrierTunnel ? { openMachineCarrierTunnel } : {}),
-              ...(machineIrohRuntime ? {
+              ...(workspaceMachineIrohRuntime ? {
                 createRequesterMachineCarrierTunnel: ({ credentials: requesterCredentials, accountId }: Readonly<{
                   credentials: StoredCredentials; accountId: string;
                 }>) => {
                   const requesterApi = ApiClient.create(requesterCredentials);
                   return createWorkspaceMachineCarrierTunnelOpen({ accountId, localMachineId: registeredMachineId,
-                    runtime: machineIrohRuntime, resolveTrustRoots: resolvePeerMediationTrustRoots,
+                    runtime: workspaceMachineIrohRuntime, resolveTrustRoots: resolvePeerMediationTrustRoots,
                     readTargetMachine: async (machineId, signal) => (await requesterApi).getMachine(machineId, { signal }),
                     mintGrant: async (request, signal) => (await requesterApi).mintPeerMediationRouteGrant(request, { signal }),
                   });
@@ -4456,9 +4456,7 @@ export async function startDaemon(
     releaseMachineAdmissionTransport();
   } catch (error) {
     homeTransportCancellation.abort();
-    await stopProviderAccountSettings?.().catch(stopError =>
-      logger.warn('[DAEMON RUN] Agent Account settings shutdown failed', stopError));
-    stopProviderAccountSettings = null;
+    await shutdownProviderAccountSettings();
     await publicProfileRefreshHandle?.stop().catch(stopError =>
       logger.debug('[DAEMON RUN] Public-profile refresh drain failed during startup cleanup', stopError));
     storageRoutes?.dispose();

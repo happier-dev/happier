@@ -254,11 +254,12 @@ resolveServerFeaturesSnapshot?: () =>
       let executionContext = context;
       let observedServerIdentityId: string | null = null;
       if (context?.externalActionExecutionAuthorization) {
+        const actionSignal = context.signal;
         let origin: CurrentMachineExecutionOriginContext | null = null;
         try {
           origin =
             await measureActionStartPhaseV1(context, 'machine_origin', async () =>
-              await params.resolveCurrentMachineExecutionOriginContext?.(context.signal) ?? null);
+              await params.resolveCurrentMachineExecutionOriginContext?.(actionSignal) ?? null);
         } catch {
           origin = null;
         }
@@ -944,12 +945,13 @@ resolveServerFeaturesSnapshot?: () =>
           prepareDeploymentTeardown: deploymentDeps.prepareDeploymentTeardown } : {}),
         ...(projectWorkerAction ? { projectWorkerAction: request => {
           const ingress = resolveRequesterIngress(request.context);
-          return projectWorkerAction({ ...request, context: ingress ? { ...request.context,
+          const context: RpcActionExecutorContext | undefined = ingress ? { ...request.context,
             machineAdmission: ingress.machineAdmission,
             verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent,
             ...(ingress.callerInputAuthorization
               ? { externalActionExecutionAuthorization: ingress.callerInputAuthorization } : {}),
-          } : request.context });
+          } : request.context;
+          return projectWorkerAction({ ...request, context });
         } } : {}),
         ...(apiMachineForSessions
           ? {

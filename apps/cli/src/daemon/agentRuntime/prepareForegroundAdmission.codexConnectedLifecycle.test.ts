@@ -53,6 +53,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
           const result = await fixture.prepare({ connectedServices, sessionId: request.sessionId,
             attemptId: request.attemptId, foregroundPid: request.foregroundPid }, {
           activateSessionPurposeBindings: account.purposeRuntime.activateSessionPurposeBindings,
+          activatePurposeBindings: account.purposeRuntime.activatePurposeBindings,
           connectedServicesMaterializationBaseDir: join(account.happyHomeDir, 'materialized'),
           resolveConnectedServiceAuthForSpawn: async (input) => {
             try { return await resolveConnectedServiceAuthForSpawn({
@@ -60,12 +61,6 @@ describe('foreground Codex Connected Account lifecycle through real materializat
             qualifiedConnectedAccountApi: account.qualifiedApi,
             credentialRefreshService: account.coordinator,
             activeServerDir: join(account.happyHomeDir, 'active'), baseDir: join(account.happyHomeDir, 'materialized'),
-            activateQualifiedPurposeBindings: (snapshot) => account.purposeRuntime.activatePurposeBindings({
-              subject: { kind: 'operation', operationId: `foreground-materialize:${input.materializationKey}`,
-                consumer: { pluginId: 'happier.agent.codex', localId: 'codex' },
-                isCurrent: () => fixture.runtime.controller.isRuntimeRegistryCurrent(fixture.runtime.registry) },
-              purposes: snapshot.purposes, bindings: snapshot.bindings,
-            }),
             }); } catch (error) { connectedServicePreparationError = error; throw error; }
           },
           resolveDaemonSpawnHooks: async (agentId) => {
@@ -257,6 +252,16 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         if (!admitted.ok) throw new Error(admitted.error.code);
         const materialized = account.materializations[0];
         if (!materialized) throw new Error('Real Codex materialization was not prepared');
+        const operationSubjectId = materialized.materializationPurposeLease?.subjectId;
+        if (!operationSubjectId) throw new Error('Foreground materialization has no exact purpose authority');
+        const operationBinding = {
+          purpose: account.purpose, serviceRefs: [account.service],
+          exactPurposeBindingSubjectId: operationSubjectId,
+          signal: new AbortController().signal,
+        };
+        await expect(account.owner.getBinding(operationBinding)).resolves.toMatchObject({
+          account: { service: account.service, accountId: 'work' },
+        });
         const nativeHome = materialized.env[HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY];
         if (!nativeHome) throw new Error('Codex materializer did not publish native-home custody');
         const nativeAuth = await readFile(join(nativeHome, 'auth.json'), 'utf8');
@@ -288,6 +293,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         expect(claimed.environment).not.toHaveProperty('HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH');
         expect(materialized.requestAuthPurposeBindings).toEqual([]);
         await admitted.prepared.cleanup();
+        await expect(account.owner.getBinding(operationBinding)).resolves.toBeNull();
         await expect(account.owner.getBinding(exactSessionBinding)).resolves.toBeNull();
         await expect(account.owner.materialize({ ...exactSessionBinding,
           request: { kind: 'files', fileIds: ['auth.json'] },

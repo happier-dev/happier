@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync, StatementSync } from 'node:sqlite';
 import { vi } from 'vitest';
+import { MemorySearchQueryV1Schema } from '@happier-dev/protocol/memory/memorySearch';
 
 import { openSqliteDatabaseSync } from '../../persistence/sqliteSync';
 import { openDeepIndexDb, openDeepIndexReader } from './deepIndexDb';
@@ -292,6 +293,27 @@ describe('deepIndexDb', () => {
     } finally {
       db.close();
       inspection.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the admitted document result limit at both Protocol boundaries', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-deep-document-limit-'));
+    const db = openDeepIndexDb({ dbPath: join(dir, 'deep.sqlite') });
+    try {
+      const ref = { serverId: 'home', artifactId: 'document' };
+      const revision = { headerVersion: 1, bodyVersion: 1 };
+      db.replaceDocumentIndexData({ ref, revision, entries: Array.from({ length: 101 }, (_, index) => ({
+        factId: `fact-${index}`, location: 'facts', text: 'searchable content',
+      })) });
+      for (const maxResults of [1, 100]) {
+        const admitted = MemorySearchQueryV1Schema.parse({ v: 1, mode: 'deep', query: 'searchable', scope: { type: 'global' }, maxResults });
+        if (admitted.maxResults === undefined) throw new Error('Expected the explicitly admitted result limit');
+        expect(db.searchDocuments({ query: admitted.query, eligibleDocuments: [{ ref, revision }], maxResults: admitted.maxResults }))
+          .toHaveLength(maxResults);
+      }
+    } finally {
+      db.close();
       await rm(dir, { recursive: true, force: true });
     }
   });

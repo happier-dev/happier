@@ -1,10 +1,11 @@
 import { printDaemonServiceHelp } from './help';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join, win32 } from 'node:path';
 import { isPidPresent, spawnBackgroundSync } from '@happier-dev/cli-common/process';
 import { spawnSync } from 'node:child_process';
 
+import { happierHomeDirsMatch } from '@/daemon/ownership/happierHomeDirComparableKey';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { readDaemonState, readSettings, readStoredCredentials } from '@/persistence';
 import { getActiveServerProfile, upsertServerProfileByUrl } from '@/server/serverProfiles';
@@ -16,7 +17,15 @@ import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { defaultNameFromUrl, defaultWebappUrlFromServerUrl } from '@/cli/commands/server/commandUtilities';
 import { isServerIdFilesystemSafe } from '@/server/serverId';
 import { applyDaemonServiceInstallPlan, assertDaemonServiceCommandsAvailable, runDaemonServiceCommands } from './apply';
-import { buildServiceCommandEnv } from '@happier-dev/cli-common/service';
+import {
+  buildReadWindowsScheduledTaskStatusPowerShellCommand,
+  buildServiceCommandEnv,
+  isWindowsScheduledTaskLauncherActionExpected,
+  parseWindowsScheduledTaskStatusPowerShellJson,
+  splitQualifiedWindowsScheduledTaskName,
+  runWindowsScheduledTaskQuery,
+  validateWindowsServiceLauncherPe,
+} from '@happier-dev/cli-common/service';
 import { describeBackgroundServiceTargetMode } from '@happier-dev/cli-common/happierRuntime';
 
 import { resolveCliVersionFromBinary } from './resolveCliVersionFromBinary';
@@ -53,6 +62,7 @@ import {
 } from './paths';
 import { collectWindowsServiceLaunchDiagnostics } from './collectWindowsServiceLaunchDiagnostics';
 import { commandExistsInPath } from './commandExistsInPath';
+import { DaemonServiceError, readDaemonServiceFailureFacts, type ServiceOwnershipFailureReason } from './failure';
 import { resolveDaemonServiceRuntimeTarget } from './runtimeTarget';
 import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
 import { resolveLinuxSystemUserPaths } from './resolveLinuxSystemUserPaths';
@@ -61,16 +71,19 @@ import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import {
   DAEMON_SERVICE_MANAGED_CLI_RELEASE_CHANNEL_ENV_KEYS,
   resolveManagedCliReleaseChannelSync,
+  doesCliLauncherUseInstallation,
+  validateDesktopBundleId, readDesktopResourceOwnership, recordDesktopResourceUse, releaseDesktopResourceUse, withDesktopResourceOwnership,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { stopDaemon } from '@/daemon/controlClient';
 import { restartDaemonAndWait } from '@/daemon/restartDaemonAndWait';
 import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { readGuestServiceErrorCode } from '@happier-dev/protocol/ssh/commandFailure';
 
 import { discoverInstalledDaemonServiceEntries } from './discoverInstalledDaemonServiceEntries';
-import { isInstalledDaemonServiceForHappierHome, isValidInstalledDaemonServiceFile, resolveInstalledDaemonServiceDefinitionPath } from './discoverInstalledDaemonServiceEntries';
+import { isInstalledDaemonServiceForHappierHome, isValidInstalledDaemonServiceFile, readInstalledDaemonServiceLauncher, resolveInstalledDaemonServiceDefinitionPath } from './discoverInstalledDaemonServiceEntries';
 import { readInstalledDaemonServiceAutostartMode, readInstalledDaemonServiceInstallOptions, readInstalledDaemonServiceManagedBy } from './discoverInstalledDaemonServiceEntries';
-import { readBackgroundServiceStartupFailure, readBackgroundServiceAutostartMode, readBackgroundServiceHealth, type BackgroundServiceStartupFailure } from './readBackgroundServiceHealth';
+import { readBackgroundServiceStartupFailure, readBackgroundServiceAutostartMode, readBackgroundServiceHealth } from './readBackgroundServiceHealth';
 import { resolveDaemonServiceDiscoveryTargets } from './resolveDaemonServiceDiscoveryTargets';
 import type { DaemonServiceInstallStrategy } from './daemonInstallConflict';
 import { assertDaemonServiceModeSupported } from './assertDaemonServiceModeSupported';
@@ -201,6 +214,9 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
     ring: PublicReleaseRingId | null;
     instanceId: string | null;
     waitTimeoutMs: number | null;
+    installRoot: string | null;
+    desktopBundleId: string | null;
+    preserveDesktopOwnership: boolean;
   }>;
   action: DaemonServiceCliAction;
   mode: DaemonServiceMode;
@@ -219,9 +235,27 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
   let ring: PublicReleaseRingId | null = null;
   let instanceId: string | null = null;
   let waitTimeoutMs: number | null = null;
+  let installRoot: string | null = null;
+  let desktopBundleId: string | null = null;
+  let preserveDesktopOwnership = false;
 
   for (let i = 0; i < argv.length; i += 1) {
     const a = String(argv[i] ?? '');
+
+    if (a === '--desktop-bundle-id' || a.startsWith('--desktop-bundle-id=')) {
+      const raw = a === '--desktop-bundle-id' ? String(argv[++i] ?? '') : a.slice('--desktop-bundle-id='.length);
+      desktopBundleId = validateDesktopBundleId(raw);
+      continue;
+    }
+    if (a === '--preserve-desktop-ownership') { preserveDesktopOwnership = true; continue; }
+
+    if (a === '--install-root' || a.startsWith('--install-root=')) {
+      const raw = a === '--install-root' ? String(argv[++i] ?? '') : a.slice('--install-root='.length);
+      if (!raw || raw.startsWith('-')) throw new Error('Missing value for --install-root');
+      installRoot = expandHomeDirPath(raw.trim());
+      if (!isAbsolute(installRoot) && !win32.isAbsolute(installRoot)) throw new Error('--install-root requires an absolute path');
+      continue;
+    }
 
     if (a === '--wait-timeout-ms') {
       const value = Number(argv[++i]);
@@ -349,6 +383,11 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
     throw new Error('--replace-existing requires --yes');
   }
   const action = resolveAction(filtered);
+  if (desktopBundleId && action !== 'install' && action !== 'status' && !(action === 'uninstall' && filtered.includes('--all'))) throw new Error('--desktop-bundle-id requires service install, status, or uninstall --all');
+  if (preserveDesktopOwnership && action !== 'install') throw new Error('--preserve-desktop-ownership requires service install');
+  if (installRoot && (action !== 'uninstall' || !filtered.includes('--all'))) {
+    throw new Error('--install-root requires service uninstall --all');
+  }
   if (autostart && action !== 'install' && !flags.help) throw new Error('--autostart is only supported by service install');
   const mode = modeFromArgs ?? resolveOptionalModeFromText(process.env.HAPPIER_DAEMON_SERVICE_MODE ?? '', 'HAPPIER_DAEMON_SERVICE_MODE') ?? 'user';
   const systemUser = systemUserFromArgs ?? String(process.env.HAPPIER_DAEMON_SERVICE_SYSTEM_USER ?? '').trim();
@@ -365,6 +404,9 @@ function parseDaemonServiceCliInvocation(argv: readonly string[]): Readonly<{
       ring,
       instanceId,
       waitTimeoutMs,
+      installRoot,
+      desktopBundleId,
+      preserveDesktopOwnership,
     },
     action,
     mode,
@@ -386,7 +428,7 @@ async function printJson(data: unknown): Promise<void> {
 }
 
 type DaemonServiceCliFailure = Readonly<{
-  json: Readonly<{ ok: false; error: string; message: string } & Record<string, unknown>>;
+  json: Readonly<{ ok: false; error: string; message?: string } & Record<string, unknown>>;
   humanLines: readonly string[];
 }>;
 
@@ -395,7 +437,12 @@ async function reportDaemonServiceCliFailure(
   json: boolean,
 ): Promise<void> {
   if (json) {
-    await printJson(failure.json);
+    const preflightFailure = failure.json.error === 'not_installed'
+      || failure.json.error === 'owner_conflict'
+      || failure.json.error === 'daemon_service_conflict';
+    await printJson({ ...failure.json,
+      ...(preflightFailure ? { serviceStep: 'preflight', serviceStepStatus: 'failed' } : {}),
+    });
   } else {
     for (const line of failure.humanLines) process.stderr.write(`${line}\n`);
   }
@@ -455,12 +502,17 @@ async function stopCurrentWindowsServiceOwnerIfNeeded(params: Readonly<{
   }
 }
 
-function runCommandCaptureBestEffort(command: Readonly<{ cmd: string; args: readonly string[] }>): { ok: boolean; out: string | null } {
+function runCommandCaptureBestEffort(command: Readonly<{ cmd: string; args: readonly string[] }>, deadlineMs?: number): { ok: boolean; out: string | null } {
+  const timeout = deadlineMs === undefined ? undefined : deadlineMs - Date.now();
+  if (timeout !== undefined && timeout <= 0) return { ok: false, out: null };
   try {
-    const res = spawnBackgroundSync(command.cmd, [...command.args], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: buildServiceCommandEnv({ cmd: command.cmd, args: command.args, env: process.env }),
-    });
+    const res = command.cmd === 'schtasks' && command.args[0]?.toLowerCase() === '/query'
+      ? runWindowsScheduledTaskQuery(command.cmd, command.args, deadlineMs)
+      : spawnBackgroundSync(command.cmd, [...command.args], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: buildServiceCommandEnv({ cmd: command.cmd, args: command.args, env: process.env }),
+          ...(timeout === undefined ? {} : { timeout }),
+        });
     const ok = (res.status ?? 1) === 0;
     const out = (res.stdout ? String(res.stdout) : '') + (res.stderr ? String(res.stderr) : '');
     return { ok, out: out.trim() ? out : null };
@@ -523,6 +575,7 @@ function resolveDaemonServiceDiscoveryModes(params: Readonly<{
 
 async function isExpectedDaemonServiceWaitingForInitialAuth(params: Readonly<{
   platform: SupportedPlatform;
+  deadlineMs?: number;
   expectedInstalledServiceContents?: string | null;
   installedServicePath?: string | null;
   healthCommand?: Readonly<{ cmd: string; args: readonly string[] }> | null;
@@ -532,7 +585,7 @@ async function isExpectedDaemonServiceWaitingForInitialAuth(params: Readonly<{
     return false;
   }
 
-  if (params.healthCommand && !runCommandCaptureBestEffort(params.healthCommand).ok) {
+  if (params.healthCommand && !runCommandCaptureBestEffort(params.healthCommand, params.deadlineMs).ok) {
     return false;
   }
 
@@ -548,6 +601,7 @@ async function isExpectedDaemonServiceWaitingForInitialAuth(params: Readonly<{
 
 async function shouldRestartRunningDefaultFollowingServiceForSelectedRelay(params: Readonly<{
   action: 'start' | 'stop' | 'restart';
+  deadlineMs?: number;
   runtime: DaemonServiceCliRuntime;
   ownership: Awaited<ReturnType<typeof evaluateCurrentDaemonOwner>>;
   healthCommand?: Readonly<{ cmd: string; args: readonly string[] }> | null;
@@ -566,14 +620,44 @@ async function shouldRestartRunningDefaultFollowingServiceForSelectedRelay(param
     return false;
   }
 
-  return runCommandCaptureBestEffort(params.healthCommand).ok;
+  return runCommandCaptureBestEffort(params.healthCommand, params.deadlineMs).ok;
 }
 
-type ServiceOwnershipFailureReason = BackgroundServiceStartupFailure
-  | 'deadline_elapsed'
-  | 'owner_conflict'
-  | 'owner_not_service_managed'
-  | 'owner_service_label_mismatch';
+type WindowsLaunchDiagnostics = Readonly<{
+  taskName: string;
+  stdoutPath: string;
+  stderrPath: string;
+  launcherPath: string;
+  launcherDiagnosticLogPath: string;
+}>;
+
+function doesExpectedWindowsLauncherActionMatch(params: WindowsLaunchDiagnostics & Readonly<{
+  definitionPath: string;
+  deadlineMs?: number;
+}>): boolean {
+  try {
+    validateWindowsServiceLauncherPe(fs.readFileSync(params.launcherPath), params.launcherPath);
+  } catch {
+    return false;
+  }
+  const { taskName, taskPath } = splitQualifiedWindowsScheduledTaskName(params.taskName);
+  const result = runWindowsScheduledTaskQuery('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    buildReadWindowsScheduledTaskStatusPowerShellCommand({ taskName, taskPath }),
+  ], params.deadlineMs);
+  if (result.error || result.status !== 0) return false;
+  const status = parseWindowsScheduledTaskStatusPowerShellJson(String(result.stdout ?? ''));
+  return Boolean(status?.exists && isWindowsScheduledTaskLauncherActionExpected({
+    taskToRun: status.taskToRun,
+    launcherPath: params.launcherPath,
+    definitionPath: params.definitionPath,
+    diagnosticLogPath: params.launcherDiagnosticLogPath,
+  }));
+}
 
 async function waitForExpectedDaemonServiceOwnership(params: Readonly<{
   platform: SupportedPlatform;
@@ -587,7 +671,15 @@ async function waitForExpectedDaemonServiceOwnership(params: Readonly<{
   expectedInstalledServiceContents?: string | null;
   installedServicePath?: string | null;
   healthCommand?: Readonly<{ cmd: string; args: readonly string[] }> | null;
+  windowsLaunchDiagnostics?: WindowsLaunchDiagnostics | null;
 }>): Promise<Readonly<{ observed: boolean; failureReason: ServiceOwnershipFailureReason }>> {
+  if (params.deadlineMs !== undefined && Date.now() >= params.deadlineMs) {
+    return { observed: false, failureReason: 'deadline_elapsed' };
+  }
+  if (params.platform === 'win32' && params.windowsLaunchDiagnostics && params.installedServicePath
+    && !doesExpectedWindowsLauncherActionMatch({ ...params.windowsLaunchDiagnostics, definitionPath: params.installedServicePath, deadlineMs: params.deadlineMs })) {
+    return { observed: false, failureReason: params.deadlineMs !== undefined && Date.now() >= params.deadlineMs ? 'deadline_elapsed' : 'launcher_action_mismatch' };
+  }
   let stableSince: number | null = null;
   let terminalFailure = false;
   let failureReason: ServiceOwnershipFailureReason = 'deadline_elapsed';
@@ -598,7 +690,7 @@ async function waitForExpectedDaemonServiceOwnership(params: Readonly<{
     // Native print/query commands only prove a loaded job/task, not a running one.
     // Reuse the daemon owner's checkpoint only with active evidence; a conflicting
     // owner or stopped service ends this wait, and the command owns cancellation.
-    shouldAbort: () => terminalFailure,
+    shouldAbort: () => terminalFailure || (params.deadlineMs !== undefined && Date.now() >= params.deadlineMs),
     isStillStarting: async () => Boolean(params.deadlineMs === undefined && params.platform === 'linux'
       && params.healthCommand
       && runCommandCaptureBestEffort(params.healthCommand).ok
@@ -609,7 +701,7 @@ async function waitForExpectedDaemonServiceOwnership(params: Readonly<{
         // A stopped/crashed service or a different owner is terminal evidence,
         // whereas an active service without a published owner is still starting.
         const startupFailure = params.startupObservation && readBackgroundServiceStartupFailure({
-          platform: params.platform, label: params.expectedServiceLabel, ...params.startupObservation,
+          platform: params.platform, label: params.expectedServiceLabel, ...params.startupObservation, deadlineMs: params.deadlineMs,
         });
         if (startupFailure) {
           terminalFailure = true;
@@ -621,6 +713,7 @@ async function waitForExpectedDaemonServiceOwnership(params: Readonly<{
       if (ownership.kind === 'none') {
         const waitingForInitialAuth = await isExpectedDaemonServiceWaitingForInitialAuth({
           platform: params.platform,
+          deadlineMs: params.deadlineMs,
           expectedInstalledServiceContents: params.expectedInstalledServiceContents,
           installedServicePath: params.installedServicePath,
           healthCommand: params.healthCommand,
@@ -662,7 +755,7 @@ async function waitForExpectedDaemonServiceOwnership(params: Readonly<{
         return false;
       }
 
-      if (params.healthCommand && !runCommandCaptureBestEffort(params.healthCommand).ok) {
+      if (params.healthCommand && !runCommandCaptureBestEffort(params.healthCommand, params.deadlineMs).ok) {
         stableSince = null;
         return false;
       }
@@ -730,11 +823,7 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
    * logs so the resulting error tells the user *why* the daemon never claimed
    * ownership instead of just "180000ms".
    */
-  windowsLaunchDiagnostics?: Readonly<{
-    taskName: string;
-    stdoutPath: string;
-    stderrPath: string;
-  }> | null;
+  windowsLaunchDiagnostics?: WindowsLaunchDiagnostics | null;
 }>): Promise<void> {
   const waitTimeoutOverrideRaw = String(process.env.HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS ?? '').trim();
   const defaultTimeoutMs = params.platform === 'win32' ? 120_000 : 15_000;
@@ -754,6 +843,8 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
   ) : 0;
   const pollMs = readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS', 100);
   const stableMs = readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS', 1000);
+  // Start/restart retain the legacy task action until an explicit install upgrades it.
+  const launcherActionToVerify = params.action === 'install' ? params.windowsLaunchDiagnostics : null;
   const waitStartedAt = performance.now();
   const expectedOwnerObserved = timeoutMs > 0 ? await waitForExpectedDaemonServiceOwnership({
     platform: params.platform,
@@ -766,6 +857,7 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
     expectedInstalledServiceContents: params.expectedInstalledServiceContents,
     installedServicePath: params.installedServicePath,
     healthCommand: params.healthCommand,
+    windowsLaunchDiagnostics: launcherActionToVerify,
   }) : { observed: false, failureReason: 'deadline_elapsed' as const };
   if (expectedOwnerObserved.observed) {
     return;
@@ -785,6 +877,7 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
       expectedInstalledServiceContents: params.expectedInstalledServiceContents,
       installedServicePath: params.installedServicePath,
       healthCommand: params.healthCommand,
+      windowsLaunchDiagnostics: launcherActionToVerify,
     });
     if (expectedOwnerObservedDuringGrace.observed) {
       return;
@@ -803,16 +896,23 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
 
   if (params.platform === 'win32' && params.windowsLaunchDiagnostics) {
     const diagnostics = collectWindowsServiceLaunchDiagnostics({
+      deadlineMs: params.deadlineMs,
       taskName: params.windowsLaunchDiagnostics.taskName,
       stdoutPath: params.windowsLaunchDiagnostics.stdoutPath,
       stderrPath: params.windowsLaunchDiagnostics.stderrPath,
+      launcherPath: params.windowsLaunchDiagnostics.launcherPath,
+      launcherDiagnosticLogPath: params.windowsLaunchDiagnostics.launcherDiagnosticLogPath,
     });
     if (diagnostics) {
       message += `\n\n${diagnostics}`;
     }
   }
 
-  throw new Error(message);
+  throw new DaemonServiceError(message, {
+    error: 'service_ownership_failed', serviceStep: 'wait',
+    serviceStepStatus: expectedOwnerObserved.failureReason === 'deadline_elapsed' ? 'deadline_elapsed' : 'failed',
+    reason: expectedOwnerObserved.failureReason,
+  });
 }
 
 async function withManualRelayTakeoverRecovery<T>(params: Readonly<{
@@ -836,12 +936,12 @@ async function withManualRelayTakeoverRecovery<T>(params: Readonly<{
     if (restoredOk) {
       throw new Error(
         `Failed to ${params.action} the background service after stopping the current manually started daemon. ` +
-        `The previous manual daemon was restored.\n${originalMessage}`,
+        `The previous manual daemon was restored.\n${originalMessage}`, { cause: error },
       );
     }
     throw new Error(
       `Failed to ${params.action} the background service after stopping the current manually started daemon, ` +
-      `and restoring the previous manual daemon also failed.\n${originalMessage}`,
+      `and restoring the previous manual daemon also failed.\n${originalMessage}`, { cause: error },
     );
   }
 }
@@ -885,6 +985,7 @@ export function resolveDaemonServiceCliRuntimeFromEnv(options: Readonly<{
   instanceId?: string | null;
   activeServerId?: string | null;
   processEnv?: NodeJS.ProcessEnv;
+  deadlineMs?: number;
 }> = {}): DaemonServiceCliRuntime {
   const processEnv = options.processEnv ?? process.env;
   const platform =
@@ -907,6 +1008,7 @@ export function resolveDaemonServiceCliRuntimeFromEnv(options: Readonly<{
           systemUser: String(options.systemUser ?? '').trim(),
           userHomeDirOverride: explicitUserHomeDir,
           happierHomeDirOverride: explicitHappierHomeDir,
+          deadlineMs: options.deadlineMs,
         })
       : null;
   const sudoInvokerUserPaths =
@@ -919,6 +1021,7 @@ export function resolveDaemonServiceCliRuntimeFromEnv(options: Readonly<{
           try {
             return resolveLinuxSystemUserPaths({
               systemUser: String(processEnv.SUDO_USER ?? '').trim(),
+              deadlineMs: options.deadlineMs,
             });
           } catch {
             return null;
@@ -1028,8 +1131,9 @@ function assertInstalledDaemonServiceHome(
   runtime: DaemonServiceCliRuntime,
   paths: ReturnType<typeof resolveDaemonServicePaths>,
   action: 'start' | 'stop' | 'restart' | 'uninstall',
+  deadlineMs?: number,
 ): string {
-  const installedPath = resolveInstalledDaemonServiceDefinitionPath({ platform: runtime.platform, path: paths.installedPath, taskName: paths.taskName });
+  const installedPath = resolveInstalledDaemonServiceDefinitionPath({ platform: runtime.platform, path: paths.installedPath, taskName: paths.taskName, deadlineMs });
   const definition = { platform: runtime.platform, path: installedPath, expectedLabel: paths.label };
   if ((isValidInstalledDaemonServiceFile(definition)
       || (runtime.platform === 'win32' && installedPath !== paths.installedPath))
@@ -1039,9 +1143,20 @@ function assertInstalledDaemonServiceHome(
   return installedPath;
 }
 
+/** Desktop status records an actual consumer, independent of Login Items attribution. */
+export async function recordDesktopDaemonServiceUse(bundleId: string): Promise<void> {
+  const validatedBundleId = validateDesktopBundleId(bundleId);
+  const runtime = resolveDaemonServiceCliRuntimeFromEnv();
+  const paths = resolveDaemonServicePaths(runtime);
+  const installedPath = resolveInstalledDaemonServiceDefinitionPath({ platform: runtime.platform, path: paths.installedPath, taskName: paths.taskName });
+  if (isInstalledDaemonServiceForHappierHome({ platform: runtime.platform, path: installedPath, expectedLabel: paths.label, happierHomeDir: runtime.happierHomeDir })) {
+    await recordDesktopResourceUse({ resourcePath: installedPath, bundleId: validatedBundleId, created: false });
+  }
+}
+
 export async function resolveDaemonServiceListEntries(
   runtime: DaemonServiceCliRuntime,
-  options: Readonly<{ mode?: DaemonServiceMode; includeAllModes?: boolean; systemUser?: string }> = {},
+  options: Readonly<{ mode?: DaemonServiceMode; includeAllModes?: boolean; systemUser?: string; deadlineMs?: number }> = {},
 ): Promise<readonly DaemonServiceListEntry[]> {
   const settings = await readSettings();
   const allowedModes = new Set(resolveDaemonServiceDiscoveryModes({
@@ -1055,6 +1170,7 @@ export async function resolveDaemonServiceListEntries(
       mode: options.mode,
       userHomeDir: runtime.userHomeDir,
       happierHomeDir: runtime.happierHomeDir,
+      deadlineMs: options.deadlineMs,
     })
       .filter((target) => allowedModes.has(target.mode))
       .map(async (target) => await discoverInstalledDaemonServiceEntries({
@@ -1063,6 +1179,7 @@ export async function resolveDaemonServiceListEntries(
         happierHomeDir: target.happierHomeDir,
         mode: target.mode,
         serversById: (settings.servers ?? {}) as Readonly<Record<string, unknown>>,
+        deadlineMs: options.deadlineMs,
       })),
   );
 
@@ -1110,7 +1227,7 @@ export async function resolveDaemonServiceListEntries(
     publicServerUrl: runtime.publicServerUrl,
     nodePath: expectedDefaultRuntimeTarget.nodePath,
     entryPath: expectedDefaultRuntimeTarget.entryPath,
-    ...(installedDefaultTarget ? readInstalledDaemonServiceInstallOptions({ platform: runtime.platform, path: installedDefaultTarget.path }) : {}),
+    ...readInstalledDaemonServiceInstallOptions({ platform: runtime.platform, path: installedDefaultTarget?.path ?? '', processEnv: process.env }),
     irohRelayConfig: resolveDaemonServiceIrohRelayConfig({
       processEnv: process.env,
       ...(installedDefaultTarget
@@ -1143,6 +1260,7 @@ export async function resolveDaemonServiceListEntries(
     return {
       ...entry,
       installedDefinitionMatchesExpected: entry.path === expectedDefaultFile.path
+        && entry.windowsLauncherUpgradeNeeded !== true
         && doesInstalledDaemonServiceDefinitionMatchExpected({
           installedPath: entry.path,
           expectedContents: expectedDefaultFile.content,
@@ -1156,6 +1274,7 @@ function mapDaemonServiceListEntriesToInventory(
     options: Readonly<{
       activeServiceLabel?: string | null;
       activeOwnerCliVersion?: string | null;
+      deadlineMs?: number;
   }> = {},
 ): readonly DaemonServiceInventoryEntry[] {
   const activeServiceLabel = String(options.activeServiceLabel ?? '').trim();
@@ -1240,6 +1359,7 @@ function mapDaemonServiceListEntriesToInventory(
       binaryPath,
       platform: entry.platform,
       timeoutMs: versionTimeoutMs,
+      deadlineMs: options.deadlineMs,
     });
     configuredCliVersionByBinaryPathCache.set(binaryPath, version);
     return version;
@@ -1253,6 +1373,8 @@ function mapDaemonServiceListEntriesToInventory(
     if (!entry.installed) {
       return false;
     }
+    const timeout = options.deadlineMs === undefined ? runningStateTimeoutMs : Math.min(runningStateTimeoutMs, options.deadlineMs - Date.now());
+    if (timeout <= 0) return false;
 
     if (entry.platform === 'linux') {
       const unitName = basename(String(entry.path ?? '').trim());
@@ -1267,7 +1389,7 @@ function mapDaemonServiceListEntriesToInventory(
       try {
         const res = spawnBackgroundSync('systemctl', args, {
           stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: runningStateTimeoutMs,
+          timeout,
           env: buildServiceCommandEnv({ cmd: 'systemctl', args, env: process.env }),
         });
 
@@ -1296,7 +1418,7 @@ function mapDaemonServiceListEntriesToInventory(
       try {
         const res = spawnBackgroundSync('launchctl', args, {
           stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: runningStateTimeoutMs,
+          timeout,
           env: buildServiceCommandEnv({ cmd: 'launchctl', args, env: process.env }),
         });
         if ((res.status ?? 1) !== 0) {
@@ -1321,7 +1443,7 @@ function mapDaemonServiceListEntriesToInventory(
       try {
         const res = spawnBackgroundSync('schtasks', args, {
           stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: runningStateTimeoutMs,
+          timeout,
           env: buildServiceCommandEnv({ cmd: 'schtasks', args, env: process.env }),
         });
         const out = `${res.stdout ? String(res.stdout) : ''}${res.stderr ? String(res.stderr) : ''}`
@@ -1371,14 +1493,17 @@ export async function resolveDaemonServiceInventoryEntries(params: Readonly<{
   mode?: DaemonServiceMode;
   includeAllModes?: boolean;
   systemUser?: string;
+  deadlineMs?: number;
 }>): Promise<readonly DaemonServiceInventoryEntry[]> {
   const entries = await resolveDaemonServiceListEntries(params.runtime, {
     mode: params.mode,
     systemUser: params.systemUser,
     includeAllModes: params.includeAllModes,
+    deadlineMs: params.deadlineMs,
   });
   const ownership = await evaluateCurrentDaemonOwner();
   return mapDaemonServiceListEntriesToInventory(entries, {
+    deadlineMs: params.deadlineMs,
     activeServiceLabel: ownership.kind !== 'none' && ownership.owner.serviceManaged === true
       ? ownership.owner.state.serviceLabel
       : null,
@@ -1431,7 +1556,11 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
   argv: readonly string[];
   commandPath?: string;
 }>): Promise<void> {
+  let failurePhase: 'arguments' | 'preflight' | 'command' = 'arguments';
+  let failurePlatform: SupportedPlatform | undefined;
+  try {
   const parsed = parseDaemonServiceCliInvocation(params.argv);
+  failurePhase = 'preflight';
   const flags = parsed.flags;
   // Start charging before preflight, OS installation and launch; ownership does
   // not receive a new budget when those phases finish.
@@ -1444,12 +1573,14 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
       ? 'pinned'
       : resolveDaemonServiceTargetModeFromText(process.env.HAPPIER_DAEMON_SERVICE_TARGET_MODE || 'default-following');
   const runtime = resolveDaemonServiceCliRuntimeFromEnv({
+    deadlineMs: ownershipDeadlineMs,
     mode,
     systemUser,
     channel: flags.ring,
     targetMode,
     instanceId: flags.instanceId,
   });
+  failurePlatform = runtime.platform;
   if (!flags.help) {
     assertDaemonServiceModeSupported(runtime.platform, mode);
   }
@@ -1478,12 +1609,15 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
     }
   }
 
-  try {
+  if (action !== 'install' && action !== 'uninstall' && action !== 'start' && action !== 'restart' && action !== 'stop') {
+    failurePhase = 'command';
+  }
 if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
 
   if (action === 'list') {
     const includeAllModes = runtime.platform === 'linux' && parsed.modeExplicit !== true;
     const entries = await resolveDaemonServiceListEntries(runtime, {
+      deadlineMs: ownershipDeadlineMs,
       mode,
       systemUser,
       includeAllModes,
@@ -1492,6 +1626,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
       await printJson({
         entries,
         services: await resolveDaemonServiceInventoryEntries({
+          deadlineMs: ownershipDeadlineMs,
           runtime,
           mode,
           systemUser,
@@ -1571,7 +1706,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     // RV3-C1: a default-following service whose selected Home has its own running pinned service
     // stands by (its daemon yields at startup), so that Home's lock owner is no conflict and its
     // daemon never becomes this service's; the lifecycle reports the stand-by instead.
-    const standingByFor = await resolveDefaultFollowingStandBy(installRuntime);
+    const standingByFor = await resolveDefaultFollowingStandBy(installRuntime, ownershipDeadlineMs);
     const lifecycleOwnership = evaluateDaemonServiceLifecycleOwnership({
       ownership,
       expectedServiceLabel: paths.label,
@@ -1608,6 +1743,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     const preserveRunningWhenDisabled = isRunningDaemonOwnedByService({ ownership, expectedServiceLabel: paths.label })
       || (enablement === 'disabled' && (await resolveDaemonServiceInventoryEntries({
         runtime: installRuntime,
+        deadlineMs: ownershipDeadlineMs,
         mode,
         systemUser,
       })).some((entry) => entry.path === paths.installedPath && entry.running));
@@ -1629,7 +1765,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
       publicServerUrl: installRuntime.publicServerUrl,
       nodePath: installRuntime.nodePath,
       entryPath: installRuntime.entryPath,
-      ...readInstalledDaemonServiceInstallOptions({ platform: installRuntime.platform, path: paths.installedPath }),
+      ...readInstalledDaemonServiceInstallOptions({ platform: installRuntime.platform, path: paths.installedPath, processEnv: process.env }),
       ...(flags.autostart ? { autostart: flags.autostart } : {}),
       ...(requestedBundleId ? { bundleId: requestedBundleId } : {}),
       irohRelayConfig: resolveDaemonServiceIrohRelayConfig({
@@ -1668,6 +1804,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
 
     if (flags.dryRun) {
       const preview = await previewDaemonServiceInstall({
+        deadlineMs: ownershipDeadlineMs,
         managedBy: requestedManagedBy,
         autostart: flags.autostart ?? undefined,
         bundleId: requestedBundleId,
@@ -1734,15 +1871,19 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
         run: async (beforeApply) => {
           let priorLaunchdRuns: number | null = null;
           await installDaemonService({
+            desktopBundleId: flags.desktopBundleId ?? undefined,
+            preserveDesktopOwnership: flags.preserveDesktopOwnership,
+            deadlineMs: ownershipDeadlineMs,
             managedBy: requestedManagedBy,
             autostart: flags.autostart ?? undefined,
             bundleId: requestedBundleId,
             beforeApply: async () => {
+              failurePhase = 'command';
               await beforeApply();
               if (ownershipDeadlineMs !== undefined && installRuntime.platform === 'darwin') {
                 priorLaunchdRuns = shouldKickstartCurrentDarwinInstall
                   ? readBackgroundServiceHealth({ platform: installRuntime.platform, uid: installRuntime.uid,
-                    label: paths.label, mode, errLogPath: null }).runs : 0;
+                    label: paths.label, mode, errLogPath: null, deadlineMs: ownershipDeadlineMs }).runs : 0;
               }
               await stopCurrentWindowsServiceOwnerIfNeeded({
                 platform: installRuntime.platform,
@@ -1802,6 +1943,8 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
                     channel: installRuntime.channel,
                     targetMode: installRuntime.targetMode,
                   }),
+                  launcherPath: paths.launcherPath,
+                  launcherDiagnosticLogPath: paths.launcherDiagnosticLogPath,
                 }
               : null,
           });
@@ -1855,20 +1998,41 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     const wantsAll = parsed.argvFiltered.includes('--all');
     const confirmed = flags.yes;
     if (wantsAll) {
-      const entries = await resolveDaemonServiceListEntries(runtime, {
+      const discoveredEntries = await resolveDaemonServiceListEntries(runtime, {
+        deadlineMs: ownershipDeadlineMs,
         mode,
         systemUser,
-        includeAllModes: runtime.platform === 'linux' && mode === 'system',
+        includeAllModes: runtime.platform === 'linux' && (mode === 'system' || flags.installRoot !== null || flags.desktopBundleId !== null),
       });
+      const installationEntries = flags.installRoot
+        ? discoveredEntries.filter((entry) => {
+          const launcher = readInstalledDaemonServiceLauncher({ platform: runtime.platform, path: entry.path });
+          if (!launcher) throw new Error(`Cannot identify the CLI used by service: ${entry.path}`);
+          return doesCliLauncherUseInstallation({ launcher, installationRoots: [flags.installRoot!] });
+        })
+        : discoveredEntries;
+      const entries: DaemonServiceListEntry[] = [];
+      const lastConsumerPaths = new Set<string>();
+      for (const entry of installationEntries) {
+        if (flags.desktopBundleId) {
+          if (entry.verification !== 'verified') throw new Error(`Cannot verify background service ownership: ${entry.path}`);
+          if (!entry.happierHomeDir || !happierHomeDirsMatch(entry.happierHomeDir, runtime.happierHomeDir, runtime.platform)) continue;
+          const ownership = await readDesktopResourceOwnership(entry.path);
+          if (!ownership?.consumers.includes(flags.desktopBundleId)) continue;
+          if (ownership.consumers.length === 1) lastConsumerPaths.add(entry.path);
+        }
+        entries.push(entry);
+      }
       const discoveryTargetByMode = new Map(
         resolveDaemonServiceDiscoveryTargets({
+          deadlineMs: ownershipDeadlineMs,
           platform: runtime.platform,
           mode,
           userHomeDir: runtime.userHomeDir,
           happierHomeDir: runtime.happierHomeDir,
         }).map((target) => [target.mode, target] as const),
       );
-      const plans = entries.map((entry) => {
+      const plans = entries.filter((entry) => !flags.desktopBundleId || lastConsumerPaths.has(entry.path)).map((entry) => {
         const entryMode = entry.mode ?? mode;
         const discoveryTarget = discoveryTargetByMode.get(entryMode) ?? {
           mode: entryMode,
@@ -1888,9 +2052,21 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
         });
       });
 
+      const readRemainingServiceLaunchers = async (): Promise<readonly (readonly string[])[] | undefined> => {
+        if (!flags.desktopBundleId) return undefined;
+        return (await resolveDaemonServiceListEntries(runtime, { deadlineMs: ownershipDeadlineMs, mode, systemUser, includeAllModes: runtime.platform === 'linux' }))
+          .map((entry) => {
+            if (entry.verification !== 'verified') throw new Error(`Cannot verify background service ownership: ${entry.path}`);
+            const launcher = readInstalledDaemonServiceLauncher({ platform: runtime.platform, path: entry.path });
+            if (!launcher) throw new Error(`Cannot identify the CLI used by service: ${entry.path}`);
+            return launcher;
+          });
+      };
+
       if (flags.dryRun || !confirmed) {
         if (flags.json) {
-          await printJson({ ok: true, platform: runtime.platform, removed: entries.length, plans });
+          const remainingServiceLaunchers = await readRemainingServiceLaunchers();
+          await printJson({ ok: true, platform: runtime.platform, removed: plans.length, plans, ...(remainingServiceLaunchers ? { remainingServiceLaunchers } : {}) });
           return;
         }
         for (const plan of plans) {
@@ -1900,6 +2076,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
         return;
       }
 
+      let removed = 0;
       for (const entry of entries) {
         const entryMode = entry.mode ?? mode;
         const discoveryTarget = discoveryTargetByMode.get(entryMode) ?? {
@@ -1907,35 +2084,43 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
           userHomeDir: runtime.userHomeDir,
           happierHomeDir: runtime.happierHomeDir,
         };
-        await stopCurrentWindowsServiceOwnerIfNeeded({
-          platform: runtime.platform,
-          ownership: await evaluateCurrentDaemonOwner(),
-          expectedServiceLabel: entry.label,
-          action: 'uninstall',
-        });
-        await uninstallDaemonService({
-          platform: runtime.platform,
-          uid: runtime.uid ?? undefined,
-          userHomeDir: discoveryTarget.userHomeDir,
-          happierHomeDir: discoveryTarget.happierHomeDir,
-          mode: entryMode,
-          channel: entry.releaseChannel,
-          targetMode: entry.targetMode,
-          instanceId: entry.serverId,
-          installedPath: entry.path,
-          runCommands: true,
-        });
+        const remove = async () => {
+          failurePhase = 'command';
+          await stopCurrentWindowsServiceOwnerIfNeeded({
+            platform: runtime.platform,
+            ownership: await evaluateCurrentDaemonOwner(),
+            expectedServiceLabel: entry.label,
+            action: 'uninstall',
+          });
+          await uninstallDaemonService({
+            deadlineMs: ownershipDeadlineMs,
+            platform: runtime.platform,
+            uid: runtime.uid ?? undefined,
+            userHomeDir: discoveryTarget.userHomeDir,
+            happierHomeDir: discoveryTarget.happierHomeDir,
+            mode: entryMode,
+            channel: entry.releaseChannel,
+            targetMode: entry.targetMode,
+            instanceId: entry.serverId,
+            installedPath: entry.path,
+            runCommands: true,
+          });
+          removed += 1;
+        };
+        if (flags.desktopBundleId) await releaseDesktopResourceUse({ resourcePath: entry.path, bundleId: flags.desktopBundleId, remove });
+        else await remove();
       }
 
       if (flags.json) {
-        await printJson({ ok: true, platform: runtime.platform, removed: entries.length });
+        const remainingServiceLaunchers = await readRemainingServiceLaunchers();
+        await printJson({ ok: true, platform: runtime.platform, removed, ...(remainingServiceLaunchers ? { remainingServiceLaunchers } : {}) });
         return;
       }
-      process.stdout.write(`Removed ${entries.length} background services.\n`);
+      process.stdout.write(`Removed ${removed} background services.\n`);
       return;
     }
 
-    assertInstalledDaemonServiceHome(runtime, paths, 'uninstall');
+    assertInstalledDaemonServiceHome(runtime, paths, 'uninstall', ownershipDeadlineMs);
     const plan = planDaemonServiceUninstall({
       platform: runtime.platform,
       mode,
@@ -1957,6 +2142,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
       return;
     }
 
+    failurePhase = 'command';
     await stopCurrentWindowsServiceOwnerIfNeeded({
       platform: runtime.platform,
       ownership: await evaluateCurrentDaemonOwner(),
@@ -1964,6 +2150,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
       action: 'uninstall',
     });
     await uninstallDaemonService({
+      deadlineMs: ownershipDeadlineMs,
       platform: runtime.platform,
       uid: runtime.uid ?? undefined,
       userHomeDir: runtime.userHomeDir,
@@ -1990,7 +2177,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
       }
     }
 
-    const installedDefinitionPath = assertInstalledDaemonServiceHome(runtime, paths, action);
+    const installedDefinitionPath = assertInstalledDaemonServiceHome(runtime, paths, action, ownershipDeadlineMs);
     if (!isValidInstalledDaemonServiceFile({
       platform: runtime.platform,
       path: installedDefinitionPath,
@@ -2029,6 +2216,10 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     let refreshedInstalledServiceDefinition = false;
     let serviceDefinitionReloadCommands: DaemonServicePlannedCommand[] = [];
     if (action === 'start' || action === 'restart') {
+      const irohRelayConfig = resolveDaemonServiceIrohRelayConfig({
+        processEnv: process.env,
+        installedService: { platform: runtime.platform, path: installedDefinitionPath },
+      });
       try {
         const expectedPlan = planDaemonServiceInstall({
           platform: runtime.platform,
@@ -2046,11 +2237,8 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
           publicServerUrl: runtime.publicServerUrl,
           nodePath: runtime.nodePath,
           entryPath: runtime.entryPath,
-          ...readInstalledDaemonServiceInstallOptions({ platform: runtime.platform, path: paths.installedPath }),
-          irohRelayConfig: resolveDaemonServiceIrohRelayConfig({
-            processEnv: process.env,
-            installedService: { platform: runtime.platform, path: paths.installedPath },
-          }),
+          ...readInstalledDaemonServiceInstallOptions({ platform: runtime.platform, path: paths.installedPath, processEnv: process.env }),
+          irohRelayConfig,
           homeCarrierEligibility: resolveDaemonServiceHomeCarrierPolicy({
             processEnv: process.env,
             installedService: { platform: runtime.platform, path: paths.installedPath },
@@ -2067,7 +2255,11 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
           if (!matches) {
             assertDaemonServiceCommandsAvailable(expectedPlan.commands);
             process.stderr.write('Refreshing background service definition (drifted from current template).\n');
-            await applyDaemonServiceInstallPlan(expectedPlan, { runCommands: false });
+            failurePhase = 'command';
+            await withDesktopResourceOwnership({ resourcePath: installedDefinitionPath, preserve: true, operation: async () => {
+              await applyDaemonServiceInstallPlan(expectedPlan, { runCommands: false });
+              return { value: undefined, created: false };
+            } });
             refreshedInstalledServiceDefinition = true;
             serviceDefinitionReloadCommands = expectedPlan.commands.filter((command) => (
               command.cmd === 'systemctl' && command.args.includes('daemon-reload')
@@ -2087,6 +2279,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     const runningDefaultFollowingServiceNeedsRelayRestart =
       await shouldRestartRunningDefaultFollowingServiceForSelectedRelay({
         action,
+        deadlineMs: ownershipDeadlineMs,
         runtime,
         ownership,
         healthCommand: ownershipHealthCommand,
@@ -2122,7 +2315,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     if (action === 'start' || action === 'restart') {
       // RV3-C1: see the install path — a standing-by default-following service is started or
       // restarted (so it stops serving the relay the terminal left) and reported as standing by.
-      const standingByFor = await resolveDefaultFollowingStandBy(runtime);
+      const standingByFor = await resolveDefaultFollowingStandBy(runtime, ownershipDeadlineMs);
       const lifecycleOwnership = evaluateDaemonServiceLifecycleOwnership({
         ownership,
         expectedServiceLabel: paths.label,
@@ -2188,6 +2381,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
         action,
         run: async (beforeApply) => {
           assertDaemonServiceCommandsAvailable(plan.commands);
+          failurePhase = 'command';
           await beforeApply();
           await stopCurrentWindowsServiceOwnerIfNeeded({
             platform: runtime.platform,
@@ -2205,9 +2399,9 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
             ? plan.commands.some((command) => command.cmd === 'launchctl' && command.args[0] === 'bootstrap')
               ? 0
               : readBackgroundServiceHealth({ platform: runtime.platform, uid: runtime.uid,
-                label: paths.label, mode, errLogPath: null }).runs
+                label: paths.label, mode, errLogPath: null, deadlineMs: ownershipDeadlineMs }).runs
             : null;
-          runDaemonServiceCommands(plan.commands, { failureMode: 'strict' });
+          runDaemonServiceCommands(plan.commands, { failureMode: 'strict', deadlineMs: ownershipDeadlineMs });
           if (standingByFor.length > 0) return;
           await assertExpectedDaemonServiceOwnership({
             action,
@@ -2230,6 +2424,8 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
                     channel: runtime.channel,
                     targetMode: runtime.targetMode,
                   }),
+                  launcherPath: paths.launcherPath,
+                  launcherDiagnosticLogPath: paths.launcherDiagnosticLogPath,
                 }
               : null,
           });
@@ -2290,13 +2486,14 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
       return;
     }
 
+    failurePhase = 'command';
     await stopCurrentWindowsServiceOwnerIfNeeded({
       platform: runtime.platform,
       ownership,
       expectedServiceLabel: paths.label,
       action: 'stop',
     });
-    runDaemonServiceCommands(plan.commands, { failureMode: 'strict' });
+    runDaemonServiceCommands(plan.commands, { failureMode: 'strict', deadlineMs: ownershipDeadlineMs });
 
     if (flags.json) {
       await printJson({
@@ -2323,15 +2520,16 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
   }
 
   if (action === 'status') {
-    const installedDefinitionPath = resolveInstalledDaemonServiceDefinitionPath({ platform: runtime.platform, path: paths.installedPath, taskName: paths.taskName });
+    const installedDefinitionPath = resolveInstalledDaemonServiceDefinitionPath({ platform: runtime.platform, path: paths.installedPath, taskName: paths.taskName, deadlineMs: ownershipDeadlineMs });
     const installed = isInstalledDaemonServiceForHappierHome({
       platform: runtime.platform,
       path: installedDefinitionPath,
       expectedLabel: paths.label,
       happierHomeDir: runtime.happierHomeDir,
     });
+    if (installed && flags.desktopBundleId && !flags.dryRun) await recordDesktopResourceUse({ resourcePath: installedDefinitionPath, bundleId: flags.desktopBundleId, created: false });
     const ownership = await evaluateCurrentDaemonOwner();
-    const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
+    const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime, ownershipDeadlineMs);
 
     const state = await readDaemonState().catch(() => null);
     const pid = typeof state?.pid === 'number' ? state.pid : null;
@@ -2350,7 +2548,7 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     });
 
     const systemStatus = installed && !flags.dryRun && systemPlan.commands.length
-      ? runCommandCaptureBestEffort(systemPlan.commands[0]!)
+      ? runCommandCaptureBestEffort(systemPlan.commands[0]!, ownershipDeadlineMs)
       : { ok: false, out: null };
     const owner = state ? {
       running: pidAlive,
@@ -2469,10 +2667,20 @@ if (flags.help) { await printDaemonServiceHelp(flags.json); return; }
     humanLines: [msg],
   }, flags.json);
   } catch (error) {
-    if (flags.json && error instanceof Error && 'code' in error && error.code === 'service_manager_unavailable') {
+    if (params.argv.includes('--json')) {
+      const knownCode = error instanceof Error && 'code' in error ? readGuestServiceErrorCode(error.code) : undefined;
+      const facts = readDaemonServiceFailureFacts(error) ?? {
+        error: knownCode ?? (failurePhase === 'arguments' ? 'service_invalid_arguments'
+          : failurePhase === 'preflight' ? 'service_preflight_failed' : 'service_command_failed'),
+        serviceStep: failurePhase === 'command' ? 'command' : 'preflight',
+        serviceStepStatus: 'failed',
+      };
       await reportDaemonServiceCliFailure({
-        json: { ok: false, error: error.code, message: error.message, platform: runtime.platform },
-        humanLines: [error.message],
+        json: { ok: false, ...facts,
+          ...(facts.error === 'service_manager_unavailable' && error instanceof Error
+            ? { message: error.message, platform: failurePlatform } : {}),
+        },
+        humanLines: [error instanceof Error ? error.message : String(error)],
       }, true);
       return;
     }

@@ -89,6 +89,7 @@ describe('resolveDaemonLaunchSpec', () => {
   const originalExecPathDescriptor = Object.getOwnPropertyDescriptor(process, 'execPath');
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.doUnmock('node:fs');
     if (originalExecPathDescriptor) Object.defineProperty(process, 'execPath', originalExecPathDescriptor);
     vi.unstubAllEnvs();
     vi.resetModules();
@@ -105,6 +106,29 @@ describe('resolveDaemonLaunchSpec', () => {
     delete process.env.HAPPIER_VARIANT;
   });
 
+  it('self-restart refuses a selected source launch whose installed dependencies changed', async () => {
+    await withTempDir('daemon-stale-source-', async root => {
+      const bundleRoot = join(root, 'bundle');
+      const cliDir = join(bundleRoot, 'apps/cli');
+      const entrypoint = join(cliDir, 'src/index.mjs');
+      mkdirSync(dirname(entrypoint), { recursive: true });
+      writeFileSync(entrypoint, 'import "./removed-dependency.mjs";');
+      const markerPath = join(root, 'dependency-publication');
+      const generationPath = join(root, 'dependency-generation');
+      writeFileSync(markerPath, JSON.stringify({ identity: 'refreshed-dependencies' }));
+      writeFileSync(join(bundleRoot, 'source-bundle.json'), JSON.stringify({ entrypoint,
+        dependencyPublication: { identity: 'captured-dependencies', generation: null, writerActive: false, markerPath, generationPath },
+      }));
+      const statePath = join(root, 'stack.runtime.json');
+      writeFileSync(statePath, JSON.stringify({ sourceRuntimeLaunch: { entrypoint, cliDir } }));
+      const mod = await import('./resolveDaemonLaunchSpec');
+      await expect(mod.resolveDaemonLaunchSpec(['daemon', 'start-sync'], {
+        HAPPIER_STACK_STACK: 'source-qa', HAPPIER_STACK_RUNTIME_STATE_PATH: statePath,
+        HAPPIER_DAEMON_STARTUP_SOURCE: 'self-restart',
+      })).rejects.toMatchObject({ code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', retryable: false });
+    });
+  });
+
   it.each([false, true])('self-restart consumes the selected Stack source launch instead of the inherited incumbent entrypoint (command environment=%s)', async exposesCommand => {
     await withTempDir('daemon-selected-source-', async (root) => {
       const selected = join(root, 'next', 'src', 'index.mjs');
@@ -114,6 +138,7 @@ describe('resolveDaemonLaunchSpec', () => {
       writeFileSync(statePath, JSON.stringify({
         sourceRuntimeLaunch: { entrypoint: selected, cliDir: join(root, 'next'), env: {
           HAPPIER_STACK_CLI_ROOT_DIR: join(root, 'next'),
+          HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(root, 'next', 'guest-cli'),
           ...(exposesCommand ? { PATH: join(root, 'stack', 'cli', 'source-runtime', 'bin'), PATHEXT: '.EXE;.CMD' } : {}),
           UNRELATED_SOURCE_VALUE: 'do-not-forward',
         } },
@@ -123,6 +148,7 @@ describe('resolveDaemonLaunchSpec', () => {
         NODE_ENV: 'test',
         HAPPIER_STACK_STACK: 'source-qa', HAPPIER_STACK_RUNTIME_STATE_PATH: statePath,
         HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: join(root, 'incumbent', 'src', 'index.mjs'),
+        HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(root, 'incumbent', 'guest-cli'),
         HAPPIER_STACK_CLI_ROOT_DIR: join(root, 'incumbent'), HAPPIER_CLI_ROOT_DIR: join(root, 'incumbent'),
         HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0', HAPPIER_DAEMON_STARTUP_SOURCE: 'self-restart',
       });
@@ -130,6 +156,7 @@ describe('resolveDaemonLaunchSpec', () => {
       expect(result.env?.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT).toBe(selected);
       expect(result.env?.HAPPIER_CLI_ROOT_DIR).toBe(join(root, 'next'));
       expect(result.env?.HAPPIER_STACK_CLI_ROOT_DIR).toBe(join(root, 'next'));
+      expect(result.env?.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT).toBe(join(root, 'next', 'guest-cli'));
       expect(result.env?.HAPPIER_CLI_SUBPROCESS_PREFER_TSX).toBe('0');
       expect(result.env?.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK).toBe('0');
       expect(result.env?.PATH).toBe(exposesCommand ? join(root, 'stack', 'cli', 'source-runtime', 'bin') : undefined);

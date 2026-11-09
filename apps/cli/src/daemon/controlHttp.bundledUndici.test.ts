@@ -16,8 +16,10 @@ describe('daemon control HTTP in the compiled runtime', () => {
     // Match the source/guest bundle's split ESM, source condition and CJS require bridge.
     // Execute emitted exports in Node, outside Vitest's module transformer and mocks.
     const source = fileURLToPath(new URL('./controlHttp.ts', import.meta.url));
+    const pluginHttpSource = fileURLToPath(new URL('../plugins/runtime/fetch/globalFetchRuntime.ts', import.meta.url));
     const result = await build({
-      stdin: { contents: `export { readDaemonControlHttpResponse } from ${JSON.stringify(source)};`,
+      stdin: { contents: `export { readDaemonControlHttpResponse } from ${JSON.stringify(source)};
+        export { createGlobalFetchRuntime } from ${JSON.stringify(pluginHttpSource)};`,
         resolveDir: fileURLToPath(new URL('.', import.meta.url)), loader: 'ts' },
       outdir: outputDir, bundle: true, splitting: true, format: 'esm', platform: 'node', target: 'node20',
       ...SOURCE_RUNTIME_OUTPUT_OPTIONS,
@@ -27,7 +29,8 @@ describe('daemon control HTTP in the compiled runtime', () => {
     });
     expect(Object.keys(result.metafile.inputs).some(path => /node_modules\/undici\//.test(path))).toBe(true);
     const entryOutput = Object.entries(result.metafile.outputs)
-      .find(([, output]) => output.exports.includes('readDaemonControlHttpResponse'));
+      .find(([, output]) => output.exports.includes('readDaemonControlHttpResponse')
+        && output.exports.includes('createGlobalFetchRuntime'));
     expect(entryOutput).toBeDefined();
     await writeFile(join(outputDir, 'package.json'), '{"type":"module"}');
     const observed: Array<{ path: string | undefined; method: string | undefined; body: string }> = [];
@@ -50,7 +53,7 @@ describe('daemon control HTTP in the compiled runtime', () => {
     try {
       const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', `
         try {
-        const { readDaemonControlHttpResponse: read } = await import(process.argv[1]);
+        const { readDaemonControlHttpResponse: read, createGlobalFetchRuntime } = await import(process.argv[1]);
         // Model the guest's native fetch/package-dispatcher ABI mismatch at the
         // platform boundary. The control transport must use its dispatcher's fetch.
         const nativeFetch = globalThis.fetch;
@@ -66,7 +69,16 @@ describe('daemon control HTTP in the compiled runtime', () => {
         try { await read({ ...input, path: '/cancelled', signal: cancellation.signal }); }
         catch (error) { cancelled = error.name; }
         globalThis.fetch = nativeFetch;
-        console.log(JSON.stringify({ accepted, refused, cancelled }));
+        const pluginHttp = createGlobalFetchRuntime();
+        const pluginResponse = await pluginHttp.request({
+          url: 'http://127.0.0.1:' + input.httpPort + '/plugin', method: 'POST', redirect: 'error',
+          body: new TextEncoder().encode('plugin-body'),
+        });
+        let pluginCancelled;
+        try { await pluginHttp.request({ url: 'http://127.0.0.1:' + input.httpPort + '/not-dispatched' }, { signal: cancellation.signal }); }
+        catch (error) { pluginCancelled = error.name; }
+        console.log(JSON.stringify({ accepted, refused, cancelled,
+          plugin: { status: pluginResponse.status, body: new TextDecoder().decode(pluginResponse.body), cancelled: pluginCancelled } }));
         } catch (error) {
           console.error(error);
           process.exitCode = 1;
@@ -76,8 +88,12 @@ describe('daemon control HTTP in the compiled runtime', () => {
         accepted: { ok: true, status: 200, body: '{"ok":true}' },
         refused: { ok: false, status: 409, body: '{"errorCode":"approval_required"}' },
         cancelled: 'AbortError',
+        plugin: { status: 200, body: '{"ok":true}', cancelled: 'AbortError' },
       });
-      expect(observed).toEqual(['/ping', '/refused'].map(path => ({ path, method: 'POST', body: '{"hello":"bundle"}' })));
+      expect(observed).toEqual([
+        ...['/ping', '/refused'].map(path => ({ path, method: 'POST', body: '{"hello":"bundle"}' })),
+        { path: '/plugin', method: 'POST', body: 'plugin-body' },
+      ]);
     } finally {
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(() => resolve()));

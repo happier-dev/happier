@@ -17,7 +17,8 @@ export function createDaemonShutdownController(): {
   let requestShutdown: (source: DaemonShutdownSource, errorMessage?: string) => void;
   const resolvesWhenShutdownRequested = new Promise<DaemonShutdownRequest>((resolve) => {
     requestShutdown = (source, errorMessage) => {
-      logger.debug(`[DAEMON RUN] Requesting shutdown (source: ${source}, errorMessage: ${errorMessage})`);
+      logger.infoFile('[DAEMON RUN] Shutdown requested', { code: 'daemon_shutdown_requested', source });
+      logger.flushSync();
 
       // A stopped daemon must revoke its local Account incumbent before any
       // asynchronous drain/cleanup work runs. The shutdown controller is the
@@ -40,22 +41,25 @@ export function createDaemonShutdownController(): {
     requestShutdown('os-signal');
   });
 
-  process.on('uncaughtException', (error) => {
-    logger.debug('[DAEMON RUN] FATAL: Uncaught exception', error);
-    logger.debug(`[DAEMON RUN] Stack trace: ${error.stack}`);
-    requestShutdown('exception', error.message);
+  process.on('uncaughtException', () => {
+    // Rejected work can carry private materialization paths or account data.
+    // The shared fatal logger drains a closed reason without serializing it.
+    logger.fatal(new Error('daemon_uncaught_exception'));
+    requestShutdown('exception', 'daemon_uncaught_exception');
   });
 
-  process.on('unhandledRejection', (reason, promise) => {
-    logger.debug('[DAEMON RUN] FATAL: Unhandled promise rejection', reason);
-    logger.debug(`[DAEMON RUN] Rejected promise:`, promise);
-    const error = reason instanceof Error ? reason : new Error(`Unhandled promise rejection: ${reason}`);
-    logger.debug(`[DAEMON RUN] Stack trace: ${error.stack}`);
-    requestShutdown('exception', error.message);
+  process.on('unhandledRejection', () => {
+    logger.fatal(new Error('daemon_unhandled_rejection'));
+    requestShutdown('exception', 'daemon_unhandled_rejection');
   });
 
   process.on('exit', (code) => {
-    logger.debug(`[DAEMON RUN] Process exiting with code: ${code}`);
+    if (code !== 0) {
+      logger.fatal(new Error(`daemon_process_exit_nonzero:${code}`));
+    } else {
+      logger.infoFile('[DAEMON RUN] Process exiting', { code: 'daemon_process_exit', exitCode: code });
+      logger.flushSync();
+    }
   });
 
   process.on('beforeExit', (code) => {

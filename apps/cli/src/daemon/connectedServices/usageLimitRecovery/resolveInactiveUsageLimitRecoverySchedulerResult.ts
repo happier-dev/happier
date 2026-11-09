@@ -35,8 +35,6 @@ function isConfirmedCancellation(result: unknown): boolean {
 
 export function resolveInactiveUsageLimitRecoverySchedulerResult(input: Readonly<{
   result: unknown;
-  nowMs: number;
-  fallbackRetryDelayMs: number;
 }>): UsageLimitRecoverySchedulerRecoveryResult {
   const resultStatus = readStatus(input.result);
   const recovery = readRecovery(input.result);
@@ -67,7 +65,6 @@ export function resolveInactiveUsageLimitRecoverySchedulerResult(input: Readonly
   if (
     recovery
     && isPendingUsageLimitRecoveryStatus(recovery.status)
-    && typeof recovery.nextCheckAtMs === 'number'
   ) {
     return {
       status: 'wait',
@@ -78,7 +75,7 @@ export function resolveInactiveUsageLimitRecoverySchedulerResult(input: Readonly
   }
   return {
     status: 'wait',
-    nextCheckAtMs: input.nowMs + input.fallbackRetryDelayMs,
+    nextCheckAtMs: null,
     lastProbeError: 'usage_limit_recovery_probe_not_ready',
   };
 }

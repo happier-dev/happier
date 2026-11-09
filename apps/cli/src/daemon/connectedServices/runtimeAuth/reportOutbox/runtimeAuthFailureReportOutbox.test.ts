@@ -39,6 +39,22 @@ const classifiedFailure = {
 } as const;
 
 describe('runtimeAuthFailureReportOutbox', () => {
+  it('persists provider evidence and explicit unknown issued identities independently across restart', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-outbox-provider-evidence-');
+    try {
+      for (const providerReportedOrganizationId of ['org-one', 'org-two', null]) {
+        await enqueueRuntimeAuthFailureReportOutboxItem({ outboxDir, report: {
+          sessionId: 'session-provider-evidence', classification: { ...classifiedFailure,
+            sourceProviderAccountId: null, sourceProviderOrganizationId: null, providerReportedOrganizationId },
+        } });
+      }
+      const items = await readRuntimeAuthFailureReportOutboxItems({ outboxDir });
+      expect(items).toHaveLength(3);
+      expect(items.map(item => item.classification.providerReportedOrganizationId)).toEqual(expect.arrayContaining(['org-one', 'org-two', null]));
+      for (const item of items) expect(item.classification).toMatchObject({ sourceProviderAccountId: null, sourceProviderOrganizationId: null });
+    } finally { await removeTempDir(outboxDir); }
+  });
+
   it('retains separate durable reports for organizations sharing one provider user', async () => {
     const outboxDir = await createTempDir('happier-runtime-auth-outbox-context-');
     try {

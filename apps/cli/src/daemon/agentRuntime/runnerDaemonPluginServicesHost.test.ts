@@ -1,10 +1,6 @@
-import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
-import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { createCurrentRuntimeProviderOperationsSource } from '@/providers/runtimeServices';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import type {
     JsonValue,
 } from '@happier-dev/plugin-sdk';
@@ -40,9 +36,13 @@ import {
     createPluginActionCallerMaterializationFixture,
 } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
 import {
+    authorizeResolvedAgentNativeExecLaunchForHost,
     createStablePluginExecService,
+    issueAgentNativeLaunchQualifierForHost,
 } from '@/plugins/runtime/invocation/services/exec';
+import { withTempDir } from '@/testkit/fs/tempDir';
 import {
+    createPluginInvocationServicesFromDescriptors,
     createUnavailablePluginServices,
 } from '@/plugins/runtime/invocation/services/unavailable';
 import {
@@ -59,7 +59,13 @@ import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import { createConfiguredPluginExternalSessionsAdapter } from '@/session/external/configuredSourceMaterializer';
 import { createServer, type Server } from 'node:http';
 import { createRunnerManagedProviderConsumerAccess } from '@/agent/runtime/session/process/runnerManagedProviderConsumerAccess';
-import { AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { AgentRuntimeDaemonServiceRequestV1Schema, AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { dispatchCurrentRunnerDaemonPluginService } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
+import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority } from './sessionBridgeAuthorization';
+import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
+import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
+import { createCurrentRuntimeProviderOperationsSource } from '@/providers/runtimeServices';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 import { accountSettingsParse, applyAccountSettingsSavedSecretMutation, formatSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol';
 import { createAccountPluginSecretCustodyRouter } from '@/plugins/runtime/context/accountPluginSecretCustody';
@@ -68,6 +74,10 @@ import { createSecretSourceHostFixture } from '@/plugins/testkit/secretSources';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { createHash } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { PluginInvocationServicesSeed } from '@/plugins/runtime/invocation/services/types';
 
 const binding = createAgentSessionRunnerFactoryBinding({
     v: 1,
@@ -158,6 +168,73 @@ const witness = Object.freeze({
     turnId: 'turn-1',
     userMessageSeq: 1,
     userMessageSeqs: [1],
+});
+
+it('delivers admitted download bytes through the runner bridge and preserves custody refusal and cancellation', async () => {
+    await withTempDir('runner-download-', async directory => {
+        const unavailable = createUnavailablePluginServices();
+        const destination = { destinationId: 'receiver-issued-destination' };
+        let finishDelivery: (() => void) | undefined;
+        let cancelDeliverySignal: AbortSignal | undefined;
+        // The native receiver is the system boundary; service binding, custody and runner transport stay real.
+        const publish: NonNullable<PluginInvocationServicesSeed['fileDownload']>['publish'] = async (input, options) => {
+            if (input.name === 'cancel.bin') {
+                cancelDeliverySignal = options?.signal;
+                await new Promise<void>(resolve => options?.signal?.addEventListener('abort', () => resolve(), { once: true }));
+                return { success: false, status: 'cancelled', errorCode: 'cancelled', error: 'Receiver cancelled.' };
+            }
+            await new Promise<void>(resolve => { finishDelivery = resolve; });
+            await writeFile(join(directory, input.name), input.bytes);
+            return { success: true, status: 'completed', transferId: 'transfer-1',
+                destinationId: input.destination.destinationId, name: input.name, sizeBytes: input.bytes.length,
+                sha256: createHash('sha256').update(input.bytes).digest('hex') };
+        };
+        const host = createRunnerDaemonPluginServicesHost({ async createInvocation({ signal }) {
+            const services = createPluginInvocationServicesFromDescriptors({
+                plugin: { id: 'fixture.plugin', version: '1.0.0' },
+                contribution: { id: 'download', qualifiedId: 'fixture.plugin/actions/download' },
+                occurrenceId: 'runner-download', correlationId: 'runner-download', surface: 'agent',
+                signal, isOccurrenceCurrent: () => true,
+                fileDownload: { ...destination, retirementSignal: signal, publish },
+            }, createPluginInvocationServiceBinding('runner-download', 'runner-download-binding'), {
+                loggerSink: { write() {} },
+            });
+            return { services, resourceDescriptors: {},
+                subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: services.actions.execute,
+                currentGlobalMcp: services.mcp, currentGlobalExternalSessions: services.sessions.external };
+        } });
+        try {
+            const services = await prepareRunnerDaemonPluginServices({ invocationId: 'runner-download',
+                signal: new AbortController().signal, local: unavailable, readActiveTurnAdmissionWitness: () => witness,
+                dispatch: async (operation, options) => decodeRunnerDaemonPluginServiceWireValueV1((await host.dispatch({
+                    ...direct, operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), signal: options?.signal,
+                })).value),
+            });
+            const bytes = new Uint8Array([0, 255, 128, 10]);
+            await expect(services.fs.prepareDownload({ name: 'denied.bin', bytes,
+                destination: { destinationId: 'unadmitted-destination' } })).resolves.toMatchObject({
+                success: false, status: 'failed', errorCode: 'filesystem_transfer_custody_required',
+            });
+            expect(finishDelivery).toBeUndefined();
+            let settled = false;
+            const download = services.fs.prepareDownload({ name: 'download.bin', bytes, destination })
+                .then(result => { settled = true; return result; });
+            await vi.waitFor(() => expect(finishDelivery).toBeDefined());
+            expect(settled).toBe(false);
+            finishDelivery?.();
+            await expect(download).resolves.toMatchObject({ success: true, status: 'completed',
+                destinationId: destination.destinationId, name: 'download.bin', sizeBytes: bytes.length,
+                sha256: createHash('sha256').update(bytes).digest('hex') });
+            expect(new Uint8Array(await readFile(join(directory, 'download.bin')))).toEqual(bytes);
+            const cancellation = new AbortController();
+            const cancelled = services.fs.prepareDownload({ name: 'cancel.bin', bytes, destination }, { signal: cancellation.signal });
+            await vi.waitFor(() => expect(cancelDeliverySignal).toBeDefined());
+            cancellation.abort();
+            await expect(cancelled).resolves.toMatchObject({ success: false, status: 'cancelled' });
+            expect(cancelDeliverySignal?.aborted).toBe(true);
+        } finally { await host.dispose(); }
+    });
 });
 
 function unavailableDaemonDatabaseScope(scope: StorageScopeService): DaemonDatabaseStorageScope {
@@ -333,6 +410,53 @@ describe('runner daemon PluginServices host', () => {
                 .rejects.toMatchObject({ code: 'plugin_secret_custody_unavailable' });
         } finally { await host.dispose(); await source.dispose(); }
     });
+    it.each(['acp', 'terminal', 'exec'] as const)('keeps the daemon isolation authority on a forwarded %s launch', async agentLaunchKind => withTempDir('runner-other-workspace-', async otherWorkspace => {
+        const unavailable = createUnavailablePluginServices();
+        const signal = new AbortController().signal;
+        const cwd = process.cwd();
+        const release = vi.fn();
+        const executable = { kind: 'systemTool', id: 'fixture-native-agent' } as const;
+        const agentIsolation = { read: () => ({ enabled: true,
+            status: { kind: 'applying' as const, phase: 'runtime_replacement' as const },
+            workspaceRoots: [agentLaunchKind === 'exec' ? otherWorkspace : cwd] }) };
+        const exec = createStablePluginExecService({ signal, agentIsolation,
+            isOccurrenceCurrent: () => true, resolveExecutable: async () => ({ command: process.execPath, release }),
+            resolvePath: async () => cwd });
+        const services: PluginServices = { ...unavailable, exec,
+            availability: id => id === 'exec' ? { status: 'available' } : unavailable.availability(id) };
+        const host = createRunnerDaemonPluginServicesHost({
+            async createInvocation() { return { services, prepareAgentNativeLaunch: async () => undefined,
+                agentIsolation,
+                resourceDescriptors: {},
+                subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: unavailable.actions.execute,
+                currentGlobalMcp: unavailable.mcp, currentGlobalExternalSessions: unavailable.sessions.external,
+            }; },
+        });
+        const runnerServices = await prepareRunnerDaemonPluginServices({ invocationId: 'invocation-1', signal,
+            local: unavailable, readActiveTurnAdmissionWitness: () => witness,
+            dispatch: async (operation, options) => decodeRunnerDaemonPluginServiceWireValueV1((await host.dispatch({
+                ...direct, operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), signal: options?.signal,
+            })).value),
+        });
+        try {
+            const launch = agentLaunchKind === 'exec'
+                ? runnerServices.exec.run({ executable, args: ['--version'], cwd },
+                    { nativeLaunch: issueAgentNativeLaunchQualifierForHost(runnerServices.exec) })
+                : authorizeResolvedAgentNativeExecLaunchForHost(runnerServices.exec,
+                    { command: process.execPath, args: ['--version'], env: {}, cwd, release }, undefined, undefined, agentLaunchKind);
+            await expect(launch)
+                .rejects.toMatchObject({ code: 'agent_isolation_unavailable', execLaunch: 'notStarted', retryable: false,
+                    data: { details: { reason: process.platform === 'linux' ? 'launch_probe_failed' : 'unsupported_platform', launchKind: agentLaunchKind } } });
+            expect(release).toHaveBeenCalledOnce();
+            if (agentLaunchKind === 'exec') {
+                const trusted = await runnerServices.exec.run({ executable, args: ['--version'], cwd });
+                expect(trusted.termination.observed).toEqual({ kind: 'exit', exitCode: 0 });
+                expect(release).toHaveBeenCalledTimes(2);
+            }
+        } finally { await host.dispose(); }
+    }));
+
     it('prepares Session HTTP reads once through the canonical host before executing and preserves typed refusals', async () => {
         const unavailable = createUnavailablePluginServices();
         let transportSignal: AbortSignal | undefined;
@@ -487,11 +611,11 @@ describe('runner daemon PluginServices host', () => {
 
     it('projects only bounded preparation codes and owner stages through the strict refusal consumer', () => {
         const privateText = 'Bearer private-df43-secret /private/df43/path';
-        for (const error of [
-            new Error(privateText),
-            Object.assign(new Error(privateText), { code: `invalid\n${privateText}` }),
-            new PluginError({ code: 'a'.repeat(129), message: privateText, details: { privateText } }),
-        ]) {
+        for (const [error, retryable] of [
+            [new Error(privateText), true],
+            [Object.assign(new Error(privateText), { code: `invalid\n${privateText}` }), true],
+            [new PluginError({ code: 'a'.repeat(129), message: privateText, retryable: false, details: { privateText } }), false],
+        ] as const) {
             const preparedError = createRunnerDaemonPluginServicesPreparationError(error, 'registry_acquisition');
             const refusal = AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: false,
                 error: projectRunnerDaemonPluginServicesFailure(preparedError, 'dispatch') });
@@ -499,6 +623,7 @@ describe('runner daemon PluginServices host', () => {
                 code: 'runner_plugin_services_unavailable',
                 message: 'Runner PluginServices preparation failed (registry_acquisition: runner_plugin_services_unavailable)',
                 cause: { code: 'runner_plugin_services_unavailable', stage: 'registry_acquisition' },
+                retryable,
             } });
             expect(JSON.stringify(preparedError.data)).not.toContain(privateText);
         }
@@ -516,7 +641,7 @@ describe('runner daemon PluginServices host', () => {
         expect(AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: false,
             error: projectRunnerDaemonPluginServicesFailure(typed) })).toEqual({ ok: false,
             error: { code, message: `Runner PluginServices operation failed (dispatch: ${code})`,
-                cause: { code, stage: 'dispatch' } } });
+                cause: { code, stage: 'dispatch' }, retryable: false } });
         // Filesystem/loader failures use uppercase machine codes. Keep the
         // underlying code in the diagnostic, without exposing their path text.
         const missingFile = Object.assign(new Error(privateText), { code: 'ENOENT', path: privateText });
@@ -528,6 +653,32 @@ describe('runner daemon PluginServices host', () => {
         } });
         expect(missingFileError.details).toEqual({ cause: { code: 'ENOENT', stage: 'registry_acquisition' } });
         expect(JSON.stringify(missingFileRefusal)).not.toContain(privateText);
+    });
+
+    it('keeps an unknown preparation exception transient while retaining a definitive source refusal', () => {
+        expect(createRunnerDaemonPluginServicesPreparationError(new TypeError('PRIVATE_SOURCE_CONTENT'), 'registry_acquisition'))
+            .toMatchObject({ retryable: true });
+        expect(createRunnerDaemonPluginServicesPreparationError(new PluginError({
+            code: 'github_credential_unavailable', message: 'PRIVATE_SOURCE_CONTENT', retryable: false,
+        }), 'invocation_context')).toMatchObject({ retryable: false });
+    });
+
+    it.each([true, false])('retains source refusal retryability %s through the strict daemon envelope', (retryable) => {
+        const projected = projectRunnerDaemonPluginServicesFailure(new PluginError({
+            code: 'github_credential_unavailable', message: 'PRIVATE_SOURCE_CONTENT', retryable,
+        }), 'dispatch');
+        expect(AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: false, error: projected }))
+            .toMatchObject({ ok: false, error: { retryable } });
+    });
+
+    it('retains a source identifier through the strict daemon refusal without private exception text', () => {
+        const projected = projectRunnerDaemonPluginServicesFailure(new PluginError({
+            code: 'provider-busy', message: 'PRIVATE_SOURCE_CONTENT', retryable: true,
+        }), 'dispatch');
+        const response = AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: false, error: projected });
+        expect(response).toMatchObject({ ok: false,
+            error: { cause: { code: 'provider-busy', stage: 'dispatch' } } });
+        expect(JSON.stringify(response)).not.toContain('PRIVATE_SOURCE_CONTENT');
     });
 
     it('retains bounded dispatch failure codes and exception types without exposing private exception text', () => {
@@ -549,7 +700,7 @@ describe('runner daemon PluginServices host', () => {
         }
     });
 
-    it('refreshes private shared access after daemon replacement without rematerializing or replaying an Agent request', async () => {
+    it('refreshes private shared access after daemon replacement without rematerializing or replaying an Agent request', async () => withTempDir('runner-shared-access-', async happyHomeDir => {
         const unavailable = createUnavailablePluginServices();
         const bootstrap = { ...managedProviderBootstrap(), custody: 'daemonShared' as const };
         const lifetime = new AbortController();
@@ -602,29 +753,52 @@ describe('runner daemon PluginServices host', () => {
             return host;
         };
         let host = makeHost();
-        let consumer: Awaited<ReturnType<typeof createRunnerManagedProviderConsumerAccess>> | null = null;
-        await prepareRunnerDaemonPluginServices({
-            invocationId: 'shared-access', signal: lifetime.signal,
-            dispatch: async (operation, options) => decodeRunnerDaemonPluginServiceWireValueV1((await host.dispatch({
-                ...direct, operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), ...(options?.signal ? { signal: options.signal } : {}),
-            })).value),
-            bindManagedServices: () => unavailable.managedServices,
-            onManagedProviderStarted: async ({ materialize, readSharedGatewayAccess }) => {
-                consumer = await createRunnerManagedProviderConsumerAccess({
-                    signal: lifetime.signal,
-                    credentialTransport: { id: 'bearer', protocols: ['anthropic'], uses: ['runtime'], destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } },
-                    readAccess: readSharedGatewayAccess, materialize,
-                });
-            },
-            local: unavailable,
+        const daemonFailures: { code: string; causeCode: string | undefined }[] = [];
+        // Keep the real daemon response projection and runner RPC reader: raw
+        // host exceptions do not carry the wire cause consumed by the gateway.
+        const daemon = createServer(async (request, response) => {
+            const chunks: Buffer[] = [];
+            for await (const chunk of request) chunks.push(Buffer.from(chunk));
+            try {
+                const envelope = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(Buffer.concat(chunks).toString()));
+                const result = await host.dispatch({ ...direct,
+                    operation: RunnerDaemonPluginServiceOperationV1Schema.parse(envelope.operation),
+                    signal: lifetime.signal });
+                response.end(JSON.stringify(AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: true, result })));
+            } catch (error) {
+                const failure = projectRunnerDaemonPluginServicesFailure(error, 'dispatch');
+                daemonFailures.push({ code: failure.code, causeCode: failure.cause?.code });
+                response.end(JSON.stringify(AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: false,
+                    error: failure })));
+            }
         });
-        if (!consumer) throw new Error('Expected runner consumer access');
-        const retainedConsumer = consumer as Awaited<ReturnType<typeof createRunnerManagedProviderConsumerAccess>>;
-        const publicEnvironment = Object.fromEntries(retainedConsumer.materialization.env.flatMap((entry) => entry.value === null ? [] : [[entry.name, entry.value]]));
-        const environment = retainedConsumer.transformLaunchEnvironment(publicEnvironment);
-        const agentUrl = `${environment.PROVIDER_URL}/messages`;
-        const agentRequest = () => fetch(agentUrl, { method: 'POST', headers: { authorization: `Bearer ${environment.PROVIDER_TOKEN}`, 'x-api-key': 'must-not-forward' }, body: '{}' });
+        await new Promise<void>(resolve => daemon.listen(0, '127.0.0.1', resolve));
+        const daemonAddress = daemon.address();
+        if (!daemonAddress || typeof daemonAddress === 'string') throw new Error('Expected loopback daemon');
+        let consumer: Awaited<ReturnType<typeof createRunnerManagedProviderConsumerAccess>> | null = null;
         try {
+            const authority = { ...direct, happyHomeDir, publicReleaseRing: 'stable' as const,
+                path: await createAgentRuntimeDaemonServiceAuthorityPath({ happyHomeDir, publicReleaseRing: 'stable' }) };
+            await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: daemonAddress.port });
+            await prepareRunnerDaemonPluginServices({
+                invocationId: 'shared-access', signal: lifetime.signal,
+                dispatch: (operation, options) => dispatchCurrentRunnerDaemonPluginService({ authority, operation, ...options }),
+                bindManagedServices: () => unavailable.managedServices,
+                onManagedProviderStarted: async ({ materialize, readSharedGatewayAccess }) => {
+                    consumer = await createRunnerManagedProviderConsumerAccess({
+                        signal: lifetime.signal,
+                        credentialTransport: { id: 'bearer', protocols: ['anthropic'], uses: ['runtime'], destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } },
+                        readAccess: readSharedGatewayAccess, materialize,
+                    });
+                },
+                local: unavailable,
+            });
+            if (!consumer) throw new Error('Expected runner consumer access');
+            const retainedConsumer = consumer as Awaited<ReturnType<typeof createRunnerManagedProviderConsumerAccess>>;
+            const publicEnvironment = Object.fromEntries(retainedConsumer.materialization.env.flatMap((entry) => entry.value === null ? [] : [[entry.name, entry.value]]));
+            const environment = retainedConsumer.transformLaunchEnvironment(publicEnvironment);
+            const agentUrl = `${environment.PROVIDER_URL}/messages`;
+            const agentRequest = () => fetch(agentUrl, { method: 'POST', headers: { authorization: `Bearer ${environment.PROVIDER_TOKEN}`, 'x-api-key': 'must-not-forward' }, body: '{}' });
             expect(await (await agentRequest()).text()).toBe('daemon-1:/v1/messages');
             await host.dispose();
             generation = 2;
@@ -632,18 +806,23 @@ describe('runner daemon PluginServices host', () => {
             expect(await (await agentRequest()).text()).toBe('daemon-2:/v1/messages');
             expect(materializations).toBe(1);
             failUpstream = true;
-            expect((await agentRequest()).status).toBe(403);
+            const upstreamUnavailable = await agentRequest();
+            expect(upstreamUnavailable.status).toBe(503);
+            expect(await upstreamUnavailable.json()).toMatchObject({ error: { code: 'broker_unavailable' } });
             expect(effects).toBe(3);
             current = false;
-            expect((await agentRequest()).status).toBe(403);
+            const retiredAuthority = await agentRequest();
+            expect(retiredAuthority.status, JSON.stringify(daemonFailures)).toBe(503);
+            expect(await retiredAuthority.json()).toMatchObject({ error: { code: 'broker_unavailable' } });
             expect(effects).toBe(3);
         } finally {
             lifetime.abort();
-            await retainedConsumer.cleanup();
+            await (consumer as Awaited<ReturnType<typeof createRunnerManagedProviderConsumerAccess>> | null)?.cleanup();
             await Promise.all(hosts.map((owner) => owner.dispose()));
+            await new Promise<void>((resolve, reject) => daemon.close(error => error ? reject(error) : resolve()));
             await Promise.all(upstreams.map((upstream) => new Promise<void>((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()))));
         }
-    });
+    }));
 
     it('retains and closes serializable list query demand through the real runner and daemon owners', async () => {
         const unavailable = createUnavailablePluginServices();
@@ -1344,6 +1523,57 @@ describe('runner daemon PluginServices host', () => {
             kind: 'plugin_services.result_v1',
         });
         expect(disposeRetry).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['ready', 'failed', 'cancelled', 'closed'] as const)('keeps Resource watch attachment in host custody until admission settles (%s)', async state => {
+        const unavailable = createUnavailablePluginServices();
+        let attach!: (value: { dispose(): Promise<void> }) => void;
+        let rejectAttach!: (error: unknown) => void;
+        const installed = vi.fn(async () => undefined);
+        const failure = new PluginError({ code: 'plugin_action_read_observation_unavailable', message: 'Observer cannot attach' });
+        const watch = vi.fn(async () => await new Promise<{ dispose(): Promise<void> }>((resolve, reject) => {
+            attach = resolve; rejectAttach = reject;
+        }));
+        const host = createRunnerDaemonPluginServicesHost({ async createInvocation() { return {
+            services: { ...unavailable, resources: { ...unavailable.resources, watch } }, resourceDescriptors: {},
+            subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: ['prompt'], notificationPreferencesWatch: false },
+            dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: async () => null,
+            currentGlobalMcp: unavailable.mcp, currentGlobalExternalSessions: unavailable.sessions.external,
+        }; } });
+        await host.dispatch({ ...direct, operation: { kind: 'plugin_services.prepare_v1', ...requestBase() } });
+        const controller = new AbortController();
+        let settled = false;
+        const opening = host.dispatch({ ...direct, signal: controller.signal, operation: {
+            kind: 'plugin_resources.watch.open_v1', ...requestBase(), subscriptionId: 'async-resource', id: 'prompt',
+        } });
+        void opening.then(() => { settled = true; }, () => { settled = true; });
+        await vi.waitFor(() => expect(watch).toHaveBeenCalledOnce());
+        expect(settled).toBe(false);
+        if (state === 'failed') {
+            rejectAttach(failure);
+            await expect(opening).rejects.toBe(failure);
+        } else if (state === 'cancelled') {
+            controller.abort(failure);
+            attach({ dispose: installed });
+            await expect(opening).rejects.toBe(failure);
+            await vi.waitFor(() => expect(installed).toHaveBeenCalledOnce());
+        } else if (state === 'closed') {
+            const closing = host.dispatch({ ...direct, operation: { kind: 'plugin_services.subscription.close_v1',
+                ...requestBase({ lifecycle: true }), subscriptionId: 'async-resource' } });
+            attach({ dispose: installed });
+            await expect(closing).resolves.toMatchObject({ kind: 'plugin_services.result_v1' });
+            await expect(opening).rejects.toMatchObject({ code: 'plugin_service_subscription_closed' });
+            expect(installed).toHaveBeenCalledOnce();
+        } else {
+            attach({ dispose: installed });
+            await expect(opening).resolves.toMatchObject({ kind: 'plugin_services.result_v1' });
+            expect(installed).not.toHaveBeenCalled();
+            await host.dispatch({ ...direct, operation: { kind: 'plugin_services.subscription.close_v1',
+                ...requestBase({ lifecycle: true }), subscriptionId: 'async-resource' } });
+            expect(installed).toHaveBeenCalledOnce();
+        }
+        await host.dispose();
+        expect(installed).toHaveBeenCalledTimes(state === 'failed' ? 0 : 1);
     });
 
     it('routes MCP lookup through the current-global owner and keeps the selected client for later requests', async () => {
