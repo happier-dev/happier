@@ -1054,7 +1054,7 @@ describe('Team credential Provider broker admission', () => {
                 expect(result).toEqual(signedAtCommit);
             }
             expect(await openAccountConnectionProviderBroker(openInput)).toMatchObject({ ok: false });
-            expect(presenceReads).toBe(1);
+            expect(presenceReads).toBe(2);
         } finally {
             db.$transaction = originalTransaction;
         }

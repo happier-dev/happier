@@ -394,9 +394,9 @@ export function createProviderLocalOperations(context: ProviderConnectionService
       }
 
       let authorizationCurrent = true;
-      const isAuthorizationCurrent = () => authorizationCurrent
-        && deps.featureGate.isEnabled('providers');
+      const isAuthorizationCurrent = () => authorizationCurrent;
       const revalidateAuthorization = async (): Promise<boolean> => {
+        authorizationCurrent = authorizationCurrent && deps.featureGate.isEnabled('providers');
         if (!isAuthorizationCurrent()) return false;
         const current = await deps.loadSnapshot(registryProjection);
         const currentResolved = resolveProviderContributionRegistryEntry(

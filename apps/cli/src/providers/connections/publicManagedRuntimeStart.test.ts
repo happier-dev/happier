@@ -34,6 +34,7 @@ import { createPublicManagedProviderRuntimeStartOperation } from './publicManage
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
@@ -81,27 +82,28 @@ it('finishes an admitted physical gateway Start across policy drift and refuses 
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
       controller, physicalGateway: true });
     const gateway = fixture.gateway!;
-    // The real OS gateway writes this marker during runtime.start. Policy
-    // admission succeeds before that effect and refuses subsequent admissions.
-    const admit = vi.fn(async () => {
-      try {
-        await readFile(join(gateway.directory, 'gateway-started'), 'utf8');
-        return false;
-      } catch (error) {
-        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return true;
-        throw error;
-      }
+    // The real OS gateway writes this marker during runtime.start. Feature
+    // policy changes at that effect; no internal startup path is mocked.
+    const unavailable = async (): Promise<never> => { throw new Error('Unexpected configuration mutation or inspection'); };
+    const service = createProviderConnectionService({ machineId: fixture.machineId,
+      featureGate: { isEnabled: () => !existsSync(join(gateway.directory, 'gateway-started')) },
+      loadSnapshot: async () => ({ accountSettings: fixture.snapshot.settings, rawAccountSettings: {},
+        providerSettings: fixture.providerSettings, registry: fixture.contributes,
+        savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(fixture.snapshot) }),
+      updateProviderSettings: unavailable, collectDnsEvidence: unavailable, runtimeSummary: unavailable, now: () => 1,
+      resolveConnection: input => resolveProviderConnectionForMachine({ ...input, dnsEvidenceByEndpointUrl: input.dnsEvidence }),
+      resolveManagedPurposeBindingIntent: gateway.purposeBindingOwner.resolveBindingIntent,
+      startManagedProviderRuntime: createPublicManagedProviderRuntimeStartOperation({ machineId: fixture.machineId,
+        happyHomeDir: homeDir, controller, resolveSharedGateway: createMachineSharedProviderGatewayResolver({ machineId: fixture.machineId,
+          readAccountId: () => 'account', readOrigin: async () => ({ serverIdentityId: 'home', machineId: fixture.machineId }) }) }),
     });
-    const start = createPublicManagedProviderRuntimeStartOperation({ machineId: fixture.machineId, happyHomeDir: homeDir, controller });
-    const request = { contributionKey: `${gateway.identity.pluginId}/${gateway.identity.localId}`, identity: gateway.identity,
-      request: { reason: 'explicitStartLocal' as const, endpointTemplateIds: ['api'] },
-      purposeBindings: gateway.purposeBindings, isAuthorizationCurrent: () => true, revalidateAuthorization: admit };
+    const start = () => service.startLocal({ action: 'startLocal', machineId: fixture.machineId,
+      contributionKey: `${gateway.identity.pluginId}/${gateway.identity.localId}`, connectionId: fixture.record.connectionId });
     try {
-      await expect(start(request)).resolves.toEqual({ status: 'running' });
-      expect(admit).toHaveBeenCalledOnce();
+      await expect(start()).resolves.toMatchObject({ status: 'success', phase: 'running' });
       const pid = Number(await readFile(join(gateway.directory, 'gateway-started'), 'utf8'));
       expect(process.kill(pid, 0)).toBe(true);
-      await expect(start(request)).rejects.toMatchObject({ code: 'provider_authorization_changed' });
+      await expect(start()).resolves.toMatchObject({ status: 'error', error: { code: 'provider_feature_disabled' } });
     } finally { await fixture.cleanup(); }
   });
 });

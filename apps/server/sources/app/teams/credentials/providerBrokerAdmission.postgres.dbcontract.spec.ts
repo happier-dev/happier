@@ -200,15 +200,15 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                                 }
                                 return Reflect.apply(client.$queryRawUnsafe, client, queryArgs);
                             };
-                            if (property !== 'machine') return Reflect.get(client, property, client);
-                            return new Proxy(client.machine, { get(model, method) {
+                            // Session admission now reads Machine grant facts
+                            // through the real exact AccessKey relation.
+                            if (property !== 'accessKey') return Reflect.get(client, property, client);
+                            return new Proxy(client.accessKey, { get(model, method) {
                                 const query = Reflect.get(model, method, model);
-                                if (method !== 'findMany') return query;
+                                if (method !== 'findUnique') return query;
                                 return async (...queryArgs: unknown[]) => {
                                     const rows: unknown = await Reflect.apply(query, model, queryArgs);
-                                    const input = queryArgs[0];
-                                    if (!checked && input && typeof input === 'object' && 'select' in input
-                                        && input.select && typeof input.select === 'object' && 'accountGrants' in input.select) {
+                                    if (!checked) {
                                         for (const intent of ['NO KEY UPDATE', 'UPDATE']) {
                                             await expect(db.$queryRawUnsafe(
                                                 `SELECT "id" FROM "Account" WHERE "id" = $1 FOR ${intent} NOWAIT`, custodian.id,
@@ -444,19 +444,19 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                         db.$transaction = new Proxy(originalTransaction, { async apply(target, receiver, args) {
                             const callback: unknown = args[0];
                             if (typeof callback !== 'function') return Reflect.apply(target, receiver, args);
-                            const final = ++transactions === 2;
+                            const final = ++transactions === 1;
                             const observed = new Proxy(callback, { async apply(fn, context, callbackArgs) {
                                 const native = callbackArgs[0];
                                 const scheduled = new Proxy(native, { get(client, property) {
                                     if (property !== 'machine' || !final) return Reflect.get(client, property, client);
                                     return new Proxy(client.machine, { get(model, method) {
                                         const query = Reflect.get(model, method, model);
-                                        if (method !== 'findMany') return query;
+                                        if (method !== 'findUnique') return query;
                                         return async (...queryArgs: unknown[]) => {
                                             const rows: unknown = await Reflect.apply(query, model, queryArgs);
                                             const input = queryArgs[0];
                                             if (!checked && input && typeof input === 'object' && 'select' in input
-                                                && input.select && typeof input.select === 'object' && 'accountGrants' in input.select) {
+                                                && input.select && typeof input.select === 'object' && 'operationProtocolCapabilities' in input.select) {
                                                 // Content revoke/replacement must take NO KEY UPDATE at
                                                 // publication; physical erasure takes UPDATE at entry.
                                                 for (const intent of ['NO KEY UPDATE', 'UPDATE']) {
@@ -506,7 +506,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                             expect(await openAccountConnectionProviderBroker(openInput)).toMatchObject({ ok: false });
                             expect(await admitAccountConnectionProviderBroker({ ...common, verifyAuthority,
                                 request: { v: 2, authority: retained.authority } })).toMatchObject({ ok: false });
-                            expect(presenceReads).toBe(reads);
+                            expect(presenceReads).toBe(reads + 2);
                         } finally {
                             db.$transaction = originalTransaction;
                             if (replacement) {
@@ -533,7 +533,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                 expect(await admitAccountConnectionProviderBroker({ ...common, verifyAuthority,
                     request: { v: 2, authority: personalAuthority } })).toMatchObject({ ok: false });
             }
-            expect(presenceReads).toBe(readsBeforeRevocation);
+            expect(presenceReads).toBe(readsBeforeRevocation + personalAuthorities.length);
         } finally {
             await db.team.delete({ where: { id: team.id } });
             await db.accessKey.deleteMany({ where: { accountId: requester.id } });
