@@ -30,19 +30,6 @@ vi.mock('@/components/ui/forms/dropdown/SelectableMenuResults', () => ({
     SelectableMenuResults: (props: any) => React.createElement('SelectableMenuResults', props),
 }));
 
-vi.mock('@/components/ui/forms/dropdown/useSelectableMenu', () => ({
-    CREATE_ITEM_ID: '__create__',
-    useSelectableMenu: () => ({
-        searchQuery: '',
-        selectedIndex: 0,
-        filteredCategories: [],
-        inputRef: { current: null },
-        handleSearchChange: vi.fn(),
-        handleKeyPress: vi.fn(),
-        setSelectedIndex: vi.fn(),
-    }),
-}));
-
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));

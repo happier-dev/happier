@@ -1314,7 +1314,7 @@ export const Item = React.memo<ItemProps>((props) => {
             height: 'auto',
             minHeight: PAGE_LIST_METRICS.rowLeadingColumnPx,
             marginRight: PAGE_LIST_METRICS.rowLeadingGapPx,
-            ...(sidePaneTextEdge ? { alignItems: 'flex-start' } : null),
+            ...(sidePaneTextEdge ? { alignItems: 'flex-start' as const } : null),
         } as const
         : null;
     const catalogLeadingColumnStyle = catalogGeometry ? {

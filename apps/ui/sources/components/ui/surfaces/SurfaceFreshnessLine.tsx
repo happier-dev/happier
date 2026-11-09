@@ -1,4 +1,4 @@
-import { HAPPIER_FRESHNESS_LINE_METRICS, HappierFreshnessClauses, HappierFreshnessLine, HappierPressable, resolveHappierFreshnessText } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FRESHNESS_LINE_METRICS, HappierFreshnessClauses, HappierFreshnessLine, HappierPressable, resolveHappierFreshnessText, useHappierPageSection } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -68,6 +68,7 @@ export function SurfaceFreshnessLine(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const onSheet = React.useContext(SurfaceFreshnessOnSheetContext);
+    const pageSection = useHappierPageSection();
     const chip = props.presentation === 'chip';
     const actions = props.actions ?? (props.action ? [props.action] : []);
     const parts = resolveHappierFreshnessText({
@@ -78,7 +79,7 @@ export function SurfaceFreshnessLine(props: Readonly<{
         parts: true,
     });
     const text = parts.text;
-    return (
+    const line = (
         <HappierFreshnessLine
             testID={props.testID}
             busy={props.busy}
@@ -135,8 +136,10 @@ export function SurfaceFreshnessLine(props: Readonly<{
                 </View>
             ) : null}
         >
+            {/* A line's reason is its whole sentence: it wraps (and its recoveries move beneath it when they no
+                longer fit), never cut to an ellipsis. Only the chip, a single inline phrase, keeps one line. */}
             {chip || parts.asOf === null ? (
-                <Text testID={props.testID ? `${props.testID}-text` : undefined} style={stylesheet.text} numberOfLines={chip ? 1 : 2}>
+                <Text testID={props.testID ? `${props.testID}-text` : undefined} style={stylesheet.text} numberOfLines={chip ? 1 : undefined}>
                     {renderEmphasis(text, props.emphasis)}
                 </Text>
             ) : (
@@ -144,7 +147,7 @@ export function SurfaceFreshnessLine(props: Readonly<{
                 <View testID={props.testID ? `${props.testID}-text` : undefined} accessible accessibilityLabel={text}>
                     <HappierFreshnessClauses
                         asOf={<Text style={stylesheet.text} numberOfLines={1}>{parts.asOf}</Text>}
-                        reason={parts.reason ? <Text style={stylesheet.text} numberOfLines={2}>{renderEmphasis(parts.reason, props.emphasis)}</Text> : null}
+                        reason={parts.reason ? <Text style={stylesheet.text}>{renderEmphasis(parts.reason, props.emphasis)}</Text> : null}
                         separator={(hidden) => (
                             <Text style={[stylesheet.text, hidden ? stylesheet.hiddenSeparator : null]} aria-hidden
                                 accessibilityElementsHidden importantForAccessibility="no">{' · '}</Text>
@@ -154,6 +157,9 @@ export function SurfaceFreshnessLine(props: Readonly<{
             )}
         </HappierFreshnessLine>
     );
+    // In a page section the strip spans the section's content, on its rows' inset like the rows and
+    // sub-headings beside it, never the full sheet past them (Session Info Habits, Context).
+    return pageSection && !chip ? <View style={{ marginHorizontal: pageSection.rowInsetPx }}>{line}</View> : line;
 }
 
 function renderEmphasis(text: string, emphasis: string | undefined): React.ReactNode {

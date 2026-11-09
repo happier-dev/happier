@@ -8,7 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { MERMAID_WEBVIEW_BUNDLE_JS } from './mermaidWebViewBundle.generated';
 
 const MAX_MERMAID_WEBVIEW_MESSAGE_BYTES = 1_024;
@@ -54,15 +54,16 @@ export const MermaidRenderer = React.memo((props: {
     const { theme } = useUnistyles();
     const [dimensions, setDimensions] = React.useState({ width: 0, height: 200 });
     const copyFeedback = useHappierCopyFeedback();
+    const writeClipboard = useClipboardWrite();
 
     const copyMermaid = React.useCallback(async () => {
-        const copied = await setClipboardStringSafe(props.content);
+        const copied = await writeClipboard(props.content);
         if (copied) {
             copyFeedback.markCopied('mermaid');
             return;
         }
         Modal.alert(t('common.error'), t('markdown.copyFailed'), [{ text: t('common.ok'), style: 'cancel' }]);
-    }, [copyFeedback, props.content]);
+    }, [copyFeedback, props.content, writeClipboard]);
 
     const onLayout = React.useCallback((event: { nativeEvent: { layout: { width: number } } }) => {
         const { width } = event.nativeEvent.layout;

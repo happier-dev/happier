@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
@@ -11,6 +11,7 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { Typography } from '@/constants/Typography';
 import { CODE_EDITOR_BASE_FONT_SIZE, CODE_EDITOR_BASE_LINE_HEIGHT } from '../codeEditorFontMetrics';
+import { HappierPressable, type HappierPressableProps } from '@happier-dev/plugin-ui/presentation';
 
 export type EditorAccessoryBarProps = Readonly<{
     children: React.ReactNode;
@@ -19,14 +20,32 @@ export type EditorAccessoryBarProps = Readonly<{
     leading?: React.ReactNode;
     /** Panel only: the pinned end of the bar (Undo and the editor's Save stay in reach while the keys scroll). */
     trailing?: React.ReactNode;
+    /** Panel only: a strip that rides the keyboard with the row, above it (parameter help). */
+    above?: React.ReactNode;
     accessibilityLabel?: string;
     testID?: string;
 }>;
 
-/** Shared editor row chrome; native panels keep the existing keyboard-sticky owner. */
+/** The gap between keys: in the scrolling row and in each pinned group alike. */
+const KEY_GAP = 6;
 /** One key's drawn size; the inline row is exactly one key tall, so a host row that holds it reserves this height. */
 export const EDITOR_ACCESSORY_KEY_SIZE = 34;
+/** The panel row's own vertical room above and below its keys (the inline row has none: its scroll viewport is one key tall). */
+const PANEL_ROOM_Y = 8;
 
+type KeyReach = NonNullable<HappierPressableProps['hitReach']>;
+
+/**
+ * The bar declares the real gaps of its keys. Each key's hit area takes half of the gap to its neighbour so
+ * neighbours meet and never overlap; the inline row's scroll viewport is exactly one key tall and clips
+ * anything past it, so its keys reach no further vertically.
+ */
+const PANEL_KEY_REACH: KeyReach = { left: KEY_GAP / 2, right: KEY_GAP / 2, top: PANEL_ROOM_Y, bottom: PANEL_ROOM_Y };
+const INLINE_KEY_REACH: KeyReach = { left: KEY_GAP / 2, right: KEY_GAP / 2, top: 0, bottom: 0 };
+
+const EditorAccessoryReachContext = React.createContext<KeyReach>(PANEL_KEY_REACH);
+
+/** Shared editor row chrome; native panels keep the existing keyboard-sticky owner. */
 export function EditorAccessoryBar(props: EditorAccessoryBarProps) {
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
@@ -46,18 +65,23 @@ export function EditorAccessoryBar(props: EditorAccessoryBarProps) {
     </HorizontalScrollableRow>;
 
     if (isInline) return <View testID={props.testID} accessibilityRole="toolbar" style={stylesheet.inlineRoot}>
-        {content}
+        <EditorAccessoryReachContext.Provider value={INLINE_KEY_REACH}>{content}</EditorAccessoryReachContext.Provider>
     </View>;
 
+    // One topology whatever rides above the row: the strip comes and goes while typing, and the row's
+    // scroll position and held keys must survive it.
     const backgroundColor = paintColor(theme.colors.surface.inset, 'transparent');
     const bar = <View testID={props.testID} accessibilityRole="toolbar" accessibilityLabel={props.accessibilityLabel}
-        style={[stylesheet.bar, props.leading || props.trailing ? stylesheet.pinnedBar : null,
-            { backgroundColor }]}>
-        {props.leading ? <View style={[stylesheet.pinned, stylesheet.pinnedLeading]}>{props.leading}</View> : null}
-        <View style={stylesheet.scrollSlot}>{content}</View>
-        {props.trailing ? <View style={[stylesheet.pinned, stylesheet.pinnedTrailing]}>{props.trailing}</View> : null}
+        style={[stylesheet.bar, { backgroundColor }]}>
+        {props.above ?? null}
+        <View style={stylesheet.pinnedBar}>
+            {props.leading ? <View style={[stylesheet.pinned, stylesheet.pinnedLeading]}>{props.leading}</View> : null}
+            <View style={stylesheet.scrollSlot}>{content}</View>
+            {props.trailing ? <View style={[stylesheet.pinned, stylesheet.pinnedTrailing]}>{props.trailing}</View> : null}
+        </View>
     </View>;
-    return <KeyboardStickyFooter onLayout={onSeatLayout} style={{ backgroundColor }}>{bar}</KeyboardStickyFooter>;
+    const provided = <EditorAccessoryReachContext.Provider value={PANEL_KEY_REACH}>{bar}</EditorAccessoryReachContext.Provider>;
+    return <KeyboardStickyFooter onLayout={onSeatLayout} style={{ backgroundColor }}>{provided}</KeyboardStickyFooter>;
 }
 
 export type EditorAccessoryChipProps = Readonly<{
@@ -81,17 +105,14 @@ export function EditorAccessoryChip(props: EditorAccessoryChipProps) {
     const selected = props.selected === true;
     const foreground = selected ? theme.colors.state.active.foreground : theme.colors.text.secondary;
     const repeatHandlers = useHeldKeyRepeat(props.repeat === true && !props.disabled, props.onPress);
-    return <Pressable
+    const hitReach = React.useContext(EditorAccessoryReachContext);
+    return <HappierPressable
         testID={props.testID}
+        hitReach={hitReach}
         accessibilityRole="button"
         accessibilityLabel={props.label}
-        accessibilityState={props.selected === undefined && props.disabled === undefined ? undefined : {
-            ...(props.selected === undefined ? {} : { selected }),
-            ...(props.disabled === undefined ? {} : { disabled: props.disabled }),
-        }}
-        aria-pressed={props.selected}
+        selected={props.selected}
         disabled={props.disabled}
-        hitSlop={6}
         onPress={repeatHandlers?.onPress ?? props.onPress}
         onPressIn={repeatHandlers?.onPressIn}
         onPressOut={repeatHandlers?.onPressOut}
@@ -107,7 +128,7 @@ export function EditorAccessoryChip(props: EditorAccessoryChipProps) {
         {props.badge ? <Text style={[stylesheet.badge, { color: foreground }]} allowFontScaling={false}>
             {props.badge}
         </Text> : null}
-    </Pressable>;
+    </HappierPressable>;
 }
 
 /**
@@ -150,9 +171,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     scrollContent: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
+        gap: KEY_GAP,
         paddingHorizontal: 12,
-        paddingVertical: 8,
+        paddingVertical: PANEL_ROOM_Y,
     },
     pinnedBar: {
         flexDirection: 'row',
@@ -165,8 +186,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     pinned: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
-        paddingVertical: 8,
+        gap: KEY_GAP,
+        paddingVertical: PANEL_ROOM_Y,
     },
     pinnedLeading: {
         paddingLeft: 12,
@@ -198,7 +219,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     scrollContentInline: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6,
+        gap: KEY_GAP,
         paddingHorizontal: 0,
         paddingVertical: 0,
     },

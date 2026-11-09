@@ -7,7 +7,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { useInitialPresentationProducer } from '@/components/ui/presentation/InitialPresentationReadinessContext';
 import { sanitizeRenderedMermaidSvg } from './mermaidSanitize';
 
@@ -36,6 +36,7 @@ export const MermaidRenderer = React.memo((props: {
         svg: null,
     }));
     const copyFeedback = useHappierCopyFeedback();
+    const writeClipboard = useClipboardWrite();
     const currentRenderState = renderState.content === props.content
         ? renderState
         : { content: props.content, status: 'pending' as const, svg: null };
@@ -45,13 +46,13 @@ export const MermaidRenderer = React.memo((props: {
     });
 
     const copyMermaid = React.useCallback(async () => {
-        const copied = await setClipboardStringSafe(props.content);
+        const copied = await writeClipboard(props.content);
         if (copied) {
             copyFeedback.markCopied('mermaid');
             return;
         }
         Modal.alert(t('common.error'), t('markdown.copyFailed'), [{ text: t('common.ok'), style: 'cancel' }]);
-    }, [copyFeedback, props.content]);
+    }, [copyFeedback, props.content, writeClipboard]);
 
     React.useEffect(() => {
         let isMounted = true;

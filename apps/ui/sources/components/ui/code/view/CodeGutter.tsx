@@ -7,14 +7,15 @@ import { Text } from '@/components/ui/text/Text';
 import { resolveCodeMonoFontFamily } from '@/components/ui/code/codeTypography';
 import { CODE_EDITOR_BASE_FONT_SIZE, CODE_EDITOR_BASE_LINE_HEIGHT, CODE_GUTTER_METRICS } from '../editor/codeEditorFontMetrics';
 
-function NumberColumn(props: { value: string; digits: number }) {
+function NumberColumn(props: { value: string; digits: number; current?: boolean }) {
     return <View style={stylesheet.numberColumn}>
         <Text accessible={false} aria-hidden importantForAccessibility="no-hide-descendants" style={stylesheet.measureText}>{'0'.repeat(props.digits)}</Text>
-        <Text style={stylesheet.gutterText}>{props.value}</Text>
+        <Text style={[stylesheet.gutterText, props.current ? stylesheet.gutterTextCurrent : null]}>{props.value}</Text>
     </View>;
 }
 
-export function CodeGutter(props: { line: CodeLine; showLineNumbers?: boolean; lineNumberDigits?: number }) {
+/** `current`: the line carries the current-line band, so its number reads in ink (files lab `.ln.cur .n`). */
+export function CodeGutter(props: { line: CodeLine; showLineNumbers?: boolean; lineNumberDigits?: number; current?: boolean }) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { line } = props;
@@ -35,8 +36,8 @@ export function CodeGutter(props: { line: CodeLine; showLineNumbers?: boolean; l
     // a file view has only its own line number.
     return (
         <View style={styles.gutter}>
-            {line.kind === 'file' ? null : <NumberColumn value={left} digits={digits} />}
-            <NumberColumn value={right} digits={digits} />
+            {line.kind === 'file' ? null : <NumberColumn value={left} digits={digits} current={props.current} />}
+            <NumberColumn value={right} digits={digits} current={props.current} />
         </View>
     );
 }
@@ -62,4 +63,5 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontVariant: ['tabular-nums'],
         color: theme.colors.text.secondary,
     },
+    gutterTextCurrent: { color: theme.colors.text.primary },
 }));

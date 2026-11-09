@@ -9,9 +9,10 @@ import { ScmComparisonPhoneHeader } from '@/components/sessions/files/comparison
 import { listFilesComparisonScopeOptions, resolveFilesComparisonLabel } from '@/components/sessions/files/comparison/filesComparison';
 import { WalkthroughContents } from '@/components/sessions/files/walkthrough/WalkthroughContents';
 import { WalkthroughView, type WalkthroughViewLayout, type WalkthroughViewProps } from '@/components/sessions/files/walkthrough/WalkthroughView';
-import type { ScmDiffSummaryFailurePresentation } from '@/sync/domains/scm/diffSummary/state';
+import { SCM_DIFF_SUMMARY_ENDED_PARTWAY_FAILURE, type ScmDiffSummaryFailurePresentation } from '@/sync/domains/scm/diffSummary/state';
 import { ScmDiffSummaryStartOptions } from '@/components/sessions/files/comparison/ScmDiffSummaryStartOptions';
 import { buildWalkthroughReading, EMPTY_WALKTHROUGH_READING, type WalkthroughReadingInput } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import { useWalkthroughReading } from '@/components/sessions/files/walkthrough/useWalkthroughReading';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -69,7 +70,7 @@ function SpecimenBar(props: Readonly<{ view: 'files' | 'walkthrough'; phone?: bo
     );
     if (props.phone) return <ScmComparisonPhoneHeader view={props.view} views={['files', 'walkthrough']}
         scope={{ options: SCOPE_OPTIONS, current: SESSION, currentLabel: t('scmComparison.scope.session'), fileCount: 9, onSelect: noop }}
-        onSelectView={noop} onBack={noop} onStartReview={noop} reviewDisabled={props.offline} reviewDisabledReason={reason} sections={findSections} />;
+        onSelectView={noop} onStartReview={noop} reviewDisabled={props.offline} reviewDisabledReason={reason} sections={findSections} />;
     return (
         <ScmComparisonBar
             leading={(
@@ -93,10 +94,11 @@ function LiveMarks(props: Readonly<{
 }>) {
     const [refs, setRefs] = React.useState(() => specimenReviewedRefs(props.reviewedCount));
     const findSurfaceId = `specimen-walkthrough:${React.useId()}`;
-    const reading = React.useMemo(() => buildWalkthroughReading({
+    const marks = React.useMemo(() => applyScmReviewedMarkIntent(SPECIMEN_COMPARISON, null, refs, true), [refs]);
+    const reading = useWalkthroughReading({
         ...props.input,
-        reviewed: applyScmReviewedMarkIntent(SPECIMEN_COMPARISON, null, refs, true),
-    }), [props.input, refs]);
+        reviewed: marks,
+    });
     // The pane owner supplies focus eligibility in the product; this frame stands in for it so Find can open.
     return (
         <PluginSurfaceFocusEligibilityProvider active>
@@ -141,9 +143,10 @@ const MERGED: Omit<WalkthroughReadingInput, 'reviewed'> = {
     ...COMPLETE,
     walkthrough: { state: 'complete', value: SPECIMEN_WALKTHROUGH_MERGED },
 };
-const FAILED: WalkthroughReadingInput = {
+/** What the producer saves when writing stops after some stops: the partial output with its (diagnostic) reason. */
+const STOPPED_PARTWAY: WalkthroughReadingInput = {
     ...COMPLETE,
-    walkthrough: { state: 'failed', value: { ...SPECIMEN_WALKTHROUGH, stops: SPECIMEN_WALKTHROUGH.stops.slice(0, 2), otherChangeRefs: [] }, reason: 'Anthropic is overloaded (529)' },
+    walkthrough: { state: 'partial', value: { ...SPECIMEN_WALKTHROUGH, stops: SPECIMEN_WALKTHROUGH.stops.slice(0, 2), otherChangeRefs: [] }, reason: 'Anthropic is overloaded (529)' },
     analysis: SPECIMEN_ANALYSIS_STOPPED,
     reviewed: null,
 };
@@ -162,7 +165,7 @@ function base(layout: WalkthroughViewLayout): Omit<WalkthroughViewProps, 'readin
 
 /** One cell of the lifecycle storyboard (lab WT2-L). */
 function LifecycleCell(props: Readonly<{ caption: string; reading: WalkthroughReadingInput; view?: Partial<WalkthroughViewProps> }>) {
-    const reading = React.useMemo(() => buildWalkthroughReading(props.reading), [props.reading]);
+    const reading = useWalkthroughReading(props.reading);
     return (
         <View style={styles.cell}>
             <Text style={styles.cellCaption}>{props.caption}</Text>
@@ -193,7 +196,7 @@ function Lifecycle() {
             <LifecycleCell caption={`${L} 3 · Complete`} reading={{ ...COMPLETE, reviewed: null }} view={{ scopeDetail: 'written 10:42 in 38 s' }} />
             <LifecycleCell caption={`${L} 5 · Incomplete evidence`} reading={{ ...COMPLETE, comparison: INCOMPLETE_COMPARISON, analysis: SPECIMEN_ANALYSIS_STOPPED, reviewed: null }} />
             <LifecycleCell caption={`${L} 6 · Stale after a later edit`} reading={{ ...COMPLETE, reviewed: reviewed(1) }} view={{ stale: { onRefresh: noop } }} />
-            <LifecycleCell caption={`${L} 7 · Failed`} reading={FAILED} view={{ onRetry: noop, onChooseModel: noop }} />
+            <LifecycleCell caption={`${L} 7 · Failed`} reading={STOPPED_PARTWAY} view={{ failure: SCM_DIFF_SUMMARY_ENDED_PARTWAY_FAILURE, onRetry: noop, onChooseModel: noop }} />
             <LifecycleCell caption={`${L} 8 · Machine offline`} reading={{ ...COMPLETE, reviewed: reviewed(2) }} view={{ offline: { machine: 'MacBook Pro', time: '10:42' }, scopeDetail: 'from 10:42' }} />
             <LifecycleCell caption={`WT3-D4 · Generator ended`} reading={{ ...COMPLETE, reviewed: reviewed(1) }} view={{ endedConversation: { onStartNew: noop, onAskSession: noop } }} />
             <LifecycleCell caption={`${L} · Not written yet`} reading={{ ...COMPLETE, walkthrough: null, reviewed: null }} view={{ onShowFiles: noop }} />
@@ -245,7 +248,9 @@ export const WALKTHROUGH_SPECIMEN_FRAMES: readonly WalkthroughSpecimenFrame[] = 
     { id: 'A3', title: 'WT1-A3 · overview open', render: (phone) => <LiveMarks input={COMPLETE} reviewedCount={0} bar={!phone} view={{ ...base(phone ? 'phone' : 'wide'), initialOverviewOpen: true }} /> },
     { id: 'A2', title: 'WT1-A2p · contents sheet', render: () => <PhoneContents /> },
     { id: 'L', title: 'WT2-L · lifecycle', render: () => <Lifecycle /> },
-    { id: 'L7', title: 'WT2-L7 · failed', render: (phone) => <LiveMarks input={FAILED} reviewedCount={0} bar={!phone} view={{ ...base(phone ? 'phone' : 'wide'), onRetry: noop, onChooseModel: noop }} /> },
+    { id: 'L7', title: 'WT2-L7 · failed', render: (phone) => <LiveMarks input={STOPPED_PARTWAY} reviewedCount={0} bar={!phone} view={{ ...base(phone ? 'phone' : 'wide'), failure: SCM_DIFF_SUMMARY_ENDED_PARTWAY_FAILURE, onRetry: noop, onChooseModel: noop }} /> },
+    { id: 'L7t', title: 'WT2-L7 · stopped: the change is larger than the runtime reads, no retry', render: (phone) => <LiveMarks input={STOPPED_PARTWAY} reviewedCount={0} bar={!phone} view={{ ...base(phone ? 'phone' : 'wide'), failure: SPECIMEN_START_FAILURES.tooLarge, onRetry: noop, onChooseModel: noop }} /> },
+    { id: 'L7w', title: 'WT2-L7 · stopped: more than the model reads, Choose model', render: (phone) => <LiveMarks input={STOPPED_PARTWAY} reviewedCount={0} bar={!phone} view={{ ...base(phone ? 'phone' : 'wide'), failure: SPECIMEN_START_FAILURES.smallWindow, onRetry: noop, onChooseModel: noop }} /> },
     { id: 'L7m', title: 'WT2-L7 · regeneration refused: model unavailable, reading kept', render: (phone) => <LiveMarks input={COMPLETE} reviewedCount={0} bar={!phone}
         view={{ ...base(phone ? 'phone' : 'wide'), failure: SPECIMEN_START_FAILURES.model, onRetry: noop, onChooseModel: noop }} /> },
     { id: 'L7o', title: 'WT2-L7 · regeneration refused: outdated machine, reading kept', render: (phone) => <LiveMarks input={COMPLETE} reviewedCount={0} bar={!phone}

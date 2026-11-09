@@ -7,11 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StyleSheet, type ViewToken } from 'react-native';
 
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { VirtualizedList } from '../VirtualizedList';
 import { CollectionList } from '../../collection/CollectionList';
-import { DiffFilesListView } from '@/components/ui/code/diff/DiffFilesListView';
-import { installClampedWebScrollGeometry } from '@/dev/testkit/legend/webScrollGeometry';
+import { DiffFilesListView, type DiffFilesListViewHandle } from '@/components/ui/code/diff/DiffFilesListView';
+import { installClampedWebScrollGeometry, readVirtualizedWebRowTop } from '@/dev/testkit/legend/webScrollGeometry';
 import { useScmDiffExpandedKeys } from '@/components/workspaces/scm/review/useScmDiffExpandedKeys';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
@@ -385,6 +386,119 @@ describe('VirtualizedList web DOM integration', () => {
         expect(diagnostics).not.toContain('windowSize');
     });
 
+    it.each([Number.POSITIVE_INFINITY, Math.floor((2 ** 31 - 1) / 64)])('DiffFilesListView reveals exact first, middle and last identities in a 55,507-row variable-height inventory after membership changes (physical extent %s)', async (physicalExtent) => {
+        const listRef = React.createRef<DiffFilesListViewHandle>();
+        // Blink LayoutUnit stores CSS pixels in signed 32-bit units of 1/64 px:
+        // https://chromium.googlesource.com/chromium/src/+/96b04b8744c3300c980cd87bc41cc3444d463fb0/third_party/blink/renderer/platform/geometry/layout_unit.h
+        // Model the browser scroll boundary, including its content-height clamp. The real
+        // virtualizer owns estimates, measurements, position correction and target settlement.
+        installClampedWebScrollGeometry(physicalExtent);
+        let rows = Array.from({ length: 55_507 }, (_, index) => ({ key: `file-${index}`, added: 1, removed: 0 }));
+        let expandedId = rows[0]!.key;
+        const render = async () => {
+            await act(async () => root.render(
+                <div id="virtualized-list-host" style={{ display: 'flex', flexDirection: 'column', height: 400 }}>
+                    <DiffFilesListView ref={listRef} files={rows} virtualizeFileList
+                        expandedKeys={new Set([...rows.slice(0, 20).map(row => row.key), expandedId])}
+                        onToggleExpanded={() => {}} canRenderInlineDiffs={false} wrapLines showLineNumbers showPrefix
+                        renderFileRow={({ file, expanded }) => <div data-row-height={expanded ? '1200' : '84'} data-file-id={file.key}>{file.key}</div>} />
+                </div>,
+            ));
+            await flushLegendWork();
+        };
+        const reveal = async (index: number) => {
+            expandedId = rows[index]!.key;
+            await render();
+            await act(async () => { listRef.current!.scrollToIndex({ index, animated: false, viewPosition: 0 }); });
+            await flushLegendWork();
+            const row = container.querySelector<HTMLElement>(`[data-file-id="${rows[index]!.key}"]`);
+            const scroller = container.querySelector<HTMLElement>('[style*="overflow-y: auto"]')!;
+            expect(row).not.toBeNull();
+            // jsdom supplies no layout: read the real virtualizer's DOM placement at
+            // the geometry boundary, rather than treating a pinned mounted row as visible.
+            expect(readVirtualizedWebRowTop(row!, scroller), rows[index]!.key).toBeGreaterThanOrEqual(-1);
+            expect(readVirtualizedWebRowTop(row!, scroller), rows[index]!.key).toBeLessThan(scroller.clientHeight);
+        };
+        await render();
+        await reveal(0);
+        await reveal(Math.floor(rows.length / 2));
+        await reveal(rows.length - 1);
+        rows = [{ key: 'added-file', added: 1, removed: 0 }, ...rows];
+        await render();
+        await reveal(0);
+        await reveal(Math.floor(rows.length / 2));
+        await reveal(rows.length - 1);
+        rows = rows.filter(row => row.key !== 'file-2');
+        await render();
+        await reveal(0);
+        await reveal(Math.floor(rows.length / 2));
+        await reveal(rows.length - 1);
+    });
+
+    it('keeps a revealed final file on screen while the Review expansion window grows the 55,919-file list around it', async () => {
+        // Production Review composition: the expansion window follows the list's own viewability. The
+        // final file cannot reach the top, so files shown above it expand after the reveal settles.
+        installClampedWebScrollGeometry();
+        const files = Array.from({ length: 55_919 }, (_, index) => ({ key: `file-${index}`, added: 1, removed: 0 }));
+        const keys = files.map(file => file.key);
+        const listRef = React.createRef<DiffFilesListViewHandle>();
+        let revealFile: (index: number) => void = () => {};
+        function Review() {
+            const [viewableIndices, setViewableIndices] = React.useState<readonly number[]>([]);
+            const [reveal, setReveal] = React.useState<Readonly<{ key: string; index: number }> | null>(null);
+            const { expandedKeys } = useScmDiffExpandedKeys({ allKeys: keys, viewableIndices, tooLarge: true, aheadCount: 14, behindCount: 8, resetKey: 'review', reveal });
+            revealFile = (index) => {
+                setReveal({ key: keys[index]!, index });
+                listRef.current!.scrollToIndex({ index, animated: false, viewPosition: 0 });
+            };
+            return <DiffFilesListView ref={listRef} files={files} virtualizeFileList expandedKeys={expandedKeys}
+                onViewableItemsChanged={({ viewableItems }: { viewableItems: ViewToken[] }) => setViewableIndices(viewableItems.flatMap(token => typeof token.index === 'number' ? [token.index] : []))}
+                onToggleExpanded={() => {}} canRenderInlineDiffs={false} wrapLines showLineNumbers showPrefix
+                renderFileRow={({ file, expanded }) => <div data-row-height={expanded ? '1200' : '84'} data-file-id={file.key}>{file.key}</div>} />;
+        }
+        await act(async () => root.render(
+            <div id="virtualized-list-host" style={{ display: 'flex', flexDirection: 'column', height: 400 }}><Review /></div>,
+        ));
+        await flushLegendWork();
+        const last = files.length - 1;
+        await act(async () => { revealFile(last); });
+        await flushLegendWork();
+        await flushLegendWork();
+        const row = container.querySelector<HTMLElement>(`[data-file-id="${keys[last]}"]`);
+        const scroller = container.querySelector<HTMLElement>('[style*="overflow-y: auto"]')!;
+        expect(row).not.toBeNull();
+        expect(readVirtualizedWebRowTop(row!, scroller)).toBeGreaterThanOrEqual(-1);
+        expect(readVirtualizedWebRowTop(row!, scroller)).toBeLessThan(scroller.clientHeight);
+    });
+
+    it('DiffFilesListView mounts only nearby leading rows of 55,000 and restores a scroll offset past them onto the same file', async () => {
+        // The Review index draws as the list's leading rows (28px each); a remounted Review restores its
+        // last scroll offset before any of them is measured. The offset must land on the file it left.
+        installClampedWebScrollGeometry();
+        const leadingKeys = Array.from({ length: 55_000 }, (_, index) => `index-${index}`);
+        const files = Array.from({ length: 2_000 }, (_, index) => ({ key: `file-${index}`, added: 1, removed: 0 }));
+        const listRef = React.createRef<DiffFilesListViewHandle>();
+        await act(async () => root.render(
+            <div id="virtualized-list-host" style={{ display: 'flex', flexDirection: 'column', height: 400 }}>
+                <DiffFilesListView ref={listRef} files={files} virtualizeFileList expandedKeys={new Set()}
+                    onToggleExpanded={() => {}} canRenderInlineDiffs={false} wrapLines showLineNumbers showPrefix
+                    leadingRows={{ keys: leadingKeys, render: (index) => <div data-row-height="28">{leadingKeys[index]}</div>, estimatedSize: () => 28 }}
+                    renderFileRow={({ file }) => <div data-row-height="84" data-file-id={file.key}>{file.key}</div>} />
+            </div>,
+        ));
+        await flushLegendWork();
+        // Only the rows near the viewport mount, never the 55,000-row inventory.
+        expect(container.querySelectorAll('[data-row-height="28"]').length).toBeLessThan(500);
+        // The first file sits right after the leading rows; file rows' own estimates are not under test.
+        const target = 0;
+        await act(async () => { listRef.current!.scrollToOffset({ offset: leadingKeys.length * 28, animated: false }); });
+        await flushLegendWork();
+        const scroller = container.querySelector<HTMLElement>('[style*="overflow-y: auto"]')!;
+        const row = container.querySelector<HTMLElement>(`[data-file-id="file-${target}"]`);
+        expect(row).not.toBeNull();
+        expect(Math.abs(readVirtualizedWebRowTop(row!, scroller))).toBeLessThan(84);
+    });
+
     // A retained surface that is not being presented is `display: none`, so every row the list renders
     // there measures 0 x 0. Legend accepts a 0 x 0 row (its own viewport ignores 0 x 0, its row
     // coordinator does not), so a data change under a hidden surface made every row "fit": the pool
@@ -424,6 +538,79 @@ describe('VirtualizedList web DOM integration', () => {
         expect(container.querySelector('[data-testid="row:second-0"]')).not.toBeNull();
         expect(container.querySelector('[data-testid="row:first-0"]')).toBeNull();
         expect(mountedRows()).toBeLessThan(40);
+    });
+
+    it('does not revisit offscreen item sizes on an unchanged retained return at 59,445 rows', async () => {
+        const rows = Array.from({ length: 59_445 }, (_, index) => ({ id: `return-${index}` }));
+        const mounted = new Set<string>();
+        let countReads = false;
+        let offscreenSizeReads = 0;
+        let resizeFirst: (() => void) | undefined;
+        function RowBody({ id }: Row) {
+            const [height, setHeight] = React.useState(56);
+            React.useLayoutEffect(() => {
+                mounted.add(id);
+                return () => { mounted.delete(id); };
+            }, [id]);
+            if (id === rows[0]!.id) resizeFirst = () => setHeight(84);
+            return <div data-row-height={height} role="option">{id}</div>;
+        }
+        const content = <div id="virtualized-list-host" style={{ display: 'flex', flexDirection: 'column', height: 400 }}>
+            <VirtualizedList data={rows} estimatedItemSize={56} keyExtractor={item => item.id}
+                getItemType={item => {
+                    if (countReads && !mounted.has(item.id)) offscreenSizeReads += 1;
+                    return 'row';
+                }}
+                renderItem={({ item }) => <RowBody id={item.id} />} />
+        </div>;
+        const render = async (active: boolean) => {
+            await act(async () => root.render(<RetainedPanelSurface isActive={active}>{content}</RetainedPanelSurface>));
+            await flushLegendWork();
+        };
+        await render(true);
+        expect(mounted.size).toBeGreaterThan(0);
+        expect(mounted.size).toBeLessThan(40);
+        countReads = true;
+        await render(false);
+        expect(offscreenSizeReads).toBe(0);
+        await render(true);
+        expect(offscreenSizeReads).toBe(0);
+        // A genuine geometry change still reaches the list after the quiet return.
+        await act(async () => resizeFirst!());
+        await flushLegendWork();
+        expect(container.querySelector('[role="option"]')?.getAttribute('data-row-height')).toBe('84');
+    });
+
+    it('parks 55,919 rows without mounting the inventory when a retained row settles while hidden', async () => {
+        const rows = Array.from({ length: 55_919 }, (_, index) => ({ id: `park-${index}` }));
+        let mounts = 0;
+        let settle: (() => void) | undefined;
+        function RowBody({ id }: { id: string }) {
+            const [loaded, setLoaded] = React.useState(false);
+            React.useLayoutEffect(() => { mounts += 1; }, []);
+            if (id === 'park-0') settle = () => setLoaded(true);
+            return <div data-row-height={loaded ? '84' : '56'} role="option">{id}</div>;
+        }
+        const content = <div id="virtualized-list-host" style={{ display: 'flex', flexDirection: 'column', height: 400 }}>
+            <VirtualizedList data={rows} estimatedItemSize={56} keyExtractor={item => item.id}
+                renderItem={({ item }) => <RowBody id={item.id} />} />
+        </div>;
+        const render = async (active: boolean) => {
+            await act(async () => root.render(<RetainedPanelSurface isActive={active}>{content}</RetainedPanelSurface>));
+            await flushLegendWork();
+        };
+        await render(true);
+        const presentedMounts = mounts;
+        expect(presentedMounts).toBeGreaterThan(0);
+        expect(presentedMounts).toBeLessThan(40);
+        mounts = 0;
+        await render(false);
+        await act(async () => settle!());
+        await flushLegendWork();
+        expect(mounts).toBe(0);
+        await render(true);
+        expect(mounts).toBeLessThan(40);
+        expect(container.querySelector('[role="option"]')?.getAttribute('data-row-height')).toBe('84');
     });
 
     it('keeps unchanged Review rows mounted and quiet when 59,165 files gain two entries', async () => {
@@ -481,5 +668,149 @@ describe('VirtualizedList web DOM integration', () => {
         expect(unmounts).toEqual([]);
     });
 
+    it('keeps measured type averages accurate while toggling 55,919 diff files', async () => {
+        installClampedWebScrollGeometry();
+        const files = Array.from({ length: 55_919 }, (_, index) => ({ key: `file-${index}`, added: 1, removed: 0 }));
+        const keys = files.map(file => file.key);
+        const listRef = React.createRef<DiffFilesListViewHandle>();
+        let toggleCollapsed: (key: string) => void;
+        let revealFile: (index: number) => void;
+        let commits = 0;
+        const samples: Array<Record<string, { average: number; count: number }>> = [];
+        const commitCounts: number[] = [];
+        const errors: string[] = [];
+        const onError = (event: ErrorEvent) => { errors.push(event.error instanceof Error ? event.error.message : event.message); };
+        window.addEventListener('error', onError);
+        function Review() {
+            const [viewableIndices, setViewableIndices] = React.useState<readonly number[]>([]);
+            const [reveal, setReveal] = React.useState<Readonly<{ key: string; index: number }> | null>(null);
+            const window = useScmDiffExpandedKeys({ allKeys: keys, viewableIndices, tooLarge: true, aheadCount: 14, behindCount: 8, resetKey: 'legend-loop', reveal });
+            toggleCollapsed = window.toggleCollapsed;
+            revealFile = (index) => {
+                setReveal({ key: keys[index]!, index });
+                listRef.current!.scrollToIndex({ index, animated: false, viewPosition: 0 });
+            };
+            const expandedKeys = window.expandedKeys;
+            return <DiffFilesListView ref={listRef} files={files} virtualizeFileList expandedKeys={expandedKeys}
+                onViewableItemsChanged={({ viewableItems }: { viewableItems: ViewToken[] }) => setViewableIndices(viewableItems.flatMap(token => typeof token.index === 'number' ? [token.index] : []))}
+                onToggleExpanded={window.toggleCollapsed} canRenderInlineDiffs={false} wrapLines showLineNumbers showPrefix
+                renderFileRow={({ file, expanded }) => <div data-row-height={expanded ? '1200' : '84'} data-file-id={file.key}>{file.key}</div>} />;
+        }
+        function readAverages() {
+            // Inspect Legend's public state through its mounted ref; the host intentionally
+            // exposes only scroll commands. Keep sizing and the recycler real.
+            const row = container.querySelector<HTMLElement>('[data-file-id]')!;
+            const fiberKey = Object.keys(row).find(key => key.startsWith('__reactFiber$'))!;
+            type Fiber = { return: Fiber | null; ref?: { current?: { getState?: () => { getAverageItemSizes: () => Record<string, { average: number; count: number }> } } } };
+            let fiber = (row as unknown as Record<string, Fiber>)[fiberKey];
+            for (; fiber; fiber = fiber.return!) {
+                if (fiber.ref && typeof fiber.ref !== 'function' && fiber.ref.current?.getState) {
+                    return fiber.ref.current.getState().getAverageItemSizes();
+                }
+            }
+            throw new Error('Mounted Legend public getState ref not found');
+        }
+        try {
+            await act(async () => root.render(<React.Profiler id="legend-loop" onRender={() => { commits += 1; }}>
+                <div id="virtualized-list-host" style={{ display: 'flex', flexDirection: 'column', height: 400 }}><Review /></div>
+            </React.Profiler>));
+            await flushLegendWork();
+            for (const index of [0]) {
+                await act(async () => { revealFile!(index); });
+                await flushLegendWork();
+                for (let toggle = 0; toggle < 36; toggle += 1) {
+                    commits = 0;
+                    const key = keys[index]!;
+                    const before = container.querySelector<HTMLElement>(`[data-file-id="${key}"]`)?.dataset.rowHeight;
+                    await act(async () => { toggleCollapsed!(key); });
+                    await flushLegendWork();
+                    const after = container.querySelector<HTMLElement>(`[data-file-id="${key}"]`)?.dataset.rowHeight;
+                    expect(after, "real row changes expanded/collapsed type").not.toBe(before);
+                    const averages = readAverages();
+                    // This is the only file ever measured collapsed. Expanding it must
+                    // remove that contribution, including the now-empty type bucket.
+                    expect.soft(averages.file?.count ?? 0, 'collapsed measurements follow their current type')
+                        .toBe(after === '84' ? 1 : 0);
+                    samples.push(averages);
+                    commitCounts.push(commits);
+                }
+            }
+            const beforeIdle = commits;
+            await flushLegendWork();
+            expect.soft(samples.flatMap(sample => Object.values(sample).filter(value => value.average < 0)),
+                'per-type average sizes must remain non-negative').toEqual([]);
+            for (const [type, height] of [['expanded-file', 1_200], ['file', 84]] as const) {
+                const measurements = samples.flatMap(sample => sample[type] ? [sample[type]!.average] : []);
+                expect(measurements.length).toBeGreaterThan(0);
+                expect.soft(measurements.every(average => Math.abs(average - height) < 0.001),
+                    `${type} average reflects only measurements of that type`).toBe(true);
+            }
+            // React's nested-update failure threshold is 50; this diagnostic distinguishes a settling
+            // interaction from that failure class. It adds no product limit or scheduling guard.
+            expect.soft(Math.max(...commitCounts), 'commits per toggle below nested-update threshold').toBeLessThan(50);
+            expect.soft(commits - beforeIdle, 'settled list has no idle commits').toBe(0);
+            expect.soft(errors.filter(error => /Maximum update depth/.test(error))).toEqual([]);
+        } finally {
+            window.removeEventListener('error', onError);
+        }
+    });
+    it.each([
+        ['the same commit hides it before presentation is withdrawn', 'same-commit'],
+        ['list work scheduled while presented settles after the hide', 'pending-work'],
+    ] as const)('parks 55,919 Review rows without mounting the inventory when %s', async (_label, order) => {
+        // Live (agent-qa-perf #69, Project → Inbox): the parked Review list took new data while its
+        // presentation was still true, was then hidden, and Legend kept measuring its containers at 0 x 0
+        // until React's nested-update limit crashed the app after ~50k mounts.
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const errors: string[] = [];
+        const onError = (event: ErrorEvent) => { errors.push(event.error instanceof Error ? event.error.message : event.message); };
+        window.addEventListener('error', onError);
+        let mounts = 0;
+        function RowBody({ id }: { id: string }) {
+            React.useLayoutEffect(() => { mounts += 1; }, []);
+            return <div data-row-height="84" role="option">{id}</div>;
+        }
+        const makeRows = (revision: number) => Array.from({ length: 55_919 }, (_, index) => ({ id: `review-${index}`, revision }));
+        const Surface = (props: Readonly<{ hidden: boolean; presented: boolean; rows: readonly (Row & { revision: number })[] }>) => (
+            <div style={{ display: props.hidden ? 'none' : 'flex', flexDirection: 'column' }}>
+                <PluginSurfaceFocusEligibilityProvider active={props.presented}>
+                    <div id="virtualized-list-host" style={{ display: 'flex', flexDirection: 'column', height: 400 }}>
+                        <VirtualizedList data={props.rows} estimatedItemSize={84} keyExtractor={item => item.id}
+                            extraData={props.rows[0]?.revision} renderItem={({ item }) => <RowBody id={item.id} />} />
+                    </div>
+                </PluginSurfaceFocusEligibilityProvider>
+            </div>
+        );
+        const render = (hidden: boolean, presented: boolean, rows: readonly (Row & { revision: number })[]) =>
+            act(async () => { root.render(<Surface hidden={hidden} presented={presented} rows={rows} />); });
+        try {
+            await render(false, true, makeRows(1));
+            await flushLegendWork();
+            const presentedMounts = mounts;
+            expect(presentedMounts).toBeGreaterThan(0);
+            expect(presentedMounts).toBeLessThan(40);
 
+            mounts = 0;
+            if (order === 'same-commit') {
+                await render(true, true, makeRows(2));
+            } else {
+                await render(false, true, makeRows(2));
+                await render(true, true, makeRows(2));
+            }
+            await render(true, false, makeRows(3));
+            await flushLegendWork();
+            const hiddenMounts = mounts;
+
+            mounts = 0;
+            await render(false, true, makeRows(3));
+            await flushLegendWork();
+            expect({ hiddenMounts, crashed: errors.some(error => /Maximum update depth/.test(error)) })
+                .toEqual({ hiddenMounts: 0, crashed: false });
+            expect(mounts).toBeLessThan(40);
+            expect(container.querySelectorAll('[role="option"]').length).toBeLessThan(40);
+            expect(consoleError.mock.calls.flat().map(String).join('\n')).not.toContain('Maximum update depth');
+        } finally {
+            window.removeEventListener('error', onError);
+        }
+    });
 });

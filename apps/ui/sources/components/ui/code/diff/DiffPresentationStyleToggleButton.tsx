@@ -9,6 +9,8 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 export type DiffPresentationStyleToggleButtonProps = Readonly<{
     disabled?: boolean;
     size?: number;
+    /** The gap the row leaves to its neighbouring control; the hit area reaches half of it. */
+    interactiveTargetGapPx?: number;
     presentation?: 'icon' | 'segmented';
 }>;
 
@@ -65,7 +67,7 @@ export const DiffPresentationStyleToggleButton = React.memo<DiffPresentationStyl
             iconSize={iconSize}
             size={28}
             variant="plain"
-            interactiveTargetGapPx={8}
+            interactiveTargetGapPx={props.interactiveTargetGapPx ?? 8}
         />
     );
 });

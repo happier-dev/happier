@@ -115,7 +115,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.pressed,
     },
     rowHovered: {
-        backgroundColor: theme.colors.surface.pressed,
+        backgroundColor: theme.colors.surface.hover,
     },
     rowSelected: {
         backgroundColor: theme.colors.surface.pressedOverlay,
@@ -304,7 +304,7 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
             ? (isMenu ? styles.rowMenuSelected : styles.rowSelected)
             : null,
         selected ? { backgroundColor: paintColor(isMenu ? theme.colors.surface.selected : theme.colors.surface.pressedOverlay) }
-            : isHovered && !disabled ? { backgroundColor: paintColor(variant === 'selectable' ? (theme.dark ? theme.colors.surface.elevated : theme.colors.surface.inset) : theme.colors.surface.pressed) }
+            : isHovered && !disabled ? { backgroundColor: paintColor(variant === 'selectable' ? (theme.dark ? theme.colors.surface.elevated : theme.colors.surface.inset) : theme.colors.surface.hover) }
                 : pressed && !disabled ? { backgroundColor: paintColor(theme.colors.surface.pressed) } : null,
         disabled ? styles.rowDisabled : null,
         isMenu ? styles.rowMenu : null,
@@ -337,8 +337,9 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
         ref={ref as React.Ref<HappierFocusable>}
         title={props.title}
         subtitle={props.subtitle}
-        // A menu is scanned, not read: one purpose line per row; the row's accessible name keeps the whole text.
-        subtitleLines={isMenu ? 1 : undefined}
+        // Ordinary menu summaries stay compact. A disabled action's explanation
+        // must keep its recovery instruction visible, including on phones.
+        subtitleLines={isMenu ? (disabled ? 0 : 1) : undefined}
         titleLeading={titleLeading}
         titleAccessory={titleAccessory}
         subtitleLeading={subtitleLeading}

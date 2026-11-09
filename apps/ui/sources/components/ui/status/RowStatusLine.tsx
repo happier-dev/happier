@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { Theme } from '@/theme';
 import { HappierRowStatusLine, happierPageTextMetrics, type HappierRowStatusLineContentProps, type HappierRowStatusTone } from '@happier-dev/plugin-ui/presentation';
 
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
@@ -10,6 +11,11 @@ import { Typography } from '@/constants/Typography';
 
 export type RowStatusTone = HappierRowStatusTone;
 
+/** The one ink for each status tone; a page-level status line that is not a row reads the same trouble colours. */
+export function rowStatusToneColors(theme: Theme): Readonly<Record<RowStatusTone, string>> {
+    return { quiet: theme.colors.text.secondary, warn: theme.colors.state.warning.foreground, bad: theme.colors.state.danger.foreground };
+}
+
 /**
  * The one status line under a row's title (an agent, an installable provider). Healthy states are quiet
  * text; only trouble carries a dot and a tone (needs you, failed); work in progress leads with a small
@@ -19,11 +25,11 @@ export const RowStatusLine = React.memo(function RowStatusLine(props: HappierRow
     const { theme } = useUnistyles();
     return (
         <HappierRowStatusLine {...props} host={{
-            colors: { quiet: theme.colors.text.secondary, warn: theme.colors.state.warning.foreground, bad: theme.colors.state.danger.foreground },
+            colors: rowStatusToneColors(theme),
             actionGap: theme.space.s8,
             renderBusy: ({ size }) => <ActivitySpinner size={size} color={theme.colors.text.tertiary} style={styles.spinner} />,
             renderIndicator: ({ size, color }) => <StatusDot size={size} color={color} />,
-            renderText: ({ text, numberOfLines, style }) => <Text style={[styles.text, style]} numberOfLines={numberOfLines}>{text}</Text>,
+            renderText: ({ text, numberOfLines, style, mono }) => <Text style={[styles.text, mono ? styles.mono : null, style]} numberOfLines={numberOfLines}>{text}</Text>,
             renderAction: (action) => <TextLinkButton tone="strong" {...action} />,
         }} />
     );
@@ -38,5 +44,8 @@ const styles = StyleSheet.create(() => ({
         ...Typography.default(),
         ...happierPageTextMetrics('rowDescription'),
         fontVariant: ['tabular-nums'],
+    },
+    mono: {
+        ...Typography.mono(),
     },
 }));

@@ -35,7 +35,7 @@ vi.mock('react-native-keyboard-controller', async () => {
   native.keyboard = await createKeyboardControllerModuleMock();
   return native.keyboard;
 });
-// Safe-area insets are an OS boundary; this viewport has no inset.
+// The OS bottom inset distinguishes full keyboard coverage from passive chrome height.
 vi.mock('react-native-safe-area-context', async (importOriginal) => ({
   ...await importOriginal<typeof import('react-native-safe-area-context')>(),
   useSafeAreaInsets: () => ({ top: 0, bottom: 40, left: 0, right: 0 }),

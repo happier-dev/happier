@@ -1,4 +1,5 @@
 import { ValueSync } from '@/utils/sessions/sync';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import {
     getAutocompleteSuggestionIdentity,
@@ -53,6 +54,7 @@ export type ActiveSuggestionKindSelection = (kind: ComposerSuggestionKindId) => 
 }>;
 
 type ActiveSuggestionState = Readonly<{
+    source: object | null;
     query: string | null;
     suggestions: AutocompleteSuggestion[];
     selected: number;
@@ -105,6 +107,7 @@ function unchangedSuggestionState(
     next: ActiveSuggestionState,
 ): ActiveSuggestionState {
     return previous.query === next.query
+        && previous.source === next.source
         && previous.selected === next.selected
         && previous.pinnedKey === next.pinnedKey
         && previous.selectionPending === next.selectionPending
@@ -116,18 +119,20 @@ function unchangedSuggestionState(
 
 function reconcileSuggestionSnapshot(params: Readonly<{
     previous: ActiveSuggestionState;
+    source: object;
     query: string;
     suggestions: AutocompleteSuggestion[];
     complete: boolean;
     autoSelectFirst: boolean;
 }>): ActiveSuggestionState {
-    const { previous, query, suggestions, complete, autoSelectFirst } = params;
+    const { previous, source, query, suggestions, complete, autoSelectFirst } = params;
     if (previous.pinnedKey !== null) {
         const selected = suggestions.findIndex(
             (suggestion) => getAutocompleteSuggestionIdentity(suggestion) === previous.pinnedKey,
         );
         if (selected !== -1) {
             return unchangedSuggestionState(previous, {
+                source,
                 query,
                 suggestions,
                 selected,
@@ -141,6 +146,7 @@ function reconcileSuggestionSnapshot(params: Readonly<{
             // earlier section happened to settle first. Arrow navigation is still
             // an intentional new choice; Enter remains inert until then.
             return unchangedSuggestionState(previous, {
+                source,
                 query,
                 suggestions,
                 selected: -1,
@@ -159,6 +165,7 @@ function reconcileSuggestionSnapshot(params: Readonly<{
     const selected = nearest >= 0 && suggestions[nearest]?.disabled === true
         ? stepToEnabled(suggestions, nearest, 1, true) : nearest;
     return unchangedSuggestionState(previous, {
+        source,
         query,
         suggestions,
         selected: selected < 0 && suggestions.length > 0 && autoSelectFirst ? stepToEnabled(suggestions, -1, 1, false) : selected,
@@ -174,6 +181,7 @@ export function useActiveSuggestions(
     options: SuggestionOptions = {}
 ) {
     const handler = resolveActiveSuggestionsHandler(source, query);
+    const sessionVisibility = useSessionRecordingVisibility(query?.startsWith('@') === true);
     const {
         autoSelectFirst = true,
         wrapAround = true
@@ -181,6 +189,7 @@ export function useActiveSuggestions(
 
     // State for suggestions
     const [state, setState] = React.useState<ActiveSuggestionState>({
+        source: null,
         query: null,
         suggestions: [],
         selected: -1,
@@ -214,7 +223,7 @@ export function useActiveSuggestions(
     const moveUp = React.useCallback((kind: ComposerSuggestionKindId | null = null) => move(-1, kind), [move]);
     const moveDown = React.useCallback((kind: ComposerSuggestionKindId | null = null) => move(1, kind), [move]);
     const selectionForKind = React.useCallback<ActiveSuggestionKindSelection>((kind) => {
-        if (!query || stateRef.current.query !== query) return { selected: -1, selectionPending: false };
+        if (!query || stateRef.current.query !== query || stateRef.current.source !== activeSyncRef.current) return { selected: -1, selectionPending: false };
         return readKindSelection(stateRef.current, kind, autoSelectFirst);
     }, [autoSelectFirst, query]);
 
@@ -235,6 +244,7 @@ export function useActiveSuggestions(
                     return;
                 }
                 const next: ActiveSuggestionState = {
+                    source: ownSync,
                     query: null,
                     suggestions: [],
                     selected: -1,
@@ -257,6 +267,7 @@ export function useActiveSuggestions(
                 const previous = stateRef.current;
                 const next = reconcileSuggestionSnapshot({
                     previous,
+                    source: ownSync,
                     query: nextQuery,
                     suggestions,
                     complete: status?.complete === true,
@@ -293,7 +304,7 @@ export function useActiveSuggestions(
             acceptsPublications = false;
         });
         return ownSync;
-    }, [autoSelectFirst, handler]);
+    }, [autoSelectFirst, handler, sessionVisibility]);
 
     React.useEffect(() => {
         activeSyncRef.current = sync;
@@ -313,7 +324,7 @@ export function useActiveSuggestions(
     }, [query, sync]);
 
     // If no query return empty suggestions
-    if (!query || state.query !== query) {
+    if (!query || state.query !== query || state.source !== sync) {
         return [[], -1, moveUp, moveDown, false, false, selectionForKind] as const;
     }
 

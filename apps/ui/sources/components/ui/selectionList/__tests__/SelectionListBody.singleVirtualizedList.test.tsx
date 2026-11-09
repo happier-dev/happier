@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
+import type { CapturingLegendListMockState } from '@/dev/testkit/mocks/legendList';
 
 import type {
     SelectionListOption,
@@ -16,13 +16,14 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
-    renderItems: true,
-});
+let legendListState: CapturingLegendListMockState;
 
-vi.mock('@legendapp/list/react-native', () => ({
-    LegendList: capturedLegendList.LegendList,
-}));
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return await createLegendListModuleMock({ renderItems: true, memoizeItems: true }, state => {
+        legendListState = state;
+    });
+});
 
 function makeOptions(count: number, prefix: string): ReadonlyArray<SelectionListOption> {
     return Array.from({ length: count }, (_, i) => ({
@@ -65,11 +66,37 @@ function defaultProps(rootStep: SelectionListStep, overrides: Partial<SelectionL
  */
 describe('SelectionListBody single virtualized-list multi-section restructure (RV-9 / FRESH-3)', () => {
     beforeEach(() => {
-        legendListState.reset();
+        legendListState?.reset();
     });
 
     afterEach(() => {
         vi.unstubAllEnvs();
+    });
+
+    it('keeps a mounted direct-source row fresh when the same path changes without structural churn', async () => {
+        const { SelectionList } = await import('../SelectionList');
+        const items: SelectionListVirtualizedOptionSource['items'] = [
+            { kind: 'option', key: 'same-path', optionIndex: 0, positionInSet: 1 },
+        ];
+        const makeSource = (label: string): SelectionListVirtualizedOptionSource => ({
+            items, optionCount: 1, stateKey: '',
+            getOption: () => ({ id: 'same-path', label }),
+            getOptionId: () => 'same-path',
+            findItemIndexByOptionIndex: index => index === 0 ? 0 : -1,
+            findOptionIndexById: id => id === 'same-path' ? 0 : -1,
+            getFirstFocusableOptionIndex: () => 0,
+            getNextFocusableOptionIndex: () => 0,
+            isFocusableOptionIndex: index => index === 0,
+            getHeader: () => ({ id: 'files' }),
+        });
+        const props = (source: SelectionListVirtualizedOptionSource) => defaultProps({
+            id: 'root', inputPlaceholder: 'Search', sections: [], virtualizedOptionSource: source,
+        }, { maxHeight: 300 });
+        const screen = await renderScreen(<SelectionList {...props(makeSource('Before entry change'))} />);
+        expect(screen.getTextContent()).toContain('Before entry change');
+        await screen.update(<SelectionList {...props(makeSource('After entry change'))} />);
+        expect(screen.getTextContent()).toContain('After entry change');
+        expect(screen.getTextContent()).not.toContain('Before entry change');
     });
 
     it('keeps row taps handled for a direct virtualized option source while the keyboard is open', async () => {
@@ -85,6 +112,7 @@ describe('SelectionListBody single virtualized-list multi-section restructure (R
             stateKey: 'direct-v1',
             getOption: (index) => options[index]!,
             getOptionId: (index) => options[index]?.id ?? '',
+            findItemIndexByOptionIndex: index => index >= 0 && index < options.length ? index : -1,
             findOptionIndexById: (id) => options.findIndex((option) => option.id === id),
             getFirstFocusableOptionIndex: () => 0,
             getNextFocusableOptionIndex: (current, direction) => (
@@ -110,6 +138,47 @@ describe('SelectionListBody single virtualized-list multi-section restructure (R
             .toBe('handled');
     });
 
+    it('draws a direct source section\'s coverage hint with the shared hint line', async () => {
+        const options = makeOptions(2, 'hinted');
+        const source: SelectionListVirtualizedOptionSource = {
+            items: [
+                { kind: 'result-hint', key: 'files::resultHint', sectionIndex: 0 },
+                ...options.map((option, optionIndex) => ({
+                    kind: 'option' as const,
+                    key: option.id,
+                    optionIndex,
+                    positionInSet: optionIndex + 1,
+                })),
+            ],
+            optionCount: options.length,
+            stateKey: 'hinted-v1',
+            getOption: (index) => options[index]!,
+            getOptionId: (index) => options[index]?.id ?? '',
+            findItemIndexByOptionIndex: index => index >= 0 && index < options.length ? index + 1 : -1,
+            findOptionIndexById: (id) => options.findIndex((option) => option.id === id),
+            getFirstFocusableOptionIndex: () => 0,
+            getNextFocusableOptionIndex: (current, direction) => (
+                (current + direction + options.length) % options.length
+            ),
+            isFocusableOptionIndex: (index) => index >= 0 && index < options.length,
+            getHeader: () => ({ id: 'files', resultHint: 'Files are offline' }),
+        };
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(
+            <SelectionList
+                {...defaultProps({
+                    id: 'root',
+                    inputPlaceholder: 'Search',
+                    sections: [],
+                    virtualizedOptionSource: source,
+                }, { maxHeight: 300 })}
+            />,
+        );
+
+        expect(screen.findByTestId('sl:section:files:resultHint')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Files are offline');
+    });
+
     it('keys a direct source row from the row itself, so the list can compare a replaced listing against the previous one', async () => {
         // LegendList detects a data change by calling the CURRENT keyExtractor on the PREVIOUS data
         // (`checkStructuralDataChange`). A listing that shrinks (Browse after indexing settles) must
@@ -132,6 +201,7 @@ describe('SelectionListBody single virtualized-list multi-section restructure (R
                 stateKey,
                 getOption,
                 getOptionId: (index) => getOption(index).id,
+                findItemIndexByOptionIndex: index => index >= 0 && index < options.length ? index : -1,
                 findOptionIndexById: (id) => options.findIndex((option) => option.id === id),
                 getFirstFocusableOptionIndex: () => 0,
                 getNextFocusableOptionIndex: (current) => current,

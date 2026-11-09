@@ -1,21 +1,12 @@
 import { Skia, type SkData, type SkImage } from '@shopify/react-native-skia';
 
-import { decodeBase64 } from '@/encryption/base64';
-import { encodeUTF8 } from '@/encryption/text';
+import { dataUriBytes } from '@/utils/files/dataUriBytes';
 
 import type { ImageAnnotationSource } from './types';
 
 /** Android's Skia URL stream has no data: handler; feed its bytes directly to Skia. */
 export function annotationImageDataSource(uri: string): string | Uint8Array | null {
-  if (!uri.startsWith('data:')) return uri;
-  const comma = uri.indexOf(',');
-  if (comma < 0) return null;
-  try {
-    const payload = decodeURIComponent(uri.slice(comma + 1));
-    return uri.slice(0, comma).split(';').includes('base64') ? decodeBase64(payload) : encodeUTF8(payload);
-  } catch {
-    return null;
-  }
+  return uri.startsWith('data:') ? dataUriBytes(uri) : uri;
 }
 
 /** MediaStage admits raster and SVG pictures; preview and flatten share the same raster. */

@@ -7,20 +7,24 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { loadPluginUiHostSupport } from '@/components/plugins/hostApi/loadPluginUiHostSupport';
+import * as hostedDocument from '@/components/plugins/hostedWeb/buildHostedHtmlDocument';
 import { HostedHtmlSurfaceAdapter, type CallerHostedHtmlRuntime } from '@/components/ui/surfaces/hostedHtml/HostedHtmlSurfaceAdapter';
 import { createSessionCallerHostedHtmlRequestController } from './sessionCallerHostedHtmlRequestController';
 import {
-    createActionExecutor,
-    DEFAULT_ACTIONS_SETTINGS_V1,
+    createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import {
+    DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
+import {
     isApprovalRequiredByActionsSettings,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/actions/actionApprovalPolicy';
 
 const observations = vi.hoisted(() => ({ frames: [] as Record<string, unknown>[] }));
 // Physical browser frame only; the real caller adapter and shared bridge remain exercised.
 vi.mock('@/components/browser/frame/BrowserViewFrame.web', () => ({
     BrowserViewFrame: (props: Readonly<{ engine: Record<string, unknown> }>) => {
         observations.frames.push(props.engine);
-        return React.createElement('BrowserViewFrame');
+        const [document] = React.useState(() => ({}));
+        return React.createElement('BrowserViewFrame', { document });
     },
 }));
 
@@ -29,7 +33,7 @@ afterEach(() => { standardCleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals()
 async function waitForCallerFrame() {
     // Await real lazy SDK initialization rather than spending the assertion's
     // polling budget on cold module transformation in the source harness.
-    await act(async () => { await loadPluginUiHostSupport(); });
+    await act(async () => { await loadPluginUiHostSupport(); await vi.dynamicImportSettled(); });
     await vi.waitFor(async () => {
         await act(async () => { await Promise.resolve(); });
         expect(observations.frames.at(-1)?.html).toEqual(expect.any(String));
@@ -74,6 +78,60 @@ it('opens caller links only through a current frame activation without adding Ho
     expect(negotiated).toMatchObject({ payload: { methods: ['context', 'watchContext'] } });
 });
 
+it('renders local content with unavailable optional methods and returns a typed unsupported call', async () => {
+    const runtime: CallerHostedHtmlRuntime = {
+        serverIdentityId: 'home-a', accountId: 'account-a', accountEncryptionMode: 'plain', hostOrigin: 'https://app.example.com',
+        admittedHostMethods: ['context', 'watchContext'],
+        createRequestController: () => ({ handleRequest: async () => { throw new Error('unsupported_call_reached_controller'); }, dispose: () => undefined }),
+        lifetime: { isCurrent: () => true, onRetire: () => ({ dispose: () => undefined }) },
+    };
+    const screen = await renderScreen(<HostedHtmlSurfaceAdapter
+        title="Local interactive content" recordRevision="revision-a" approvalSubject="optional"
+        source={artifactHtmlBundleFromBodyV1('<button>Local control</button>')}
+        requestedCapabilities={{ hostMethods: ['readResource'], resources: [{ pluginId: 'acme.preview', localId: 'status' }] }}
+        target={{ kind: 'app' }} runtime={runtime} testID="optional-html"
+    />);
+    const frame = await waitForCallerFrame();
+    expect(frame.html).toContain('<button>Local control</button>');
+    expect(screen.findByTestId('optional-html-unavailable')).toBeNull();
+    const encoded = String(frame.html).match(/Object\.freeze\((\{.*?\})\),writable:false/)?.[1];
+    if (!encoded) throw new Error('expected_inline_frame_bootstrap');
+    const { identity } = JSON.parse(encoded) as { identity: { instanceId: string; mountNonce: string } };
+    const transport = frame.webMessageBridge as Readonly<{
+        onMessage: (event: MessageEvent, receipt: { consumeTransientActivation(): boolean }) => unknown;
+    }>;
+    const send = (sequence: number, kind: string, payload: unknown) => transport.onMessage(
+        { data: { version: 1, identity, sequence, kind, payload }, origin: 'null' } as MessageEvent,
+        { consumeTransientActivation: () => false },
+    );
+    await act(async () => { await send(1, 'ready', { ready: true }); });
+    expect(await send(2, 'hostApi', { wireVersion: 1, kind: 'negotiate', identity, apiRange: '^1.0.0' }))
+        .toMatchObject({ payload: { methods: ['context', 'watchContext'] } });
+    expect(await send(3, 'hostApi', {
+        wireVersion: 1, kind: 'request', identity, requestId: 'optional-read', method: 'readResource',
+        payload: { resource: { pluginId: 'acme.preview', localId: 'status' }, input: {} },
+    })).toMatchObject({ payload: { kind: 'error', error: { code: 'unsupported_method' } } });
+});
+
+it('reports malformed local assets through the physical document owner and recovers with corrected source', async () => {
+    const runtime: CallerHostedHtmlRuntime = {
+        serverIdentityId: 'home-a', accountId: 'account-a', accountEncryptionMode: 'plain', hostOrigin: 'https://app.example.com',
+        admittedHostMethods: [],
+        createRequestController: () => ({ handleRequest: async () => null, dispose: () => undefined }),
+        lifetime: { isCurrent: () => true, onRetire: () => ({ dispose: () => undefined }) },
+    };
+    const render = (body: string) => <HostedHtmlSurfaceAdapter title="Asset validation" recordRevision={body}
+        approvalSubject="assets" source={artifactHtmlBundleFromBodyV1(body)}
+        target={{ kind: 'app' }} runtime={runtime} testID="asset-html" />;
+    const screen = await renderScreen(render('<script src="missing.js"></script>'));
+    await vi.waitFor(() => expect(screen.findByTestId('asset-html-error')).toBeTruthy());
+    expect(screen.findByTestId('asset-html-error')).toBeTruthy();
+    await screen.update(render('<p>Corrected source</p>'));
+    const frame = await waitForCallerFrame();
+    expect(frame.html).toContain('<p>Corrected source</p>');
+    expect(screen.findByTestId('asset-html-error')).toBeNull();
+});
+
 it('replays the stored executable while each guest Action still requires the viewer approval owner', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'viewer-approval' }));
     // Persisting approval/mutation is the external boundary; keep the policy,
@@ -93,7 +151,7 @@ it('replays the stored executable while each guest Action still requires the vie
         createRequestController: (publishResourceEvent) => createSessionCallerHostedHtmlRequestController({
             sessionId: 'session-a', serverId: 'viewer-home', serverIdentityId: 'viewer-home', accountId: 'viewer-account',
             executeHostAction: (actionId, input, context) => executor.execute(actionId, input, context),
-            isAccountCurrent: () => true, isSessionCurrent: () => true, pluginTarget: null,
+            isAccountCurrent: () => true, isSessionCurrent: () => true, isSessionOwned: () => true, pluginTarget: null,
             publishResourceEvent, notify: () => undefined,
         }),
         lifetime: { isCurrent: () => true, onRetire: () => ({ dispose: () => undefined }) },
@@ -120,12 +178,13 @@ it('replays the stored executable while each guest Action still requires the vie
         await send(1, 'ready', { ready: true });
         await send(2, 'hostApi', { wireVersion: 1, kind: 'negotiate', identity, apiRange: '^1.0.0' });
     });
-    await expect(send(3, 'hostApi', {
+    const actionReply = await send(3, 'hostApi', {
         wireVersion: 1, kind: 'request', identity, requestId: 'remove-item', method: 'executeAction',
         payload: { action: 'session.board.item.remove', input: {
             sessionId: 'session-a', itemId: 'stored-item', expectedItemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
         } },
-    })).resolves.toMatchObject({ kind: 'result', payload: { kind: 'result', result: {
+    });
+    expect(actionReply, JSON.stringify(actionReply)).toMatchObject({ kind: 'result', payload: { kind: 'result', result: {
         kind: 'approval_request_created', artifactId: 'viewer-approval',
     } } });
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({
@@ -134,35 +193,88 @@ it('replays the stored executable while each guest Action still requires the vie
     expect(sessionBoardAction).not.toHaveBeenCalled();
 });
 
-it('keeps a live caller frame connected across an equivalent parent render', async () => {
+it('materializes one caller document, retains it across equal inputs, and replaces changed source', async () => {
+    // Observe actual full-document materializations; the builder still runs real logic.
+    const materializations = vi.spyOn(hostedDocument, 'buildHostedHtmlDocument');
     const runtime: CallerHostedHtmlRuntime = {
         serverIdentityId: 'home-a', accountId: 'account-a', accountEncryptionMode: 'plain', hostOrigin: 'https://app.example.com',
         admittedHostMethods: ['context', 'watchContext'],
         createRequestController: () => ({ handleRequest: async () => null, dispose: () => undefined }),
         lifetime: { isCurrent: () => true, onRetire: () => ({ dispose: () => undefined }) },
     };
-    const source = artifactHtmlBundleFromBodyV1('<main>same document</main>');
+    let source = artifactHtmlBundleFromBodyV1('<main>same document</main>');
     const requestedCapabilities = { hostMethods: ['context', 'watchContext'] };
+    let branch = 'feature/ci';
     const render = () => <HostedHtmlSurfaceAdapter
         sessionId="session-a" title="same title" recordRevision="revision-a"
-        approvalSubject="same-source" source={source} requestedCapabilities={requestedCapabilities}
+        approvalSubject="same-source" source={{ ...source }} requestedCapabilities={{ ...requestedCapabilities }}
         input={{ period: 'week' }}
-        target={{ kind: 'session', sessionId: 'session-a' }}
+        target={{ kind: 'session', sessionId: 'session-a', branch }}
+        onIntrinsicHeightChange={() => {}}
         runtime={runtime} testID="probe-html"
     />;
     const screen = await renderScreen(render());
     const firstFrame = await waitForCallerFrame();
+    expect(materializations).toHaveBeenCalledTimes(1);
+    const document = screen.tree.findByType('BrowserViewFrame').props.document;
     const posted: unknown[] = [];
     const transport = firstFrame.webMessageBridge as Readonly<{
         attachHostMessages: (send: (message: unknown) => void) => (() => void);
     }>;
     const detach = transport.attachHostMessages((message) => posted.push(message));
     await screen.update(render());
+    await vi.waitFor(() => expect(screen.tree.findAllByType('BrowserViewFrame')).toHaveLength(1));
+    expect(screen.tree.findByType('BrowserViewFrame').props.document).toBe(document);
+    expect(observations.frames.at(-1)!.html).toBe(firstFrame.html);
+    expect(materializations).toHaveBeenCalledTimes(1);
+    branch = 'next-branch';
+    await screen.update(render());
+    await vi.waitFor(() => expect(screen.tree.findAllByType('BrowserViewFrame')).toHaveLength(1));
+    expect(screen.tree.findByType('BrowserViewFrame').props.document).toBe(document);
     expect(observations.frames.at(-1)!.html).toBe(firstFrame.html);
     detach();
     expect(posted).not.toEqual(expect.arrayContaining([
         expect.objectContaining({ payload: expect.objectContaining({ kind: 'disconnected' }) }),
     ]));
+    source = artifactHtmlBundleFromBodyV1('<main>replacement document</main>');
+    await screen.update(render());
+    await vi.waitFor(() => expect(observations.frames.at(-1)!.html).toContain('replacement document'));
+    expect(materializations).toHaveBeenCalledTimes(2);
+});
+
+it('delivers the existing intrinsic height to a replacement presenter without reloading its frame', async () => {
+    const runtime: CallerHostedHtmlRuntime = {
+        serverIdentityId: 'home-a', accountId: 'account-a', accountEncryptionMode: 'plain', hostOrigin: 'https://app.example.com',
+        admittedHostMethods: [],
+        createRequestController: () => ({ handleRequest: async () => null, dispose: () => undefined }),
+        lifetime: { isCurrent: () => true, onRetire: () => ({ dispose: () => undefined }) },
+    };
+    const source = artifactHtmlBundleFromBodyV1('<main>long retained document</main>');
+    const firstHeights: number[] = [];
+    const nextHeights: number[] = [];
+    let presenter = (height: number) => { firstHeights.push(height); };
+    const render = () => <HostedHtmlSurfaceAdapter title="retained" recordRevision="revision-a" approvalSubject="retained"
+        source={source} target={{ kind: 'app' }} runtime={runtime} onIntrinsicHeightChange={presenter} testID="retained-html" />;
+    const screen = await renderScreen(render());
+    const frame = await waitForCallerFrame();
+    const encoded = String(frame.html).match(/Object\.freeze\((\{.*?\})\),writable:false/)?.[1];
+    if (!encoded) throw new Error('expected_inline_frame_bootstrap');
+    const { identity } = JSON.parse(encoded) as { identity: { instanceId: string; mountNonce: string } };
+    const transport = frame.webMessageBridge as Readonly<{
+        onMessage: (event: MessageEvent, receipt: { consumeTransientActivation(): boolean }) => unknown;
+    }>;
+    await act(async () => {
+        await transport.onMessage({ data: { version: 1, identity, sequence: 1, kind: 'ready', payload: { ready: true } }, origin: 'null' } as MessageEvent,
+            { consumeTransientActivation: () => false });
+        await transport.onMessage({ data: { version: 1, identity, sequence: 2, kind: 'heightChanged', payload: { height: 2400 } }, origin: 'null' } as MessageEvent,
+            { consumeTransientActivation: () => false });
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    });
+    expect(firstHeights).toEqual([2400]);
+    presenter = height => { nextHeights.push(height); };
+    await screen.update(render());
+    expect(nextHeights).toEqual([2400]);
+    expect(observations.frames.at(-1)!.html).toBe(frame.html);
 });
 
 it('bootstraps caller HTML with the canonical host environment before reveal', async () => {

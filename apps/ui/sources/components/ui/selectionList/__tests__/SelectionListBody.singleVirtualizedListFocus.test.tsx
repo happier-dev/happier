@@ -33,6 +33,7 @@ const scrollToOffset = vi.fn();
 
 const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
     renderItems: true,
+    renderItemLimit: 2,
     refHandle: { scrollToIndex, scrollToOffset },
 });
 
@@ -109,6 +110,7 @@ function buildDirectSource(): SelectionListVirtualizedOptionSource {
         stateKey: 'direct-v1',
         getOption: (index) => options[index]!,
         getOptionId: (index) => options[index]?.id ?? '',
+        findItemIndexByOptionIndex: index => index >= 0 && index < options.length ? index : -1,
         findOptionIndexById: (id) => options.findIndex((option) => option.id === id),
         getFirstFocusableOptionIndex: () => 0,
         getNextFocusableOptionIndex: (current, direction) => (
@@ -168,6 +170,34 @@ describe('SelectionListBody flat virtualized-list focused-row scroll (RV-9)', ()
         await act(async () => { moved.props.onLayout?.({ nativeEvent: { layout: { y: 1440, height: 60 } } }); });
         expect(scrollToIndex).not.toHaveBeenCalled();
     });
+    it('reveals the last of 54,935 source rows without scanning structural items', async () => {
+        const { SelectionListBody } = await import('../SelectionListBody');
+        let kindReads = 0;
+        const items: SelectionListVirtualizedOptionSource['items'] = Array.from({ length: 54_935 }, (_, index) => ({
+            get kind() { kindReads += 1; return 'option' as const; },
+            key: `indexed-${index}`, optionIndex: index, positionInSet: index + 1,
+        }));
+        const source: SelectionListVirtualizedOptionSource = {
+            items, optionCount: items.length, stateKey: '',
+            getOption: index => ({ id: `indexed-${index}`, label: `File ${index}` }),
+            getOptionId: index => `indexed-${index}`,
+            findOptionIndexById: id => Number(id.slice('indexed-'.length)),
+            findItemIndexByOptionIndex: index => index,
+            getFirstFocusableOptionIndex: () => 0,
+            getNextFocusableOptionIndex: (index, direction) => Math.max(0, Math.min(items.length - 1, index + direction)),
+            isFocusableOptionIndex: index => index >= 0 && index < items.length,
+            getHeader: () => ({ id: 'files' }),
+        };
+        const props = { step: buildBodyStep(), rootTestID: 'sl', selectedOptionIds: new Set<string>(), plan: [],
+            virtualizedOptionSource: source, listboxId: 'listbox', onSelect() {}, onPushStep() {} };
+        const screen = await renderScreen(<SelectionListBody {...props} focusedOptionIndex={0} focusedOptionId="indexed-0" />);
+        kindReads = 0;
+        scrollToIndex.mockClear();
+        await screen.update(<SelectionListBody {...props} focusedOptionIndex={54_934} focusedOptionId="indexed-54934" />);
+        expect(kindReads).toBeLessThanOrEqual(12); // Two native-boundary cells plus their semantic wrappers.
+        expect(scrollToIndex).toHaveBeenCalledWith({ index: 54_934, viewPosition: 0.5, animated: true });
+    });
+
     beforeEach(() => {
         setReducedMotionPreferenceOverride(false);
         scrollToIndex.mockClear();

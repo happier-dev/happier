@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 
 
 const actEnvironmentGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -68,8 +69,11 @@ describe('Switch.web', () => {
 
         expect(pressable.props.accessibilityLabel).toBe('Fast responses');
         expect(pressable.props.accessibilityState).toMatchObject({ checked: false, disabled: false });
-        expect(flattened.minWidth ?? flattened.width).toBeGreaterThanOrEqual(44);
-        expect(flattened.minHeight ?? flattened.height).toBeGreaterThanOrEqual(44);
+        // Drawn at its compact track; the shared hit-area owner reaches the 44px target past it.
+        expect(flattened.width).toBeLessThan(44);
+        const area = readHitArea(pressable);
+        expect(area.width).toBeGreaterThanOrEqual(44);
+        expect(area.height).toBeGreaterThanOrEqual(44);
 
         const event = { key: ' ', nativeEvent: { key: ' ' }, preventDefault: vi.fn() };
         pressable.props.onKeyDown(event);

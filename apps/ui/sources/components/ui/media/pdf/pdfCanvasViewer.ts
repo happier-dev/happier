@@ -1,6 +1,7 @@
 import type { PDFPageProxy } from 'pdfjs-dist';
 import type { PdfFindMatch } from './pdfFindModel';
-import { anchorPdfZoom, resolvePdfCanvasSize } from './pdfZoom';
+import { anchorPdfZoom, clampPdfScale, PDF_ZOOM_MIN, resolvePdfCanvasSize, resolvePdfDoubleTapZoom, type PdfZoom } from './pdfZoom';
+import { attachPdfTouchZoom, type PdfTouchPoint } from './pdfTouchZoom';
 import { attachWheelZoom } from '../zoom/wheelZoom';
 import type { PdfViewPosition } from './pdfViewPosition';
 export interface PdfCanvasDocument { readonly numPages: number; getPage(page: number): Promise<Pick<PDFPageProxy, 'getViewport' | 'render' | 'getTextContent'>>; }
@@ -20,7 +21,10 @@ export function createPdfCanvasViewer(input: Readonly<{
     onPageChange?(page: number): void; onError?(error: unknown): void;
     onReaderMove?(): void; onLocationChange?(position: PdfViewPosition): void;
     onPagesInit?(pageCount: number): void; onPagesLoaded?(pageCount: number): void;
-    onScaleChange?(scale: number): void;
+    /** The scale a wheel, pinch or double tap settled on, and the zoom to remember for it (a double tap back to fit keeps the fit mode). */
+    onScaleChange?(scale: number, zoom: PdfZoom): void;
+    /** The scale that fits the column; double tap alternates between it and 200%, and a pinch may go down to it. */
+    fitScale?(): number;
 }>) {
     const { container } = input;
     let disposed = false;
@@ -154,7 +158,10 @@ export function createPdfCanvasViewer(input: Readonly<{
         restorePosition(position: PdfViewPosition) { const slot = slots[Math.max(0, Math.min(slots.length - 1, position.page - 1))]; if (slot) { container.scrollTop = slot.element.offsetTop + position.top; container.scrollLeft = position.left; } },
         setScale(next: number, anchor = { x: container.clientWidth / 2, y: container.clientHeight / 2 }) {
             if (disposed || next === scale || !Number.isFinite(next) || next <= 0) return;
-            const scroll = anchorPdfZoom({ scrollLeft: container.scrollLeft, scrollTop: container.scrollTop, pointerX: anchor.x, pointerY: anchor.y, previousScale: scale, nextScale: next });
+            // The page under the anchor keeps its place; read its edge before and after the pages resize.
+            const anchored = slots[pageAt(container.scrollTop + anchor.y) - 1]?.element;
+            const before = { left: anchored?.offsetLeft ?? 0, top: anchored?.offsetTop ?? 0 };
+            const { scrollLeft, scrollTop } = container;
             const ratio = next / scale; scale = next;
             for (const slot of slots) {
                 release(slot);
@@ -162,18 +169,47 @@ export function createPdfCanvasViewer(input: Readonly<{
                 slot.element.style.height = `${parseFloat(slot.element.style.height) * ratio}px`;
                 if (slot.visible) void render(slot);
             }
+            const scroll = anchorPdfZoom({ scrollLeft, scrollTop, pointerX: anchor.x, pointerY: anchor.y, ratio,
+                before, after: { left: anchored?.offsetLeft ?? 0, top: anchored?.offsetTop ?? 0 } });
             container.scrollLeft = scroll.left; container.scrollTop = scroll.top;
         },
         setFindMatches(next: readonly PdfFindMatch[], current: PdfFindMatch | null) { matches = next; currentMatch = current; for (const slot of slots) highlight(slot); },
         revealMatch(match: PdfFindMatch) { pendingReveal = match; reveal(); },
         goToPage(page: number) { const slot = slots[Math.max(0, Math.min(slots.length - 1, Math.floor(page) - 1))]; if (slot) container.scrollTop = slot.element.offsetTop; },
-        dispose() { if (disposed) return; disposed = true; observer.disconnect(); listeners.abort(); removeWheel(); for (const slot of slots) release(slot); container.replaceChildren(); input.signal?.removeEventListener('abort', viewer.dispose); },
+        dispose() { if (disposed) return; disposed = true; observer.disconnect(); listeners.abort(); removeWheel(); removeTouch(); clearPinch(); for (const slot of slots) release(slot); container.replaceChildren(); input.signal?.removeEventListener('abort', viewer.dispose); },
     };
     const removeWheel = attachWheelZoom(container, { isZoomed: () => false, onPan: () => {},
         onZoom: (factor, focal) => {
             const next = scale * factor;
             viewer.setScale(next, { x: focal.x + container.clientWidth / 2, y: focal.y + container.clientHeight / 2 });
-            input.onScaleChange?.(next);
+            input.onScaleChange?.(next, next);
+        },
+    });
+    // A pinch moves the pages with a transform about its focal point and re-renders once at the settled scale.
+    const clearPinch = () => { for (const slot of slots) { slot.element.style.transform = ''; slot.element.style.transformOrigin = ''; } };
+    const pinchTarget = (factor: number) => clampPdfScale(scale * factor, input.fitScale?.() ?? PDF_ZOOM_MIN);
+    const settle = (next: number, zoom: PdfZoom, focal: PdfTouchPoint) => {
+        clearPinch();
+        if (disposed || Math.abs(next / scale - 1) < 0.005) return;
+        viewer.setScale(next, focal);
+        input.onScaleChange?.(next, zoom);
+    };
+    const removeTouch = attachPdfTouchZoom(container, {
+        onPinch: (factor, focal) => {
+            const shown = pinchTarget(factor) / scale;
+            for (const slot of slots) {
+                if (!slot.visible) continue;
+                slot.element.style.transformOrigin = `${container.scrollLeft + focal.x - slot.element.offsetLeft}px ${container.scrollTop + focal.y - slot.element.offsetTop}px`;
+                slot.element.style.transform = `scale(${shown})`;
+            }
+        },
+        onPinchEnd: (factor, focal) => { const next = pinchTarget(factor); settle(next, next, focal); },
+        onPinchCancel: clearPinch,
+        onDoubleTap: focal => {
+            const fit = input.fitScale?.();
+            if (fit === undefined) return;
+            const zoom = resolvePdfDoubleTapZoom(scale, fit);
+            settle(zoom === 'fit-width' ? fit : zoom, zoom, focal);
         },
     });
     if (input.signal?.aborted) viewer.dispose(); else input.signal?.addEventListener('abort', viewer.dispose, { once: true });

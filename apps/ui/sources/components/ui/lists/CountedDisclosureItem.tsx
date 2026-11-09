@@ -5,7 +5,7 @@ import {
     type HappierCountedDisclosureHeaderState,
 } from '@happier-dev/plugin-ui/presentation';
 
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 
 function renderCountedDisclosureHeader(state: HappierCountedDisclosureHeaderState) {
@@ -18,8 +18,6 @@ function renderCountedDisclosureHeader(state: HappierCountedDisclosureHeaderStat
             subtitleLines={state.subtitleNumberOfLines}
             icon={state.icon}
             detail={state.detail}
-            showChevron={false}
-            rightElement={<ExpandableItemCaret expanded={state.expanded} />}
         />
     );
 }

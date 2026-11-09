@@ -133,6 +133,7 @@ export const FieldValueItem = React.memo(function FieldValueItem(props: FieldVal
                     autoFocus={autoFocus}
                     onBlur={field.commit}
                     onSubmitEditing={field.commit}
+                    onKeyPress={event => { if (event.nativeEvent.key === 'Escape') field.cancel(); }}
                     style={[stepper ? { minWidth: 0, width: FIELD_BOX_METRICS.triggerMinWidthPx } : undefined, fieldStyle]}
                     // A number with its unit reads as one phrase ("3 messages"): the digits sit against the unit.
                     textAlign={unit && kind !== 'text' ? 'right' : undefined}
@@ -150,6 +151,7 @@ export const FieldValueItem = React.memo(function FieldValueItem(props: FieldVal
             editable={itemProps.disabled !== true}
             onBlur={field.commit}
             onSubmitEditing={field.commit}
+            onKeyPress={event => { if (event.nativeEvent.key === 'Escape') field.cancel(); }}
             style={[compactValueStyle, { color: theme.colors.text.primary }]}
         />
     ) : null;

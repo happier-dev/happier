@@ -106,6 +106,41 @@ describe('DiffViewer (web renderer selection)', () => {
         expect(storage.getState().settings.filesDiffRendererMode).toBe('pierre');
     });
 
+    it('offers "Fold again" above the region Find opened in Pierre, reaching the same refold as the Find Action', async () => {
+        const { DiffViewer } = await import('./DiffViewer.web');
+        const { buildCodeLinesFromUnifiedDiff } = await import('../model/buildCodeLinesFromUnifiedDiff');
+        const { expandUnifiedDiffContext } = await import('../model/expandUnifiedDiffContext');
+        const baseText = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n') + '\n';
+        const unifiedDiff = ['--- a/a.ts', '+++ b/a.ts', '@@ -1,3 +1,3 @@', ' line 1', '-line 2', '+line two', ' line 3',
+            '@@ -20,3 +20,3 @@', ' line 20', '-line 21', '+line twenty-one', ' line 22'].join('\n') + '\n';
+        const patchLines = buildCodeLinesFromUnifiedDiff({ unifiedDiff, hideFilePrelude: true });
+        const lines = expandUnifiedDiffContext({ unifiedDiff, baseText, lines: patchLines })!;
+        const target = lines.find(line => line.renderCodeText === 'line 10')!;
+        let refold: (() => string) | undefined;
+        const screen = await renderScreen(<DiffViewer mode="unified" unifiedDiff={unifiedDiff} filePath="a.ts" findActive virtualized={false}
+            precomputedLines={lines} contextBaseText={baseText} scrollToLineId={target.id}
+            findRangesByLineId={new Map([[target.id, [{ start: 0, end: 7, current: true }]]])}
+            registerFindRefold={(next) => { refold = next; return () => { refold = undefined; }; }} />);
+        const diff = () => screen.findAllByType('pierre-file-diff')[0]!.props;
+        expect(diff().fileDiff.isPartial).toBe(false);
+        // The band sits after the last patch row before the opened region (new line 3), not on the match.
+        const opened = diff().lineAnnotations.find((annotation: { side: string; lineNumber: number }) => annotation.side === 'additions' && annotation.lineNumber === 3);
+        expect(opened).toBeTruthy();
+        const band = await renderScreen(<>{diff().renderAnnotation(opened)}</>);
+        expect(band.findByTestId('diff-find-opened-fold')).not.toBeNull();
+        // Lines 4 to 19 sit between the two hunks: sixteen hidden lines, all opened by the completed patch.
+        const bandText = (node: unknown): string => typeof node === 'string' ? node
+            : ((node as { children?: unknown[] } | null)?.children ?? []).map(bandText).join('');
+        expect(bandText(band.findByTestId('diff-find-opened-fold'))).toMatch(/\b16\b/);
+
+        await renderer.act(async () => { await band.pressByTestId('diff-find-fold-again'); });
+        expect(diff().fileDiff.isPartial).toBe(true);
+        expect(diff().lineAnnotations.some((annotation: { lineNumber: number }) => annotation.lineNumber === 3)).toBe(false);
+        // The Action reaches the same operation: nothing is left for it to refold.
+        expect(refold?.()).toBe('noRevealedFold');
+        expect(storage.getState().settings.filesDiffRendererMode).toBe('pierre');
+    });
+
     it('keeps the patch-only Pierre diff for a Find match the patch already shows', async () => {
         const { DiffViewer } = await import('./DiffViewer.web');
         const { buildCodeLinesFromUnifiedDiff } = await import('../model/buildCodeLinesFromUnifiedDiff');

@@ -103,6 +103,8 @@ function useRetainedWebScroll(active: boolean, isWeb: boolean) {
 
 export const RetainedPanelSurface = React.memo((props: Readonly<{
     isActive: boolean;
+    /** The hidden body is still presented elsewhere (a hidden list whose open detail is on screen). Defaults to `isActive`. */
+    presentationActive?: boolean;
     testID?: string;
     mode?: RetainedPanelSurfaceMode;
     /** Opt in only for bodies proven safe to suspend, including their layout-effect lifetimes. */
@@ -136,7 +138,7 @@ export const RetainedPanelSurface = React.memo((props: Readonly<{
     }
 
     const content = (
-        <PluginSurfaceFocusEligibilityProvider active={active}>
+        <PluginSurfaceFocusEligibilityProvider active={active} presentationActive={props.presentationActive ?? active}>
             <React.Activity mode={props.hiddenMode === 'activity' && !active ? 'hidden' : 'visible'}>
                 <Freeze freeze={props.hiddenMode !== 'activity' && props.suspendWhenHidden === true && !active && frozen}>{props.children}</Freeze>
             </React.Activity>

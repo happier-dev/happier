@@ -6,6 +6,7 @@ type RegisterNativeBackDescendant = () => () => void;
 type NativeBackLayerHandler = () => boolean;
 
 type NativeBackLayerContextValue = Readonly<{
+    forwardInputBack: boolean;
     registerDescendant: RegisterNativeBackDescendant;
     /** One guest-history callback belonging to this pane boundary, not a stack. */
     registerBackHandler: (handler: NativeBackLayerHandler) => () => void;
@@ -16,6 +17,8 @@ type NativeBackLayerBoundaryProps = Readonly<{
     onRequestClose?: () => void;
     /** Retained underlays must not nominate invisible descendants for Back. */
     suppressDescendants?: boolean;
+    /** Let a focused native editor deliver IME Back to this pane's RN listener. */
+    forwardInputBack?: boolean;
     children: React.ReactNode;
 }>;
 
@@ -60,9 +63,10 @@ export function NativeBackLayerBoundary(props: NativeBackLayerBoundaryProps): Re
         };
     }, []);
     const activeContextValue = React.useMemo<NativeBackLayerContextValue>(() => ({
+        forwardInputBack: props.forwardInputBack === true,
         registerDescendant,
         registerBackHandler,
-    }), [registerBackHandler, registerDescendant]);
+    }), [props.forwardInputBack, registerBackHandler, registerDescendant]);
 
     useNativeBackLayerDescendant(active);
 
@@ -92,6 +96,11 @@ export function NativeBackLayerBoundary(props: NativeBackLayerBoundaryProps): Re
             {props.children}
         </NativeBackLayerContext.Provider>
     );
+}
+
+export function useNativeBackLayerInputBackEnabled(): boolean {
+    const context = React.useContext(NativeBackLayerContext);
+    return Platform.OS === 'android' && context?.forwardInputBack === true;
 }
 
 /**

@@ -226,19 +226,21 @@ describe('PDF rendered recovery', () => {
         vi.stubGlobal('fetch', async (uri: string) => ({ ok: true, arrayBuffer: () => blobs.get(uri)!.arrayBuffer() }));
         vi.stubGlobal('IntersectionObserver', class { observe() {} disconnect() {} });
         // ResizeObserver is the browser layout boundary: the test says when the column's box changed.
-        const resized: Array<() => void> = [];
+        const resized: Array<(entries?: ResizeObserverEntry[]) => void> = [];
         vi.stubGlobal('ResizeObserver', class {
-            constructor(callback: ResizeObserverCallback) { resized.push(() => callback([], this as unknown as ResizeObserver)); }
+            constructor(callback: ResizeObserverCallback) { resized.push((entries = []) => callback(entries, this as unknown as ResizeObserver)); }
             observe() {} unobserve() {} disconnect() {}
         });
         let columnWidth = 800;
+        let hidden = false;
         let container: HTMLElement | null = null;
         const source = { enabled: true, source: { kind: 'bytes' as const, bytes, name: 'fit.pdf' }, cacheKey: 'fit', mimeType: 'application/pdf' };
         const nodeMock = { createNodeMock: ({ props }: { props: Record<string, unknown> }) => {
             if (!props.dataSet) return null;
             const element = document.createElement('div');
             Object.defineProperty(element, 'clientWidth', { get: () => columnWidth });
-            Object.defineProperty(element, 'clientHeight', { get: () => 1000 });
+            Object.defineProperty(element, 'clientHeight', { get: () => hidden ? 0 : 1000 });
+            Object.defineProperty(element, 'checkVisibility', { value: () => !hidden });
             container = element; return element;
         } };
         const pageWidth = () => (container?.querySelector<HTMLElement>('[data-pdf-page="1"]')?.style.width ?? null);
@@ -246,6 +248,14 @@ describe('PDF rendered recovery', () => {
         await vi.waitFor(() => expect(pageWidth()).toBe('800px'));
         columnWidth = 400;
         act(() => { for (const notify of resized) notify(); });
+        expect(pageWidth()).toBe('400px');
+        // A retained pane hiding the viewer (display: none) reports the column 0×0: that is not a narrower
+        // column, so the pages keep their fitted scale and are not re-rendered for it, nor again on show.
+        hidden = true; columnWidth = 0;
+        act(() => { for (const notify of resized) notify([{ contentRect: { width: 0, height: 0 } } as ResizeObserverEntry]); });
+        expect(pageWidth()).toBe('400px');
+        hidden = false; columnWidth = 400;
+        act(() => { for (const notify of resized) notify([{ contentRect: { width: 400, height: 1000 } } as ResizeObserverEntry]); });
         expect(pageWidth()).toBe('400px');
         await screen.unmount();
 

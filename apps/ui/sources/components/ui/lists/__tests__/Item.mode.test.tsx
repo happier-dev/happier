@@ -380,7 +380,7 @@ describe('Item mode prop', () => {
         await act(async () => {
             row()!.props.onHoverIn();
         });
-        expect(flattenTestStyle(findRowSurface(row()!)!.props.style).backgroundColor).toBe(lightTheme.colors.surface.pressed);
+        expect(flattenTestStyle(findRowSurface(row()!)!.props.style).backgroundColor).toBe(lightTheme.colors.surface.hover);
 
         await act(async () => {
             row()!.props.onHoverOut();
@@ -421,7 +421,7 @@ describe('Item mode prop', () => {
 
         const afterStyleFn = afterHover.props.style as (state: { pressed: boolean }) => unknown;
         const afterFlattened = flattenTestStyle(afterStyleFn({ pressed: false }));
-        expect(afterFlattened.backgroundColor).toBe(lightTheme.colors.surface.pressed);
+        expect(afterFlattened.backgroundColor).toBe(lightTheme.colors.surface.hover);
     });
 
     it('forwards web hover events to optional callbacks', async () => {

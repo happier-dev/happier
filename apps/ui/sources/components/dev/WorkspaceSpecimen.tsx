@@ -3,11 +3,11 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { useCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceEmptyTab, createWorkspaceState, reduceWorkspaceState, type WorkspaceTab } from '@/components/appShell/workspace/workspaceState';
 import { WorkspaceTitleBar } from '@/components/appShell/workspace/titleBar/WorkspaceTitleBar';
 import { createWorkspaceBarGeometry, WorkspaceBarGeometryContext } from '@/components/appShell/workspace/titleBar/workspaceBarGeometry';
-import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
+import { SessionPaneHeader } from '@/components/sessions/shell/view/SessionPaneHeader';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -103,7 +103,7 @@ export function WorkspaceSpecimen(props: Readonly<{ frame: string | null }>) {
     const changeStatus = () => storage.setState((current) => ({ sessionListRowsByServerId: {
         ...current.sessionListRowsByServerId, [HOME]: { ...current.sessionListRowsByServerId[HOME], fix: sessionRow('fix', 'attention') },
     } }));
-    return <WorkspaceNavigationContext.Provider value={value}>
+    return <WorkspaceNavigationProvider value={value}>
         <WorkspaceBarGeometryContext.Provider value={geometry}>
             <View style={styles.root} testID="workspace-specimen-current-source">
                 <View style={styles.strip}>
@@ -114,7 +114,7 @@ export function WorkspaceSpecimen(props: Readonly<{ frame: string | null }>) {
                         key={group.id} ref={(view) => { paneRefs.current[group.id] = view; }}
                         onLayout={() => measure(group.id)} style={styles.pane} testID={`workspace-specimen-pane-${group.id}`}
                     >
-                        <ChatHeaderView title={TITLES[group.activeTabId] ?? group.activeTabId} subtitle="happier · Studio" showBackButton={false} includeTopInset={false} />
+                        <SessionPaneHeader title={TITLES[group.activeTabId] ?? group.activeTabId} subtitle="happier · Studio" showBackButton={false} includeTopInset={false} />
                         <View style={styles.body}>
                             <Text style={styles.copy}>It remounts because the modal key includes the window width, so every resize throws its state away.</Text>
                             <Text style={styles.copy}>The tab strip uses the live session projection above. Close a tab, then reopen its original instance from Recently closed.</Text>
@@ -128,7 +128,7 @@ export function WorkspaceSpecimen(props: Readonly<{ frame: string | null }>) {
                 </View>
             </View>
         </WorkspaceBarGeometryContext.Provider>
-    </WorkspaceNavigationContext.Provider>;
+    </WorkspaceNavigationProvider>;
 }
 
 const styles = StyleSheet.create((theme) => ({

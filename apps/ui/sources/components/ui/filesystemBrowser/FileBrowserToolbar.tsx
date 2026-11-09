@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { Pressable, View, type LayoutChangeEvent, type PressableProps, type ViewProps } from 'react-native';
+import { View, type LayoutChangeEvent, type ViewProps } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { TextInput } from '@/components/ui/text/Text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, useHappierMaterialColorResolver, type HappierPressableProps, type HappierStyleProp } from '@happier-dev/plugin-ui/presentation';
 
 export type FileBrowserToolbarActionLike = Readonly<{
     id: string;
@@ -94,7 +94,10 @@ export function FileBrowserToolbar({
     );
 }
 
-export type FileBrowserToolbarIconButtonProps = Omit<PressableProps, 'children'> & Readonly<{
+/** The gap between the toolbar's actions: the layout and the actions' hit areas share it. */
+const ACTIONS_GAP = 8;
+
+export type FileBrowserToolbarIconButtonProps = Omit<HappierPressableProps, 'children' | 'selected'> & Readonly<{
     selected?: boolean;
     children: React.ReactNode;
 }>;
@@ -104,16 +107,19 @@ export function FileBrowserToolbarIconButton({
     disabled,
     style,
     children,
+    // The toolbar declares its real action gap: each action's hit area takes half of it.
+    hitReach = { left: ACTIONS_GAP / 2, right: ACTIONS_GAP / 2 },
     ...rest
 }: FileBrowserToolbarIconButtonProps) {
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
     const userStyle = style;
     return (
-        <Pressable
+        <HappierPressable
             {...rest}
+            hitReach={hitReach}
             disabled={disabled}
-            hitSlop={8}
+            selected={selected}
             style={(state) => ([
                 styles.iconButton,
                 {
@@ -122,10 +128,10 @@ export function FileBrowserToolbarIconButton({
                     opacity: disabled ? 0.5 : (state.pressed ? motionTokens.press.opacity : 1),
                 },
                 typeof userStyle === 'function' ? userStyle(state) : userStyle,
-            ])}
+            ]) as HappierStyleProp}
         >
             {children}
-        </Pressable>
+        </HappierPressable>
     );
 }
 
@@ -154,7 +160,7 @@ const styles = StyleSheet.create(() => ({
     actions: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
+        gap: ACTIONS_GAP,
         flexShrink: 0,
     },
     iconButton: {

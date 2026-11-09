@@ -6,13 +6,12 @@ import {
     type HappierFindBarProps,
 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { renderThemeMaterialSurface } from '@/components/ui/glass/GlassSurface';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { isTouchPrimaryPointer, resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -123,7 +122,6 @@ export function FindBar({ surfaceLabel, ...props }: FindBarProps): React.ReactEl
         focus: border.focus,
     }), [border, dark, state, surface, text]);
     const elevation = React.useMemo(() => shadowLevelStyle(shadowLevels[4]), [shadowLevels]);
-    const minimumTargetSize = isTouchPrimaryPointer(Platform.OS) ? resolveMinimumInteractiveTargetSize(Platform.OS) : undefined;
     return (
         <HappierFindBar
             {...props}
@@ -135,10 +133,11 @@ export function FindBar({ surfaceLabel, ...props }: FindBarProps): React.ReactEl
             gradient={resolveThemeSurfaceFinish(theme, 'floating')}
             renderMaterialSurface={renderThemeMaterialSurface}
             host={CORE_FIND_BAR_HOST}
+            // A pointer's floor: the bar's links and small controls keep their drawn size and reach 24 px.
+            minimumTargetSize={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
             reducedMotion={reducedMotion}
             // The host placement presents the bar (overlay motion owner), so the bar does not settle twice.
             arrivalMotion="host"
-            minimumTargetSize={minimumTargetSize}
         />
     );
 }

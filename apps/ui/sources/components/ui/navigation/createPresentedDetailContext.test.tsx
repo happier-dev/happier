@@ -4,6 +4,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createPresentedDetailContext } from './createPresentedDetailContext';
 import { NavigationContext } from '@react-navigation/native';
 import { createNavigationPropMock } from '@/dev/testkit/mocks/reactNavigation';
+import { PaneRegionProvider } from '@/components/appShell/panes/paneRegionContext';
 
 afterEach(standardCleanup);
 
@@ -21,6 +22,23 @@ it('presents an embedded detail over its parent and returns to the parent when i
     expect(seen.at(-1)).toBe('environment');
     await screen.update(view(false));
     expect(seen.at(-1)).toBe('project');
+});
+
+it('keeps a detail drawn in the side column from taking the page chrome', async () => {
+    // A page companion can embed a detail (a Session) whose companion tab exists only while the page's chrome
+    // names it; letting the side detail take that chrome unmounts it, and the page takes it back, in a loop.
+    const detail = createPresentedDetailContext<string>();
+    const seen: Array<string | null> = [];
+    function Publisher(props: { value: string }) { detail.usePublish(props.value, true); return null; }
+    const Reader = React.memo(function Reader() { seen.push(detail.useValue()); return null; });
+    const screen = await renderScreen(<detail.Provider>
+        <PaneRegionProvider region="main"><Publisher value="page" /></PaneRegionProvider>
+        <PaneRegionProvider region="side"><Publisher value="companion-session" /></PaneRegionProvider>
+        <Reader />
+    </detail.Provider>);
+    expect(seen.at(-1)).toBe('page');
+    expect(seen).not.toContain('companion-session');
+    await screen.unmount();
 });
 
 it('keeps blurred retained native scenes from replacing the focused detail', async () => {

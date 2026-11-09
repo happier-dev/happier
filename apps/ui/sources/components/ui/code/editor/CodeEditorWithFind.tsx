@@ -13,6 +13,7 @@ import { FindBarPlacement } from '@/components/ui/find/FindBarPlacement';
 import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFocusReturn';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
+import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { useEditorChangeMarkers, type EditorChangeMarkersController } from './useEditorChangeMarkers';
 import type { EditorChangeMarker, EditorChangeMarkerSeed } from './editorChangeMarkers';
 
@@ -83,6 +84,7 @@ function CodeEditorWithFindImpl(props: CodeEditorWithFindProps) {
     useFindSurfaceRegistration(eligible && find && controller ? {
         surfaceId: props.surfaceId ?? props.resetKey,
         engineOwnsFind: find.presentation === 'native',
+        containsTarget: target => isFindSurfaceTarget((props.focusRootRef ?? localRootRef).current as unknown as HTMLElement | null, target),
         containsFocus: () => {
             if (find.containsFocus() || inputFocused) return true;
             if (Platform.OS !== 'web' || typeof document === 'undefined') return false;
@@ -109,11 +111,14 @@ function CodeEditorWithFindImpl(props: CodeEditorWithFindProps) {
         if (!eligible || !find || !seed || !props.filePath || seed.target.path !== props.filePath) return;
         const anchor = seed.target.anchor;
         const line = anchor ? (anchor.kind === 'line' ? anchor.line : anchor.startLine) : undefined;
-        open();
+        capture(find.isOpen());
+        // A native engine's seed opens its own widget with the query. A bare open first would let the
+        // engine seed itself from the word at the caret, and its asynchronous start could land last.
+        if (find.presentation === 'shared') { find.open(); setSharedOpen(true); inputRef.current?.focus(); }
         // The facet owns pending engine boot; accepting the seed cannot lose it before ready.
         find.seed(seed.query, seed.options, line === undefined ? undefined : { line });
         props.onFindSeedConsumed?.();
-    }, [eligible, find, open, props.filePath, props.findSeed, props.onFindSeedConsumed]);
+    }, [capture, eligible, find, props.filePath, props.findSeed, props.onFindSeedConsumed]);
     React.useEffect(() => {
         if (!eligible && sharedOpen) {
             find?.close();
@@ -130,6 +135,7 @@ function CodeEditorWithFindImpl(props: CodeEditorWithFindProps) {
                 value={props.value}
                 language={props.language}
                 onChange={onChange}
+                history={props.history}
                 testID={props.testID}
                 wrapLines={props.wrapLines}
                 showLineNumbers={props.showLineNumbers}

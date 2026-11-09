@@ -8,7 +8,7 @@ import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
+import { MachineEnrollTextField } from '@/components/ui/forms/MachineEnrollTextField';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { AppShellMaterialFrame } from '@/components/navigation/shell/AppShellMaterialFrame';
 import { FilePageHeader } from '@/components/workspaces/files/file/FilePageHeader';
@@ -205,7 +205,7 @@ function Audit(props: Readonly<{ inputAudit?: boolean }>) {
             <GlassSurface surfaceGroup={group} testID={`glass-audit-${group}`} style={styles.glass}>
                 <Text style={styles.groupTitle}>{group}</Text>
                 <CompactSearchField testID={`glass-audit-field-${group}`} value="settings" onChangeText={noop} placeholder="Search" />
-                {props.inputAudit ? <MachineSetupTextField testID={`glass-audit-machine-${group}`} label="Canonical styled input" value="Host field" onChangeText={noop} /> : null}
+                {props.inputAudit ? <MachineEnrollTextField testID={`glass-audit-machine-${group}`} label="Canonical styled input" value="Host field" onChangeText={noop} /> : null}
                 {props.inputAudit && group === 'floating' ? <FilePageHeader displayMode="file" onDisplayMode={noop}
                     diffMode="pending" onDiffMode={noop} hasPendingDelta={false} hasIncludedDelta={false} scmWriteEnabled={false}
                     includeExcludeEnabled={false} virtualSelectionEnabled={false} isSelectedForCommit={false} lineSelectionEnabled={false}

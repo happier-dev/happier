@@ -116,6 +116,27 @@ describe('FilesystemBrowserList', () => {
         expect(retry).toHaveBeenCalledOnce();
     });
 
+    it.each([false, true])('keeps the isolation refusal and hides root retry (retained rows: %s)', async (retainedRows) => {
+        const { FilesystemBrowser } = await import('./FilesystemBrowser');
+        const screen = await renderScreen(<FilesystemBrowser
+            nodes={retainedRows ? nodes : []}
+            rootLoading={false}
+            rootError="agent_isolation_unavailable"
+            errorTestID="isolation-root-error"
+            listHeaderTestID="isolation-root-error"
+            emptyLabel="Empty"
+            loadingLabel="Loading"
+            inlineRetryLabel="Retry"
+            retryRoot={vi.fn()}
+            renderRow={({ node }) => React.createElement('View', { testID: `row-${node.path}` })}
+        />);
+
+        expect(screen.getTextContent()).toContain(t('errors.agentIsolationUnavailable'));
+        expect(screen.findByTestId('isolation-root-error-diagnostic-agent_isolation_unavailable')).toBeTruthy();
+        if (retainedRows) expect(screen.findByTestId('row-src/index.ts')).toBeTruthy();
+        expect(screen.findAllByTestId('isolation-root-error-action')).toHaveLength(0);
+    });
+
     it('retains listed rows when a refresh fails and offers one cause with one retry', async () => {
         const { FilesystemBrowserList } = await import('./FilesystemBrowserList');
         const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');

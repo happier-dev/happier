@@ -16,6 +16,8 @@ export function usePaneAnimatedPresence(input: Readonly<{
     const progress = React.useRef(new Animated.Value(0)).current;
     const nodeRef = React.useRef<React.ReactNode | null>(input.node);
     const [present, setPresent] = React.useState(input.targetOpen);
+    const presentRef = React.useRef(present);
+    presentRef.current = present;
     const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const animationRunIdRef = React.useRef(0);
 
@@ -39,7 +41,6 @@ export function usePaneAnimatedPresence(input: Readonly<{
         };
 
         if (input.targetOpen) {
-            nodeRef.current = input.node;
             setPresent(true);
             Animated.timing(progress, {
                 toValue: 1,
@@ -56,7 +57,7 @@ export function usePaneAnimatedPresence(input: Readonly<{
             return;
         }
 
-        if (!present) return;
+        if (!presentRef.current) return;
         Animated.timing(progress, {
             toValue: 0,
             duration: input.durationMs,
@@ -73,7 +74,14 @@ export function usePaneAnimatedPresence(input: Readonly<{
                 setPresent(false);
             });
         }, settleDurationMs);
-    }, [input.durationMs, input.node, input.targetOpen, input.useNativeDriver, present, progress]);
+    // Only opening or closing moves the pane: new content for an open pane (every parent render
+    // hands it a new element) and the presence flip itself start no animation.
+    }, [input.durationMs, input.targetOpen, input.useNativeDriver, progress]);
+
+    // The content an exit animation keeps showing is the last content the open pane had.
+    React.useEffect(() => {
+        if (input.targetOpen) nodeRef.current = input.node;
+    }, [input.node, input.targetOpen]);
 
     React.useEffect(() => {
         return () => {

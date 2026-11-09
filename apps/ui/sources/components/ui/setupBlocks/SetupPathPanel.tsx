@@ -73,7 +73,7 @@ export function SetupPathPanel<T extends string>(props: Readonly<{
                                     style={({ hovered }) => [
                                         styles.path,
                                         selected ? styles.pathSelected : hovered ? styles.pathHovered : null,
-                                        selected ? { backgroundColor: materialColor(theme.colors.surface.selected) } : hovered ? { backgroundColor: materialColor(theme.colors.surface.pressed, theme.colors.surface.pressedOverlay) } : null,
+                                        selected ? { backgroundColor: materialColor(theme.colors.surface.selected) } : hovered ? { backgroundColor: materialColor(theme.colors.surface.hover) } : null,
                                     ]}
                                 >
                                     <View style={styles.pathGlyph}>{path.glyph}</View>
@@ -103,7 +103,7 @@ export function SetupPathPanel<T extends string>(props: Readonly<{
                                     style={({ hovered }) => [
                                         styles.chip,
                                         selected ? styles.chipSelected : hovered ? styles.chipHovered : null,
-                                        !selected && hovered ? { backgroundColor: materialColor(theme.colors.surface.pressed, theme.colors.surface.pressedOverlay) } : null,
+                                        !selected && hovered ? { backgroundColor: materialColor(theme.colors.surface.hover) } : null,
                                     ]}
                                 >
                                     {path.glyph}
@@ -169,7 +169,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.selected,
     },
     pathHovered: {
-        backgroundColor: theme.colors.surface.pressed,
+        backgroundColor: theme.colors.surface.hover,
     },
     pathGlyph: {
         width: 20,
@@ -231,7 +231,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: theme.colors.text.primary,
     },
     chipHovered: {
-        backgroundColor: theme.colors.surface.pressed,
+        backgroundColor: theme.colors.surface.hover,
     },
     chipLabel: {
 

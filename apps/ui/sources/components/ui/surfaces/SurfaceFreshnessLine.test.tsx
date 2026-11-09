@@ -38,6 +38,21 @@ describe('SurfaceFreshnessLine content', () => {
         expect(retry).toHaveBeenCalledTimes(1);
     });
 
+    it('never cuts its reason short beside two recoveries, with or without a time', async () => {
+        const reason = 'Input delivery is uncertain. Copy your input and check the terminal before sending it again.';
+        for (const asOf of [undefined, Date.now() - 60_000]) {
+            const screen = await renderScreen(
+                <SurfaceFreshnessLine testID="uncertain" tone="warning" reason={reason} {...(asOf ? { asOf } : {})}
+                    actions={[{ label: 'Copy', onPress: () => {} }, { label: 'Discard', onPress: () => {} }]} />,
+            );
+            const clamped = screen.root.findAll((node) => typeof node.props.numberOfLines === 'number'
+                && JSON.stringify(node.props.children ?? '').includes('uncertain'));
+            expect(clamped).toHaveLength(0);
+            expect(screen.getTextContent()).toContain(reason);
+            await screen.unmount();
+        }
+    });
+
     it('shows a working ring on the line while it reconnects', async () => {
         const screen = await renderScreen(<SurfaceFreshnessLine testID="fresh" reason="Reconnecting to MacBook Pro…" busy />);
         expect(screen.findByTestId('fresh-spinner')).not.toBeNull();

@@ -19,7 +19,7 @@ export type SetupBlockAction = Readonly<{ label: string; testID: string; onPress
  * `row`, at the end of the line of a `wide` row (a list of blocks beside other sections' rows). Only the buttons and the ✕ act, so no control is nested in another. A block whose body is
  * different (several actions, a footer line) puts its own body on `SetupBlockPaper` instead.
  */
-export const SetupBlockTile = React.memo(function SetupBlockTile(props: Readonly<{
+type SetupBlockTileProps = Readonly<{
     testID: string;
     layout: 'card' | 'row' | 'wide';
     icon?: IconName;
@@ -34,7 +34,34 @@ export const SetupBlockTile = React.memo(function SetupBlockTile(props: Readonly
     dismiss?: SetupBlockDismiss;
     /** A step already under way: how much of it is done (0–1), drawn as a meter under the title. */
     progress?: Readonly<{ fraction: number; accessibilityLabel: string }>;
-}>) {
+}>;
+
+function areActionsEqual(left: SetupBlockAction | undefined, right: SetupBlockAction | undefined): boolean {
+    return left === right || (left !== undefined && right !== undefined
+        && left.label === right.label && left.testID === right.testID && left.onPress === right.onPress);
+}
+
+/**
+ * A host rebuilds `action`/`dismiss` objects whenever any of its hooks settles. What the tile draws and
+ * which handlers it calls are the facts; a fresh object holding the same facts is not a change.
+ */
+const same = <T,>(left: T, right: T) => left === right;
+// Exhaustive by type: a new tile prop fails to compile until it says how it is compared.
+const TILE_PROP_EQUALITY: { [K in keyof SetupBlockTileProps]-?: (left: SetupBlockTileProps[K], right: SetupBlockTileProps[K]) => boolean } = {
+    testID: same, layout: same, icon: same, glyph: same, title: same, subtitle: same, disabled: same,
+    action: areActionsEqual, alternative: areActionsEqual,
+    dismiss: (left, right) => left === right || (left !== undefined && right !== undefined
+        && left.label === right.label && left.tooltip === right.tooltip && left.onPress === right.onPress),
+    progress: (left, right) => left === right || (left !== undefined && right !== undefined
+        && left.fraction === right.fraction && left.accessibilityLabel === right.accessibilityLabel),
+};
+
+function areSetupBlockTilePropsEqual(left: SetupBlockTileProps, right: SetupBlockTileProps): boolean {
+    return (Object.keys(TILE_PROP_EQUALITY) as (keyof SetupBlockTileProps)[])
+        .every(key => (TILE_PROP_EQUALITY[key] as (a: unknown, b: unknown) => boolean)(left[key], right[key]));
+}
+
+export const SetupBlockTile = React.memo(function SetupBlockTile(props: SetupBlockTileProps) {
     const { theme } = useUnistyles();
     const card = props.layout === 'card';
     const buttons = (
@@ -81,7 +108,7 @@ export const SetupBlockTile = React.memo(function SetupBlockTile(props: Readonly
             {props.layout === 'wide' ? buttons : null}
         </SetupBlockPaper>
     );
-});
+}, areSetupBlockTilePropsEqual);
 
 const styles = StyleSheet.create((theme) => ({
     glyphCard: {

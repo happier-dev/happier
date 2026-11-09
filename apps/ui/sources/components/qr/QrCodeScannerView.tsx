@@ -69,6 +69,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         maxWidth: 360,
     },
+    // On a step column the action spans the column like every other step's primary.
+    embeddedFooterButton: {
+        width: '100%',
+    },
     permissionsCard: {
         flex: 1,
         alignItems: 'center',
@@ -89,6 +93,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'center',
         lineHeight: 20,
     },
+    // Embedded, the state is a paragraph and its actions on the host's column: it starts at the
+    // column's edge under the host's heading instead of centring itself in a box of its own.
+    embeddedPermissions: {
+        width: '100%',
+        alignItems: 'flex-start',
+        gap: theme.space.s16,
+    },
+    embeddedPermissionsBody: {
+        ...Typography.variant('reading'),
+        color: theme.colors.text.secondary,
+    },
+    embeddedFooter: {
+        width: '100%',
+        alignItems: 'flex-start',
+        gap: theme.space.s12,
+    },
 }));
 
 export interface QrCodeScannerViewProps {
@@ -98,7 +118,8 @@ export interface QrCodeScannerViewProps {
     permissionRequiredMessage: string;
     unavailableMessage?: string;
     onScan: (data: string) => void | Promise<void>;
-    onCancel: () => void;
+    /** Leaves the scanner. Omitted when the host already draws the way back (the welcome pane's chevron). */
+    onCancel?: () => void;
     footer?: React.ReactNode;
     testIDPrefix: string;
     /**
@@ -115,7 +136,9 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
     const closeIconColor = theme.dark ? theme.colors.background.canvas : theme.colors.text.primary;
     const scannerActive = props.active ?? true;
 
-    const [permission, requestPermission] = useCameraPermissions();
+    const canQueryCameraPermission = Platform.OS !== 'web'
+        || (typeof navigator !== 'undefined' && typeof navigator.permissions?.query === 'function');
+    const [permission, requestPermission] = useCameraPermissions({ get: canQueryCameraPermission });
     const isProcessingRef = React.useRef(false);
 
     const canUseCamera = scannerActive && canUseCurrentDeviceQrScanner();
@@ -165,57 +188,68 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
         return <View style={styles.root} />;
     }
 
+    const embedded = props.embedded === true;
+    const stateStyle = embedded ? styles.embeddedPermissions : styles.permissionsCard;
+    const bodyStyle = embedded ? styles.embeddedPermissionsBody : styles.permissionsBody;
+    const footerStyle = embedded ? styles.embeddedFooter : styles.footer;
+    const onCancel = props.onCancel;
+
     if (!canUseCamera) {
         return (
-            <View style={styles.permissionsCard}>
-                {props.embedded ? null : <Text style={styles.permissionsTitle}>{props.title}</Text>}
-                <Text style={styles.permissionsBody}>{props.unavailableMessage ?? t('modals.qrScannerUnavailable')}</Text>
-                {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
-                <View style={styles.footerButton}>
-                    <RoundButton
-                        testID={`${props.testIDPrefix}-cancel`}
-                        size="normal"
-                        title={t('common.back')}
-                        action={async () => props.onCancel()}
-                    />
-                </View>
+            <View style={stateStyle}>
+                {embedded ? null : <Text style={styles.permissionsTitle}>{props.title}</Text>}
+                <Text style={bodyStyle}>{props.unavailableMessage ?? t('modals.qrScannerUnavailable')}</Text>
+                {props.footer ? <View style={footerStyle}>{props.footer}</View> : null}
+                {onCancel ? (
+                    <View style={styles.footerButton}>
+                        <RoundButton
+                            testID={`${props.testIDPrefix}-cancel`}
+                            size="normal"
+                            title={t('common.back')}
+                            action={async () => onCancel()}
+                        />
+                    </View>
+                ) : null}
             </View>
         );
     }
 
     if (!permission) {
         return (
-            <View style={styles.permissionsCard}>
+            <View style={stateStyle}>
                 <ActivitySpinner size="small" color={theme.colors.text.primary} />
-                <Text style={styles.permissionsBody}>{t('common.loading')}</Text>
+                <Text style={bodyStyle}>{t('common.loading')}</Text>
                 {/*
                  * The platform has not answered yet, and an unanswered request stays here.
                  * Pasting the pairing link and leaving must stay reachable exactly as they
                  * are once the answer is "denied"; a spinner is not an exit.
                  */}
-                {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
-                <View style={styles.footerButton}>
-                    <RoundButton
-                        testID={`${props.testIDPrefix}-cancel`}
-                        size="small"
-                        title={t('common.cancel')}
-                        display="inverted"
-                        action={async () => props.onCancel()}
-                    />
-                </View>
+                {props.footer ? <View style={footerStyle}>{props.footer}</View> : null}
+                {onCancel ? (
+                    <View style={styles.footerButton}>
+                        <RoundButton
+                            testID={`${props.testIDPrefix}-cancel`}
+                            size="small"
+                            title={t('common.cancel')}
+                            display="inverted"
+                            action={async () => onCancel()}
+                        />
+                    </View>
+                ) : null}
             </View>
         );
     }
 
     if (!permission.granted) {
         return (
-            <View style={styles.permissionsCard}>
-                {props.embedded ? null : <Text style={styles.permissionsTitle}>{props.title}</Text>}
-                <Text style={styles.permissionsBody}>{props.permissionRequiredMessage}</Text>
-                <View style={styles.footerButton}>
+            <View style={stateStyle}>
+                {embedded ? null : <Text style={styles.permissionsTitle}>{props.title}</Text>}
+                <Text style={bodyStyle}>{props.permissionRequiredMessage}</Text>
+                <View style={embedded ? styles.embeddedFooterButton : styles.footerButton}>
                     <RoundButton
                         testID={`${props.testIDPrefix}-retry-permission`}
-                        size="normal"
+                        // Embedded, it is the step's one primary: the pane's action tier, not a dialog button.
+                        size={embedded ? 'large' : 'normal'}
                         title={t('common.retry')}
                         action={async () => {
                             await requestPermission().catch(() => {});
@@ -235,16 +269,18 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
                         />
                     </View>
                 ) : null}
-                <View style={styles.footerButton}>
-                    <RoundButton
-                        testID={`${props.testIDPrefix}-cancel`}
-                        size="small"
-                        title={t('common.cancel')}
-                        display="inverted"
-                        action={async () => props.onCancel()}
-                    />
-                </View>
-                {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
+                {onCancel ? (
+                    <View style={styles.footerButton}>
+                        <RoundButton
+                            testID={`${props.testIDPrefix}-cancel`}
+                            size="small"
+                            title={t('common.cancel')}
+                            display="inverted"
+                            action={async () => onCancel()}
+                        />
+                    </View>
+                ) : null}
+                {props.footer ? <View style={footerStyle}>{props.footer}</View> : null}
             </View>
         );
     }
@@ -269,20 +305,24 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
             />
             <View style={styles.overlay} pointerEvents="box-none">
                 <View style={styles.topRow} pointerEvents="box-none">
-                    <HappierPressable
-                        accessibilityRole="button"
-                        accessibilityLabel={t('common.cancel')}
-                        testID={`${props.testIDPrefix}-close`}
-                        onPress={props.onCancel}
-                        style={styles.closeButton}
-                    >
-                        <Icon
-                            testID={`${props.testIDPrefix}-close-icon`}
-                            name="x"
-                            size={20}
-                            color={closeIconColor}
-                        />
-                    </HappierPressable>
+                    {onCancel ? (
+                        <HappierPressable
+                            accessibilityRole="button"
+                            accessibilityLabel={t('common.cancel')}
+                            testID={`${props.testIDPrefix}-close`}
+                            onPress={onCancel}
+                            style={styles.closeButton}
+                        >
+                            <Icon
+                                testID={`${props.testIDPrefix}-close-icon`}
+                                name="x"
+                                size={20}
+                                color={closeIconColor}
+                            />
+                        </HappierPressable>
+                    ) : (
+                        <View style={styles.spacer} pointerEvents="none" />
+                    )}
                     {props.embedded ? (
                         <View style={styles.spacer} pointerEvents="none" />
                     ) : (

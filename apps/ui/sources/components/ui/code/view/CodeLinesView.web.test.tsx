@@ -2,9 +2,9 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
 import type { TextProps } from 'react-native';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
-import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
+import { codeViewListRef, installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
 import type { CodeLinePressEvent } from './CodeLineRow';
 
 
@@ -30,18 +30,6 @@ installCodeViewCommonModuleMocks({
             Platform: {
                 OS: 'web',
                 select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
-            },
-            FlatList: (props: any) => {
-                const items = Array.isArray(props.data)
-                    ? props.data.map((item: any, index: number) =>
-                        React.createElement(
-                            React.Fragment,
-                            { key: props.keyExtractor ? props.keyExtractor(item) : String(index) },
-                            props.renderItem ? props.renderItem({ item, index }) : null,
-                        )
-                    )
-                    : null;
-                return React.createElement('FlatList', props, items);
             },
         });
     },
@@ -89,6 +77,11 @@ vi.mock('shiki', () => ({
     createHighlighter: (...args: any[]) => createHighlighterSpy(...args),
 }));
 
+// Vite's cold module graph is setup, not part of the first layout scenario's deadline.
+await import('./CodeLinesViewCore');
+const { VirtualizedList } = await import('@/components/ui/lists/virtualized');
+beforeEach(() => { Object.values(codeViewListRef).forEach(mock => mock.mockReset()); });
+
 async function flushReactAsyncWork(): Promise<void> {
     // The highlighter and its regex engine load through dynamic imports; microtask
     // flushing alone does not wait for Vite to finish those module requests.
@@ -97,6 +90,169 @@ async function flushReactAsyncWork(): Promise<void> {
 }
 
 describe('CodeLinesView (web)', () => {
+    it('bootstraps an unmeasured wrapped phone target, then lands on its real row layout', async () => {
+        const { CodeLinesViewCore } = await import('./CodeLinesViewCore');
+        const { buildCodeLinesFromFile } = await import('../model/buildCodeLinesFromFile');
+        const lines = buildCodeLinesFromFile({ text: Array.from({ length: 360 }, (_, index) =>
+            `export const coast${index + 1} = "Coastal notebook line ${index + 1}";`).join('\n') });
+        const phone = document.createElement('div');
+        phone.style.width = '390px';
+        document.body.append(phone);
+        const screen = await renderScreen(<CodeLinesViewCore lines={lines} wrapLines virtualized scrollToLineId={lines[149].id} />);
+        try {
+            const list = screen.tree.root.findByType('LegendList');
+            expect(list.props.estimatedItemSize).toBeGreaterThan(0);
+            expect(codeViewListRef.scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 149 }));
+            const row = screen.tree.root.findAll(node => typeof node.props.nativeID === 'string'
+                && node.props.nativeID.endsWith(`-${lines[149].id}`) && typeof node.props.onLayout === 'function')[0];
+            const target = document.createElement('div');
+            target.id = row.props.nativeID;
+            target.scrollIntoView = vi.fn();
+            phone.append(target);
+            await renderer.act(async () => row.props.onLayout());
+            expect(target.scrollIntoView).toHaveBeenCalledTimes(1);
+            await renderer.act(async () => screen.tree.root.findByType(VirtualizedList).props.onContentSizeChange(390, 15_000));
+            expect(target.scrollIntoView).toHaveBeenCalledTimes(1);
+        } finally { await screen.unmount(); phone.remove(); }
+    });
+
+    it.each(['content', 'viewport', 'resize', 'find', 'scroll', 'wheel', 'pointerdown', 'keydown', 'touchmove'] as const)(
+        'finishes a clamped reading landing on growth, yielding to %s', async scenario => {
+            const { CodeLinesViewCore } = await import('./CodeLinesViewCore');
+            const { buildCodeLinesFromFile } = await import('../model/buildCodeLinesFromFile');
+            const lines = buildCodeLinesFromFile({ text: Array.from({ length: 213 }, (_, index) => `line ${index + 1}`).join('\n') });
+            const scroller = document.createElement('div'); scroller.style.overflowY = 'auto';
+            const content = document.createElement('div'); const target = document.createElement('div');
+            content.append(target); scroller.append(content); document.body.append(scroller);
+            let extent = 4470, offset = 0;
+            Object.defineProperties(scroller, {
+                clientHeight: { value: 794 }, scrollHeight: { get: () => extent },
+                scrollTop: { get: () => offset, set: (top: number) => { offset = Math.max(0, Math.min(top, extent - 794)); } },
+            });
+            scroller.getBoundingClientRect = () => new DOMRect(0, 0, 400, 794);
+            target.getBoundingClientRect = () => new DOMRect(0, 4300 - offset, 400, 22);
+            // Substitute only browser layout and scroll clamping while the real Core owns navigation.
+            const land = vi.fn(() => { scroller.scrollTop = 4300 - Number.parseFloat(target.style.scrollMarginTop || '0'); });
+            target.scrollIntoView = land;
+            const observers = new Set<{ callback: ResizeObserverCallback; nodes: Set<Element> }>();
+            class LayoutObserver {
+                nodes = new Set<Element>();
+                constructor(public callback: ResizeObserverCallback) { observers.add(this); }
+                observe(node: Element) { this.nodes.add(node); }
+                unobserve(node: Element) { this.nodes.delete(node); }
+                disconnect() { observers.delete(this); }
+            }
+            vi.stubGlobal('ResizeObserver', LayoutObserver);
+            const ranges = scenario === 'find' ? new Map([['f:150', [{ start: 0, end: 4, current: true }]]]) : undefined;
+            const render = () => <CodeLinesViewCore lines={[...lines]} scrollToLineId="f:150" findRangesByLineId={ranges} />;
+            const screen = await renderScreen(render());
+            const row = screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.nativeID?.endsWith('-f:150'))[0]!;
+            target.id = row.props.nativeID;
+            const layout = async () => renderer.act(async () => {
+                const list = screen.tree.root.findByType(VirtualizedList);
+                if (scenario === 'viewport') list.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 794 } } });
+                else if (scenario === 'content') list.props.onContentSizeChange?.(400, extent);
+                else for (const observer of [...observers]) if (observer.nodes.has(content)) {
+                    observer.callback([], observer as unknown as ResizeObserver);
+                }
+            });
+            try {
+                await renderer.act(async () => { row.props.onLayout?.(); });
+                expect(offset).toBe(3676); // The target mounted before the rows beneath it were measured.
+                const readerMoved = ['scroll', 'wheel', 'pointerdown', 'keydown', 'touchmove'].includes(scenario);
+                if (readerMoved) {
+                    if (scenario === 'scroll') scroller.scrollTop = 100;
+                    scroller.dispatchEvent(scenario === 'keydown' ? new KeyboardEvent('keydown', { key: 'ArrowDown' }) : new Event(scenario));
+                }
+                const beforeGrowth = offset;
+                extent = 6252;
+                await layout();
+                expect(offset).toBe(readerMoved ? beforeGrowth : 4035);
+                const settledLandings = land.mock.calls.length;
+                await layout();
+                expect(land).toHaveBeenCalledTimes(settledLandings); // Unchanged geometry causes no scrolling work.
+                scroller.scrollTop = 100;
+                scroller.dispatchEvent(new Event('scroll'));
+                await screen.update(render());
+                extent += 100;
+                await layout();
+                expect(offset).toBe(100); // An equivalent rerender cannot reacquire the reader's position.
+            } finally { await screen.unmount(); scroller.remove(); vi.unstubAllGlobals(); }
+        },
+    );
+    it.each(['viewport', 'content'] as const)('resumes a pending line landing after the %s becomes measurable', async measurement => {
+        const { CodeLinesViewCore } = await import('./CodeLinesViewCore');
+        const { buildCodeLinesFromFile } = await import('../model/buildCodeLinesFromFile');
+        const lines = buildCodeLinesFromFile({ text: Array.from({ length: 161 }, (_, index) => `line ${index + 1}`).join('\n') });
+        const scroller = document.createElement('div'); scroller.style.overflowY = 'auto';
+        const first = document.createElement('div'); scroller.append(first); document.body.append(scroller);
+        let measured = false;
+        Object.defineProperties(scroller, { clientHeight: { value: 473 }, scrollHeight: { get: () => measured ? 3590 : 473 },
+            scrollTo: { value: ({ top }: ScrollToOptions) => { scroller.scrollTop = measured ? top ?? 0 : 0; } } });
+        codeViewListRef.scrollToIndex.mockImplementation(() => { scroller.scrollTop = measured ? 3000 : 0; });
+        // DOM availability/measurement is the browser boundary. The pending-target owner remains real.
+        const screen = await renderScreen(<CodeLinesViewCore lines={lines} scrollToLineId="f:150" />);
+        const rows = screen.tree.root.findAll(node => typeof node.type === 'string' && typeof node.props.nativeID === 'string');
+        first.id = rows.find(row => row.props.nativeID.endsWith('-f:1'))!.props.nativeID;
+        const row = rows.find(row => row.props.nativeID.endsWith('-f:150'))!;
+        const list = () => screen.tree.root.findByType(VirtualizedList);
+        try {
+            expect(scroller.scrollTop).toBe(0);
+            measured = true;
+            await renderer.act(async () => {
+                if (measurement === 'viewport') list().props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 473 } } });
+                else list().props.onContentSizeChange?.(400, 3590);
+            });
+            expect(scroller.scrollTop).toBeGreaterThan(0);
+            const target = document.createElement('div'); target.id = row.props.nativeID;
+            let landedMarginTop = '';
+            const land = vi.fn(() => { landedMarginTop = target.style.scrollMarginTop; scroller.scrollTop = 3000; }); target.scrollIntoView = land;
+            scroller.append(target);
+            await renderer.act(async () => { row.props.onLayout?.(); });
+            // The line lands in the upper third of what the reader sees (lab G1o), so the context below it is readable.
+            expect(land).toHaveBeenCalledExactlyOnceWith({ block: 'start' });
+            expect(landedMarginTop).toBe('158px');
+            expect(target.style.scrollMarginTop).toBe('');
+            scroller.scrollTop = 100;
+            await screen.update(<CodeLinesViewCore lines={[...lines]} scrollToLineId="f:150" />);
+            await renderer.act(async () => { list().props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 473 } } }); list().props.onContentSizeChange?.(400, 3590); });
+            expect(scroller.scrollTop).toBe(100);
+            expect(land).toHaveBeenCalledTimes(1);
+        } finally { await screen.unmount(); scroller.remove(); }
+    });
+    it('accepts bare DOM modifier clicks at the row press boundary', async () => {
+        const { CodeLinesViewCore } = await import('./CodeLinesViewCore');
+        const { buildCodeLinesFromFile } = await import('../model/buildCodeLinesFromFile');
+        const { Pressable } = await import('react-native');
+        const lines = buildCodeLinesFromFile({ text: '😀 target' });
+        const activate = vi.fn(() => true), select = vi.fn();
+        const screen = await renderScreen(<CodeLinesViewCore lines={lines} virtualized={false} onPressLine={select}
+            intelligence={{ onPointerToken: vi.fn(), onActivateToken: activate }} />);
+        const code = document.createElement('span');
+        code.setAttribute('data-code-text', lines[0]!.id);
+        code.innerHTML = '<span>😀 </span><span>target</span>';
+        document.body.append(code);
+        const target = code.lastElementChild!;
+        const previousCaret = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint');
+        Object.defineProperty(document, 'caretPositionFromPoint', { configurable: true,
+            value: () => ({ offsetNode: target.firstChild, offset: 2 }) });
+        try {
+            const row = (await findCodeRows(screen.tree))[0]!;
+            const press = row.findByType(Pressable).props.onPress;
+            if (!press) throw new Error('Expected the View row press handler');
+            // The external press boundary can deliver a DOM event without a React nativeEvent wrapper.
+            const event = new MouseEvent('click', { ctrlKey: true, clientX: 10, clientY: 20 });
+            Object.defineProperty(event, 'target', { value: target });
+            // RN's declaration admits only responder events; RN-web also supplies bare browser events.
+            expect(() => press(event as unknown as Parameters<typeof press>[0])).not.toThrow();
+            expect(activate).toHaveBeenCalledExactlyOnceWith(lines[0]!.id, 5, expect.objectContaining({ via: 'modifier' }), 1);
+            expect(select).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount(); code.remove(); rowTextCommits.clear(); rowTextRenders.clear();
+            if (previousCaret) Object.defineProperty(document, 'caretPositionFromPoint', previousCaret);
+            else Reflect.deleteProperty(document, 'caretPositionFromPoint');
+        }
+    });
     it.each(['off', 'simple', 'advanced'] as const)('renders only changed decorations and newly revealed rows with %s syntax', async (mode) => {
         const { CodeLinesViewCore } = await import('./CodeLinesViewCore');
         const { CodeLinesView } = await import('./CodeLinesView.web');
@@ -195,10 +351,10 @@ describe('CodeLinesView (web)', () => {
         const content = document.createElement('div');
         const element = document.createElement('div');
         content.append(element); scroller.append(content); document.body.append(scroller);
-        let rowTop = 800;
-        element.getBoundingClientRect = () => new DOMRect(0, rowTop - scroller.scrollTop, 400, 22);
+        let rowTop = 800, rowHeight = 22;
+        element.getBoundingClientRect = () => new DOMRect(0, rowTop - scroller.scrollTop, 400, rowHeight);
         scroller.getBoundingClientRect = () => new DOMRect(0, 0, 400, 600);
-        element.scrollIntoView = () => { scroller.scrollTop = rowTop - 289; };
+        element.scrollIntoView = () => { scroller.scrollTop = rowTop - Number.parseFloat(element.style.scrollMarginTop || '0'); };
         const observers = new Set<{ callback: ResizeObserverCallback; nodes: Set<Element> }>();
         class LayoutObserver {
             nodes = new Set<Element>();
@@ -210,7 +366,7 @@ describe('CodeLinesView (web)', () => {
         vi.stubGlobal('ResizeObserver', LayoutObserver);
         const resize = async (node: Element) => renderer.act(async () => {
             for (const observer of [...observers]) if (observer.nodes.has(node)) {
-                observer.callback([{ target: node } as ResizeObserverEntry], observer as unknown as ResizeObserver);
+                observer.callback([], observer as unknown as ResizeObserver);
             }
         });
         const ranges = new Map([[target.id, [{ start: 0, end: 6, current: true }]]]);
@@ -219,17 +375,18 @@ describe('CodeLinesView (web)', () => {
         element.id = row.props.nativeID;
         try {
             await renderer.act(async () => { row.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: rowTop, width: 400, height: 22 } } }); });
-            expect(scroller.scrollTop).toBe(511);
+            expect(scroller.scrollTop).toBe(600);
             rowTop += 62;
+            rowHeight = 66;
             await resize(content);
-            expect(element.getBoundingClientRect().top + 11).toBe(300);
+            expect(element.getBoundingClientRect().top + rowHeight / 2).toBe(211);
             // An equivalent decoration publication does not reacquire a reader's scroll.
             scroller.scrollTop += 100;
             scroller.dispatchEvent(new Event('scroll'));
             await screen.update(<CodeLinesViewCore lines={lines} virtualized={false} scrollToLineId={target.id} findRangesByLineId={new Map(ranges)} />);
             rowTop += 22;
             await resize(content);
-            expect(scroller.scrollTop).toBe(673);
+            expect(scroller.scrollTop).toBe(784);
             await screen.update(<CodeLinesViewCore lines={lines} virtualized={false} />);
             expect(observers.size).toBe(0);
         } finally {
@@ -296,7 +453,7 @@ describe('CodeLinesView (web)', () => {
         const lines = buildCodeLinesFromFile({ text: Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join('\n') });
         const screen = await renderScreen(<CodeLinesViewCore lines={lines} virtualized scrollToLineId={lines[12]!.id} />);
 
-        const list = screen.tree.root.findAll((node) => (node.type as unknown) === 'FlatList')[0]!;
+        const list = screen.tree.root.findAll((node) => (node.type as unknown) === 'LegendList')[0]!;
         expect(list.props.initialScrollIndex).toBeUndefined();
     });
 
@@ -320,14 +477,14 @@ describe('CodeLinesView (web)', () => {
         Object.defineProperty(document, 'caretPositionFromPoint', { configurable: true, value: () => ({ offsetNode: target.firstChild, offset: 2 }) });
         const geometry = vi.spyOn(code, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 10, 200, 20));
         try {
-            const list = screen.tree.root.findByType('FlatList');
+            const list = screen.tree.root.findByType('LegendList');
             expect(list.props.onPointerMove).toEqual(expect.any(Function));
             list.props.onPointerMove({ target, clientX: 10, clientY: 20 });
             expect(pointer).toHaveBeenLastCalledWith(lines[0].id, 5, { x: 10, y: 10, width: 1, height: 20 }, 1);
             // Activation is covered through the real row press in CodeLinesView.touch.web.test.
             pointer.mockClear(); activate.mockClear();
             await screen.update(<CodeLinesViewCore lines={[{ ...lines[0], kind: 'remove', newLine: null }]} intelligence={{ onPointerToken: pointer, onActivateToken: activate }} />);
-            const updated = screen.tree.root.findByType('FlatList');
+            const updated = screen.tree.root.findByType('LegendList');
             updated.props.onPointerMove({ target, clientX: 10, clientY: 20 });
             target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 20, ctrlKey: true }));
             expect(pointer).not.toHaveBeenCalled();

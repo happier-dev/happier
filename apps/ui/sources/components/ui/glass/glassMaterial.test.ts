@@ -70,6 +70,30 @@ describe('glass material Account owner', () => {
         }
     });
 
+    it('treats a shown background as content backing under Auto while retaining opaque overrides', () => {
+        const auto = { glassSurfaceMaterials: glassPresetMaterials('auto') };
+        const solid = { blur: 'off', opacity: 1 } as const;
+        for (const atmosphereBehind of ['band', 'wallpaper'] as const) {
+            for (const desktopWindow of [false, true]) {
+                const environment = { atmosphereBehind, desktopWindow, nativeWindowMaterialLive: false };
+                expect(resolveGlassSurfaceMaterial(auto, 'content', environment))
+                    .toEqual({ material: readGlassTintedMaterials(auto).content, reason: null });
+                expect(resolveGlassSurfaceMaterial(auto, 'content', { ...environment, nativeRenderer: true }).material)
+                    .toEqual(auto.glassSurfaceMaterials.content);
+                expect(resolveGlassSurfaceMaterial(auto, 'content', { ...environment, reduceTransparency: true }))
+                    .toEqual({ material: solid, reason: 'reduceTransparency' });
+                expect(resolveGlassSurfaceMaterial(auto, 'content', { ...environment, windowActive: false }))
+                    .toEqual({ material: solid, reason: 'inactiveWindow' });
+                expect(resolveGlassSurfaceMaterial({ glassSurfaceMaterials: glassPresetMaterials('solid') }, 'content', environment).material)
+                    .toEqual(solid);
+            }
+        }
+        expect(resolveGlassSurfaceMaterial(auto, 'content', { atmosphereBehind: 'none' }))
+            .toEqual({ material: solid, reason: 'unsupported' });
+        expect(resolveGlassSurfaceMaterial(auto, 'content', { atmosphereBehind: 'none', desktopWindow: true, nativeWindowMaterialLive: false }))
+            .toEqual({ material: solid, reason: 'unavailable' });
+    });
+
     it('applies a dimming tone without a contrast lift to wallpaper chrome and sidebar, retaining solid/custom and ordinary window treatment', () => {
         for (const group of ['chrome', 'sidebar'] as const) {
             const settings = { glassSurfaceMaterials: glassPresetMaterials('clear') };
@@ -96,8 +120,10 @@ describe('glass material Account owner', () => {
                         for (const atmosphereBehind of ['none', 'wallpaper'] as const) {
                             const environment = { atmosphereBehind, desktopWindow: true, nativeWindowMaterialLive: true };
                             const map = resolveGlassBackdropMap(settings, group, dark, environment)!;
-                            const opacity = resolveGlassSurfaceMaterial(settings, group, environment).material.opacity;
-                            const compression = dark ? atmosphereBehind === 'none' ? plainDark : pictureDark : Math.min(light, 1 - opacity);
+                            // Under the default glass a light floating surface takes Strong's panel coat (ink behind it).
+                            const readable = group === 'floating' && !dark && tint === DEFAULT_GLASS_TINT_INTENSITY;
+                            const opacity = readable ? map.opacity! : resolveGlassSurfaceMaterial(settings, group, environment).material.opacity;
+                            const compression = readable ? 0.15 : dark ? atmosphereBehind === 'none' ? plainDark : pictureDark : Math.min(light, 1 - opacity);
                             const filtered = applyGlassBackdropFilter(map.tone, [60, 60, 60]);
                             expect((1 - opacity) * filtered[0]! / 60).toBeCloseTo(compression, 3);
                         }
@@ -159,6 +185,40 @@ describe('glass material Account owner', () => {
                     const extreme: [number, number, number] = theme.dark ? [255, 255, 255] : [0, 0, 0];
                     over(extreme).forEach((value, channel) => expect(Math.abs(value - rgb(solid)[channel]!)).toBeLessThanOrEqual(0.15 * 255 + 2));
                 }
+            }
+        });
+        it('keeps the ink behind a light floating surface to the Strong panel share under the default glass, so a dark control leaves no grey smudge', () => {
+            // What lies under a light menu or Share card is ink content (a black button, text, field edges):
+            // blurred through the tint's hair it reads as a dirty ghost on the white glass.
+            const theme = lightTheme;
+            const solid = rgb(theme.colors.edge.floatingFill);
+            for (const tint of [undefined, DEFAULT_GLASS_TINT_INTENSITY]) {
+                for (const atmosphereBehind of ['none', 'wallpaper'] as const) {
+                    for (const role of [false, true] as const) {
+                        const settings = { glassSurfaceMaterials: glassPresetMaterials('auto'), glassTintIntensity: tint };
+                        const map = resolveGlassBackdropMap(settings, 'floating', false, { atmosphereBehind }, { page: theme.colors.surface.base, solid: theme.colors.edge.floatingFill }, role)!;
+                        const opacity = map.opacity ?? resolveGlassSurfaceMaterial(settings, 'floating').material.opacity;
+                        const over = (backdrop: [number, number, number]) => renderGlassOver({ filter: map.tone, coat: rgb(map.coat!), opacity, backdrop });
+                        const label = `${tint} ${atmosphereBehind} ${role ? 'panel' : 'menu'}`;
+                        over(rgb(theme.colors.surface.base)).forEach((value, channel) => expect(Math.abs(value - solid[channel]!), label).toBeLessThanOrEqual(1));
+                        over([0, 0, 0]).forEach((value, channel) => expect(Math.abs(value - solid[channel]!), label).toBeLessThanOrEqual(0.15 * 255 + 2));
+                    }
+                }
+            }
+            // Dark keeps its own coats, and a person's customized glass applies exactly as set.
+            const darkSettings = { glassSurfaceMaterials: glassPresetMaterials('auto') };
+            const darkGround = { page: darkTheme.colors.surface.base, solid: darkTheme.colors.edge.floatingFill };
+            expect(resolveGlassBackdropMap(darkSettings, 'floating', true, {}, darkGround, false))
+                .not.toEqual(resolveGlassBackdropMap(darkSettings, 'floating', true, {}, darkGround, 'livePicture'));
+            const ground = { page: theme.colors.surface.base, solid: theme.colors.edge.floatingFill };
+            for (const settings of [
+                { glassSurfaceMaterials: glassPresetMaterials('auto'), glassTintIntensity: 0 },
+                { glassSurfaceMaterials: glassPresetMaterials('everywhere') },
+            ]) {
+                const menu = resolveGlassBackdropMap(settings, 'floating', false, {}, ground, false)!;
+                const opacity = menu.opacity ?? resolveGlassSurfaceMaterial(settings, 'floating').material.opacity;
+                const out = renderGlassOver({ filter: menu.tone, coat: rgb(menu.coat!), opacity, backdrop: [0, 0, 0] });
+                expect(Math.abs(out[0]! - rgb(theme.colors.edge.floatingFill)[0]!)).toBeGreaterThan(0.3 * 255);
             }
         });
         it('leaves a customized tint, intensity or preset exactly as set over a live picture', () => {
@@ -418,3 +478,4 @@ describe('the notch paint', () => {
         expect(coat({ glassSurfaceMaterials: { ...materials, floating: { blur: 'strong', opacity: 0.4 } } })).toBeCloseTo(0.4);
     });
 });
+

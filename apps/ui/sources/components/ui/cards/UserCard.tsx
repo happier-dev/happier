@@ -25,11 +25,12 @@ export function UserCard({
     const displayName = formatAccountDisplayName(user) ?? t('accountDisplay.unnamed');
     const avatarUrl = user.avatar?.url || user.avatar?.path;
 
-    // Create avatar element using the Avatar component
+    // The person-row avatar: Team member and Team rows draw the same 36 px face, so friends and
+    // teammates read as one list on the People page.
     const avatarElement = (
         <Avatar
             id={user.id}
-            size={40}
+            size={36}
             imageUrl={avatarUrl}
             thumbhash={user.avatar?.thumbhash}
         />

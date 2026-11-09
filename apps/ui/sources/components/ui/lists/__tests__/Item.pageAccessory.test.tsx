@@ -202,6 +202,41 @@ describe('Item adaptive accessory', () => {
     });
 });
 
+describe('Item page detail on a phone', () => {
+    it('measures the label with its qualifier, so a detail beside a Machine name moves beneath instead of cutting it', async () => {
+        const { Item } = await import('../Item');
+        const { ListPresentationProvider } = await import('../listPresentation');
+        const { View } = await import('react-native');
+        const { act } = await import('react-test-renderer');
+        const screen = await renderScreen(<ListPresentationProvider value="page">
+            <Item testID="machine" title="NLDW3-5-36-33" titleQualifier="3ca2" detail="Not shared with you"
+                icon={<View />} onPress={() => {}} />
+        </ListPresentationProvider>);
+        const text = (node: ReactTestInstance): string => node.children
+            .map(child => typeof child === 'string' ? child : text(child)).join(' ');
+        const hidden = (node: ReactTestInstance) => {
+            for (let current: ReactTestInstance | null = node; current; current = current.parent) {
+                if (current.props['aria-hidden']) return true;
+            }
+            return false;
+        };
+        const measured = () => screen.findAll(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function');
+        const event = (width: number) => ({ nativeEvent: { layout: { x: 0, y: 0, width, height: 52 } } });
+        // The outermost measured host is the row, at a phone's width.
+        await act(async () => { measured()[0]!.props.onLayout(event(358)); });
+        // Natural widths: the name alone is 105, the name with its qualifier 150, the detail 125.
+        for (const node of measured().filter(hidden)) {
+            const content = text(node);
+            const width = content.includes('Not shared') ? 125 : content.includes('3ca2') ? 150 : content.includes('NLDW3') ? 105 : null;
+            if (width !== null) await act(async () => { node.props.onLayout(event(width)); });
+        }
+        const visibleDetail = screen.findAll(node => typeof node.type === 'string' && !hidden(node)
+            && node.children.includes('Not shared with you'))[0]!;
+        // Inline, the detail is the right-aligned meta column beside the name; beneath, it reads as the subtitle.
+        expect(flattenTestStyle(visibleDetail.props.style).textAlign, 'detail moved beneath the whole name').not.toBe('right');
+    });
+});
+
 describe('Item leading mark on a page', () => {
     it('keeps a stacked field label beside its reserved leading slot, without inserting a blank row', async () => {
         const { Item } = await import('../Item');

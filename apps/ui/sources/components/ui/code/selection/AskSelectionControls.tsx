@@ -1,14 +1,14 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SelectionActionBar } from '@/components/ui/selection/SelectionActionBar';
 import { useFloatingChromeClearance, usePageBottomSeat, useReportPageBottomBar } from '@/components/ui/layout/useFloatingChromeClearance';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 
-import { SelectionToolbar } from './SelectionToolbar';
+import { SelectionToolbar, type SelectionToolbarAction } from './SelectionToolbar';
 import { useAskSelection, type AskSelection, type UseAskSelectionInput } from './useAskSelection';
 
 export type AskSelectionControlsProps = UseAskSelectionInput &
@@ -20,6 +20,7 @@ export type AskSelectionControlsProps = UseAskSelectionInput &
     /** The phone selection bar took (true) or left (false) the bottom edge, so a page's own bottom bar can step aside. */
     onPhoneBarShownChange?: (shown: boolean) => void;
     testID?: string;
+    actionsForSelection?: (selection: AskSelection) => readonly SelectionToolbarAction[] | null;
   }>;
 
 /**
@@ -29,18 +30,21 @@ export type AskSelectionControlsProps = UseAskSelectionInput &
 export function AskSelectionControls(
   props: AskSelectionControlsProps,
 ): React.ReactElement | null {
-  const { commentEnabled, onCommentSelection, onPhoneBarShownChange, testID, ...input } = props;
+  const { commentEnabled, onCommentSelection, onPhoneBarShownChange, testID, actionsForSelection, ...input } = props;
   const ask = useAskSelection(input);
-  const phone = useDeviceType() === 'phone';
+  const isPhone = useDeviceType() === 'phone';
   // The phone bar floats over the page like its other bottom bars: above the floating tab bar when one covers it.
   const chromeClearance = useFloatingChromeClearance();
   const selection = ask.selection;
+  // The floating toolbar needs a rect to rise from; a native selection made on rows has none, so it takes the bar.
+  const phone = isPhone || (Platform.OS !== 'web' && selection !== null && !selection.rect);
   // Once the person asked or commented, the toolbar steps back until the selection changes (lab A2:
   // the selection stays visible, the question is in the composer now).
   const selectionKey = selection
-    ? `${selection.startLine}:${selection.endLine}:${selection.text}`
+    ? `${selection.key ?? ''}:${selection.startLine}:${selection.endLine}:${selection.text}`
     : null;
   const [actedOnKey, setActedOnKey] = React.useState<string | null>(null);
+  React.useEffect(() => { if (selection === null) setActedOnKey(null); }, [selection]);
   const visible =
     props.active !== false &&
     selection !== null &&
@@ -84,6 +88,8 @@ export function AskSelectionControls(
       return item.run();
     },
   })), [ask.menuItems, selectionKey]);
+  const customActions = selection && actionsForSelection?.(selection)?.map((action) => ({ ...action,
+    onPress: () => { setActedOnKey(selectionKey); return action.onPress(); } }));
   if (phone) {
     const lineCount = selection
       ? selection.endLine - selection.startLine + 1
@@ -96,8 +102,24 @@ export function AskSelectionControls(
       >
       <SelectionActionBar
         visible={visible}
-        label={t('files.askSelection.lineCount', { count: lineCount })}
-        actions={[
+        // Surface actions select prose, where a line count means nothing: the bar names the selection instead.
+        label={customActions ? t('files.askSelection.toolbarLabel') : t('files.askSelection.lineCount', { count: lineCount })}
+        actions={customActions ? [
+          ...customActions.map((action) => ({
+            id: action.id,
+            label: action.label,
+            ...(action.primary ? { emphasis: 'primary' as const } : {}),
+            onPress: action.onPress,
+            testID: `selection-bar-${action.id}`,
+            renderIcon: (color: string) => <Icon name={action.icon} size={ICON_SIZE.sm} color={color} />,
+          })),
+          {
+            id: 'copy',
+            label: t('files.askSelection.copy'),
+            onPress: ask.copy,
+            testID: 'selection-bar-copy',
+          },
+        ] : [
           {
             id: 'ask',
             label: t('files.askSelection.ask'),
@@ -152,6 +174,7 @@ export function AskSelectionControls(
       onComment={onComment}
       onCopy={ask.copy}
       testID={testID}
+      actions={customActions}
     />
   );
 }

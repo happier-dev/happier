@@ -39,7 +39,7 @@ const WORKSPACE = {
 /** A native (devenv) environment's refusal, changed-inputs and unevaluated-Nix states (plan 24 copy). */
 const NATIVE_MANIFEST = {
   version: 1,
-  environment: { kind: 'toolchain', tool: 'devenv', configPath: 'devenv.nix' },
+  toolchain: { kind: 'toolchain', tool: 'devenv', configPath: 'devenv.nix' },
   scripts: {
     verify: { source: { kind: 'command', command: 'devenv shell -- ./verify.sh' } },
     check: { source: { kind: 'command', command: 'devenv shell -- ./check.sh' } },
@@ -48,7 +48,7 @@ const NATIVE_MANIFEST = {
 } as const;
 const NATIVE_DETECTION: ProjectDefinitionDetectionV1 = {
   entries: [],
-  environments: [{ kind: 'toolchain', tool: 'devenv', configPath: 'devenv.nix' }],
+  toolchains: [{ kind: 'toolchain', tool: 'devenv', configPath: 'devenv.nix' }],
   devcontainers: [],
   coverage: 'partial',
   diagnostics: [{ file: 'devenv.nix', code: 'unevaluated_nix' }],
@@ -64,7 +64,7 @@ const pkg = (target: string): ProjectNativeRefV1 => ({
 });
 const MANIFEST = {
   version: 1,
-  environment: { kind: 'toolchain', tool: 'mise', configPath: '.mise.toml' },
+  toolchain: { kind: 'toolchain', tool: 'mise', configPath: '.mise.toml' },
   environmentVariables: [
     { name: 'DATABASE_URL', kind: 'secret', required: true },
     { name: 'SENTRY_AUTH_TOKEN', kind: 'secret', required: false },
@@ -99,25 +99,10 @@ const MANIFEST = {
     server: { source: pkg('dev:server'), port: 3005 },
   },
 };
-const DETECTION: ProjectDefinitionDetectionV1 = {
+// Query-shaped fixture facts: Scripts contains only offers not already in the project file.
+const PAGE_DETECTION: ProjectDefinitionDetectionV1 = {
   entries: [
-    ...['test', 'typecheck', 'lint', 'build', 'test:e2e'].map((target) => ({
-      source: pkg(target),
-      usage: 'script' as const,
-    })),
-    ...['dev:ui', 'dev:server', 'storybook'].map((target) => ({
-      source: pkg(target),
-      usage: 'service' as const,
-    })),
-    {
-      source: {
-        kind: 'native',
-        tool: 'mise',
-        file: 'mise.toml',
-        target: 'release-notes',
-      },
-      usage: 'script',
-    },
+    { source: pkg('build'), usage: 'script' },
     {
       source: {
         kind: 'native',
@@ -127,23 +112,39 @@ const DETECTION: ProjectDefinitionDetectionV1 = {
       },
       usage: 'script',
     },
-    {
-      source: {
-        kind: 'native',
-        tool: 'compose',
-        file: 'compose.yaml',
-        target: 'db',
-      },
-      usage: 'service',
-    },
   ],
-  environments: [
-    { kind: 'toolchain', tool: 'mise', configPath: '.mise.toml' },
-    { kind: 'toolchain', tool: 'nix_flake', configPath: 'flake.nix' },
-  ],
+  toolchains: [],
   devcontainers: [],
   coverage: 'complete',
   diagnostics: [],
+};
+const FIRST_DETECTION: ProjectDefinitionDetectionV1 = {
+  ...PAGE_DETECTION,
+  entries: [
+    ...['test', 'typecheck', 'lint', 'build', 'test:e2e'].map(target => ({ source: pkg(target), usage: 'script' as const })),
+    { source: { kind: 'native', tool: 'mise', file: 'mise.toml', target: 'release-notes' }, usage: 'script' },
+    PAGE_DETECTION.entries[1]!,
+  ],
+};
+const PAGE_SUMMARY = {
+  total: 4, scripts: 2, services: 2,
+  files: [
+    { file: 'package.json', total: 2, scripts: 1, services: 1 },
+    { file: 'Makefile', total: 1, scripts: 1, services: 0 },
+    { file: 'compose.yaml', total: 1, scripts: 0, services: 1 },
+  ],
+};
+const FIRST_SUMMARY = {
+  total: 11, scripts: 7, services: 4,
+  files: [
+    { file: 'package.json', total: 8, scripts: 5, services: 3 },
+    { file: 'mise.toml', total: 1, scripts: 1, services: 0 },
+    { file: 'Makefile', total: 1, scripts: 1, services: 0 },
+    { file: 'compose.yaml', total: 1, scripts: 0, services: 1 },
+  ],
+};
+const EMPTY_DETECTION: ProjectDefinitionDetectionV1 = {
+  entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [],
 };
 
 function definition(manifest: unknown): ProjectManifestFileSnapshot {
@@ -322,10 +323,13 @@ export function ScriptsSpecimen(
           ? definition({
               ...MANIFEST,
               workspace: undefined,
-              environment: undefined,
+    toolchain: undefined,
             })
           : declared,
-    detection: frame === 'NATIVE' ? NATIVE_DETECTION : DETECTION,
+    detection: frame === 'NATIVE' ? { ...NATIVE_DETECTION, toolchains: [] }
+      : frame === 'RAIL' ? EMPTY_DETECTION : frame === 'FIRST' ? FIRST_DETECTION : PAGE_DETECTION,
+    ...(frame === 'FIRST' ? { detectionSummary: FIRST_SUMMARY }
+      : frame !== 'NATIVE' && frame !== 'RAIL' ? { detectionSummary: PAGE_SUMMARY } : {}),
     importCandidates: [],
     ...(frame === 'NATIVE' ? { setupReadiness: { kind: 'needsReview' as const, code: 'setup_changed' } } : {}),
   };
@@ -348,7 +352,7 @@ export function ScriptsSpecimen(
         accountId="specimen"
         client={client}
         definition={declared}
-        detection={DETECTION}
+        detection={EMPTY_DETECTION}
         importCandidates={[]}
         seedFromDetection={false}
         initialMode="form"

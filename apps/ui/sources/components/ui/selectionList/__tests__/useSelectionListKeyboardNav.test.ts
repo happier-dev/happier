@@ -66,6 +66,7 @@ function makeVirtualizedSource(
         stateKey: ids.join('|'),
         getOption: (index) => ({ id: ids[index] ?? '', label: ids[index] ?? '' }),
         getOptionId: (index) => ids[index] ?? '',
+        findItemIndexByOptionIndex: index => index >= 0 && index < ids.length ? index : -1,
         findOptionIndexById: (id) => ids.indexOf(id),
         getFirstFocusableOptionIndex: () => ids.findIndex((_, index) => focusable(index)),
         getNextFocusableOptionIndex: (current, direction) => {

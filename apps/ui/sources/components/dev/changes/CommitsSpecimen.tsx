@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ScmCommitPlanApplication, ScmComparison, ScmDiffSummaryCommitPlan } from '@happier-dev/protocol';
+import type { ScmCommitPlanApplication} from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
+import type { ScmComparison} from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryCommitPlan } from '@happier-dev/protocol/scm/diffSummary';
 import type { ScmCommitPublication } from '@happier-dev/protocol/scm';
 
 import { buildCommitProposal, type CommitProposal } from '@/components/sessions/files/commits/commitProposal';
@@ -87,6 +89,11 @@ const HOOK_FAILED = proposal(application({ status: 'failed', reason: 'hook_faile
     { groupId: 'compact', state: 'not_published', publication: writer({ hookName: 'pre-commit' }), error: "apps/ui/…/useModalLayout.ts\n  2:14  error  'COMPACT_MODAL_WIDTH' is exported but never used  unused-exports" },
     { groupId: 'test', state: 'pending' }] }));
 const REWRITTEN = proposal(application({ nextGroupIndex: 1, steps: [{ ...landed1, publication: { ...landed1.publication, signed: false }, actualMessage: 'Key the settings modal by route, not window width\n\nRefs: HAP-212' }, { groupId: 'compact', state: 'writing' }, { groupId: 'test', state: 'pending' }] }));
+/** The QA run's C3 state: a landed prefix whose message a hook rewrote, then a hook failure (the longest status lines). */
+const PREFIX_HOOK_FAILED = proposal(application({ status: 'failed', reason: 'hook_failed', nextGroupIndex: 1, steps: [
+    { ...landed1, actualMessage: 'Key the settings modal by route, not window width\n\nRefs: HAP-212' },
+    { groupId: 'compact', state: 'not_published', publication: writer({ hookName: 'pre-commit' }), error: "apps/ui/…/useModalLayout.ts\n  2:14  error  'COMPACT_MODAL_WIDTH' is exported but never used  unused-exports" },
+    { groupId: 'test', state: 'pending' }] }));
 const HEAD_MOVED = proposal(application({ status: 'failed', reason: 'head_moved', nextGroupIndex: 1, steps: [landed1, { groupId: 'compact', state: 'pending' }, { groupId: 'test', state: 'pending' }] }));
 const STOPPED = proposal(application({ status: 'stopped', reason: 'stopped', nextGroupIndex: 2, steps: [landed1,
     { groupId: 'compact', state: 'published', commitSha: SHA2, publication: writer({ state: 'published', candidateOid: SHA2, indexReconciliation: 'reconciled', committedAtMs: AT_1102 + 60_000, signed: true }) },
@@ -128,7 +135,7 @@ function CommitsFrame(props: Readonly<{ proposal: CommitProposal; phone: boolean
         <View style={styles.fill}>
             {props.phone ? <ScmComparisonPhoneHeader view="commits" views={['files', 'walkthrough', 'commits']}
                 scope={{ options: SCOPE_OPTIONS, current: PENDING_SCOPE, currentLabel: t('scmComparison.scope.workingTree'), fileCount: 9, onSelect: noop }}
-                onSelectView={noop} onBack={noop} onStartReview={noop} /> : <CommitsBar />}
+                onSelectView={noop} onStartReview={noop} /> : <CommitsBar />}
             <CommitProposalView proposal={props.proposal} phase="ready" branch="v0.3" modelLabel="Opus 5.5"
                 layout={props.phone ? 'phone' : 'wide'} actions={props.actions} active={false}
                 failureNotice={props.failure ? <ScmDiffSummaryFailureNotice testID="commit-proposal" failure={props.failure}
@@ -143,7 +150,7 @@ function StartFrame(props: Readonly<{ phone: boolean; failure: ScmDiffSummaryFai
         <View style={styles.fill}>
             {props.phone ? <ScmComparisonPhoneHeader view="commits" views={['files', 'walkthrough', 'commits']}
                 scope={{ options: SCOPE_OPTIONS, current: PENDING_SCOPE, currentLabel: t('scmComparison.scope.workingTree'), fileCount: 9, onSelect: noop }}
-                onSelectView={noop} onBack={noop} onStartReview={noop} /> : <CommitsBar />}
+                onSelectView={noop} onStartReview={noop} /> : <CommitsBar />}
             <CommitProposalView proposal={null} phase="none" branch="v0.3" modelLabel={null}
                 layout={props.phone ? 'phone' : 'wide'} actions={EDIT_ACTIONS} active={false}
                 start={{ onStart: noop, busy: false, disabled: Boolean(props.disabled), reason: null,
@@ -161,6 +168,12 @@ const HOOK_EVIDENCE: CommitHookEvidence = {
         { path: SCREEN, changeKind: 'modified', unifiedDiff: `--- a/${SCREEN}\n+++ b/${SCREEN}\n@@ -4,3 +4,3 @@\n-import {SettingsModal} from '@/components/settings/SettingsModal'\n+import { SettingsModal } from '@/components/settings/SettingsModal';\n` },
         { path: COPY, changeKind: 'modified', unifiedDiff: `--- a/${COPY}\n+++ b/${COPY}\n@@ -311,1 +311,1 @@\n-    compact: "Compact"\n+    compact: 'Compact',\n` },
     ],
+};
+
+/** The phone's paused hook card reads its evidence like the product does: from the recorded trees. */
+const HOOK_ACTIONS: CommitProposalActions = {
+    ...RUN_ACTIONS,
+    readHookDiff: async () => ({ success: true, beforeTreeOid: TREE_A, afterTreeOid: TREE_B, files: [...HOOK_EVIDENCE.files] }),
 };
 
 function Card(props: Readonly<{ proposal: CommitProposal; groupId: string; open: boolean; hookEvidence?: CommitHookEvidence }>) {
@@ -283,13 +296,15 @@ export const COMMITS_SPECIMEN_FRAMES: readonly CommitsSpecimenFrame[] = [
     { id: 'C2a', title: 'WT4-C2a · Git pane, nothing selected', render: (phone) => <GitPane selected={null} phone={phone} /> },
     { id: 'C2t', title: 'WT4-C2 · Git pane tree, commit 1 selected', render: (phone) => <GitPaneTree selected="route-key" phone={phone} /> },
     { id: 'C3', title: 'WT4-C3 · creating', render: (phone) => <CommitsFrame proposal={CREATING} phone={phone} actions={RUN_ACTIONS} /> },
+    { id: 'C3h', title: 'WT4-C3 · a landed prefix, then a hook failed', render: (phone) => <CommitsFrame proposal={PREFIX_HOOK_FAILED} phone={phone} actions={RUN_ACTIONS} /> },
+    { id: 'C4s', title: 'WT4-C4 · stopped partway', render: (phone) => <CommitsFrame proposal={STOPPED} phone={phone} actions={RUN_ACTIONS} /> },
     { id: 'C5', title: 'Empty · Propose with its model', render: (phone) => <StartFrame phone={phone} failure={null} /> },
     { id: 'C5r', title: 'Empty · refused: outdated machine', render: (phone) => <StartFrame phone={phone} failure={SPECIMEN_START_FAILURES.outdated} /> },
     { id: 'C5e', title: 'Empty · Explain changes is off', render: (phone) => <StartFrame phone={phone} failure={SPECIMEN_START_FAILURES.explainOff} disabled /> },
     { id: 'C6', title: 'Proposal kept · regeneration refused: model unavailable', render: (phone) => <CommitsFrame proposal={EDITING} phone={phone} actions={EDIT_ACTIONS} failure={SPECIMEN_START_FAILURES.model} /> },
     { id: 'C5g', title: 'Empty · writing stopped', render: (phone) => <StartFrame phone={phone} failure={SCM_DIFF_SUMMARY_GENERIC_FAILURE} /> },
     { id: 'C6g', title: 'Proposal kept · writing stopped', render: (phone) => <CommitsFrame proposal={EDITING} phone={phone} actions={EDIT_ACTIONS} failure={SCM_DIFF_SUMMARY_GENERIC_FAILURE} /> },
-    { id: 'C4', title: 'WT4-C4 · every divergence', render: (phone) => (phone ? <CommitsFrame proposal={HOOK_CHANGED} phone actions={RUN_ACTIONS} /> : <Divergences />) },
+    { id: 'C4', title: 'WT4-C4 · every divergence', render: (phone) => (phone ? <CommitsFrame proposal={HOOK_CHANGED} phone actions={HOOK_ACTIONS} /> : <Divergences />) },
 ];
 
 const styles = StyleSheet.create((theme) => ({

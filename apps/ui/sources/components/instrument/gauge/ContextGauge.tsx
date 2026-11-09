@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import Animated, {
     runOnJS,
@@ -29,6 +29,8 @@ import {
     usageToneToTokenUsageTone,
     type UsageTone,
 } from './gaugeMath';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import type { HappierHitReach } from '@happier-dev/plugin-ui/environment';
 
 /**
  * The in-session context gauge. Public instrument-kit primitive consumed by the
@@ -56,10 +58,10 @@ export type ContextGaugeProps = Readonly<{
     /** Context usage unknown after a model switch. */
     stale?: boolean;
     onPress?: () => void;
+    /** The free space the host leaves around the gauge (half its neighbour gaps), which its hit area may take. */
+    hitReach?: HappierHitReach;
     testID?: string;
 }>;
-
-const MIN_HIT_SIZE = 40;
 
 function roundToLabelBucket(pct: number): number {
     return Math.round(pct / 5) * 5;
@@ -212,14 +214,13 @@ export const ContextGauge = React.memo(function ContextGauge(props: ContextGauge
         );
     }
 
-    const hitSlop = Math.max(0, Math.ceil((MIN_HIT_SIZE - size) / 2));
     return (
         <GaugePressable
             testID={props.testID}
             accessibilityLabel={accessibilityLabel}
             onPress={props.onPress}
-            hitSlop={hitSlop}
             reducedMotion={!animateFill}
+            hitReach={props.hitReach}
         >
             {body}
         </GaugePressable>
@@ -230,32 +231,32 @@ type GaugePressableProps = Readonly<{
     children: React.ReactNode;
     onPress: () => void;
     accessibilityLabel: string;
-    hitSlop: number;
     /** The instrument motion cap (`minimal`): opacity-only acknowledgement. */
     reducedMotion: boolean;
+    hitReach?: HappierHitReach;
     testID?: string;
 }>;
 
 /**
- * The gauge keeps its own Pressable for the expanded hit slop a 16-20px ring needs;
- * the press response itself is the shared `usePressFeedback` owner (glyph-sized mark).
+ * The gauge's press response is the shared `usePressFeedback` owner (glyph-sized mark); a 16-20px ring
+ * reaches a finger's target through the shared pressable's hit area.
  */
 function GaugePressable(props: GaugePressableProps) {
     const feedback = usePressFeedback({ glyph: true, reduced: props.reducedMotion });
 
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel}
-            hitSlop={props.hitSlop}
             onPress={props.onPress}
             onPressIn={feedback.onPressIn}
             onPressOut={feedback.onPressOut}
+            hitReach={props.hitReach}
             style={styles.root}
         >
             <Animated.View style={feedback.animatedStyle}>{props.children}</Animated.View>
-        </Pressable>
+        </HappierPressable>
     );
 }
 

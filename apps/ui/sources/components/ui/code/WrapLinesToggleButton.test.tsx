@@ -19,10 +19,6 @@ vi.mock('@/components/ui/buttons/IconButton', () => ({
     IconButton: (props: Record<string, unknown>) => React.createElement('IconButton', props),
 }));
 
-vi.mock('@/components/ui/interactiveTargetSize', () => ({
-    resolveMinimumInteractiveTargetSize: () => 44,
-}));
-
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key) => key });
@@ -45,7 +41,6 @@ describe('WrapLinesToggleButton', () => {
             accessibilityRole: 'switch',
             checked: false,
             selected: false,
-            minimumInteractiveTargetSize: 44,
         }));
         await pressTestInstanceAsync(button, 'WrapLinesToggleButton');
         expect(setWrapLines).toHaveBeenCalledWith(true);

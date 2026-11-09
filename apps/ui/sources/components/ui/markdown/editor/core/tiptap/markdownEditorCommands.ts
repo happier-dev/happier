@@ -11,6 +11,7 @@
  */
 
 import type { Editor } from '@tiptap/core';
+import type { CodeEditorHistory } from '@/components/ui/code/editor/codeEditorTypes';
 
 import type {
     MarkdownBlockType,
@@ -22,8 +23,8 @@ import { MARKDOWN_EDITOR_HEADING_LEVELS } from './createMarkdownEditorExtensions
 
 /**
  * Opens a resolved link href. Injected so the registry stays platform-agnostic:
- * the web surface passes `window.open`-backed opener; the native bundle passes a
- * bridge-message opener (so the RN host can use `Linking`).
+ * the web surface supplies its host opener; the native bundle passes a
+ * bridge-message opener so host effects never enter the headless bundle.
  */
 export type MarkdownLinkOpener = (href: string) => void;
 
@@ -32,16 +33,9 @@ export type MarkdownLinkOpener = (href: string) => void;
  * a pure editor mutation.
  */
 export type RunMarkdownEditorCommandOptions = Readonly<{
-    /** Opener used by the `openLink` command. Defaults to `window.open` on web. */
+    /** Host-owned opener used by `openLink`; without one the registry has no effect. */
     openLink?: MarkdownLinkOpener;
 }>;
-
-/** Default opener: best-effort `window.open` when a DOM is available. */
-function defaultOpenLink(href: string): void {
-    if (typeof window !== 'undefined' && typeof window.open === 'function') {
-        window.open(href, '_blank', 'noopener,noreferrer');
-    }
-}
 
 /**
  * Reads the active link href for the current selection, or `undefined` when no
@@ -125,7 +119,7 @@ export function runMarkdownEditorCommand(
         case 'openLink': {
             const href = readActiveLinkHref(editor);
             if (href) {
-                (options?.openLink ?? defaultOpenLink)(href);
+                options?.openLink?.(href);
             }
             return;
         }
@@ -168,7 +162,7 @@ function readBlockType(editor: Editor): MarkdownBlockType {
  * (active marks, block type, link state for open/unlink, and undo/redo
  * availability).
  */
-export function readSelectionState(editor: Editor): MarkdownSelectionState {
+export function readSelectionState(editor: Editor, history?: CodeEditorHistory): MarkdownSelectionState {
     const isLinkActive = editor.isActive('link');
     const linkHref = isLinkActive ? readActiveLinkHref(editor) : undefined;
 
@@ -182,7 +176,7 @@ export function readSelectionState(editor: Editor): MarkdownSelectionState {
         blockType: readBlockType(editor),
         isLinkActive,
         linkHref,
-        canUndo: editor.can().undo(),
-        canRedo: editor.can().redo(),
+        canUndo: history ? history.canUndo : editor.can().undo(),
+        canRedo: history ? history.canRedo : editor.can().redo(),
     };
 }

@@ -358,6 +358,7 @@ function SelectionListBodyPlannedContent(props: SelectionListBodyProps & Readonl
     const latch = useLatchedBodyRenderer({
         stepId: props.step.id,
         plan,
+        virtualization: props.step.virtualization,
         declaresPagination: props.pagination !== undefined,
         declaresColumns: props.declaresColumns === true || hasBodySlots,
     });

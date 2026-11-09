@@ -7,6 +7,29 @@ import { TIPTAP_WEBVIEW_BUNDLE_JS } from '../tiptapWebViewBundle.generated';
 new Function(TIPTAP_WEBVIEW_BUNDLE_JS)();
 const generatedApi = globalThis.HAPPIER_TIPTAP_WEBVIEW!;
 describe.each([{ name: 'source', api: tiptapWebViewApi }, { name: 'generated bundle', api: generatedApi }])('rich WebView document and Find contract ($name)', ({ api }) => {
+    it('delegates keyboard history and preserves exact replacement source bytes across a flush', () => {
+        const messages: Array<{ type: string; payload?: unknown }> = [];
+        const root = document.createElement('div');
+        document.body.appendChild(root);
+        const runtime = api.createRuntime({ root, postEnvelope: message => messages.push(message), config: { readOnly: false, changeDebounceMs: 0, sharedHistory: true } });
+        try {
+            runtime.onEnvelope({ v: 1, type: 'init', payload: { doc: '# Draft\n' } });
+            const input = root.querySelector('.ProseMirror')!;
+            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }));
+            expect(messages.filter(message => message.type === 'history.command').at(-1)?.payload).toEqual({ command: 'undo' });
+            const systemUndo = new InputEvent('beforeinput', { inputType: 'historyUndo', bubbles: true, cancelable: true });
+            input.dispatchEvent(systemUndo);
+            expect(systemUndo.defaultPrevented).toBe(true);
+            expect(messages.filter(message => message.type === 'history.command')).toHaveLength(2);
+            input.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'x', bubbles: true, cancelable: true }));
+            expect(messages.filter(message => message.type === 'history.command')).toHaveLength(2);
+            const doc = '# Exact\r\n\r\n- one\r\n';
+            runtime.onEnvelope({ v: 1, type: 'text.command', payload: { command: { replaceDocument: doc, history: 'undo' } } });
+            runtime.onEnvelope({ v: 1, type: 'requestDoc', payload: { requestId: 'undo-flush' } });
+            expect(messages.filter(message => message.type === 'docSnapshot').at(-1)?.payload).toEqual({ requestId: 'undo-flush', doc });
+            expect(messages.filter(message => message.type === 'docChanged')).toHaveLength(0);
+        } finally { runtime.destroy(); root.remove(); }
+    });
     it('returns the original source on flush before edits', () => {
         const messages: Array<{ type: string; payload?: unknown }> = [];
         const root = document.createElement('div');

@@ -8,7 +8,7 @@ import Animated, {
     withTiming,
     type SharedValue,
 } from 'react-native-reanimated';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import {
     HappierDisclosure,
     type HappierDisclosureBodyProps,
@@ -16,11 +16,15 @@ import {
     type HappierDisclosureMotion,
     type HappierDisclosureMotionDriver,
     type HappierDisclosureProps,
+    happierPageRowDividerInset,
+    happierPageRowDividerWidth,
+    useHappierPageSection,
 } from '@happier-dev/plugin-ui/presentation';
 
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { ItemRevealContext } from './ItemRevealContext';
+import { PAGE_LIST_METRICS } from './pageListMetrics';
+import { useSectionLeadingColumn } from './sectionLeadingColumn';
 
 /**
  * Happier core's binding of the disclosure contract (`HappierDisclosure` in `@happier-dev/plugin-ui`):
@@ -97,22 +101,6 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-/**
- * The caret an expandable row's header shows at its end: one glyph, one size and the secondary ink
- * for every accordion row, so headers never pick their own. Decorative; the header's pressable owns
- * the expanded state it mirrors (`header={(state) => <Item rightElement={<ExpandableItemCaret expanded={state.expanded} />} />}`).
- */
-export function ExpandableItemCaret(props: Readonly<{ expanded: boolean }>) {
-    const { theme } = useUnistyles();
-    return (
-        <Icon
-            name={props.expanded ? 'caret-down' : 'caret-right'}
-            size={ICON_SIZE.sm}
-            color={theme.colors.text.secondary}
-        />
-    );
-}
-
 export type ExpandableItemProps = Omit<HappierDisclosureProps, 'motion' | 'reducedMotion' | 'separatorStyle'> & Readonly<{
     reducedMotion?: boolean;
 }>;
@@ -130,12 +118,32 @@ export const ExpandableItem = React.memo(function ExpandableItem(props: Expandab
             stateRef.current.onExpandedChange(true);
         }
     }, [revealRequest]);
+    // On a page section's sheet the hairline is the sheet's row seam, exactly as an `Item` row draws it: from the
+    // row's text (past the section's leading column) to the sheet's trailing edge, or to the rows' trailing
+    // inset on a flat sheet. Elsewhere the disclosure keeps its own faint line.
+    const pageSheet = useHappierPageSection();
+    const reservesLeadingColumn = useSectionLeadingColumn(false);
+    const pageSeparatorStyle = React.useMemo(() => {
+        if (!pageSheet) return null;
+        const inset = happierPageRowDividerInset({
+            rowInsetPx: pageSheet.rowInsetPx,
+            leadingPx: reservesLeadingColumn ? PAGE_LIST_METRICS.rowLeadingColumnPx + PAGE_LIST_METRICS.rowLeadingGapPx : 0,
+            framed: pageSheet.framed,
+        });
+        return {
+            height: happierPageRowDividerWidth(),
+            opacity: 1,
+            backgroundColor: pageSheet.rowDividerColor,
+            marginLeft: inset.marginStart,
+            marginRight: inset.marginEnd,
+        };
+    }, [pageSheet, reservesLeadingColumn]);
     return (
         <HappierDisclosure
             {...props}
             reducedMotion={props.reducedMotion ?? detectedReducedMotion}
             motion={reanimatedDisclosureMotion}
-            separatorStyle={styles.separator}
+            separatorStyle={pageSeparatorStyle ? [styles.separator, pageSeparatorStyle] : styles.separator}
         />
     );
 });

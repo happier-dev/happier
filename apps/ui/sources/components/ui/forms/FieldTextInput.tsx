@@ -3,11 +3,11 @@ import {
     HAPPIER_FIELD_TEXT_METRICS,
     HappierFieldTextBox,
     resolveHappierFieldTextInputMetrics,
+    useHappierHitArea,
     type HappierFieldTextBoxProps,
 } from '@happier-dev/plugin-ui/presentation';
-import type { StyleProp, TextInputProps as RNTextInputProps, ViewStyle } from 'react-native';
+import { Platform, type StyleProp, type TextInputProps as RNTextInputProps, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { View } from 'react-native';
 
 import { FIELD_BOX_METRICS, resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Text, TextInput } from '@/components/ui/text/Text';
@@ -64,6 +64,8 @@ export type FieldTextInputProps = Readonly<{
     trailing?: React.ReactNode;
     /** Where the typed text sits in the field (a count against its unit sits right). */
     textAlign?: 'left' | 'center' | 'right';
+    /** A fixed adornment the value continues (the `/` of a shortcut), drawn in the field box before the text. */
+    leading?: React.ReactNode;
     /**
      * `document`: long prose edited in place (a role's instructions) as a soft filled card at reading
      * size that grows with its text. Default `field`: the bordered box of a row's control.
@@ -81,6 +83,12 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
         const styles = stylesheet;
         const invalid = Boolean(props.error) || props.invalid === true;
         const presentation = props.presentation ?? 'field';
+        const inputMetrics = resolveHappierFieldTextInputMetrics({
+            multiline: props.multiline,
+            minLines: props.minLines,
+            presentation,
+        });
+        const hitArea = useHappierHitArea({ restingStyle: () => inputMetrics });
         const colors = resolveFieldBoxColors(theme, invalid ? 'invalid' : 'idle', presentation);
         // A document grows with its text instead of scrolling inside a fixed box.
         const grows = (presentation === 'document' || props.growWithText === true) && props.multiline === true;
@@ -94,6 +102,8 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                 presentation={presentation}
                 multiline={props.multiline}
                 colors={colors}
+                leading={props.leading}
+                trailing={props.trailing}
                 // App callers pass React Native layout styles; the shared box keeps its anatomy under them.
                 style={props.style as HappierFieldTextBoxProps['style']}
                 error={props.error ? (
@@ -107,7 +117,6 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                     </Text>
                 ) : undefined}
             >
-                <View style={props.trailing ? styles.fieldRow : undefined}>
                 <TextInput
                     ref={ref}
                     testID={props.testID}
@@ -138,15 +147,12 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                     blurOnSubmit={props.multiline ? undefined : !props.onSubmitEditing}
                     multiline={props.multiline}
                     editable={props.editable}
+                    {...(Platform.OS === 'web' ? {} : { hitSlop: hitArea.hitSlop, onLayout: hitArea.onLayout })}
                     {...(grows ? { onContentSizeChange: handleContentSizeChange, scrollEnabled: false } : {})}
                     style={[
                         styles.input,
                         // The input's text box inside the field box is the shared owner's.
-                        resolveHappierFieldTextInputMetrics({
-                            multiline: props.multiline,
-                            minLines: props.minLines,
-                            presentation,
-                        }),
+                        inputMetrics,
                         // The mono face is for what is typed (a path, a command); an empty field's placeholder is
                         // prose ("Whole repository") and keeps the field's own face.
                         props.monospace && props.value ? styles.inputMono : null,
@@ -155,20 +161,14 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                         // A right-aligned value keeps a word space before its trailing unit.
                         props.textAlign === 'right' && props.trailing ? { paddingRight: theme.space.s4 } : null,
                         { color: colors.valueColor },
-                        props.trailing ? styles.inputWithAction : null,
                     ]}
                 />
-                {props.trailing ? <View style={styles.trailing}>{props.trailing}</View> : null}
-                </View>
             </HappierFieldTextBox>
         );
     },
 ));
 
 const stylesheet = StyleSheet.create((theme) => ({
-    fieldRow: { flexDirection: 'row', alignItems: 'center', minWidth: 0 },
-    inputWithAction: { flex: 1, minWidth: 0 },
-    trailing: { flexShrink: 0, paddingRight: theme.space.s4 },
     input: {
         ...Typography.default(),
     },

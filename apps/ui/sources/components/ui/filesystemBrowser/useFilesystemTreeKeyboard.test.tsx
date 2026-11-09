@@ -9,6 +9,9 @@ import { useFilesystemTreeKeyboard, type FilesystemTreeKeyboardNode } from './us
 const folder = { path: 'src', depth: 0, type: 'directory', isExpanded: false } as const;
 const file = { path: 'src/index.ts', depth: 1, type: 'file', isExpanded: false } as const;
 const other = { path: 'readme.md', depth: 0, type: 'file', isExpanded: false } as const;
+// A row reads its tab-stop answer from the tree's active-path source, as mounted rows do.
+const rowProps = (keyboard: ReturnType<typeof useFilesystemTreeKeyboard>, node: FilesystemTreeKeyboardNode, onDisclosure?: () => void, pin?: () => void) =>
+    keyboard.getRowProps(node, keyboard.activePath.get() === node.path, onDisclosure, pin);
 
 describe('filesystem tree keyboard', () => {
     it('repairs collapsed focus through explicit parents, even when keys do not encode ancestry', async () => {
@@ -20,7 +23,7 @@ describe('filesystem tree keyboard', () => {
         function Tree({ nodes }: { nodes: readonly FilesystemTreeKeyboardNode[] }) {
             keyboard = useFilesystemTreeKeyboard(nodes);
             return <>{nodes.map(node => <Pressable key={node.path} testID={node.path}
-                ref={keyboard.getRowProps(node).pressableRef} />)}</>;
+                ref={rowProps(keyboard, node).pressableRef} />)}</>;
         }
         // Physical focus is the native host boundary; refs, traversal and repair stay real.
         const screen = await renderScreen(<Tree nodes={[first, parent, child]} />, {
@@ -29,9 +32,9 @@ describe('filesystem tree keyboard', () => {
             } }),
         });
         focusedPath = child.path;
-        await act(async () => { keyboard.getRowProps(child).onFocus?.(); });
+        await act(async () => { rowProps(keyboard, child).onFocus?.(); });
         await screen.update(<Tree nodes={[first, { ...parent, isExpanded: false }]} />);
-        expect(keyboard.activePath).toBe('folder');
+        expect(keyboard.activePath.get()).toBe('folder');
         expect(focusedPath).toBe(parent.path);
     });
 
@@ -42,9 +45,9 @@ describe('filesystem tree keyboard', () => {
         const hook = await renderHook((nodes: readonly FilesystemTreeKeyboardNode[]) => useFilesystemTreeKeyboard(nodes), {
             initialProps: [first, sibling, child],
         });
-        await act(async () => { hook.getCurrent().getRowProps(child).onFocus?.(); });
+        await act(async () => { rowProps(hook.getCurrent(), child).onFocus?.(); });
         await hook.rerender([first, { ...sibling, isExpanded: false }]);
-        expect(hook.getCurrent().activePath).toBe('src-other');
+        expect(hook.getCurrent().activePath.get()).toBe('src-other');
     });
 
     it('expands, traverses children, returns to parent and retains one active row after collapse', async () => {
@@ -52,37 +55,37 @@ describe('filesystem tree keyboard', () => {
         const pin = vi.fn();
         const hook = await renderHook((nodes: readonly FilesystemTreeKeyboardNode[]) => useFilesystemTreeKeyboard(nodes), { initialProps: [folder, other] as readonly FilesystemTreeKeyboardNode[] });
         const key = async (node: FilesystemTreeKeyboardNode, value: string, shiftKey = false) => {
-            await act(async () => hook.getCurrent().getRowProps(node, activate, pin).onKeyDown?.({ key: value, shiftKey, preventDefault: vi.fn() }));
+            await act(async () => rowProps(hook.getCurrent(), node, activate, pin).onKeyDown?.({ key: value, shiftKey, preventDefault: vi.fn() }));
         };
-        expect(hook.getCurrent().getRowProps(folder, activate).accessibilityExpanded).toBe(false);
+        expect(rowProps(hook.getCurrent(), folder, activate).accessibilityExpanded).toBe(false);
         const rootLeftDefault = vi.fn();
-        await act(async () => hook.getCurrent().getRowProps(folder, activate).onKeyDown?.({ key: 'ArrowLeft', preventDefault: rootLeftDefault }));
+        await act(async () => rowProps(hook.getCurrent(), folder, activate).onKeyDown?.({ key: 'ArrowLeft', preventDefault: rootLeftDefault }));
         expect(rootLeftDefault).toHaveBeenCalledOnce();
         await key(folder, 'ArrowRight');
         expect(activate).toHaveBeenCalledOnce();
         const expanded = { ...folder, isExpanded: true };
         await hook.rerender([expanded, file, other]);
         await key(expanded, 'ArrowRight');
-        expect(hook.getCurrent().getRowProps(file, activate).webTabIndex).toBe(0);
-        expect(hook.getCurrent().getRowProps(file, activate).accessibilityLevel).toBe(2);
+        expect(rowProps(hook.getCurrent(), file, activate).webTabIndex).toBe(0);
+        expect(rowProps(hook.getCurrent(), file, activate).accessibilityLevel).toBe(2);
         await key(file, 'p');
         expect(pin).toHaveBeenCalledOnce();
         const printDefault = vi.fn();
-        await act(async () => hook.getCurrent().getRowProps(file, activate, pin).onKeyDown?.({ key: 'p', ctrlKey: true, preventDefault: printDefault }));
+        await act(async () => rowProps(hook.getCurrent(), file, activate, pin).onKeyDown?.({ key: 'p', ctrlKey: true, preventDefault: printDefault }));
         expect(pin).toHaveBeenCalledOnce();
         expect(printDefault).not.toHaveBeenCalled();
         const enterDefault = vi.fn();
-        await act(async () => hook.getCurrent().getRowProps(file, activate, pin).onKeyDown?.({ key: 'Enter', preventDefault: enterDefault }));
+        await act(async () => rowProps(hook.getCurrent(), file, activate, pin).onKeyDown?.({ key: 'Enter', preventDefault: enterDefault }));
         expect(enterDefault).not.toHaveBeenCalled();
         expect(pin).toHaveBeenCalledOnce();
         expect(activate).toHaveBeenCalledOnce();
         await key(file, 'ArrowLeft');
-        expect(hook.getCurrent().getRowProps(expanded, activate).webTabIndex).toBe(0);
+        expect(rowProps(hook.getCurrent(), expanded, activate).webTabIndex).toBe(0);
         await key(expanded, 'ArrowDown');
         await hook.rerender([folder, other]);
-        expect(hook.getCurrent().getRowProps(folder, activate).webTabIndex).toBe(0);
-        expect(hook.getCurrent().getRowProps(other, activate).webTabIndex).toBe(-1);
+        expect(rowProps(hook.getCurrent(), folder, activate).webTabIndex).toBe(0);
+        expect(rowProps(hook.getCurrent(), other, activate).webTabIndex).toBe(-1);
         await key(folder, 'End');
-        expect(hook.getCurrent().getRowProps(other, activate).webTabIndex).toBe(0);
+        expect(rowProps(hook.getCurrent(), other, activate).webTabIndex).toBe(0);
     });
 });

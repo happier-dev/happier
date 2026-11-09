@@ -1,5 +1,6 @@
 import { SCM_DIFF_SUMMARY_DISABLED_FAILURE, type ScmDiffSummaryFailurePresentation } from '@/sync/domains/scm/diffSummary/state';
-import type { ScmComparison, ScmComparisonFile, ScmDiffSummaryAnalysisCoverage, ScmDiffSummaryWalkthrough } from '@happier-dev/protocol';
+import type { ScmComparison, ScmComparisonFile} from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryAnalysisCoverage, ScmDiffSummaryWalkthrough } from '@happier-dev/protocol/scm/diffSummary';
 
 /**
  * Dev-only: the Walkthrough lab's illustration (the "Fix settings modal remount" session) as a captured
@@ -240,4 +241,6 @@ export const SPECIMEN_START_FAILURES = {
     model: { reason: 'modelUnavailable', messageKey: 'walkthrough.generationFailure.modelUnavailable', nextAction: 'chooseModel', nextActionKey: 'walkthrough.notice.chooseModel' },
     unreachable: { reason: 'machineUnavailable', messageKey: 'walkthrough.generationFailure.machineUnavailable', nextAction: 'reconnectMachine', nextActionKey: 'walkthrough.generationFailure.reconnectMachine' },
     explainOff: SCM_DIFF_SUMMARY_DISABLED_FAILURE,
+    tooLarge: { reason: 'inputTooLarge', messageKey: 'walkthrough.generationFailure.inputTooLarge', nextAction: 'narrowChange', nextActionKey: 'walkthrough.generationFailure.narrowChange' },
+    smallWindow: { reason: 'contextTooSmall', messageKey: 'walkthrough.generationFailure.contextTooSmall', nextAction: 'chooseModel', nextActionKey: 'walkthrough.notice.chooseModel' },
 } as const satisfies Record<string, ScmDiffSummaryFailurePresentation>;

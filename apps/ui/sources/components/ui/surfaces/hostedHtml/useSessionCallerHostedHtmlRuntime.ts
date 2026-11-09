@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { PLUGIN_UI_CALLER_HOSTED_HTML_HOST_METHODS_V1 } from '@happier-dev/protocol/plugins/ui';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
@@ -37,6 +38,8 @@ export function useSessionCallerHostedHtmlRuntime(
     const sessionCurrent = sessionId === undefined || session?.access?.capabilities.readTranscript === true;
     const sessionCurrentRef = React.useRef(sessionCurrent);
     sessionCurrentRef.current = sessionCurrent;
+    const sessionOwnedRef = React.useRef(session?.access?.role === 'owner');
+    sessionOwnedRef.current = session?.access?.role === 'owner';
     const surfaceCurrentRef = React.useRef(isSurfaceCurrent);
     surfaceCurrentRef.current = isSurfaceCurrent;
     const hostOrigin = resolveHostedFrameHostOrigin();
@@ -77,8 +80,7 @@ export function useSessionCallerHostedHtmlRuntime(
                 && pluginRuntimeRef.current?.phase === 'current'
                 && pluginRuntimeRef.current.interactionEnabled
                 && (pluginRuntimeRef.current.serverId === null || areServerProfileIdentifiersEquivalent(pluginRuntimeRef.current.serverId, binding.serverId))
-                && pluginRuntimeRef.current.machineId === pluginMachineId
-                && pluginRuntimeRef.current.pluginUiProjection === pluginUiProjection,
+                && pluginRuntimeRef.current.machineId === pluginMachineId,
         } : null;
         return Object.freeze({
             serverIdentityId,
@@ -98,7 +100,17 @@ export function useSessionCallerHostedHtmlRuntime(
                 executeHostAction: execute,
                 isAccountCurrent: isCurrent,
                 isSessionCurrent: () => sessionCurrentRef.current,
+                isSessionOwned: () => sessionOwnedRef.current,
+                readActionsSettings: async signal => {
+                    const account = await captureLazyActionAccountContext(binding.serverId, signal);
+                    try {
+                        if (account.accountId !== binding.accountId) throw new Error('caller_account_unavailable');
+                        const settings = await account.readSettings();
+                        return normalizeActionsSettingsV1(settings.actionsSettingsV1);
+                    } finally { account.dispose(); }
+                },
                 pluginTarget,
+                surfaceTarget: mount?.target,
                 mountInstanceKey: mount?.mountInstanceKey,
                 launchInput: mount?.input,
                 publishResourceEvent,

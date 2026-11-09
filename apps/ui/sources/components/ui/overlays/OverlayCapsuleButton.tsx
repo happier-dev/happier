@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
 import { Icon } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
@@ -29,8 +29,7 @@ const CAPSULE_DOT_SIZE = 6;
 export const OVERLAY_CAPSULE_BUTTON_GAP = 10;
 
 /** Total vertical space a capsule row takes above the surface it floats over. */
-export const OVERLAY_CAPSULE_ROW_HEIGHT = Math.max(OVERLAY_CAPSULE_BUTTON_SIZE, resolveMinimumInteractiveTargetSize(Platform.OS))
-    + OVERLAY_CAPSULE_BUTTON_GAP;
+export const OVERLAY_CAPSULE_ROW_HEIGHT = OVERLAY_CAPSULE_BUTTON_SIZE + OVERLAY_CAPSULE_BUTTON_GAP;
 
 const styles = StyleSheet.create({
     capsule: {
@@ -76,22 +75,25 @@ export const OverlayCapsuleButton = React.memo(function OverlayCapsuleButton(
          */
         label?: string;
         dot?: boolean;
-        accessibilityValue?: React.ComponentProps<typeof Pressable>['accessibilityValue'];
+        accessibilityValue?: React.ComponentProps<typeof HappierPressable>['accessibilityValue'];
+        /** Where the capsule has less free space than the row gap (flush against a card): the reach it may take. */
+        hitReach?: React.ComponentProps<typeof HappierPressable>['hitReach'];
     }>,
 ): React.ReactElement {
     const { theme } = useUnistyles();
-    const minimumInteractiveTargetSize = Math.max(OVERLAY_CAPSULE_BUTTON_SIZE, resolveMinimumInteractiveTargetSize(Platform.OS));
 
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel}
             onPress={props.onPress}
+            // The row's gap to the surface and to its sibling capsule is the free space the hit area may take.
+            hitReach={props.hitReach ?? OVERLAY_CAPSULE_BUTTON_GAP / 2}
             accessibilityValue={props.accessibilityValue}
             style={({ pressed }) => [
                 styles.press,
-                { width: props.label === undefined ? minimumInteractiveTargetSize : undefined, height: minimumInteractiveTargetSize },
+                props.label === undefined ? styles.capsule : null,
                 pressed ? styles.pressed : null,
             ]}
         >
@@ -117,6 +119,6 @@ export const OverlayCapsuleButton = React.memo(function OverlayCapsuleButton(
                     )}
                 </GlassPanel>
             </View>
-        </Pressable>
+        </HappierPressable>
     );
 });

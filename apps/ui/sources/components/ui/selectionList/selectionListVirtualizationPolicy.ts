@@ -157,6 +157,8 @@ const BODY_RENDERER_RANK: Readonly<Record<SelectionListBodyRenderer, number>> = 
 
 export type ResolveSelectionListBodyRendererArgs = Readonly<{
     plan: ReadonlyArray<SectionRenderPlan>;
+    /** A step with several independently changing sources needs one renderer for its whole lifetime. */
+    virtualization?: 'force';
     /** The caller DECLARED pagination — a declaration, not a plan-derived count. */
     declaresPagination: boolean;
     /** The caller DECLARED `columns` — see `SelectionListBodyProps.declaresColumns`. */
@@ -174,6 +176,7 @@ export type ResolveSelectionListBodyRendererArgs = Readonly<{
 export function resolveSelectionListBodyRenderer(
     args: ResolveSelectionListBodyRendererArgs,
 ): SelectionListBodyRenderer {
+    if (args.virtualization === 'force') return 'flatVirtualized';
     if (args.declaresPagination) return 'flatVirtualized';
     if (planRequiresFlatVirtualizedList(args.plan)) return 'flatVirtualized';
     if (!planHasVirtualizedSection(args.plan)) return 'scrollFrame';

@@ -71,6 +71,22 @@ describe('Item switch row', () => {
     expect(onValueChange.mock.calls.length).toBe(before + 1);
   });
 
+  it('lets an async toggle settle inside the row press, so the row is busy until it finishes', async () => {
+    const { Item } = await import('./Item');
+    const { Switch } = await import('@/components/ui/forms/Switch.web');
+    let settled = false;
+    const onValueChange = vi.fn(async () => {
+      await Promise.resolve();
+      settled = true;
+    });
+    const screen = await renderScreen(
+      <Item testID="row" title="Pinned" rightElement={<Switch value={false} onValueChange={onValueChange} />} showChevron={false} />,
+    );
+    await screen.pressByTestIdAsync('row');
+    expect(onValueChange).toHaveBeenCalledWith(true);
+    expect(settled).toBe(true);
+  });
+
   it('leaves a disabled switch row inert', async () => {
     const { Item } = await import('./Item');
     const { Switch } = await import('@/components/ui/forms/Switch.web');

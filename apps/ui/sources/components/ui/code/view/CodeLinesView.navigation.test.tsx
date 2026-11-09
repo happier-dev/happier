@@ -16,6 +16,30 @@ const lines = buildCodeLinesFromUnifiedDiff({ unifiedDiff: '@@ -1 +1 @@\n-old\n+
 const settleScroll = async () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
 
 describe('code line navigation', () => {
+    it('honors a new reveal request for the same line without repeating equivalent requests', async () => {
+        let scrollY = 0;
+        let landings = 0;
+        const externalScrollView = {
+            scrollRef: { current: { scrollTo: ({ y }: { y: number }) => { scrollY = y; landings += 1; } } },
+            contentRef: { current: {} as View }, offsetRef: { current: 0 },
+        };
+        const render = (requestId: number) => <CodeLinesViewCore lines={lines} virtualized={false} scrollToLineId="a:2"
+            scrollToLineRequestId={requestId} externalScrollView={externalScrollView} />;
+        const screen = await renderScreen(render(1), {
+            createNodeMock: () => ({ measureLayout: (_relative: unknown, callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 240, 400, 22) }),
+        });
+        try {
+            expect(scrollY).toBe(240);
+            scrollY = 320;
+            await screen.update(render(2));
+            expect(scrollY).toBe(240);
+            const completed = landings;
+            scrollY = 320;
+            await screen.update(render(2));
+            expect(scrollY).toBe(320);
+            expect(landings).toBe(completed);
+        } finally { await screen.unmount(); }
+    });
     it('reveals the next occurrence on the same line without repeating on equivalent decorations', async () => {
         let scrollY = 0;
         const externalScrollView = {

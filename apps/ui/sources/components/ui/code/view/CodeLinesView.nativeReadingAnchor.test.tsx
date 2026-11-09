@@ -1,10 +1,9 @@
 import React from 'react';
 import type { View } from 'react-native';
-import type { CodeLine } from '../model/codeLineTypes';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
+import { codeViewListRef, installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
 import { buildCodeLinesFromFile } from '../model/buildCodeLinesFromFile';
 
 vi.mock('@/text', async () => {
@@ -18,13 +17,12 @@ vi.mock('@/sync/store/hooks', async () => {
 installCodeViewCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
-        const FlatList = React.forwardRef<unknown, { data: CodeLine[]; renderItem: (args: { item: CodeLine; index: number }) => React.ReactNode }>((props, ref) =>
-            React.createElement('FlatList', { ...props, ref }, props.data.map((item, index) => <React.Fragment key={item.id}>{props.renderItem({ item, index })}</React.Fragment>)));
-        return createReactNativeNativeMock({ platformOS: 'ios' }, { FlatList });
+        return createReactNativeNativeMock({ platformOS: 'ios' });
     },
 });
 
 await import('./CodeLinesViewCore');
+beforeEach(() => { Object.values(codeViewListRef).forEach(mock => mock.mockReset()); });
 
 describe('native code reading continuity', () => {
     it('lets only the native viewer covering the viewport top restore a shared scroll owner', async () => {
@@ -72,13 +70,11 @@ describe('native code reading continuity', () => {
         const { CodeLinesViewCore } = await import('./CodeLinesViewCore');
         let scrollY = 55;
         let inserted = false;
+        codeViewListRef.getNativeScrollRef.mockReturnValue({ measureInWindow: (success: (x: number, y: number) => void) => success(0, 0) });
+        codeViewListRef.scrollToOffset.mockImplementation(({ offset }: { offset: number }) => { scrollY = offset; });
+        codeViewListRef.scrollToIndex.mockImplementation(({ index, viewOffset }: { index: number; viewOffset: number }) => { scrollY = index * 25 - viewOffset; });
         const screen = await renderScreen(<CodeLinesViewCore lines={buildCodeLinesFromFile({ text: 'a\nb\nreading\nd' })} />, {
-            createNodeMock: (element) => element.type === 'FlatList' ? {
-                getNativeScrollRef: () => ({ measureInWindow: (success: (x: number, y: number) => void) => success(0, 0) }),
-                scrollToOffset: ({ offset }: { offset: number }) => { scrollY = offset; },
-                // Native list metrics can still describe the previous layout during commit.
-                scrollToIndex: ({ index, viewOffset }: { index: number; viewOffset: number }) => { scrollY = index * 25 - viewOffset; },
-            } : typeof (element.props as Record<string, unknown>).nativeID === 'string' ? {
+            createNodeMock: (element) => typeof (element.props as Record<string, unknown>).nativeID === 'string' ? {
                 measureInWindow: (success: (x: number, y: number) => void) => {
                     const index = Number(String((element.props as Record<string, unknown>).nativeID).split(':').at(-1)) - 1;
                     const y = inserted && index > 0 ? 60 + (index - 1) * 25 : index * 25;
@@ -87,8 +83,8 @@ describe('native code reading continuity', () => {
             } : null,
         });
         await act(async () => {
-            screen.findByType('FlatList').props.onScroll({ nativeEvent: { contentOffset: { y: scrollY } } });
-            screen.findByType('FlatList').props.onViewableItemsChanged({ viewableItems: [{ index: 2 }] });
+            screen.findByType('LegendList').props.onScroll({ nativeEvent: { contentOffset: { y: scrollY } } });
+            screen.findByType('LegendList').props.onViewableItemsChanged({ viewableItems: [{ index: 2 }] });
         });
         inserted = true;
         await screen.update(<CodeLinesViewCore lines={buildCodeLinesFromFile({ text: 'wrapped insertion\na\nb\nreading\nd' })} />);
@@ -122,27 +118,15 @@ describe('native code reading continuity', () => {
         expect(scrollY).toBe(initial + 50);
     });
 
-    it('retains the mapped passage when the native list first needs to measure the new target', async () => {
+    it('retains the mapped passage through index navigation without a measured target row', async () => {
         const { CodeLinesViewCore } = await import('./CodeLinesViewCore');
         let visible: { index: number; viewOffset?: number; viewPosition?: number } = { index: 2 };
-        let needsMeasurement = true;
-        const screen = await renderScreen(<CodeLinesViewCore lines={buildCodeLinesFromFile({ text: 'a\nb\nreading\nd' })} />, {
-            createNodeMock: (element) => element.type === 'FlatList' ? {
-                scrollToOffset: () => {},
-                scrollToIndex: (target: typeof visible) => {
-                    if (needsMeasurement) {
-                        needsMeasurement = false;
-                        const onFailure = (element.props as Record<string, unknown>).onScrollToIndexFailed as (info: { index: number; averageItemLength: number }) => void;
-                        onFailure({ index: target.index, averageItemLength: 22 });
-                    } else visible = target;
-                },
-            } : null,
-        });
+        codeViewListRef.scrollToIndex.mockImplementation((target: typeof visible) => { visible = target; });
+        const screen = await renderScreen(<CodeLinesViewCore lines={buildCodeLinesFromFile({ text: 'a\nb\nreading\nd' })} />);
         await act(async () => {
-            screen.findByType('FlatList').props.onViewableItemsChanged({ viewableItems: [{ index: 2 }] });
+            screen.findByType('LegendList').props.onViewableItemsChanged({ viewableItems: [{ index: 2 }] });
         });
         await screen.update(<CodeLinesViewCore lines={buildCodeLinesFromFile({ text: 'inserted\na\nb\nreading\nd' })} />);
-        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
         expect(visible.index).toBe(3);
         expect(visible.viewOffset).toBe(0);
         expect(visible.viewPosition).toBeUndefined();

@@ -15,13 +15,8 @@ import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import { mapCodeReadingAnchors } from '@/components/ui/code/model/mapCodeReadingAnchor';
 import { collapseUnifiedDiffContext } from './collapseUnifiedDiffContext';
 import { UnifiedDiffFoldToggleRow } from './UnifiedDiffFoldToggleRow';
-import { Text } from '@/components/ui/text/Text';
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { DiffFindOpenedFoldRow } from '../DiffFindOpenedFoldRow';
 import { t } from '@/text';
-import { useUnistyles } from 'react-native-unistyles';
-import { Typography } from '@/constants/Typography';
-import { resolveThemeColor } from '@/theme/parseThemeColor';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { composeDiffLineSlots } from '../hunks/composeDiffLineSlots';
 import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
 
@@ -49,7 +44,6 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
     const contextThreshold = useSetting('filesDiffFoldingContextThreshold') ?? 0;
     const contextRadius = useSetting('filesDiffFoldingContextRadius') ?? 0;
     const intraLineDiff = useIntraLineWordDiffConfig();
-    const { theme } = useUnistyles();
     const [refoldedFindLine, setRefoldedFindLine] = React.useState<string | null>(null);
     React.useEffect(() => { setRefoldedFindLine(null); }, [props.scrollToLineId, props.findActive, props.findRangesByLineId]);
 
@@ -131,16 +125,8 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
     React.useEffect(() => canFold ? props.registerFindRefold?.(refold) : undefined,
         [canFold, props.registerFindRefold, refold]);
 
-    const openedBandColor = React.useMemo(() => resolveThemeColor(theme.colors.find.matchCurrent).alpha(0.1).rgb().string(), [theme.colors]);
     const renderAfterLine = React.useCallback((line: CodeLine) => {
-        // The fold Find opened (Find lab F1d): a faint band in the current-match tint, the reason on the left
-        // where the fold toggle sits, and the way back at the row's end.
-        if (findOpenedRegion?.afterLineId === line.id) return <View style={{ paddingLeft: 46, paddingRight: 12, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: openedBandColor }}>
-            <Icon name="arrows-down-up" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
-            <Text style={{ flex: 1, color: theme.colors.text.tertiary, ...Typography.variant('meta') }} numberOfLines={1}>{t('find.openedForMatch')}</Text>
-            <TextLinkButton testID="diff-find-fold-again" label={t('find.foldAgain')}
-                onPress={() => { refold(); }} />
-        </View>;
+        if (findOpenedRegion?.afterLineId === line.id) return <DiffFindOpenedFoldRow hiddenCount={findOpenedRegion.hiddenCount} onFoldAgain={refold} />;
         const region = foldRegionsByAfterLineId.get(line.id) ?? null;
         if (!region) return null;
         return (
@@ -157,7 +143,7 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
                 }}
             />
         );
-    }, [foldRegionsByAfterLineId, findOpenedRegion, openedBandColor, refold, theme.colors.text.tertiary]);
+    }, [foldRegionsByAfterLineId, findOpenedRegion, refold]);
     const composedAfterLine = React.useMemo(() => canFold
         ? composeDiffLineSlots(props.renderAfterLine, renderAfterLine)
         : props.renderAfterLine, [canFold, props.renderAfterLine, renderAfterLine]);
@@ -186,6 +172,7 @@ export const HappierUnifiedDiffViewer = React.memo<UnifiedDiffViewerProps>((prop
                 showLineNumbers={props.showLineNumbers}
                 showPrefix={props.showPrefix}
                 scrollToLineId={props.scrollToLineId}
+                scrollToLineRequestId={props.scrollToLineRequestId}
                 onScrollToLine={props.onScrollToLine}
                 externalScrollView={props.externalScrollView}
                 highlightLineId={props.highlightLineId}

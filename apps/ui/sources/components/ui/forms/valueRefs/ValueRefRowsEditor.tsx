@@ -1,3 +1,5 @@
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -10,6 +12,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import {
   DropdownMenu,
   type DropdownMenuItem,
+  type DropdownMenuSelection,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import {
@@ -20,6 +23,7 @@ import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
@@ -28,7 +32,7 @@ import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 
-import { SavedSecretPickerModal } from './SavedSecretPickerModal';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import {
   ValueRefEditorModal,
   getValueRefEditorModalTitle,
@@ -112,6 +116,8 @@ export const ValueRefRowsEditor = React.memo(function ValueRefRowsEditor(
     kind: ValueRefRowsKind;
     entries: Readonly<Record<string, ValueRefV1>>;
     onChangeEntries: (next: Record<string, ValueRefV1>) => void;
+    /** In-memory authoring drafts can retain valid edits before the input loses focus. Saved settings use blur. */
+    commitOnChange?: boolean;
     secrets: SavedSecret[];
     scope?: AccountSettingsScope | null;
     /** The add-a-row button's label; absent when `declaredNames` fixes the rows. */
@@ -123,10 +129,20 @@ export const ValueRefRowsEditor = React.memo(function ValueRefRowsEditor(
     declaredNames?: boolean;
     /** What each declared name is for, by name: a quiet line under that row, so the name is said once. */
     descriptions?: Readonly<Record<string, string>>;
+    /**
+     * The editor sits in a section content row, which already carries the row inset: a narrow row (its own `Item`)
+     * bleeds back by it on every side, so its text starts where the section's other rows start instead of one inset further in.
+     */
+    inSectionRow?: boolean;
     /** Test ids: `<prefix>.row.<i>.{name,value,type,more}` and `<prefix>.add`. */
     testIdPrefix: string;
     /** Names whose value is missing (the banner's "Add key" lands here): drawn as the attention field. */
     attentionKeys?: ReadonlySet<string>;
+    /**
+     * Every row reads as a fixed one (an add is pending): names, values and types stay visible, nothing is editable,
+     * removable or added.
+     */
+    readOnly?: boolean;
     /** Read-only rows (a header the sign-in provides), shown after the editable ones. */
     fixedRows?: readonly Readonly<{
       key: string;
@@ -221,10 +237,24 @@ export const ValueRefRowsEditor = React.memo(function ValueRefRowsEditor(
 
   const describe = (valueRef: ValueRefV1): string =>
     describeValueRef(valueRef, secretName);
+  const readOnly = props.readOnly === true;
+  // Held rows read through the same fixed line as a sign-in's own header: name, value, type.
+  const fixedRows = readOnly
+    ? [
+        ...editor.rows.map((row) => ({
+          key: row.key,
+          value: row.valueRef.t === 'savedSecret'
+            ? (secretName(row.valueRef.secretId) ?? t('capabilities.valueRows.needsValue'))
+            : literalText(row.valueRef) || t('capabilities.valueRows.needsValue'),
+          type: typeTitle(rowType(row.valueRef)),
+        })),
+        ...(props.fixedRows ?? []),
+      ]
+    : props.fixedRows;
 
   return (
     <View style={styles.list} onLayout={onLayout}>
-      {editor.rows.map((row, index) =>
+      {readOnly ? null : editor.rows.map((row, index) =>
         inline ? (
           <ValueRefInlineRow
             key={row.key}
@@ -243,6 +273,7 @@ export const ValueRefRowsEditor = React.memo(function ValueRefRowsEditor(
             description={props.descriptions?.[row.key]}
             typeColumnWidth={typeColumnWidth}
             onTypeWidth={onTypeWidth}
+            commitOnChange={props.commitOnChange}
             onSubmit={(key, valueRef) =>
               editor.submitEntry(row.key, key, valueRef)
             }
@@ -252,24 +283,30 @@ export const ValueRefRowsEditor = React.memo(function ValueRefRowsEditor(
             onEditInModal={() => openRowModal(row.key, row.valueRef)}
           />
         ) : (
-          <View key={row.key}>
+          <View key={row.key} style={props.inSectionRow ? styles.bleed : null}>
             <Item
               testID={`${props.testIdPrefix}.row.${index}`}
               title={row.key}
               titleStyle={styles.mono}
               subtitle={describe(row.valueRef)}
+              // What the name is for belongs to the row: it sits in the row's own text column.
+              {...(props.descriptions?.[row.key]
+                ? {
+                    bottomElement: (
+                      <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
+                        {props.descriptions[row.key]}
+                      </Text>
+                    ),
+                    bottomElementInset: 'text' as const,
+                  }
+                : {})}
               onPress={() => openRowModal(row.key, row.valueRef)}
               showDivider={false}
             />
-            {props.descriptions?.[row.key] ? (
-              <Text variant="meta" style={[styles.description, { color: theme.colors.text.secondary }]}>
-                {props.descriptions[row.key]}
-              </Text>
-            ) : null}
           </View>
         ),
       )}
-      {props.fixedRows?.map((row) => (
+      {fixedRows?.map((row) => (
         <View key={row.key} style={styles.fixedRow}>
           <Text
             variant="body"
@@ -286,7 +323,7 @@ export const ValueRefRowsEditor = React.memo(function ValueRefRowsEditor(
           </Text>
         </View>
       ))}
-      {inline && pendingRow ? (
+      {inline && pendingRow && !readOnly ? (
         <ValueRefInlineRow
           kind={props.kind}
           rowKey={null}
@@ -310,7 +347,7 @@ export const ValueRefRowsEditor = React.memo(function ValueRefRowsEditor(
           }}
         />
       ) : null}
-      {props.declaredNames === true || props.addLabel === undefined ? null : (
+      {readOnly || props.declaredNames === true || props.addLabel === undefined ? null : (
       <View style={styles.addRow}>
         <RoundButton
           testID={`${props.testIdPrefix}.add`}
@@ -354,6 +391,7 @@ const ValueRefInlineRow = React.memo(function ValueRefInlineRow(
     /** The list's one source-column width (the widest source any row shows), so name, value and source line up down the list. */
     typeColumnWidth: number;
     onTypeWidth: (rowId: string, width: number) => void;
+    commitOnChange?: boolean;
     onSubmit: (key: string, valueRef: ValueRefV1) => SubmitResult;
     onRemove: () => void;
     onEditInModal: () => void;
@@ -437,38 +475,25 @@ const ValueRefInlineRow = React.memo(function ValueRefInlineRow(
   };
   const onValueBlur = () => commit();
 
-  const pickSecret = (thenType: RowType) => {
-    Modal.show({
-      component: SavedSecretPickerModal,
-      props: {
-        ...(props.scope === undefined ? {} : { scope: props.scope }),
-        selectedId:
-          props.valueRef.t === 'savedSecret' ? props.valueRef.secretId : null,
-        includeNoneRow: false,
-        onSelectId: (id: string | null) => {
-          if (!id) return;
-          const result = props.onSubmit(name, {
-            t: 'savedSecret',
-            secretId: id,
-          });
-          if (result.ok) setType(thenType);
-          presentSubmission(result);
-        },
-      },
-      chrome: {
-        kind: 'card',
-        title: t('settings.mcpServersPickSecretTitle'),
-        dimensions: { size: 'lg' },
-      },
-      closeOnBackdrop: true,
+  const pickSecret = (thenType: RowType, anchor?: PopoverAnchor) => {
+    void presentConnectSheet({
+      service: { kind: 'key', suggestedName: name.trim() || undefined },
+      anchor,
+      ...(props.scope === undefined ? {} : { scope: props.scope }),
+      ...(props.valueRef.t === 'savedSecret' ? { current: props.valueRef.secretId } : {}),
+    }).then(selection => {
+      if (selection.kind === 'dismissed') return;
+      const result = props.onSubmit(name, { t: 'savedSecret', secretId: selection.secretRef });
+      if (result.ok) setType(thenType);
+      presentSubmission(result);
     });
   };
 
-  const chooseType = (id: string) => {
+  const chooseType = (id: string, selection?: DropdownMenuSelection) => {
     const next = id as RowType;
     if (next === type) return;
     if (next === 'savedSecret') {
-      pickSecret(next);
+      pickSecret(next, selection?.anchor);
       return;
     }
     const text =
@@ -575,7 +600,7 @@ const ValueRefInlineRow = React.memo(function ValueRefInlineRow(
           {type === 'savedSecret' ? (
             <HappierPressable
                             testID={`${props.testID}.value`}
-                            onPress={() => pickSecret('savedSecret')}
+                            onPress={(event) => pickSecret('savedSecret', resolvePressTriggerAnchor(event))}
                             accessibilityRole="button"
                             accessibilityLabel={props.secretName ?? t('capabilities.valueRows.chooseSecret')}
                             hasPopup="dialog"
@@ -614,6 +639,7 @@ const ValueRefInlineRow = React.memo(function ValueRefInlineRow(
               onChangeText={(text) => {
                 setValue(text);
                 setError(null);
+                if (props.commitOnChange && valueRefFor(type, text)) commit(type, text);
               }}
               onBlur={onValueBlur}
               accessibilityLabel={t('capabilities.valueRows.value')}
@@ -707,6 +733,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   description: {
     paddingTop: theme.space.s2,
+  },
+  // The section content row's own inset, given back (its top carries 2 px more than its bottom).
+  bleed: {
+    marginHorizontal: -PAGE_LIST_METRICS.rowPaddingHorizontalPx,
+    marginTop: -(PAGE_LIST_METRICS.rowPaddingVerticalPx + 2),
+    marginBottom: -PAGE_LIST_METRICS.rowPaddingVerticalPx,
   },
   row: {
     flexDirection: 'row',

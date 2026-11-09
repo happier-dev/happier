@@ -1,15 +1,9 @@
 import { HAPPIER_MOTION_V1, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 import { Easing } from 'react-native';
+import { gestureTokens } from './gestureTokens';
 
 export const motionTokens = {
-    gesture: {
-        /** Shared movement tolerance before a tap becomes a drag. */
-        slopPx: 12,
-        doubleTapMs: 300,
-        /** A held on-screen key (the editor's arrow keys) repeats like a hardware key: first after the delay, then every interval. */
-        keyRepeatDelayMs: 400,
-        keyRepeatIntervalMs: 60,
-    },
+    gesture: gestureTokens,
     durationMs: {
         instant: 0,
         /** Press acknowledgement: fast enough to feel immediate under the finger. */
@@ -135,6 +129,20 @@ export const motionTokens = {
         reducedCrossFadeMs: 120,
     },
     /**
+     * The first Publish of a public profile (lab ppmotion M1), the page's one signature: after success the band's
+     * planet comes up by `travelShare` of the band over `riseMs` on an ease-out cubic while its light goes from
+     * `shadowOpacity` to ready; the result line enters after it over `lineEnterMs` from `lineRisePx`. Reduced
+     * motion: the band is already risen and band and line share one `reducedCrossFadeMs` cross-fade.
+     */
+    publishRise: {
+        riseMs: 900,
+        travelShare: 0.35,
+        shadowOpacity: 0.35,
+        lineEnterMs: 220,
+        lineRisePx: 8,
+        reducedCrossFadeMs: 140,
+    },
+    /**
      * Home's atmosphere (plan R-10, R-13): a picture arrives over `readyFadeMs` and never holds Home's
      * content; on send the ordered fade climbs the band over `sendDissolveMs`. Any other leaving (a
      * picture taking over, a moment holding the planet) is a quicker `leaveFadeMs` fade on the exit
@@ -145,6 +153,14 @@ export const motionTokens = {
         leaveFadeMs: 300,
         sendDissolveMs: 600,
         reducedCrossFadeMs: 140,
+    },
+    /**
+     * A message the person just sent rises into its place in the thread, already in its final form
+     * (face, name, words); confirmation changes only the time beside the name. Reduced motion: no rise.
+     */
+    sentMessage: {
+        riseMs: HAPPIER_MOTION_V1.baseMs,
+        risePx: 8,
     },
     /**
      * A Session's guard moments (plan 50 GM, lab `rg`): the composer status line cross-fades between

@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { renderScreen } from '@/dev/testkit';
+import { readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { HAPPIER_SWITCH_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -43,12 +44,23 @@ describe('Switch interactive target', () => {
         expect(typeof interactionNode?.props.onPress).toBe('function');
         const style = flattenStyle(interactionNode?.props.style);
         const { trackWidth, trackHeight } = HAPPIER_SWITCH_METRICS.default;
-        // Hit region: the full touch target.
-        expect(style.width).toBe(HAPPIER_SWITCH_METRICS.webTargetPx);
-        expect(style.height).toBe(HAPPIER_SWITCH_METRICS.webTargetPx);
         // Layout footprint: exactly the drawn track, so a row never grows around the switch.
-        expect((style.width as number) + 2 * (style.marginHorizontal as number)).toBe(trackWidth);
-        expect((style.height as number) + 2 * (style.marginVertical as number)).toBe(trackHeight);
+        expect(style.width).toBe(trackWidth);
+        expect(style.height).toBe(trackHeight);
+        // Hit area: the full target, from the shared hit-area owner.
+        const area = readHitArea(interactionNode!);
+        expect(area.width).toBe(HAPPIER_SWITCH_METRICS.webTargetPx);
+        expect(area.height).toBe(HAPPIER_SWITCH_METRICS.webTargetPx);
+    });
+
+    it('lets a host keep the switch from reaching into a neighbour that owns the space above it', async () => {
+        const { Switch } = await import('./Switch.web');
+        const screen = await renderScreen(
+            <Switch value={false} onValueChange={() => {}} hitReach={{ top: 0 }} testID="web-switch" />,
+        );
+        const area = readHitArea(screen.findByTestId('web-switch')!);
+        expect(area.insets.top).toBe(0);
+        expect(area.insets.bottom).toBe((HAPPIER_SWITCH_METRICS.webTargetPx - HAPPIER_SWITCH_METRICS.default.trackHeight) / 2);
     });
 
     it('never inflates the native switch interaction nodes to the touch target (their wrapper pressable owns the reach)', async () => {
@@ -70,7 +82,7 @@ describe('Switch interactive target', () => {
                 />
             </>,
         );
-        const minimumTargetSize = resolveMinimumInteractiveTargetSize('android');
+        const minimumTargetSize = resolveHappierMinimumInteractiveTargetSize('android');
 
         const targetSizes = ['native-switch-default', 'native-switch-compact'].map((testID) => {
             const interactionNode = screen.findByTestId(testID);

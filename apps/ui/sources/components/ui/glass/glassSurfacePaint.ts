@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import Color from 'color';
 import { parseThemeColor } from '@/theme/parseThemeColor';
-import { happierMaterialBackgroundColor } from '@happier-dev/plugin-ui/presentation';
+import { happierMaterialBackgroundColor, happierMaterialInnerBackgroundColor } from '@happier-dev/plugin-ui/presentation';
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { GLASS_BLUR_RADIUS_PX, readGlassPreset, resolveGlassBackdropMap, resolveGlassBackdropTone, resolveGlassSurfaceMaterial, type GlassFloatingCoat, type GlassMaterialSettings, type GlassMaterialEnvironment, type GlassSurfaceGroup, type GlassSurfaceMaterial } from './glassMaterial';
 
@@ -84,6 +84,18 @@ export function glassSurfaceBackgroundColor(color: string, group: GlassSurfaceGr
         return `var(${prefix}plane-background-color, color-mix(in srgb, ${color} var(${prefix}plane-opacity, var(${prefix}opacity, 100%)), transparent))`;
     }
     return happierMaterialBackgroundColor(color, group, Platform.OS === 'web', nested);
+}
+
+/**
+ * Working content in flow: a prompt, a tool card, a code frame, a reference chip. Solid, it is its own fill.
+ * Over glass content it takes the material's inner translucent fill (the ink tint inner surfaces use) instead
+ * of the page plane a picture clears, so it never turns into a slab or vanishes. `nested` is a fill inside
+ * such a card: it clears over glass, so tints never stack, and keeps its own fill when solid.
+ */
+export function glassContentFill(color: string, colors: Readonly<{ surface: Readonly<{ selected: string }> }>, options?: Readonly<{ nested?: boolean }>): string {
+    return options?.nested
+        ? glassSurfaceBackgroundColor(color, 'content', true, false)
+        : happierMaterialInnerBackgroundColor(color, colors.surface.selected, 'content', Platform.OS === 'web');
 }
 
 /**

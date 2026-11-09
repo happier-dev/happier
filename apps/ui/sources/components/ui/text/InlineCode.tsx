@@ -24,7 +24,9 @@ export const InlineCode = React.memo((props: Readonly<{ children: React.ReactNod
             testID={props.testID}
             fontFamily={Typography.mono().fontFamily}
             ink={theme.colors.text.primary}
-            fill={theme.colors.surface.elevated}
+            // Ink, not a surface step: the dark raised card is `surface.elevated` itself, so a chip filled
+            // with it vanished on every card. The same selection ink the transcript's Markdown code uses.
+            fill={theme.colors.surface.selected}
             paddingHorizontalPx={theme.space.s4}
             {...(props.style === undefined ? {} : { style: props.style as HappierInlineCodeTextProps['style'] })}
         >

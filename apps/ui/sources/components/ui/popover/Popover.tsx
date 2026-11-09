@@ -58,6 +58,7 @@ import { ModalBackButton } from '@/modal/components/card/ModalBackButton';
 import { createPhoneSheetPushStack, PhoneSheetPushBody, PhoneSheetPushContext, usePhoneSheetPush, type PhoneSheetPushStack } from './phoneSheetPush';
 import { FloatingOverlaySheetContext } from '@/components/ui/overlays/FloatingOverlay';
 import { GlassOpenedLayer } from '@/components/ui/glass/GlassSurface';
+import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
 
 const ViewWithWheel = View as unknown as React.ComponentType<ViewProps & { onWheel?: any }>;
 
@@ -402,7 +403,7 @@ export function Popover(props: PopoverProps) {
     return <PaneHeaderScrollIsolation>
         {props.phonePresentation === 'sheet' && deviceType === 'phone'
             ? (pushStack ? <PushedPhonePopoverSheet {...props} stack={pushStack} /> : <PhonePopoverSheet {...props} />)
-            : <AnchoredPopover {...props} />}
+            : <AnchoredPopoverPresence {...props} />}
     </PaneHeaderScrollIsolation>;
 }
 
@@ -419,6 +420,8 @@ function PushedPhonePopoverSheet(props: PopoverProps & Readonly<{ stack: PhoneSh
 }
 
 function PhonePopoverSheet(props: PopoverProps) {
+    const overlayPortal = useOverlayPortal();
+    const portalId = React.useId();
     const { width: windowWidth, height: windowHeight } = usePresentationWindowDimensions();
     const insets = useChromeSafeAreaInsets();
     const maxHeight = Math.min(props.maxHeightCap ?? windowHeight, Math.max(0, windowHeight - insets.top - insets.bottom));
@@ -426,7 +429,7 @@ function PhonePopoverSheet(props: PopoverProps) {
     // Views pushed inside this sheet (a row's picker): the band then names the top one and leads with Back.
     const [pushStack] = React.useState(createPhoneSheetPushStack);
     const pushed = React.useSyncExternalStore(pushStack.subscribe, pushStack.getChrome, pushStack.getChrome);
-    return <BaseModal
+    const content = <BaseModal
         visible={props.open}
         onClose={closeSheet}
         onBack={pushed ? pushStack.back : undefined}
@@ -448,7 +451,8 @@ function PhonePopoverSheet(props: PopoverProps) {
             title={pushed ? pushed.title : props.accessibilityLabel}
             subtitle={pushed ? pushed.subtitle : props.sheetSubtitle}
             closeButtonTestID="popover-sheet.close"
-            actions={pushed ? undefined : props.sheetHeaderAction}
+            // Done replaces the close control, so it stays on the title's row (a phone stacks context actions).
+            completion={pushed ? undefined : props.sheetHeaderAction}
             footer={pushed ? undefined : props.sheetFooter}
             onClose={props.onRequestClose && (pushed || !props.sheetHeaderAction) ? closeSheet : undefined}
             style={{ maxHeight: Math.max(0, windowHeight - insets.top) }}
@@ -473,9 +477,29 @@ function PhonePopoverSheet(props: PopoverProps) {
             </FloatingOverlaySheetContext.Provider>
         </ModalCardFrame>
     </BaseModal>;
+    // A sheet opened by a composer or row needs the screen's native bounds for both
+    // layout and hit testing, just like the anchored presentation below.
+    useNativeOverlayPortalNode({
+        overlayPortal,
+        portalId,
+        enabled: Platform.OS !== 'web',
+        content,
+    });
+    return Platform.OS !== 'web' && overlayPortal ? null : content;
 }
 
-function AnchoredPopover(props: PopoverProps) {
+function AnchoredPopoverPresence(props: PopoverProps) {
+    const reducedMotion = useReducedMotionPreference();
+    const popoverMotionPreset = React.useMemo(
+        () => resolveOverlayMotionPreset({ kind: 'popover' }),
+        [],
+    );
+    const overlayPresence = useOverlayPresence(props.open, reducedMotion ? 0 : popoverMotionPreset.exitMs);
+    // Keep the existing exit lifetime, but acquire placement, portals and focus only while present.
+    return overlayPresence.present ? <AnchoredPopover {...props} overlayPresence={overlayPresence} /> : null;
+}
+
+function AnchoredPopover(props: PopoverProps & Readonly<{ overlayPresence: ReturnType<typeof useOverlayPresence> }>) {
     const {
         open: requestedOpen,
         anchorRef: anchorRefLegacy,
@@ -532,6 +556,8 @@ function AnchoredPopover(props: PopoverProps) {
     const maxHeightCap = maxHeightCapProp ?? windowHeight;
     const preferredRoom = maxHeightCapProp ?? DEFAULT_PREFERRED_ROOM_PX;
     const overlayPortal = useOverlayPortal();
+    // The native portal host renders outside this tree; a live picture under the anchor still sets the coat there.
+    const overLivePicture = React.useContext(GlassLivePictureBackdropContext);
     const modalPortalTarget = useModalPortalTarget();
     const modalLayerZIndex = useModalLayerZIndex();
     const hasModalPortalTargetProvider = useHasModalPortalTargetProvider();
@@ -604,17 +630,8 @@ function AnchoredPopover(props: PopoverProps) {
             }
         }
     }, []);
-    const reducedMotion = useReducedMotionPreference();
     const { blurEnabled: materialBlurEnabled } = useGlassBlurSetting();
-    const popoverMotionPreset = React.useMemo(
-        () => resolveOverlayMotionPreset({ kind: 'popover' }),
-        [],
-    );
-    const overlayPresence = useOverlayPresence(
-        open,
-        reducedMotion ? 0 : popoverMotionPreset.exitMs,
-    );
-    const shouldRender = overlayPresence.present;
+    const overlayPresence = props.overlayPresence;
 
     const getDomElementFromNode = React.useCallback((candidate: any): HTMLElement | null => {
         let node: any = candidate;
@@ -1298,9 +1315,10 @@ function AnchoredPopover(props: PopoverProps) {
                     : resolvedPlacement === 'left'
                         ? availableLeft
                         : (
-                            // A popover that asks to size to its anchor hangs from the anchor's own edges: the boundary (already
-                            // inset by `edgePadding`) is its only margin, so the gap does not narrow it again.
-                            (topBottomLayoutOnPortal === 'boundary' || sizesToAnchorExplicitly)
+                            // Shifted panels use the room inside the boundary's edge padding. Their vertical
+                            // anchor gap must not shrink that width: a shell switching to boundary layout
+                            // when cramped would otherwise gain width, switch back, and repeat forever.
+                            (topBottomLayoutOnPortal === 'boundary' || sizesToAnchorExplicitly || props.fit === 'shift')
                             && (resolvedPlacement === 'top' || resolvedPlacement === 'bottom')
                                 ? effectiveBoundaryRect.width
                                 : effectiveBoundaryRect.width - gap * 2
@@ -2027,10 +2045,10 @@ function AnchoredPopover(props: PopoverProps) {
     // A repeated native geometry measurement can revisit this component without changing
     // the public layout. Keep the content render tied to that layout, not the measurement.
     // The popover is a floating layer opened over its anchor's surface, never in that surface's flow.
-    const renderedChildren = React.useMemo(() => shouldRender
-        ? <GlassOpenedLayer>{children({ ...computed, maxWidth: contentMaxWidth, requestClose })}</GlassOpenedLayer>
-        : null, [children, computed, contentMaxWidth, requestClose, shouldRender]);
-    const content = shouldRender ? (
+    const renderedChildren = React.useMemo(() =>
+        <GlassOpenedLayer>{children({ ...computed, maxWidth: contentMaxWidth, requestClose })}</GlassOpenedLayer>,
+        [children, computed, contentMaxWidth, requestClose]);
+    const content = (
         <EscapeLayerProvider layer={escapeLayer}>
             <PopoverBackdrop
                 backdrop={backdropEnabled ? backdrop : false}
@@ -2160,7 +2178,7 @@ function AnchoredPopover(props: PopoverProps) {
                 )}
             </ViewWithWheel>
         </EscapeLayerProvider>
-    ) : null;
+    );
 
     const contentWithRadixBranch = (() => {
         if (!content) return null;
@@ -2185,10 +2203,10 @@ function AnchoredPopover(props: PopoverProps) {
         overlayPortal,
         portalId: portalIdRef.current as string,
         enabled: shouldUseOverlayPortalOnNative,
-        content,
+        content: overLivePicture && content
+            ? <GlassLivePictureBackdropContext.Provider value>{content}</GlassLivePictureBackdropContext.Provider>
+            : content,
     });
-
-    if (!shouldRender) return null;
 
     const webPortal = tryRenderWebPortal({
         shouldPortalWeb,

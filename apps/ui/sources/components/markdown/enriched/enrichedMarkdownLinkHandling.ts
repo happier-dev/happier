@@ -1,4 +1,4 @@
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { INLINE_REFERENCE_HREF_PREFIX_V1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { projectInlineReferenceLabelsV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { parseMarkdownSyntax, splitMarkdownIntoBlockSources } from '../streaming/splitMarkdownIntoBlockSources';
@@ -353,8 +353,8 @@ export function sanitizeEnrichedMarkdownWithInlineReferences(markdown: string, r
     return { markdown: normalizeMarkdownAutolinks(normalizeExplicitMarkdownLinks(normalizedReferences, references, resolved, options), options), references: resolved };
 }
 
-export async function openMarkdownLinkUrl(raw: string): Promise<void> {
+export async function openMarkdownLinkUrl(raw: string, openUrl: (url: string) => Promise<unknown> = openExternalUrl): Promise<void> {
     const normalized = normalizeMarkdownLinkUrl(raw);
     if (!normalized || !isExternallyOpenableMarkdownLink(normalized)) return;
-    await openExternalUrl(normalized);
+    await openUrl(normalized);
 }

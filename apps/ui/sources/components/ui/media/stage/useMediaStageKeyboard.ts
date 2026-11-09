@@ -8,6 +8,7 @@ export type MediaStageKeyboardActions = Readonly<{
     fit: () => void;
     actualSize: () => void;
     playPause?: () => void;
+    annotate?: () => void;
 }>;
 
 /** The canonical keyboard provider owns listeners; the open stage supplies only its handlers. */
@@ -20,5 +21,6 @@ export function useMediaStageKeyboard(actions: MediaStageKeyboardActions | null)
         'media.fit': actions.fit,
         'media.actualSize': actions.actualSize,
         ...(actions.playPause ? { 'media.playPause': actions.playPause } : {}),
+        ...(actions.annotate ? { 'media.annotate': actions.annotate } : {}),
     } : {});
 }

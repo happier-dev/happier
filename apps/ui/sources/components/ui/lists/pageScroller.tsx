@@ -115,10 +115,7 @@ export function usePageScroller(input: PageScrollerInput): PageScroller {
   const contained = useContainedPageScope();
   const isWeb = Platform.OS === 'web';
 
-  const pageColor =
-    presentation === 'page'
-      ? theme.colors.surface.base
-      : theme.colors.background.canvas;
+  const pageColor = theme.colors.surface.base;
   const nativePageColor = useGlassSurfaceColor(
     pageColor,
     'content',

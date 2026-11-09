@@ -23,7 +23,8 @@ import {
 } from './pdfCanvasViewer';
 import { buildPdfPageCss } from './pdfPageCss';
 import { createPdfViewPosition } from './pdfViewPosition';
-import { readPdfViewport, resolvePdfScale } from './pdfZoom';
+import { isUnrenderedLayoutBox } from '@/components/ui/presentation/retainedPresentationGeometry';
+import { readPdfViewport, resolvePdfScale, type PdfZoom } from './pdfZoom';
 import { usePdfFind } from './usePdfFind';
 import {
   PdfPagePill,
@@ -126,11 +127,11 @@ function PdfViewerBody(props: PdfViewerProps & Readonly<{ onRetry(): void }>) {
   }, [props.onPreviewChange, preview.status, preview.uri, preview.error, progress?.receivedBytes, progress?.totalBytes, byteLength, mimeType]);
 
   const element = () => containerRef.current as unknown as HTMLElement | null;
-  const scaleFor = React.useCallback(() => {
+  const scaleFor = React.useCallback((mode: PdfZoom = latest.current.zoom) => {
     const node = element();
     const page = firstPage.current;
     if (!node || !page) return 1;
-    return resolvePdfScale(latest.current.zoom, {
+    return resolvePdfScale(mode, {
       pageWidth: page.width,
       pageHeight: page.height,
       ...readPdfViewport(node),
@@ -220,9 +221,10 @@ function PdfViewerBody(props: PdfViewerProps & Readonly<{ onRetry(): void }>) {
             },
             onPagesInit: (count) => position?.pagesInit(count),
             onPagesLoaded: (count) => position?.pagesLoaded(count),
-            onScaleChange: (value) => {
+            fitScale: () => scaleFor('fit-width'),
+            onScaleChange: (value, zoom) => {
               applyScale(value);
-              latest.current.onZoomChange(value);
+              latest.current.onZoomChange(zoom);
             },
           });
           viewerRef.current = viewer;
@@ -284,9 +286,12 @@ function PdfViewerBody(props: PdfViewerProps & Readonly<{ onRetry(): void }>) {
   React.useEffect(() => {
     const node = element();
     if (!node || state.status !== 'ready' || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => {
+    const observer = new ResizeObserver((entries) => {
       const viewer = viewerRef.current;
       if (!viewer || typeof latest.current.zoom === 'number') return;
+      // A hidden retained pane is not a narrower column: keep the pages at their fitted scale.
+      const box = entries.at(-1)?.contentRect;
+      if (box && isUnrenderedLayoutBox(node, box.width, box.height)) return;
       const next = scaleFor();
       viewer.setScale(next);
       applyScale(next);

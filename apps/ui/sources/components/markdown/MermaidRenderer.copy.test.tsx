@@ -1,8 +1,17 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { createOnShouldStartLoadWithRequest } from 'react-native-webview/src/WebViewShared';
 import { renderScreen } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+beforeEach(async () => {
+  await homes.reset();
+  const serverId = await homes.addHome({ name: 'Mermaid copy', serverUrl: 'https://mermaid-copy.test', accountId: 'copy-owner' });
+  await homes.selectHomes([serverId]);
+});
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

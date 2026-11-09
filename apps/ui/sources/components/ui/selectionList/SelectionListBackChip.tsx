@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View, Platform } from 'react-native';
+import { View, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -7,6 +7,7 @@ import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const stylesheet = StyleSheet.create((theme) => ({
     chip: {
@@ -45,16 +46,15 @@ export function SelectionListBackChip(props: SelectionListBackChipProps): React.
     const paintColor = useHappierMaterialColorResolver();
     const styles = stylesheet;
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID}
             accessibilityRole="button"
             accessibilityLabel={t('selectionList.backTo', { label: props.label })}
             onPress={props.onPress}
-            hitSlop={{ top: 6, right: 6, bottom: 6, left: 6 }}
             style={({ pressed }) => [styles.chip, { backgroundColor: paintColor(theme.colors.surface.pressedOverlay) }, pressed && styles.pressed]}
         >
             <Icon name="caret-left" size={14} color={theme.colors.text.secondary} />
             <Text style={styles.label}>{props.label}</Text>
-        </Pressable>
+        </HappierPressable>
     );
 }

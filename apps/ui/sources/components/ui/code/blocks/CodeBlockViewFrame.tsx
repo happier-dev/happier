@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import { Text } from '@/components/ui/text/Text';
 import { HorizontalOverflowScrollView } from '@/components/ui/scroll/HorizontalOverflowScrollView';
 import { resolveCodeMonoFontFamily } from '../codeTypography';
 import { CopyIconButton, COPY_ICON_BUTTON_SIZE } from '@/components/ui/copy/CopyIconButton';
 import { resolveHappierCodeBlockLayout } from '@happier-dev/plugin-ui/presentation';
-import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
 
 export type CodeBlockViewFrameProps = Readonly<{
     code: string;
@@ -100,7 +100,8 @@ export const CodeBlockViewFrame = React.memo<CodeBlockViewFrameProps>(({
             style={[
                 styles.container,
                 showCopyButton && shouldOverlayCopyButton ? styles.containerWithOverlaidCopy : null,
-                { backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.inset, 'content', true), borderColor: theme.colors.border.default },
+                // Working content: solid it is its own fill; over glass content the material's inner translucent fill, never the cleared page plane.
+                { backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors), borderColor: theme.colors.border.default },
                 containerStyle,
             ]}
         >

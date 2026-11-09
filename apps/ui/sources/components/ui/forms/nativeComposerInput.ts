@@ -39,6 +39,7 @@ export type NativeComposerInputHandle = Readonly<{
     measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => void;
 }>;
 
+// Expo direct events share React Native's global registry with bubbling TextInput events.
 export type NativeComposerInputProps = Omit<ViewProps, 'onFocus' | 'onBlur'> & Readonly<{
     value: string;
     mostRecentEventCount: number;
@@ -57,6 +58,7 @@ export type NativeComposerInputProps = Omit<ViewProps, 'onFocus' | 'onBlur'> & R
     minHeight: number;
     maxHeight: number;
     editable: boolean;
+    forwardHardwareBack?: boolean;
     placeholder: string;
     returnKeyType: 'send' | 'default';
     submitBehavior: 'newline' | 'submit' | 'blurAndSubmit';
@@ -68,15 +70,15 @@ export type NativeComposerInputProps = Omit<ViewProps, 'onFocus' | 'onBlur'> & R
     referenceMenuLabels: Readonly<{ open: string; remove: string }>;
     acceptsAttachmentDrops: boolean;
     attachmentDropScope: string;
-    onAttachmentDrop: (event: NativeSyntheticEvent<NativeComposerAttachmentDrop & Readonly<{ scope: string }>>) => void;
-    onChange: (event: NativeSyntheticEvent<NativeInputGeometry & Readonly<{ text: string; selection: Selection; eventCount: number; references: readonly NativeBoundReference[] }>>) => void;
-    onSelection: (event: NativeSyntheticEvent<NativeInputGeometry & Readonly<{ selection: Selection }>>) => void;
-    onKeyPress: (event: NativeSyntheticEvent<KeyboardKeyPressEventInput & Readonly<{ submitting?: boolean }>>) => void;
-    onFocus: (event?: NativeSyntheticEvent<NativeInputGeometry>) => void;
-    onBlur?: () => void;
-    onSubmitEditing?: (event?: NativeSyntheticEvent<KeyboardKeyPressEventInput>) => void;
-    onContentHeightChange: (event: NativeSyntheticEvent<Readonly<{ height: number }>>) => void;
-    onScroll: (event: NativeSyntheticEvent<NativeInputGeometry & Readonly<{ y: number }>>) => void;
-    onReferencePress?: (event: NativeSyntheticEvent<Readonly<{ ref: string }>>) => void;
-    onDecorationPress?: (event: NativeSyntheticEvent<Readonly<{ url: string }>>) => void;
+    onComposerAttachmentDrop: (event: NativeSyntheticEvent<NativeComposerAttachmentDrop & Readonly<{ scope: string }>>) => void;
+    onComposerChange: (event: NativeSyntheticEvent<NativeInputGeometry & Readonly<{ text: string; selection: Selection; eventCount: number; references: readonly NativeBoundReference[] }>>) => void;
+    onComposerSelection: (event: NativeSyntheticEvent<NativeInputGeometry & Readonly<{ selection: Selection }>>) => void;
+    onComposerKeyPress: (event: NativeSyntheticEvent<KeyboardKeyPressEventInput & Readonly<{ submitting?: boolean }>>) => void;
+    onComposerFocus: (event?: NativeSyntheticEvent<NativeInputGeometry>) => void;
+    onComposerBlur?: () => void;
+    onComposerSubmitEditing?: (event?: NativeSyntheticEvent<KeyboardKeyPressEventInput>) => void;
+    onComposerContentHeightChange: (event: NativeSyntheticEvent<Readonly<{ height: number }>>) => void;
+    onComposerScroll: (event: NativeSyntheticEvent<NativeInputGeometry & Readonly<{ y: number }>>) => void;
+    onComposerReferencePress?: (event: NativeSyntheticEvent<Readonly<{ ref: string }>>) => void;
+    onComposerDecorationPress?: (event: NativeSyntheticEvent<Readonly<{ url: string }>>) => void;
 }>;

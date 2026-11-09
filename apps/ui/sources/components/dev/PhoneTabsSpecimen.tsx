@@ -6,11 +6,11 @@ import { useCompactAppDestinations } from '@/components/appShell/destinations/co
 import { PhoneOpenTabsRail } from '@/components/appShell/workspace/PhoneOpenTabsRail';
 import {
     useOptionalWorkspaceNavigation,
-    WorkspaceNavigationContext,
+    WorkspaceNavigationProvider,
     type WorkspaceNavigationContextValue,
 } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState, reduceWorkspaceState, type WorkspaceState, type WorkspaceTab } from '@/components/appShell/workspace/workspaceState';
-import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
+import { SessionPaneHeader } from '@/components/sessions/shell/view/SessionPaneHeader';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -85,9 +85,9 @@ export function PhoneTabsSpecimen(props: Readonly<{ frame: string | null }>) {
     if (!value) return null;
     const header = HEADERS[frame];
     return (
-        <WorkspaceNavigationContext.Provider value={value}>
+        <WorkspaceNavigationProvider value={value}>
             <View style={styles.root}>
-                <ChatHeaderView title={header.title} subtitle={header.subtitle} onBackPress={() => {}} />
+                <SessionPaneHeader title={header.title} subtitle={header.subtitle} onBackPress={() => {}} />
                 <PhoneOpenTabsRail />
                 <ScrollView contentContainerStyle={styles.body}>
                     <Text style={styles.copy}>{frame === 'unavailable'
@@ -95,6 +95,6 @@ export function PhoneTabsSpecimen(props: Readonly<{ frame: string | null }>) {
                         : 'It remounts because SettingsModal’s key includes the window width, so every resize throws its state away.'}</Text>
                 </ScrollView>
             </View>
-        </WorkspaceNavigationContext.Provider>
+        </WorkspaceNavigationProvider>
     );
 }

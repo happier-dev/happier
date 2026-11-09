@@ -36,7 +36,9 @@ export function createMonacoCommands(engine: editor.IStandaloneCodeEditor, model
                 engine.executeEdits('happier.command', [{ range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column }, text: change.insert, forceMoveMarkers: true }]);
                 engine.pushUndoStop();
             } else engine.trigger('happier.command', 'type', { text: command.insert });
-        } else engine.trigger('happier.command', { indent: 'editor.action.indentLines', outdent: 'editor.action.outdentLines', undo: 'undo', redo: 'redo' }[command], null);
+        } else if (command === 'indent' || command === 'outdent' || command === 'undo' || command === 'redo') {
+            engine.trigger('happier.command', { indent: 'editor.action.indentLines', outdent: 'editor.action.outdentLines', undo: 'undo', redo: 'redo' }[command], null);
+        }
         options.onHistory();
     };
     return { revealLine, runCommand, getHistory };

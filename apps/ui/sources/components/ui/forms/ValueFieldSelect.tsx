@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu, type DropdownMenuSelection } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 
@@ -25,7 +25,8 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
     label: string;
     items: ReadonlyArray<ValueFieldSelectItem>;
     selectedId: string | null;
-    onSelect: (id: string) => void;
+    /** `selection` carries where the choice was made, for what opens from it (the Connect sheet). */
+    onSelect: (id: string, selection?: DropdownMenuSelection) => void;
     disabled?: boolean;
     /** Fit a narrow row to its choice. */
     compact?: boolean;
@@ -56,9 +57,9 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
             onOpenChange={setOpen}
             items={items}
             selectedId={props.selectedId}
-            onSelect={(id) => {
+            onSelect={(id, selection) => {
                 setOpen(false);
-                props.onSelect(id);
+                props.onSelect(id, selection);
             }}
             placement="bottom"
             popoverAnchorAlign={props.fill ? 'start' : 'end'}

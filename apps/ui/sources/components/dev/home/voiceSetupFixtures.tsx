@@ -69,6 +69,7 @@ function fixtureModel(frame: VoiceSetupFixtureFrame): VoiceSetupPanelModel {
         serviceTiles: labServices(selected),
         readiness: null,
         tryLive: false,
+        canStart: facts.canTry,
         shortcutLabel: frame === 'SD' ? '⌥⌘V' : null,
     };
 }

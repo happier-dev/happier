@@ -52,14 +52,21 @@ export function PageLeaveActions(props: Readonly<{
             onPress={action.onPress}
         />
     );
+    // The consequence of the one way out stands beside it (it wraps beneath on a narrow page); with an irreversible
+    // action apart at the far edge, it is stated once underneath.
+    const beside = props.footnote !== undefined && destructive.length === 0;
+    const footnote = props.footnote ? (
+        <Text testID={props.testID ? `${props.testID}:footnote` : undefined} style={beside ? styles.footnoteBeside : styles.footnote}>{props.footnote}</Text>
+    ) : null;
     return (
         <ItemGroup surface="none" accessibilityLabel={props.accessibilityLabel}>
             <View style={styles.actions} testID={props.testID}>
                 {recoverable.map(render)}
+                {beside ? footnote : null}
                 {destructive.length > 0 ? <View style={styles.spacer} /> : null}
                 {destructive.map(render)}
             </View>
-            {props.footnote ? <Text testID={props.testID ? `${props.testID}:footnote` : undefined} style={styles.footnote}>{props.footnote}</Text> : null}
+            {beside ? null : footnote}
         </ItemGroup>
     );
 }
@@ -83,6 +90,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
         marginTop: theme.space.s10,
+        marginHorizontal: theme.space.s2,
+    },
+    footnoteBeside: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.tertiary,
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 240,
         marginHorizontal: theme.space.s2,
     },
 }));

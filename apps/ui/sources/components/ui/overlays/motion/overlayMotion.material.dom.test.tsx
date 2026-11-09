@@ -40,9 +40,9 @@ describe('web overlay material composition', () => {
             return { playState: 'running', effect: { target: this }, cancel } as unknown as Animation;
         });
         Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
-        function Scene({ visible, preset }: { visible: boolean; preset: 'auto' | 'solid' }) {
+        function Scene({ visible, preset, disabled }: { visible: boolean; preset: 'auto' | 'solid'; disabled?: boolean }) {
             return <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials(preset) }}>
-                <OverlayMotionFrame visible={visible} kind="popover" direction="bottom">
+                <OverlayMotionFrame visible={visible} disabled={disabled} kind="popover" direction="bottom">
                     {/* A card's elevation drawn on an ancestor of its paint (ModalCardFrame, floating chrome). */}
                     <div data-testid="elevation" style={{ boxShadow: '0px 8px 24px rgba(0, 0, 0, 0.2)' }}>
                         <GlassSurface testID="material" finishRole={null} style={{ padding: 12, gap: 8, alignItems: 'stretch' }}>
@@ -55,6 +55,14 @@ describe('web overlay material composition', () => {
             </GlassMaterialSettingsProvider>;
         }
         try {
+            const styleReads = vi.spyOn(globalThis, 'getComputedStyle');
+            // The placement owner keeps this subtree hidden until its geometry is published.
+            // There is no presented frame to animate out or material to sample yet.
+            await act(async () => root.render(<Scene visible={false} disabled preset="auto" />));
+            const hiddenMaterial = container.querySelector<HTMLElement>('[data-testid="material"]')!;
+            const hiddenFrame = hiddenMaterial.parentElement!.parentElement!;
+            expect(styleReads.mock.calls.filter(([element]) => hiddenFrame.contains(element))).toHaveLength(0);
+            expect(runs).toHaveLength(0);
             await act(async () => root.render(<Scene visible preset="auto" />));
             const material = container.querySelector<HTMLElement>('[data-testid="material"]')!;
             const elevation = container.querySelector<HTMLElement>('[data-testid="elevation"]')!;

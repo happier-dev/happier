@@ -1,4 +1,4 @@
-import type { WorkspaceAnchorResolutionStatusV1 } from '@happier-dev/protocol';
+import type { WorkspaceAnchorResolutionStatusV1 } from '@happier-dev/protocol/workspace/anchors/v1';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';

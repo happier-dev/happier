@@ -7,6 +7,8 @@ import { useRichEligibility } from '@/components/ui/markdown/editor/core/eligibi
 import type { MarkdownRichIneligibleReason } from '@/components/ui/markdown/editor/core/eligibility/markdownRichEligibility';
 import type { MarkdownEditMode } from '@/components/ui/markdown/editor/markdownEditorTypes';
 import { useMarkdownLiveValue, type MarkdownLiveValueStore } from './useMarkdownLiveValue';
+import { Modal } from '@/modal';
+import { t } from '@/text';
 
 /**
  * Shared Raw <-> Rich owner for controlled fields and ref-backed file buffers.
@@ -111,6 +113,10 @@ export function useMarkdownEditMode(input: Readonly<{
             setHandoff({ baseResetKey: outgoing.baseResetKey, hostValue: outgoing.value, text: latest });
             setMarkdownModeResetNonce((nonce) => nonce + 1);
             setMarkdownEditMode(next);
+        } catch {
+            if (modeSwitching.current && inputRef.current.baseResetKey === outgoing.baseResetKey) {
+                Modal.alert(t('common.error'), t('errors.operationFailed'));
+            }
         } finally {
             modeSwitching.current = false;
         }

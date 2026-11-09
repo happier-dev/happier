@@ -44,9 +44,25 @@ installPanelCommonModuleMocks({
     },
 });
 
+const motionPreference = vi.hoisted(() => ({ reduced: false }));
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
-    useReducedMotionPreference: () => false,
+    useReducedMotionPreference: () => motionPreference.reduced,
 }));
+
+type CompositorCall = Readonly<{ keyframes: ReadonlyArray<Record<string, unknown>>; options: Record<string, unknown> }>;
+let compositorCalls: CompositorCall[] = [];
+// The web element behind each pane column: the compositor animation boundary (Web Animations API).
+const paneColumnNodeMock = (element: Readonly<{ props: Record<string, unknown> }>) => element.props?.role !== 'region' ? null : {
+    style: {},
+    getAnimations: () => [],
+    animate: (keyframes: ReadonlyArray<Record<string, unknown>>, options: Record<string, unknown>) => {
+        compositorCalls.push({ keyframes, options });
+        return { cancel: () => undefined, onfinish: null };
+    },
+};
+
+// Load the real host graph before fake timers and the individual interaction budgets begin.
+await import('./MultiPaneHost');
 
 // The host's first presence belongs to the main column's drawer (closed here); details and right follow it.
 const DETAILS_AND_RIGHT_PROGRESS = [1, 3] as const;
@@ -56,35 +72,98 @@ describe('MultiPaneHost docked pane animation', () => {
         capturedAnimatedInitialValues = [];
         capturedTimingConfigs = [];
         capturedAnimatedValues = [];
+        compositorCalls = [];
+        motionPreference.reduced = false;
     });
 
     afterEach(() => {
         vi.useRealTimers();
     });
 
-    it('starts docked right/details pane animations from hidden progress and animates their dock width', async () => {
+    it('never mounts a sidebar token while its retained surface closes', async () => {
+        vi.useFakeTimers();
         const { MultiPaneHost } = await import('./MultiPaneHost');
+        const tree = (open: boolean) => <MultiPaneHost
+            main={<Main />}
+            rightPane={open ? React.createElement('RightToken') : null}
+            rightSurfaces={[{ id: 'files', placement: open ? 'side' : 'hidden', content: <Right /> }]}
+            detailsPane={null}
+            layout={{ main: 'docked', kind: 'twoPane', right: open ? 'docked' : 'hidden', details: 'hidden' }}
+            rightDockWidthPx={360} detailsDockWidthPx={520}
+            onCloseRight={() => {}} onCloseDetails={() => {}}
+            onCommitRightDockWidthPx={() => {}} onCommitDetailsDockWidthPx={() => {}}
+        />;
+        const screen = await renderScreen(tree(true));
+        expect(screen.root.findAllByType('RightToken')).toHaveLength(0);
+        await screen.update(tree(false));
+        expect(screen.root.findAllByType('RightToken')).toHaveLength(0);
+        expect(screen.root.findAllByType(Right)).toHaveLength(1);
+    });
 
-        const screen = await renderScreen(
-            <MultiPaneHost
-                main={<Main />}
-                rightPane={<Right />}
-                detailsPane={<Details />}
-                layout={{ main: 'docked', kind: 'threePane', right: 'docked', details: 'docked' }}
-                rightDockWidthPx={360}
-                detailsDockWidthPx={520}
-                onCloseRight={() => {}}
-                onCloseDetails={() => {}}
-                onCommitRightDockWidthPx={() => {}}
-                onCommitDetailsDockWidthPx={() => {}}
-            />,
-        );
+    it('opens docked right/details panes at their dock widths and moves them on the compositor', async () => {
+        const { MultiPaneHost } = await import('./MultiPaneHost');
+        const tree = (open: boolean) => <MultiPaneHost
+            main={<Main />}
+            rightPane={open ? <Right /> : null}
+            detailsPane={open ? <Details /> : null}
+            // A docked pane that closes while its layout stays docked plays its exit (the host's retained-close path).
+            layout={{ main: 'docked', kind: 'threePane', right: 'docked', details: 'docked' }}
+            rightDockWidthPx={360} detailsDockWidthPx={520}
+            onCloseRight={() => {}} onCloseDetails={() => {}}
+            onCommitRightDockWidthPx={() => {}} onCommitDetailsDockWidthPx={() => {}}
+        />;
+
+        const screen = await renderScreen(tree(true), { createNodeMock: paneColumnNodeMock });
 
         expect(capturedAnimatedInitialValues.slice(...DETAILS_AND_RIGHT_PROGRESS)).toEqual([0, 0]);
-        expect(capturedTimingConfigs.some((config) => config?.toValue === 1)).toBe(true);
+        // The open columns hold their dock widths from the first frame.
+        expect(findPlainDimension(screen, 'width', 360)).toBe(true);
+        expect(findPlainDimension(screen, 'width', 520)).toBe(true);
+        // Each column fades and slides in over the pane motion.
+        expect(compositorCalls).toHaveLength(2);
+        for (const call of compositorCalls) {
+            expect(call.keyframes[0]?.opacity).toBe(0);
+            expect(call.keyframes.at(-1)?.opacity).toBe(1);
+            expect(call.options).toMatchObject({ duration: motionTokens.durationMs.base, easing: motionTokens.easingCss.standard });
+        }
 
-        expect(findAnimatedDimensionOutputRange(screen, 'width', [0, 360])).toBe(true);
-        expect(findAnimatedDimensionOutputRange(screen, 'width', [0, 520])).toBe(true);
+        await screen.update(tree(false));
+        // Closing plays the same motion back out while the columns keep their widths until they leave.
+        expect(compositorCalls).toHaveLength(4);
+        for (const call of compositorCalls.slice(2)) {
+            expect(call.keyframes[0]?.opacity).toBe(1);
+            expect(call.keyframes.at(-1)?.opacity).toBe(0);
+        }
+        expect(findPlainDimension(screen, 'width', 360)).toBe(true);
+    });
+
+    it('lays the page out once per open and close, never once per animation frame', async () => {
+        const { MultiPaneHost } = await import('./MultiPaneHost');
+        const screen = await renderScreen(<MultiPaneHost
+            main={<Main />} rightPane={<Right />} detailsPane={<Details />}
+            layout={{ main: 'docked', kind: 'threePane', right: 'docked', details: 'docked' }}
+            rightDockWidthPx={360} detailsDockWidthPx={520}
+            onCloseRight={() => {}} onCloseDetails={() => {}}
+            onCommitRightDockWidthPx={() => {}} onCommitDetailsDockWidthPx={() => {}}
+        />, { createNodeMock: paneColumnNodeMock });
+
+        // A layout property driven by the animation progress re-lays out the page (and the transcript) on every frame.
+        expect(countProgressDrivenLayoutStyles(screen)).toBe(0);
+    });
+
+    it('opens docked panes at once under reduced motion', async () => {
+        motionPreference.reduced = true;
+        const { MultiPaneHost } = await import('./MultiPaneHost');
+        const screen = await renderScreen(<MultiPaneHost
+            main={<Main />} rightPane={<Right />} detailsPane={null}
+            layout={{ main: 'docked', kind: 'twoPane', right: 'docked', details: 'hidden' }}
+            rightDockWidthPx={360} detailsDockWidthPx={520}
+            onCloseRight={() => {}} onCloseDetails={() => {}}
+            onCommitRightDockWidthPx={() => {}} onCommitDetailsDockWidthPx={() => {}}
+        />, { createNodeMock: paneColumnNodeMock });
+
+        expect(findPlainDimension(screen, 'width', 360)).toBe(true);
+        expect(compositorCalls).toHaveLength(0);
     });
 
     it('settles docked pane progress open when Animated.timing never completes', async () => {
@@ -138,6 +217,28 @@ describe('MultiPaneHost docked pane animation', () => {
         expect(screen.getTextContent()).toContain('Current value');
         await act(async () => { await vi.advanceTimersByTimeAsync(motionTokens.durationMs.base); });
         expect(screen.findByTestId('current-pane-action')).toBeNull();
+    });
+
+    it('starts no pane animation when an open pane only receives new content', async () => {
+        vi.useFakeTimers();
+        const { MultiPaneHost } = await import('./MultiPaneHost');
+        const tree = (label: string) => <MultiPaneHost
+            main={<Main />} rightPane={null}
+            detailsPane={React.createElement('DetailsToken', { label })}
+            layout={{ main: 'docked', kind: 'twoPane', right: 'hidden', details: 'docked' }}
+            rightDockWidthPx={360} detailsDockWidthPx={520}
+            onCloseRight={() => {}} onCloseDetails={() => {}}
+            onCommitRightDockWidthPx={() => {}} onCommitDetailsDockWidthPx={() => {}}
+        />;
+        const screen = await renderScreen(tree('first'));
+        await act(async () => { await vi.advanceTimersByTimeAsync(motionTokens.durationMs.base); });
+        const startedWhileOpening = capturedTimingConfigs.length;
+
+        // Every parent render hands the pane a new element; the pane is already open, so nothing moves.
+        for (const label of ['second', 'third', 'fourth']) await screen.update(tree(label));
+
+        expect(capturedTimingConfigs.length - startedWhileOpening).toBe(0);
+        expect(capturedAnimatedValues.slice(...DETAILS_AND_RIGHT_PROGRESS).map((value) => value.__value)).toEqual([1, 0]);
     });
 
     it('starts docked bottom pane animation from hidden progress and animates its dock height', async () => {
@@ -244,6 +345,23 @@ function findAnimatedDimensionOutputRange(
             candidate.length === outputRange.length &&
             candidate.every((value, index) => value === outputRange[index]);
     }).length > 0;
+}
+
+function findPlainDimension(
+    screen: Pick<Awaited<ReturnType<typeof renderScreen>>, 'findAll'>,
+    key: 'width' | 'height',
+    value: number,
+): boolean {
+    // The pane column itself (its region), not the resizable content inside it.
+    return screen.findAll((node) => node.props?.role === 'region' && flattenStyle(node.props?.style)?.[key] === value).length > 0;
+}
+
+function countProgressDrivenLayoutStyles(screen: Pick<Awaited<ReturnType<typeof renderScreen>>, 'findAll'>): number {
+    const layoutKeys = ['width', 'height', 'minWidth', 'maxWidth', 'flexBasis', 'left', 'right', 'margin', 'marginLeft', 'marginRight'];
+    return screen.findAll((node) => {
+        const style = flattenStyle(node.props?.style);
+        return layoutKeys.some((key) => style?.[key]?.__interpolateConfig !== undefined);
+    }).length;
 }
 
 function flattenStyle(style: any): any {

@@ -1,4 +1,5 @@
-import type { ScmComparison, ScmDiffSummaryAnalysisCoverage, ScmDiffSummaryWalkthrough } from '@happier-dev/protocol';
+import type { ScmComparison} from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryAnalysisCoverage, ScmDiffSummaryWalkthrough } from '@happier-dev/protocol/scm/diffSummary';
 import { SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH } from './walkthroughSpecimenFixture';
 
 /** Dev illustration only; the real hosted capture owner supplies these facts. */

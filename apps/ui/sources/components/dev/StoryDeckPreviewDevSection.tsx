@@ -4,7 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ReleaseNotesStorySurface } from '@/components/changelog/releaseNotes';
+import { ReleaseNotesStorySurface, type ReleaseNotesStorySurfaceProps } from '@/components/changelog/releaseNotes';
 import { Modal } from '@/modal';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
@@ -35,9 +35,9 @@ function useReleaseNotesPreviewState(): ReleaseNotesPreviewState {
     }, [runtimeVersion]);
 }
 
-function showPreviewModal<P extends object>(params: Readonly<{
-    component: React.ComponentType<P>;
-    buildProps: (close: () => void) => P;
+function showPreviewModal(params: Readonly<{
+    component: typeof ReleaseNotesStorySurface;
+    buildProps: (close: () => void) => ReleaseNotesStorySurfaceProps;
 }>): void {
     let modalId: string | null = null;
     const close = () => {

@@ -69,7 +69,12 @@ describe('Android material fallback', () => {
                     const finishLayer = screen.findAllByType('Svg').filter(node => node.props.accessibilityElementsHidden === true);
                     expect(finishLayer).toHaveLength(1);
                     expect(finishLayer[0]!.findAllByType('Rect')).toHaveLength(1);
-                    expect(finishLayer[0]!.findAllByType('Stop').map(node => Color(node.props.stopColor).alpha())).toEqual([0, 0.024]);
+                    const stops = finishLayer[0]!.findAllByType('Stop');
+                    expect(stops).toHaveLength(2);
+                    // Native SVG separates opacity and quantizes it to an alpha byte.
+                    for (const [index, alpha] of [0, 0.024].entries()) {
+                        expect(Color(stops[index]!.props.stopColor).alpha() * (stops[index]!.props.stopOpacity ?? 1)).toBeCloseTo(alpha, 2);
+                    }
                     standardCleanup();
                 }
             }

@@ -7,13 +7,14 @@ import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding'
 import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 import type { ScmDiffSummaryWalkthrough } from '@happier-dev/protocol/scm/diffSummary';
 
-import { ScmComparisonBar, ScmComparisonStartReview, ScmComparisonViewSwitch } from '@/components/sessions/files/comparison/ScmComparisonBar';
+import { ScmComparisonBar, ScmComparisonViewSwitch } from '@/components/sessions/files/comparison/ScmComparisonBar';
 import { ScmComparisonScopePicker } from '@/components/sessions/files/comparison/ScmComparisonScopePicker';
 import { ScmComparisonPhoneHeader } from '@/components/sessions/files/comparison/ScmComparisonPhoneHeader';
 import { listFilesComparisonScopeOptions } from '@/components/sessions/files/comparison/filesComparison';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { WalkthroughView, type WalkthroughViewLayout } from '@/components/sessions/files/walkthrough/WalkthroughView';
-import { buildWalkthroughReading, type WalkthroughReadingInput } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import type { WalkthroughReadingInput } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import { useWalkthroughReading } from '@/components/sessions/files/walkthrough/useWalkthroughReading';
 import { ReviewFindingDecisionControl } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 import { PlanOutputMessageCard } from '@/components/sessions/plans/messages/PlanOutputMessageCard';
 import { DelegateOutputMessageCard } from '@/components/sessions/delegations/messages/DelegateOutputMessageCard';
@@ -21,7 +22,6 @@ import { ReviewFindingsMessageCard } from '@/components/sessions/reviews/message
 import { useReviewSeverityColorResolver } from '@/components/sessions/reviews/findings/useReviewSeverityColors';
 import { ReviewWalkthroughSteps, WalkthroughReviewExplanation } from '@/components/sessions/reviews/walkthrough/ReviewWalkthroughParts';
 import { ReviewExplainFindingsButton } from '@/components/sessions/reviews/walkthrough/SessionWalkthroughReview';
-import { StartReviewDialogView, startReviewDialogChrome } from '@/components/sessions/reviews/walkthrough/StartReviewDialog';
 import { buildWalkthroughReviewOverlay } from '@/components/sessions/reviews/walkthrough/reviewWalkthroughOverlay';
 import { resolveReviewWalkthroughProgress } from '@/components/sessions/reviews/walkthrough/reviewWalkthroughProgress';
 import { buildWalkthroughReviewSlots, type WalkthroughReviewSlotsInput } from '@/components/sessions/reviews/walkthrough/walkthroughReviewSlots';
@@ -31,17 +31,13 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
-import type { CustomModalInjectedProps } from '@/modal/types';
-import { resolveReviewWalkthroughPlan, type ReviewWalkthroughEngine } from '@/sync/domains/reviews/reviewWalkthroughPlan';
 import { t } from '@/text';
 
 import { SPECIMEN_ANALYSIS_COMPLETE, SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH, specimenReviewedRefs } from './walkthroughSpecimenFixture';
 
 /**
  * Dev-only: the review frames of the Walkthrough lab (WT5-R1 to R9) drawn through the real components at
- * static props: the Start review dialog, the two-step status, findings beside the stops, the tail, a
+ * static props: the two-step status, findings beside the stops, the tail, a
  * partial review and the finished-review card. The data is the lab's illustration, not product logic.
  */
 const noop = () => {};
@@ -109,7 +105,7 @@ function triage(decision: 'accept' | 'undecided' = 'undecided') {
 function Bar(props: Readonly<{ trailing: React.ReactNode; phone?: boolean }>) {
     if (props.phone) return <ScmComparisonPhoneHeader view="walkthrough" views={['files', 'walkthrough']}
         scope={{ options: SCOPE_OPTIONS, current: SESSION, currentLabel: t('scmComparison.scope.session'), fileCount: 9, onSelect: noop }}
-        onSelectView={noop} onBack={noop} onStartReview={noop} extraActions={props.trailing} />;
+        onSelectView={noop} onStartReview={noop} extraActions={props.trailing} />;
     return (
         <ScmComparisonBar
             leading={(
@@ -138,12 +134,12 @@ function ReviewReading(props: Readonly<{
 }>) {
     const phone = props.layout === 'phone';
     const comparison = props.input?.comparison ?? SPECIMEN_COMPARISON;
-    const reading = React.useMemo(() => buildWalkthroughReading({
+    const reading = useWalkthroughReading({
         comparison,
         walkthrough: props.scenario.walkthrough,
         analysis: props.input?.analysis ?? SPECIMEN_ANALYSIS_COMPLETE,
         reviewed: applyScmReviewedMarkIntent(comparison, null, props.scenario.walkthrough?.value?.stops.slice(0, props.scenario.reviewed ?? 2).flatMap((stop) => stop.changeRefs) ?? [], true),
-    }), [comparison, props.input?.analysis, props.scenario]);
+    });
     const overlay = React.useMemo(() => overlayOf(props.scenario, comparison), [props.scenario, comparison]);
     const severityColors = useReviewSeverityColorResolver();
     const slots = buildWalkthroughReviewSlots({ overlay, phone, renderTriage: () => triage(), onAskStop: noop, showKeys: !phone, severityColors, ...props.slots });
@@ -226,57 +222,6 @@ function PartialNotice() {
 const PROPOSE = (
     <RoundButton size="small" display="inverted" title={t('scmComparison.proposeCommits')} leading={<Icon name="git-commit" size={ICON_SIZE.xs} />} onPress={noop} />
 );
-
-/* ── Start review dialog (R4, R4p, R7) ── */
-const ENGINES: readonly ReviewWalkthroughEngine[] = [
-    { engineId: 'claude', label: 'Claude Code', description: 'Opus 5.5', enabled: true, structuredNarration: true },
-    { engineId: 'codex', label: 'Codex', description: 'GPT-6.1', enabled: true, structuredNarration: true },
-    { engineId: 'coderabbit', label: 'CodeRabbit', description: 'Review CLI', enabled: true, structuredNarration: false },
-];
-
-/** The dialog's own state, so the real modal chrome can host it exactly as `presentStartReviewDialog` does. */
-function SpecimenStartReviewDialog(props: CustomModalInjectedProps & Readonly<{ selected: readonly string[]; phone: boolean }>) {
-    const [selected, setSelected] = React.useState(props.selected);
-    const [walkthrough, setWalkthrough] = React.useState(true);
-    const [narrator, setNarrator] = React.useState<string | null>(null);
-    const [instructions, setInstructions] = React.useState('Focus on how the modal and the phone sheet are keyed.');
-    const plan = resolveReviewWalkthroughPlan({ engines: ENGINES, selectedEngineIds: selected, walkthrough, narratorEngineId: narrator });
-    return (
-        <StartReviewDialogView
-            engines={ENGINES}
-            selectedEngineIds={selected}
-            onToggleEngine={(id) => setSelected((current) => (current.includes(id) ? current.filter((value) => value !== id) : [...current, id]))}
-            scopeLabel={t('scmComparison.scope.session')}
-            scopeDetail="start → now · 9 files · 14 changes"
-            instructions={instructions}
-            onChangeInstructions={setInstructions}
-            walkthrough={walkthrough}
-            onToggleWalkthrough={() => setWalkthrough((on) => !on)}
-            narratorEngineId={narrator}
-            onSelectNarrator={setNarrator}
-            plan={plan}
-            onCancel={props.onClose}
-            onStart={props.onClose}
-            phone={props.phone}
-        />
-    );
-}
-
-/** WT5-R4/R7: Start review in the real modal card chrome (card on wide, sheet on a phone), over the comparison bar. */
-function DialogFrame(props: Readonly<{ selected: readonly string[]; phone: boolean }>) {
-    const chrome = startReviewDialogChrome();
-    return (
-        <View style={styles.fill}>
-            {props.phone ? null : <Bar trailing={<>{PROPOSE}<ScmComparisonStartReview onPress={noop} /></>} />}
-            <View style={styles.scrim} />
-            <View style={[styles.backdrop, props.phone ? styles.backdropPhone : null]}>
-                <ModalCardFrame header="none" title={chrome.title} presentation={props.phone ? 'sheet' : 'card'} dimensions={chrome.dimensions} testID={chrome.testID}>
-                    <SpecimenStartReviewDialog selected={props.selected} phone={props.phone} onClose={noop} />
-                </ModalCardFrame>
-            </View>
-        </View>
-    );
-}
 
 /* ── Progress storyboard (R5) and both after-the-fact paths (R9) ── */
 function Cell(props: Readonly<{ caption: string; children: React.ReactNode }>) {
@@ -435,8 +380,6 @@ export const REVIEW_WALKTHROUGH_SPECIMEN_FRAMES: readonly ReviewWalkthroughSpeci
                 bar={<Bar trailing={<>{steps(R3, null)}{PROPOSE}</>} />} slots={{ notice: <PartialNotice /> }} />
         ),
     },
-    { id: 'R4', title: 'WT5-R4 · Start review with a walkthrough', render: (phone) => <DialogFrame selected={['claude', 'codex']} phone={phone} /> },
-    { id: 'R7', title: 'WT5-R7 · a findings-only CLI engine', render: (phone) => <DialogFrame selected={['coderabbit']} phone={phone} /> },
     {
         id: 'R5', title: 'WT5-R5 · Reviewing, then writing',
         render: (phone) => phone
@@ -460,10 +403,6 @@ export const REVIEW_WALKTHROUGH_SPECIMEN_FRAMES: readonly ReviewWalkthroughSpeci
 
 const styles = StyleSheet.create((theme) => ({
     fill: { flex: 1, minHeight: 0, backgroundColor: theme.colors.surface.base },
-    // The modal's own dim behind the card (BaseModal's backdrop role), for a static specimen of an open dialog.
-    scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: theme.colors.overlay.scrimWizard, opacity: motionTokens.overlay.modal.backdropMaxOpacity },
-    backdrop: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', paddingVertical: theme.space.s24 },
-    backdropPhone: { justifyContent: 'flex-end', paddingVertical: 0 },
     grid: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s24, padding: theme.space.s24 },
     cell: { width: 640, gap: theme.space.s8 },
     cellCaption: { ...Typography.variant('meta', 'semiBold'), color: theme.colors.text.secondary,  },

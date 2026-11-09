@@ -13,11 +13,12 @@
  */
 
 import * as React from 'react';
-import { Platform, Pressable, View, type GestureResponderEvent } from 'react-native';
+import { Platform, View, type GestureResponderEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { Item } from '@/components/ui/lists/Item';
+import { ListOptionPressable } from '@/components/ui/lists/listOptionSetPosition';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
@@ -538,7 +539,14 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
     id: _cellOwnedId,
     ...optionAriaWithoutCellIdentity
   } = optionAria;
-  const webOptionAria = isGridCell ? optionAriaWithoutCellIdentity : optionAria;
+  const webOptionAriaWithNumbers: Record<string, unknown> = isGridCell ? optionAriaWithoutCellIdentity : optionAria;
+  // A row given no set size or position takes the ones its list publishes (`listOptionSetPosition`),
+  // read by its pressable alone, so results arriving above it or a changed count do not redraw this row.
+  const listPublishesSetSize = props.setSize === undefined && optionAria.role === 'option';
+  const listPublishesPosition = props.positionInSet === undefined && optionAria.role === 'option';
+  const webOptionAria = { ...webOptionAriaWithNumbers };
+  if (listPublishesSetSize) delete webOptionAria['aria-setsize'];
+  if (listPublishesPosition) delete webOptionAria['aria-posinset'];
   const customContentAccessibilityProps =
     Platform.OS === 'web'
       ? (webOptionAria as unknown as Record<string, never>)
@@ -602,7 +610,9 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
     props.option.openStep === undefined;
   const row =
     props.option.content !== undefined ? (
-      <Pressable
+      <ListOptionPressable
+        readsListOptionSetSize={listPublishesSetSize}
+        readsListOptionPosition={listPublishesPosition}
         testID={optionTestId}
         onPressIn={props.option.onPressIn}
         onHoverIn={props.option.disabled === true ? undefined : handlePointerHighlight}
@@ -644,7 +654,7 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         }}
       >
         {props.option.content}
-      </Pressable>
+      </ListOptionPressable>
     ) : (
       <Item
         rowRole={rowRole}
@@ -694,10 +704,10 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         }
         webId={isGridCell ? undefined : optionAria.id}
         accessibilityPositionInSet={
-          optionAria.role === 'option' ? optionAria['aria-posinset'] : undefined
+          optionAria.role === 'option' && !listPublishesPosition ? optionAria['aria-posinset'] : undefined
         }
         accessibilitySetSize={
-          optionAria.role === 'option' ? optionAria['aria-setsize'] : undefined
+          optionAria.role === 'option' && !listPublishesSetSize ? optionAria['aria-setsize'] : undefined
         }
         {...itemInsetAndTextProps}
         {...itemBottomProps}

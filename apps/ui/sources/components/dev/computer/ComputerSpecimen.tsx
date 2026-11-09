@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ComputerGrantStatusV1 } from '@happier-dev/protocol';
+import type { ComputerGrantStatusV1 } from '@happier-dev/protocol/computer/v1';
 
 import type { BrowserStreamedSurfaceRuntime } from '@/components/browser/adapters/BrowserStreamedTarget';
 import { ComputerActionApprovalCard, describeComputerActionApproval } from '@/components/approvals/ComputerActionApprovalCard';
@@ -156,7 +156,7 @@ const PRESENCE = {
     human: { kind: 'human', controlEpoch: 2, interruptedCompletion: null },
 } as const satisfies Record<string, BrowserCopresence>;
 
-function ViewerFrame(props: Readonly<{ presence: keyof typeof PRESENCE; stream: StreamFixture; shared?: boolean; phone: boolean; floatable?: boolean; failure?: string }>) {
+function ViewerFrame(props: Readonly<{ presence: keyof typeof PRESENCE; stream: StreamFixture; shared?: boolean; phone: boolean; floatable?: boolean; failure?: string; grants?: ComputerGrantStatusV1 }>) {
     const stream = useStream(props.stream);
     return (
         <ComputerScreenViewer
@@ -176,6 +176,8 @@ function ViewerFrame(props: Readonly<{ presence: keyof typeof PRESENCE; stream: 
             onFloat={props.floatable ? NOOP : undefined}
             failure={props.failure}
             onRefresh={NOOP}
+            grants={props.grants}
+            onOpenSettings={props.grants ? NOOP : undefined}
             compact={props.phone}
         />
     );
@@ -325,13 +327,16 @@ function HostFrame(props: Readonly<{ phone: boolean; area?: Readonly<{ width: nu
 
 /** The session-wide strip at the top of the transcript (lab HC), drawn with the real capsule strip. */
 function SessionLineFrame(props: Readonly<{ phone: boolean; presence: keyof typeof PRESENCE }>) {
+    // Measured like the Session's line, so a narrow column moves the buttons beneath the sentence.
+    const [width, setWidth] = React.useState<number | undefined>(undefined);
     return (
         <View style={styles.chat}>
-            <View style={styles.stripFrame}>
+            <View style={styles.stripFrame} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
                 <BrowserPresenceCapsule
                     testID="specimen-session-computer-presence"
                     placement="strip"
                     compact={props.phone}
+                    availableWidth={width}
                     presence={PRESENCE[props.presence]}
                     agent={AGENT}
                     agentTitle={props.presence === 'agent' ? t('computerUse.strip.using', { target: TITLE }) : undefined}
@@ -394,6 +399,8 @@ const FRAMES: readonly Frame[] = [
     { id: 'HC', render: (phone) => <SessionLineFrame phone={phone} presence="agent" /> },
     { id: 'HCh', render: (phone) => <SessionLineFrame phone={phone} presence="human" /> },
     { id: 'OG', render: (phone) => <PickerFrame grants={DENIED} phone={phone} /> },
+    // The grant was revoked while sharing: the viewer's picture becomes the same card.
+    { id: 'OGv', render: (phone) => <ViewerFrame presence="agent" stream="live" grants={DENIED} phone={phone} /> },
     { id: 'CS', render: () => <ConsentFrame /> },
     { id: 'LV', render: (phone) => <ViewerFrame presence="agent" stream="live" phone={phone} /> },
     // Docked in the desktop pane while the floating frame would fit: its menu offers Float view.

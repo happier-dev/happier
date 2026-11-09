@@ -12,6 +12,7 @@ import { t } from '@/text';
 import type { DateTimePickerPopoverProps } from './DateTimePickerPopover';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const DAY_SIZE = 44;
 export function isDateTimePickerPopoverAvailable(): boolean { return true; }
@@ -56,12 +57,12 @@ function PickerHeader(props: Readonly<{ title: string; onPrevious?: () => void; 
     return <View style={styles.header}>
         <Text style={[styles.headerTitle, { color: theme.colors.text.primary }]}>{props.title}</Text>
         {props.onPrevious && props.onNext ? <View style={styles.headerActions}>
-            <Pressable accessibilityRole="button" accessibilityLabel={`${t('common.previous')}: ${props.title}`} hitSlop={8} onPress={props.onPrevious} style={({ pressed }) => [styles.iconButton, { backgroundColor: pressed ? paintColor(theme.colors.surface.pressed) : 'transparent' }]}>
+            <HappierPressable accessibilityRole="button" accessibilityLabel={`${t('common.previous')}: ${props.title}`} onPress={props.onPrevious} style={({ pressed }) => [styles.iconButton, { backgroundColor: pressed ? paintColor(theme.colors.surface.pressed) : 'transparent' }]}>
                 <Icon name="caret-left" size={16} color={theme.colors.text.secondary} />
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel={`${t('common.next')}: ${props.title}`} hitSlop={8} onPress={props.onNext} style={({ pressed }) => [styles.iconButton, { backgroundColor: pressed ? paintColor(theme.colors.surface.pressed) : 'transparent' }]}>
+            </HappierPressable>
+            <HappierPressable accessibilityRole="button" accessibilityLabel={`${t('common.next')}: ${props.title}`} onPress={props.onNext} style={({ pressed }) => [styles.iconButton, { backgroundColor: pressed ? paintColor(theme.colors.surface.pressed) : 'transparent' }]}>
                 <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
-            </Pressable>
+            </HappierPressable>
         </View> : null}
     </View>;
 }

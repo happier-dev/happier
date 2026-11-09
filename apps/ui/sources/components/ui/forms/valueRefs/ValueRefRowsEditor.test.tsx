@@ -12,13 +12,15 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 
 installValueRefsCommonModuleMocks();
 
+// Load the real component graph after boundary installation, outside timed interactions.
+const { ValueRefRowsEditor } = await import('./ValueRefRowsEditor');
+
 afterEach(() => {
   standardCleanup();
 });
 
 async function mount(entries: Record<string, ValueRefV1>) {
   const onChangeEntries = vi.fn();
-  const { ValueRefRowsEditor } = await import('./ValueRefRowsEditor');
   const screen = await renderScreen(
     <ValueRefRowsEditor
       kind="env"
@@ -57,6 +59,32 @@ async function type(
 }
 
 describe('ValueRefRowsEditor', () => {
+  it('keeps the draft when Connect is dismissed and links the returned key reference in place', async () => {
+    const { screen, onChangeEntries } = await mount({ API_KEY: { t: 'literal', v: 'kept-value' } });
+    const anchor = { kind: 'rect', rect: { left: 25, top: 40, width: 90, height: 30 }, coordinateSpace: 'window' } as const;
+    const chooseKey = async () => {
+      await act(async () => {
+        screen.findAllByTestId('env.row.0.type').find(node => typeof node.props.onSelect === 'function' && typeof node.props.onOpenChange === 'function')!.props.onSelect('savedSecret', { anchor });
+      });
+      const { Modal } = await import('@/modal');
+      const presented = vi.mocked(Modal.show).mock.calls.at(-1)?.[0].props as {
+        request: { service: { kind: string } };
+        onResult: (result: { kind: 'dismissed' } | { kind: 'connected'; secretRef: string }) => void;
+      };
+      expect(presented.request.service.kind).toBe('key');
+      expect(presented.request).toMatchObject({ anchor });
+      return presented;
+    };
+    const first = await chooseKey();
+    await act(async () => { first.onResult({ kind: 'dismissed' }); });
+    expect(onChangeEntries).not.toHaveBeenCalled();
+    expect(input(screen, 'env.row.0.value').props.value).toBe('kept-value');
+    const second = await chooseKey();
+    await act(async () => { second.onResult({ kind: 'connected', secretRef: 'happier:shared-secret:v1:new-key' }); });
+    expect(onChangeEntries).toHaveBeenCalledExactlyOnceWith({
+      API_KEY: { t: 'savedSecret', secretId: 'happier:shared-secret:v1:new-key' },
+    });
+  });
   it('shows a refusal when picking a Saved Secret would duplicate a variable name', async () => {
     const { screen, onChangeEntries } = await mount({ API_KEY: { t: 'literal', v: '${API_KEY}' } });
     await act(async () => { screen.pressByTestId('env.add'); });
@@ -67,8 +95,9 @@ describe('ValueRefRowsEditor', () => {
     const { Modal } = await import('@/modal');
     const picker = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
     if (!picker || !('props' in picker)) throw new Error('Expected secret picker');
-    const select = (picker.props as { onSelectId: (id: string) => void }).onSelectId;
-    await act(async () => { select('happier:shared-secret:v1:secret-a'); });
+    const presented = picker.props as { request: { service: { kind: string } }; onResult: (result: { kind: 'selected'; secretRef: string }) => void };
+    expect(presented.request.service.kind).toBe('key');
+    await act(async () => { presented.onResult({ kind: 'selected', secretRef: 'happier:shared-secret:v1:secret-a' }); });
     expect(onChangeEntries).not.toHaveBeenCalled();
     expect(screen.findAllByTestId('env.row.new.error').some(node => node.props.children === 'capabilities.valueRows.duplicateName')).toBe(true);
   });
@@ -80,7 +109,9 @@ describe('ValueRefRowsEditor', () => {
     });
     expect(onChangeEntries).not.toHaveBeenCalled();
 
-    await type(screen, 'env.row.1.value', 'require');
+    await act(async () => { input(screen, 'env.row.1.value').props.onChangeText('require'); });
+    expect(onChangeEntries).not.toHaveBeenCalled();
+    await act(async () => { input(screen, 'env.row.1.value').props.onBlur(); });
     expect(onChangeEntries).toHaveBeenCalledTimes(1);
     expect(onChangeEntries).toHaveBeenLastCalledWith({
       DATABASE_URL: kept,
@@ -119,7 +150,6 @@ describe('ValueRefRowsEditor', () => {
     });
   });
   it('says what a declared input is under its one name, never repeating the name in a second line', async () => {
-    const { ValueRefRowsEditor } = await import('./ValueRefRowsEditor');
     const screen = await renderScreen(
       <ValueRefRowsEditor
         kind="env"

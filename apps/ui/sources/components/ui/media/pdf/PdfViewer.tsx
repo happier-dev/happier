@@ -172,6 +172,8 @@ function PdfViewerDocument(props: PdfViewerProps & Readonly<{
           current ? { ...current, page: message.page } : current,
         );
         setPillTick((value) => value + 1);
+      } else if (message.type === 'zoom') {
+        latest.current.onZoomChange(message.zoom);
       } else if (message.type === 'location') {
         latest.current.onPositionChange?.({
           page: message.page,

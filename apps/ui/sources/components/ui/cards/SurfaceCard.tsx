@@ -128,7 +128,7 @@ export const SurfaceCard = React.memo(function SurfaceCard(props: SurfaceCardPro
     const page = useListPresentation() === 'page';
     const { theme } = useUnistyles();
     const renderMaterialSurface = React.useCallback<HappierMaterialSurfaceRender>((input) =>
-        <GlassSurface surfaceGroup={input.role} nested enabled={tone !== 'flat'} finishRole={tone === 'flat' ? null : 'card'} gradient={input.gradient} style={input.style as StyleProp<ViewStyle>}>
+        <GlassSurface surfaceGroup={input.role} noCoat={input.noCoat} nested enabled={tone !== 'flat'} finishRole={tone === 'flat' ? null : 'card'} gradient={input.gradient} style={input.style as StyleProp<ViewStyle>}>
             {input.children}
         </GlassSurface>, [tone]);
     const cardStyle: StyleProp<ViewStyle> = [

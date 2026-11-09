@@ -112,6 +112,30 @@ describe('Popover web portal interaction readiness', () => {
         }
     });
 
+    it('moves focus in when a press takes over an open hover preview, and not before', async () => {
+        const { Popover } = await import('./Popover');
+        const trigger = document.createElement('button');
+        const container = document.createElement('div');
+        document.body.append(trigger, container);
+        const root = createRoot(container);
+        const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(rect(100, 100, 180, 40));
+        const render = (pressed: boolean) => <Popover open anchorRef={{ current: trigger }} autoFocusOnOpen={pressed}
+            backdrop={false} portal={{ web: true }}>
+            {() => <button data-testid="preview-option">Option</button>}
+        </Popover>;
+        try {
+            trigger.focus();
+            await act(async () => { root.render(render(false)); });
+            expect(document.activeElement).toBe(trigger);
+            await act(async () => { root.render(render(true)); });
+            expect(document.activeElement).toBe(document.querySelector('[data-testid="preview-option"]'));
+        } finally {
+            await act(async () => root.unmount());
+            measure.mockRestore();
+            container.remove(); trigger.remove();
+        }
+    });
+
     it('cancels cold opening focus when the external search receives input immediately after commit', async () => {
         const { Popover } = await import('./Popover');
         const search = document.createElement('input');

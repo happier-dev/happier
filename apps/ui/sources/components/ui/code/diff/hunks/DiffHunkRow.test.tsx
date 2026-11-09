@@ -10,6 +10,7 @@ import type { DiffHunkInfo, DiffViewerHunks } from '../diffViewerTypes';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { PluginSurfaceFocusEligibilityProvider, useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { fixedDiffHunkNumbering } from './diffHunkNumbering';
 
 const viewport = vi.hoisted(() => ({
   value: { width: 1200, height: 800, scale: 1, fontScale: 1 },
@@ -78,7 +79,7 @@ describe('DiffHunkRow on the shared hunk contract', () => {
       `@@ -${index * 3 + 1},3 +${index * 3 + 1},3 @@\n context ${index}\n-before ${index}\n+after ${index}\n tail ${index}\n`).join('');
     let hunkStateReads = 0;
     let positionRenders = 0;
-    const hiddenCommitListeners: number[] = [];
+    let hiddenCommits = 0;
     let backgroundResults = 0;
     let publishBackgroundResult!: () => void;
     let initializations = 0;
@@ -86,7 +87,7 @@ describe('DiffHunkRow on the shared hunk contract', () => {
       const deviceType = useDeviceType();
       const presented = useLayoutPresentationActive();
       React.useLayoutEffect(() => {
-        if (!presented) hiddenCommitListeners.push(viewport.listeners.size);
+        if (!presented) hiddenCommits += 1;
       }, [presented]);
       positionRenders += 1;
       const [position, setPosition] = React.useState(() => { initializations += 1; return { draft: '', scrollY: 0 }; });
@@ -118,7 +119,9 @@ describe('DiffHunkRow on the shared hunk contract', () => {
     });
     expect(screen.findByTestId('diff-hunk-keep-0')).toBeTruthy();
     await screen.update(panel(false));
-    expect(hiddenCommitListeners).toEqual([0]);
+    // The hiding commit withdraws every Dimensions listener (the presentation owner's layout effect ends it).
+    expect(hiddenCommits).toBe(1);
+    expect(viewport.listeners.size).toBe(0);
     hunkStateReads = 0;
     for (let index = 0; index < 20; index += 1) {
       await act(async () => {
@@ -152,8 +155,7 @@ describe('DiffHunkRow on the shared hunk contract', () => {
     const discard = vi.fn<(hunk: DiffHunkInfo) => void>();
     const screen = await render({
       currentIndex: 1,
-      numberOffset: 2,
-      numberTotal: 7,
+      numbering: fixedDiffHunkNumbering(2, 7),
       stateOf: (hunk) => (hunk.index === 0 ? 'kept' : 'open'),
       actions: { keep, discard },
       disabledReason: (_hunk, action) =>

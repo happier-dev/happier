@@ -3,6 +3,8 @@ import * as React from 'react';
 type LazyMountOnScreenProps = Readonly<{
     children: React.ReactNode;
     initiallyVisible?: boolean;
+    /** Decorative previews release their renderers when clipped; ordinary content stays mounted. */
+    unmountWhenHidden?: boolean;
     placeholder?: React.ReactNode;
     rootMargin?: string;
     style?: React.CSSProperties;
@@ -25,16 +27,15 @@ export function LazyMountOnScreen(props: LazyMountOnScreenProps) {
     const ref = React.useRef<HTMLDivElement | null>(null);
 
     React.useEffect(() => {
-        if (props.initiallyVisible === true && !visible) {
+        if (props.initiallyVisible === true && !props.unmountWhenHidden) {
             setVisible(true);
             return;
         }
-        if (visible) return;
         if (typeof window === 'undefined' || typeof document === 'undefined') {
             setVisible(true);
             return;
         }
-        const IO: any = (globalThis as any).IntersectionObserver;
+        const IO = globalThis.IntersectionObserver;
         if (typeof IO !== 'function') {
             setVisible(true);
             return;
@@ -47,10 +48,12 @@ export function LazyMountOnScreen(props: LazyMountOnScreenProps) {
         }
 
         let done = false;
-        const observer = new IO((entries: any[]) => {
+        const observer = new IO((entries) => {
             if (done) return;
             const entry = entries?.[0];
-            if (entry?.isIntersecting) {
+            if (props.unmountWhenHidden) {
+                if (entry) setVisible(entry.isIntersecting);
+            } else if (entry?.isIntersecting) {
                 done = true;
                 setVisible(true);
                 try {
@@ -72,13 +75,14 @@ export function LazyMountOnScreen(props: LazyMountOnScreenProps) {
         }
 
         return () => {
+            done = true;
             try {
                 observer.disconnect();
             } catch {
                 // ignore
             }
         };
-    }, [props.initiallyVisible, props.rootMargin, visible]);
+    }, [props.initiallyVisible, props.rootMargin, props.unmountWhenHidden]);
 
     return (
         <div ref={ref} style={props.style}>

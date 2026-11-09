@@ -170,7 +170,9 @@ export function PopoverPortalTargetProvider(props: { children: React.ReactNode }
                     // Required on native: Popover measures the portal root to derive anchor-relative coordinates.
                     // Collapsable views can be optimized away, producing invalid measurements (e.g. y=0 in contained modals).
                     collapsable={false}
-                    style={[{ flex: 1 }, rootPointerEvents.webStyle]}
+                    // Keep intrinsic picker content in the basis; flex: 1 collapses this
+                    // scope to zero height inside a max-height-only native sheet.
+                    style={[{ flexGrow: 1, flexShrink: 1 }, rootPointerEvents.webStyle]}
                     pointerEvents={rootPointerEvents.nativePointerEvents}
                     onLayout={(e) => {
                         const next = e?.nativeEvent?.layout;

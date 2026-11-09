@@ -28,10 +28,12 @@ import { createUiSurfaceMountIdentity } from '@/components/plugins/hostApi/creat
 import { useHostedFrameLifecycle } from '@/components/ui/surfaces/framed/useHostedFrameLifecycle';
 import {
     createPluginSurfaceContext,
+    getPluginSurfaceTargetMountKey,
     usePluginSurfaceEnvironment,
 } from '@/components/plugins/surfaces/pluginSurfaceContext';
 import { resolveLocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/platform';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
+import { useLayoutPresentationActive, usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import {
     prepareCallerHostedHtmlSurface,
@@ -67,7 +69,7 @@ export type CallerHostedHtmlRuntime = Readonly<{
     admittedHostMethods: readonly PluginUiHostMethodV1[];
     createRequestController: (
         publishResourceEvent: (event: PluginUiResourceSubscriptionEventV1) => void,
-        mount?: Readonly<{ mountInstanceKey: string; input?: PluginUiLaunchInputV1 }>,
+        mount?: Readonly<{ mountInstanceKey: string; input?: PluginUiLaunchInputV1; target?: PluginSurfaceTarget }>,
     ) => SessionCallerHostedHtmlRequestController;
     lifetime: Readonly<{
         isCurrent: () => boolean;
@@ -93,15 +95,23 @@ export function HostedHtmlSurfaceAdapter(props: Readonly<{
     onIntrinsicHeightChange?: (height: number) => void;
     testID: string;
 }>): React.ReactElement | null {
+    const presentationActive = useLayoutPresentationActive();
+    const focusEligible = usePluginSurfaceFocusEligibility();
+    const activityRef = React.useRef({ active: presentationActive });
+    activityRef.current = { active: presentationActive };
     const launchInputKey = stableJsonStringify(props.input);
     // Launch input belongs to the physical mount. Equivalent parent snapshots must
     // not dispose its request controller or disconnect the still-running frame.
     const launchInput = React.useMemo(() => props.input, [launchInputKey]);
+    const targetKey = stableJsonStringify(props.target);
+    // This transport boundary retains an equal accepted disclosure separately
+    // from physical identity, so Resource updates never replace the document.
+    const target = React.useMemo(() => props.target, [targetKey]);
     const logicalMountKey = stableJsonStringify({
         serverIdentityId: props.runtime.serverIdentityId,
         accountId: props.runtime.accountId,
         sessionId: props.sessionId,
-        target: props.target,
+        target: getPluginSurfaceTargetMountKey(target),
         accountEncryptionMode: props.runtime.accountEncryptionMode,
         approvalSubject: props.approvalSubject,
         recordRevision: props.recordRevision,
@@ -117,8 +127,6 @@ export function HostedHtmlSurfaceAdapter(props: Readonly<{
     const bridgeRef = React.useRef<ReturnType<typeof createCallerHostedHtmlHostApiBridgeHandler> | null>(null);
     const lifecycle = useHostedFrameLifecycle({
         lifetimeKey: logicalMountKey,
-        readyRequired: true,
-        onReadyTimeout: () => { bridgeRef.current?.recordReadyTimeout(); },
         onRetireAttempt: () => {
             frameSink.current = null;
             bridgeRef.current?.dispose();
@@ -128,8 +136,8 @@ export function HostedHtmlSurfaceAdapter(props: Readonly<{
         lifetime: props.runtime.lifetime,
         mountKey: `${logicalMountKey}\u001f${lifecycle.attempt}`,
         instanceId: logicalInstanceId,
-        interactionEnabled: true,
-        focusEligible: true,
+        interactionEnabled: presentationActive,
+        focusEligible,
     });
     const frameIdentity = mount.identity;
     const [frameUnavailable, setFrameUnavailable] = React.useState<HostedInlineDocumentFrameUnavailableCode | null>(null);
@@ -143,19 +151,17 @@ export function HostedHtmlSurfaceAdapter(props: Readonly<{
         }
         setFrameUnavailable(code);
     }, [lifecycle.fail]);
+    const admittedHostMethodsKey = stableJsonStringify(props.runtime.admittedHostMethods);
+    // Record projections can allocate equal JSON again on presentation updates. Admission follows
+    // the same canonical source/policy identity as the physical mount, not those object references;
+    // otherwise a still-current frame briefly becomes loading and loses its document.
     const preparation = React.useMemo(() => frameIdentity === null
         ? null
         : {
-            serverIdentityId: props.runtime.serverIdentityId,
-            accountId: props.runtime.accountId,
-            approvalSubject: props.approvalSubject,
             source: props.source,
             requestedCapabilities: props.requestedCapabilities,
             admittedHostMethods: props.runtime.admittedHostMethods,
-            frameIdentity,
-            hostOrigin: props.runtime.hostOrigin,
-        }, [frameIdentity, props.approvalSubject, props.requestedCapabilities, props.runtime.accountId,
-        props.runtime.admittedHostMethods, props.runtime.hostOrigin, props.runtime.serverIdentityId, props.source]);
+        }, [frameIdentity, logicalMountKey, admittedHostMethodsKey, props.runtime.hostOrigin]);
     const [preparedResult, setPreparedResult] = React.useState<Readonly<{
         input: NonNullable<typeof preparation>;
         value: PreparedCallerHostedHtmlSurface;
@@ -171,22 +177,31 @@ export function HostedHtmlSurfaceAdapter(props: Readonly<{
         return () => { current = false; };
     }, [preparation, mount.isCurrent]);
     const prepared = preparedResult?.input === preparation ? preparedResult.value : null;
+    const reportHeight = React.useRef(props.onIntrinsicHeightChange);
+    reportHeight.current = props.onIntrinsicHeightChange;
     const heightReporter = React.useMemo(() => createHostedFrameIntrinsicHeightReporter({
-        publish: (height) => props.onIntrinsicHeightChange?.(height),
+        publish: (height) => reportHeight.current?.(height),
         scheduleFrame: (callback) => requestAnimationFrame(callback),
         cancelFrame: (handle) => cancelAnimationFrame(handle),
-    }), [mount.identity, props.onIntrinsicHeightChange]);
+    }), [mount.identity]);
     React.useLayoutEffect(() => () => heightReporter.dispose(), [heightReporter]);
+    React.useLayoutEffect(() => {
+        // The physical document can outlive its presenter. A replacement needs
+        // its published room even when the guest's dimensions have not changed.
+        const height = heightReporter.readPublishedHeight();
+        if (height !== null && mount.isCurrent()) props.onIntrinsicHeightChange?.(height);
+    }, [heightReporter, mount.isCurrent, props.onIntrinsicHeightChange]);
     const createRequestController = props.runtime.createRequestController;
     const requestController = React.useMemo(
         () => frameIdentity === null
             ? null
             : createRequestController(
                 (event) => { bridgeRef.current?.publishResourceSubscriptionEvent(event); },
-                { mountInstanceKey: frameIdentity.instanceId, input: launchInput },
+                { mountInstanceKey: frameIdentity.instanceId, input: launchInput, target },
             ),
         [createRequestController, frameIdentity, launchInput],
     );
+    React.useLayoutEffect(() => { requestController?.updateSurfaceTarget?.(target); }, [requestController, target]);
     const authorizeRequest = React.useCallback((request: CallerHostedHtmlHostApiRequest): boolean => {
         if (prepared?.kind !== 'admitted') return false;
         if (request.method !== 'readResource'
@@ -212,13 +227,13 @@ export function HostedHtmlSurfaceAdapter(props: Readonly<{
         prepared?.kind === 'admitted'
             ? createPluginSurfaceContext({
                 mount: CALLER_MOUNT,
-                target: props.target,
+                target,
                 accountEncryptionMode: props.runtime.accountEncryptionMode,
                 environment,
                 translations: CALLER_TRANSLATIONS,
             })
             : null
-    ), [environment, prepared, props.target, props.runtime.accountEncryptionMode]);
+    ), [environment, prepared, target, props.runtime.accountEncryptionMode]);
     // Read at bridge construction so the first negotiation already carries the current
     // environment (before reveal); later changes are pushed, never a new bridge.
     const surfaceSnapshotRef = React.useRef(surfaceSnapshot);
@@ -239,7 +254,7 @@ export function HostedHtmlSurfaceAdapter(props: Readonly<{
                 identity: frameIdentity,
                 surface: surfaceSnapshotRef.current,
                 methods: prepared.advertisedHostMethods,
-                activity: { active: true },
+                activity: activityRef.current,
             },
             readInstalledMethods: () => prepared.advertisedHostMethods,
             postToFrame: (message) => frameSink.current?.(message),
@@ -268,8 +283,8 @@ export function HostedHtmlSurfaceAdapter(props: Readonly<{
         // The whole surface snapshot, exactly as the bridge was constructed with it: this is the
         // mount's context producer, and `pushSurfaceContext` republishes nothing when the
         // snapshot is semantically identical.
-        if (surfaceSnapshot !== null) bridge?.pushSurfaceContext(surfaceSnapshot);
-    }, [bridge, surfaceSnapshot]);
+        if (surfaceSnapshot !== null) bridge?.pushSurfaceContext(surfaceSnapshot, { active: presentationActive });
+    }, [bridge, surfaceSnapshot, presentationActive]);
     React.useEffect(() => () => requestController?.dispose(), [requestController]);
     if (frameIdentity === null) {
         return (

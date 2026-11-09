@@ -60,6 +60,7 @@ import { CodeMirrorWebViewSurface } from './CodeMirrorWebViewSurface.native';
 import { renderScreen } from '@/dev/testkit';
 import type { CodeEditorHandle } from '../codeEditorTypes';
 import { KeyboardShortcutProvider } from '@/keyboard/KeyboardShortcutProvider';
+import { createEditorDocumentHistory } from '../editorDocumentHistory';
 
 
 function emitEnvelope(envelope: any) {
@@ -102,6 +103,184 @@ function findPostedInitPayload(callStartIndex: number): any {
 }
 
 describe('CodeMirrorWebViewSurface (native)', () => {
+    it('publishes compact text changes before context and authorizes only the current explicit ghost acceptance', async () => {
+        postMessageSpy.mockClear();
+        const ref = React.createRef<CodeEditorHandle>();
+        const screen = await renderScreen(<CodeMirrorWebViewSurface ref={ref} resetKey="inline-bridge" value="a" language="text" onChange={vi.fn()} />);
+        let stopContext = () => {};
+        try {
+            emitEnvelope({ v: 1, type: 'ready', payload: {} });
+            const observed: string[] = [];
+            stopContext = ref.current!.inlineSuggestions!.subscribeContext(() => { observed.push(ref.current!.getValue()); });
+            const context = { line: 1, character: 2, offset: 2, version: 2, eol: '\r\n', selectionCount: 1,
+                hasSelection: false, composing: false, suggestWidgetOpen: false };
+            const suggestion = { id: 'one', text: 'tail', line: 1, character: 2 };
+            emitEnvelope({ v: 1, type: 'inline.context', payload: { context, suggestion, changes: [{ from: 1, to: 1, insert: 'b' }] } });
+            expect(observed).toEqual(['ab']);
+            const snapshot = ref.current!.inlineSuggestions!.getSuggestion();
+            emitEnvelope({ v: 1, type: 'inline.context', payload: { context, suggestion, changes: [] } });
+            expect(ref.current!.inlineSuggestions!.getSuggestion()).toBe(snapshot);
+            const request = { id: 'one', version: 2, partial: false };
+            const acceptMessages = () => postMessageSpy.mock.calls.map(([raw]) => JSON.parse(raw)).filter(message => message.type === 'inline.accept');
+            emitEnvelope({ v: 1, type: 'inline.acceptRequested', payload: request });
+            expect(acceptMessages()).toEqual([]);
+            ref.current!.inlineSuggestions!.setAcceptGuard(() => true);
+            emitEnvelope({ v: 1, type: 'inline.acceptRequested', payload: { ...request, version: 1 } });
+            expect(acceptMessages()).toEqual([]);
+            emitEnvelope({ v: 1, type: 'inline.acceptRequested', payload: request });
+            expect(acceptMessages()).toEqual([{ v: 1, type: 'inline.accept', payload: request }]);
+        } finally { stopContext(); await screen.unmount(); }
+    });
+    it('records pending typing and an explicit shared insert as separate undo steps', async () => {
+        postMessageSpy.mockClear();
+        const history = createEditorDocumentHistory();
+        let value = 'seed';
+        const onChange = (next: string) => { history.record(value, next); value = next; };
+        const ref = React.createRef<CodeEditorHandle>();
+        await renderScreen(<CodeMirrorWebViewSurface ref={ref} resetKey="insert-history" value={value} language="text" onChange={onChange} history={history} />);
+        emitEnvelope({ v: 1, type: 'ready', payload: {} });
+        const start = postMessageSpy.mock.calls.length;
+        await act(async () => { ref.current!.runCommand({ insert: '!' }); });
+        const beforeId = readRequestDocRequestIdFromPostedMessages(start);
+        const afterStart = postMessageSpy.mock.calls.length;
+        await act(async () => { emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId: beforeId, doc: 'seed typed' } }); });
+        const afterId = readRequestDocRequestIdFromPostedMessages(afterStart);
+        await act(async () => { emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId: afterId, doc: 'seed typed!' } }); });
+        expect(history.undo(value)).toBe('seed typed');
+        expect(history.undo('seed typed')).toBe('seed');
+    });
+    it('does not consume shared Undo when the WebView never confirms its current document', async () => {
+        vi.useFakeTimers();
+        try {
+            const history = createEditorDocumentHistory();
+            history.record('before', 'after');
+            const ref = React.createRef<CodeEditorHandle>();
+            await renderScreen(<CodeMirrorWebViewSurface ref={ref} resetKey="unconfirmed-history" value="after" language="text" onChange={vi.fn()} history={history} />);
+            emitEnvelope({ v: 1, type: 'ready', payload: {} });
+            const pendingStart = postMessageSpy.mock.calls.length;
+            await act(async () => { ref.current!.runCommand('undo'); });
+            const expiredRequestId = readRequestDocRequestIdFromPostedMessages(pendingStart);
+            await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+            expect(ref.current!.getValue()).toBe('after');
+            expect(history.getSnapshot()).toEqual({ canUndo: true, canRedo: false });
+            const failure = ref.current!.flushPendingChange().then(() => false, () => true);
+            await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+            expect(await failure).toBe(true);
+            emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId: expiredRequestId, doc: 'stale draft' } });
+            expect(ref.current!.getValue()).toBe('after');
+            const recoveryStart = postMessageSpy.mock.calls.length;
+            const recovery = ref.current!.flushPendingChange();
+            const recoveryId = readRequestDocRequestIdFromPostedMessages(recoveryStart);
+            emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId: recoveryId, doc: 'after' } });
+            await recovery;
+        } finally { vi.useRealTimers(); }
+    });
+    it('drops a cancelled live draft when resetKey changes back to the unchanged original seed', async () => {
+        postMessageSpy.mockClear();
+        const ref = React.createRef<CodeEditorHandle>();
+        const onChange = vi.fn();
+        const screen = await renderScreen(<CodeMirrorWebViewSurface ref={ref} resetKey="edit" value="original" language="text" onChange={onChange} />);
+        emitEnvelope({ v: 1, type: 'ready', payload: {} });
+        emitEnvelope({ v: 1, type: 'docChanged', payload: { doc: 'cancelled draft' } });
+        emitEnvelope({ v: 1, type: 'inline.context', payload: { context: { line: 1, character: 15, offset: 15,
+            version: 1, eol: '\n', selectionCount: 1, hasSelection: false, composing: false, suggestWidgetOpen: false },
+            changes: [], suggestion: { id: 'cancelled-ghost', text: ' tail', line: 1, character: 15 } } });
+        ref.current!.inlineSuggestions!.setAcceptGuard(() => true);
+        expect(ref.current!.getValue()).toBe('cancelled draft');
+        const pendingStart = postMessageSpy.mock.calls.length;
+        const cancelledFlush = ref.current!.flushPendingChange().then(() => null, error => error);
+        const cancelledRequestId = readRequestDocRequestIdFromPostedMessages(pendingStart);
+        await screen.update(<CodeMirrorWebViewSurface ref={ref} resetKey="cancelled" value="original" language="text" onChange={onChange} />);
+        expect(await cancelledFlush).toBeInstanceOf(Error);
+        const beforeStaleAccept = postMessageSpy.mock.calls.length;
+        emitEnvelope({ v: 1, type: 'inline.acceptRequested', payload: { id: 'cancelled-ghost', version: 1, partial: false } });
+        expect(postMessageSpy.mock.calls.slice(beforeStaleAccept).map(([raw]) => JSON.parse(raw).type)).not.toContain('inline.accept');
+        expect(ref.current!.inlineSuggestions!.getSuggestion()).toBeNull();
+        emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId: cancelledRequestId, doc: 'cancelled draft' } });
+        expect(ref.current!.getValue()).toBe('original');
+        const start = postMessageSpy.mock.calls.length;
+        emitEnvelope({ v: 1, type: 'ready', payload: {} });
+        expect(findPostedInitPayload(start)?.doc).toBe('original');
+        let flushed = false;
+        const flush = ref.current!.flushPendingChange().then(() => { flushed = true; });
+        const requestId = readRequestDocRequestIdFromPostedMessages(start);
+        emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId, doc: 'original' } });
+        await flush;
+        expect(flushed).toBe(true);
+        expect(ref.current!.getValue()).toBe('original');
+    });
+    it('rejects an unmounted flush and ignores its late document acknowledgement', async () => {
+        const ref = React.createRef<CodeEditorHandle>();
+        const onChange = vi.fn();
+        const screen = await renderScreen(<CodeMirrorWebViewSurface ref={ref} resetKey="unmount-flush" value="seed" language="text" onChange={onChange} />);
+        emitEnvelope({ v: 1, type: 'ready', payload: {} });
+        const handle = ref.current!;
+        const pendingStart = postMessageSpy.mock.calls.length;
+        const outcome = handle.flushPendingChange().then(() => null, error => error);
+        const requestId = readRequestDocRequestIdFromPostedMessages(pendingStart);
+        const deliverLate = lastWebViewProps.onMessage;
+        await screen.unmount();
+        expect(await outcome).toBeInstanceOf(Error);
+        deliverLate({ nativeEvent: { data: JSON.stringify({ v: 1, type: 'docSnapshot', payload: { requestId, doc: 'late draft' } }) } });
+        expect(handle.getValue()).toBe('seed');
+        expect(onChange).not.toHaveBeenCalled();
+    });
+    it('waits for a queued shared edit before confirming a public flush', async () => {
+        const history = createEditorDocumentHistory();
+        let value = 'seed';
+        const onChange = (next: string) => { history.record(value, next); value = next; };
+        const ref = React.createRef<CodeEditorHandle>();
+        const screen = await renderScreen(<CodeMirrorWebViewSurface ref={ref} resetKey="queued-flush" value={value} language="text" onChange={onChange} history={history} />);
+        try {
+            emitEnvelope({ v: 1, type: 'ready', payload: {} });
+            let settled = false;
+            let start = postMessageSpy.mock.calls.length;
+            let flush!: Promise<void>;
+            await act(async () => {
+                ref.current!.runCommand({ insert: '!' });
+                flush = ref.current!.flushPendingChange().then(() => { settled = true; });
+            });
+            let requestId = readRequestDocRequestIdFromPostedMessages(start);
+            start = postMessageSpy.mock.calls.length;
+            await act(async () => { emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId, doc: 'seed typed' } }); });
+            expect(settled).toBe(false);
+            requestId = readRequestDocRequestIdFromPostedMessages(start);
+            start = postMessageSpy.mock.calls.length;
+            await act(async () => { emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId, doc: 'seed typed!' } }); });
+            expect(settled).toBe(false);
+            requestId = readRequestDocRequestIdFromPostedMessages(start);
+            await act(async () => { emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId, doc: 'seed typed!' } }); await flush; });
+            expect(settled).toBe(true);
+            expect(ref.current!.getValue()).toBe('seed typed!');
+            expect(history.undo(value)).toBe('seed typed');
+            expect(history.undo('seed typed')).toBe('seed');
+        } finally { await screen.unmount(); }
+    });
+    it('flushes the current document before shared Undo and emits tagged replacement bytes', async () => {
+        postMessageSpy.mockClear();
+        const ref = React.createRef<CodeEditorHandle>();
+        const history = createEditorDocumentHistory();
+        history.record('original', 'draft');
+        let value = 'draft';
+        const onChange = vi.fn((next: string, change?: { history: 'undo' | 'redo' }) => {
+            if (!change) history.record(value, next);
+            value = next;
+        });
+        await renderScreen(<CodeMirrorWebViewSurface ref={ref} resetKey="shared-history" value="draft" language="text" onChange={onChange} history={history} />);
+        emitEnvelope({ v: 1, type: 'ready', payload: {} });
+        const state = vi.fn();
+        ref.current!.subscribeHistory(state);
+        expect(state).toHaveBeenLastCalledWith({ canUndo: true, canRedo: false });
+        const start = postMessageSpy.mock.calls.length;
+        await act(async () => { ref.current!.runCommand('undo'); });
+        expect(ref.current!.getValue()).toBe('draft');
+        const requestId = readRequestDocRequestIdFromPostedMessages(start);
+        await act(async () => { emitEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId, doc: 'unflushed draft' } }); });
+        expect(ref.current!.getValue()).toBe('draft');
+        expect(onChange).toHaveBeenLastCalledWith('draft', { history: 'undo' });
+        const commands = postMessageSpy.mock.calls.map(([raw]) => JSON.parse(String(raw))).filter(message => message.type === 'command');
+        expect(commands.at(-1)?.payload.command).toEqual({ replaceDocument: 'draft', history: 'undo' });
+    });
     it('forwards the configured editor save chord through the canonical host dispatcher', async () => {
         postMessageSpy.mockClear();
         const save = vi.fn();

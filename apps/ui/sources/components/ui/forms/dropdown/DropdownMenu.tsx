@@ -221,6 +221,9 @@ export type DropdownMenuProps = Readonly<{
      * Useful for context menus that open from right-click/long-press on a row.
      */
     popoverAnchorRef?: React.RefObject<any> | null;
+    /** A public trigger can own its focus target independently of the measurable anchor. */
+    popoverFocusReturnRef?: React.RefObject<unknown>;
+    popoverFollowScrollRef?: React.RefObject<unknown>;
     /**
      * Optional measured anchor supplied directly to Popover. Rect anchors are useful for menus
      * opened from a press inside a much larger or partially clipped trigger.
@@ -237,6 +240,8 @@ export type DropdownMenuProps = Readonly<{
     popoverAccessibilityLabel?: string;
     /** The phone sheet's line under its title. */
     popoverSheetSubtitle?: string;
+    /** The existing phone-sheet owner pins this below its scrolling menu rows. */
+    popoverSheetFooter?: React.ReactNode;
     /** See `Popover.sheetHeader`. */
     popoverSheetHeader?: 'band' | 'none';
     overlayStyle?: ViewStyle;
@@ -843,6 +848,8 @@ export function DropdownMenu(props: DropdownMenuProps) {
                 <Popover
                     open={props.open}
                     anchorRef={resolvedAnchorRef}
+                    focusReturnRef={props.popoverFocusReturnRef}
+                    followScrollRef={props.popoverFollowScrollRef}
                     anchor={props.popoverAnchor}
                     autoFocusOnOpen
                     placement={requestedPlacement}
@@ -860,6 +867,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     }}
                     boundaryRef={props.popoverBoundaryRef}
                     phonePresentation={phonePresentation}
+                    sheetFooter={props.popoverSheetFooter}
                     accessibilityLabel={props.popoverAccessibilityLabel}
                     sheetSubtitle={props.popoverSheetSubtitle}
                     sheetHeader={props.popoverSheetHeader}

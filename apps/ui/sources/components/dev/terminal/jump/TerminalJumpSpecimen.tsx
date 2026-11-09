@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { SessionTerminalMemberV1, SessionTerminalTabV1 } from '@happier-dev/protocol';
+import type { SessionTerminalMemberV1, SessionTerminalTabV1 } from '@happier-dev/protocol/terminal/workspace';
 
 import { Modal } from '@/modal';
 import { buildCommandSurfaceCardChrome, COMMAND_SURFACE_WEB_PLACEMENT } from '@/modal/components/card/commandSurfaceCard';
@@ -41,17 +41,17 @@ const CONTEXT: SessionTerminalDescribeContext = {
 const MEMBERS: Readonly<Record<string, SessionTerminalMemberV1>> = {
     claude: { id: 'claude', target: { kind: 'session_attach' } },
     zsh: { id: 'zsh', target: { kind: 'workspace_shell' } },
-    vite: { id: 'vite', target: { kind: 'workspace_shell', initialCommand: 'yarn workspace @happier-dev/ui dev' } },
-    storybook: { id: 'storybook', target: { kind: 'workspace_shell', initialCommand: 'yarn storybook' } },
+    vite: { id: 'vite', target: { kind: 'workspace_shell', launch: { kind: 'package_script', runTargetId: 'vite:dev' } } },
+    storybook: { id: 'storybook', target: { kind: 'workspace_shell', launch: { kind: 'package_script', runTargetId: 'storybook:dev' } } },
     devbox: { id: 'devbox', target: { kind: 'machine_shell', machineId: 'machine-devbox', cwd: '~/' } },
 };
 
 const SUMMARIES: Readonly<Record<string, TerminalSurfaceSummary>> = {
-    zsh: { title: 'zsh', bell: null, status: 'connected', error: null, url: null },
-    vite: { title: 'vite', bell: null, status: 'connected', error: null, url: 'http://localhost:5173/' },
-    storybook: { title: 'storybook', bell: null, status: 'connected', error: null, url: 'http://localhost:6006/' },
-    'key-craft-vite': { title: 'vite', bell: null, status: 'connected', error: null, url: 'http://localhost:5174/' },
-    'key-review-test': { title: 'test', bell: null, status: 'exited', error: null, url: null },
+    zsh: { title: 'zsh', bell: null, status: 'connected', error: null, failure: null, url: null },
+    vite: { title: 'vite', bell: null, status: 'connected', error: null, failure: null, url: 'http://localhost:5173/' },
+    storybook: { title: 'storybook', bell: null, status: 'connected', error: null, failure: null, url: 'http://localhost:6006/' },
+    'key-craft-vite': { title: 'vite', bell: null, status: 'connected', error: null, failure: null, url: 'http://localhost:5174/' },
+    'key-review-test': { title: 'test', bell: null, status: 'exited', error: null, failure: null, url: null },
 };
 
 function layoutTab(id: string, members: readonly string[]): SessionTerminalTabV1 {

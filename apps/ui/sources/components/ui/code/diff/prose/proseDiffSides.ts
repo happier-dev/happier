@@ -47,3 +47,30 @@ export function buildProseDiffSides(lines: readonly CodeLine[]): ProseDiffSides 
   }
   return { old, new: next };
 }
+
+/** One line of the unified prose reading: unchanged, added or removed where it happens, or the gap between hunks. */
+export type ProseUnifiedLine = Readonly<{
+  id: string;
+  kind: 'same' | 'added' | 'removed' | 'gap';
+  text: string;
+}>;
+
+/**
+ * The unified reading of the same canonical text-diff lines: one column in document order, each unchanged
+ * line once and each change marked in place (lab `b-work P`, an instructions edit read top to bottom).
+ */
+export function buildProseUnifiedLines(lines: readonly CodeLine[]): readonly ProseUnifiedLine[] {
+  const out: ProseUnifiedLine[] = [];
+  for (const line of lines) {
+    if (line.kind === 'header') {
+      if (out.length > 0) out.push({ id: line.id, kind: 'gap', text: '' });
+    } else if (line.kind === 'add') {
+      out.push({ id: line.id, kind: 'added', text: line.renderCodeText });
+    } else if (line.kind === 'remove') {
+      out.push({ id: line.id, kind: 'removed', text: line.renderCodeText });
+    } else if (line.kind === 'context') {
+      out.push({ id: line.id, kind: 'same', text: line.renderCodeText });
+    }
+  }
+  return out;
+}

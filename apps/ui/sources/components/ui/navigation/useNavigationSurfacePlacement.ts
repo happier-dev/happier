@@ -5,8 +5,6 @@ import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import {
     EMPTY_NAVIGATION_PLACEMENT_PREFERENCES,
     readNavigationPlacementPreferences,
-    navigationPlacementsFromLegacyPins,
-    navigationPreferencesFromLegacyAppDestinations,
     navigationPlacementPatch,
     resolveNavigationPlacementAddress,
     NavigationSurfacePlacementsV1Schema,
@@ -15,7 +13,7 @@ import {
     type NavigationSurfacePlacementsV1,
 } from '@/sync/domains/settings/mobileSurfacePinning';
 
-/** Every surface subscribes to device preferences; mounting only reads historical seeds. */
+/** Every surface subscribes to device preferences; mounting only reads the current owner. */
 export function useNavigationSurfacePlacement(address: NavigationPlacementAddress, enabled = true): Readonly<{
     preferences: NavigationPlacementPreferences;
 }> {
@@ -28,10 +26,7 @@ export function useNavigationSurfacePlacement(address: NavigationPlacementAddres
             : device === 'desktop' ? { pageKind: kind, device, section: section === 'companions' ? section : 'pages' }
                 : kind as Extract<NavigationPlacementAddress, string>), [kind, device, section, enabled]);
     const stored = useLocalSetting('navigationSurfacePlacementsV1', selector);
-    const legacyPhone = useLocalSetting('sessionCockpitBarSurfaceIds', value => enabled && kind === 'sessionTabBar' && !stored ? value : undefined);
-    const legacyApp = useLocalSetting('compactAppDestinationPreferencesV1', value => enabled && kind === 'appRail' && !stored ? value : undefined);
-    const preferences = React.useMemo(() => stored ?? (legacyPhone !== undefined ? navigationPlacementsFromLegacyPins(legacyPhone)
-        : legacyApp !== undefined ? navigationPreferencesFromLegacyAppDestinations(legacyApp) : EMPTY_NAVIGATION_PLACEMENT_PREFERENCES), [stored, legacyPhone, legacyApp]);
+    const preferences = stored ?? EMPTY_NAVIGATION_PLACEMENT_PREFERENCES;
     return { preferences };
 }
 

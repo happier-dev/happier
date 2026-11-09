@@ -2,8 +2,12 @@ import * as React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { installBrowserClipboardBoundary, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from './uiListsTestHelpers';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -100,10 +104,15 @@ const Clipboard = await import('expo-clipboard');
 const { Item } = await import('./Item');
 
 describe('Item (long press)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        await homes.reset();
+        const serverId = await homes.addHome({ name: 'Item copy', serverUrl: 'https://item-copy.test', accountId: 'copy-owner' });
+        await homes.setActionPolicy(serverId, 'clipboard.write', 'ui', 'allowed');
+        await homes.selectHomes([serverId]);
         platformState.os = 'web';
         modalAlertSpy.mockClear();
         vi.mocked(Clipboard.setStringAsync).mockClear();
+        installBrowserClipboardBoundary(async text => { await Clipboard.setStringAsync(text); });
     });
 
     it('suppresses onPress immediately after onLongPress', async () => {
@@ -148,7 +157,7 @@ describe('Item (long press)', () => {
         await invokeItemHandler(pressable, 'onLongPress');
         await invokeItemHandler(pressable, 'onPress', { nativeEvent: { detail: 1 } });
 
-        expect(Clipboard.setStringAsync).toHaveBeenCalledWith('/tmp/session.log');
+        await vi.waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenCalledWith('/tmp/session.log'));
         expect(modalAlertSpy).not.toHaveBeenCalledWith('common.copied', expect.anything());
         expect(screen.findByTestId('item-copy-feedback')).toBeTruthy();
     });

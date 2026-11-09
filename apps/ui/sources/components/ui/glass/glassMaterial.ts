@@ -45,17 +45,22 @@ export type GlassSurfaceResolution = Readonly<{
     reason: 'reduceTransparency' | 'inactiveWindow' | 'noBacking' | 'unsupported' | 'unavailable' | null;
 }>;
 
+function isWallpaperShellPlane(group: GlassSurfaceGroup, environment: GlassMaterialEnvironment): boolean {
+    return environment.atmosphereBehind === 'wallpaper' && (group === 'chrome' || group === 'sidebar');
+}
+
 /** Stored choices survive accessibility and window-focus overrides. Never fade foreground content. */
 export function resolveGlassSurfaceMaterial(settings: GlassMaterialSettings, group: GlassSurfaceGroup, environment: GlassMaterialEnvironment = {}): GlassSurfaceResolution {
     const requested = (environment.nativeRenderer === true ? readGlassMaterials(settings) : readGlassTintedMaterials(settings))[group];
-    // A shown Wallpaper lies under the title bar, rail and sidebar, so for them it is a backing like desktop glass
-    // (owner ruling 2026-10-23): their stored material applies. Solid stays opaque because its stored material is.
-    const overWallpaper = environment.atmosphereBehind === 'wallpaper' && (group === 'chrome' || group === 'sidebar');
+    // A shown background backs content; Wallpaper also backs the title bar, rail and sidebar (A2/A3).
+    // Their stored material applies even without live desktop glass. Solid's stored material stays opaque.
+    const atmosphereBacked = isWallpaperShellPlane(group, environment)
+        || (group === 'content' && (environment.atmosphereBehind === 'band' || environment.atmosphereBehind === 'wallpaper'));
     const reason: GlassSurfaceResolution['reason'] = environment.reduceTransparency ? 'reduceTransparency'
         : environment.windowActive === false ? 'inactiveWindow'
         : group === 'card' && environment.atmosphereBehind !== 'band' && environment.atmosphereBehind !== 'wallpaper'
             && resolveGlassSurfaceMaterial(settings, 'content', environment).material.opacity === 1 ? 'noBacking'
-        : overWallpaper ? null
+        : atmosphereBacked ? null
         : environment.desktopWindow !== true && ((group === 'content' && environment.atmosphereBehind !== 'band' && environment.atmosphereBehind !== 'wallpaper')
             || (group !== 'floating' && group !== 'card' && readGlassPreset(settings) === 'auto')) ? 'unsupported'
         : environment.desktopWindow === true && group !== 'floating' && group !== 'card' && environment.nativeWindowMaterialLive !== true ? 'unavailable'
@@ -239,15 +244,19 @@ function legibleCompression(compression: number, dark: boolean, tone: GlassAtmos
  * Custom, Solid, Reduce Transparency and unbacked surfaces return null and paint exactly as set.
  */
 export function resolveGlassBackdropMap(settings: GlassMaterialSettings, group: GlassSurfaceGroup, dark: boolean, environment: GlassMaterialEnvironment = {}, ground: GlassBackdropGround | null = null, panel: GlassFloatingCoat = false): GlassBackdropMap | null {
-    const wallpaperPlane = environment.atmosphereBehind === 'wallpaper' && (group === 'chrome' || group === 'sidebar');
+    const wallpaperPlane = isWallpaperShellPlane(group, environment);
     if ((group !== 'floating' && group !== 'card' && !wallpaperPlane) || readGlassPreset(settings) === 'custom') return null;
     const { opacity } = resolveGlassSurfaceMaterial(settings, group, environment).material;
     if (opacity === 1) return null;
     if (group === 'floating' || group === 'card') {
         const picture = environment.atmosphereBehind === 'band' || environment.atmosphereBehind === 'wallpaper';
         const tint = resolveGlassTintValues(settings.glassTintIntensity);
-        // A customized appearance over a live picture is the plain floating surface it would be anywhere else.
-        const coat = panel === 'livePicture' && !isDefaultGlassAppearance(settings) ? false : panel;
+        // Under the default glass, Strong's panel coat carries a floating surface over a live picture and,
+        // in light on web, over everything: what lies under a light menu or Share card is ink (a black button, text,
+        // field edges), and through the tint's hair its blur reads as a grey ghost on the white glass.
+        // A customized appearance is the plain floating surface it would be anywhere else.
+        const readable = isDefaultGlassAppearance(settings) && (panel === 'livePicture' || (group === 'floating' && !dark && environment.nativeRenderer !== true));
+        const coat: GlassFloatingCoat = readable ? 'livePicture' : panel === 'livePicture' ? false : panel;
         if (group === 'floating' && coat) {
             // The heavy coat carries the panel: the backdrop passes at most at 1 − α, never brightened.
             const alpha = coat === 'livePicture' ? Math.max(tint.panelCoat, GLASS_LIVE_PICTURE_PANEL_COAT) : tint.panelCoat;

@@ -56,11 +56,11 @@ function history(extra?: Partial<UserMessageHistoryEntriesSnapshot>): UserMessag
     return {
         entries: HISTORY_ENTRIES, coverage: 'partial', hasMore: true, isLoading: false, error: false,
         progress: { pagesLoaded: 1, sessionsSearched: 3, totalSessions: 14 },
-        loadMore: async () => {}, retry: async () => {}, stop: noop, ...extra,
+        loadMore: async () => history(extra), retry: async () => history(extra), stop: () => history(extra), ...extra,
     };
 }
 
-export type PromptsSpecimenState = 'picker' | 'nothingSaved' | 'noMatches' | 'olderLoading' | 'composer' | 'message' | 'save' | 'saveInPlace';
+export type PromptsSpecimenState = 'picker' | 'nothingSaved' | 'noMatches' | 'olderLoading' | 'libraryError' | 'libraryPartial' | 'previewError' | 'composer' | 'message' | 'save' | 'saveInPlace';
 
 /** One state per page so each screenshot frames exactly one open picker above its composer. */
 export function PromptsSpecimen(props: Readonly<{ state: PromptsSpecimenState; query?: string; touch?: boolean }>) {
@@ -68,7 +68,12 @@ export function PromptsSpecimen(props: Readonly<{ state: PromptsSpecimenState; q
     if (props.state === 'composer') return <ComposerAccessoriesSpecimen />;
     if (props.state === 'message') return <CommittedMessageSpecimen />;
     if (props.state === 'save') return <SaveFormSpecimen />;
-    const pickerLibrary = props.state === 'nothingSaved' ? library([]) : library(DOCUMENTS);
+    const pickerLibrary = props.state === 'nothingSaved' ? library([])
+        : props.state === 'libraryError' ? library([], { error: true, coverage: 'unavailable' })
+        : props.state === 'libraryPartial' ? library(DOCUMENTS.slice(0, 2), { coverage: 'partial' })
+        // The highlighted prompt's text cannot be read: the preview says so on the shared state line.
+        : props.state === 'previewError' ? library(DOCUMENTS, { read: async () => { throw new Error('Prompt read failed'); } })
+        : library(DOCUMENTS);
     const pickerHistory = props.state === 'olderLoading'
         ? history({ entries: HISTORY_ENTRIES.slice(0, 1), isLoading: true, progress: { pagesLoaded: 2, sessionsSearched: 5, totalSessions: 14 } })
         : history();
@@ -79,7 +84,7 @@ export function PromptsSpecimen(props: Readonly<{ state: PromptsSpecimenState; q
             </View>
             <PromptPickerViewWithQuery
                 key={props.state}
-                initialQuery={props.query ?? (props.state === 'noMatches' ? 'kubernetes' : props.state === 'picker' || props.state === 'olderLoading' ? 'test' : '')}
+                initialQuery={props.query ?? (props.state === 'noMatches' ? 'kubernetes' : props.state === 'picker' || props.state === 'olderLoading' || props.state === 'previewError' ? 'test' : '')}
                 anchorRef={anchorRef} library={pickerLibrary} history={pickerHistory} hardwareKeyboard={!props.touch}
             />
         </View>

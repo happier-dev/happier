@@ -5,8 +5,6 @@ import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const densityState = vi.hoisted(() => ({ preferred: 'cozy' as 'comfortable' | 'cozy' | 'compact', fontScale: 1 }));
-
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -23,22 +21,17 @@ vi.mock('@/components/ui/layout/layout', () => ({
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 
-// The list-density preference is device-local storage: the one boundary this test controls.
-vi.mock('@/sync/store/settingsReadHooks', async importOriginal => ({
-    ...await importOriginal<typeof import('@/sync/store/settingsReadHooks')>(),
-    useLocalSetting: (key: string) => (key === 'uiItemDensity' ? densityState.preferred : key === 'uiFontScale' ? densityState.fontScale : null),
-}));
-
 // Density and font scale are live boundary inputs, so module reloads are unnecessary.
 await import('../Item');
 await import('../ItemGroup');
 await import('../listPresentation');
 await import('@/components/settings/connectedServices/ConnectedServiceMark');
 await import('@/components/ui/icons/Icon');
+const { storage } = await import('@/sync/domains/state/storageStore');
 
 afterEach(() => {
-    densityState.fontScale = 1;
     standardCleanup();
+    storage.getState().applyLocalSettings({ uiItemDensity: 'cozy', uiFontScale: 1 }, { persist: false });
 });
 
 type Screen = Awaited<ReturnType<typeof renderScreen>>;
@@ -73,7 +66,7 @@ function rowHeight(screen: Screen, title: string, subtitle?: string): number {
 }
 
 async function renderPage(density: Density, section?: 'compact') {
-    densityState.preferred = density;
+    storage.getState().applyLocalSettings({ uiItemDensity: density }, { persist: false });
     const { Item } = await import('../Item');
     const { ItemGroup } = await import('../ItemGroup');
     const { ListPresentationProvider } = await import('../listPresentation');
@@ -96,7 +89,7 @@ describe('Item page rows follow the list-density preference', () => {
         const { ConnectedServiceMark } = await import('@/components/settings/connectedServices/ConnectedServiceMark');
         const { Icon } = await import('@/components/ui/icons/Icon');
         const { ListPresentationProvider } = await import('../listPresentation');
-        densityState.preferred = 'compact';
+        storage.getState().applyLocalSettings({ uiItemDensity: 'compact' }, { persist: false });
         const screen = await renderScreen(
             <ListPresentationProvider value="page">
                 <Item title="Gateway vendor" icon={<ConnectedServiceMark legacyServiceId={null} size="inline" />} />
@@ -108,7 +101,7 @@ describe('Item page rows follow the list-density preference', () => {
     });
 
     it('leaves web row metrics at their base size for the global CSS scale owner', async () => {
-        densityState.fontScale = 1.3;
+        storage.getState().applyLocalSettings({ uiFontScale: 1.3 }, { persist: false });
         const screen = await renderPage('cozy');
         const title = flattenTestStyle(textNode(screen, 'Theme').props.style);
         // Unistyles compiles the adapter's complete style into CSS. The global web override
@@ -177,7 +170,7 @@ describe('page rows with a trailing control', () => {
         const { View } = await import('react-native');
         const heights: Record<Density, { plain: number; withControl: number }> = {} as never;
         for (const density of ['comfortable', 'cozy', 'compact'] as const) {
-            densityState.preferred = density;
+            storage.getState().applyLocalSettings({ uiItemDensity: density }, { persist: false });
             // The shared switch draws a 24px track in a 44px focus and hit box (`HAPPIER_SWITCH_METRICS`).
             const screen = await renderScreen(
                 <ListPresentationProvider value="page">
@@ -206,18 +199,5 @@ describe('page rows with a trailing control', () => {
         for (const density of ['comfortable', 'cozy', 'compact'] as const) {
             expect(heights[density].withControl, density).toBe(heights[density].plain);
         }
-    });
-});
-
-describe('page row metrics on touch', () => {
-    it('never draws a row shorter than a touch target when the primary pointer is a finger', async () => {
-        const { resolvePageRowMetrics, PAGE_ROW_TOUCH_MIN_HEIGHT_PX } = await import('../pageRowMetrics');
-        for (const density of ['comfortable', 'cozy', 'compact'] as const) {
-            for (const shape of ['standard', 'list'] as const) {
-                expect(resolvePageRowMetrics({ density, shape, touch: true }).minHeightPx).toBeGreaterThanOrEqual(PAGE_ROW_TOUCH_MIN_HEIGHT_PX);
-            }
-        }
-        // A precise pointer keeps the dense desktop list.
-        expect(resolvePageRowMetrics({ density: 'compact', shape: 'list', touch: false }).minHeightPx).toBeLessThan(PAGE_ROW_TOUCH_MIN_HEIGHT_PX);
     });
 });

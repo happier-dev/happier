@@ -6,13 +6,30 @@ import { expect, it, vi } from 'vitest';
 import Color from 'color';
 import { installFormsCommonModuleMocks } from '@/components/ui/forms/formsTestHelpers';
 
+const appearance = vi.hoisted(() => ({
+    mode: 'light' as 'light' | 'dark',
+    listeners: new Set<(preferences: { colorScheme: 'light' | 'dark' }) => void>(),
+}));
+
 installFormsCommonModuleMocks({
-    reactNative: async () => vi.importActual('react-native-web'),
+    reactNative: async () => ({
+        ...await vi.importActual<typeof import('react-native')>('react-native-web'),
+        // RNW captures matchMedia during setup-module evaluation, before this test's
+        // browser exists. Model the OS Appearance boundary; keep the theme runtime real.
+        Appearance: {
+            getColorScheme: () => appearance.mode,
+            addChangeListener: (listener: (preferences: { colorScheme: 'light' | 'dark' }) => void) => {
+                appearance.listeners.add(listener);
+                return { remove: () => { appearance.listeners.delete(listener); } };
+            },
+        },
+    }),
     unistyles: async () => vi.importActual('react-native-unistyles'),
 });
 
-it('follows repeated adaptive scheme changes in concrete card paint and number ink without remounting', async () => {
+it('keeps shell paint and a retained pane on the resolved system or explicit theme without remounting', async () => {
     let mode: 'light' | 'dark' = 'light';
+    appearance.mode = mode;
     const queries = new Map<string, MediaQueryList>();
     const previousMatchMedia = window.matchMedia;
     const previousOrientation = Object.getOwnPropertyDescriptor(screen, 'orientation');
@@ -36,41 +53,55 @@ it('follows repeated adaptive scheme changes in concrete card paint and number i
     const variable = '--qa-card';
     const previousVariable = document.documentElement.style.getPropertyValue(variable);
     try {
-        const { StyleSheet, useUnistyles } = await import('react-native-unistyles');
+        const { StyleSheet, UnistylesRuntime, useUnistyles } = await import('react-native-unistyles');
         const { lightTheme, darkTheme } = await import('@/theme');
         StyleSheet.configure({ themes: { light: lightTheme, dark: darkTheme }, settings: { initialTheme: 'light', CSSVars: true } });
-        const { initializeThemeRuntimeAppearance } = await import('@/theme/profiles/themeProfileRuntime');
-        initializeThemeRuntimeAppearance({ themePreference: 'adaptive', themeProfiles: {
-            profiles: [], activeProfileIds: { light: null, dark: null },
-        }, style: null }, { light: lightTheme, dark: darkTheme });
-        const { useGlassSurfaceColor, useGlassMaterialColorResolver } = await import('./useGlassSurfaceColor');
+        const { applyThemeRuntimeSelection, initializeThemeRuntimeAppearance } = await import('@/theme/profiles/themeProfileRuntime');
+        const { DEFAULT_THEME_PROFILES_LOCAL_STATE } = await import('@/theme/profiles/themeProfilePersistence');
+        const selection = { themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE, style: null };
+        initializeThemeRuntimeAppearance({ ...selection, themePreference: 'adaptive' }, { light: lightTheme, dark: darkTheme });
+        const { useGlassSurfaceColor } = await import('./useGlassSurfaceColor');
+        const { RetainedPanelSurface } = await import('@/components/ui/panels/RetainedPanelSurface');
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         const { glassPresetMaterials } = await import('./glassMaterial');
         const { useWebRootCanvasPresentation } = await import('@/theme/useWebRootCanvasPresentation');
         const settings = { glassSurfaceMaterials: { ...glassPresetMaterials('everywhere'), content: { blur: 'strong' as const, opacity: 0.5 } } };
-        function Card() {
-            useWebRootCanvasPresentation(false);
+        function Card({ id }: Readonly<{ id: string }>) {
             const { theme } = useUnistyles();
             const card = useGlassSurfaceColor(`var(${variable})`, 'content', false, true, false);
-            const resolve = useGlassMaterialColorResolver();
-            const sibling = React.useMemo(() => resolve({ color: `var(${variable})`, nested: false }), [resolve]);
-            return <div data-testid="card" style={{ backgroundColor: card }}>
-                <span data-testid="number" style={{ color: theme.colors.text.primary }}>1.4M</span>
-                <div data-testid="sibling" style={{ backgroundColor: sibling }} />
+            return <div data-testid={id} style={{ backgroundColor: card }}>
+                <span style={{ color: theme.colors.text.primary }}>1.4M</span>
             </div>;
         }
+        function Shell({ active }: Readonly<{ active: boolean }>) {
+            useWebRootCanvasPresentation(false);
+            return <><Card id="shell" /><RetainedPanelSurface isActive={active} hiddenMode="activity">
+                <Card id="pane" />
+            </RetainedPanelSurface></>;
+        }
+        const scene = (active: boolean) => <GlassRuntimeEnvironmentProvider value={{ desktopWindow: true, nativeWindowMaterialLive: true }}>
+            <GlassMaterialSettingsProvider value={settings}><Shell active={active} /></GlassMaterialSettingsProvider>
+        </GlassRuntimeEnvironmentProvider>;
         document.documentElement.style.setProperty(variable, lightTheme.colors.surface.base);
-        await act(async () => root.render(<GlassRuntimeEnvironmentProvider value={{ desktopWindow: true, nativeWindowMaterialLive: true }}>
-            <GlassMaterialSettingsProvider value={settings}><Card /></GlassMaterialSettingsProvider>
-        </GlassRuntimeEnvironmentProvider>));
-        const card = host.querySelector<HTMLElement>('[data-testid="card"]')!;
-        const number = host.querySelector<HTMLElement>('[data-testid="number"]')!;
-        const sibling = host.querySelector<HTMLElement>('[data-testid="sibling"]')!;
-        for (const next of ['dark', 'light', 'dark'] as const) {
-            const theme = next === 'dark' ? darkTheme : lightTheme;
+        await act(async () => root.render(scene(true)));
+        const shell = host.querySelector<HTMLElement>('[data-testid="shell"]')!;
+        const pane = host.querySelector<HTMLElement>('[data-testid="pane"]')!;
+        const cases = [
+            { preference: 'adaptive', os: 'dark', expected: 'dark' },
+            { preference: 'adaptive', os: 'light', expected: 'light' },
+            { preference: 'dark', os: 'light', expected: 'dark' },
+            { preference: 'light', os: 'dark', expected: 'light' },
+            { preference: 'adaptive', os: 'dark', expected: 'dark' },
+        ] as const;
+        for (const { preference, os, expected } of cases) {
+            // A retained Activity withdraws effects; revealing it must catch theme changes.
+            await act(async () => root.render(scene(false)));
+            const theme = expected === 'dark' ? darkTheme : lightTheme;
             await act(async () => {
-                mode = next;
+                applyThemeRuntimeSelection({ ...selection, themePreference: preference });
+                mode = os;
+                appearance.mode = os;
                 document.documentElement.style.setProperty(variable, theme.colors.surface.base);
                 for (const query of queries.values()) {
                     if (!query.media.startsWith('(prefers-color-scheme:')) continue;
@@ -78,13 +109,18 @@ it('follows repeated adaptive scheme changes in concrete card paint and number i
                     Object.defineProperties(event, { matches: { value: query.matches }, media: { value: query.media } });
                     query.dispatchEvent(event);
                 }
+                for (const listener of appearance.listeners) listener({ colorScheme: os });
             });
-            expect(getComputedStyle(number).color).toBe(Color(theme.colors.text.primary).rgb().string());
-            expect(getComputedStyle(document.body).backgroundColor).toBe(Color(theme.colors.background.canvas).rgb().string());
+            await act(async () => root.render(scene(true)));
+            expect(UnistylesRuntime.themeName, `${preference}/${os}: runtime`).toBe(expected);
+            expect(getComputedStyle(document.body).backgroundColor, `${preference}/${os}: canvas`).toBe(Color(theme.colors.background.canvas).rgb().string());
             const paint = Color(theme.colors.surface.base).alpha(0.5).rgb().string();
-            expect(getComputedStyle(card).backgroundColor).toBe(paint);
-            expect(getComputedStyle(sibling).backgroundColor).toBe(paint);
-            expect(host.querySelector('[data-testid="number"]')).toBe(number);
+            for (const surface of [shell, pane]) {
+                expect(getComputedStyle(surface).backgroundColor).toBe(paint);
+                expect(getComputedStyle(surface.querySelector('span')!).color).toBe(Color(theme.colors.text.primary).rgb().string());
+            }
+            expect(host.querySelector('[data-testid="shell"]')).toBe(shell);
+            expect(host.querySelector('[data-testid="pane"]')).toBe(pane);
         }
     } finally {
         await act(async () => root.unmount());

@@ -1,20 +1,24 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 
+import { packWidgetGroupBands, type WidgetGroupBand } from '@happier-dev/plugin-ui/presentation';
+
 import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import { CARD_GRID, resolveCardGridColumns } from './cardGridMetrics';
 
 /**
  * A card that takes more than one column: `2`, or the whole `row` (it falls back to the columns
  * there are, so on a phone every card is one column). Plain children take one column each.
+ * `rows` is its height in grid rows (a widget footprint's `rowSpan`): see `CardGrid`.
  * `columns` gives a mixed row its capacity; `startRow` keeps its boundary when fewer columns fit.
  */
-export function CardGridCell(props: Readonly<{ span?: 2 | 'row'; columns?: 1 | 2 | 3; startRow?: boolean; children: React.ReactNode }>) {
+export function CardGridCell(props: Readonly<{ span?: 2 | 'row'; rows?: number; columns?: 1 | 2 | 3; startRow?: boolean; children: React.ReactNode }>) {
     return <>{props.children}</>;
 }
 
-type CardGridEntry = Readonly<{ id: string; span: 2 | 'row' | undefined; columns: 1 | 2 | 3 | undefined; startRow: boolean; node: React.ReactNode }>;
+type CardGridEntry = Readonly<{ id: string; span: 2 | 'row' | undefined; rows: number | undefined; columns: 1 | 2 | 3 | undefined; startRow: boolean; node: React.ReactNode }>;
 
 /**
  * The card grid: the shared column owner (`ItemGroupColumns`) at the card rhythm (`CARD_GRID`). Each
@@ -41,14 +45,32 @@ export const CardGrid = React.memo(function CardGrid(props: Readonly<{
     }, [requested]);
     React.useEffect(() => { onColumnCountChange?.(columns); }, [columns, onColumnCountChange]);
 
+    // Cards that say how many rows they take (widget footprints) pack in two dimensions on a two-column grid,
+    // with the widget groups' packer: each half card takes the shorter column, so two Smalls stack beside a
+    // Medium (lab widget-groups wgvar). The packing follows the device, never the measured width, so no card
+    // remounts when the first measure lands; a pane too narrow for two columns stacks a band's columns.
+    const phone = useDeviceType() === 'phone';
     const entries: CardGridEntry[] = [];
     React.Children.forEach(props.children, (child) => {
         if (child == null || child === false) return;
         const cell = React.isValidElement<React.ComponentProps<typeof CardGridCell>>(child) && child.type === CardGridCell
             ? child.props : undefined;
         const key = React.isValidElement(child) && child.key != null ? String(child.key) : String(entries.length);
-        entries.push({ id: key, span: cell?.span, columns: cell?.columns, startRow: cell?.startRow === true, node: child });
+        entries.push({ id: key, span: cell?.span, rows: cell?.rows, columns: cell?.columns, startRow: cell?.startRow === true, node: child });
     });
+    const twoDimensional = requested === 2 && !phone && entries.some((entry) => entry.rows !== undefined);
+
+    if (twoDimensional) {
+        const byId = new Map(entries.map((entry) => [entry.id, entry]));
+        // `customize` keeps a lone half card at its half; the grid never stretches a card wider than its size.
+        const bands = packWidgetGroupBands(entries.map((entry) => ({ id: entry.id, columnSpan: entry.span ? 2 : 1, rowSpan: entry.rows ?? 1 })), 2, 'customize');
+        return (
+            <View testID={props.testID} style={[bandListStyle, props.style]} onLayout={onLayout}>
+                {bands.map((band) => <CardGridBand key={band.key} band={band} byId={byId} stacked={columns < 2} testID={props.testID} />)}
+            </View>
+        );
+    }
+
     // Mixed row capacities keep every card under one keyed parent. Finish a partial row before the
     // next capacity starts (a trio collapsed to two columns must not borrow the following pair).
     const cells: React.ReactNode[] = [];
@@ -83,6 +105,34 @@ export const CardGrid = React.memo(function CardGrid(props: Readonly<{
     );
 });
 
+/**
+ * One band: a full-width card, or two columns. The column holding the band's rows shares its height among its
+ * cards in proportion to their rows; a column with fewer rows keeps each card at its own height and leaves quiet
+ * paper under it (lab widget-groups), so a Small never stretches to a Medium's height.
+ */
+function CardGridBand(props: Readonly<{ band: WidgetGroupBand; byId: ReadonlyMap<string, CardGridEntry>; stacked: boolean; testID?: string }>) {
+    const { band } = props;
+    if (band.kind === 'slot') return null;
+    if (band.kind === 'row') return <View style={rowBandStyle}>{props.byId.get(band.cell.id)?.node}</View>;
+    const rows = band.columns.map((column) => column.reduce((total, cell) => total + cell.rowSpan, 0));
+    const bandRows = Math.max(...rows);
+    return (
+        <View testID={props.testID ? `${props.testID}.band.${band.key}` : undefined} style={props.stacked ? stackedBandStyle : columnsBandStyle}>
+            {band.columns.map((column, index) => (
+                <View key={index} testID={props.testID ? `${props.testID}.band.${band.key}.column.${index}` : undefined}
+                    style={props.stacked ? stackedColumnStyle : bandColumnStyle}>
+                    {column.map((cell) => (
+                        <View key={cell.id} style={{ flexGrow: props.stacked || rows[index] === bandRows ? cell.rowSpan : 0 }}>
+                            {props.byId.get(cell.id)?.node}
+                        </View>
+                    ))}
+                </View>
+            ))}
+        </View>
+    );
+}
+
+// A card fills its cell, so every card in a row is as tall as the tallest.
 const cellStyle: ViewStyle = { flex: 1 };
 const bandListStyle: ViewStyle = { rowGap: CARD_GRID.gapPx };
 const rowBandStyle: ViewStyle = { flexDirection: 'column' };

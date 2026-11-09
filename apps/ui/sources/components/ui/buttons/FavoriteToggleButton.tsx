@@ -17,28 +17,11 @@
  */
 
 import * as React from 'react';
-import { Pressable, type GestureResponderEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon, type IconWeight } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-
-// F8 — Narrow boundary types: the cross-platform stop-propagation pattern
-// needs to call DOM-only `stopImmediatePropagation` on the underlying
-// native event without leaking `any`. Mirrors the documented helper in
-// `ReviewCommentLineAffordance.tsx` (also Pressable-rooted).
-type PressEventWithStopImmediatePropagation = GestureResponderEvent & {
-    nativeEvent?: GestureResponderEvent['nativeEvent'] & {
-        stopImmediatePropagation?: () => void;
-    };
-};
-
-// `react-native`'s typings only model `{ pressed: boolean }` for the
-// Pressable style callback, but RN-Web also passes `hovered` at runtime.
-// A narrow structural type covers both targets without `any`.
-type FavoritePressableState = Readonly<{
-    pressed: boolean;
-    hovered?: boolean;
-}>;
+import { HappierPressable, type HappierPressableProps } from '@happier-dev/plugin-ui/presentation';
+import { stopPressEventPropagation } from '@/utils/ui/stopPressEventPropagation';
 
 const stylesheet = StyleSheet.create(() => ({
     pressable: {
@@ -73,17 +56,8 @@ export function FavoriteToggleButton(
 ): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const handlePress = React.useCallback((event?: GestureResponderEvent) => {
-        // Prevent the row's onSelect from firing when the button is pressed.
-        // On native, RN composes touch responders; on web, Pressable forwards
-        // a SyntheticEvent we can stop. Both branches are guarded.
-        if (event && typeof event.stopPropagation === 'function') {
-            event.stopPropagation();
-        }
-        const nativeEvent = (event as PressEventWithStopImmediatePropagation | undefined)?.nativeEvent;
-        if (nativeEvent && typeof nativeEvent.stopImmediatePropagation === 'function') {
-            nativeEvent.stopImmediatePropagation();
-        }
+    const handlePress = React.useCallback<HappierPressableProps['onPress']>((event) => {
+        stopPressEventPropagation(event);
         props.onToggle(props.id);
     }, [props]);
     const accessibilityLabel = props.isFavorite ? props.removeLabel : props.addLabel;
@@ -92,17 +66,16 @@ export function FavoriteToggleButton(
         ? theme.colors.state.warning.foreground
         : theme.colors.text.tertiary;
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID}
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
-            accessibilityState={{ selected: props.isFavorite }}
-            // Web a11y — `aria-pressed` is the toggle semantic when a button
-            // represents a 2-state on/off control. RN-web maps this through.
-            aria-pressed={props.isFavorite}
+            // A button holding a 2-state on/off value: the shared pressable projects `selected` as `aria-pressed`.
+            selected={props.isFavorite}
+            // Inside a selectable row, whose own press is the row: the star keeps its drawn box.
+            hitReach={0}
             onPress={handlePress}
-            hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-            style={(state: FavoritePressableState) => [
+            style={(state) => [
                 styles.pressable,
                 props.isFavorite ? styles.pressableActive : styles.pressableInactive,
                 state.hovered ? styles.pressableActive : null,
@@ -110,6 +83,6 @@ export function FavoriteToggleButton(
             ]}
         >
             <Icon name="star" size={16} weight={iconWeight} color={iconColor} />
-        </Pressable>
+        </HappierPressable>
     );
 }

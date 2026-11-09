@@ -2,7 +2,8 @@ import React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findAllByType, findFirstByType, invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
-import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
+import { codeViewListRef, installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
+import type { CodeEditorLanguageIntelligence } from '../editor/codeEditorTypes';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,18 +15,6 @@ installCodeViewCommonModuleMocks({
             Platform: {
                 OS: 'ios',
             },
-            FlatList: (props: any) => {
-                const items = Array.isArray(props.data)
-                    ? props.data.map((item: any, index: number) =>
-                        React.createElement(
-                            React.Fragment,
-                            { key: props.keyExtractor ? props.keyExtractor(item) : String(index) },
-                            props.renderItem ? props.renderItem({ item, index }) : null,
-                        )
-                    )
-                    : null;
-                return React.createElement('FlatList', props, items);
-            },
         });
     },
     unistyles: async () => {
@@ -36,22 +25,49 @@ installCodeViewCommonModuleMocks({
     },
 });
 
+// Compile/load the real view graph during collection, before timing viewport behavior.
+await import('./CodeLinesViewCore');
+await import('../model/buildCodeLinesFromFile');
+
 async function findCodeRows(tree: renderer.ReactTestRenderer) {
     const { CodeLineRow } = await import('./CodeLineRow');
     return tree.root.findAllByType(CodeLineRow);
 }
 
-async function withFakeTimers<T>(run: () => Promise<T>): Promise<T> {
-    return await run();
-}
-
-async function waitForCodeLinesViewScrollFallback(): Promise<void> {
-    await renderer.act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 75));
-    });
-}
-
 describe('CodeLinesView', () => {
+    it.each([true, false])('requests semantic tokens only for visible lines and retires an old viewport or disabled preference (native range: %s)', async (nativeRange) => {
+        const { CodeLinesViewCore } = await import('./CodeLinesViewCore');
+        const { buildCodeLinesFromFile } = await import('../model/buildCodeLinesFromFile');
+        const lines = buildCodeLinesFromFile({ text: Array.from({ length: 5000 }, () => 'const target = 1;').join('\n') });
+        const request = vi.fn<CodeEditorLanguageIntelligence['request']>();
+        const snapshot = { mode: 'server' as const, status: 'ready' as const, selection: null, querySelection: null, kind: null, result: null,
+            capabilities: { hover: false, definition: false, references: false, documentSymbol: false, diagnostics: 'none' as const,
+                acceptsExternalChanges: false, semanticTokensRange: nativeRange, semanticTokensDelta: !nativeRange } };
+        const controller = { getSnapshot: () => snapshot, subscribe: () => () => undefined, request };
+        let finish!: (value: Awaited<ReturnType<typeof request>>) => void;
+        request.mockImplementation(() => new Promise(done => { finish = done; }));
+        const intelligence = { onPointerToken: vi.fn(), onActivateToken: vi.fn(), semantic: { controller, enabled: true } };
+        const screen = await renderScreen(<CodeLinesViewCore lines={lines} intelligence={intelligence} />);
+        expect(request).not.toHaveBeenCalled();
+        const visible = (indices: number[]) => findFirstByType(screen.tree, 'LegendList')!.props.onViewableItemsChanged({ viewableItems: indices.map(index => ({ index })) });
+        await renderer.act(async () => visible([100, 101]));
+        await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+        expect(request.mock.calls[0].slice(0, 2)).toEqual(['semanticTokens', { range: { start: { line: 100, character: 0 }, end: { line: 101, character: 17 } } }]);
+        await renderer.act(async () => visible([100, 101]));
+        expect(request).toHaveBeenCalledTimes(1);
+        const stale = finish;
+        await renderer.act(async () => visible([200, 201]));
+        expect(request.mock.calls[0][2]?.aborted).toBe(true);
+        await renderer.act(async () => stale({ status: 'ok', kind: 'semanticTokens', tokens: [{ serverId: 's', legend: { tokenTypes: ['function'], tokenModifiers: [] }, data: [100, 6, 6, 0, 0] }] }));
+        expect((await findCodeRows(screen.tree))[100].props.semanticTokens).toBeUndefined();
+        await renderer.act(async () => finish({ status: 'ok', kind: 'semanticTokens', tokens: [{ serverId: 's', legend: { tokenTypes: ['function'], tokenModifiers: [] }, data: [200, 6, 6, 0, 0, 200, 6, 6, 0, 0] }] }));
+        const rows = await findCodeRows(screen.tree);
+        expect(rows[200].props.semanticTokens).toEqual([{ start: 6, end: 12, role: 'function' }]);
+        expect(rows[400].props.semanticTokens).toBeUndefined();
+        await screen.update(<CodeLinesViewCore lines={lines} intelligence={{ ...intelligence, semantic: { controller, enabled: false } }} />);
+        expect((await findCodeRows(screen.tree))[200].props.semanticTokens).toBeUndefined();
+        expect(request).toHaveBeenCalledTimes(2);
+    });
     it('keeps native text naming and long-press line selection distinct in a selectable read view', async () => {
         const { CodeLinesViewCore } = await import('./CodeLinesViewCore');
         const { buildCodeLinesFromFile } = await import('../model/buildCodeLinesFromFile');
@@ -92,7 +108,7 @@ describe('CodeLinesView', () => {
         expect(sizingText.map(node => node.children.join(''))).toEqual(['00000', '00000']);
         expect(findAllByType(screen.tree, 'View').filter(node => node.props.testID === 'review-comment-line-affordance-lane')).toHaveLength(2);
     });
-    it('does not render FlatList when virtualized=false', async () => {
+    it('does not render VirtualizedList when virtualized=false', async () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
         let tree!: renderer.ReactTestRenderer;
@@ -113,7 +129,7 @@ describe('CodeLinesView', () => {
                     ]}
                 />)).tree;
 
-        expect(findAllByType(tree, 'FlatList')).toHaveLength(0);
+        expect(findAllByType(tree, 'LegendList')).toHaveLength(0);
 
         const rows = await findCodeRows(tree);
         expect(rows).toHaveLength(1);
@@ -141,7 +157,7 @@ describe('CodeLinesView', () => {
         expect(pin.transform).toEqual([{ translateX: 120 }]);
     });
 
-    it('passes extraData to FlatList when renderAfterLine is provided', async () => {
+    it('passes extraData to VirtualizedList when renderAfterLine is provided', async () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
         let tree!: renderer.ReactTestRenderer;
@@ -162,14 +178,14 @@ describe('CodeLinesView', () => {
                     renderAfterLine={() => React.createElement('After')}
                 />)).tree;
 
-        const list = findFirstByType(tree, 'FlatList');
+        const list = findFirstByType(tree, 'LegendList');
         if (!list) {
-            throw new Error('expected FlatList');
+            throw new Error('expected VirtualizedList');
         }
         expect(list.props.extraData).toBeTruthy();
     });
 
-    it('keeps virtualized FlatList structural props stable across equivalent rerenders', async () => {
+    it('keeps virtualized VirtualizedList structural props stable across equivalent rerenders', async () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
         const lines = [
@@ -187,9 +203,9 @@ describe('CodeLinesView', () => {
         ] as const;
 
         const rendered = await renderScreen(<CodeLinesView lines={lines} />);
-        const before = findFirstByType(rendered.tree, 'FlatList');
+        const before = findFirstByType(rendered.tree, 'LegendList');
         if (!before) {
-            throw new Error('expected FlatList');
+            throw new Error('expected VirtualizedList');
         }
         const beforeRenderItem = before.props.renderItem;
         const beforeStyle = before.props.style;
@@ -198,9 +214,9 @@ describe('CodeLinesView', () => {
 
         await rendered.update(<CodeLinesView lines={lines} />);
 
-        const after = findFirstByType(rendered.tree, 'FlatList');
+        const after = findFirstByType(rendered.tree, 'LegendList');
         if (!after) {
-            throw new Error('expected FlatList');
+            throw new Error('expected VirtualizedList');
         }
 
         expect(after.props.renderItem).toBe(beforeRenderItem);
@@ -273,6 +289,23 @@ describe('CodeLinesView', () => {
         const highlighted = rows.filter((r) => r.props.highlighted === true);
         expect(highlighted).toHaveLength(1);
         expect(highlighted[0]!.props.line.id).toBe('2');
+    });
+
+    it('keeps a landed line banded until the reader presses into the code, then bands a new landing again', async () => {
+        const { CodeLinesView } = await import('./CodeLinesView');
+        const line = (n: number) => ({ id: String(n), sourceIndex: n - 1, hunkIndex: null, kind: 'context' as const, oldLine: n, newLine: n,
+            renderPrefixText: '', renderCodeText: `const v${n} = ${n};`, renderIsHeaderLine: false, selectable: false });
+        const lines = [line(1), line(2), line(3)];
+        const view = (ids: ReadonlySet<string>) => <CodeLinesView virtualized={false} highlightLineId="2" highlightLineIds={ids} lines={lines} />;
+        const screen = await renderScreen(view(new Set(['2'])));
+        const banded = async () => (await findCodeRows(screen.tree)).filter((row) => row.props.highlighted === true).map((row) => row.props.line.id);
+        expect(await banded()).toEqual(['2']);
+        const [first] = await findCodeRows(screen.tree);
+        await renderer.act(async () => { first!.props.onPressLine?.(first!.props.line); });
+        expect(await banded()).toEqual([]);
+        // The same landing re-rendered stays released; a new landing (a new range) bands again.
+        await screen.update(view(new Set(['2'])));
+        expect(await banded()).toEqual(['2']);
     });
 
     it('marks every row in highlightLineIds as highlighted while preserving highlightLineId', async () => {
@@ -516,7 +549,33 @@ describe('CodeLinesView', () => {
         expect(onPressLineRange.mock.calls[0]?.[0].map((line: any) => line.id)).toEqual(['f:1', 'f:2']);
     });
 
-    it('sets initialScrollIndex when scrollToLineId is provided', async () => {
+    it('selects a touch range: long-press starts it, taps extend it, and the lone row clears it', async () => {
+        const { CodeLinesView } = await import('./CodeLinesView');
+        const lines = ['one', 'two', 'three'].map((code, index) => ({ id: `f:${index + 1}`, sourceIndex: index, hunkIndex: null,
+            kind: 'file' as const, oldLine: null, newLine: index + 1, renderPrefixText: '', renderCodeText: code,
+            renderIsHeaderLine: false, selectable: true }));
+        const onPressLineRange = vi.fn();
+        const onPressLine = vi.fn();
+        const view = (selected: string[]) => <CodeLinesView virtualized={false} interactionMode="selectRange" lines={lines}
+            selectedLineIds={new Set(selected)} rangeSelectionActive={selected.length > 0}
+            onPressLine={onPressLine} onPressLineRange={onPressLineRange} pressLineWhenNotSelectable />;
+        const screen = await renderScreen(view([]));
+        const rowProps = async () => (await findCodeRows(screen.tree)).map((row) => row.props);
+        // Nothing selected: a tap is not a range gesture.
+        (await rowProps())[2]!.onPressLine!(lines[2]);
+        expect(onPressLineRange).not.toHaveBeenCalled();
+        (await rowProps())[0]!.onLongPressLine!(lines[0]);
+        expect(onPressLineRange.mock.calls.at(-1)?.[0].map((line: any) => line.id)).toEqual(['f:1']);
+        await screen.update(view(['f:1']));
+        (await rowProps())[2]!.onPressLine!(lines[2]);
+        expect(onPressLineRange.mock.calls.at(-1)?.[0].map((line: any) => line.id)).toEqual(['f:1', 'f:2', 'f:3']);
+        await screen.update(view(['f:1']));
+        (await rowProps())[0]!.onPressLine!(lines[0]);
+        expect(onPressLineRange.mock.calls.at(-1)?.[0]).toEqual([]);
+        expect(onPressLine).not.toHaveBeenCalled();
+    });
+
+    it('reveals a native line target through the shared index-scroll path', async () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 
         let tree!: renderer.ReactTestRenderer;
@@ -548,128 +607,12 @@ describe('CodeLinesView', () => {
                     ]}
                 />)).tree;
 
-        const list = findFirstByType(tree, 'FlatList');
+        const list = findFirstByType(tree, 'LegendList');
         if (!list) {
-            throw new Error('expected FlatList');
+            throw new Error('expected VirtualizedList');
         }
-        expect(list.props.initialScrollIndex).toBe(1);
+        expect(codeViewListRef.scrollToIndex).toHaveBeenCalledWith(expect.objectContaining({ index: 1 }));
     });
 
-    it('attempts a DOM scrollIntoView fallback when scrollToLineId is provided', async () => {
-        await withFakeTimers(async () => {
-            const getElementById = vi.fn();
-            const scrollIntoView = vi.fn();
-            getElementById.mockReturnValue({ scrollIntoView });
-            const previousDocument = (globalThis as any).document;
-            (globalThis as any).document = { getElementById };
 
-            try {
-                const { CodeLinesView } = await import('./CodeLinesView');
-                const screen = await renderScreen(
-                    <CodeLinesView
-                        scrollToLineId="b"
-                        lines={[
-                            {
-                                id: 'a',
-                                sourceIndex: 0, hunkIndex: null,
-                                kind: 'context',
-                                oldLine: 1,
-                                newLine: 1,
-                                renderPrefixText: '',
-                                renderCodeText: 'a',
-                                renderIsHeaderLine: false,
-                                selectable: false,
-                            },
-                            {
-                                id: 'b',
-                                sourceIndex: 1, hunkIndex: null,
-                                kind: 'context',
-                                oldLine: 2,
-                                newLine: 2,
-                                renderPrefixText: '',
-                                renderCodeText: 'b',
-                                renderIsHeaderLine: false,
-                                selectable: false,
-                            },
-                        ]}
-                    />
-                );
-                await waitForCodeLinesViewScrollFallback();
-
-                expect(getElementById).toHaveBeenCalledWith(expect.stringMatching(/-b$/));
-                expect(scrollIntoView).toHaveBeenCalled();
-                await screen.unmount();
-            } finally {
-                (globalThis as any).document = previousDocument;
-            }
-        });
-    });
-
-    it('falls back to setting scrollTop on the nearest scroll container when the target element is not mounted', async () => {
-        await withFakeTimers(async () => {
-            const scrollContainer: any = {
-                scrollTop: 0,
-                clientHeight: 100,
-                scrollHeight: 1000,
-                parentElement: null,
-                scrollTo: vi.fn(({ top }: { top: number }) => {
-                    scrollContainer.scrollTop = top;
-                }),
-            };
-
-            const anchorElement: any = {
-                id: 'a',
-                parentElement: scrollContainer,
-            };
-
-            const getElementById = vi.fn((id: string) => {
-                if (id.endsWith('-b')) return null; // target line not mounted yet
-                if (id.endsWith('-a')) return anchorElement; // first rendered row
-                return null;
-            });
-
-            const previousDocument = (globalThis as any).document;
-            (globalThis as any).document = { getElementById };
-
-            try {
-                const { CodeLinesView } = await import('./CodeLinesView');
-                const screen = await renderScreen(
-                    <CodeLinesView
-                        scrollToLineId="b"
-                        lines={[
-                            {
-                                id: 'a',
-                                sourceIndex: 0, hunkIndex: null,
-                                kind: 'context',
-                                oldLine: 1,
-                                newLine: 1,
-                                renderPrefixText: '',
-                                renderCodeText: 'a',
-                                renderIsHeaderLine: false,
-                                selectable: false,
-                            },
-                            {
-                                id: 'b',
-                                sourceIndex: 1, hunkIndex: null,
-                                kind: 'context',
-                                oldLine: 2,
-                                newLine: 2,
-                                renderPrefixText: '',
-                                renderCodeText: 'b',
-                                renderIsHeaderLine: false,
-                                selectable: false,
-                            },
-                        ]}
-                    />
-                );
-                await waitForCodeLinesViewScrollFallback();
-
-                // Estimated row height is 22px; index 1 should land at ~22px.
-                expect(scrollContainer.scrollTop).toBe(22);
-                await screen.unmount();
-            } finally {
-                (globalThis as any).document = previousDocument;
-            }
-        });
-    });
 });

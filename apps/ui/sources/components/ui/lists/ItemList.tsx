@@ -41,19 +41,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
     },
     groupedBackground: {
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.background.canvas, 'content', true),
+        backgroundColor: glassSurfaceBackgroundColor(theme.colors.surface.base, 'content', true),
     },
     contentContainer: {
         paddingBottom: Platform.select({ ios: 34, default: 16 }),
         paddingTop: 0,
     },
     // A card modal's body has no padding of its own and its sections add none (`ItemGroup`, contained),
-    // so a grouped list owns the card's gutter: the header's text edge, which a sheet and a bare button
-    // row (which bleeds by its row inset into that gutter) both sit on.
+    // so the list owns the card's gutter, grouped or page: the header's text edge, which a sheet and a
+    // bare button row (which bleeds by its row inset into that gutter) both sit on.
     fill: {
         flexGrow: 1,
     },
-    containedGroupedGutter: {
+    containedGutter: {
         paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx,
     },
 }));
@@ -123,7 +123,7 @@ export const ItemList = React.memo(React.forwardRef<ScrollView, ItemListProps>((
         contentContainerStyle: [
             styles.contentContainer,
             presentation === 'page' ? { paddingBottom: 0 } : null,
-            page.contained && presentation === 'grouped' ? styles.containedGroupedGutter : null,
+            page.contained ? styles.containedGutter : null,
             fill ? styles.fill : null,
             containerStyle,
             page.bottomChromeHeight > 0 ? { paddingBottom: (presentation === 'page' ? 0 : BASE_CONTENT_PADDING_BOTTOM) + page.bottomChromeHeight } : null,
@@ -176,7 +176,7 @@ export const ItemListStatic = React.memo<ItemListStaticProps>((props) => {
 
     return (
         <ListPresentationProvider value={presentation}>
-            <View style={[materialRole === undefined ? stylesheet.groupedBackground : { backgroundColor: paintColor(theme.colors.background.canvas, 'transparent') }, style, materialRole !== undefined && typeof authoredBackground === 'string' ? { backgroundColor: paintColor(authoredBackground, 'transparent') } : null]}>
+            <View style={[materialRole === undefined ? stylesheet.groupedBackground : { backgroundColor: paintColor(theme.colors.surface.base, 'transparent') }, style, materialRole !== undefined && typeof authoredBackground === 'string' ? { backgroundColor: paintColor(authoredBackground, 'transparent') } : null]}>
                 <View style={containerStyle}>
                     {children}
                 </View>

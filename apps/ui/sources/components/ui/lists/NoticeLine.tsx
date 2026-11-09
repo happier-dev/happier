@@ -28,7 +28,7 @@ export const NoticeLine = React.memo(function NoticeLine(props: Readonly<{
         label: string;
         iconName: IconName;
         disabled?: boolean;
-        onPress: () => void;
+        onPress: (event?: unknown) => void;
     }>;
 }>) {
     const { theme } = useUnistyles();

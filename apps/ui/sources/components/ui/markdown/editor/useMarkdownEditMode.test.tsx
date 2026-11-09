@@ -72,6 +72,7 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 import { useMarkdownEditMode } from './useMarkdownEditMode';
+import { Modal } from '@/modal';
 
 type ProbeArgs = Readonly<{
     value: string;
@@ -168,6 +169,21 @@ describe('useMarkdownEditMode', () => {
         await act(async () => { await captured.state?.onToggle('raw'); });
         expect(captured.state?.seedText).toBe('# Flushed');
         expect(onValueChange).toHaveBeenLastCalledWith('# Flushed');
+    });
+
+    it('keeps the current rich surface and draft when the outgoing snapshot is unconfirmed', async () => {
+        const alert = vi.spyOn(Modal, 'alert').mockResolvedValue(undefined);
+        const onValueChange = vi.fn();
+        const ref = makeRef({ getValue: () => '# Pending draft',
+            flushPendingChange: async () => { throw new Error('snapshot_unavailable'); } });
+        await renderScreen(<Probe value="# Seed" language="markdown" editorHandleRef={ref} onValueChange={onValueChange} />);
+        const resetKey = captured.state?.resetKey;
+        await act(async () => { await expect(captured.state?.onToggle('raw')).resolves.toBeUndefined(); });
+        expect(captured.state?.showRich).toBe(true);
+        expect(captured.state?.resetKey).toBe(resetKey);
+        expect(onValueChange).not.toHaveBeenCalled();
+        expect(alert).toHaveBeenCalled();
+        alert.mockRestore();
     });
 
     it('ignores a double toggle during flush and lets a host reseed win over the old flush', async () => {
@@ -345,6 +361,7 @@ describe('useMarkdownEditMode', () => {
     });
 
     it('blocks raw during initial HTML eligibility, then preserves an explicit raw edit when the worker becomes eligible', async () => {
+        console.info('FX-EDITORSUITE stage import');
         const { MarkdownCodeEditorField } = await import('./MarkdownCodeEditorField');
         const { MarkdownEditModeMenu } = await import('../editorChrome/MarkdownEditModeMenu');
         const { CodeEditorWithFind } = await import('@/components/ui/code/editor/CodeEditorWithFind');
@@ -355,13 +372,16 @@ describe('useMarkdownEditMode', () => {
         const liveValue = { get: () => text, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
         const onChange = (next: string) => { text = next; listeners.forEach((listener) => listener()); };
         const editorRef = makeRef();
+        console.info('FX-EDITORSUITE stage mount');
         const screen = await renderScreen(<MarkdownCodeEditorField value={text} language="markdown" resetKey="pending-html"
             editorRef={editorRef} liveValue={liveValue} onChange={onChange} changeDebounceMs={0} />);
         try {
+            console.info('FX-EDITORSUITE stage raw');
             expect(screen.findAllByType(ActivitySpinner)).toHaveLength(1);
             expect(screen.findAllByType(CodeEditorWithFind)).toHaveLength(0);
             expect(editorRef.current).toBeNull();
             await act(async () => { screen.findByType(MarkdownEditModeMenu).props.onChange('raw'); });
+            console.info('FX-EDITORSUITE stage ready');
             const edited = 'Edited <span>kept</span> draft';
             await act(async () => {
                 webViewBoundary.onMessage!({ nativeEvent: { data: JSON.stringify({ v: 1, type: 'ready', payload: { ok: true } }) } });
@@ -370,6 +390,7 @@ describe('useMarkdownEditMode', () => {
                 await vi.waitFor(() => { expect(text).toBe(edited); });
             });
             expect(screen.findAllByType(CodeEditorWithFind)).toHaveLength(1);
+            console.info('FX-EDITORSUITE stage release');
             tiptap.release();
             await act(async () => { await import('./markdownEditorEngine.web'); });
             const menu = screen.findByType(MarkdownEditModeMenu);
@@ -377,7 +398,9 @@ describe('useMarkdownEditMode', () => {
             expect(menu.props.mode).toBe('raw');
             expect(screen.findAllByType(CodeEditorWithFind)).toHaveLength(1);
             expect(editorRef.current?.getValue()).toBe(edited);
+            console.info('FX-EDITORSUITE stage rich');
             await act(async () => { menu.props.onChange('rich'); });
+            console.info('FX-EDITORSUITE stage assertion');
             expect(screen.findByType(RichMarkdownEditorPanel).props.value).toBe(edited);
             expect(editorRef.current?.getValue()).toBe(edited);
         } finally { tiptap.release(); }

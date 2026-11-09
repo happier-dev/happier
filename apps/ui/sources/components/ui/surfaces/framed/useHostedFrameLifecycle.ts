@@ -1,19 +1,8 @@
 import * as React from 'react';
 
-const DEFAULT_HOSTED_FRAME_READY_TIMEOUT_MS = 30_000;
-
-function scheduleHostedFrameReadyTimeout(input: Readonly<{
-    timeoutMs?: number;
-    onTimeout: () => void;
-}>): () => void {
-    const timeout = setTimeout(input.onTimeout, input.timeoutMs ?? DEFAULT_HOSTED_FRAME_READY_TIMEOUT_MS);
-    return () => clearTimeout(timeout);
-}
-
 export type HostedFrameFailure =
     | 'guest_error'
     | 'load_failed'
-    | 'ready_timeout'
     | 'unexpected_navigation';
 
 export type HostedFrameRetirementReason = HostedFrameFailure | 'reload' | 'replaced' | 'retired' | 'unmount';
@@ -29,9 +18,6 @@ type HostedFrameLifecycleState = Readonly<{
 /** One source-neutral frame attempt lifecycle shared by installed and caller adapters. */
 export function useHostedFrameLifecycle(input: Readonly<{
     lifetimeKey: string;
-    readyRequired: boolean;
-    readyTimeoutMs?: number | null;
-    onReadyTimeout?: () => void;
     onRetireAttempt?: (reason: HostedFrameRetirementReason) => void;
 }>) {
     const [state, setState] = React.useState<HostedFrameLifecycleState>(() => ({
@@ -41,9 +27,7 @@ export function useHostedFrameLifecycle(input: Readonly<{
         ready: false,
         failure: null,
     }));
-    const onReadyTimeoutRef = React.useRef(input.onReadyTimeout);
     const onRetireAttemptRef = React.useRef(input.onRetireAttempt);
-    onReadyTimeoutRef.current = input.onReadyTimeout;
     onRetireAttemptRef.current = input.onRetireAttempt;
     const renderedState = state.lifetimeKey === input.lifetimeKey
         ? state
@@ -101,17 +85,6 @@ export function useHostedFrameLifecycle(input: Readonly<{
         setState((current) => current.lifetimeKey === renderedState.lifetimeKey && current.attempt === renderedState.attempt
             && current.failure === null ? { ...current, ready: true } : current);
     }, [renderedState.attempt, renderedState.lifetimeKey]);
-
-    React.useEffect(() => {
-        if (!renderedState.loaded || renderedState.ready || renderedState.failure || !input.readyRequired || input.readyTimeoutMs === null) return;
-        return scheduleHostedFrameReadyTimeout({
-            timeoutMs: input.readyTimeoutMs ?? undefined,
-            onTimeout: () => {
-                onReadyTimeoutRef.current?.();
-                fail('ready_timeout');
-            },
-        });
-    }, [fail, input.readyRequired, input.readyTimeoutMs, renderedState.failure, renderedState.loaded, renderedState.ready]);
 
     return Object.freeze({
         attempt: renderedState.attempt,

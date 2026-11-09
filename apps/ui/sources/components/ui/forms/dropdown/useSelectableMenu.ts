@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type { TextInput } from 'react-native';
-import type { SelectableMenuCategory, SelectableMenuItem } from './selectableMenuTypes';
+import type { SelectableMenuCategory, SelectableMenuItem, SelectableMenuItemSource } from './selectableMenuTypes';
 import { t } from '@/text';
 import {
     matchesHappierMenuQuery,
@@ -31,6 +31,7 @@ export const CREATE_ITEM_ID = '__create__';
 
 export function useSelectableMenu(params: {
     items: ReadonlyArray<SelectableMenuItem>;
+    itemSource?: SelectableMenuItemSource;
     onRequestClose: () => void;
     initialSelectedId?: string | null;
     onCreateItem?: ((query: string) => void) | null;
@@ -84,16 +85,24 @@ export function useSelectableMenu(params: {
         return groupByCategory(filtered);
     }, [allItemsRaw, params.createItemFactory, params.onCreateItem, searchQuery]);
 
-    const allItems = useMemo(() => {
-        return filteredCategories.flatMap((c) => c.items);
-    }, [filteredCategories]);
+    const { allItems, itemIndexById } = useMemo(() => {
+        const allItems = filteredCategories.flatMap((c) => c.items);
+        // A source's unfiltered order is already indexed. A query owns only its matching rows.
+        const itemIndexById = params.itemSource
+            ? new Map(allItems.map((item, index) => [item.id, index]))
+            : undefined;
+        return { allItems, itemIndexById };
+    }, [filteredCategories, params.itemSource?.indexById, searchQuery]);
     const getItemLabel = useCallback((item: SelectableMenuItem) => item.title, []);
+    // A run of swatches is one keyboard row: Left/Right move along it, Up/Down step past it.
+    const getItemRowGroup = useCallback((item: SelectableMenuItem) => (item.swatch ? `swatch:${item.swatch.group ?? ''}` : null), []);
     const {
         selectedIndex,
         setSelectedIndex,
         handleKeyPress,
     } = useHappierMenuInteraction({
         items: allItems,
+        itemIndexById,
         open: params.open,
         initialSelectedId: params.initialSelectedId,
         allowEmptySelection: params.allowEmptySelection,
@@ -105,6 +114,7 @@ export function useSelectableMenu(params: {
         resetKey: searchQuery,
         onRequestClose: params.onRequestClose,
         getItemLabel,
+        getItemRowGroup,
     });
 
     const handleSearchChange = useCallback((text: string) => setSearchQuery(text), []);
@@ -113,9 +123,11 @@ export function useSelectableMenu(params: {
         searchQuery,
         selectedIndex,
         filteredCategories,
+        allItems,
         inputRef,
         handleSearchChange,
         handleKeyPress,
         setSelectedIndex,
+        itemSource: params.itemSource,
     };
 }

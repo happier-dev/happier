@@ -36,6 +36,7 @@ describe('buildCodeMirrorWebViewHtml', () => {
         vi.resetModules();
         vi.doMock('./codemirrorWebViewBundle.generated', () => ({
             CODEMIRROR_WEBVIEW_BUNDLE_JS: '',
+            CODEMIRROR_INLINE_SUGGESTIONS_FACTORY_JS: '',
         }));
 
         const { buildCodeMirrorWebViewHtml } = await import('./codemirrorWebViewHtml');
@@ -79,6 +80,7 @@ describe('buildCodeMirrorWebViewHtml', () => {
         vi.resetModules();
         vi.doMock('./codemirrorWebViewBundle.generated', () => ({
             CODEMIRROR_WEBVIEW_BUNDLE_JS: '',
+            CODEMIRROR_INLINE_SUGGESTIONS_FACTORY_JS: '',
         }));
 
         const { buildCodeMirrorWebViewHtml } = await import('./codemirrorWebViewHtml');
@@ -99,6 +101,7 @@ describe('buildCodeMirrorWebViewHtml', () => {
         vi.resetModules();
         vi.doMock('./codemirrorWebViewBundle.generated', () => ({
             CODEMIRROR_WEBVIEW_BUNDLE_JS: '',
+            CODEMIRROR_INLINE_SUGGESTIONS_FACTORY_JS: '',
         }));
 
         const { buildCodeMirrorWebViewHtml } = await import('./codemirrorWebViewHtml');
@@ -120,6 +123,7 @@ describe('buildCodeMirrorWebViewHtml', () => {
         vi.resetModules();
         vi.doMock('./codemirrorWebViewBundle.generated', () => ({
             CODEMIRROR_WEBVIEW_BUNDLE_JS: '',
+            CODEMIRROR_INLINE_SUGGESTIONS_FACTORY_JS: '',
         }));
 
         const { buildCodeMirrorWebViewHtml } = await import('./codemirrorWebViewHtml');
@@ -162,6 +166,7 @@ describe('buildCodeMirrorWebViewHtml', () => {
         vi.resetModules();
         vi.doMock('./codemirrorWebViewBundle.generated', () => ({
             CODEMIRROR_WEBVIEW_BUNDLE_JS: '',
+            CODEMIRROR_INLINE_SUGGESTIONS_FACTORY_JS: '',
         }));
 
         const { buildCodeMirrorWebViewHtml } = await import('./codemirrorWebViewHtml');
@@ -183,6 +188,7 @@ describe('buildCodeMirrorWebViewHtml', () => {
         vi.resetModules();
         vi.doMock('./codemirrorWebViewBundle.generated', () => ({
             CODEMIRROR_WEBVIEW_BUNDLE_JS: '',
+            CODEMIRROR_INLINE_SUGGESTIONS_FACTORY_JS: '',
         }));
 
         const { buildCodeMirrorWebViewHtml } = await import('./codemirrorWebViewHtml');
@@ -220,6 +226,7 @@ describe('buildCodeMirrorWebViewHtml', () => {
         vi.resetModules();
         vi.doMock('./codemirrorWebViewBundle.generated', () => ({
             CODEMIRROR_WEBVIEW_BUNDLE_JS: '',
+            CODEMIRROR_INLINE_SUGGESTIONS_FACTORY_JS: '',
         }));
 
         const { buildCodeMirrorWebViewHtml } = await import('./codemirrorWebViewHtml');

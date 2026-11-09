@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     MENTION_KIND_V1,
     buildMentionRefForKindV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/runtime/input/mentionRefV1';
 
 const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());

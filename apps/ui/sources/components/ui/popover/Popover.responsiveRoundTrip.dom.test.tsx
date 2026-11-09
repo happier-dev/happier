@@ -68,12 +68,12 @@ describe('Popover responsive placement lifecycle', () => {
             await settled();
             expect(document.querySelector('[role="dialog"]')).not.toBeNull();
             expect(portal()).toBeNull();
-            // Responsive reflow moved the same opener. Until the platform reports its new
-            // geometry, a desktop panel must not paint at the previous desktop's coordinates.
+            // Responsive reflow moved the same opener. The synchronous layout publication
+            // must expose its new coordinates without waiting for another frame.
             anchorX = 1000;
             viewport.width = 1440; viewport.height = 1000;
             await act(async () => { root.render(<Harness />); });
-            expect(portal().style.opacity).toBe('0');
+            checkPlacement();
             await settled();
             checkPlacement();
             await act(async () => { document.querySelector<HTMLButtonElement>('[data-testid="responsive-done"]')!.click(); });

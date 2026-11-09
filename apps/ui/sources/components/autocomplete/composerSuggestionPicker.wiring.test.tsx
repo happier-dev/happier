@@ -3,7 +3,8 @@ import { seedAutocompleteSessions, seedAutocompleteSessionRows } from './autocom
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { RPC_METHODS, type PluginProjectionV2 } from '@happier-dev/protocol';
+import { RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
+import { type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 
 import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
@@ -104,8 +105,6 @@ function composerReferenceHost(triggers: ComposerSuggestionTrigger[] = ['@']): C
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {},

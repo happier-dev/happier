@@ -14,12 +14,11 @@ import {
     resolveHappierStagedMoveHints,
 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { I18nManager, Platform, View } from 'react-native';
+import { I18nManager, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
@@ -179,7 +178,6 @@ export const EntityDragGrip = React.forwardRef<View, Readonly<{
             ref={ref}
             {...props}
             colors={colors}
-            minimumTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
             renderGlyph={renderGripGlyph}
         />
     );
@@ -227,7 +225,6 @@ export function EntityDragGripTrigger(props: Readonly<{
             revealed={props.revealed}
             density={props.density}
             colors={colors}
-            minimumTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
             renderGlyph={renderGripGlyph}
             onKeyDown={onKeyDown ? (key, event) => {
                 const native = event as Partial<Readonly<{ repeat: boolean; shiftKey: boolean; preventDefault(): void; stopPropagation(): void; nativeEvent: Readonly<{ repeat?: boolean; shiftKey?: boolean }> }>>;

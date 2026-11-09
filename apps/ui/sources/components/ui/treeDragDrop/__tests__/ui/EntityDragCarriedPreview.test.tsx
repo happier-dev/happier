@@ -11,7 +11,7 @@ import type { WindowBounds } from '../../treeDragDropTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
-const motion = vi.hoisted(() => ({ springs: [] as number[], completions: [] as ((finished?: boolean) => void)[] }));
+const motion = vi.hoisted(() => ({ springs: [] as number[], completions: [] as ((finished?: boolean) => void)[], shared: [] as { value: number }[] }));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -22,7 +22,13 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
-    return { ...createReanimatedModuleMock(),
+    const base = createReanimatedModuleMock();
+    return { ...base,
+        useSharedValue: (initial: number) => {
+            const value = base.useSharedValue(initial) as { value: number };
+            if (!motion.shared.includes(value)) motion.shared.push(value);
+            return value;
+        },
         withSpring: (value: number, _config: unknown, completion?: (finished?: boolean) => void) => {
             motion.springs.push(value);
             if (completion) motion.completions.push(completion);
@@ -41,6 +47,7 @@ vi.mock('react-native-worklets', () => ({
 afterEach(() => {
     motion.springs.length = 0;
     motion.completions.length = 0;
+    motion.shared.length = 0;
     setReducedMotionPreferenceOverride(null);
 });
 
@@ -110,7 +117,8 @@ describe('EntityDragCarriedPreview refusal settlement', () => {
         await act(async () => { carry = runtime.begin('source')!; carry.move({ x: 250, y: 250 }); release = carry.release(); });
         const position = screen.findAll(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function')[0]!;
         await act(async () => { position.props.onLayout({ nativeEvent: { layout: { width: 260, height: 100 } } }); });
-        const positionStyle = position.props.style[0] as { left: number; top: number };
+        // The card's place rides the first two shared values (x, y), written from the pointer channel.
+        const positionStyle = { left: motion.shared[0]!.value, top: motion.shared[1]!.value };
         expect(screen.findHostByTestId('carried-card')).toBeNull();
         // Native source geometry can arrive after pickup; settlement must use its current origin.
         sourceBounds = { x: 10, y: 20, width: 300, height: 40 };
@@ -138,6 +146,36 @@ describe('EntityDragCarriedPreview refusal settlement', () => {
             await act(async () => { runtime.cancel(); });
         } else expect(screen.findHostByTestId('carried-card')).toBeNull();
         unsubscribe();
+        await screen.unmount();
+    });
+});
+
+describe('EntityDragCarriedPreview pointer frames', () => {
+    it('moves the card without committing React while the place under the pointer is unchanged', async () => {
+        const runtime = createEntityDragDropRuntime();
+        const scope = { serverId: 'home-a', accountId: 'account-a' };
+        runtime.registerSource({ id: 'source', scope,
+            getItem: () => ({ kind: 'session' as const, scope, address: { serverId: scope.serverId, sessionId: 'child' } }),
+            isCurrent: () => true, describe: () => ({ title: 'Child' }) });
+        runtime.registerTarget({ id: 'target', scope, acceptedKinds: ['session'],
+            getBounds: () => ({ x: 0, y: 0, width: 1000, height: 1000 }), execute: async () => ({ status: 'applied' }),
+            resolve: () => ({ status: 'allowed', effect: { actionId: 'session.manager.set', input: {}, preview: { verb: 'Put under', target: 'Lead' } } }) });
+        let commits = 0;
+        const screen = await renderScreen(
+            <React.Profiler id="preview" onRender={() => { commits += 1; }}>
+                <EntityDragCarriedPreview runtime={runtime} testID="carried-card" />
+            </React.Profiler>,
+        );
+        let carry!: NonNullable<ReturnType<typeof runtime.begin>>;
+        await act(async () => { carry = runtime.begin('source')!; carry.move({ x: 100, y: 100 }); });
+        const position = screen.findAll(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function')[0]!;
+        await act(async () => { position.props.onLayout({ nativeEvent: { layout: { width: 200, height: 60 } } }); });
+        const before = commits;
+        const x = motion.shared[0]!.value;
+        for (let i = 1; i <= 20; i += 1) await act(async () => { carry.move({ x: 100 + i * 5, y: 100 + i }); });
+        expect(commits - before).toBe(0);
+        expect(motion.shared[0]!.value).toBe(x + 100);
+        expect(motion.shared[1]!.value).toBe(100 + 20 + 18);
         await screen.unmount();
     });
 });

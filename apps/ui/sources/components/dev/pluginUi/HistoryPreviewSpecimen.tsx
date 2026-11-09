@@ -33,6 +33,8 @@ export function HistoryPreviewSpecimen() {
                     { kind: 'agent-text', id: 'dev-item', realID: 'dev-item', localId: null, createdAt: 2, text: 'The flaky e2e is the settings sheet: it remounts when the viewport changes, so the test sometimes types into a sheet that is about to be replaced.' },
                 ] }} /></View>
                 <View style={styles.panel}><ConversationPreview highlight={null} query={QUERY} disabled={false} /></View>
+                <View style={styles.panel} testID="dev-find-history-preview-failed"><ConversationPreview highlight={HIGHLIGHT} query={QUERY} disabled={false}
+                    exchange={{ failed: true, messages: [] }} onRetry={noop} /></View>
             </View>
         </View>
     );

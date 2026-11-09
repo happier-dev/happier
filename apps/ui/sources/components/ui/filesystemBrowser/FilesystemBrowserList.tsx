@@ -6,7 +6,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import { resolveFilesystemErrorReason } from './filesystemErrorReason';
+import { isFilesystemErrorRetryable, resolveFilesystemErrorReason } from './filesystemErrorReason';
 
 import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -56,7 +56,8 @@ export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(p
                 title={t('files.pane.rootErrorTitleUnnamed')}
                 reason={props.rootErrorReason ?? resolveFilesystemErrorReason(props.rootError)}
                 diagnosticCode={props.rootError}
-                action={{ label: props.inlineRetryLabel, onPress: props.retryRoot }}
+                action={isFilesystemErrorRetryable(props.rootError)
+                    ? { label: props.inlineRetryLabel, onPress: props.retryRoot } : undefined}
             />
         ) : null
     ), [emptyStateOwnsRoot, props.inlineRetryLabel, props.listHeaderTestID, props.loadingLabel, props.retryRoot, props.rootError, props.rootErrorReason, showRootLoadingHeader, theme.colors.text.secondary]);

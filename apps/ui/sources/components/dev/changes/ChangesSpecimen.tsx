@@ -28,6 +28,7 @@ import { WALKTHROUGH_SPECIMEN_FRAMES } from './WalkthroughSpecimen';
 import { COMMITS_SPECIMEN_FRAMES } from './CommitsSpecimen';
 import { REVIEW_WALKTHROUGH_SPECIMEN_FRAMES } from './ReviewWalkthroughSpecimen';
 import { PULL_REQUEST_SPECIMEN_FRAMES } from './PullRequestSpecimen';
+import { PULL_REQUEST_VIEWED_SPECIMEN_FRAMES } from './PullRequestViewedSpecimen';
 import { PULL_REQUEST_FORM_SPECIMEN_FRAMES } from './PullRequestFormSpecimen';
 import { SPECIMEN_ANALYSIS_COMPLETE, SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH, specimenReviewedRefs } from './walkthroughSpecimenFixture';
 
@@ -142,7 +143,7 @@ function FilesFrame(props: Readonly<{ stacked: boolean; explain?: boolean }>) {
         renderBar: props.stacked ? (coverage: ChangedFilesReviewCoverage, actions: React.ReactNode) => <ScmComparisonPhoneHeader
             view="files" views={['files', 'walkthrough']} scope={{ options: SCOPE_OPTIONS, current: SESSION_COMPARISON,
                 currentLabel: t('scmComparison.scope.session'), fileCount: coverage.fileCount, onSelect: noop }}
-            onSelectView={noop} onBack={noop} onStartReview={noop} extraActions={actions} /> : undefined,
+            onSelectView={noop} onStartReview={noop} extraActions={actions} /> : undefined,
         renderBarLeading: (coverage: ChangedFilesReviewCoverage) => (
             <>
             <ScmComparisonViewSwitch view="files" views={['files', 'walkthrough']} onSelect={noop} />
@@ -204,7 +205,7 @@ function FilesFrame(props: Readonly<{ stacked: boolean; explain?: boolean }>) {
 }
 const DETAILS_HEADER = { isSelectedForCommit: null } as const;
 /** Walkthrough frames own a pinned phone bar, so on a phone they fill the viewport exactly. */
-const WALKTHROUGH_FRAME_IDS = new Set([...WALKTHROUGH_SPECIMEN_FRAMES, ...COMMITS_SPECIMEN_FRAMES, ...REVIEW_WALKTHROUGH_SPECIMEN_FRAMES, ...PULL_REQUEST_SPECIMEN_FRAMES].map((frame) => frame.id));
+const WALKTHROUGH_FRAME_IDS = new Set([...WALKTHROUGH_SPECIMEN_FRAMES, ...COMMITS_SPECIMEN_FRAMES, ...REVIEW_WALKTHROUGH_SPECIMEN_FRAMES, ...PULL_REQUEST_SPECIMEN_FRAMES, ...PULL_REQUEST_VIEWED_SPECIMEN_FRAMES].map((frame) => frame.id));
 
 type Frame = Readonly<{ id: string; title: string; render: (phone: boolean) => React.ReactElement; tall?: boolean }>;
 
@@ -219,6 +220,7 @@ const FRAMES: readonly Frame[] = [
     ...COMMITS_SPECIMEN_FRAMES.map((frame) => ({ ...frame, tall: true })),
     ...REVIEW_WALKTHROUGH_SPECIMEN_FRAMES.map((frame) => ({ ...frame, tall: true })),
     ...PULL_REQUEST_SPECIMEN_FRAMES.map((frame) => ({ ...frame, tall: true })),
+    ...PULL_REQUEST_VIEWED_SPECIMEN_FRAMES.map((frame) => ({ ...frame, tall: true })),
     ...PULL_REQUEST_FORM_SPECIMEN_FRAMES,
 ];
 

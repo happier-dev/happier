@@ -1,44 +1,35 @@
 import * as React from 'react';
-import { Platform, Pressable, View, type GestureResponderEvent, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
+import { HappierPressable, type HappierPressableProps, type HappierStyleProp } from '@happier-dev/plugin-ui/presentation';
+import { stopPressEventPropagation } from '@/utils/ui/stopPressEventPropagation';
 
 export const REVIEW_COMMENT_LINE_AFFORDANCE_TEST_ID = 'review-comment-line-affordance';
 export const REVIEW_COMMENT_LINE_AFFORDANCE_ICON_TEST_ID = 'review-comment-line-affordance-icon';
 export const REVIEW_COMMENT_LINE_AFFORDANCE_ICON_NAME = 'chat-dots';
 
-const webCursorStyle = Platform.OS === 'web'
-    ? ({
+const webCursorStyle: HappierStyleProp = Platform.OS === 'web'
+    ? {
         cursor: 'pointer',
-    } as unknown as ViewStyle)
+    }
     : null;
-
-type PressEventWithStopImmediatePropagation = GestureResponderEvent & {
-    nativeEvent?: GestureResponderEvent['nativeEvent'] & {
-        stopImmediatePropagation?: () => void;
-    };
-};
-
-function stopPressEventPropagation(event: GestureResponderEvent) {
-    event.stopPropagation();
-    (event as PressEventWithStopImmediatePropagation).nativeEvent?.stopImmediatePropagation?.();
-}
 
 export function ReviewCommentLineAffordance(props: {
     active?: boolean;
     color: string;
     onHoverIn?: () => void;
     onHoverOut?: () => void;
-    onPress: (event: GestureResponderEvent) => void;
-    style?: StyleProp<ViewStyle>;
+    onPress: HappierPressableProps['onPress'];
+    style?: HappierStyleProp & React.ComponentProps<typeof View>['style'];
     testID?: string;
     visible?: boolean;
 }) {
     const active = props.active === true;
     const visible = props.visible !== false;
-    const onPress = React.useCallback((event: GestureResponderEvent) => {
+    const onPress = React.useCallback<HappierPressableProps['onPress']>((event) => {
         stopPressEventPropagation(event);
         props.onPress(event);
     }, [props.onPress]);
@@ -58,12 +49,12 @@ export function ReviewCommentLineAffordance(props: {
     }
 
     return (
-        <Pressable
+        <HappierPressable
             accessibilityRole="button"
             accessibilityLabel={active ? t('files.reviewComments.closeCommentA11y') : t('files.reviewComments.addCommentA11y')}
-            hitSlop={8}
-            onHoverIn={props.onHoverIn}
-            onHoverOut={props.onHoverOut}
+            // Line gutters stack with no gap between them: a line's hit area never reaches into the next line's.
+            hitReach={{ top: 0, bottom: 0 }}
+            onHoverChange={(hovered) => (hovered ? props.onHoverIn?.() : props.onHoverOut?.())}
             onPress={onPress}
             style={[styles.button, webCursorStyle, props.style]}
             testID={props.testID ?? REVIEW_COMMENT_LINE_AFFORDANCE_TEST_ID}
@@ -74,7 +65,7 @@ export function ReviewCommentLineAffordance(props: {
                 size={14}
                 testID={REVIEW_COMMENT_LINE_AFFORDANCE_ICON_TEST_ID}
             />
-        </Pressable>
+        </HappierPressable>
     );
 }
 

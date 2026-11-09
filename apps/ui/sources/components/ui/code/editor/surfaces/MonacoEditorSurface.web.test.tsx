@@ -17,12 +17,16 @@ const createEditorSpy = vi.fn<(...args: unknown[]) => Record<string, unknown>>((
     onDidChangeModelContent: () => ({ dispose: () => {} }),
     onDidBlurEditorText: () => ({ dispose: () => {} }),
     updateOptions: () => {},
+    addAction: () => ({ dispose: () => {} }),
+    createContextKey: () => ({ set() {}, reset() {} }),
     dispose: () => {},
 }));
 const defineThemeSpy = vi.fn();
 const setThemeSpy = vi.fn();
 const typescriptModeSpy = vi.fn();
 const javascriptModeSpy = vi.fn();
+const webLanguageModeSpies = { json: vi.fn(), css: vi.fn(), scss: vi.fn(), less: vi.fn(), html: vi.fn(), handlebar: vi.fn(), razor: vi.fn() };
+const registerInlineCompletionsProviderSpy = vi.fn<(...args: unknown[]) => { dispose(): void }>(() => ({ dispose() {} }));
 
 const darkEditorTheme = {
     dark: true,
@@ -76,7 +80,12 @@ function assertCallable(value: unknown, label: string): (...args: unknown[]) => 
 
 /** The installed Monaco 0.55.1 boundary always includes both language-service defaults. */
 function createMonacoLanguageServicesBoundary() {
-    return { typescript: {
+    const service = (setModeConfiguration: typeof typescriptModeSpy) => ({ modeConfiguration: { foldingRanges: true, colors: true }, setModeConfiguration });
+    return { KeyCode: { Tab: 2, RightArrow: 17, Escape: 9, Backslash: 88 }, KeyMod: { CtrlCmd: 2048, WinCtrl: 256, Alt: 512 },
+        json: { jsonDefaults: service(webLanguageModeSpies.json) },
+        css: { cssDefaults: service(webLanguageModeSpies.css), scssDefaults: service(webLanguageModeSpies.scss), lessDefaults: service(webLanguageModeSpies.less) },
+        html: { htmlDefaults: service(webLanguageModeSpies.html), handlebarDefaults: service(webLanguageModeSpies.handlebar), razorDefaults: service(webLanguageModeSpies.razor) },
+        languages: { registerInlineCompletionsProvider: registerInlineCompletionsProviderSpy }, typescript: {
         typescriptDefaults: { setModeConfiguration: typescriptModeSpy },
         javascriptDefaults: { setModeConfiguration: javascriptModeSpy },
     } };
@@ -94,8 +103,30 @@ function setupMonacoGlobals() {
     (globalThis as any).window.monaco = {
         ...createMonacoLanguageServicesBoundary(),
         editor: {
-            createModel: createModelSpy,
-            create: createEditorSpy,
+            createModel: (...args: unknown[]) => {
+                const model = createModelSpy(...args);
+                const defaults = { uri: { scheme: 'inmemory', path: '/surface-test' }, getLanguageId: () => 'plaintext',
+                    getVersionId: () => 1, getEOL: () => '\n', getOffsetAt: (position: { column: number }) => position.column - 1 };
+                for (const [key, value] of Object.entries(defaults)) if (!(key in model)) model[key] = value;
+                return model;
+            },
+            create: (...args: unknown[]) => {
+                const editor = createEditorSpy(...args);
+                // Monaco always supplies this public API, including fixtures that customize unrelated engine methods.
+                if (!('createDecorationsCollection' in editor)) editor.createDecorationsCollection = () => ({ set() {}, clear() {} });
+                if (!('createContextKey' in editor)) editor.createContextKey = () => ({ set() {}, reset() {} });
+                const getDomNode = editor.getDomNode;
+                const original = typeof getDomNode === 'function' ? getDomNode() : null;
+                // The public engine returns an HTMLElement. Preserve measurement/style boundary fixtures on one.
+                if (original && !(original instanceof HTMLElement)) {
+                    const node = document.createElement('div');
+                    for (const key of ['style', 'getBoundingClientRect']) if (key in original) {
+                        Object.defineProperty(node, key, { configurable: true, value: original[key] });
+                    }
+                    editor.getDomNode = () => node;
+                }
+                return editor;
+            },
             defineTheme: defineThemeSpy,
             setTheme: setThemeSpy,
         },
@@ -109,6 +140,8 @@ beforeEach(() => {
     setThemeSpy.mockClear();
     typescriptModeSpy.mockClear();
     javascriptModeSpy.mockClear();
+    for (const spy of Object.values(webLanguageModeSpies)) spy.mockClear();
+    registerInlineCompletionsProviderSpy.mockClear();
     monacoDom.listeners.clear();
     unistylesState.currentTheme = darkEditorTheme;
 });
@@ -132,9 +165,12 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     const base = await createUnistylesMock();
     const baseRuntime = base.useUnistyles().rt;
+    const baseTheme = base.useUnistyles().theme;
     return {
         ...base,
-        useUnistyles: () => ({ theme: unistylesState.currentTheme, rt: baseRuntime }),
+        useUnistyles: () => ({ theme: { ...baseTheme, ...unistylesState.currentTheme,
+            colors: { ...baseTheme.colors, ...unistylesState.currentTheme.colors,
+                diff: { ...baseTheme.colors.diff, ...unistylesState.currentTheme.colors.diff } } }, rt: baseRuntime }),
     };
 });
 
@@ -142,9 +178,324 @@ import { MonacoEditorSurface } from './MonacoEditorSurface.web';
 import type { CodeEditorHandle } from '../codeEditorTypes';
 import { KeyboardShortcutProvider } from '@/keyboard/KeyboardShortcutProvider';
 import { GlassRuntimeEnvironmentProvider } from '@/components/ui/glass/glassRuntimeEnvironment';
+import { createEditorDocumentHistory } from '../editorDocumentHistory';
+import { createCodeIntelligenceController } from '@/sync/domains/workspaces/languageIntelligence/createCodeIntelligenceController';
+import { bindCodeIntelligenceEditor } from '@/sync/domains/workspaces/languageIntelligence/bindCodeIntelligenceEditor';
+import { FilesEditorAiSuggestionsV1Schema } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { LanguageIntelligenceQueryResult } from '@happier-dev/protocol/machines/languageIntelligence';
+import { dispatchEscapeToLayerStack, ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, registerEscapeLayer } from '@/keyboard/escape';
 
 
 describe('MonacoEditorSurface (web)', () => {
+    it.each(['pending', 'preview'] as const)('dismisses next-edit %s through the real Escape layer without taking IME or list Escape', async phase => {
+        vi.useFakeTimers();
+        setupMonacoGlobals();
+        const node = document.createElement('div');
+        const input = document.createElement('textarea');
+        node.append(input);
+        let text = 'old(); old();', version = 1, column = 4;
+        const changed = new Set<(event: { changes: Array<{ rangeOffset: number; rangeLength: number; text: string }> }) => void>();
+        const selected = new Set<() => void>();
+        const model = { getValue: () => text, getVersionId: () => version, getEOL: () => '\n',
+            getLineCount: () => 1, getLineContent: () => text, getLineMaxColumn: () => text.length + 1,
+            getOffsetAt: (position: { column: number }) => position.column - 1,
+            getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }), dispose() {} };
+        createModelSpy.mockReturnValueOnce(model);
+        createEditorSpy.mockReturnValueOnce({ ...createEditorSpy.getMockImplementation()!(), trigger: vi.fn(),
+            getDomNode: () => node, getModel: () => model, getPosition: () => ({ lineNumber: 1, column }),
+            getSelections: () => [{ isEmpty: () => true }], focus() {},
+            setPosition: (position: { column: number }) => { column = position.column; for (const listener of selected) listener(); },
+            createDecorationsCollection: () => ({ set() {}, clear() {} }),
+            onDidChangeModelContent: (listener: Parameters<typeof changed.add>[0]) => { changed.add(listener); return { dispose: () => changed.delete(listener) }; },
+            onDidChangeCursorSelection: (listener: () => void) => { selected.add(listener); return { dispose: () => selected.delete(listener) }; },
+        });
+        const ref = React.createRef<CodeEditorHandle>();
+        const screen = await renderScreen(<MonacoEditorSurface ref={ref} resetKey="next-edit-escape" value={text} language={null} onChange={() => {}} />);
+        const settings = FilesEditorAiSuggestionsV1Schema.parse({ enabled: true, nextEditEnabled: true,
+            mode: 'onRequest', connectionId: 'source', modelId: 'edit-model' });
+        const descriptor = { id: 'edit-model', name: 'Edit model', contextWindowTokens: 32768,
+            nextEdit: { operationId: 'edit', tokenAccounting: 'utf8-bytes' as const, outputTokens: 4096, promptOverheadTokens: 32 } };
+        const requests: { signal: AbortSignal; resolve(value: LanguageIntelligenceQueryResult): void }[] = [];
+        const controller = createCodeIntelligenceController({ scope: { serverId: 'home', machineId: 'machine', rootPath: '/repo' },
+            path: 'a.ts', languageId: 'typescript', getText: () => text,
+            accountLifetime: { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+            query: async () => ({ status: 'unavailable', reason: 'no_capable_server' }), openLocation() {},
+            inlineSuggestions: { getSettings: () => settings, getModel: () => descriptor,
+                query: (_input, signal) => new Promise(resolve => requests.push({ signal, resolve })) },
+        });
+        let unbind = () => {};
+        const answer = async (index: number) => {
+            await act(async () => {
+                requests[index]!.resolve({ status: 'ok', kind: 'ai.nextEdit', version,
+                    edits: [{ path: 'a.ts', range: { start: { line: 0, character: 11 }, end: { line: 0, character: 14 } }, oldText: 'old', newText: 'renamed' }] });
+                await vi.runAllTimersAsync();
+            });
+        };
+        const escape = async (isComposing = false) => {
+            const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, isComposing });
+            Object.defineProperty(event, 'target', { value: input });
+            let handled = false;
+            await act(async () => { handled = dispatchEscapeToLayerStack(event); });
+            if (ref.current!.inlineSuggestions!.getContext()?.suggestWidgetOpen) expect(event.defaultPrevented).toBe(false);
+            return handled;
+        };
+        try {
+            await act(async () => {
+                unbind = bindCodeIntelligenceEditor(controller, ref.current!, { path: 'a.ts', inlayHints: 'off', semanticHighlighting: false });
+                text = 'renamed(); old();'; version++; column = 8;
+                for (const listener of changed) listener({ changes: [{ rangeOffset: 0, rangeLength: 3, text: 'renamed' }] });
+                controller.nextEditSuggestions.trigger();
+                await vi.runAllTimersAsync();
+            });
+            expect(requests).toHaveLength(1);
+            if (phase === 'preview') {
+                await answer(0);
+                await act(async () => { node.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', cancelable: true })); });
+                expect(controller.nextEditSuggestions.getSnapshot().status).toBe('preview');
+            } else expect(controller.nextEditSuggestions.getSnapshot().status).toBe('requesting');
+            expect(await escape(true)).toBe(false);
+            if (phase === 'pending') expect(requests[0]!.signal.aborted).toBe(false);
+            expect(await escape()).toBe(true);
+            if (phase === 'pending') { expect(requests[0]!.signal.aborted).toBe(true); await answer(0); }
+            expect(controller.nextEditSuggestions.getSnapshot().suggestion).toBeNull();
+            expect(text).toBe('renamed(); old();');
+
+            await act(async () => { controller.nextEditSuggestions.trigger(); await vi.runAllTimersAsync(); });
+            const list = document.createElement('div'); list.className = 'suggest-widget visible';
+            await act(async () => { node.append(list); await flushHookEffects(); });
+            expect(ref.current!.inlineSuggestions!.getContext()?.suggestWidgetOpen).toBe(true);
+            expect(await escape()).toBe(true);
+            await answer(1);
+            expect(controller.nextEditSuggestions.getSnapshot().suggestion).toBeNull();
+        } finally { unbind(); controller.dispose(); await screen.unmount(); vi.useRealTimers(); }
+    });
+    it('dismisses a visible inline suggestion before its containing modal on Escape', async () => {
+        setupMonacoGlobals();
+        const node = document.createElement('div');
+        const input = document.createElement('textarea');
+        node.append(input);
+        const parent = { parent: null };
+        const closeModal = vi.fn();
+        const unregister = registerEscapeLayer({ priority: ESCAPE_LAYER_PRIORITIES.modal, allowEditableTarget: true,
+            scope: parent, onEscape: closeModal });
+        const model = { getValue: () => 'x', getLineCount: () => 1, dispose() {} };
+        createModelSpy.mockReturnValueOnce(model);
+        createEditorSpy.mockReturnValueOnce({ ...createEditorSpy.getMockImplementation()!(), trigger: vi.fn(), getDomNode: () => node,
+            getPosition: () => ({ lineNumber: 1, column: 2 }), getSelections: () => [{ isEmpty: () => true }] });
+        const ref = React.createRef<CodeEditorHandle>();
+        const screen = await renderScreen(<EscapeLayerProvider layer={parent}>
+            <MonacoEditorSurface ref={ref} resetKey="inline-escape" value="x" language={null} onChange={() => {}} />
+        </EscapeLayerProvider>);
+        try {
+            ref.current!.inlineSuggestions!.set({ id: 'escape', text: ' café', line: 1, character: 1 });
+            const provider = registerInlineCompletionsProviderSpy.mock.calls.at(-1)![1] as import('monaco-editor').languages.InlineCompletionsProvider;
+            const completions = await provider.provideInlineCompletions(model as unknown as import('monaco-editor').editor.ITextModel,
+                { lineNumber: 1, column: 2 } as import('monaco-editor').Position,
+                {} as import('monaco-editor').languages.InlineCompletionContext,
+                { isCancellationRequested: false } as import('monaco-editor').CancellationToken);
+            provider.handleItemDidShow!(completions!, completions!.items[0]!, ' café', {} as import('monaco-editor').languages.EditDeltaInfo);
+            const escape = () => {
+                const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+                Object.defineProperty(event, 'target', { value: input });
+                return dispatchEscapeToLayerStack(event);
+            };
+            expect(escape()).toBe(true);
+            expect(ref.current!.inlineSuggestions!.getSuggestion()).toBeNull();
+            expect(ref.current!.getValue()).toBe('x');
+            expect(closeModal).not.toHaveBeenCalled();
+            expect(escape()).toBe(true);
+            expect(closeModal).toHaveBeenCalledOnce();
+        } finally { unregister(); await screen.unmount(); }
+    });
+    it('publishes the live inline handle before notifying readiness on boot, reset and remount', async () => {
+        setupMonacoGlobals();
+        const ref = React.createRef<CodeEditorHandle>();
+        const observations: Array<{ inline: CodeEditorHandle['inlineSuggestions']; context: ReturnType<NonNullable<CodeEditorHandle['inlineSuggestions']>['getContext']> | undefined }> = [];
+        const onReady = vi.fn(() => {
+            const inline = ref.current?.inlineSuggestions;
+            observations.push({ inline, context: inline?.getContext() });
+        });
+        const prepareEditor = (column: number) => {
+            createModelSpy.mockReturnValueOnce({ getValue: () => 'text', getLineCount: () => 1, dispose() {} });
+            createEditorSpy.mockReturnValueOnce({ ...createEditorSpy.getMockImplementation()!(),
+                getPosition: () => ({ lineNumber: 1, column }), getSelections: () => [{ isEmpty: () => true }] });
+        };
+        prepareEditor(2);
+        const screen = await renderScreen(<MonacoEditorSurface key="first" ref={ref} resetKey="one" value="text" language={null} onChange={() => {}} onReady={onReady} />);
+        try {
+            expect(onReady).toHaveBeenCalledTimes(1);
+            expect(observations[0]?.inline).toBeDefined();
+            expect(observations[0]?.context).toMatchObject({ line: 1, character: 1, offset: 1 });
+            prepareEditor(3);
+            await screen.update(<MonacoEditorSurface key="first" ref={ref} resetKey="two" value="text" language={null} onChange={() => {}} onReady={onReady} />);
+            expect(onReady).toHaveBeenCalledTimes(2);
+            expect(observations[1]?.inline).toBeDefined();
+            expect(observations[1]?.inline).not.toBe(observations[0]?.inline);
+            expect(observations[1]?.context).toMatchObject({ line: 1, character: 2, offset: 2 });
+            prepareEditor(4);
+            await screen.update(<MonacoEditorSurface key="second" ref={ref} resetKey="three" value="text" language={null} onChange={() => {}} onReady={onReady} />);
+            expect(onReady).toHaveBeenCalledTimes(3);
+            expect(observations[2]?.inline).toBeDefined();
+            expect(observations[2]?.inline).not.toBe(observations[1]?.inline);
+            expect(observations[2]?.context).toMatchObject({ line: 1, character: 3, offset: 3 });
+        } finally { await screen.unmount(); }
+    });
+    it.each(['replacement', 'format'] as const)('keeps an explicit %s in one undo step separate from pending typing', async (command) => {
+        setupMonacoGlobals();
+        const history = createEditorDocumentHistory();
+        let value = 'a', owner = 'a';
+        const listeners = new Set<(event: Record<string, unknown>) => void>();
+        const changed = () => { for (const listener of listeners) listener({}); };
+        const model = { getValue: () => value, getLineCount: () => 1, getEOL: () => '\n',
+            getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }), dispose: () => {} };
+        createModelSpy.mockReturnValueOnce(model);
+        createEditorSpy.mockReturnValueOnce({ ...createEditorSpy.getMockImplementation()!(), pushUndoStop: () => {},
+            getModel: () => model,
+            getAction: () => ({ run: async () => { value = 'formatted'; changed(); } }),
+            onDidChangeModelContent: (listener: (event: Record<string, unknown>) => void) => {
+                listeners.add(listener); return { dispose: () => { listeners.delete(listener); } };
+            },
+            executeEdits: (_source: string, edits: Array<{ range: { startColumn: number; endColumn: number }; text: string }>) => {
+                for (const edit of edits) value = value.slice(0, edit.range.startColumn - 1) + edit.text + value.slice(edit.range.endColumn - 1);
+                changed();
+            } });
+        const ref = React.createRef<CodeEditorHandle>();
+        const screen = await renderScreen(<MonacoEditorSurface ref={ref} resetKey="command-boundaries" value={value} language={null}
+            history={history} onChange={(next, change) => { if (!change?.history) history.record(owner, next); owner = next; }} />);
+        const controller = createCodeIntelligenceController({ scope: { serverId: 'home', machineId: 'machine', rootPath: '/repo' },
+            path: 'a.ts', languageId: 'typescript', getText: () => owner,
+            accountLifetime: { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+            query: async () => ({ status: 'unavailable', reason: 'no_capable_server' }), openLocation() {} });
+        try {
+            if (command === 'format') ref.current!.setLanguageIntelligence!({ ...controller, path: 'a.ts', inlayHints: 'off', semanticHighlighting: false });
+            const availability = vi.fn();
+            const unsubscribe = ref.current!.subscribeHistory(availability);
+            availability.mockClear();
+            await act(async () => {
+                value = 'ab'; changed();
+                if (command === 'format') await ref.current!.formatDocument!();
+                else ref.current!.runCommand({ replaceDocument: 'formatted' });
+            });
+            if (command === 'replacement') expect(availability).toHaveBeenCalledTimes(1);
+            unsubscribe();
+            await act(async () => {
+                ref.current!.runCommand('undo');
+            });
+            expect(ref.current!.getValue()).toBe('ab');
+            await act(async () => { ref.current!.runCommand('undo'); });
+            expect(ref.current!.getValue()).toBe('a');
+        } finally { controller.dispose(); await screen.unmount(); }
+    });
+
+    it('projects guarded inline completions without augmenting the server list or taking its Tab', async () => {
+        setupMonacoGlobals();
+        const model = { getValue: () => 'x', getLanguageId: () => 'plaintext', getVersionId: () => 1, getEOL: () => '\n',
+            getOffsetAt: () => 1, getLineCount: () => 1, dispose() {} };
+        const selection = { isEmpty: () => true };
+        const trigger = vi.fn();
+        createModelSpy.mockReturnValueOnce(model);
+        createEditorSpy.mockReturnValueOnce({ ...createEditorSpy.getMockImplementation()!(), trigger,
+            getPosition: () => ({ lineNumber: 1, column: 2 }), getSelections: () => [selection], getSelection: () => selection });
+        const ref = React.createRef<CodeEditorHandle>();
+        const screen = await renderScreen(<MonacoEditorSurface ref={ref} resetKey="inline" value="x" language={null} onChange={() => {}} />);
+        try {
+            ref.current!.inlineSuggestions!.set({ id: 'one', text: ' café', line: 1, character: 1 });
+            const provider = registerInlineCompletionsProviderSpy.mock.calls.at(-1)![1] as import('monaco-editor').languages.InlineCompletionsProvider;
+            const position = { lineNumber: 1, column: 2 } as import('monaco-editor').Position;
+            const context = { selectedSuggestionInfo: undefined } as import('monaco-editor').languages.InlineCompletionContext;
+            const token = { isCancellationRequested: false } as import('monaco-editor').CancellationToken;
+            const result = await provider.provideInlineCompletions(model as unknown as import('monaco-editor').editor.ITextModel, position, context, token);
+            expect(result).toMatchObject({ suppressSuggestions: false, items: [{ insertText: ' café' }] });
+            provider.handleItemDidShow!(result!, result!.items[0]!, ' café', {} as import('monaco-editor').languages.EditDeltaInfo);
+            trigger.mockClear();
+            ref.current!.runCommand('inlineSuggestAccept');
+            expect(trigger).not.toHaveBeenCalledWith(expect.anything(), 'editor.action.inlineSuggest.commit', expect.anything());
+            ref.current!.inlineSuggestions!.setAcceptGuard(() => true);
+            ref.current!.runCommand('inlineSuggestAccept');
+            expect(trigger).toHaveBeenCalledWith(expect.anything(), 'editor.action.inlineSuggest.commit', null);
+            const augmented = await provider.provideInlineCompletions(model as unknown as import('monaco-editor').editor.ITextModel, position,
+                { ...context, selectedSuggestionInfo: {} } as import('monaco-editor').languages.InlineCompletionContext, token);
+            expect(augmented).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+    it('uses retained history for engine actions, keyboard and system Undo after remount', async () => {
+        setupMonacoGlobals();
+        const history = createEditorDocumentHistory();
+        history.record('a', 'ab'); history.record('ab', 'abc');
+        let value = 'abc';
+        let changed: (event: Record<string, unknown>) => void = () => {};
+        const trigger = vi.fn();
+        const actions = new Map<string, () => unknown>();
+        createModelSpy.mockReturnValueOnce({ getValue: () => value, getLineCount: () => 1, getEOL: () => '\n',
+            getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
+            canUndo: () => false, canRedo: () => false, dispose: () => {} });
+        createEditorSpy.mockReturnValueOnce({ ...createEditorSpy.getMockImplementation()!(), trigger, pushUndoStop: () => {},
+            addAction: (action: { id: string; run(): unknown }) => {
+                actions.set(action.id, action.run); return { dispose: () => { actions.delete(action.id); } };
+            },
+            onDidChangeModelContent: (listener: typeof changed) => { changed = listener; return { dispose: () => {} }; },
+            executeEdits: (_source: string, edits: Array<{ range: { startColumn: number; endColumn: number }; text: string }>) => {
+                for (const edit of edits) value = value.slice(0, edit.range.startColumn - 1) + edit.text + value.slice(edit.range.endColumn - 1);
+                changed({});
+            } });
+        const ref = React.createRef<CodeEditorHandle>();
+        const onChange = vi.fn();
+        const screen = await renderScreen(<MonacoEditorSurface ref={ref} resetKey="remounted" value={value} language={null}
+            history={history} onChange={onChange} />);
+        try {
+            const states: Array<{ canUndo: boolean; canRedo: boolean }> = [];
+            ref.current!.subscribeHistory((state) => states.push(state));
+            expect(states.at(-1)).toEqual({ canUndo: true, canRedo: false });
+            await act(async () => { await actions.get('undo')?.(); });
+            expect(ref.current!.getValue()).toBe('ab');
+            expect(onChange).toHaveBeenLastCalledWith('ab', { history: 'undo' });
+            const event = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, cancelable: true });
+            await act(async () => { monacoDom.listeners.get('keydown')?.(event); });
+            expect(event.defaultPrevented).toBe(true);
+            expect(ref.current!.getValue()).toBe('a');
+            const systemRedo = new InputEvent('beforeinput', { inputType: 'historyRedo', cancelable: true });
+            await act(async () => { monacoDom.listeners.get('beforeinput')?.(systemRedo); });
+            expect(systemRedo.defaultPrevented).toBe(true);
+            expect(ref.current!.getValue()).toBe('ab');
+            await act(async () => { await actions.get('redo')?.(); });
+            expect(ref.current!.getValue()).toBe('abc');
+            expect(trigger).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+
+    it('makes a failed engine load editable and retries from the newest fallback draft', async () => {
+        setupMonacoGlobals();
+        const onReady = vi.fn();
+        const onChange = vi.fn();
+        const ref = React.createRef<CodeEditorHandle>();
+        const loadedMonaco = window.monaco;
+        window.monaco = undefined;
+        window.require = Object.assign((_deps: unknown, _ok: unknown, fail: (error: Error) => void) => {
+            fail(new Error('engine chunk unavailable'));
+        }, { config: () => {} }) as typeof window.require;
+        const screen = await renderScreen(<MonacoEditorSurface ref={ref} value="original" resetKey="first" language={null}
+            onChange={onChange} onReady={onReady} />);
+        try {
+            await flushHookEffects();
+            // Ready means a usable text surface, including the plain fallback after a chunk failure.
+            expect(onReady).toHaveBeenCalledOnce();
+            const { TextInput } = await import('@/components/ui/text/Text');
+            const fallback = screen.findByType(TextInput);
+            expect(fallback.props.editable).toBe(true);
+            await act(async () => { fallback.props.onChangeText('unsaved fallback draft'); });
+            expect(ref.current?.getValue()).toBe('unsaved fallback draft');
+            expect(onChange).toHaveBeenLastCalledWith('unsaved fallback draft');
+            // Retrying the external engine must use the current draft rather than the initial seed.
+            window.monaco = loadedMonaco;
+            createModelSpy.mockImplementationOnce((value) => ({ getValue: () => value, getLineCount: () => 1, dispose: () => {} }));
+            await act(async () => { screen.update(<MonacoEditorSurface ref={ref} value="unsaved fallback draft" resetKey="retry" language={null}
+                onChange={onChange} onReady={onReady} />); });
+            await flushHookEffects();
+            expect(createModelSpy).toHaveBeenLastCalledWith('unsaved fallback draft', 'plaintext');
+            expect(ref.current?.getValue()).toBe('unsaved fallback draft');
+        } finally { await screen.unmount(); setupMonacoGlobals(); }
+    });
+
     it('aligns its measured five-digit gutter with the shared code-view and review inset', async () => {
         setupMonacoGlobals();
         // Monaco sizes its number box in whole digits of the 13 px code font (7.8 px each here); the code view
@@ -178,24 +529,28 @@ describe('MonacoEditorSurface (web)', () => {
         setupMonacoGlobals();
         const definition = vi.fn();
         const references = vi.fn();
-        await renderScreen(<KeyboardShortcutProvider handlers={{ 'code.goToDefinition': definition, 'code.findReferences': references }}>
+        const peek = vi.fn(); const typeDefinition = vi.fn(); const implementation = vi.fn();
+        await renderScreen(<KeyboardShortcutProvider handlers={{ 'code.goToDefinition': definition, 'code.findReferences': references,
+            'code.peekReferences': peek, 'code.goToTypeDefinition': typeDefinition, 'code.goToImplementation': implementation }}>
             <MonacoEditorSurface resetKey="intelligence-keys" value="const value = 1" language="typescript" onChange={vi.fn()} />
         </KeyboardShortcutProvider>);
         const capture = monacoDom.listeners.get('keydown');
         expect(capture).toEqual(expect.any(Function));
-        for (const modifiers of [{}, { altKey: true }, { shiftKey: true }]) {
+        for (const modifiers of [{}, { altKey: true }, { shiftKey: true }, { ctrlKey: true }, { ctrlKey: true, shiftKey: true }]) {
             const event = { key: 'F12', ...modifiers, preventDefault: vi.fn(), stopImmediatePropagation: vi.fn(), isComposing: false };
             capture!(event as unknown as Event);
             expect(event.preventDefault).toHaveBeenCalledOnce();
             expect(event.stopImmediatePropagation).toHaveBeenCalledOnce();
         }
-        expect(definition).toHaveBeenCalledTimes(2);
+        expect(definition).toHaveBeenCalledOnce();
         expect(references).toHaveBeenCalledOnce();
+        expect(peek).toHaveBeenCalledOnce(); expect(typeDefinition).toHaveBeenCalledOnce(); expect(implementation).toHaveBeenCalledOnce();
     });
     it('reads the live selection, rounds its anchor range and releases selection subscriptions', async () => {
         setupMonacoGlobals();
         let selection = { startLineNumber: 1, startColumn: 3, endLineNumber: 3, endColumn: 1 };
         let changed: (() => void) | undefined;
+        const caretAnchor = vi.fn(() => ({ left: 20, top: 40, height: 18 }));
         const text = 'first\nsecond\nthird';
         const model = {
             ...createModelSpy.getMockImplementation()!(),
@@ -207,7 +562,7 @@ describe('MonacoEditorSurface (web)', () => {
         createEditorSpy.mockReturnValueOnce({
             ...createEditorSpy.getMockImplementation()!(),
             getSelection: () => selection,
-            getScrolledVisiblePosition: () => ({ left: 20, top: 40, height: 18 }),
+            getScrolledVisiblePosition: caretAnchor,
             getDomNode: () => ({ getBoundingClientRect: () => ({ left: 100, top: 200 }) }),
             onDidChangeCursorSelection: (listener: () => void) => { changed = listener; return { dispose: vi.fn() }; },
         });
@@ -219,7 +574,10 @@ describe('MonacoEditorSurface (web)', () => {
         selection = { startLineNumber: 2, startColumn: 3, endLineNumber: 2, endColumn: 3 };
         changed!();
         expect(listener).toHaveBeenCalledTimes(1);
-        expect(ref.current!.getSelection!()).toMatchObject({ startLine: 2, endLine: 2, text: 'second' });
+        // A caret with no range shows no toolbar, so reading it must not force Monaco to lay the view out (every keystroke reads it).
+        caretAnchor.mockClear();
+        expect(ref.current!.getSelection!()).toMatchObject({ startLine: 2, endLine: 2, text: 'second', collapsed: true, rect: null });
+        expect(caretAnchor).not.toHaveBeenCalled();
         unsubscribe();
         listener.mockClear();
         changed!();
@@ -239,6 +597,16 @@ describe('MonacoEditorSurface (web)', () => {
         expect(javascriptModeSpy.mock.invocationCallOrder[0]).toBeLessThan(createModelSpy.mock.invocationCallOrder[0]);
         expect(createModelSpy.mock.calls[0]).toEqual(['const answer = 42', 'typescript']);
         expect(createEditorSpy.mock.calls[0]?.[1]).toMatchObject({ hover: { enabled: false } });
+    });
+    it('does not let bundled web language services compete with Machine intelligence', async () => {
+        setupMonacoGlobals();
+        await renderScreen(<MonacoEditorSurface resetKey="web-intelligence-owner" value="{}" language="json" onChange={vi.fn()} />);
+        for (const spy of Object.values(webLanguageModeSpies)) {
+            expect(spy).toHaveBeenCalledWith(expect.objectContaining({ completionItems: false, hovers: false, documentSymbols: false,
+                diagnostics: false, documentHighlights: false, rename: false, documentFormattingEdits: false, documentRangeFormattingEdits: false, selectionRanges: false,
+                foldingRanges: true, colors: true }));
+            expect(spy.mock.invocationCallOrder[0]).toBeLessThan(createModelSpy.mock.invocationCallOrder[0]);
+        }
     });
     it('publishes pointer and activation UTF-16 positions and releases subscribers', async () => {
         setupMonacoGlobals();
@@ -405,6 +773,26 @@ describe('MonacoEditorSurface (web)', () => {
         expect(zones.size).toBe(0);
         expect(ref.current!.getPeekZoneRect!()).toBeNull();
     });
+    it('keeps a seeded query and line pending through a later open while the engine boots', async () => {
+        setupMonacoGlobals();
+        // The engine is still loading: the boot callback runs only when Monaco arrives.
+        let boot: (() => void) | null = null;
+        (globalThis as any).window.require = (_deps: unknown, onOk?: () => void) => { if (typeof onOk === 'function') boot = onOk; };
+        const trigger = vi.fn();
+        const setPosition = vi.fn();
+        createEditorSpy.mockReturnValueOnce({ ...createEditorSpy.getMockImplementation()!(), trigger, setPosition, revealPositionInCenter: vi.fn() });
+        const ref = React.createRef<CodeEditorHandle>();
+        await renderScreen(<MonacoEditorSurface ref={ref} resetKey="boot-seed" value="one" language="text" onChange={vi.fn()} />);
+        // Edit hands the reader's Find over as a seed; the Find surface handoff then asks the engine to show Find.
+        ref.current?.find?.seed('needle', { matchCase: false, regex: false }, { line: 40 });
+        ref.current?.find?.open();
+        await act(async () => { boot?.(); });
+        expect(setPosition).toHaveBeenCalledWith({ lineNumber: 40, column: 1 });
+        const finds = trigger.mock.calls.filter(([, id]) => id === 'editor.actions.findWithArgs').map(([, , args]) => args);
+        // The seed reaches the engine first; a bare open after it keeps Monaco's now non-empty query.
+        expect(finds[0]).toEqual(expect.objectContaining({ searchString: 'needle' }));
+        expect(finds.every((args) => !args || (args as { searchString?: string }).searchString === 'needle')).toBe(true);
+    });
     it('exposes the canonical decoration channel before the editor finishes booting', async () => {
         setupMonacoGlobals();
         const ref = React.createRef<CodeEditorHandle>();
@@ -414,13 +802,20 @@ describe('MonacoEditorSurface (web)', () => {
     });
     it('seeds the native find widget through the public action without changing the model', async () => {
         setupMonacoGlobals();
-        const trigger = vi.fn();
+        // Monaco replaces a given search string with the word at the caret while its own Find state is
+        // empty, unless selection seeding is off for that start; the seed's query must be what it shows.
+        let seedFromSelection: unknown = 'always';
+        const seedingAtTrigger: unknown[] = [];
+        const trigger = vi.fn((_source: string, id: string) => { if (id === 'editor.actions.findWithArgs') seedingAtTrigger.push(seedFromSelection); });
+        const updateOptions = vi.fn((options: { find?: { seedSearchStringFromSelection?: unknown } }) => {
+            if (options.find && 'seedSearchStringFromSelection' in options.find) seedFromSelection = options.find.seedSearchStringFromSelection;
+        });
         const setPosition = vi.fn();
         const revealPositionInCenter = vi.fn();
         const model = { getValue: () => 'first\r\nsecond\\n', setValue: vi.fn(), dispose: vi.fn() };
         createModelSpy.mockReturnValueOnce(model);
         const editorBoundary = {
-            ...createEditorSpy.getMockImplementation()!(), trigger, setPosition, revealPositionInCenter,
+            ...createEditorSpy.getMockImplementation()!(), trigger, setPosition, revealPositionInCenter, updateOptions,
         };
         createEditorSpy.mockReturnValueOnce(editorBoundary);
         const ref = React.createRef<CodeEditorHandle>();
@@ -431,6 +826,9 @@ describe('MonacoEditorSurface (web)', () => {
         expect(trigger).toHaveBeenCalledWith('happier.find', 'editor.actions.findWithArgs', {
             searchString: '\\n', isRegex: false, isCaseSensitive: true, matchWholeWord: false, findInSelection: false,
         });
+        expect(seedingAtTrigger).toEqual(['never']);
+        // The person's own Cmd+F keeps seeding from the caret afterwards.
+        expect(seedFromSelection).toBe('always');
         expect(setPosition).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });
         expect(revealPositionInCenter).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });
         expect(model.setValue).not.toHaveBeenCalled();
@@ -565,12 +963,15 @@ describe('MonacoEditorSurface (web)', () => {
             ...createMonacoLanguageServicesBoundary(),
             editor: {
                 createModel: () => ({
+                    uri: { scheme: 'inmemory', path: '/surface-test' },
                     getValue: () => currentValue,
                     getLineCount: () => currentValue.split('\n').length,
                     setValue: () => {},
                     dispose: () => {},
                 }),
                 create: () => ({
+                    createContextKey: () => ({ set() {}, reset() {} }), addAction: () => ({ dispose() {} }),
+                    createDecorationsCollection: () => ({ set() {}, clear() {} }),
                     onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
                         changeHandler = handler;
                         return { dispose: () => {} };
@@ -635,12 +1036,15 @@ describe('MonacoEditorSurface (web)', () => {
             ...createMonacoLanguageServicesBoundary(),
             editor: {
                 createModel: () => ({
+                    uri: { scheme: 'inmemory', path: '/surface-test' },
                     getValue: () => currentValue,
                     getLineCount: () => currentValue.split('\n').length,
                     setValue: () => {},
                     dispose: () => {},
                 }),
                 create: () => ({
+                    createContextKey: () => ({ set() {}, reset() {} }), addAction: () => ({ dispose() {} }),
+                    createDecorationsCollection: () => ({ set() {}, clear() {} }),
                     onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
                         changeHandler = handler;
                         return { dispose: () => {} };
@@ -701,6 +1105,7 @@ describe('MonacoEditorSurface (web)', () => {
             ...createMonacoLanguageServicesBoundary(),
             editor: {
                 createModel: () => ({
+                    uri: { scheme: 'inmemory', path: '/surface-test' },
                     getValue: () => currentValue,
                     getLineCount: () => currentValue.split('\n').length,
                     getFullModelRange: () => ({ startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: currentValue.length + 1 }),
@@ -708,6 +1113,8 @@ describe('MonacoEditorSurface (web)', () => {
                     dispose: () => {},
                 }),
                 create: () => ({
+                    createContextKey: () => ({ set() {}, reset() {} }), addAction: () => ({ dispose() {} }),
+                    createDecorationsCollection: () => ({ set() {}, clear() {} }),
                     onDidChangeModelContent: (handler: (..._args: any[]) => void) => {
                         changeHandler = handler;
                         return { dispose: () => {} };
@@ -775,11 +1182,14 @@ describe('MonacoEditorSurface (web)', () => {
             ...createMonacoLanguageServicesBoundary(),
             editor: {
                 createModel: () => ({
+                    uri: { scheme: 'inmemory', path: '/surface-test' },
                     getValue: () => currentValue,
                     setValue: () => {},
                     dispose: () => {},
                 }),
                 create: () => ({
+                    createContextKey: () => ({ set() {}, reset() {} }), addAction: () => ({ dispose() {} }),
+                    createDecorationsCollection: () => ({ set() {}, clear() {} }),
                     onDidChangeModelContent: () => ({ dispose: () => {} }),
                     onDidBlurEditorText: (handler: () => void) => {
                         blurHandler = handler;

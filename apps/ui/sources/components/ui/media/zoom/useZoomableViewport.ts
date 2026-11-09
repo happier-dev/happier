@@ -29,6 +29,8 @@ export type ZoomableViewportInput = Readonly<{
     onPage?: (direction: -1 | 1, velocityX: number) => void;
     onTap?: () => void;
     onZoomSettled?: (aboveFit: boolean) => void;
+    /** Off while one finger belongs to the picture's own tool (annotating): two fingers still pan and pinch. */
+    onePointerPan?: boolean;
     /** Native composition binds hapticsLight; fired at most once per pinch. */
     onZoomBoundary?: () => void;
 }>;
@@ -36,6 +38,7 @@ export type ZoomableViewportInput = Readonly<{
 /** Renderless viewport owner. Chrome remains outside its GestureDetector in the stage composition. */
 export function useZoomableViewport(input: ZoomableViewportInput) {
     const preferredReducedMotion = useReducedMotionPreference();
+    const onePointerPan = input.onePointerPan ?? true;
     const initialDpr = input.devicePixelRatio ?? PixelRatio.get();
     const initialBounds = resolveZoomBounds(input.imageSize, input.viewportSize, initialDpr);
     const image = useSharedValue(input.imageSize);
@@ -173,7 +176,7 @@ export function useZoomableViewport(input: ZoomableViewportInput) {
                 runOnJS(syncDimensions)();
             });
 
-        const pan = Gesture.Pan().withTestId('media-pan').minPointers(1).maxPointers(1)
+        const pan = Gesture.Pan().withTestId('media-pan').enabled(onePointerPan).minPointers(1).maxPointers(1)
             .minDistance(motionTokens.gesture.slopPx).enableTrackpadTwoFingerGesture(false)
             .hitSlop(Platform.OS === 'web' ? {} : resolveSessionSwitcherEdgeHitSlop(Platform.OS))
             .onStart(() => {
@@ -266,7 +269,7 @@ export function useZoomableViewport(input: ZoomableViewportInput) {
                 } else runOnJS(publishTap)();
             });
         return Gesture.Race(Gesture.Simultaneous(pinch, pan), Gesture.Exclusive(doubleTap, tap));
-    }, [boundaryEmitted, dismissEnabled, dismissX, dismissY, dpr, image, pageTranslation, paging, panActive, panMode, panStart, pinchActive, pinchFocal, pinchStart, pinchStarted, publishBoundary, publishDismiss, publishPage, publishTap, reducedMotion, scale, settle, stopMotion, syncDimensions, translationX, translationY, viewport, zoomAt]);
+    }, [boundaryEmitted, onePointerPan, dismissEnabled, dismissX, dismissY, dpr, image, pageTranslation, paging, panActive, panMode, panStart, pinchActive, pinchFocal, pinchStart, pinchStarted, publishBoundary, publishDismiss, publishPage, publishTap, reducedMotion, scale, settle, stopMotion, syncDimensions, translationX, translationY, viewport, zoomAt]);
 
     const contentStyle = useAnimatedStyle(() => {
         const fitScale = resolveZoomBounds(image.value, viewport.value, dpr.value).min;

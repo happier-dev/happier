@@ -5,23 +5,52 @@ import * as commands from '@codemirror/commands';
 import * as language from '@codemirror/language';
 import * as autocomplete from '@codemirror/autocomplete';
 import * as search from '@codemirror/search';
+import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildCodeMirrorWebViewHtml } from './codemirrorWebViewHtml';
 import { createCodeMirrorDecorations } from './codeMirrorDecorations';
+import { createCodeMirrorLanguageIntelligence } from './codeMirrorLanguageIntelligence';
+import { createCodeMirrorInlineSuggestions } from './codeMirrorInlineSuggestions';
+import { CodeMirrorWebViewSurface } from '../surfaces/CodeMirrorWebViewSurface.native';
+import type { CodeEditorHandle } from '../codeEditorTypes';
+import { createEditorDocumentHistory } from '../editorDocumentHistory';
+import { renderScreen } from '@/dev/testkit';
+
+const nativeBoundary = vi.hoisted(() => ({
+    postMessage: vi.fn<(raw: string) => void>(),
+    onMessage: null as ((event: { nativeEvent: { data: string } }) => void) | null,
+}));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ View: 'View', Platform: { OS: 'ios', select: (options: Record<string, unknown>) => options.ios ?? options.default } });
+});
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
+vi.mock('react-native-webview', () => ({
+    // Only the native transport is replaced; both bridge and surface run unchanged.
+    WebView: React.forwardRef((props: { onMessage: NonNullable<typeof nativeBoundary.onMessage> }, ref) => {
+        nativeBoundary.onMessage = props.onMessage;
+        React.useImperativeHandle(ref, () => ({ postMessage: nativeBoundary.postMessage }));
+        return null;
+    }),
+}));
 
 // Load the installed CodeMirror modules through the WebView's embedded-bundle ABI.
 vi.mock('./codemirrorWebViewBundle.generated', () => ({ CODEMIRROR_WEBVIEW_BUNDLE_JS: '/* installed modules supplied by test */' }));
 
 type Envelope = { v: number; type: string; payload: { doc?: string; requestId?: string; message?: string; status?: unknown } };
 
-function bootBridge() {
+function bootBridge(onMessage?: (raw: string) => void) {
     const messages: Envelope[] = [];
     document.body.innerHTML = '<div id="root"></div>';
-    vi.stubGlobal('__CM6__', { ...state, ...view, ...commands, ...language, ...autocomplete, ...search, createCodeMirrorDecorations });
+    vi.stubGlobal('__CM6__', { ...state, ...view, ...commands, ...language, ...autocomplete, ...search, createCodeMirrorDecorations, createCodeMirrorLanguageIntelligence, createCodeMirrorInlineSuggestions });
     Object.defineProperty(window, 'ReactNativeWebView', {
         configurable: true,
-        value: { postMessage: (raw: string) => messages.push(JSON.parse(raw)) },
+        value: { postMessage: (raw: string) => { messages.push(JSON.parse(raw)); onMessage?.(raw); } },
     });
     const html = buildCodeMirrorWebViewHtml({
         theme: {
@@ -69,6 +98,7 @@ describe('native CodeMirror WebView line endings', () => {
     let restoreRangeGeometry: (() => void) | undefined;
 
     beforeEach(() => {
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         // JSDOM has no layout engine; retain the real CodeMirror measurement path over a DOM boundary fixture.
         const descriptors = ['getClientRects', 'getBoundingClientRect'].map((name) => [name, Object.getOwnPropertyDescriptor(Range.prototype, name)] as const);
@@ -83,6 +113,42 @@ describe('native CodeMirror WebView line endings', () => {
             }
         };
     });
+
+    it('publishes buffered typing before a public flush even when inline context already advanced the native mirror', async () => {
+        const history = createEditorDocumentHistory();
+        let text = 'seed';
+        const publications: string[] = [];
+        const ref = React.createRef<CodeEditorHandle>();
+        const screen = await renderScreen(React.createElement(CodeMirrorWebViewSurface, {
+            ref, resetKey: 'inline-flush', value: text, language: 'text', history,
+            onChange: next => { publications.push(next); history.record(text, next); text = next; },
+        }));
+        const outbound: string[] = [];
+        nativeBoundary.postMessage.mockImplementation(raw => { outbound.push(raw); });
+        const bridge = bootBridge(raw => nativeBoundary.onMessage?.({ nativeEvent: { data: raw } }));
+        cleanup = bridge.cleanup;
+        const deliver = (raw: string) => {
+            const envelope = JSON.parse(raw) as { type: string; payload: object };
+            bridge.send(envelope.type, envelope.payload);
+        };
+        nativeBoundary.postMessage.mockImplementation(deliver);
+        for (const raw of outbound) deliver(raw);
+        try {
+            await act(async () => { bridge.getView().dispatch({ changes: { from: 4, insert: ' typed' } }); });
+            expect(ref.current!.getValue()).toBe('seed typed');
+            expect(text).toBe('seed');
+            await act(async () => { await ref.current!.flushPendingChange(); });
+            expect(text).toBe('seed typed');
+            await act(async () => { await ref.current!.flushPendingChange(); vi.advanceTimersByTime(101); });
+            expect(publications).toEqual(['seed typed']);
+            expect(history.undo(text)).toBe('seed');
+            expect(history.getSnapshot()).toEqual({ canUndo: false, canRedo: true });
+        } finally {
+            nativeBoundary.postMessage.mockReset();
+            nativeBoundary.onMessage = null;
+            await screen.unmount();
+        }
+    });
     afterEach(() => {
         cleanup?.();
         cleanup = undefined;
@@ -93,6 +159,145 @@ describe('native CodeMirror WebView line endings', () => {
         Reflect.deleteProperty(window, 'ReactNativeWebView');
         restoreRangeGeometry?.();
         restoreRangeGeometry = undefined;
+    });
+
+    it('delegates shared Undo before engine history and applies exact tagged bytes without echoing an edit', () => {
+        const bridge = bootBridge();
+        cleanup = bridge.cleanup;
+        bridge.send('init', { doc: 'before\r\n', sharedHistory: true });
+        const editor = bridge.getView();
+        editor.dispatch({ changes: { from: 0, insert: 'after ' } });
+        expect(commands.undo(editor)).toBe(false);
+        const undo = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
+        editor.contentDOM.dispatchEvent(undo);
+        expect(undo.defaultPrevented).toBe(true);
+        expect(bridge.messages.filter(message => message.type === 'history.command').at(-1)?.payload).toEqual({ command: 'undo' });
+        const systemRedo = new InputEvent('beforeinput', { inputType: 'historyRedo', bubbles: true, cancelable: true });
+        editor.contentDOM.dispatchEvent(systemRedo);
+        expect(systemRedo.defaultPrevented).toBe(true);
+        expect(bridge.messages.filter(message => message.type === 'history.command').at(-1)?.payload).toEqual({ command: 'redo' });
+        editor.contentDOM.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'x', bubbles: true, cancelable: true }));
+        expect(bridge.messages.filter(message => message.type === 'history.command')).toHaveLength(2);
+        expect(editor.state.doc.toString()).toBe('after before\n');
+        bridge.send('command', { command: { replaceDocument: 'before\r\n', history: 'undo' } });
+        vi.advanceTimersByTime(101);
+        bridge.send('requestDoc', { requestId: 'shared-undo' });
+        expect(bridge.messages.filter(message => message.type === 'docSnapshot').at(-1)?.payload).toEqual({ requestId: 'shared-undo', doc: 'before\r\n' });
+        expect(bridge.messages.filter(message => message.type === 'docChanged')).toHaveLength(0);
+    });
+
+    it('previews an insertion without changing bytes, then accepts through authorization with one isolated undo', () => {
+        const bridge = bootBridge();
+        cleanup = bridge.cleanup;
+        bridge.send('init', { doc: 'const café =\r\nnext' });
+        const editor = bridge.getView();
+        editor.dispatch({ selection: { anchor: editor.state.doc.line(1).to } });
+        const rawDoc = () => {
+            bridge.send('requestDoc', { requestId: 'inline-bytes' });
+            return bridge.messages.filter(message => message.type === 'docSnapshot').at(-1)?.payload.doc;
+        };
+        bridge.send('inline.set', { id: 'one', text: ' naïve😀\r\nfinish', line: 1, character: 12 });
+        expect(editor.dom.querySelector('.happier-editor-inline-suggestion')?.textContent).toBe(' naïve😀\r\nfinish');
+        expect(rawDoc()).toBe('const café =\r\nnext');
+        bridge.send('command', { command: 'inlineSuggestAccept' });
+        expect(rawDoc()).toBe('const café =\r\nnext');
+        const request = bridge.messages.filter(message => message.type === 'inline.acceptRequested').at(-1);
+        expect(request?.payload).toMatchObject({ id: 'one', partial: false });
+        bridge.send('inline.accept', request!.payload);
+        expect(rawDoc()).toBe('const café = naïve😀\r\nfinish\r\nnext');
+        bridge.send('command', { command: 'undo' });
+        expect(rawDoc()).toBe('const café =\r\nnext');
+    });
+
+    it('keeps a matching typed prefix, accepts Unicode words separately, and refuses stale authorization', () => {
+        const bridge = bootBridge();
+        cleanup = bridge.cleanup;
+        bridge.send('init', { doc: 'x' });
+        const editor = bridge.getView();
+        editor.dispatch({ selection: { anchor: 1 } });
+        bridge.send('inline.set', { id: 'unicode', text: 'café😀\r\nend', line: 1, character: 1 });
+        editor.dispatch({ changes: { from: 1, insert: 'c' }, selection: { anchor: 2 } });
+        expect(editor.dom.querySelector('.happier-editor-inline-suggestion')?.textContent).toBe('afé😀\r\nend');
+        bridge.send('command', { command: 'inlineSuggestAcceptWord' });
+        const request = bridge.messages.filter(message => message.type === 'inline.acceptRequested').at(-1)!;
+        bridge.send('inline.accept', request.payload);
+        expect(editor.state.sliceDoc()).toBe('xcafé');
+        expect(editor.dom.querySelector('.happier-editor-inline-suggestion')?.textContent).toBe('😀\r\nend');
+        bridge.send('command', { command: 'undo' });
+        expect(editor.state.sliceDoc()).toBe('xc');
+        bridge.send('inline.accept', request.payload);
+        expect(editor.state.sliceDoc()).toBe('xc');
+    });
+
+    it('retires a ghost on an incompatible edit or selection and manual trigger never changes bytes', () => {
+        const bridge = bootBridge();
+        cleanup = bridge.cleanup;
+        bridge.send('init', { doc: 'x' });
+        const editor = bridge.getView();
+        editor.dispatch({ selection: { anchor: 1 } });
+        bridge.send('inline.set', { id: 'one', text: 'end', line: 1, character: 1 });
+        editor.dispatch({ changes: { from: 0, insert: '!' } });
+        expect(editor.dom.querySelector('.happier-editor-inline-suggestion')).toBeNull();
+        bridge.send('inline.set', { id: 'two', text: 'end', line: 1, character: 1 });
+        editor.dispatch({ selection: { anchor: 0, head: 1 } });
+        expect(editor.dom.querySelector('.happier-editor-inline-suggestion')).toBeNull();
+        bridge.send('command', { command: 'inlineSuggestTrigger' });
+        expect(bridge.messages.filter(message => message.type === 'inline.event').at(-1)?.payload).toMatchObject({ kind: 'trigger' });
+        expect(editor.state.sliceDoc()).toBe('!x');
+    });
+
+    it('suppresses ghost acceptance during composition, with multiple carets, and while a real completion list is pending', () => {
+        const bridge = bootBridge();
+        cleanup = bridge.cleanup;
+        bridge.send('init', { doc: 'xy' });
+        const editor = bridge.getView();
+        editor.dispatch({ effects: state.StateEffect.appendConfig.of(state.EditorState.allowMultipleSelections.of(true)),
+            selection: state.EditorSelection.create([state.EditorSelection.cursor(0), state.EditorSelection.cursor(1)]) });
+        bridge.send('inline.set', { id: 'multi', text: 'tail', line: 1, character: 1 });
+        expect(editor.dom.querySelector('.happier-editor-inline-suggestion')).toBeNull();
+        editor.dispatch({ selection: { anchor: 1 } });
+        editor.contentDOM.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+        bridge.send('inline.set', { id: 'ime', text: 'tail', line: 1, character: 1 });
+        bridge.send('command', { command: 'inlineSuggestAccept' });
+        expect(editor.dom.querySelector('.happier-editor-inline-suggestion')).toBeNull();
+        expect(bridge.messages.some(message => message.type === 'inline.acceptRequested')).toBe(false);
+        editor.contentDOM.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+        editor.dispatch({ effects: state.StateEffect.appendConfig.of(autocomplete.autocompletion({ override: [() => new Promise(() => {})] })) });
+        autocomplete.startCompletion(editor);
+        expect(autocomplete.completionStatus(editor.state)).toBe('pending');
+        bridge.send('inline.set', { id: 'list', text: 'tail', line: 1, character: 1 });
+        bridge.send('command', { command: 'inlineSuggestAccept' });
+        expect(editor.dom.querySelector('.happier-editor-inline-suggestion')).toBeNull();
+        expect(bridge.messages.some(message => message.type === 'inline.acceptRequested')).toBe(false);
+        expect(editor.state.doc.toString()).toBe('xy');
+    });
+
+    it('reports a single compact UTF-16 edit for a keystroke on a 5k-line CRLF document', () => {
+        const bridge = bootBridge();
+        cleanup = bridge.cleanup;
+        const text = Array.from({ length: 5_000 }, (_, index) => `const value${index} = ${index};`).join('\r\n');
+        bridge.send('init', { doc: text });
+        const editor = bridge.getView();
+        editor.dispatch({ changes: { from: editor.state.doc.length, insert: '😀' }, selection: { anchor: editor.state.doc.length + 2 } });
+        expect(bridge.messages.filter(message => message.type === 'inline.context').at(-1)?.payload).toMatchObject({
+            changes: [{ from: text.length, to: text.length, insert: '😀' }],
+            context: { line: 5_000, offset: text.length + 2, eol: '\r\n' },
+        });
+        expect(bridge.messages.filter(message => message.type === 'docChanged')).toHaveLength(0);
+    });
+
+    it('routes the native autocomplete through controller envelopes and cancels after an incompatible edit', async () => {
+        const bridge = bootBridge(); cleanup = bridge.cleanup;
+        bridge.send('init', { doc: 'ans' });
+        bridge.send('intelligence.configure', { path: 'a.ts', inlayHints: 'off', semanticHighlighting: false, capabilities: { completion: true, completionTriggerCharacters: ['.'] } });
+        const editor = bridge.getView(); editor.dispatch({ selection: { anchor: 3 } });
+        bridge.send('command', { command: 'suggest' });
+        await vi.waitFor(() => expect(bridge.messages.some(message => message.type === 'intelligence.request')).toBe(true));
+        const sent = bridge.messages.find(message => message.type === 'intelligence.request');
+        expect(sent?.payload).toMatchObject({ kind: 'completion', options: { position: { line: 0, character: 3 } } });
+        expect(sent?.payload).not.toHaveProperty('text');
+        editor.dispatch({ changes: { from: 3, insert: 'x' } });
+        expect(bridge.messages.some(message => message.type === 'intelligence.cancel')).toBe(true);
     });
 
     it('removes one tracked decoration through the bridge without reseeding the shifted remainder', () => {

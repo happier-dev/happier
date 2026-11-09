@@ -54,24 +54,33 @@ function texts(screen: Awaited<ReturnType<typeof renderScreen>>): string[] {
 }
 
 describe('SegmentedChoiceItem', () => {
-    it.each([['ios', 44], ['android', 48]] as const)('reaches the %s touch target with its press frame, never by drawing the choice taller', async (os, minimum) => {
+    it.each([['ios', 44], ['android', 48]] as const)('reaches the %s touch target with its hit area, never by drawing the choice taller', async (os, minimum) => {
         const { Platform, StyleSheet } = await import('react-native');
         const previous = Platform.OS;
         Object.defineProperty(Platform, 'OS', { configurable: true, value: os });
         try {
             const { SegmentedChoiceItem } = await import('./SegmentedChoiceItem');
-            const screen = await renderScreen(<SegmentedChoiceItem
-                title="Index mode" options={OPTIONS} value="hints" onChange={() => {}} testIDPrefix="mode"
-            />);
+            const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+            const { readHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
+            const { act } = await import('react-test-renderer');
+            const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: os, colorScheme: 'light' }}>
+                <SegmentedChoiceItem title="Index mode" options={OPTIONS} value="hints" onChange={() => {}} testIDPrefix="mode" />
+            </HappierUiPlatformProvider>);
             for (const option of OPTIONS) {
                 const frame = screen.findByTestId(`mode:${option.id}`)!;
                 const frameStyle = StyleSheet.flatten(frame.props.style);
                 const surfaceStyle = StyleSheet.flatten(frame.findAllByType('View' as never)[0]!.props.style);
-                // Flush choices never reach sideways; the transparent frame reaches above and below only.
+                const drawn = { width: 100, height: 28 };
+                await act(async () => { frame.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, ...drawn } } }); });
+                const area = readHitArea(screen.findByTestId(`mode:${option.id}`)!, drawn);
+                // Flush choices never reach sideways; the hit area reaches above and below only, inside the track.
                 expect(frameStyle.minWidth).toBeLessThan(minimum);
                 expect(surfaceStyle.minHeight).toBeUndefined();
-                expect(frameStyle.paddingVertical).toBeGreaterThan(0);
-                expect(frameStyle.marginVertical).toBe(-frameStyle.paddingVertical);
+                expect(frameStyle.paddingVertical ?? 0).toBe(0);
+                expect(area.insets.left).toBe(0);
+                expect(area.insets.right).toBe(0);
+                expect(area.insets.top).toBeGreaterThan(0);
+                expect(area.insets.top).toBeLessThan(minimum - drawn.height);
             }
         } finally {
             Object.defineProperty(Platform, 'OS', { configurable: true, value: previous });

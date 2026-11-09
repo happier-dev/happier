@@ -21,7 +21,6 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import type { IconName } from '@/components/ui/icons/Icon';
-import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { t } from '@/text';
 
 import {
@@ -146,7 +145,7 @@ export function SelectionListStateLine(props: Readonly<{
         />
     );
     if (props.aria === undefined && !inMenu) return line;
-    return <View {...props.aria} style={inMenu ? dynamicRowStyles.menuLine : undefined}>{line}</View>;
+    return <View {...props.aria}>{line}</View>;
 }
 
 /** Error row — `role="alert"` unless rendered as the identity-free measure mirror. */
@@ -487,12 +486,13 @@ function renderSelectionListSectionElement(
     // declares more than one. `allowVirtualization` is false for those.
     const willVirtualize = eligibleForVirtualization && allowVirtualization;
 
-    if (willVirtualize && !measureMode) {
+    if (willVirtualize) {
         const virtualizedNode = (
             <SelectionListVirtualizedSection
                 section={sectionForRender}
                 stepId={ctx.stepId}
                 rootTestID={ctx.rootTestID}
+                measureMode={measureMode}
                 selectedOptionIds={ctx.selectedOptionIds}
                 // F4 — thread the keyboard-driven focused option through
                 // so the virtualized renderer can mirror focused styling
@@ -524,7 +524,7 @@ function renderSelectionListSectionElement(
             && sectionPlan.transitionKey.length > 0
             ? sectionPlan.transitionKey
             : undefined;
-        if (virtualizedTransitionKey !== undefined) {
+        if (virtualizedTransitionKey !== undefined && !measureMode) {
             return (
                 <View
                     key={sectionPlan.id}
@@ -555,8 +555,8 @@ function renderSelectionListSectionElement(
                 {sectionPlan.resultHint ? (
                     <SelectionListResultHintRow
                         hint={sectionPlan.resultHint}
-                        testID={selectionListTestId(sectionTestId, 'resultHint')}
-                        measureMode={false}
+                        testID={measureMode ? undefined : selectionListTestId(sectionTestId, 'resultHint')}
+                        measureMode={measureMode}
                     />
                 ) : null}
             </View>

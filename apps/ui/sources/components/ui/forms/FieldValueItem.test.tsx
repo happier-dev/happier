@@ -52,6 +52,52 @@ function field(screen: Awaited<ReturnType<typeof renderField>>) {
 }
 
 describe('FieldValueItem', () => {
+    it('lets a refused asynchronous settings Action retry the retained draft without duplicate submission', async () => {
+        const { useHappierFieldValueDraft } = await import('@happier-dev/plugin-ui/presentation');
+        const { FieldTextInput } = await import('./FieldTextInput');
+        const attempts: string[] = [];
+        let finish!: (accepted: boolean) => void;
+        function Host({ value }: Readonly<{ value: string }>) {
+            const field = useHappierFieldValueDraft({ value, onCommit: next => {
+                attempts.push(next);
+                return new Promise<boolean>(resolve => { finish = resolve; });
+            } });
+            return <FieldTextInput testID="retry" accessibilityLabel="Name" value={field.draft}
+                onChangeText={field.change} onBlur={field.commit} onSubmitEditing={field.commit} />;
+        }
+        const screen = await renderScreen(<Host value="saved" />);
+        await act(async () => { screen.findByTestId('retry')!.props.onChangeText('draft'); });
+        await act(async () => { const props = screen.findByTestId('retry')!.props; props.onSubmitEditing(); props.onBlur(); });
+        expect(attempts).toEqual(['draft']);
+        await act(async () => { finish(false); });
+        expect(screen.findByTestId('retry')!.props.value).toBe('draft');
+        await act(async () => { screen.findByTestId('retry')!.props.onSubmitEditing(); });
+        expect(attempts).toEqual(['draft', 'draft']);
+        await act(async () => { finish(true); });
+        await screen.update(<Host value="remote-after-acceptance" />);
+        expect(screen.findByTestId('retry')!.props.value).toBe('remote-after-acceptance');
+    });
+    it('keeps a dirty draft across saved-value updates, cancels to the latest value, and submits only once before acknowledgement', async () => {
+        const { FieldValueItem } = await import('./FieldValueItem');
+        const saved: string[] = [];
+        const render = (value: string) => <FieldValueItem title="Name" value={value} fieldTestID="draft"
+            onCommit={next => { saved.push(next); }} />;
+        const screen = await renderScreen(render('original'));
+        await screen.update(render('remote-clean'));
+        const input = () => screen.findByTestId('draft')!;
+        expect(input().props.value).toBe('remote-clean');
+        await act(async () => { input().props.onChangeText('mine'); });
+        await screen.update(render('remote-dirty'));
+        expect(input().props.value).toBe('mine');
+        await act(async () => { input().props.onKeyPress({ nativeEvent: { key: 'Escape' } }); input().props.onBlur(); });
+        expect(input().props.value).toBe('remote-dirty');
+        expect(saved).toEqual([]);
+        await act(async () => { input().props.onChangeText('submitted'); });
+        await act(async () => { const props = input().props; props.onSubmitEditing(); props.onBlur(); });
+        expect(saved).toEqual(['submitted']);
+        await screen.update(render('submitted'));
+        expect(input().props.value).toBe('submitted');
+    });
     it('commits a controlled draft against its acknowledged value and stops after acknowledgement', async () => {
         const { FieldValueItem } = await import('./FieldValueItem');
         const saved: string[] = [];
@@ -68,6 +114,25 @@ describe('FieldValueItem', () => {
         expect(saved).toEqual(['new-command']);
         await act(async () => { screen.findByTestId('controlled')!.props.onBlur(); });
         expect(saved).toEqual(['new-command']);
+    });
+    it('takes an explicit controlled reset while retaining a draft across baseline-only updates', async () => {
+        const { FieldValueItem } = await import('./FieldValueItem');
+        const saved: string[] = [];
+        function Host({ acknowledged, discard = false }: Readonly<{ acknowledged: string; discard?: boolean }>) {
+            const [value, setValue] = React.useState('old-command');
+            return <FieldValueItem title="Command" fieldTestID="controlled-reset"
+                value={discard ? acknowledged : value} committedValue={acknowledged}
+                onDraftChange={setValue} onCommit={next => { saved.push(next); }} />;
+        }
+        const screen = await renderScreen(<Host acknowledged="old-command" />);
+        const input = () => screen.findByTestId('controlled-reset')!;
+        await act(async () => { input().props.onChangeText('local-command'); });
+        await screen.update(<Host acknowledged="remote-command" />);
+        expect(input().props.value).toBe('local-command');
+        await screen.update(<Host acknowledged="remote-command" discard />);
+        expect(input().props.value).toBe('remote-command');
+        await act(async () => { input().props.onBlur(); });
+        expect(saved).toEqual([]);
     });
     it('steps a numeric draft, keeps its units out of storage, and respects the owner bounds', async () => {
         const { FieldValueItem } = await import('./FieldValueItem');

@@ -42,6 +42,8 @@ export const MARKDOWN_EDITOR_HEADING_LEVELS: ReadonlyArray<1 | 2 | 3> = [1, 2, 3
 
 /** Options for configuring the extension set with host-provided callbacks. */
 export type CreateMarkdownEditorExtensionsOptions = Readonly<{
+    /** The document owner supplies undo; do not install another engine history. */
+    sharedHistory?: boolean;
     /**
      * Called when the slash-command trigger state changes.
      * When `null`, the `MenuTriggerExtension` is still registered but its
@@ -68,6 +70,7 @@ export function createMarkdownEditorExtensions(
 ): AnyExtension[] {
     return [
         StarterKit.configure({
+            ...(options?.sharedHistory ? { undoRedo: false as const } : {}),
             // H1-H3 only (Phase-1 scope).
             heading: { levels: [...MARKDOWN_EDITOR_HEADING_LEVELS] },
             // Preserve + autolink + paste-to-link; never auto-open inside the editor

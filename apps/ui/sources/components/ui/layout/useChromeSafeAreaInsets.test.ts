@@ -192,7 +192,7 @@ describe('useChromeSafeAreaInsets helpers', () => {
         expect(hook.getCurrent()).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
     });
 
-    it('returns zero insets for the dedicated desktop activity overlay window', async () => {
+    it.each(['activity-overlay', 'pet-overlay', 'capture', 'capture-selection'])('returns zero insets for the dedicated desktop %s window', async route => {
         vi.resetModules();
 
         vi.doMock('react-native', async () => {
@@ -210,7 +210,7 @@ describe('useChromeSafeAreaInsets helpers', () => {
             ...(await importOriginal<typeof import('@/utils/platform/desktopHost')>()),
             isDesktopHost: () => true,
         }));
-        vi.stubGlobal('window', { location: { href: 'https://happier.test/desktop/activity-overlay' } });
+        vi.stubGlobal('window', { location: { href: `https://happier.test/desktop/${route}` } });
 
         const { useChromeSafeAreaInsets } = await import('./useChromeSafeAreaInsets');
         const hook = await renderHook(() => useChromeSafeAreaInsets());

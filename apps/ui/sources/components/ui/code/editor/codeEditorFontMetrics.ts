@@ -2,6 +2,8 @@ export const CODE_EDITOR_BASE_FONT_SIZE = 13;
 export const CODE_EDITOR_BASE_LINE_HEIGHT = 22;
 /** Columns per tab in the editor (Monaco `tabSize`) and wherever its lines are drawn outside it. */
 export const CODE_EDITOR_TAB_SIZE = 2;
+/** One formatting policy for an editor model and a saved-file preview without a mounted model. */
+export const CODE_EDITOR_FORMATTING_OPTIONS = Object.freeze({ tabSize: CODE_EDITOR_TAB_SIZE, insertSpaces: true });
 export { CODE_EDITOR_BASE_LINE_HEIGHT as CODE_LINE_BASE_HEIGHT };
 /** Existing code-view insets; editors consume the same geometry. */
 export const CODE_GUTTER_METRICS = Object.freeze({ rowPadding: 8, numberPaddingLeft: 4, numberPaddingRight: 18, numberMinWidth: 24, numberFontSize: 11, columnGap: 6, reviewLaneWidth: 32 });

@@ -25,8 +25,9 @@ const frames = vi.hoisted(() => [] as Record<string, unknown>[]);
 // adapter, shared frame host and canonical Host API bridge real.
 vi.mock('@/components/browser/frame/BrowserViewFrame.web', () => ({
     BrowserViewFrame: (props: Readonly<{ engine: Record<string, unknown> }>) => {
+        const [document] = React.useState(() => ({}));
         frames.push(props.engine);
-        return React.createElement('BrowserViewFrame', { testID: 'physical-caller-frame' });
+        return React.createElement('BrowserViewFrame', { testID: 'physical-caller-frame', document });
     },
 }));
 
@@ -121,8 +122,58 @@ function publishSession(serverId = 'srv_home-a', sessionId = 'session-a') {
 afterEach(() => { standardCleanup(); credentials.clear(); vi.unstubAllGlobals(); invalidateAccountEncryptionModeCache(); });
 
 describe('useSessionCallerHostedHtmlRuntime', () => {
+    it('delivers a policy refusal to the real guest bridge instead of reporting an internal host failure', async () => {
+        storage.setState(state => ({ settingsScope: { serverId: 'srv_home-a', accountId: 'account:srv_home-a' },
+            settings: { ...state.settings, actionsSettingsV1: { v: 1, actions: {} } },
+            sessions: { ...state.sessions, 'session-a': { ...state.sessions['session-a']!, access: createSessionAccessFixture('edit') } },
+        }));
+        const screen = await renderScreen(<CallerSurface runtime={pluginRuntime} value="foreign"
+            requestedCapabilities={{ hostMethods: ['context', 'executeAction'], actions: ['session.message.send', 'session.stop'] }} />);
+        await vi.waitFor(() => expect(screen.findByTestId('physical-caller-frame')).not.toBeNull());
+        const guest = readFrame(frames.at(-1)!);
+        await act(async () => {
+            await guest.send({ version: 1, identity: guest.identity, sequence: 1, kind: 'ready', payload: { ready: true } });
+            await guest.send({ version: 1, identity: guest.identity, sequence: 2, kind: 'hostApi', payload: {
+                wireVersion: 1, kind: 'negotiate', identity: guest.identity, apiRange: '^1.0.0',
+            } });
+            let sequence = 2;
+            for (const action of ['session.message.send', 'session.stop'] as const) {
+                expect(await guest.send({ version: 1, identity: guest.identity, sequence: ++sequence, kind: 'hostApi', payload: {
+                    wireVersion: 1, kind: 'request', identity: guest.identity, requestId: action, method: 'executeAction',
+                    payload: { action, input: action === 'session.message.send' ? { message: 'Blocked' } : { sessionId: 'session-a' } },
+                } })).toMatchObject({ kind: 'result', payload: { kind: 'error', error: { code: 'action_disabled' } } });
+            }
+        });
+    });
+    it('supplies current Session ownership to policy without letting a still-readable recipient borrow owner access', async () => {
+        storage.setState({ settingsScope: { serverId: 'srv_home-a', accountId: 'account:srv_home-a' } });
+        const hook = await renderHook(() => useSessionCallerHostedHtmlRuntime('srv_home-a', 'session-a', pluginRuntime));
+        await vi.waitFor(() => expect(hook.getCurrent()).not.toBeNull());
+        const controller = hook.getCurrent()!.createRequestController(() => {});
+        const read = () => controller.handleRequest({ requestId: 'ownership', method: 'readResource',
+            payload: { resource: { pluginId: 'acme.preview', localId: 'missing' } } });
+        try {
+            // The own-Session call reaches the real declaration reader (there is no such Resource).
+            await expect(read()).rejects.toThrow('plugin_resource_not_found');
+            await act(async () => { storage.setState(state => ({ sessions: { ...state.sessions,
+                'session-a': { ...state.sessions['session-a']!, access: createSessionAccessFixture('edit') },
+            } })); });
+            expect(hook.getCurrent()).not.toBeNull();
+            await expect(read()).resolves.toMatchObject({ code: 'action_disabled' });
+            await act(async () => { storage.setState(state => ({ settings: { ...state.settings,
+                actionsSettingsV1: { v: 1, actions: {}, callerSurfacePolicies: { foreign_session_html: {
+                    'acme.preview/resources/missing': 'allowed',
+                } } },
+            } })); });
+            await expect(read()).rejects.toThrow('plugin_resource_not_found');
+        } finally { controller.dispose(); }
+    });
     beforeEach(async () => {
         await act(async () => { await loadPluginUiHostSupport(); });
+        // The physical document lazily loads its real guest bootstrap. Resolve
+        // that module before testing held Account-mode readiness so a cold
+        // Vitest transform is not mistaken for a still-pending mode read.
+        await import('@/components/plugins/hostedWeb/guestBootstrap.generated');
         platformState.current = 'web';
         frameAvailability.current = true;
         frames.length = 0;
@@ -255,6 +306,7 @@ describe('useSessionCallerHostedHtmlRuntime', () => {
         await vi.waitFor(() => expect(screen.findByTestId('physical-caller-frame')).not.toBeNull());
         const before = readFrame(frames.at(-1)!);
         const physicalFrame = screen.findByTestId('physical-caller-frame');
+        const document = physicalFrame!.props.document;
         const events: unknown[] = [];
         const detach = before.bridge.attachHostMessages((message) => events.push(message));
         await act(async () => {
@@ -272,6 +324,7 @@ describe('useSessionCallerHostedHtmlRuntime', () => {
         />);
         expect(readFrame(frames.at(-1)!).identity).toEqual(before.identity);
         expect(screen.findByTestId('physical-caller-frame')).toBe(physicalFrame);
+        expect(screen.findByTestId('physical-caller-frame')!.props.document).toBe(document);
         // Parent-only bags are not public context, and an equivalent canonical
         // snapshot must neither disconnect nor publish a spurious update.
         expect(events).not.toContainEqual(expect.objectContaining({ kind: 'disconnected' }));
@@ -386,6 +439,27 @@ describe('useSessionCallerHostedHtmlRuntime', () => {
             ...state.localSettings, debugMode: !state.localSettings.debugMode,
         } })); });
         expect(hook.getCurrent()).toBe(before);
+    });
+
+    it('keeps an admitted controller usable across projection replacement and refuses new calls after retirement', async () => {
+        const hook = await renderHook(({ runtime }) => useSessionCallerHostedHtmlRuntime('srv_home-a', 'session-a', runtime), {
+            initialProps: { runtime: pluginRuntime },
+        });
+        await vi.waitFor(() => expect(hook.getCurrent()).not.toBeNull());
+        const controller = hook.getCurrent()!.createRequestController(() => {});
+        const readMissing = () => controller.handleRequest({ requestId: 'missing', method: 'readResource',
+            payload: { resource: { pluginId: 'acme.preview', localId: 'missing' } } });
+        // The declaration resolver is real. Its specific refusal proves that
+        // the request reached admission rather than an obsolete snapshot fence.
+        await expect(readMissing()).rejects.toThrow('plugin_resource_not_found');
+        await hook.rerender({ runtime: { ...pluginRuntime,
+            pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 2 } } });
+        await expect(readMissing()).rejects.toThrow('plugin_resource_not_found');
+        await hook.rerender({ runtime: { ...pluginRuntime, phase: 'unavailable', interactionEnabled: false } });
+        await expect(controller.handleRequest({ requestId: 'retired', method: 'executeAction',
+            payload: { action: { pluginId: 'acme.preview', localId: 'open' } },
+        })).rejects.toThrow('caller_surface_retired');
+        controller.dispose();
     });
 
     it('withdraws prior guest authority while the canonical Account mode is revalidated', async () => {

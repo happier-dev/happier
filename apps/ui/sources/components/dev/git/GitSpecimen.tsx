@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import type { ScmLogEntry } from '@happier-dev/protocol/scm';
 import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
 
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
@@ -208,8 +208,10 @@ function GitFrame(props: Readonly<{ state: FrameState; phone: boolean }>) {
             entries={state.history}
             incoming={state.incoming}
             loading={false}
+            error={false}
             hasMore
             onLoadMore={NOOP}
+            onRetry={NOOP}
             onOpenCommit={NOOP}
             landedSha={state.landedSha ?? null}
         />

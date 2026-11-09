@@ -2,6 +2,8 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, type ReactTestRenderer } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
+import { HappierUiPlatformProvider } from '@happier-dev/plugin-ui/environment';
 import { storage } from '@/sync/domains/state/storage';
 
 const themeBoundary = vi.hoisted(() => ({ warningForeground: '#C47F00' }));
@@ -86,16 +88,34 @@ describe('ContextGauge (tier 2 ring)', () => {
         expect(host.props.accessibilityLabel).toBe('Context usage unavailable after model change');
     });
 
-    it('press: wraps in a pressable with an expanded hit area and fires onPress', async () => {
+    it('press: wraps in a pressable whose hit area reaches a finger without growing the ring, and fires onPress', async () => {
         const onPress = vi.fn();
-        const tree = await render(<ContextGauge usedPct={30} size={20} onPress={onPress} testID="cg" />);
-        const pressable = tree.root.findAll((node) => String(node.type) === 'Pressable')[0]!;
-        expect(pressable.props.hitSlop).toBe(10);
+        const tree = await render(
+            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+                <ContextGauge usedPct={30} size={20} onPress={onPress} testID="cg" />
+            </HappierUiPlatformProvider>,
+        );
+        const findPressable = () => tree.root.findAll((node) => String(node.type) === 'Pressable')[0]!;
+        const area = await layoutHitArea(findPressable, { width: 20, height: 20 });
+        expect(area.drawn).toEqual({ width: 20, height: 20 });
+        expect(area.width).toBe(44);
+        expect(area.height).toBe(44);
+        const pressable = findPressable();
         expect(pressable.props.accessibilityRole).toBe('button');
         act(() => {
             pressable.props.onPress();
         });
         expect(onPress).toHaveBeenCalledTimes(1);
+    });
+
+    it('press: the host bounds the hit area to the free space it declares, without growing the ring', async () => {
+        const tree = await render(
+            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+                <ContextGauge usedPct={30} size={16} onPress={() => {}} hitReach={{ left: 5, right: 5, top: 6, bottom: 6 }} testID="cg" />
+            </HappierUiPlatformProvider>,
+        );
+        const area = await layoutHitArea(() => tree.root.findAll((node) => String(node.type) === 'Pressable')[0]!, { width: 16, height: 16 });
+        expect(area.insets).toEqual({ top: 6, bottom: 6, left: 5, right: 5 });
     });
 
     it('press: minimal motion acknowledges with opacity only, never a scale', async () => {

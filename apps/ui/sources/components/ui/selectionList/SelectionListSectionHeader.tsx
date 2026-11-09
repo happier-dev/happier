@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View, Platform, type StyleProp, type ViewStyle } from 'react-native';
+import { View, Platform, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
@@ -10,6 +10,7 @@ import { buildSelectionListSectionHeaderGridA11yProps } from './buildSelectionLi
 import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from './_constants';
 import { SelectionListOptionPresentationContext } from './SelectionListOptionPresentationContext';
 import type { SelectionListSectionAction } from './_types';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * R6 — Premium UI design polish (Fix 1): a lighter, command-bar-style section
@@ -157,15 +158,14 @@ export function SelectionListSectionHeader(
             ) : null}
             {props.rightAccessory}
             {props.action ? (
-                <Pressable
+                <HappierPressable
                     testID={props.action.testID}
                     accessibilityRole="link"
                     accessibilityLabel={props.action.label}
-                    hitSlop={8}
                     onPress={props.action.onPress}
                 >
                     <Text style={styles.action}>{props.action.label}</Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
         </View>
     );

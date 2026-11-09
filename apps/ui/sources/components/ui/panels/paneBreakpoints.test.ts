@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolvePaneLayout } from './paneBreakpoints';
+import { resolveDestinationListYields, resolvePaneLayout } from './paneBreakpoints';
 
 describe('resolvePaneLayout', () => {
     it('never docks an item opened over its page, so the page keeps its width at every size', () => {
@@ -223,3 +223,23 @@ describe('resolvePaneLayout', () => {
     });
 });
 
+describe('resolveDestinationListYields', () => {
+    // A page whose detail is its content (a Triage entry beside its list) opens a companion: when list, detail
+    // and companion cannot all dock, the list steps aside and the detail keeps its column; nothing overlays it.
+    const page = { deviceType: 'tablet' as const, multiPaneEnabled: true, destinationOwnsDetails: true,
+        rightPreferredPx: 380, detailsPreferredPx: 750 };
+    it('collapses the list when the detail and its companion cannot both dock beside it', () => {
+        const input = { ...page, containerWidthPx: 1384, rightOpen: true, detailsOpen: true };
+        expect(resolveDestinationListYields(resolvePaneLayout(input), input)).toBe(true);
+    });
+    it('keeps the list while all three fit, or with only the detail open', () => {
+        const wide = { ...page, containerWidthPx: 1800, rightOpen: true, detailsOpen: true };
+        expect(resolveDestinationListYields(resolvePaneLayout(wide), wide)).toBe(false);
+        const detailOnly = { ...page, containerWidthPx: 1384, rightOpen: false, detailsOpen: true };
+        expect(resolveDestinationListYields(resolvePaneLayout(detailOnly), detailOnly)).toBe(false);
+    });
+    it('leaves auxiliary Details (a Session\'s file viewer) to the ordinary rules', () => {
+        const session = { ...page, destinationOwnsDetails: false, containerWidthPx: 1384, rightOpen: true, detailsOpen: true };
+        expect(resolveDestinationListYields(resolvePaneLayout(session), session)).toBe(false);
+    });
+});

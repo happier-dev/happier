@@ -41,7 +41,7 @@ export type SelectionListSearchHeaderLeadingSlotProps = Readonly<{
     rootTestID?: string;
 }>;
 
-export function SelectionListSearchHeaderLeadingSlot(
+export const SelectionListSearchHeaderLeadingSlot = React.memo(function SelectionListSearchHeaderLeadingSlot(
     props: SelectionListSearchHeaderLeadingSlotProps,
 ): React.ReactElement {
     const { theme } = useUnistyles();
@@ -116,4 +116,4 @@ export function SelectionListSearchHeaderLeadingSlot(
             )}
         </ReanimatedAnimated.View>
     );
-}
+});

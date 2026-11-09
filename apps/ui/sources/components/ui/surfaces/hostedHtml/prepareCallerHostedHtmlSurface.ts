@@ -1,12 +1,4 @@
 import {
-    UI_SURFACE_ISOLATION_PROFILE_VERSION_V1,
-    UiSurfaceExecutableApprovalKeyV1Schema,
-    buildUiSurfaceExecutableApprovalKeyStringV1,
-    createUiSurfaceExecutableSecurityFingerprintV1,
-    createUiSurfaceRequestedCapabilitiesDigestV1,
-    type UiSurfaceExecutableApprovalKeyV1,
-} from '@happier-dev/protocol/plugins/contributions/ui/executableSurfaceApprovalV1';
-import {
     admitCallerAuthoredUiSurfaceCapabilitiesV1,
     type NormalizedUiSurfaceCapabilityRequestV1,
 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
@@ -15,8 +7,6 @@ import {
     type PluginHostedHtmlSourceV1,
 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlSourceV1';
 import type { PluginUiHostMethodV1 } from '@happier-dev/protocol/plugins/ui/hostApiDefinition';
-
-import { buildHostedHtmlDocument } from '@/components/plugins/hostedWeb/buildHostedHtmlDocument';
 
 export type PreparedCallerHostedHtmlSurface =
     | Readonly<{
@@ -27,8 +17,6 @@ export type PreparedCallerHostedHtmlSurface =
             networkOrigins: NormalizedUiSurfaceCapabilityRequestV1['networkOrigins'];
             network?: 'none' | 'open';
         }>;
-        /** Audit/review rendering of the exact host shell; never rewrap this value. */
-        document: string;
         advertisedHostMethods: readonly PluginUiHostMethodV1[];
         /** The exact immutable mount input; outer Session authority binds refs. */
         capabilityManifest: Readonly<{
@@ -36,14 +24,11 @@ export type PreparedCallerHostedHtmlSurface =
             requested: NormalizedUiSurfaceCapabilityRequestV1;
             advertisedHostMethods: readonly PluginUiHostMethodV1[];
         }>;
-        approval: UiSurfaceExecutableApprovalKeyV1;
-        approvalKey: string;
     }>
     | Readonly<{
         kind: 'rejected';
         code:
             | 'source_invalid'
-            | 'approval_scope_invalid'
             | 'capability_request_invalid'
             | 'host_method_outside_caller_ceiling';
     }>;
@@ -53,19 +38,13 @@ export type PreparedCallerHostedHtmlSurface =
  *
  * Installed plugins do not enter this adapter: their independently admitted
  * public ABI and full trusted Host API continue through PluginSurfaceHost.
- * This adapter only validates the caller ceiling, derives the stable approval
- * identity, and builds the host-owned shell. Session access/revision/currentness
- * and remembered-approval storage remain with the outer Session owner.
+ * This adapter validates the caller ceiling. The physical frame's shared
+ * document owner resolves local assets and builds the only rendered shell.
  */
 export async function prepareCallerHostedHtmlSurface(input: Readonly<{
-    serverIdentityId: string;
-    accountId: string;
-    approvalSubject: string;
     source: unknown;
     requestedCapabilities?: unknown;
     admittedHostMethods: readonly PluginUiHostMethodV1[];
-    frameIdentity: Readonly<{ instanceId: string; mountNonce: string }>;
-    hostOrigin: string;
 }>): Promise<PreparedCallerHostedHtmlSurface> {
     const source = PluginHostedHtmlSourceV1Schema.safeParse(input.source);
     if (!source.success) return Object.freeze({ kind: 'rejected', code: 'source_invalid' });
@@ -74,49 +53,6 @@ export async function prepareCallerHostedHtmlSurface(input: Readonly<{
         admittedHostMethods: input.admittedHostMethods,
     });
     if (admission.kind === 'rejected') return admission;
-    // Partial capability intersection is intentional: a current realm may
-    // serve only part of a caller document's reviewed request. But when an
-    // explicit host-method request has no admitted method at all, mounting a
-    // frame cannot provide any of the authority it asked for. Keep the authored
-    // source visible as typed unavailable and create no physical frame.
-    if (
-        admission.capabilities.hostMethods.length > 0
-        && !admission.capabilities.hostMethods.some((method) => admission.advertisedHostMethods.includes(method))
-    ) {
-        return Object.freeze({ kind: 'rejected', code: 'capability_request_invalid' } as const);
-    }
-    const executableSecurityFingerprint = createUiSurfaceExecutableSecurityFingerprintV1({
-        source: source.data,
-        isolationProfileVersion: UI_SURFACE_ISOLATION_PROFILE_VERSION_V1,
-        networkOrigins: admission.capabilities.networkOrigins,
-        network: admission.capabilities.network,
-    });
-    const requestedCapabilitiesDigest = createUiSurfaceRequestedCapabilitiesDigestV1(admission.capabilities);
-    const approval = UiSurfaceExecutableApprovalKeyV1Schema.safeParse({
-        serverIdentityId: input.serverIdentityId,
-        accountId: input.accountId,
-        approvalSubject: input.approvalSubject,
-        executableSecurityFingerprint,
-        requestedCapabilitiesDigest,
-    });
-    if (!approval.success) return Object.freeze({ kind: 'rejected', code: 'approval_scope_invalid' });
-    let document: string;
-    try {
-        document = await buildHostedHtmlDocument(
-            source.data,
-            {
-                identity: input.frameIdentity,
-                frameOrigin: 'null',
-                hostOrigin: input.hostOrigin,
-            },
-            { network: admission.capabilities.network === 'origins' ? undefined : admission.capabilities.network,
-                networkOrigins: admission.capabilities.networkOrigins },
-        );
-    } catch {
-        // A structurally valid bundle can still reference missing or invalid
-        // local assets. Keep that authored-content failure at this boundary.
-        return Object.freeze({ kind: 'rejected', code: 'source_invalid' });
-    }
     return Object.freeze({
         kind: 'admitted',
         frameSource: Object.freeze({
@@ -124,14 +60,11 @@ export async function prepareCallerHostedHtmlSurface(input: Readonly<{
             networkOrigins: admission.capabilities.networkOrigins,
             network: admission.capabilities.network === 'origins' ? undefined : admission.capabilities.network,
         }),
-        document,
         advertisedHostMethods: admission.advertisedHostMethods,
         capabilityManifest: Object.freeze({
             version: 1 as const,
             requested: admission.capabilities,
             advertisedHostMethods: admission.advertisedHostMethods,
         }),
-        approval: approval.data,
-        approvalKey: buildUiSurfaceExecutableApprovalKeyStringV1(approval.data),
     });
 }

@@ -8,6 +8,8 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 
 export type AppSwitchProps = SwitchProps & {
     compact?: boolean;
+    /** How far the switch's hit area may reach past it on each side (the shared hit-area owner's reach). */
+    hitReach?: HappierSwitchProps['hitReach'];
 };
 
 /**
@@ -24,7 +26,7 @@ function useForwardedControlRef<T>(ref: React.ForwardedRef<T>) {
 }
 
 export const Switch = React.forwardRef<unknown, AppSwitchProps>(function Switch(
-    { value, disabled, onValueChange, style, compact, ...rest },
+    { value, disabled, onValueChange, style, compact, hitReach, ...rest },
     ref,
 ) {
     const controlRef = useForwardedControlRef(ref);
@@ -51,6 +53,7 @@ export const Switch = React.forwardRef<unknown, AppSwitchProps>(function Switch(
             reducedMotion={reducedMotion}
             nativeID={rest.nativeID}
             testID={rest.testID}
+            hitReach={hitReach}
             presentational={rowOwnsSwitch}
             controlRef={controlRef}
             // App callers pass React Native styles (layout only); the shared control keeps its own box over them.

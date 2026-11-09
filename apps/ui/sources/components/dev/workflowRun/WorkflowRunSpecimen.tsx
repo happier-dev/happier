@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import {
   WorkflowProgressEnvelopeV1Schema,
   type WorkflowProgressEnvelopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import {
   createWorkflowDefinitionFixture,

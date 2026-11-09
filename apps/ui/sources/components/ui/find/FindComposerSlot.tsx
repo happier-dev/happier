@@ -34,6 +34,15 @@ function createFindComposerSlotStore(): FindComposerSlotStore {
 const FindComposerSlotContext = React.createContext<FindComposerSlotStore | null>(null);
 const subscribeNone = () => () => {};
 const readNone = () => null;
+const readFalse = () => false;
+const isReplacingComposer = (seat: FindComposerSlotSeat | null): seat is FindComposerSlotSeat & { leaving: false } => seat !== null && !seat.leaving;
+
+/** Subscribe only to slot ownership, not to each frame published by the seated bar. */
+export function useFindComposerSlotReplacing(): boolean {
+    const store = React.useContext(FindComposerSlotContext);
+    const readReplacing = React.useCallback(() => isReplacingComposer(store?.get() ?? null), [store]);
+    return React.useSyncExternalStore(store?.subscribe ?? subscribeNone, readReplacing, readFalse);
+}
 
 export function FindComposerSlotProvider(props: Readonly<{ children: React.ReactNode }>) {
     const [store] = React.useState(createFindComposerSlotStore);
@@ -47,7 +56,7 @@ export function FindComposerSlotProvider(props: Readonly<{ children: React.React
 export function FindComposerSlotHost(props: Readonly<{ composer: React.ReactNode }>) {
     const store = React.useContext(FindComposerSlotContext);
     const seat = React.useSyncExternalStore(store?.subscribe ?? subscribeNone, store?.get ?? readNone, readNone);
-    const replacing = seat !== null && !seat.leaving;
+    const replacing = isReplacingComposer(seat);
     return <>
         {replacing ? <View testID="find-composer-slot">{seat.node}</View> : null}
         <View style={replacing ? { display: 'none' } : { position: 'relative' }}>

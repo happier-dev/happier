@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildCodeLinesFromUnifiedDiff } from './buildCodeLinesFromUnifiedDiff';
 import { expandUnifiedDiffContext } from './expandUnifiedDiffContext';
 import { buildReviewCommentDraftFromCodeLine } from '../reviewComments/buildReviewCommentDraftFromCodeLine';
-import { WorkspaceAnchorV1Schema } from '@happier-dev/protocol';
+import { WorkspaceAnchorV1Schema } from '@happier-dev/protocol/workspace/anchors/v1';
 
 const expand = (baseText: string, unifiedDiff: string) => expandUnifiedDiffContext({ baseText, unifiedDiff,
     lines: buildCodeLinesFromUnifiedDiff({ unifiedDiff, hideFilePrelude: true }) });

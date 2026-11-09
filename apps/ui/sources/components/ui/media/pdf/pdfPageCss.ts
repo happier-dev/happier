@@ -29,7 +29,8 @@ export function buildPdfPageCss(
 ): string {
   return `
 ${scope} { background: ${colors.well}; overflow: auto; display: flex; flex-direction: column; align-items: flex-start;
-  gap: ${metrics.gap}px; padding: ${metrics.gap}px; box-sizing: border-box; overscroll-behavior: contain; }
+  gap: ${metrics.gap}px; padding: ${metrics.gap}px; box-sizing: border-box; overscroll-behavior: contain;
+  touch-action: pan-x pan-y; }
 ${scope}[data-pdf-viewer="stage"] { background: transparent; }
 ${scope} .pdf-page { position: relative; flex: none; margin-inline: auto; background: ${colors.paper}; box-shadow: 0 0 0 1px ${colors.hairline}; overflow: hidden; }
 ${scope} .pdf-page-canvas { position: absolute; inset: 0; display: block; }

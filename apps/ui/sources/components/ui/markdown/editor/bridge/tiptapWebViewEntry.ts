@@ -44,6 +44,7 @@ export type TiptapWebViewRuntimeConfig = Readonly<{
     changeDebounceMs: number;
     /** Whether the editor starts read-only. */
     readOnly: boolean;
+    sharedHistory?: boolean;
 }>;
 
 export type TiptapWebViewRuntime = Readonly<{
@@ -134,6 +135,7 @@ function createRuntime(params: Readonly<{
     let seeded = false;
     let source = '';
     let edited = false;
+    const sharedHistory = config.sharedHistory === true;
     let docChangeTimer: ReturnType<typeof setTimeout> | null = null;
     let selectionTimer: ReturnType<typeof setTimeout> | null = null;
     let lastSelectionState: MarkdownSelectionState | null = null;
@@ -156,7 +158,7 @@ function createRuntime(params: Readonly<{
     };
 
     const emitSelectionState = (editor: Editor) => {
-        const next = readSelectionState(editor);
+        const next = readSelectionState(editor, sharedHistory ? { canUndo: false, canRedo: false } : undefined);
         if (lastSelectionState && selectionStatesEqual(lastSelectionState, next)) {
             return;
         }
@@ -235,7 +237,27 @@ function createRuntime(params: Readonly<{
 
     const editor = new Editor({
         element: root,
+        editorProps: {
+            handleDOMEvents: {
+                beforeinput: (view, event) => {
+                    if (!sharedHistory || !view.editable || view.composing || event.isComposing
+                        || (event.inputType !== 'historyUndo' && event.inputType !== 'historyRedo')) return false;
+                    event.preventDefault();
+                    postEnvelope({ v: 1, type: 'history.command', payload: { command: event.inputType === 'historyUndo' ? 'undo' : 'redo' } });
+                    return true;
+                },
+            },
+            handleKeyDown: (view, event) => {
+                if (!sharedHistory || !view.editable || view.composing || event.isComposing || event.altKey || !(event.metaKey || event.ctrlKey)) return false;
+                const key = event.key.toLowerCase();
+                if (key !== 'z' && key !== 'y') return false;
+                event.preventDefault();
+                postEnvelope({ v: 1, type: 'history.command', payload: { command: key === 'y' || event.shiftKey ? 'redo' : 'undo' } });
+                return true;
+            },
+        },
         extensions: createMarkdownEditorExtensions({
+            sharedHistory,
             onMenuTriggerChange: emitMenuTriggerChanged,
             onMenuTriggerKeyDown: (event: MenuTriggerKeyDownEvent) => {
                 postEnvelope({ v: 1, type: 'menuTriggerKeyDown', payload: event });
@@ -342,6 +364,25 @@ function createRuntime(params: Readonly<{
 
         if (envelope.type === 'setDoc') {
             setDoc(typeof payload.doc === 'string' ? payload.doc : '');
+            return;
+        }
+
+        if (envelope.type === 'text.command') {
+            if (!editor.isEditable) return;
+            const command = payload.command;
+            if (command === 'undo' || command === 'redo') {
+                if (sharedHistory) postEnvelope({ v: 1, type: 'history.command', payload: { command } });
+                else editor.commands[command]();
+            } else if (command && typeof command === 'object' && 'replaceDocument' in command && typeof command.replaceDocument === 'string') {
+                cancelPendingDocChange();
+                applyingRemote = true;
+                try {
+                    seedMarkdown(editor, command.replaceDocument, { preserveViewState: true });
+                    source = command.replaceDocument;
+                    edited = false;
+                } finally { applyingRemote = false; }
+            }
+            emitSelectionState(editor);
             return;
         }
 

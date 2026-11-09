@@ -176,7 +176,7 @@ const FIXTURE_ACCOUNT_DIRECTORY_CAPABILITY = {
 function resolveContinuationFixtureService(service: JourneyAccountService): AccountDirectoryAuthMethodDiscovery {
     if (service.discovery) return service.discovery;
     const serverIdentityId = service.entry.endpoint.serverIdentityId ?? FIXTURE_ACCOUNT_SERVICE_IDENTITY;
-    const endpointUrl = service.entry.endpoint.url;
+    const endpointUrl = service.entry.endpoint.url || 'https://continuation.example.test';
     return {
         endpointUrl,
         serverIdentityId,

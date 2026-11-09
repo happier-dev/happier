@@ -21,7 +21,7 @@ describe('CodeBlockViewFrame part radius', () => {
     it('rounds the frame with the theme code block radius', async () => {
         const { CodeBlockViewFrame } = await import('./CodeBlockViewFrame');
         const { useUnistyles } = await import('react-native-unistyles');
-        const { glassSurfaceBackgroundColor } = await import('@/components/ui/glass/glassSurfacePaint');
+        const { happierMaterialInnerBackgroundColor } = await import('@happier-dev/plugin-ui/presentation');
 
         const screen = await renderScreen(<CodeBlockViewFrame code={'x'} language={null} wrap={false} showCopyButton={false}>
                     <React.Fragment>child</React.Fragment>
@@ -34,7 +34,8 @@ describe('CodeBlockViewFrame part radius', () => {
         const rounded = screen.tree.root.findAll((node) => typeof node.type === 'string' && flatten(node.props?.style).borderRadius === 37);
         expect(rounded.length).toBeGreaterThan(0);
         const { theme } = useUnistyles();
-        expect(flatten(rounded[0].props.style).backgroundColor).toBe(glassSurfaceBackgroundColor(theme.colors.surface.inset, 'content', true));
+        // Solid it is its own fill; over glass content the material's inner translucent fill, never the cleared page plane.
+        expect(flatten(rounded[0].props.style).backgroundColor).toBe(happierMaterialInnerBackgroundColor(theme.colors.surface.inset, theme.colors.surface.selected, 'content', true));
         expect(flatten(rounded[0].props.style).opacity).toBeUndefined();
     });
 });

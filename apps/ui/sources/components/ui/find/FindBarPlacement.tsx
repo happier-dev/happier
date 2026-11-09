@@ -25,6 +25,35 @@ const FIND_BAR_MOTION = {
 export const FindBarExitingContext = React.createContext(false);
 
 /**
+ * The band an inline Find bar covers at the top of its surface, in px from the surface's top (0 when no
+ * bar floats there, or on a phone where the bar is seated below). Content under the bar keeps its first
+ * lines clear of this band, so a match on line 1 is never hidden by the bar that counts it.
+ */
+export const FindBarBandContext = React.createContext(0);
+
+/** The room between the capsule's bottom edge and the first content it keeps clear. */
+const FIND_BAR_BAND_GAP_PX = 8;
+
+/** The band of an inline capsule from its placement frame: its bottom edge plus the gap below it. */
+export function findBarBandFromLayout(layout: Readonly<{ y: number; height: number }>, gapPx = FIND_BAR_BAND_GAP_PX): number {
+    return Math.ceil(layout.y + layout.height + gapPx);
+}
+
+/**
+ * The band a surface publishes through `FindBarBandContext` while its inline bar is open: measured from
+ * `FindBarPlacement`'s `onLayout`, and 0 once the bar closes or is seated.
+ */
+export function useFindBarBand(open: boolean): Readonly<{ bandPx: number; onLayout: (event: LayoutChangeEvent) => void }> {
+    const seated = useFindBarPresentation() === 'keyboardSeated';
+    const [measured, setMeasured] = React.useState(0);
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const band = findBarBandFromLayout(event.nativeEvent.layout);
+        setMeasured((previous) => previous === band ? previous : band);
+    }, []);
+    return { bandPx: open && !seated ? measured : 0, onLayout };
+}
+
+/**
  * Whether a surface keeps its Find bar mounted: while open, and through the bar's exit after it closes.
  * The surface closes its Find model and returns focus at once; only the bar's last frame lingers.
  */

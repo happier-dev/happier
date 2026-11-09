@@ -33,10 +33,9 @@ describe('ItemGroupTitleWithAction', () => {
         const rootView = tree!.findByType('View' as any);
         const children = React.Children.toArray(rootView.props.children) as any[];
         expect(children).toHaveLength(2);
-        // The action is the pressable itself, right after the title (the react-native test double's
-        // `Pressable` is a forwardRef component, so compare against it rather than a host name).
-        const { Pressable } = await import('react-native');
-        expect(children[1]?.type).toBe(Pressable);
+        // The action is the shared pressable itself, right after the title.
+        const { HappierPressable } = await import('@happier-dev/plugin-ui/presentation');
+        expect(children[1]?.type).toBe(HappierPressable);
 
         const titleNodes = tree!.findAllByType('Text' as any).filter((node) => {
             const value = node.props.children;

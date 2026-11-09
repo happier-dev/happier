@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { ComposerContentHandleV1, SessionAttachmentHandleV1 } from '@happier-dev/protocol';
+import type { ComposerContentHandleV1} from '@happier-dev/protocol/runtime/input/composerContentV1';
+import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { t } from '@/text';

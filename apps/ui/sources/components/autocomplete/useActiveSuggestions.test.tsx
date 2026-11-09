@@ -1,9 +1,15 @@
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
 import type { AutocompleteSuggestion } from './autocompleteTypes';
 import { useActiveSuggestions, type ActiveSuggestionsHandler } from './useActiveSuggestions';
+import { storage } from '@/sync/domains/state/storage';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { readComposerSessionSuggestionItems } from '@/sync/domains/input/suggestionSession';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
 function suggestion(key: string): AutocompleteSuggestion {
     return {
@@ -14,6 +20,31 @@ function suggestion(key: string): AutocompleteSuggestion {
 }
 
 describe('useActiveSuggestions', () => {
+    it('refreshes an open Session suggestion query on sharing changes without another keystroke', async () => {
+        const previous = storage.getState();
+        storage.setState({ settings: { ...previous.settings, sessionListHiddenTagIdsWhileRecording: { home: ['secret'] } },
+            sessionOrganizationTagAssignmentsBySessionKey: { [buildSessionOrganizationSessionKey('home', 'secret')]: { sessionId: 'secret', tagIds: ['secret'] } },
+            sessionListRowsByServerId: { home: { secret: createSessionListRenderableSessionFixture({ id: 'secret' }) } } });
+        const refresh = createDeferred<void>();
+        let reads = 0;
+        const handler: ActiveSuggestionsHandler = async () => {
+            reads += 1;
+            if (reads === 2) await refresh.promise;
+            return readComposerSessionSuggestionItems({ serverId: 'home', currentSessionId: null }, readSessionRecordingVisibility())
+                .map(item => ({ kind: 'session', key: item.id, text: item.title }));
+        };
+        const hook = await renderHook(() => useActiveSuggestions('@', handler));
+        try {
+            await flushHookEffects();
+            expect(hook.getCurrent()[0].map(item => item.key)).toEqual(['secret']);
+            await act(async () => setScreenSharingPrivacyActive(true));
+            await flushHookEffects();
+            expect(hook.getCurrent()[0]).toEqual([]);
+            await act(async () => setScreenSharingPrivacyActive(false));
+            await flushHookEffects();
+            expect(hook.getCurrent()[0].map(item => item.key)).toEqual(['secret']);
+        } finally { refresh.resolve(); await hook.unmount(); setScreenSharingPrivacyActive(false); storage.setState(previous, true); }
+    });
     it('does not expose stale suggestions while a newer query is pending', async () => {
         const first = createDeferred<AutocompleteSuggestion[]>();
         const second = createDeferred<AutocompleteSuggestion[]>();

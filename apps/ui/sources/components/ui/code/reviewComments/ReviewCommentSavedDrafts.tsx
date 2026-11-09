@@ -6,7 +6,6 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { Text } from '@/components/ui/text/Text';
@@ -49,7 +48,6 @@ function ReviewCommentSavedDraftCard(props: Readonly<{
     onUpdateDraft?: (draft: ReviewCommentDraft) => void;
 }>) {
     const { theme } = useUnistyles();
-    const touchTargetFloor = resolveTouchTargetFloorPx();
     const [menuOpen, setMenuOpen] = React.useState(false);
     const { draft } = props;
     const included = isReviewCommentDraftIncludedInPrompt(draft);
@@ -75,7 +73,6 @@ function ReviewCommentSavedDraftCard(props: Readonly<{
                             testID={`review-comment-draft-menu:${draft.id}`}
                             variant="plain"
                             iconName="dots-three"
-                            minimumInteractiveTargetSize={touchTargetFloor ?? undefined}
                             interactiveTargetGapPx={6}
                             accessibilityLabel={t('common.moreActions')}
                             expanded={menuOpen}
@@ -95,7 +92,6 @@ function ReviewCommentSavedDraftCard(props: Readonly<{
                     onPress={() => props.onUpdateDraft?.({ ...draft, includeInPrompt: !included })}
                     style={(state) => [
                         styles.includeRow,
-                        touchTargetFloor ? { minHeight: touchTargetFloor } : null,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                     ]}
                 >

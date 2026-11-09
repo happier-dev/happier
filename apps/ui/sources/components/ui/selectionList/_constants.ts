@@ -4,10 +4,6 @@
  * domain's `_constants.ts` (per Decisions Log "Stale-threshold ownership").
  */
 
-/** Default debounce window for dynamic sections (Phase 2). Listed here for
- * cross-file visibility; consumed by `useSelectionListDynamicSections`. */
-export const SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS = 120;
-
 /** Default skeleton row count while a dynamic section loads (Phase 2). */
 export const SELECTION_LIST_DEFAULT_LOADING_SKELETON_ROWS = 3;
 

@@ -32,13 +32,13 @@ export function useItemRowAccessibleName(): string | undefined {
  */
 export const ITEM_ROW_SWITCH = Symbol.for('happier.ui.itemRowSwitch');
 
-export type ItemRowSwitch = Readonly<{ value: boolean; disabled: boolean; label?: string; onValueChange?: (value: boolean) => void }>;
+export type ItemRowSwitch = Readonly<{ value: boolean; disabled: boolean; label?: string; onValueChange?: (value: boolean) => unknown }>;
 
 export function readItemRowSwitch(node: React.ReactNode): ItemRowSwitch | null {
     if (!React.isValidElement(node)) return null;
     const type = node.type as unknown as Record<symbol, unknown> | null;
     if (!type || type[ITEM_ROW_SWITCH] !== true) return null;
-    const props = node.props as Readonly<{ value?: boolean; disabled?: boolean | null; onValueChange?: ((value: boolean) => void) | null; accessibilityLabel?: string; 'aria-label'?: string }>;
+    const props = node.props as Readonly<{ value?: boolean; disabled?: boolean | null; onValueChange?: ((value: boolean) => unknown) | null; accessibilityLabel?: string; 'aria-label'?: string }>;
     return {
         value: props.value === true,
         disabled: props.disabled === true,

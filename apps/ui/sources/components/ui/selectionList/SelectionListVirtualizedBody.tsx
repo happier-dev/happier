@@ -15,10 +15,11 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
-
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 import { t } from '@/text';
 
 import {
@@ -39,7 +40,7 @@ import {
     resolveSelectionListSectionColumnCount,
     resolveSelectionListSectionColumnSpan,
 } from './selectionListGridGeometry';
-import { PlanOptionRow } from './SelectionListOptionRow';
+import { SelectionListVirtualizedOptionRow, SelectionListVirtualizedRowStateProvider } from './SelectionListVirtualizedRowState';
 import { SelectionListPaginationFooter } from './SelectionListPaginationFooter';
 import { SelectionListA11yPatternContext } from './SelectionListA11yPatternContext';
 import { SelectionListScrollIntoViewContext, type SelectionListRegisterScrollItemLayout } from './SelectionListScrollIntoViewContext';
@@ -322,6 +323,49 @@ export function flattenRenderPlanForVirtualizedList(
     return rows;
 }
 
+type SelectionListVirtualizedOptionPositions = Readonly<{ byId: ReadonlyMap<string, number>; setSize: number }>;
+
+/**
+ * The previous item for a row whose members are all unchanged (an `option-row`'s cells compared one by
+ * one), otherwise the new one; the array itself when no row changed. Options are compared by identity:
+ * a step that rebuilds an unchanged option keeps it (see `retainShallow`), and a new option redraws.
+ */
+const planItemKey = (item: SelectionListBodyVirtualizedItem) => item.rowKey;
+const planItemType = (item: SelectionListBodyVirtualizedItem) => item.kind;
+const sourceItemKey = (item: SelectionListVirtualizedOptionSourceItem) => item.key;
+const sourceItemType = (item: SelectionListVirtualizedOptionSourceItem) => item.kind;
+
+export function retainVirtualizedItems(
+    previous: ReadonlyArray<SelectionListBodyVirtualizedItem> | undefined,
+    next: ReadonlyArray<SelectionListBodyVirtualizedItem>,
+): ReadonlyArray<SelectionListBodyVirtualizedItem> {
+    if (!previous || previous === next) return next;
+    const previousByKey = new Map<string, SelectionListBodyVirtualizedItem>();
+    const previousCells = new Map<string, SelectionListBodyVirtualizedOptionItem>();
+    for (const item of previous) {
+        previousByKey.set(item.rowKey, item);
+        if (item.kind === 'option-row') for (const cell of item.options) previousCells.set(cell.rowKey, cell);
+    }
+    let changed = previous.length !== next.length;
+    const items = next.map((item, index) => {
+        let candidate: SelectionListBodyVirtualizedItem = item;
+        if (item.kind === 'option-row') {
+            const cells = item.options.map(cell => retainShallow(previousCells.get(cell.rowKey), cell));
+            const held = previousByKey.get(item.rowKey);
+            const sameCells = held?.kind === 'option-row' && held.options.length === cells.length
+                && cells.every((cell, cellIndex) => cell === held.options[cellIndex]);
+            candidate = held?.kind === 'option-row' && sameCells && retainShallow(held, { ...item, options: held.options }) === held
+                ? held
+                : cells.every((cell, cellIndex) => cell === item.options[cellIndex]) ? item : { ...item, options: cells };
+        } else {
+            candidate = retainShallow(previousByKey.get(item.rowKey), item);
+        }
+        if (candidate !== previous[index]) changed = true;
+        return candidate;
+    });
+    return changed ? items : previous;
+}
+
 /**
  * Fold consecutive option rows of ONE section into column blocks
  * (`chunkIntoColumnBlocks`).
@@ -388,12 +432,8 @@ type FlatRowRenderContext = Readonly<{
     registerCellLayout?: SelectionListRegisterScrollItemLayout | null;
     rootTestID: string | undefined;
     stepId: string;
-    selectedOptionIds: ReadonlySet<string>;
-    focusedOptionId: string | null;
     onSelect: (id: string, option: SelectionListOption) => void;
     onPushStep: (step: SelectionListStep) => void;
-    optionPositionById: ReadonlyMap<string, number>;
-    optionSetSize: number;
     /** FR3-1 / FR3-8 — identity-free measure rendering. */
     measureMode?: boolean;
     /** Lane G — cells per visual row for `kind: 'option-row'` items. */
@@ -426,19 +466,15 @@ function renderVirtualizedOptionCell(
     cellPlacement?: SelectionListGridCellPlacement,
     rowIndex?: number,
 ): React.ReactElement {
-    const isSelected = ctx.selectedOptionIds.has(item.option.id);
-    const isFocused = ctx.focusedOptionId !== null && ctx.focusedOptionId === item.option.id;
+    // Highlight, selection and set position come from the body's row-state provider, not this cell.
     const optionRow = (
-        <PlanOptionRow
+        <SelectionListVirtualizedOptionRow
             option={item.option}
             rootTestID={ctx.rootTestID}
             stepId={ctx.stepId}
-            isSelected={isSelected}
-            isFocused={isFocused}
             onSelect={ctx.onSelect}
             onPushStep={ctx.onPushStep}
-            positionInSet={ctx.optionPositionById.get(item.option.id) ?? 1}
-            setSize={ctx.optionSetSize}
+            positionInSet={1}
             measureMode={ctx.measureMode === true}
             {...(cellPlacement === undefined ? {} : { cellPlacement })}
             {...(rowIndex === undefined ? {} : { rowIndex })}
@@ -708,11 +744,17 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
     const reducedMotion = useReducedMotionPreference();
     const columnCount = props.columnCount ?? 1;
     const columnGapPx = props.columnGapPx;
+    // A rebuilt plan that leaves a row as it was keeps that row's item (and the positions every
+    // cell reads), so the recycler redraws only the rows that changed.
+    const publishedRef = React.useRef<Readonly<{
+        items: ReadonlyArray<SelectionListBodyVirtualizedItem>;
+        positions: SelectionListVirtualizedOptionPositions;
+    }> | null>(null);
     const flatItems = React.useMemo(
-        () => groupVirtualizedItemsIntoColumnRows(
+        () => retainVirtualizedItems(publishedRef.current?.items, groupVirtualizedItemsIntoColumnRows(
             flattenRenderPlanForVirtualizedList(props.plan),
             columnCount,
-        ),
+        )),
         [props.plan, columnCount],
     );
     // Row numbering exists only in `grid` mode. The same body-owned pattern
@@ -739,7 +781,11 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
                 byId.set(cell.option.id, position);
             }
         }
-        return { byId, setSize: position };
+        const previous = publishedRef.current?.positions;
+        const positions = previous && previous.setSize === position && previous.byId.size === byId.size
+            && [...byId].every(([id, at]) => previous.byId.get(id) === at) ? previous : { byId, setSize: position };
+        publishedRef.current = { items: flatItems, positions };
+        return positions;
     }, [flatItems]);
 
     // RV-9: dev-only deduplicated warning about descriptor mis-configuration
@@ -800,18 +846,18 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
         rootTestID: props.rootTestID,
         a11yPattern,
     });
+    // A host hands these per render (often inline); their identity is not a row fact, so it never
+    // invalidates a recycled cell. Activation always reaches the newest callback.
+    const onSelect = useEventCallback(props.onSelect);
+    const onPushStep = useEventCallback(props.onPushStep);
     const renderItem = React.useCallback(
         ({ item }: { item: SelectionListBodyVirtualizedItem }) =>
             renderVirtualizedListRow(item, {
                 registerCellLayout,
                 rootTestID: props.rootTestID,
                 stepId: props.stepId,
-                selectedOptionIds: props.selectedOptionIds,
-                focusedOptionId: props.focusedOptionId,
-                onSelect: props.onSelect,
-                onPushStep: props.onPushStep,
-                optionPositionById: optionPositions.byId,
-                optionSetSize: optionPositions.setSize,
+                onSelect,
+                onPushStep,
                 measureMode,
                 columnCount,
                 columnGapPx,
@@ -821,12 +867,9 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
         [
             props.rootTestID,
             props.stepId,
-            props.selectedOptionIds,
-            props.focusedOptionId,
-            props.onSelect,
-            props.onPushStep,
+            onSelect,
+            onPushStep,
             registerCellLayout,
-            optionPositions,
             measureMode,
             columnCount,
             columnGapPx,
@@ -852,37 +895,46 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
                 : (props.listboxAria as unknown as Record<string, never>))}
             {...(hostAccessibilityHide ?? {})}
         >
-            <VirtualizedList
-                ref={virtualizedListRef}
-                testID={measureMode
-                    ? undefined
-                    : selectionListTestId(props.rootTestID, 'bodyVirtualizedList')}
-                data={flatItems as SelectionListBodyVirtualizedItem[]}
-                keyExtractor={(item: SelectionListBodyVirtualizedItem) => item.rowKey}
-                renderItem={renderItem}
-                getItemType={(item: SelectionListBodyVirtualizedItem) => item.kind}
-                estimatedItemSize={SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX}
-                recycleItems={false}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
-                onLayout={measureMode ? undefined : (event) => {
-                    onViewportLayout(event);
-                    if (paneScrollsWhole) paneFades.onViewportLayout(event);
-                }}
-                {...(paneScrollsWhole ? {
-                    onContentSizeChange: paneFades.onContentSizeChange,
-                    onScroll: paneFades.onScroll,
-                    onMomentumScrollEnd: paneFades.onMomentumScrollEnd,
-                    scrollEventThrottle: 16,
-                } : {})}
-                onEndReached={onEndReached}
-                onEndReachedThreshold={props.pagination ? 0.35 : undefined}
-                ListHeaderComponent={props.bodyHeader ?? undefined}
-                ListFooterComponent={props.bodyFooter
-                    ? <>{paginationFooter}{props.bodyFooter}</>
-                    : paginationFooter}
-                ListEmptyComponent={props.emptyContent ?? undefined}
-            />
+            <SelectionListVirtualizedRowStateProvider
+                selectedOptionIds={props.selectedOptionIds}
+                focusedOptionId={props.focusedOptionId}
+                optionPositionById={optionPositions.byId}
+                optionSetSize={optionPositions.setSize}
+            >
+                <VirtualizedList
+                    ref={virtualizedListRef}
+                    testID={measureMode
+                        ? undefined
+                        : selectionListTestId(props.rootTestID, 'bodyVirtualizedList')}
+                    data={flatItems as SelectionListBodyVirtualizedItem[]}
+                    // Only row configuration invalidates cells; per-row facts arrive through the provider.
+                    extraData={renderItem}
+                    keyExtractor={planItemKey}
+                    renderItem={renderItem}
+                    getItemType={planItemType}
+                    estimatedItemSize={SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX}
+                    recycleItems={false}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
+                    onLayout={measureMode ? undefined : (event) => {
+                        onViewportLayout(event);
+                        if (paneScrollsWhole) paneFades.onViewportLayout(event);
+                    }}
+                    {...(paneScrollsWhole ? {
+                        onContentSizeChange: paneFades.onContentSizeChange,
+                        onScroll: paneFades.onScroll,
+                        onMomentumScrollEnd: paneFades.onMomentumScrollEnd,
+                        scrollEventThrottle: 16,
+                    } : {})}
+                    onEndReached={onEndReached}
+                    onEndReachedThreshold={props.pagination ? 0.35 : undefined}
+                    ListHeaderComponent={props.bodyHeader ?? undefined}
+                    ListFooterComponent={props.bodyFooter
+                        ? <>{paginationFooter}{props.bodyFooter}</>
+                        : paginationFooter}
+                    ListEmptyComponent={props.emptyContent ?? undefined}
+                />
+            </SelectionListVirtualizedRowStateProvider>
             {paneScrollsWhole ? (
                 <SelectionListPaneEdgeFades edges={paneFades.visibility} />
             ) : null}
@@ -894,8 +946,6 @@ type DirectVirtualizedSourceRowContext = Readonly<{
     source: SelectionListVirtualizedOptionSource;
     rootTestID: string | undefined;
     stepId: string;
-    selectedOptionIds: ReadonlySet<string>;
-    focusedOptionId: string | null;
     onSelect: (id: string, option: SelectionListOption) => void;
     onPushStep: (step: SelectionListStep) => void;
     measureMode: boolean;
@@ -932,18 +982,28 @@ function renderDirectVirtualizedSourceItem(
         );
     }
 
+    if (item.kind === 'result-hint') {
+        // The same coverage line as a planned section's hint ("Showing the first …", offline Files).
+        const header = ctx.source.getHeader(item.sectionIndex);
+        const sectionTestId = selectionListTestId(ctx.rootTestID, 'section', header.id);
+        return renderFlatListboxSectionGroup((
+            <SelectionListResultHintRow
+                hint={header.resultHint ?? ''}
+                testID={ctx.measureMode ? undefined : selectionListTestId(sectionTestId, 'resultHint')}
+                measureMode={ctx.measureMode}
+            />
+        ), ctx.a11yPattern);
+    }
+
     const option = ctx.source.getOption(item.optionIndex);
     return (
-        <PlanOptionRow
+        <SelectionListVirtualizedOptionRow
             option={option}
             rootTestID={ctx.rootTestID}
             stepId={ctx.stepId}
-            isSelected={ctx.selectedOptionIds.has(option.id)}
-            isFocused={ctx.focusedOptionId !== null && ctx.focusedOptionId === option.id}
             onSelect={ctx.onSelect}
             onPushStep={ctx.onPushStep}
             positionInSet={item.positionInSet}
-            setSize={ctx.source.optionCount}
             measureMode={ctx.measureMode}
         />
     );
@@ -955,6 +1015,8 @@ function SelectionListBodyDirectVirtualizedSource(props: SelectionListBodyVirtua
     const source = props.source;
     const sourceStateKey = source.stateKey;
     const reducedMotion = useReducedMotionPreference();
+    const onSelect = useEventCallback(props.onSelect);
+    const onPushStep = useEventCallback(props.onPushStep);
     const a11yPattern = React.useContext(SelectionListA11yPatternContext);
     const virtualizedListRef = React.useRef<VirtualizedListRef | null>(null);
     const focusedOptionIndex = props.focusedOptionIndex ?? (
@@ -962,12 +1024,7 @@ function SelectionListBodyDirectVirtualizedSource(props: SelectionListBodyVirtua
             ? -1
             : source.findOptionIndexById(props.focusedOptionId)
     );
-    const focusedItemIndex = React.useMemo(
-        () => focusedOptionIndex < 0 ? -1 : source.items.findIndex((item) => (
-            item.kind === 'option' && item.optionIndex === focusedOptionIndex
-        )),
-        [focusedOptionIndex, source.items],
-    );
+    const focusedItemIndex = focusedOptionIndex < 0 ? -1 : source.findItemIndexByOptionIndex(focusedOptionIndex);
     const { onViewportLayout } = useSelectionListVirtualizedFocusReveal({
         listRef: virtualizedListRef,
         focusedItemIndex,
@@ -987,10 +1044,8 @@ function SelectionListBodyDirectVirtualizedSource(props: SelectionListBodyVirtua
             source,
             rootTestID: props.rootTestID,
             stepId: props.stepId,
-            selectedOptionIds: props.selectedOptionIds,
-            focusedOptionId: props.focusedOptionId,
-            onSelect: props.onSelect,
-            onPushStep: props.onPushStep,
+            onSelect,
+            onPushStep,
             measureMode,
             a11yPattern,
         }),
@@ -999,10 +1054,8 @@ function SelectionListBodyDirectVirtualizedSource(props: SelectionListBodyVirtua
             sourceStateKey,
             props.rootTestID,
             props.stepId,
-            props.selectedOptionIds,
-            props.focusedOptionId,
-            props.onSelect,
-            props.onPushStep,
+            onSelect,
+            onPushStep,
             measureMode,
             a11yPattern,
         ],
@@ -1025,25 +1078,33 @@ function SelectionListBodyDirectVirtualizedSource(props: SelectionListBodyVirtua
                 : (props.listboxAria as unknown as Record<string, never>))}
             {...(hostAccessibilityHide ?? {})}
         >
-            <VirtualizedList
-                ref={virtualizedListRef}
-                testID={measureMode
-                    ? undefined
-                    : selectionListTestId(props.rootTestID, 'bodyVirtualizedList')}
-                data={source.items}
-                extraData={sourceStateKey}
-                keyExtractor={(item: SelectionListVirtualizedOptionSourceItem) => item.key}
-                renderItem={renderItem}
-                getItemType={(item: SelectionListVirtualizedOptionSourceItem) => item.kind}
-                estimatedItemSize={SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX}
-                recycleItems={false}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
-                onLayout={measureMode ? undefined : onViewportLayout}
-                onEndReached={onEndReached}
-                onEndReachedThreshold={props.pagination ? 0.35 : undefined}
-                ListFooterComponent={paginationFooter}
-            />
+            <SelectionListVirtualizedRowStateProvider
+                selectedOptionIds={props.selectedOptionIds}
+                focusedOptionId={props.focusedOptionId}
+                optionSetSize={source.optionCount}
+            >
+                <VirtualizedList
+                    ref={virtualizedListRef}
+                    testID={measureMode
+                        ? undefined
+                        : selectionListTestId(props.rootTestID, 'bodyVirtualizedList')}
+                    data={source.items}
+                    // The row callback captures every non-item input except the per-row facts (source/stateKey,
+                    // row configuration). Focus and selection arrive through the row-state provider instead.
+                    extraData={renderItem}
+                    keyExtractor={sourceItemKey}
+                    renderItem={renderItem}
+                    getItemType={sourceItemType}
+                    estimatedItemSize={SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX}
+                    recycleItems={false}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
+                    onLayout={measureMode ? undefined : onViewportLayout}
+                    onEndReached={onEndReached}
+                    onEndReachedThreshold={props.pagination ? 0.35 : undefined}
+                    ListFooterComponent={paginationFooter}
+                />
+            </SelectionListVirtualizedRowStateProvider>
         </View>
     );
 }

@@ -26,8 +26,8 @@ export type ActivitySpinnerProps = RNActivityIndicatorProps & Readonly<{
     animationEnabled?: boolean;
     /**
      * Draw this style instead of the one chosen in Settings → Appearance. Only for surfaces that
-     * show the styles themselves, such as that picker's previews. The chosen speed and pause still
-     * apply, so the previews play as the real spinners will.
+     * show the styles themselves, such as that picker's previews. The chosen speed and pause still apply, so the
+     * previews play as the real spinners will.
      */
     variant?: HappierSpinnerStyleId;
 }>;

@@ -17,6 +17,12 @@ afterEach(() => {
     vi.unstubAllEnvs();
 });
 
+const textOf = (node: unknown): string => {
+    if (typeof node === 'string') return node;
+    const children = (node as { children?: unknown[] } | null)?.children;
+    return Array.isArray(children) ? children.map(textOf).join('') : '';
+};
+
 describe('unified diff Find reveal', () => {
     it('lands after a folded match is revealed and its row is measured, even after the old retry window', async () => {
         const { HappierUnifiedDiffViewer } = await import('./HappierUnifiedDiffViewer');
@@ -58,6 +64,8 @@ describe('unified diff Find reveal', () => {
         expect(current[current.length - 1].children.join('')).toBe('context 5');
         const foldAgain = screen.findByTestId('diff-find-fold-again');
         expect(foldAgain).not.toBeNull();
+        // Radius 1 keeps the first and last of the ten context lines, so eight were hidden and Find opened all of them.
+        expect(textOf(screen.findByTestId('diff-find-opened-fold'))).toMatch(/\b8\b/);
         await act(async () => { await screen.pressByTestId('diff-find-fold-again'); });
         expect(screen.tree.root.findAll((node) => node.props.testID === 'find-match-current')).toHaveLength(0);
         expect(storage.getState().settings.filesDiffFoldingEnabled).toBe(true);

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -30,10 +31,46 @@ const { FloatingOverlay } = await import('@/components/ui/overlays/FloatingOverl
 const { View } = await import('react-native');
 const { Text } = await import('@/components/ui/text/Text');
 const { t } = await import('@/text');
+const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
 
 afterEach(() => { viewport.width = 390; viewport.height = 844; });
 
 describe('Popover phone presentation', () => {
+    it('hosts a composer sheet at the screen boundary so its choices and outside dismissal remain reachable', async () => {
+        const selected = vi.fn();
+        function Composer() {
+            const [open, setOpen] = React.useState(true);
+            return <OverlayPortalProvider>
+                <View testID="composer-card">
+                    <RoundButton testID="open-sheet" title="Actions" onPress={() => setOpen(true)} />
+                    <Popover open={open} phonePresentation="sheet" accessibilityLabel="Actions"
+                        onRequestClose={() => setOpen(false)}>
+                        {({ requestClose }) => <RoundButton testID="select-profile" title="Profile" onPress={() => {
+                            selected();
+                            requestClose();
+                        }} />}
+                    </Popover>
+                </View>
+                <View testID="screen-overlay-host"><OverlayPortalHost /></View>
+            </OverlayPortalProvider>;
+        }
+        const screen = await renderScreen(<Composer />);
+        const card = screen.findByTestId('composer-card')!;
+        const host = screen.findByTestId('screen-overlay-host')!;
+        // UIKit rejects hits outside the native parent's bounds even when overflow is visible.
+        expect(card.findAllByProps({ testID: 'select-profile' })).toHaveLength(0);
+        expect(host.findAllByProps({ testID: 'select-profile' }).length).toBeGreaterThan(0);
+        await screen.pressByTestIdAsync('select-profile');
+        expect(selected).toHaveBeenCalledOnce();
+        expect(host.findAll(node => node.props.role === 'dialog' && node.props.accessibilityViewIsModal === true)).toHaveLength(0);
+
+        await screen.pressByTestIdAsync('open-sheet');
+        const backdrop = host.findAllByType('TouchableWithoutFeedback')[0];
+        expect(backdrop).toBeTruthy();
+        await act(async () => { backdrop!.props.onPress(); });
+        expect(host.findAll(node => node.props.role === 'dialog' && node.props.accessibilityViewIsModal === true)).toHaveLength(0);
+    });
+
     it('keeps long plain sheet content reachable through the frame body scroller', async () => {
         viewport.height = 360;
         const recover = vi.fn();

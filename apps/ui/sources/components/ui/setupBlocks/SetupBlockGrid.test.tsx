@@ -2,11 +2,12 @@ import * as React from 'react';
 import { registerVoiceSetupPresentation, setVoiceSetupOpen } from '@/components/voice/presence/voiceCompanionSectionReveal';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Color from 'color';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { readGlassVariablesAt, resolveGlassPaint } from '@/dev/testkit/glass/resolveGlassPaint';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { dispatchEscapeToLayerStack } from '@/keyboard/escape';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
@@ -100,6 +101,7 @@ describe('SetupBlockGrid', () => {
         const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/useGlassMaterialSettings');
         const { GlassRuntimeEnvironmentProvider } = await import('@/components/ui/glass/glassRuntimeEnvironment');
         const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const { resolveGlassPresentationVariables } = await import('@/components/ui/glass/glassDocumentPresentation');
         const { SetupBlockGrid } = await import('./SetupBlockGrid');
         const { SetupBlockPaper } = await import('./SetupBlockPaper');
         const { SetupPathPanel } = await import('./SetupPathPanel');
@@ -118,10 +120,16 @@ describe('SetupBlockGrid', () => {
                 </GlassMaterialSettingsProvider>
             </GlassRuntimeEnvironmentProvider>);
             // A setup card is an Element: its paint lies on the material layer under its content.
+            // Web binds paints to the containing material's CSS payload: read what the browser paints at each node.
+            const documentVariables = resolveGlassPresentationVariables({ glassBlurEnabled: true, glassSurfaceMaterials: glassPresetMaterials('everywhere') },
+                { desktopWindow: true, nativeWindowMaterialLive: true, reduceTransparency });
+            const painted = (node: ReactTestInstance) => resolveGlassPaint(String(StyleSheet.flatten(node.props.style).backgroundColor),
+                readGlassVariablesAt(node, documentVariables));
             const paperHost = screen.findHostByTestId('material-setup-paper')!;
-            const paper = StyleSheet.flatten(paperHost.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!.props.style).backgroundColor;
-            const frame = StyleSheet.flatten(screen.findHostByTestId('material-setup.panel')!.props.style).backgroundColor;
-            const column = screen.findAllByType('View').map(node => StyleSheet.flatten(node.props.style)).find(style => style?.width === 264)!.backgroundColor;
+            const paperLayer = paperHost.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!;
+            const paper = reduceTransparency ? painted(paperLayer) : StyleSheet.flatten(paperLayer.props.style).backgroundColor;
+            const frame = painted(screen.findHostByTestId('material-setup.panel')!);
+            const column = painted(screen.findAllByType('View').find(node => StyleSheet.flatten(node.props.style)?.width === 264)!);
             if (reduceTransparency) {
                 expect(Color(paper).hexa()).toBe(Color(theme.colors.edge.cardFill).hexa());
                 expect(Color(frame).hexa()).toBe(Color(theme.colors.surface.base).hexa());

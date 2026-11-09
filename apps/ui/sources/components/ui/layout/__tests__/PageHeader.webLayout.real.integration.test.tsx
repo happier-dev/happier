@@ -212,3 +212,28 @@ it('keeps the description beside the controls under the title for inline and run
     expect(hang.rect('sentence').top).toBeGreaterThanOrEqual(hang.rect('controls').bottom);
     expect(hang.rect('sentence').right).toBeGreaterThan(hang.rect('controls').left);
 });
+
+async function measurePlainHeader(actions: React.ReactNode) {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(<View>
+            <HappierPageHeader testID="header" title={<Text testID="name" style={{ fontSize: 22, lineHeight: 28 }}>Actions</Text>}
+                description={<Text testID="purpose" style={{ fontSize: 14, lineHeight: 20 }}>What agents can do.</Text>} actions={actions} />
+            <View testID="section" style={{ height: 40 }} />
+        </View>));
+        return await measureWebLayout(host, { viewport: { width: 900, height: 600 } });
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+}
+
+it('keeps the title and everything under it in place whether or not the page has a header action', async () => {
+    const plain = await measurePlainHeader(undefined);
+    const withAction = await measurePlainHeader(<View testID="action" style={{ width: 120, height: 32 }} />);
+    expect(withAction.rect('name').top).toBe(plain.rect('name').top);
+    expect(withAction.rect('purpose').top).toBe(plain.rect('purpose').top);
+    expect(withAction.rect('section').top).toBe(plain.rect('section').top);
+});

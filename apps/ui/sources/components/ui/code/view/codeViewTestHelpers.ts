@@ -6,6 +6,7 @@ type InstallCodeViewCommonModuleMocksOptions = Readonly<{
     icons?: CodeViewModuleFactory;
     reactNative?: CodeViewModuleFactory;
     unistyles?: CodeViewModuleFactory;
+    realVirtualizer?: boolean;
 }>;
 
 const codeViewModuleState = vi.hoisted(() => ({
@@ -13,8 +14,17 @@ const codeViewModuleState = vi.hoisted(() => ({
         icons: undefined as CodeViewModuleFactory | undefined,
         reactNative: undefined as CodeViewModuleFactory | undefined,
         unistyles: undefined as CodeViewModuleFactory | undefined,
+        realVirtualizer: false,
+    },
+    listRef: {
+        scrollToIndex: vi.fn(),
+        scrollToOffset: vi.fn(),
+        getNativeScrollRef: vi.fn(),
+        getScrollableNode: vi.fn(),
     },
 }));
+
+export const codeViewListRef = codeViewModuleState.listRef;
 
 export function installCodeViewCommonModuleMocks(
     options: InstallCodeViewCommonModuleMocksOptions = {},
@@ -23,7 +33,15 @@ export function installCodeViewCommonModuleMocks(
         icons: options.icons,
         reactNative: options.reactNative,
         unistyles: options.unistyles,
+        realVirtualizer: options.realVirtualizer ?? false,
     };
+
+    vi.mock('@legendapp/list/react-native', async (importOriginal) => {
+        const original = await importOriginal<Record<string, unknown>>();
+        if (codeViewModuleState.options.realVirtualizer) return original;
+        const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+        return createCapturingLegendListMock({ original, refHandle: codeViewModuleState.listRef }).module;
+    });
 
     vi.mock('react-native', async () => {
         const activeOptions = codeViewModuleState.options;

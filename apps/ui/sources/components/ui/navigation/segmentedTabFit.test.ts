@@ -9,12 +9,39 @@ const base = { withIcons, labelsOnly, gap: 2, more: 60 } as const;
 
 describe('resolveSegmentedTabFit', () => {
   it('reserves More for explicit overflow before testing glyph, count and name fit', () => {
-    const explicit = { withIcons: [100, 100], labelsOnly: [80, 80], labelsWithoutCounts: [60, 60], gap: 2, more: 60, reserveMore: true };
-    expect(resolveSegmentedTabFit({ ...explicit, available: 264 })).toEqual({ icons: true, counts: true, visibleCount: 2 });
-    expect(resolveSegmentedTabFit({ ...explicit, available: 224 })).toEqual({ icons: false, counts: true, visibleCount: 2 });
-    expect(resolveSegmentedTabFit({ ...explicit, available: 184 })).toEqual({ icons: false, counts: false, visibleCount: 2 });
-    expect(resolveSegmentedTabFit({ ...explicit, available: 183 })).toEqual({ icons: false, counts: false, visibleCount: 1 });
-    expect(resolveSegmentedTabFit({ ...explicit, available: 40 })).toEqual({ icons: false, counts: false, visibleCount: 0 });
+    const explicit = {
+      withIcons: [100, 100],
+      labelsOnly: [80, 80],
+      labelsWithoutCounts: [60, 60],
+      gap: 2,
+      more: 60,
+      reserveMore: true,
+    };
+    expect(resolveSegmentedTabFit({ ...explicit, available: 264 })).toEqual({
+      icons: true,
+      counts: true,
+      visibleCount: 2,
+    });
+    expect(resolveSegmentedTabFit({ ...explicit, available: 224 })).toEqual({
+      icons: false,
+      counts: true,
+      visibleCount: 2,
+    });
+    expect(resolveSegmentedTabFit({ ...explicit, available: 184 })).toEqual({
+      icons: false,
+      counts: false,
+      visibleCount: 2,
+    });
+    expect(resolveSegmentedTabFit({ ...explicit, available: 183 })).toEqual({
+      icons: false,
+      counts: false,
+      visibleCount: 1,
+    });
+    expect(resolveSegmentedTabFit({ ...explicit, available: 40 })).toEqual({
+      icons: false,
+      counts: false,
+      visibleCount: 0,
+    });
   });
 
   it('keeps every tab with its glyph while the measured row holds them all', () => {
@@ -36,7 +63,13 @@ describe('resolveSegmentedTabFit', () => {
   it('drops the counts after the glyphs and before moving any tab into More', () => {
     // Inbox views beside an open item: "Needs you 69 | Updates 95 | Mentions" do not fit 280,
     // the names alone do (93+75+79 = 247 + 2 gaps).
-    const counted = { withIcons: [113, 98, 79], labelsOnly: [113, 98, 79], labelsWithoutCounts: [93, 75, 79], gap: 2, more: 60 } as const;
+    const counted = {
+      withIcons: [113, 98, 79],
+      labelsOnly: [113, 98, 79],
+      labelsWithoutCounts: [93, 75, 79],
+      gap: 2,
+      more: 60,
+    } as const;
     expect(resolveSegmentedTabFit({ ...counted, available: 280 })).toEqual({
       icons: false,
       counts: false,
@@ -62,6 +95,27 @@ describe('resolveSegmentedTabFit', () => {
       counts: false,
       visibleCount: 4,
     });
+  });
+
+  it('never moves the selected tab into More: the leading tabs give way so it keeps a place after them', () => {
+    // At 260 the names fit Overview and Code before More (80+54+2 = 136, + gap + 60 = 198). The selected
+    // last tab (68) needs its own place too: 136 + 2 + 68 + 2 + 60 = 268 > 260, so Code gives way.
+    expect(resolveSegmentedTabFit({ ...base, available: 260 })).toEqual({
+      icons: false,
+      counts: false,
+      visibleCount: 2,
+    });
+    expect(
+      resolveSegmentedTabFit({ ...base, available: 260, keep: 5 }),
+    ).toEqual({ icons: false, counts: false, visibleCount: 1 });
+    // A selected tab already inside the fitting row changes nothing.
+    expect(
+      resolveSegmentedTabFit({ ...base, available: 260, keep: 1 }),
+    ).toEqual({ icons: false, counts: false, visibleCount: 2 });
+    // In the narrowest pane the selected tab is what stays: every other tab moves behind More.
+    expect(
+      resolveSegmentedTabFit({ ...base, available: 100, keep: 3 }),
+    ).toEqual({ icons: false, counts: false, visibleCount: 0 });
   });
 
   it('follows the measured widths, not a tab count: longer labels overflow sooner at the same width', () => {

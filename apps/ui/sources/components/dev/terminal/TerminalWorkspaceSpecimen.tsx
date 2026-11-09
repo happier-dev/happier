@@ -1,13 +1,12 @@
 import * as React from 'react';
-import type { SessionTerminalMemberV1, SessionTerminalWorkspaceV1 } from '@happier-dev/protocol';
+import type { SessionTerminalMemberV1, SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/workspace';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import {
-    describeSessionTerminal,
-    describeSessionTerminalTab,
+    describeSessionTerminalTabs,
     type SessionTerminalDescribeContext,
 } from '@/components/sessions/terminal/presentation/describeSessionTerminal';
 import type { TerminalSurfaceSummary } from '@/components/sessions/terminal/terminalSurfaceSummary';
@@ -87,15 +86,21 @@ const OUTPUT: Record<string, string> = {
 };
 
 type FixtureTerminal = Readonly<{ member: SessionTerminalMemberV1; output: string; summary: TerminalSurfaceSummary }>;
-const summary = (status: EmbeddedTerminalPaneStatus, extra: Partial<TerminalSurfaceSummary> = {}): TerminalSurfaceSummary => ({ title: null, bell: null, status, error: null, url: null, ...extra });
+const summary = (status: EmbeddedTerminalPaneStatus, extra: Partial<TerminalSurfaceSummary> = {}): TerminalSurfaceSummary => {
+    const error = extra.error ?? null;
+    const failure = extra.failure ?? (status === 'error'
+        ? error === 'terminal_machine_unreachable' ? 'machine-unreachable' : 'failed'
+        : null);
+    return { title: null, bell: null, status, error, failure, url: null, ...extra };
+};
 const term = (id: string, member: Omit<SessionTerminalMemberV1, 'id'>, output: string, s: TerminalSurfaceSummary): FixtureTerminal => ({ member: { id, ...member }, output, summary: s });
 
 const TERMINALS: Record<string, FixtureTerminal> = {
     claude: term('claude', { target: { kind: 'session_attach' } }, OUTPUT.claude!, summary('connected')),
     zsh: term('zsh', { target: { kind: 'workspace_shell' }, title: 'zsh' }, OUTPUT.zsh!, summary('connected', { title: 'yarn test settings --watch' })),
     zshShort: term('zsh', { target: { kind: 'workspace_shell' }, title: 'zsh' }, OUTPUT.zshShort!, summary('connected')),
-    vite: term('vite', { target: { kind: 'workspace_shell', initialCommand: 'yarn workspace @happier-dev/ui dev' }, title: 'vite' }, OUTPUT.vite!, summary('connected', { url: 'http://localhost:5173/' })),
-    storybook: term('storybook', { target: { kind: 'workspace_shell', initialCommand: 'yarn storybook' }, title: 'storybook' }, OUTPUT.vite!, summary('connected', { url: 'http://localhost:6006/' })),
+    vite: term('vite', { target: { kind: 'workspace_shell', launch: { kind: 'package_script', runTargetId: 'vite:dev' } }, title: 'vite' }, OUTPUT.vite!, summary('connected', { url: 'http://localhost:5173/' })),
+    storybook: term('storybook', { target: { kind: 'workspace_shell', launch: { kind: 'package_script', runTargetId: 'storybook:dev' } }, title: 'storybook' }, OUTPUT.vite!, summary('connected', { url: 'http://localhost:6006/' })),
     devbox: term('devbox', { target: { kind: 'machine_shell', machineId: 'devbox', cwd: '~/' } }, OUTPUT.zshShort!, summary('connected')),
     exited: term('zsh', { target: { kind: 'workspace_shell' }, title: 'zsh' }, OUTPUT.typecheck!, summary('exited')),
     offline: term('zsh', { target: { kind: 'workspace_shell' }, title: 'zsh' }, OUTPUT.zsh!, summary('error', { error: 'terminal_machine_unreachable' })),
@@ -192,9 +197,9 @@ export function TerminalWorkspaceSpecimen(props: Readonly<{ variant: string | nu
     const [newMenuOpen, setNewMenuOpen] = React.useState(variant.newMenuOpen === true);
     const fixtures = React.useMemo(() => new Map(variant.tabs.flat().map((key) => [TERMINALS[key]!.member.id, TERMINALS[key]!])), [variant]);
     const context = React.useMemo(() => CONTEXT(variant.agentAsking === true), [variant.agentAsking]);
-    const tabs = React.useMemo(() => workspace.tabs.map((tab) => describeSessionTerminalTab(tab, tab.terminals.map((member) => (
-        describeSessionTerminal(member, fixtures.get(member.id)?.summary ?? null, context)
-    )))), [context, fixtures, workspace.tabs]);
+    const tabs = React.useMemo(() => describeSessionTerminalTabs(workspace.tabs,
+        workspace.tabs.flatMap((tab) => tab.terminals.map((member) => fixtures.get(member.id)?.summary ?? null)), context),
+    [context, fixtures, workspace.tabs]);
 
     const glyph = React.useCallback((name: IconName) => <Icon name={name} size={TERMINAL_MENU_GLYPH_PX} color={theme.colors.text.secondary} />, [theme.colors.text.secondary]);
     const newMenuItems = React.useMemo(() => buildSessionTerminalNewMenuItems({

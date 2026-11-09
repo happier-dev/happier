@@ -171,6 +171,13 @@ describe('link commands', () => {
         expect(opener).toHaveBeenCalledWith('https://example.com/page');
     });
 
+    it('does not open a browser from the headless registry without a host opener', () => {
+        const editor = createEditor('[Open](https://example.test/guide)');
+        const open = vi.spyOn(window, 'open').mockReturnValue(null);
+        runMarkdownEditorCommand(editor, { kind: 'openLink' });
+        expect(open).not.toHaveBeenCalled();
+    });
+
     it('openLink does not call the opener when no link is active', () => {
         const editor = createEditor('plain text, no link');
         editor.commands.selectAll();

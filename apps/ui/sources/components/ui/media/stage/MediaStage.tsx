@@ -2,6 +2,8 @@ import * as React from 'react';
 import { FlatList, PixelRatio, Platform, Pressable, View, type ViewToken } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  FadeIn,
+  FadeOut,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
@@ -33,7 +35,9 @@ import { Text } from '@/components/ui/text/Text';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
+import { ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, useEscapeLayer } from '@/keyboard/escape';
+import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import { withShortcut } from '@/keyboard/withShortcut';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 import { useDeviceType, usePresentationWindowDimensions } from '@/utils/platform/responsive';
@@ -48,6 +52,11 @@ import { HappierImageCheckerboard } from '@happier-dev/plugin-ui/presentation';
 import { useImageBacking } from '../imageBacking';
 import { MediaPicture, type MediaPictureSize } from '../MediaPicture';
 import { useFilePreviewSource, type FilePreviewSourceState } from '../useFilePreviewSource';
+import type { ImageAnnotator } from '../annotation/annotatorStore';
+import { AnnotatorCanvas } from '../annotation/AnnotatorCanvas';
+import { AnnotatorCaptionSlot, AnnotatorPalette } from '../annotation/AnnotatorPalette';
+import { AnnotatorPictureFrame } from '../annotation/AnnotatorPictureFrame';
+import { useAnnotatorHoldsFinger } from '../annotation/useImageAnnotator';
 import { useWheelZoom } from '../zoom/useWheelZoom';
 import { useZoomableViewport } from '../zoom/useZoomableViewport';
 import { dismissPresentation, resolveZoomBounds } from '../zoom/zoomGeometry';
@@ -55,6 +64,17 @@ import type { MediaStageItem, MediaStageProps } from './mediaStageItems';
 import { hideStageOrigin } from './hideStageOrigin';
 import { useMediaStageGallery } from './useMediaStageGallery';
 import { useMediaStageKeyboard } from './useMediaStageKeyboard';
+import { useMediaStageAnnotation } from './useMediaStageAnnotation';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import {
+  StageAnnotateActions,
+  StageAnnotateCaption,
+  StageAnnotateEntry,
+  StageAnnotatorMount,
+  StageCopyChooser,
+  useStageCapsuleLayout,
+  type StageAnnotateCapsule,
+} from './MediaStageAnnotate';
 
 type Rect = WindowFlightRect;
 type Phase = 'opening' | 'open' | 'closing';
@@ -138,6 +158,8 @@ type StageViewerProps = Readonly<{
   onPreviewChange: (index: number, preview: FilePreviewSourceState) => void;
   onDownload?: () => void;
   onOpenInDefaultApp?: () => void;
+  /** Annotate mode: the canvas lies on the picture and takes the pointer; zoom keeps working (MIS §8). */
+  annotator: ImageAnnotator | null;
 }>;
 
 /** A fitted, non-interactive neighbour on either side of the current page. */
@@ -170,6 +192,7 @@ function NeighbourPicture(
 const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
   function StageViewer(props, ref) {
     const { theme } = useUnistyles();
+    const phone = useDeviceType() === 'phone';
     const item = props.items[props.index]!;
     const picture = isPicture(item);
     // Retry asks for fresh bytes; the first attempt keeps the caller's identity so the page's held bytes are reused.
@@ -228,6 +251,8 @@ const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
       [index, onSize],
     );
 
+    const annotating = props.annotator !== null;
+    const fingerTaken = useAnnotatorHoldsFinger(props.annotator);
     const hasPrevious = props.index > 0;
     const hasNext = props.index < props.items.length - 1;
     const zoom = useZoomableViewport({
@@ -237,11 +262,12 @@ const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
       hasPrevious,
       hasNext,
       pageGap: theme.space.s24,
-      onDismiss,
-      ...(props.items.length > 1
+      onDismiss: annotating ? () => {} : onDismiss,
+      ...(props.items.length > 1 && !annotating
         ? { onPage: (direction: -1 | 1) => onPage(direction) }
         : {}),
-      onTap,
+      onTap: annotating ? () => {} : onTap,
+      onePointerPan: !fingerTaken,
       onZoomSettled: (aboveFit: boolean) => {
         setFullResolution(aboveFit);
         // 100% is one image pixel per device pixel: what the "1" key and a desktop click choose.
@@ -395,8 +421,9 @@ const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
                   {preview.status === 'loaded' && !failed ? (
                     <Animated.View
                       // The picture never takes the pointer (a web <img> would start a native image drag);
-                      // the viewport's recognizers own every press, pan and pinch.
-                      pointerEvents="none"
+                      // the viewport's recognizers own every press, pan and pinch. While annotating, only
+                      // the canvas laid over it takes the pointer.
+                      pointerEvents={annotating ? 'box-none' : 'none'}
                       style={zoom.contentStyle}
                       accessible
                       accessibilityRole="image"
@@ -412,14 +439,23 @@ const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
                         else if (event.nativeEvent.actionName === 'fit') zoom.fit();
                       }}
                     >
-                      <View style={[pictureSize, backing.paper ? { backgroundColor: backing.paper } : null]}>
+                      <AnnotatorPictureFrame
+                        annotator={props.annotator}
+                        size={pictureSize ?? undefined}
+                        // A phone insets the picture in its gutter with the media radius and an ink hairline, so a
+                        // light picture keeps its edge on a light stage (lab `ia · I1p`).
+                        {...(phone ? { radius: theme.borderRadius.lg } : {})}
+                        style={[pictureSize, backing.paper ? { backgroundColor: backing.paper } : null,
+                          phone ? { borderWidth: StyleSheet.hairlineWidth, borderColor: theme.colors.border.default } : null]}
+                      >
                         {backing.checkerboard && pictureSize ? (
                           <HappierImageCheckerboard color={theme.colors.text.primary} testID="media-stage-image-checkerboard" />
                         ) : null}
                         <MediaPicture
                           key={attempt}
                           kind={item.kind === 'svg' ? 'svg' : 'image'}
-                          uri={preview.uri}
+                          // Reopened marks stand on the original, not on the picture they were burned into.
+                          uri={props.annotator?.source.uri ?? preview.uri}
                           size={pictureSize}
                           onIntrinsicSize={handleIntrinsicSize}
                           onError={setFailed}
@@ -429,7 +465,8 @@ const StageViewer = React.forwardRef<ViewerHandle, StageViewerProps>(
                             && resolveZoomBounds(size, viewportSize, PixelRatio.get()).min === 1}
                           testID="media-stage-image"
                         />
-                      </View>
+                        {props.annotator ? <AnnotatorCanvas annotator={props.annotator} /> : null}
+                      </AnnotatorPictureFrame>
                     </Animated.View>
                   ) : unavailable ? (
                     <SurfaceStateCard
@@ -651,13 +688,18 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const item = gallery.currentItem;
   const multiple = gallery.items.length > 1;
   const showStrip = !phone && multiple;
+  // The active viewer holds these bytes for its lifetime; flight and Save follow that exact preview, including Retry.
+  const currentPreview = heldPreview?.index === gallery.index ? heldPreview : null;
+
 
   const windowRect = React.useMemo<Rect>(
     () => ({ x: 0, y: 0, width: window.width, height: window.height }),
     [window.width, window.height],
   );
   const viewport = React.useMemo<Rect>(() => {
-    if (phone || immersive) return windowRect;
+    if (immersive) return windowRect;
+    // A phone keeps a side gutter, so a picture's edge is out of the screen edge's gesture (lab `ia · I1p`).
+    if (phone) return { ...windowRect, x: theme.space.s16, width: Math.max(1, window.width - theme.space.s16 * 2) };
     const top = theme.space.s12 + TOP_BAR_HEIGHT + theme.space.s16;
     const bottom = showStrip
       ? theme.space.s16 * 2 + STRIP_THUMB_SIZE + theme.space.s4 * 2
@@ -678,6 +720,40 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
     window.width,
     windowRect,
   ]);
+
+  // Annotate mode (P2 D6, MIS §8). `useMediaStageAnnotation` owns entering, Cancel's question and Done;
+  // the annotator itself mounts only while a session is open, so a stage that never annotates does no
+  // annotation work (S4).
+  const stageAnnotation = useMediaStageAnnotation(item);
+  const [annotator, setAnnotator] = React.useState<ImageAnnotator | null>(null);
+  const annotation = stageAnnotation.session && annotator ? { annotator } : null;
+  const [reverted, setReverted] = React.useState(false);
+  const annotateCapsule: StageAnnotateCapsule = stageAnnotation.confirmDiscard ? 'confirmDiscard' : reverted ? 'reverted' : 'editing';
+  const setAnnotateCapsule = React.useCallback((next: StageAnnotateCapsule) => {
+    if (next === 'editing') stageAnnotation.keepEditing();
+    setReverted(next === 'reverted');
+  }, [stageAnnotation]);
+  const capsuleLayout = useStageCapsuleLayout();
+  const annotateShortcut = useKeyboardShortcutLabel('media.annotate');
+  // Every picture: Done lands in place where the picture is editable, as a copy in a draft elsewhere (P2 U4).
+  const annotatable = isPicture(item) && currentPreview !== null && phase === 'open';
+  const enterAnnotate = React.useCallback(() => {
+    const size = sizes.current.get(gallery.index);
+    if (!annotatable || !size || !currentPreview) return;
+    setImmersive(false);
+    setReverted(false);
+    void stageAnnotation.enter({ uri: currentPreview.uri, width: size.width, height: size.height });
+  }, [annotatable, currentPreview, gallery.index, stageAnnotation]);
+  // Tray "Edit marks" opens the stage straight into Annotate.
+  const autoAnnotated = React.useRef(false);
+  React.useEffect(() => {
+    if (!item.annotate || autoAnnotated.current || !annotatable || !sizes.current.get(gallery.index)) return;
+    autoAnnotated.current = true;
+    enterAnnotate();
+  }, [annotatable, enterAnnotate, gallery.index, item.annotate]);
+  const cancelAnnotate = React.useCallback(() => {
+    if (annotator) stageAnnotation.cancel(annotator.store.getState().document);
+  }, [annotator, stageAnnotation]);
 
   React.useEffect(() => {
     immersiveValue.value = withTiming(immersive ? 1 : 0, {
@@ -763,12 +839,30 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
     [flip, gallery.index, item, phase, props.onClose, reducedMotion],
   );
 
-  useEscapeLayer({
+  // Done lands in the composer (MIS §8.2): the stage flies home and the tray shows the marked picture.
+  const doneAnchorRef = React.useRef<View>(null);
+  const copyToChosenSession = React.useCallback((address: SessionAddress) => {
+    void stageAnnotation.copyToSession(address).then((landed) => {
+      if (landed) close();
+      else stageAnnotation.cancelCopy();
+    });
+  }, [close, stageAnnotation]);
+  const finishAnnotate = React.useCallback(() => {
+    if (!annotator) return;
+    void stageAnnotation.done(annotator.store.getState().document).then((landed) => {
+      if (landed) close();
+    });
+  }, [annotator, close, stageAnnotation]);
+
+  // The stage's popovers and the annotator's selection and crop sit in this scope, so they answer Esc first.
+  const escapeScope = useEscapeLayer({
     priority: ESCAPE_LAYER_PRIORITIES.modal,
     allowEditableTarget: true,
     onEscape: () => {
-      // Esc first brings the controls back, then closes (the keyboard path out of immersive).
-      if (immersive) setImmersive(false);
+      // Esc first brings the controls back, then closes (the keyboard path out of immersive). While
+      // annotating it is Cancel (MIS §8.3/8.4).
+      if (annotation) cancelAnnotate();
+      else if (immersive) setImmersive(false);
       else close();
       return true;
     },
@@ -793,12 +887,13 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   useMediaStageKeyboard(
     phase !== 'closing'
       ? {
-          previous: () => goTo(gallery.index - 1),
-          next: () => goTo(gallery.index + 1),
+          previous: () => { if (!annotation) goTo(gallery.index - 1); },
+          next: () => { if (!annotation) goTo(gallery.index + 1); },
           zoomIn: () => viewerRef.current?.zoomIn(),
           zoomOut: () => viewerRef.current?.zoomOut(),
           fit: () => viewerRef.current?.fit(),
           actualSize: () => viewerRef.current?.actual(),
+          ...(annotatable && !annotation ? { annotate: enterAnnotate } : {}),
         }
       : null,
   );
@@ -816,8 +911,6 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
 
   const flightTarget = flightSize ? fitRect(flightSize, viewport) : null;
   const flightItem = item;
-  // The active viewer holds these bytes for its lifetime; flight and Save follow that exact preview, including Retry.
-  const currentPreview = heldPreview?.index === gallery.index ? heldPreview : null;
   const savable = currentPreview?.uri ?? null;
   const handoffMime = currentPreview?.mimeType;
   const handoff = React.useCallback((action?: 'open') => {
@@ -835,11 +928,13 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   // A pointer click zooms, so pointer people reach immersive through this control (lab MS1i).
   const immersiveControl = !phone && isPicture(item);
 
+
   const topInset = phone ? insets.top + theme.space.s6 : theme.space.s12;
 
   // The stage's capsules and strip float over the pictures and pages it shows (arbitrary pixels), so the glass
   // takes the live-picture coat there: a white page under dark ink stays readable at the default.
   return (
+    <EscapeLayerProvider layer={escapeScope}>
     <GlassLivePictureBackdropContext.Provider value>
     <View
       style={StyleSheet.absoluteFill}
@@ -867,10 +962,22 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
         {...(savable ? { onDownload: save } : {})}
         {...(savable && canOpenFileInDefaultApp() ? { onOpenInDefaultApp: openInDefaultApp } : {})}
         onZoomChange={setZoomPercent}
+        annotator={annotation?.annotator ?? null}
         clip={zoomPercent !== null && !phone && !immersive}
         {...(item.openFile ? { onOpenFile: item.openFile } : {})}
       />
 
+      {stageAnnotation.session ? (
+        <StageAnnotatorMount session={stageAnnotation.session} onAnnotator={setAnnotator} />
+      ) : null}
+      {stageAnnotation.choosingSession ? (
+        <StageCopyChooser
+          anchorRef={doneAnchorRef}
+          targetSession={stageAnnotation.targetSession}
+          onChoose={copyToChosenSession}
+          onClose={stageAnnotation.cancelCopy}
+        />
+      ) : null}
       {phase !== 'open' && flightTarget && isPicture(flightItem) && currentPreview ? (
         <Animated.View pointerEvents="none" style={flip.clipStyle}>
           <Animated.View
@@ -903,13 +1010,16 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
             <IconButton
               variant="plain"
               iconName="x"
-              accessibilityLabel={t('common.close')}
-              tooltip={t('common.close')}
-              onPress={() => close()}
+              accessibilityLabel={annotation ? t('common.cancel') : t('common.close')}
+              tooltip={annotation ? t('common.cancel') : t('common.close')}
+              onPress={() => (annotation ? cancelAnnotate() : close())}
               testID="media-stage-close"
             />
           </StageCapsule>
-          <View style={stageStyles.title} pointerEvents="none">
+          {annotation ? (
+            <View style={stageStyles.titleSpacer} pointerEvents="none" />
+          ) : (
+            <View style={stageStyles.title} pointerEvents="none">
               <View style={{ minWidth: 0, flexShrink: 1 }}>
               <Text
                 variant="body"
@@ -925,20 +1035,40 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
                 </Text>
               ) : null}
               </View>
-            {counter && !phone ? (
-              <Text
-                variant="body"
-                style={[
-                  { color: theme.colors.text.secondary },
-                  Typography.tabular(),
-                ]}
-              >
-                {counter}
-              </Text>
-            ) : null}
-          </View>
-          {zoomPercent !== null || item.openFile || savable || immersiveControl ? (
+              {counter && !phone ? (
+                <Text
+                  variant="body"
+                  style={[
+                    { color: theme.colors.text.secondary },
+                    Typography.tabular(),
+                  ]}
+                >
+                  {counter}
+                </Text>
+              ) : null}
+            </View>
+          )}
+          {annotation || zoomPercent !== null || item.openFile || savable || immersiveControl || annotatable ? (
+            // One capsule that reshapes on the travel spring between viewing and annotating (MIS §8.1).
+            <Animated.View layout={capsuleLayout}>
             <StageCapsule>
+              {annotation ? (
+                <StageAnnotateActions
+                  annotator={annotation.annotator}
+                  capsule={annotateCapsule}
+                  onCapsule={setAnnotateCapsule}
+                  done={{ busy: stageAnnotation.pending, onPress: finishAnnotate, anchorRef: doneAnchorRef }}
+                  onDiscard={stageAnnotation.discard}
+                  phone={phone}
+                />
+              ) : (
+              <>
+              {annotatable && !phone ? (
+                <StageAnnotateEntry
+                  tooltip={withShortcut(t('files.annotate.annotate'), annotateShortcut)}
+                  onPress={enterAnnotate}
+                />
+              ) : null}
               {zoomPercent !== null && !phone ? (
                 <>
                   <IconButton
@@ -997,14 +1127,41 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
                   testID="media-stage-immersive"
                 />
               ) : null}
+              </>
+              )}
             </StageCapsule>
+            </Animated.View>
           ) : (
             <View style={stageStyles.capsulePlaceholder} />
           )}
         </View>
+        {annotation && phone ? (
+          <Animated.View
+            entering={FadeIn.duration(motionTokens.guardMoment.wordCrossFadeMs)}
+            exiting={FadeOut.duration(motionTokens.durationMs.fast)}
+            style={[stageStyles.phonePaletteLayer, { bottom: insets.bottom + theme.space.s16 }]}
+            pointerEvents="box-none"
+          >
+            <AnnotatorPalette annotator={annotation.annotator} layout="phone" surface="glass" />
+          </Animated.View>
+        ) : null}
+        {annotation && !phone ? (
+          <Animated.View
+            entering={FadeIn.duration(motionTokens.guardMoment.wordCrossFadeMs)}
+            exiting={FadeOut.duration(motionTokens.durationMs.fast)}
+            style={[
+              stageStyles.paletteLayer,
+              { top: topInset, left: theme.space.s12, right: theme.space.s12 },
+            ]}
+          >
+            <AnnotatorPalette annotator={annotation.annotator} layout="bar" surface="glass" />
+          </Animated.View>
+        ) : null}
 
-        {showStrip ? (
-          <View
+        {showStrip && !annotation ? (
+          <Animated.View
+            entering={FadeIn.duration(motionTokens.overlay.panel.enterMs)}
+            exiting={FadeOut.duration(reducedMotion ? motionTokens.overlay.panel.reducedMotionFadeMs : motionTokens.overlay.panel.exitMs)}
             style={[stageStyles.stripDock, { bottom: theme.space.s16 }]}
             pointerEvents="box-none"
           >
@@ -1017,10 +1174,24 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
               <StageGalleryStrip items={gallery.items} index={gallery.index} enabled={phase === 'open'}
                 width={Math.max(STRIP_THUMB_SIZE, window.width - theme.space.s16 * 2)} onSelect={goTo} />
             </GlassPanel>
+          </Animated.View>
+        ) : null}
+        {annotation && !phone ? (
+          <View style={[stageStyles.stripDock, { bottom: theme.space.s16 }]} pointerEvents="box-none">
+            <AnnotatorCaptionSlot annotator={annotation.annotator} surface="glass">
+              <StageAnnotateCaption
+                title={item.title}
+                width={annotation.annotator.source.width}
+                height={annotation.annotator.source.height}
+                editableUntilSend={item.edit !== undefined}
+                failure={stageAnnotation.failure !== null}
+                bottom={theme.space.s8}
+              />
+            </AnnotatorCaptionSlot>
           </View>
         ) : null}
 
-        {phone && (multiple || item.openFile) ? (
+        {phone && !annotation && (multiple || item.openFile || annotatable) ? (
           <View
             style={[
               stageStyles.stripDock,
@@ -1062,6 +1233,9 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
                   testID="media-stage-next"
                 />
               ) : null}
+              {annotatable ? (
+                <StageAnnotateEntry tooltip={t('files.annotate.annotate')} onPress={enterAnnotate} phone />
+              ) : null}
               {item.openFile ? (
                 <Pressable
                   accessibilityRole="button"
@@ -1088,6 +1262,7 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
       ) : null}
     </View>
     </GlassLivePictureBackdropContext.Provider>
+    </EscapeLayerProvider>
   );
 }
 
@@ -1160,6 +1335,21 @@ const stageStyles = StyleSheet.create((theme) => ({
   },
   capsulePlaceholder: {
     width: TOP_BAR_HEIGHT,
+  },
+  titleSpacer: {
+    flex: 1,
+  },
+  phonePaletteLayer: {
+    position: 'absolute',
+    left: theme.space.s12,
+    right: theme.space.s12,
+  },
+  paletteLayer: {
+    position: 'absolute',
+    height: TOP_BAR_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    pointerEvents: 'box-none',
   },
   zoomLabel: {
     paddingHorizontal: theme.space.s6,

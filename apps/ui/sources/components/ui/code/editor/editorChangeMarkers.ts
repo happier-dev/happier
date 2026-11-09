@@ -1,6 +1,6 @@
 import { buildReviewUnits, type ReviewUnit } from '@happier-dev/protocol/scm/comparisonOccurrences';
 import { revertHunks, type Hunk, type HunkApplyResult } from '@happier-dev/protocol/diff/hunks';
-import type { ScmChangeOccurrence } from '@happier-dev/protocol';
+import type { ScmChangeOccurrence } from '@happier-dev/protocol/scm/comparison';
 import type { EditorDecoration } from './codeEditorTypes';
 import { diffArrays } from 'diff';
 

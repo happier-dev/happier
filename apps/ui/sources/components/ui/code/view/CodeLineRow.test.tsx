@@ -35,6 +35,22 @@ installCodeViewCommonModuleMocks({
 });
 
 describe('CodeLineRow', () => {
+    it.each(['simple', 'advanced'] as const)('layers semantic roles over %s syntax without changing Find, diagnostics or text', async mode => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+        const theme = createThemeFixture();
+        const screen = await renderScreen(<CodeLineRow line={{ id: 'semantic', sourceIndex: 0, hunkIndex: null, kind: 'file', oldLine: null, newLine: 1,
+            renderPrefixText: '', renderCodeText: 'const target = 1;', renderIsHeaderLine: false, selectable: true }} selected={false}
+            syntaxHighlighting={{ mode, language: 'typescript', maxLineLength: 100 }}
+            advancedTokens={[{ text: 'const ', color: theme.colors.syntax.keyword }, { text: 'target = 1;', color: theme.colors.syntax.default }]}
+            semanticTokens={[{ start: 6, end: 12, role: 'function' }]}
+            findRanges={[{ start: 6, end: 12, current: true }]}
+            diagnostics={[{ start: 6, end: 12, severity: 'error' }]} />);
+        const role = screen.tree.root.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style).color === theme.colors.syntax.function);
+        expect(role.length).toBeGreaterThan(0);
+        const match = screen.findAllByTestId('find-match-current');
+        expect(match.at(-1)?.children.join('')).toBe('target');
+        expect(role[0].findAll(node => node.props.testID === 'find-match-current').length).toBeGreaterThan(0);
+    });
     it('keeps an interactive selected-line coat translucent without fading code or selection actions', async () => {
         const { CodeLineRow } = await import('./CodeLineRow');
         const onPressLine = vi.fn();

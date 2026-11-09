@@ -312,4 +312,78 @@ describe('SelectableMenuResults', () => {
         const categoryTitle = screen.findByType('Text');
         expect(StyleSheet.flatten(categoryTitle.props.style)).toMatchObject({ paddingHorizontal: 16 });
     });
+
+    it('renders swatch items as one row of colour radios that report the chosen one', async () => {
+        const onPressItem = vi.fn();
+        const onSelectionChange = vi.fn();
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
+        const screen = await renderScreen(<SelectableMenuResults
+            categories={[{
+                id: 'c1',
+                title: '',
+                items: [
+                    { id: 'color:blue', title: 'Blue', checked: true, swatch: { color: '#0000FF', group: 'presets' } },
+                    { id: 'color:red', title: 'Red', checked: false, swatch: { color: '#FF0000', group: 'presets' } },
+                    { id: 'color:orange', title: 'Orange', checked: false, subtitle: 'From the project', swatch: { color: '#FFAA00', group: 'presets', inherited: true } },
+                    { id: 'color:custom', title: 'Custom' },
+                ],
+            }]}
+            selectedIndex={-1}
+            onSelectionChange={onSelectionChange}
+            onPressItem={onPressItem}
+            rowVariant="slim"
+        />);
+
+        expect(screen.findAllByType('SelectableRow').map((row) => row.props.title)).toEqual(['Custom']);
+        const blue = screen.findByTestId('dropdown-option-color_blue') as any;
+        const red = screen.findByTestId('dropdown-option-color_red') as any;
+        const orange = screen.findByTestId('dropdown-option-color_orange') as any;
+        expect(blue.props.accessibilityRole).toBe('radio');
+        expect(blue.props.accessibilityLabel).toBe('Blue');
+        expect(blue.props.accessibilityState).toMatchObject({ checked: true });
+        expect(red.props.accessibilityState).toMatchObject({ checked: false });
+        expect(orange.props.accessibilityState).toMatchObject({ checked: false });
+        expect(orange.props.accessibilityHint).toBe('From the project');
+
+        await act(async () => {
+            red.props.onHoverIn?.();
+            red.props.onPress?.();
+        });
+        expect(onSelectionChange).toHaveBeenCalledWith(1);
+        expect(onPressItem).toHaveBeenCalledWith(expect.objectContaining({ id: 'color:red' }));
+    });
+
+    it('draws an empty swatch as the Remove choice in the same radio row', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+        const screen = await renderScreen(<SelectableMenuResults
+            categories={[{ id: 'c1', title: '', items: [
+                { id: 'color:remove', title: 'Remove color', checked: false, swatch: { color: '', empty: true, group: 'custom' } },
+                { id: 'color:#123456', title: 'Custom color #123456', checked: false, swatch: { color: '#123456', group: 'custom' } },
+            ] }]}
+            selectedIndex={-1}
+            onSelectionChange={() => {}}
+            onPressItem={() => {}}
+            rowVariant="slim"
+        />);
+        const remove = screen.findByTestId('dropdown-option-color_remove') as any;
+        expect(remove.props.accessibilityRole).toBe('radio');
+        expect(remove.props.accessibilityLabel).toBe('Remove color');
+        expect(remove.props.accessibilityState).toMatchObject({ checked: false });
+        expect(screen.findByTestId('dropdown-option-color_remove:strike')).not.toBeNull();
+    });
+
+    it('draws the swatch highlight only when the menu says it is visible', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+        const render = (visible: boolean) => renderScreen(<SelectableMenuResults
+            categories={[{ id: 'c1', title: '', items: [{ id: 'color:blue', title: 'Blue', swatch: { color: '#0000FF' } }] }]}
+            selectedIndex={0}
+            swatchHighlightVisible={visible}
+            onSelectionChange={() => {}}
+            onPressItem={() => {}}
+            rowVariant="slim"
+        />);
+        expect((await render(false)).findByTestId('dropdown-option-color_blue:highlight')).toBeNull();
+        expect((await render(true)).findByTestId('dropdown-option-color_blue:highlight')).not.toBeNull();
+    });
 });

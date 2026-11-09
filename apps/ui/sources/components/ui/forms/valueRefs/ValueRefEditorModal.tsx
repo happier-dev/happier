@@ -1,11 +1,15 @@
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { ValueRefV1 } from '@happier-dev/protocol';
+import type { ValueRefV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { Modal } from '@/modal';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { Item } from '@/components/ui/lists/Item';
@@ -17,7 +21,7 @@ import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 import { Text, TextInput } from '@/components/ui/text/Text';
 
-import { SavedSecretPickerModal } from './SavedSecretPickerModal';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { useValueRefEditorDraft } from './useValueRefRowsEditor';
@@ -45,6 +49,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.input.text,
         borderWidth: 0.5,
         borderColor: theme.colors.border.default,
+    },
+    actions: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: theme.space.s8,
+        paddingHorizontal: theme.space.s16,
+        paddingTop: theme.space.s8,
+        paddingBottom: theme.space.s16,
     },
 }));
 
@@ -110,22 +122,16 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
 
     const canSave = editor.canSubmit;
 
-    const pickSecret = React.useCallback(() => {
-        Modal.show({
-            component: SavedSecretPickerModal,
-            props: {
-                ...(props.scope === undefined ? {} : { scope: props.scope }),
-                selectedId: secretId,
-                onSelectId: (id) => setSecretId(id),
-            },
-            chrome: {
-                kind: 'card',
-                title: t('settings.mcpServersPickSecretTitle'),
-                dimensions: { size: 'lg' },
-            },
-            closeOnBackdrop: true,
+    const pickSecret = React.useCallback((event?: unknown, anchor?: PopoverAnchor) => {
+        void presentConnectSheet({
+            service: { kind: 'key', suggestedName: normalizedKey || undefined },
+            anchor: anchor ?? resolvePressTriggerAnchor(event),
+            ...(props.scope === undefined ? {} : { scope: props.scope }),
+            ...(secretId ? { current: secretId } : {}),
+        }).then(result => {
+            if (result.kind !== 'dismissed') setSecretId(result.secretRef);
         });
-    }, [props.scope, secretId]);
+    }, [normalizedKey, props.scope, secretId, setSecretId]);
 
     const onSave = React.useCallback(() => {
         if (!keyValid) {
@@ -164,19 +170,18 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                         onOpenChange={setSourceMenuOpen}
                         items={sourceItems}
                         selectedId={source}
-                        onSelect={(id) => {
+                        onSelect={(id, selection) => {
                             if (id !== 'literal' && id !== 'savedSecret') return;
                             const next = id;
                             setSource(next);
                             if (next !== 'savedSecret') return;
                             if (!secretId) {
-                                pickSecret();
+                                pickSecret(undefined, selection?.anchor);
                             }
                         }}
                         itemTrigger={{
                             title: t('settings.mcpServersValueSourceTitle'),
                             subtitle: source === 'literal' ? t('settings.mcpServersValueSourceLiteral') : t('settings.mcpServersValueSourceSavedSecret'),
-                            icon: <Icon name="arrows-left-right" size={29} color={theme.colors.accent.purple} />,
                         }}
                         rowKind="item"
                         connectToTrigger
@@ -209,36 +214,47 @@ export function ValueRefEditorModal(props: ValueRefEditorModalProps) {
                                 testID="mcp.valueRefEditor.secret"
                                 title={secretName ?? t('settings.mcpServersValueSecretSelect')}
                                 subtitle={secretId ? secretId : t('settings.mcpServersValueSecretSelectSubtitle')}
-                                icon={<Icon name="key" size={29} color={theme.colors.accent.indigo} />}
+                                icon={<Icon name="key" size={18} color={theme.colors.text.secondary} />}
                                 onPress={pickSecret}
+                                // Dismissing the picker never clears a key; this is the explicit way, on every width.
+                                rightElement={secretId ? (
+                                    <IconButton
+                                        testID="mcp.valueRefEditor.secret.clear"
+                                        iconName="x"
+                                        variant="plain"
+                                        size={18}
+                                        accessibilityLabel={t('connectedServicesSettings.keyClear')}
+                                        onPress={() => setSecretId(null)}
+                                    />
+                                ) : undefined}
+                                rightElementOutsidePressable
                             />
                         </>
                     )}
                 </View>
             </ItemGroup>
 
-            <ItemGroup title={t('common.actions')}>
-                <Item
-                    testID="mcp.valueRefEditor.save"
-                    title={t('common.save')}
-                    icon={<Icon name="floppy-disk" size={29} color={theme.colors.state.success.foreground} />}
-                    onPress={onSave}
-                    disabled={!canSave}
-                />
-
+            <View style={styles.actions}>
                 {deleteAllowed ? (
-                    <Item
+                    <RoundButton
                         testID="mcp.valueRefEditor.delete"
+                        size="small"
+                        display="quietDestructive"
                         title={t('common.delete')}
-                        icon={<Icon name="trash" size={29} color={theme.colors.state.danger.foreground} />}
                         onPress={() => {
                             props.onDelete?.();
                             props.onClose();
                         }}
-                        destructive
                     />
                 ) : null}
-            </ItemGroup>
+                <RoundButton
+                    testID="mcp.valueRefEditor.save"
+                    size="small"
+                    title={t('common.save')}
+                    onPress={onSave}
+                    disabled={!canSave}
+                />
+            </View>
         </ItemList>
     );
 }

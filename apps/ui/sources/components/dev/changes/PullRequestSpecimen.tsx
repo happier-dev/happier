@@ -2,7 +2,7 @@ import * as React from 'react';
 import { applyScmReviewedMarkIntent } from '@happier-dev/protocol/scm';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { ScmComparison } from '@happier-dev/protocol';
+import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 import { ScmComparisonBar, ScmComparisonViewSwitch } from '@/components/sessions/files/comparison/ScmComparisonBar';
 import { ScmComparisonScopePicker } from '@/components/sessions/files/comparison/ScmComparisonScopePicker';
 import { ScmComparisonPhoneHeader } from '@/components/sessions/files/comparison/ScmComparisonPhoneHeader';
@@ -10,7 +10,8 @@ import { ScmComparisonHeader } from '@/components/sessions/files/comparison/ScmC
 import { CapturedComparisonFilesView } from '@/components/sessions/files/comparison/CapturedComparisonFilesView';
 import { listFilesComparisonScopeOptions, resolveFilesComparisonLabel } from '@/components/sessions/files/comparison/filesComparison';
 import { WalkthroughView } from '@/components/sessions/files/walkthrough/WalkthroughView';
-import { buildWalkthroughReading, type WalkthroughReadingInput } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import type { WalkthroughReadingInput } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import { useWalkthroughReading } from '@/components/sessions/files/walkthrough/useWalkthroughReading';
 import { scmReviewComparisonOfCaptured } from '@/sync/domains/scm/diffSummary/selection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -30,14 +31,14 @@ function PullRequestFrame(props: Readonly<{ phone: boolean; comparison?: ScmComp
     const [refs, setRefs] = React.useState<string[]>([]);
     const input = React.useMemo<Omit<WalkthroughReadingInput, 'reviewed'>>(() => ({ comparison,
         walkthrough: { state: 'complete', value: PR_SPECIMEN_WALKTHROUGH }, analysis: PR_SPECIMEN_ANALYSIS }), [comparison]);
-    const reading = React.useMemo(() => buildWalkthroughReading({ ...input,
-        reviewed: applyScmReviewedMarkIntent(comparison, null, refs, true) }), [comparison, input, refs]);
+    const reviewed = React.useMemo(() => applyScmReviewedMarkIntent(comparison, null, refs, true), [comparison, refs]);
+    const reading = useWalkthroughReading({ ...input, reviewed });
     const options = listFilesComparisonScopeOptions(AVAILABILITY, 'turn-3', scope, { pendingFileCount: 9, sessionFileCount: 9,
         latestTurnFileCount: 4, currentFileCount: comparison.inventory.files.length });
     const selectView = (next: 'files' | 'walkthrough' | 'commits') => { if (next !== 'commits') setView(next); };
     const bar = props.phone ? <ScmComparisonPhoneHeader view={view} views={['files', 'walkthrough']}
         scope={{ options, current: scope, currentLabel: scopeLabel, fileCount: comparison.inventory.files.length, onSelect: noop }}
-        onSelectView={selectView} onBack={noop} onStartReview={noop} /> : <ScmComparisonBar leading={<>
+        onSelectView={selectView} onStartReview={noop} /> : <ScmComparisonBar leading={<>
         <ScmComparisonViewSwitch view={view} views={['files', 'walkthrough']} onSelect={(next) => { if (next !== 'commits') setView(next); }} />
         <ScmComparisonScopePicker options={options} current={scope}
             currentLabel={scopeLabel} fileCount={comparison.inventory.files.length} onSelect={noop} />

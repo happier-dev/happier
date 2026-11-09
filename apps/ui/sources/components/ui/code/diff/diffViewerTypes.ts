@@ -29,6 +29,17 @@ export type DiffHunkInfo = Readonly<{
     changeLineIds: readonly string[];
 }>;
 
+/**
+ * A file's change numbers, read live by each change row: a change loading in another file renumbers only the
+ * rows (their "Change n" label and accessible "of total"), never the file's diff.
+ */
+export type DiffHunkNumbering = Readonly<{
+    subscribe: (listener: () => void) => () => void;
+    /** Changes before this file's first one. */
+    offset: () => number;
+    total: () => number;
+}>;
+
 export type DiffHunkReviewState = 'open' | 'kept' | 'discarding';
 /** `comment` opens the surface's review comment at the change (composed by the viewer from `onPressAddComment`). */
 export type DiffHunkAction = 'keep' | 'discard' | 'ask' | 'copy' | 'comment';
@@ -39,9 +50,8 @@ export type DiffViewerHunks = Readonly<{
     stateOf?: (hunk: DiffHunkInfo) => DiffHunkReviewState;
     actions?: Readonly<Partial<Record<DiffHunkAction, (hunk: DiffHunkInfo) => void>>>;
     disabledReason?: (hunk: DiffHunkInfo, action: DiffHunkAction) => string | null;
-    numberOffset?: number;
-    /** Changes in the whole comparison, for each row's accessible name ("change 2 of 7"). */
-    numberTotal?: number;
+    /** Where this file's changes sit in the whole comparison ("Change 3", "change 2 of 7"); absent numbers from 1. */
+    numbering?: DiffHunkNumbering;
     renderNote?: (hunk: DiffHunkInfo) => ReactNode;
     /**
      * Host-chosen choices for a hunk that are not review verbs (the editor's Compare: Use mine · Use theirs).

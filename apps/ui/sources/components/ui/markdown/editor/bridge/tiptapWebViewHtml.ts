@@ -45,6 +45,7 @@ export type TiptapWebViewTheme = Readonly<{
 export function buildTiptapWebViewHtml(params: Readonly<{
     theme: TiptapWebViewTheme;
     readOnly: boolean;
+    sharedHistory?: boolean;
     changeDebounceMs: number;
     maxChunkBytes: number;
     uiFontScale?: number;
@@ -269,7 +270,7 @@ export function buildTiptapWebViewHtml(params: Readonly<{
         const runtime = api.createRuntime({
           root,
           postEnvelope: sendEnvelope,
-          config: { changeDebounceMs: CHANGE_DEBOUNCE_MS, readOnly: READ_ONLY },
+          config: { changeDebounceMs: CHANGE_DEBOUNCE_MS, readOnly: READ_ONLY, sharedHistory: ${params.sharedHistory === true} },
         });
 
         function onMessage(event) {

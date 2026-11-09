@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 
 import { parseThemeColor } from '@/theme/parseThemeColor';
 import { picturePrefersPageInk } from '@happier-dev/brand/atmosphere-haze';
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
 
 /**
  * Faint ink (secondary and tertiary alike) on backed glass is primary ink at this share; the web
@@ -127,4 +128,15 @@ export function glassThemeInkWebStyle(text: Readonly<{ primary: string; secondar
  */
 export function useGlassOwnFillOnPicture(paintsFill: boolean): boolean {
   return React.useContext(GlassBackedInkContext)?.picture !== undefined && paintsFill;
+}
+
+/**
+ * The ink a surface publishes to its text and icons. A surface rebuilds its ink whenever any theme or
+ * environment input it lists moves, though most moves leave the ink's members equal; every Text and
+ * Icon below re-renders on a new identity, so an equal ink keeps the one already published.
+ */
+export function useRetainedGlassBackedInk(ink: GlassBackedInk | null): GlassBackedInk | null {
+  const published = React.useRef<GlassBackedInk | null>(null);
+  published.current = ink === null ? null : retainIfEqual(published.current ?? undefined, ink);
+  return published.current;
 }

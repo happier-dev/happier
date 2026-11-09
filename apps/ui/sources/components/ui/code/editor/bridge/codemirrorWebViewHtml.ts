@@ -1,7 +1,7 @@
 import { CODE_GUTTER_METRICS, resolveCodeEditorFontMetrics } from '../codeEditorFontMetrics';
 import { minimalCodeEditorEdit } from '../codeEditorDocumentEdit';
-import { formatCodeEditorBlameMarkCss, formatCodeEditorChangeMarkCss, formatCodeEditorDiagnosticCss, type CodeEditorTheme } from '../editorTheme';
-import { CODEMIRROR_WEBVIEW_BUNDLE_JS } from './codemirrorWebViewBundle.generated';
+import { formatCodeEditorBlameMarkCss, formatCodeEditorChangeMarkCss, formatCodeEditorDiagnosticCss, formatCodeEditorNextEditCss, type CodeEditorTheme } from '../editorTheme';
+import { CODEMIRROR_INLINE_SUGGESTIONS_FACTORY_JS, CODEMIRROR_WEBVIEW_BUNDLE_JS } from './codemirrorWebViewBundle.generated';
 
 export type CodeMirrorWebViewTheme = Omit<CodeEditorTheme, 'monacoThemeName'>;
 
@@ -96,11 +96,13 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
       ${formatCodeEditorChangeMarkCss(params.theme, (kind) => '.happier-editor-marker.happier-editor-change-' + kind)}
       ${formatCodeEditorDiagnosticCss(params.theme, (severity) => '.happier-editor-diagnostic-' + severity)}
       ${formatCodeEditorBlameMarkCss(params.theme, (tone) => '.happier-editor-marker.happier-editor-blame-' + tone)}
+      .happier-editor-inline-suggestion { color: ${params.theme.syntax.commentColor}; }
+      ${formatCodeEditorNextEditCss(params.theme, (part) => '.happier-next-edit-' + part)}
     </style>
   </head>
   <body>
     <div id="root"></div>
-    ${hasEmbeddedBundle ? `<script>${embeddedBundle}</script>` : ''}
+    ${hasEmbeddedBundle ? `<script>${embeddedBundle}</script>` : `<script>${CODEMIRROR_INLINE_SUGGESTIONS_FACTORY_JS}</script>`}
     <script type="module">
       const MAX_CHUNK_BYTES = ${maxChunkBytes};
       const CHANGE_DEBOUNCE_MS = ${changeDebounceMs};
@@ -264,6 +266,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
       let applyingRemote = false;
       let currentLanguage = null;
       let currentReadOnly = false;
+      let sharedHistory = false;
       let lineSeparator = '\\n';
       let findRequest = null;
       let keyboardSignatures = new Set();
@@ -298,6 +301,15 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
 
       async function boot() {
         let decorationRuntime = null;
+        let intelligenceRuntime = null;
+        let intelligenceFactory = null;
+        let intelligenceCompartment = null;
+        let intelligenceConfig = null;
+        let intelligenceSequence = 0;
+        const intelligenceRequests = new Map();
+        let inlineRuntime = null;
+        let inlineApi = null;
+        let stateApi, viewApi, autocompleteApi;
         const decorationLayers = new Map();
         const embedded = ${hasEmbeddedBundle ? 'true' : 'false'};
         let EditorState;
@@ -353,6 +365,9 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           const bundle = globalThis.HAPPIER_CODEMIRROR_WEBVIEW || globalThis.__CM6__ || null;
           if (!bundle) throw new Error('CodeMirror bundle missing');
           ({ EditorState } = bundle);
+          intelligenceFactory = bundle.createCodeMirrorLanguageIntelligence;
+          intelligenceCompartment = bundle.Compartment ? new bundle.Compartment() : null;
+          inlineApi = bundle;
           if (bundle.createCodeMirrorDecorations) {
             decorationRuntime = bundle.createCodeMirrorDecorations(bundle, (layer, item) => {
               flushPendingDocChange();
@@ -390,11 +405,11 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           langPhp = bundle.langs?.php;
         } else {
           [
-            { EditorState },
-            { EditorView, lineNumbers, keymap, drawSelection, highlightSpecialChars, highlightActiveLine, highlightActiveLineGutter },
+            stateApi,
+            viewApi,
             { defaultKeymap, history, historyKeymap, indentMore, indentLess, undo, redo, undoDepth, redoDepth, cursorCharLeft, cursorCharRight, isolateHistory },
             { indentOnInput, bracketMatching, syntaxHighlighting, defaultHighlightStyle, HighlightStyle },
-            { closeBrackets, closeBracketsKeymap },
+            autocompleteApi,
             langJavascript,
             langPython,
             langMarkdown,
@@ -402,7 +417,29 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             { tags },
             { search, SearchQuery, setSearchQuery, getSearchQuery, findNext, findPrevious, openSearchPanel, closeSearchPanel },
           ] = await Promise.all(${cdnModuleImports});
+          ({ EditorState } = stateApi);
+          ({ EditorView, lineNumbers, keymap, drawSelection, highlightSpecialChars, highlightActiveLine, highlightActiveLineGutter } = viewApi);
+          ({ closeBrackets, closeBracketsKeymap } = autocompleteApi);
+          inlineApi = { ...stateApi, ...viewApi, ...autocompleteApi, isolateHistory };
         }
+
+        const createInline = inlineApi.createCodeMirrorInlineSuggestions || globalThis.HAPPIER_CODEMIRROR_INLINE_FACTORY;
+        inlineRuntime = createInline(inlineApi, {
+          separator: () => lineSeparator,
+          event: payload => {
+            if (payload.kind === 'accepted' || payload.kind === 'partiallyAccepted') flushPendingDocChange();
+            sendEnvelope({ v: 1, type: 'inline.event', payload });
+          },
+          context: (context, changes, suggestion) => sendEnvelope({ v: 1, type: 'inline.context', payload: { context, changes: applyingRemote ? [] : changes, suggestion } }),
+          requestAccept: payload => {
+            flushPendingDocChange();
+            sendEnvelope({ v: 1, type: 'inline.acceptRequested', payload });
+          },
+          nextEdit: kind => {
+            flushPendingDocChange();
+            sendEnvelope({ v: 1, type: 'nextEdit.key', payload: { kind } });
+          },
+        });
 
         function publishHistory() {
           if (view && undoDepth && redoDepth) sendEnvelope({ v: 1, type: 'history.state', payload: {
@@ -438,6 +475,13 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
         }
         function runCommand(command) {
           if (!view || view.composing) return;
+          if (typeof command === 'string' && intelligenceRuntime?.command(view, command)) return;
+          if (command === 'inlineSuggestAccept' || command === 'inlineSuggestAcceptWord') {
+            if (!inlineRuntime.request(view, command === 'inlineSuggestAcceptWord') && command === 'inlineSuggestAccept') inlineRuntime.nextEditKey?.(view, 'tab');
+            return;
+          }
+          if (command === 'inlineSuggestDismiss') { if (!inlineRuntime.dismiss(view)) inlineRuntime.nextEditKey?.(view, 'dismiss'); return; }
+          if (command === 'inlineSuggestTrigger') { sendEnvelope({ v: 1, type: 'inline.event', payload: { kind: 'trigger' } }); return; }
           if (command === 'find') { sendEnvelope({ v: 1, type: 'find.open', payload: {} }); return; }
           if (command === 'nextChange' || command === 'prevChange') {
             if (decorationRuntime) decorationRuntime.navigate(view, command === 'nextChange' ? 1 : -1);
@@ -445,8 +489,22 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           }
           if (command === 'moveLeft' || command === 'moveRight') { (command === 'moveLeft' ? cursorCharLeft : cursorCharRight)?.(view); return; }
           if (view.state.readOnly) return;
+          if (sharedHistory && (command === 'undo' || command === 'redo')) {
+            sendEnvelope({ v: 1, type: 'history.command', payload: { command } });
+            return;
+          }
           if (typeof command === 'object' && command) {
             if (typeof command.replaceDocument === 'string') {
+              if (command.history === 'undo' || command.history === 'redo') {
+                cancelPendingDocChange();
+                lineSeparator = detectLineSeparator(command.replaceDocument);
+                applyingRemote = true;
+                try {
+                  const changes = minimalDocumentEdit(view.state.doc.toString(), view.state.toText(command.replaceDocument).toString());
+                  if (changes) view.dispatch({ changes });
+                } finally { applyingRemote = false; }
+                return;
+              }
               const changes = minimalDocumentEdit(view.state.doc.toString(), view.state.toText(command.replaceDocument).toString());
               if (changes) view.dispatch({ changes, annotations: isolateHistory.of('full'), userEvent: 'input' });
             } else if (typeof command.insert === 'string') view.dispatch(view.state.replaceSelection(command.insert), { userEvent: 'input' });
@@ -472,6 +530,8 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             ])
           : defaultHighlightStyle;
         const baseExtensions = [
+          ...(intelligenceCompartment ? [intelligenceCompartment.of([])] : []),
+          ...inlineRuntime.extensions,
           ...(decorationRuntime ? decorationRuntime.extensions : []),
           EditorView.domEventHandlers({ keydown: (event, editor) => {
             if (editor.composing || event.isComposing) return false;
@@ -482,17 +542,24 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             sendEnvelope({ v: 1, type: 'keyboard.shortcut', payload: { key: event.key, code: event.code,
               modifiers: { shift: event.shiftKey, ctrl: event.ctrlKey, meta: event.metaKey, alt: event.altKey }, repeat: event.repeat } });
             return true;
+          }, beforeinput: (event, editor) => {
+            if (!sharedHistory || editor.state.readOnly || editor.composing || event.isComposing
+              || (event.inputType !== 'historyUndo' && event.inputType !== 'historyRedo')) return false;
+            event.preventDefault();
+            runCommand(event.inputType === 'historyUndo' ? 'undo' : 'redo');
+            return true;
           } }),
           // The host owns the visible FindBar. This input-free panel enables engine decorations.
           search({ createPanel: () => { const dom = document.createElement('span'); dom.hidden = true; return { dom }; } }),
           keymap.of([
+            { key: 'Mod-z', run: editor => { if (!sharedHistory || editor.state.readOnly || editor.composing) return false; runCommand('undo'); return true; } },
+            { key: 'Mod-Shift-z', run: editor => { if (!sharedHistory || editor.state.readOnly || editor.composing) return false; runCommand('redo'); return true; } },
+            { key: 'Mod-y', run: editor => { if (!sharedHistory || editor.state.readOnly || editor.composing) return false; runCommand('redo'); return true; } },
             { key: 'Alt-F5', run: () => { runCommand('nextChange'); return true; } },
             { key: 'Alt-Shift-F5', run: () => { runCommand('prevChange'); return true; } },
             ...defaultKeymap,
-            ...historyKeymap,
             ...closeBracketsKeymap,
           ]),
-          history(),
           indentOnInput(),
           bracketMatching(),
           closeBrackets(),
@@ -549,6 +616,13 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             color: theme.textColor,
           },
           '.cm-searchMatch': { backgroundColor: theme.findMatchColor },
+          '.happier-editor-inlay': { color: theme.lineNumberColor },
+          '.happier-editor-occurrence': { backgroundColor: theme.selectionColor },
+          '.happier-editor-semantic-function': { color: syntax.functionColor },
+          '.happier-editor-semantic-keyword': { color: syntax.keywordColor },
+          '.happier-editor-semantic-string': { color: syntax.stringColor },
+          '.happier-editor-semantic-number': { color: syntax.numberColor },
+          '.happier-editor-semantic-comment': { color: syntax.commentColor },
           '.cm-searchMatch.cm-searchMatch-selected': {
             backgroundColor: theme.findCurrentMatchColor,
             color: theme.findCurrentMatchForeground,
@@ -609,6 +683,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           if (DEFAULT_CONFIG.wrapLines) extensions.push(EditorView.lineWrapping);
           if (langExt) extensions.push(langExt);
           if (readOnly) extensions.push(EditorState.readOnly.of(true));
+          if (!sharedHistory) extensions.push(history(), keymap.of(historyKeymap));
 
           const state = EditorState.create({
             doc: doc || '',
@@ -654,6 +729,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
             view = null;
           }
           view = createView(doc, language, readOnly);
+          inlineRuntime.publish(view);
           publishSelection(view);
           publishCursor(view);
           if (decorationRuntime) for (const [layer, items] of decorationLayers) view.dispatch({ effects: decorationRuntime.set.of({ layer, items }) });
@@ -823,8 +899,37 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           }
         }
 
+        function configureIntelligence(config) {
+          intelligenceConfig = config;
+          intelligenceRuntime?.dispose(); intelligenceRuntime = null;
+          if (!view || !intelligenceCompartment) return;
+          if (!config || !intelligenceFactory) { view.dispatch({ effects: intelligenceCompartment.reconfigure([]) }); return; }
+          intelligenceRuntime = intelligenceFactory({ ...config, subscribe: () => () => {}, getSnapshot: () => ({ capabilities: config.capabilities }),
+            request: (kind, options, signal) => new Promise(resolve => {
+              if (signal?.aborted) { resolve(null); return; }
+              const id = String(++intelligenceSequence);
+              const abort = () => { intelligenceRequests.delete(id); sendEnvelope({ v: 1, type: 'intelligence.cancel', payload: { id } }); resolve(null); };
+              signal?.addEventListener('abort', abort, { once: true });
+              intelligenceRequests.set(id, result => { signal?.removeEventListener('abort', abort); resolve(result); });
+              flushPendingDocChange();
+              sendEnvelope({ v: 1, type: 'intelligence.request', payload: { id, kind, options } });
+            }),
+          }, help => sendEnvelope({ v: 1, type: 'intelligence.signature', payload: { help } }));
+          view.dispatch({ effects: intelligenceCompartment.reconfigure(intelligenceRuntime.extensions) });
+        }
+
       function onEnvelope(envelope) {
           if (!envelope || envelope.v !== 1 || typeof envelope.type !== 'string') return;
+          if (envelope.type === 'intelligence.configure') { configureIntelligence(envelope.payload); return; }
+          if (envelope.type === 'intelligence.result') {
+            const payload = envelope.payload || {}; const resolve = intelligenceRequests.get(payload.id);
+            intelligenceRequests.delete(payload.id); resolve?.(payload.result); return;
+          }
+          if (envelope.type === 'intelligence.format') {
+            Promise.resolve(view && intelligenceRuntime ? intelligenceRuntime.formatDocument(view) : null).then(() => {
+              flushPendingDocChange(); sendEnvelope({ v: 1, type: 'intelligence.formatted', payload: { id: envelope.payload?.id } });
+            }); return;
+          }
           if (envelope.type === 'keyboard.config') {
             keyboardSignatures = new Set(Array.isArray(envelope.payload?.signatures) ? envelope.payload.signatures.filter(value => typeof value === 'string') : []);
             return;
@@ -839,6 +944,27 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           }
           if (envelope.type === 'reveal') { const payload = envelope.payload || {}; reveal(payload.line, payload); return; }
           if (envelope.type === 'command') { runCommand(envelope.payload?.command); return; }
+          if (envelope.type === 'inline.set') { if (view) inlineRuntime.set(view, envelope.payload); return; }
+          if (envelope.type === 'inline.accept') { if (view) inlineRuntime.accept(view, envelope.payload || {}); return; }
+          if (envelope.type === 'nextEdit.set') { if (view) inlineRuntime.setNextEdit?.(view, envelope.payload || null); return; }
+          if (envelope.type === 'nextEdit.jump') {
+            const payload = envelope.payload || {};
+            if (view && Number.isInteger(payload.line) && payload.line >= 0 && payload.line < view.state.doc.lines) {
+              const line = view.state.doc.line(payload.line + 1);
+              const anchor = line.from + Math.max(0, Math.min(line.length, Number(payload.character) || 0));
+              view.dispatch({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: 'center' }) });
+              view.focus();
+            }
+            return;
+          }
+          if (envelope.type === 'nextEdit.apply') {
+            const payload = envelope.payload || {};
+            if (typeof payload.requestId !== 'string') return;
+            const applied = Boolean(view && inlineRuntime.applyNextEdit?.(view, payload));
+            if (applied) flushPendingDocChange();
+            sendEnvelope({ v: 1, type: 'nextEdit.applied', payload: { requestId: payload.requestId, applied } });
+            return;
+          }
           if (envelope.type === 'decorations.set') {
             const payload = envelope.payload || {};
             if ((payload.layer === 'change' || payload.layer === 'diagnostic' || payload.layer === 'blame') && Array.isArray(payload.items)) {
@@ -880,14 +1006,16 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           }
           if (envelope.type === 'init') {
             const payload = envelope.payload || {};
+            const previousSharedHistory = sharedHistory;
+            sharedHistory = payload.sharedHistory === true;
             DEFAULT_CONFIG.lineNumberDigits = Math.max(1, payload.lineNumberDigits ?? DEFAULT_CONFIG.lineNumberDigits);
             DEFAULT_CONFIG.reviewLaneWidth = payload.reviewLaneWidth ?? DEFAULT_CONFIG.reviewLaneWidth;
             const doc = typeof payload.doc === 'string' ? payload.doc : '';
             const language = payload.language ?? null;
             const readOnly = payload.readOnly === true;
-            if (view && currentLanguage === language && currentReadOnly === readOnly) {
+            if (view && previousSharedHistory === sharedHistory && currentLanguage === language && currentReadOnly === readOnly) {
               setDoc(doc);
-            } else recreateView(doc, language, readOnly);
+            } else { recreateView(doc, language, readOnly); configureIntelligence(intelligenceConfig); }
             applyGutterDigits(view);
             if (payload.reveal) reveal(payload.reveal.line, payload.reveal);
             scheduleGeometry();
@@ -901,6 +1029,7 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
           if (envelope.type === 'requestDoc') {
             const payload = envelope.payload || {};
             const requestId = typeof payload.requestId === 'string' ? payload.requestId : '';
+            flushPendingDocChange();
             const doc = view ? serializeDoc(view.state.doc) : '';
             try {
               sendEnvelope({ v: 1, type: 'docSnapshot', payload: { requestId, doc } });

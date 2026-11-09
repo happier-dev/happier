@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
+import type { CapturingLegendListMockState } from '@/dev/testkit/mocks/legendList';
 import { Pressable } from 'react-native';
 
 import type { SelectionListOption, SelectionListSection } from '../_types';
@@ -12,14 +12,14 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
-    renderItems: true,
-    renderItemLimit: 20,
-});
+let legendListState: CapturingLegendListMockState;
 
-vi.mock('@legendapp/list/react-native', () => ({
-    LegendList: capturedLegendList.LegendList,
-}));
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return await createLegendListModuleMock({ renderItems: true, renderItemLimit: 20, memoizeItems: true }, state => {
+        legendListState = state;
+    });
+});
 
 function makeOptions(count: number, prefix = 'opt'): ReadonlyArray<SelectionListOption> {
     return Array.from({ length: count }, (_, i) => ({
@@ -51,7 +51,25 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('SelectionListVirtualizedSection', () => {
-    it('constructs lazy visuals only for the rendered window in the single-section path', async () => {
+    it('moves the selected marker between mounted cells without replacing the section options', async () => {
+        const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
+        const { SelectionListSelectedMarkContext } = await import('../SelectionListOptionPresentationContext');
+        const section = makeSection(400);
+        // The real body supplies the picker mark policy; bare section mounts default to no mark.
+        const render = (id: string) => <SelectionListSelectedMarkContext.Provider value="check">
+            <SelectionListVirtualizedSection section={section} stepId="root" rootTestID="sl"
+                selectedOptionIds={new Set([id])} onSelect={() => {}} onPushStep={() => {}} />
+        </SelectionListSelectedMarkContext.Provider>;
+        const screen = await renderScreen(render('opt-0'));
+        expect(screen.findByTestId('sl:root:option-selected-mark:opt-0')).not.toBeNull();
+        expect(screen.findByTestId('sl:root:option:opt-1')).not.toBeNull();
+        await screen.update(render('opt-1'));
+        expect(legendListState.props?.data).toBe(section.options);
+        expect(screen.findByTestId('sl:root:option-selected-mark:opt-0')).toBeNull();
+        expect(screen.findByTestId('sl:root:option-selected-mark:opt-1')).not.toBeNull();
+    });
+
+    it.each([false, true])('constructs lazy visuals only for the rendered window in the single-section path (measure: %s)', async measureMode => {
         legendListState.reset();
         const constructVisual = vi.fn((id: string) => <React.Fragment>{id}</React.Fragment>);
         const options: readonly SelectionListOption[] = Array.from({ length: 1_000 }, (_, index) => ({
@@ -62,11 +80,12 @@ describe('SelectionListVirtualizedSection', () => {
             rightAccessory: () => constructVisual(`accessory-${index}`),
         }));
         const { SelectionListVirtualizedSection } = await import('../SelectionListVirtualizedSection');
-        await renderScreen(
+        const screen = await renderScreen(
             <SelectionListVirtualizedSection
                 section={{ id: 'lazy', options }}
                 stepId="root"
                 rootTestID="sl"
+                measureMode={measureMode}
                 selectedOptionIds={new Set<string>()}
                 onSelect={() => {}}
                 onPushStep={() => {}}
@@ -75,6 +94,10 @@ describe('SelectionListVirtualizedSection', () => {
 
         expect(legendListState.props?.data).toHaveLength(1_000);
         expect(constructVisual).toHaveBeenCalledTimes(60);
+        if (measureMode) {
+            expect(screen.findByTestId('sl:section:lazy:virtualized')).toBeNull();
+            expect(screen.findByTestId('sl:root:option:lazy-0')).toBeNull();
+        }
     });
 
     it('renders the section through the virtualized list with every option as data', async () => {

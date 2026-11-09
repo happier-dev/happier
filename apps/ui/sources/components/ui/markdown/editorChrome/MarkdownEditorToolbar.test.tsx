@@ -157,7 +157,7 @@ describe('MarkdownEditorToolbar', () => {
         expect(hapticsLight).toHaveBeenCalledTimes(3);
     });
 
-    it('reflects active marks from the selection state', async () => {
+    it('announces active formatting buttons as pressed from the selection state', async () => {
         const fake = createFakeController({
             ...BASE_SELECTION,
             marks: { bold: true, italic: false, strike: false, code: false },
@@ -167,10 +167,10 @@ describe('MarkdownEditorToolbar', () => {
             <MarkdownEditorToolbar controller={fake.controller} testID={TEST_ID} />,
         );
 
-        expect(screen.findByTestId(`${TEST_ID}:bold`)?.props.accessibilityState?.selected).toBe(true);
-        expect(screen.findByTestId(`${TEST_ID}:heading1`)?.props.accessibilityState?.selected).toBe(true);
-        expect(screen.findByTestId(`${TEST_ID}:italic`)?.props.accessibilityState?.selected).toBe(false);
-        expect(screen.findByTestId(`${TEST_ID}:heading2`)?.props.accessibilityState?.selected).toBe(false);
+        expect(screen.findHostByTestId(`${TEST_ID}:bold`)?.props['aria-pressed']).toBe(true);
+        expect(screen.findHostByTestId(`${TEST_ID}:heading1`)?.props['aria-pressed']).toBe(true);
+        expect(screen.findHostByTestId(`${TEST_ID}:italic`)?.props['aria-pressed']).toBe(false);
+        expect(screen.findHostByTestId(`${TEST_ID}:heading2`)?.props['aria-pressed']).toBe(false);
     });
 
     it('updates active state when the selection changes', async () => {
@@ -179,7 +179,7 @@ describe('MarkdownEditorToolbar', () => {
             <MarkdownEditorToolbar controller={fake.controller} testID={TEST_ID} />,
         );
 
-        expect(screen.findByTestId(`${TEST_ID}:italic`)?.props.accessibilityState?.selected).toBe(false);
+        expect(screen.findHostByTestId(`${TEST_ID}:italic`)?.props['aria-pressed']).toBe(false);
 
         // Push a new selection through the live subscription (as the surface would
         // when the cursor enters italic text). Wrapped in act so React commits it.
@@ -190,7 +190,7 @@ describe('MarkdownEditorToolbar', () => {
             });
         });
 
-        expect(screen.findByTestId(`${TEST_ID}:italic`)?.props.accessibilityState?.selected).toBe(true);
+        expect(screen.findHostByTestId(`${TEST_ID}:italic`)?.props['aria-pressed']).toBe(true);
     });
 
     it('hides the link actions when no link is selected', async () => {

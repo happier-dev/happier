@@ -171,24 +171,29 @@ describe('MarkdownView (enriched renderer)', () => {
     it('lets callers handle enriched markdown links before opening externally', async () => {
         const { MarkdownView } = await import('./MarkdownView');
         const onLinkPress = vi.fn(() => true);
-        const external = await import('@/utils/url/openExternalUrl');
-        // Observe the real URL owner; the shared React Native harness owns the OS boundary.
-        const openExternal = vi.spyOn(external, 'openExternalUrl');
+        const external = await import('@/utils/url/requestOpenExternalUrl');
+        // Observe the real front door without substituting its admission or OS behavior.
+        const openExternal = vi.spyOn(external, 'requestOpenExternalUrl');
         try {
-            const url = 'http://localhost:18829/repo/src/index.ts:8';
             const screen = await renderScreen(
-                <MarkdownView markdown={`[src](${url})`} selectable profile="transcript" onLinkPress={onLinkPress} />,
+                React.createElement(MarkdownView as any, {
+                    markdown: '[src](http://localhost:18829/repo/src/index.ts:8)',
+                    selectable: true,
+                    profile: 'transcript',
+                    onLinkPress,
+                }),
             );
-            const enrichedRun = screen.findByType('EnrichedMarkdownText');
 
-            await act(async () => { enrichedRun.props.onLinkPress({ url }); });
-            expect(onLinkPress).toHaveBeenCalledWith(url);
+            const enrichedRun = screen.findByType('EnrichedMarkdownText');
+            const event = { url: 'http://localhost:18829/repo/src/index.ts:8' };
+            await act(async () => { enrichedRun.props.onLinkPress(event); });
+            expect(onLinkPress).toHaveBeenCalledWith(event.url);
             expect(openExternal).not.toHaveBeenCalled();
 
             onLinkPress.mockReturnValue(false);
-            await act(async () => { enrichedRun.props.onLinkPress({ url }); });
+            await act(async () => { enrichedRun.props.onLinkPress(event); });
             expect(openExternal).toHaveBeenCalledOnce();
-            expect(openExternal).toHaveBeenCalledWith(url);
+            expect(openExternal).toHaveBeenCalledWith(event.url);
         } finally {
             openExternal.mockRestore();
         }

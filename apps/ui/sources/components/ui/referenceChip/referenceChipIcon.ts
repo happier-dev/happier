@@ -12,6 +12,8 @@ import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/w
 export function resolveReferenceChipIconName(
   input: Readonly<{ ref: string; glyph?: string | null }>,
 ): IconName | null {
+  // A video note's time chip: not a mention, and it plays from that moment.
+  if (input.ref.startsWith('time:')) return 'play';
   const parsed = parseMentionRefV1(input.ref);
   switch (parsed?.scheme) {
     case 'file':

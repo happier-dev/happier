@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { StyleSheet } from 'react-native';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
 import { renderScreen, type RenderScreenResult } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
@@ -89,3 +90,6 @@ describe('Voice moments dev-only fixtures', () => {
         expect(screen.getTextContent()).toContain('git status');
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

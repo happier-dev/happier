@@ -17,7 +17,7 @@ import { useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
 import { glassElementsCoatColor, glassSurfaceBackgroundColor, glassSurfaceTintColor, resolveGlassSurfacePlaneMaterial, glassSurfacePlaneBackdropStyle, type AtmosphereContentCoat } from './glassSurfacePaint';
 import { useGlassMaterialColorResolver } from './useGlassSurfaceColor';
 import { parseThemeColor } from '@/theme/parseThemeColor';
-import { GLASS_BACKED_FAINT_INK_SHARE, GLASS_QUIET_INK_WEB_TOKENS, GlassBackedInkContext, glassQuietThemeInks, glassThemeInkWebStyle, resolveGlassBackedInk, resolveGlassPictureInk } from './glassBackedInk';
+import { GLASS_BACKED_FAINT_INK_SHARE, GLASS_QUIET_INK_WEB_TOKENS, GlassBackedInkContext, glassQuietThemeInks, glassThemeInkWebStyle, resolveGlassBackedInk, resolveGlassPictureInk, useRetainedGlassBackedInk } from './glassBackedInk';
 import { GlassLivePictureBackdropContext } from './livePictureBackdrop';
 
 const retainSolidColor = (input: Readonly<{ color: string }>) => input.color;
@@ -93,6 +93,11 @@ export type GlassSurfaceProps = Pick<ViewProps, 'accessibilityRole' | 'accessibi
     atmosphereCoat?: AtmosphereContentCoat;
     /** Structural surfaces select a finish; chrome planes keep their existing flat material. */
     finishRole?: HappierSurfaceFinishRole | null;
+    /**
+     * What the surface's own edge becomes while a picture or the live desktop shows through it (the same
+     * `backed` state that steps up its faint ink): the composer's edge turns to ink there (DESIGN.md).
+     */
+    backedStyle?: StyleProp<ViewStyle>;
     /**
      * A floating surface's job: `panel` (dialogs, sheets, large anchored panels) carries the page at a
      * heavy coat behind the blur; `menu` (the default: menus, tooltips, small popovers) keeps the hair of tint.
@@ -248,11 +253,12 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         ? resolveGlassPictureInk({ primary: theme.colors.text.primary, page: theme.colors.surface.base, themeSecondary: theme.colors.text.secondary,
             themeQuietInks: [theme.colors.text.tertiary, theme.colors.button.secondary.tint], pictureInk })
         : backed ? resolveGlassBackedInk(theme.colors.text.primary, theme.colors.text.secondary, glassQuietThemeInks(theme.colors)) : null,
-        [onPicture, backed, pictureInk, theme.colors]);
+        [onPicture, backed, pictureInk, theme.colors.text.primary, theme.colors.text.secondary, theme.colors.text.tertiary, theme.colors.surface.base, theme.colors.button.secondary.tint, theme.colors.composer.chipTint, theme.colors.input.placeholder]);
     // Text and icons that receive the faint tokens from JavaScript take them from this scope. Like the
     // web stylesheet tokens, they inherit through nested surfaces; the provider stays mounted so a tier
     // change never remounts the content.
-    const withBackedInk = (children: React.ReactNode) => <GlassBackedInkContext.Provider value={props.noCoat ? containingInk : ownInk ?? inheritedInk}>{children}</GlassBackedInkContext.Provider>;
+    const publishedInk = useRetainedGlassBackedInk(props.noCoat ? containingInk : ownInk ?? inheritedInk);
+    const withBackedInk = (children: React.ReactNode) => <GlassBackedInkContext.Provider value={publishedInk}>{children}</GlassBackedInkContext.Provider>;
     // Keep the provider topology even without a coat. Omitted fields inherit the shared plane;
     // a plain widget must not reset its parent's ink, colour resolver or translucency.
     const materialPlane = props.noCoat ? { role: containingMaterialRole } : {
@@ -269,7 +275,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
                 ? withMaterialOpacity(tintColor, material.opacity) : solidColor;
         // Only the SDK background changes tier. Input/scroll/selection state
         // must stay under the same native parent when a preset or OS choice changes.
-        return <View {...viewProps} style={[props.style, props.noCoat ? null : { backgroundColor }, finishLift]}>
+        return <View {...viewProps} style={[props.style, backed ? props.backedStyle : null, props.noCoat ? null : { backgroundColor }, finishLift]}>
             <View pointerEvents="none" style={[
                 StyleSheet.absoluteFillObject,
                 { borderRadius, overflow: 'hidden' },
@@ -311,8 +317,16 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         }) as unknown as ViewStyle
         : { backgroundColor: !enabled || (group === 'card' && material.opacity === 1) ? solidColor
             : glassSurfaceBackgroundColor(group === 'card' ? tintColor : solidColor, group, group === 'card' ? false : nested, false) };
+    // The concrete surface owns local exceptions (an opaque reading ground, an unbacked
+    // sidebar card, or a clear content plane); descendants keep the same CSS binding.
+    const innerMaterial = material.opacity === 1 ? material : resolveGlassSurfaceMaterial(settings, group, runtimeEnvironment).material;
+    const innerPaint = props.noCoat ? null : {
+        [`--happier-glass-${group}-nested-opacity`]: innerMaterial.opacity < 1 ? '0%' : '100%',
+        [`--happier-glass-${group}-plane-background-color`]: material.opacity < 1
+            && resolveGlassSurfacePlaneMaterial(settings, group, runtimeEnvironment).opacity === 0 ? 'transparent' : 'initial',
+    } as unknown as ViewStyle;
     return (
-        <View {...viewProps} style={[props.style, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, backedInkStyle]}>
+        <View {...viewProps} style={[props.style, backed ? props.backedStyle : null, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, backedInkStyle, innerPaint]}>
             {/* Native View types omit RN-web's dataSet; this branch is the web boundary. */}
             <View {...{ dataSet: { happyGlassBackdrop: 'true' } }} style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style), paint, happierSurfaceGradientWebStyle(gradient, !theme.dark)]} />
             <GlassSurfaceGroupContext.Provider value={plane}>

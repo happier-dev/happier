@@ -91,6 +91,22 @@ describe('DropdownMenu page field', () => {
         expect(screen.findAllHostsByTestId('strategy:round-robin')).toHaveLength(0);
     });
 
+    it('labels its search field as a plain search unless the caller names what it searches', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const { CompactSearchField } = await import('@/components/ui/forms/CompactSearchField');
+        const field = (searchPlaceholder?: string) => (
+            <DropdownMenu open onOpenChange={() => {}} search {...(searchPlaceholder ? { searchPlaceholder } : {})}
+                items={STRATEGIES} selectedId={null} onSelect={() => {}} itemTrigger={{ title: 'Strategy' }} />
+        );
+        const plain = await renderScreen(field());
+        await vi.waitFor(() => expect(plain.findAllByType(CompactSearchField).length).toBe(1));
+        // Never the global command palette's prompt.
+        expect(plain.findByType(CompactSearchField).props.placeholder).not.toMatch(/commits|messages|actions/i);
+        const named = await renderScreen(field('Search strategies'));
+        await vi.waitFor(() => expect(named.findAllByType(CompactSearchField).length).toBe(1));
+        expect(named.findByType(CompactSearchField).props.placeholder).toBe('Search strategies');
+    });
+
     it('shows the selected value in the field', async () => {
         const { texts, hasFieldBox } = await renderField({ selectedId: 'round-robin' });
         expect(hasFieldBox).toBe(true);

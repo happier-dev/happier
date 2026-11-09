@@ -162,4 +162,23 @@ describe('MarkdownCodeEditorField', () => {
         expect(toolbars.map((toolbar: any) => toolbar.props.variant)).toEqual(['panel']);
         expect(toolbars[0].props.trailing).toBeTruthy();
     });
+
+    it('forwards the page language-intelligence port to the raw phone key row, not the rich one', async () => {
+        const save = { visible: true, enabled: true, tone: 'primary' as const, onPress: vi.fn() };
+        const snapshot = { capabilities: { completion: true, selectionRange: true } };
+        const languageIntelligence = { getSnapshot: () => snapshot, subscribe: () => () => undefined } as any;
+        setHook({ markdownEditMode: 'raw', resetKey: 'base:raw:0' });
+        const raw = await renderScreen(
+            <MarkdownCodeEditorField value="raw" onChange={vi.fn()} resetKey="base" language="markdown" accessory={{ save, languageIntelligence }} />,
+        );
+        expect(raw.findHostByTestId('markdown-editor-accessory-suggest')).not.toBeNull();
+        expect(raw.findHostByTestId('markdown-editor-accessory-expand-selection')).not.toBeNull();
+        expect(raw.findHostByTestId('markdown-editor-accessory-shrink-selection')).not.toBeNull();
+
+        setHook({ markdownEditMode: 'rich', resetKey: 'base:rich:0' });
+        const rich = await renderScreen(
+            <MarkdownCodeEditorField value="# Doc" onChange={vi.fn()} resetKey="base" language="markdown" accessory={{ save, languageIntelligence }} />,
+        );
+        expect(rich.findHostByTestId('markdown-editor-accessory-suggest')).toBeNull();
+    });
 });

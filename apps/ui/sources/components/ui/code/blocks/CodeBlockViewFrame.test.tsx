@@ -1,8 +1,9 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, findAllHostTestInstances, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { createDeferred, findAllHostTestInstances, installBrowserClipboardBoundary, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installCodeBlockCommonModuleMocks } from './codeBlockTestHelpers';
+import { resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -61,6 +62,9 @@ function copyPlacementStyle(tree: renderer.ReactTestRenderer): Record<string, un
 describe('CodeBlockViewFrame', () => {
     beforeEach(() => {
         vi.resetModules();
+        installBrowserClipboardBoundary(async text => {
+            if (!await setStringAsyncSpy(text)) throw new DOMException('', 'NotAllowedError');
+        });
     });
 
     it('uses the platform ScrollView on Android so horizontal code drags share native nested scrolling with the transcript list', async () => {
@@ -291,7 +295,6 @@ describe('CodeBlockViewFrame', () => {
         mockPlatform(platform);
         const { CodeBlockViewFrame, CODE_BLOCK_OVERLAY_COPY_INSET } = await import('./CodeBlockViewFrame');
         const { COPY_ICON_BUTTON_SIZE } = await import('@/components/ui/copy/CopyIconButton');
-        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
         const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
         const screen = await renderScreen(
             <HappierUiPlatformProvider platform={{ platform, colorScheme: 'light' }}>
@@ -319,7 +322,7 @@ describe('CodeBlockViewFrame', () => {
         const placement = copyPlacementStyle(screen.tree);
         // The finger's target is reached by hit slop, bounded by the padding the block gives the button.
         const slop = button.props.hitSlop as Readonly<{ top: number; bottom: number; left: number; right: number }>;
-        const floor = resolveMinimumInteractiveTargetSize(platform);
+        const floor = resolveHappierMinimumInteractiveTargetSize(platform);
         expect(slop.top).toBeLessThanOrEqual(Number(placement.top));
         expect(slop.right).toBeLessThanOrEqual(Number(placement.right));
         expect(slop.left).toBe(0);

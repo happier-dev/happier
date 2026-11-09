@@ -3,7 +3,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { resetSavedSecretCatalogEngineForTests, refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
@@ -30,6 +30,7 @@ await vi.hoisted(async () => {
 // Load the real store, catalog and Action graph after the network/platform boundaries.
 const { ValueRefEditorModal } = await import('./ValueRefEditorModal');
 const { SavedSecretPickerModal } = await import('./SavedSecretPickerModal');
+const { useConnectKeySheetModel } = await import('@/components/settings/connectedServices/setup/useConnectKeySheetModel');
 let home: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
 
 function namedRow(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
@@ -39,7 +40,7 @@ function namedRow(screen: Awaited<ReturnType<typeof renderScreen>>, testID: stri
 beforeEach(async () => {
     resetSavedSecretCatalogEngineForTests();
     resetSavedSecretCatalogSnapshotsForTests();
-    modalShowSpy.mockClear();
+    modalShowSpy.mockReset().mockReturnValue('connect-sheet');
     home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }) });
     await refreshSavedSecretCatalog(home.scope);
 });
@@ -52,6 +53,50 @@ afterEach(async () => {
 });
 
 describe('value ref saved secrets live updates', () => {
+    it('keeps unrelated saved keys reachable from a bare key request while opening New', async () => {
+        const { entry } = await home!.addOwnerResource();
+        await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });
+        const { presentConnectSheet } = await import('@/components/settings/connectedServices/setup/ConnectedServiceSetupModal');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const result = presentConnectSheet({ service: { kind: 'key' } });
+        const presentation = modalShowSpy.mock.calls.at(-1)?.[0];
+        if (!presentation?.component) throw new Error('Expected the composed Connect sheet');
+        expect(presentation.props.request).toEqual({ service: { kind: 'key' }, scope: home!.scope });
+        const screen = await renderScreen(React.createElement(InjectedAuthProvider, { credentials: home!.credentials,
+            children: React.createElement(presentation.component, { ...presentation.props, onClose: presentation.onRequestClose }) }));
+        await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-value')).not.toBeNull());
+        expect(screen.findByTestId('connect-key-sheet:mode:saved')).not.toBeNull();
+        expect(screen.findByTestId(`connect-key-sheet:saved:${entry.ref}`)).toBeNull();
+        await screen.pressByTestIdAsync('connect-key-sheet:mode:saved');
+        await screen.pressByTestIdAsync(`connect-key-sheet:saved:${entry.ref}`);
+        await screen.pressByTestIdAsync('connect-key-sheet:use');
+        await expect(result).resolves.toEqual({ kind: 'selected', secretRef: entry.ref });
+        expect(home!.creations).toEqual([]);
+        expect(home!.settingsWrites).toEqual([]);
+        await screen.unmount();
+    });
+
+    it('opens New when the current key is inaccessible and only an unrelated usable key remains', async () => {
+        const unavailable = await home!.addOwnerResource();
+        const usableRef = 'happier:shared-secret:v1:resource-b';
+        const index = home!.resources.findIndex(row => 'resourceId' in row && row.entry.ref === unavailable.entry.ref);
+        const resource = home!.resources[index];
+        if (!resource || !('resourceId' in resource)) throw new Error('Expected the current key resource');
+        home!.resources.push({ ...resource, resourceId: 'resource-b', entry: { ...resource.entry, ref: usableRef, name: 'Other key' } });
+        home!.resources[index] = { ...resource, entry: { ...resource.entry,
+            materialStatus: 'access_removed', capabilities: { use: false, rename: false, rotate: false, manageAccess: false, delete: false } } };
+        home!.request.mockClear();
+        await refreshSavedSecretCatalog(home!.scope, { includeMaterial: false });
+        const hook = await renderHook(() => useConnectKeySheetModel({ scope: home!.scope,
+            service: { kind: 'key' }, current: unavailable.entry.ref }));
+        await vi.waitFor(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().initialMode).toBe('new');
+        expect(hook.getCurrent().preselected).toBeNull();
+        expect(hook.getCurrent().linkableEntries.map(entry => entry.ref)).toEqual([usableRef]);
+        expect(home!.request.mock.calls.some(([input]) => new URL(String(input)).pathname.endsWith('/materials'))).toBe(false);
+        await hook.unmount();
+    });
+
     it('preserves a template header reference when saving without changing its value', async () => {
         const onSubmit = vi.fn(() => true);
         const initialValueRef = {
@@ -108,7 +153,7 @@ describe('value ref saved secrets live updates', () => {
         expect(home!.settingsWrites).toEqual([]);
     });
 
-    it('ValueRefEditorModal opens the saved-secret picker with its captured scope and shared chrome', async () => {
+    it('ValueRefEditorModal opens Connect with its captured scope', async () => {
         const screen = await renderScreen(React.createElement(ValueRefEditorModal, {
             onClose: vi.fn(), kind: 'header', initialKey: 'Authorization',
             initialValueRef: { t: 'literal', v: 'token' }, secrets: [],
@@ -117,17 +162,16 @@ describe('value ref saved secrets live updates', () => {
         const dropdown = screen.findAll(node => typeof node.props.onSelect === 'function'
             && node.props.items?.some((item: { id: string }) => item.id === 'savedSecret'))[0];
         if (!dropdown) throw new Error('Missing value source menu');
-        await act(async () => { dropdown.props.onSelect('savedSecret'); });
+        const anchor = { kind: 'rect', rect: { left: 40, top: 60, height: 30 }, coordinateSpace: 'window' } as const;
+        await act(async () => { dropdown.props.onSelect('savedSecret', { anchor }); });
         expect(modalShowSpy).toHaveBeenCalledTimes(1);
         expect(modalShowSpy.mock.calls[0]?.[0]).toMatchObject({
-            component: SavedSecretPickerModal,
-            props: { scope: home!.scope },
-            chrome: { kind: 'card', title: 'settings.mcpServersPickSecretTitle', dimensions: { size: 'lg' } },
+            props: { request: { scope: home!.scope, service: { kind: 'key' }, anchor } },
             closeOnBackdrop: true,
         });
     });
 
-    it('clearing the picker disables save until another saved secret is selected', async () => {
+    it('explicitly clearing the key disables save until another saved secret is selected', async () => {
         const onSubmit = vi.fn(() => true);
         const onClose = vi.fn();
         const screen = await renderScreen(React.createElement(ValueRefEditorModal, {
@@ -135,15 +179,14 @@ describe('value ref saved secrets live updates', () => {
             initialValueRef: { t: 'savedSecret', secretId: 'original-key' }, secrets: [],
             onSubmit, scope: home!.scope,
         }));
-        await screen.pressByTestIdAsync('mcp.valueRefEditor.secret');
-        const picker = modalShowSpy.mock.calls[0]?.[0];
-        expect(picker.props.selectedId).toBe('original-key');
-        await act(async () => { picker.props.onSelectId(null); });
+        await screen.pressByTestIdAsync('mcp.valueRefEditor.secret.clear');
         expect(namedRow(screen, 'mcp.valueRefEditor.save')?.props.disabled).toBe(true);
         expect(namedRow(screen, 'mcp.valueRefEditor.secret')?.props.subtitle).toBe('settings.mcpServersValueSecretSelectSubtitle');
         expect(onSubmit).not.toHaveBeenCalled();
         expect(onClose).not.toHaveBeenCalled();
-        await act(async () => { picker.props.onSelectId('replacement-key'); });
+        await screen.pressByTestIdAsync('mcp.valueRefEditor.secret');
+        const picker = modalShowSpy.mock.calls.at(-1)?.[0];
+        await act(async () => { picker.props.onResult({ kind: 'selected', secretRef: 'replacement-key' }); });
         expect(namedRow(screen, 'mcp.valueRefEditor.save')?.props.disabled).toBe(false);
         await screen.pressByTestIdAsync('mcp.valueRefEditor.save');
         expect(onSubmit).toHaveBeenCalledWith({ key: 'Authorization', valueRef: { t: 'savedSecret', secretId: 'replacement-key' } });

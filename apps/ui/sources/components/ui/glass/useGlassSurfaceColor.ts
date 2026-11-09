@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { parseThemeColor } from '@/theme/parseThemeColor';
+import { happierMaterialBackgroundColor, happierMaterialInnerBackgroundColor } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveGlassBackdropMap, resolveGlassBackdropTone, resolveGlassSurfaceMaterial, type GlassMaterialEnvironment, type GlassMaterialSettings, type GlassSurfaceGroup } from './glassMaterial';
 import { useGlassMaterialSettings } from './useGlassMaterialSettings';
@@ -60,6 +61,18 @@ export function useGlassMaterialColorResolver(containingGroup: GlassSurfaceGroup
     const colors = theme.colors;
     const settings = useGlassMaterialSettings();
     const environment = useGlassRuntimeEnvironment();
-    return React.useCallback((input: Readonly<{ color: string; role?: GlassSurfaceGroup; nested: boolean; translucentColor?: string }>) =>
+    const concrete = React.useCallback((input: Readonly<{ color: string; role?: GlassSurfaceGroup; nested: boolean; translucentColor?: string }>) =>
         resolveGlassSurfaceColor(input.color, input.role ?? containingGroup ?? 'content', settings, environment, true, input.nested || containingGroup !== null, input.translucentColor, plane && input.translucentColor === 'transparent'), [colors, settings, environment, containingGroup, plane]);
+    // Web controls bind once to the containing material's CSS payload. Presets repaint that
+    // payload without publishing a new callback to every descendant control and document tab.
+    const web = React.useCallback((input: Readonly<{ color: string; role?: GlassSurfaceGroup; nested: boolean; translucentColor?: string }>) => {
+        const group = input.role ?? containingGroup ?? 'content';
+        const parsed = parseThemeColor(input.color);
+        const color = parsed === null ? input.color : input.translucentColor === undefined
+            ? happierMaterialBackgroundColor(input.color, group, true, input.nested || containingGroup !== null)
+            : happierMaterialInnerBackgroundColor(input.color, input.translucentColor, group, true, parsed.alpha() < 1);
+        return plane && input.translucentColor === 'transparent'
+            ? `var(--happier-glass-${group}-plane-background-color, ${color})` : color;
+    }, [colors, containingGroup, plane]);
+    return Platform.OS === 'web' ? web : concrete;
 }

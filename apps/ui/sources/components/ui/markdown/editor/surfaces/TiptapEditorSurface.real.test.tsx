@@ -3,6 +3,9 @@ import * as React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MarkdownEditorSurfaceRef } from '../MarkdownEditor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
 import { flushHookEffects } from '@/dev/testkit';
 
 vi.mock('react-native', async () => import('react-native-web'));
@@ -11,12 +14,20 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const { storage } = await import('@/sync/domains/state/storage');
 const { TiptapEditorSurface } = await import('./TiptapEditorSurface.web');
+const { requestOpenExternalUrl } = await import('@/utils/url/requestOpenExternalUrl');
+const initialStorage = storage.getState();
 let root: Root | null = null;
 afterEach(async () => {
     await React.act(async () => { root?.unmount(); });
     root = null;
     document.body.replaceChildren();
+    storage.setState(initialStorage, true);
+    vi.restoreAllMocks();
+    await homes.reset();
 });
 async function renderEditor(element: React.ReactElement) {
     const container = document.createElement('div');
@@ -26,6 +37,57 @@ async function renderEditor(element: React.ReactElement) {
 }
 
 describe('real rich Markdown editor', () => {
+    it.each(['command', 'menu'] as const)('applies HTTP Action policy to the real %s opener but retains local non-HTTP links', async entry => {
+        const restoreAuth = installSignedOutAuthForTest();
+        const open = vi.spyOn(window, 'open').mockReturnValue(null);
+        const ref = React.createRef<MarkdownEditorSurfaceRef>();
+        const invoke = async () => {
+            await React.act(async () => {
+                if (entry === 'command') ref.current!.runCommand({ kind: 'openLink' });
+                else ref.current!.runMenuCommand!({ kind: 'openLink' });
+                await flushHookEffects();
+            });
+        };
+        try {
+            await renderEditor(<TiptapEditorSurface ref={ref} resetKey="http" value="[Open](https://example.test/guide)" onChange={vi.fn()} />);
+            storage.setState(state => ({ settings: { ...state.settings,
+                actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'links.openExternal': { enabled: false } } }),
+            } }));
+            // Settle the lazy real executor before driving fire-and-forget UI callbacks.
+            expect(await requestOpenExternalUrl('https://example.test/guide')).toBe(false);
+            await invoke();
+            expect(open).not.toHaveBeenCalled();
+            storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }) } }));
+            await invoke();
+            await vi.waitFor(() => expect(open).toHaveBeenCalledWith('https://example.test/guide', '_blank', 'noopener,noreferrer'));
+            for (const href of ['mailto:person@example.test', '../guide.md', '#part']) {
+                open.mockClear();
+                storage.setState(state => ({ settings: { ...state.settings,
+                    actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'links.openExternal': { enabled: false } } }),
+                } }));
+                await React.act(async () => { root!.render(<TiptapEditorSurface ref={ref} resetKey={href} value={`[Open](${href})`} onChange={vi.fn()} />); });
+                await invoke();
+                expect(open).toHaveBeenCalledExactlyOnceWith(href, '_blank', 'noopener,noreferrer');
+            }
+        } finally { restoreAuth(); }
+    });
+
+    it('adopts a delayed saved document without emitting an empty edit or losing its visible text', async () => {
+        const value = 'Your persona marker is INSTR_VOICE_CHARLIE.';
+        const ref = React.createRef<MarkdownEditorSurfaceRef>();
+        const onChange = vi.fn();
+        await renderEditor(<TiptapEditorSurface ref={ref} resetKey="delayed" value="" readOnly onChange={onChange} />);
+        expect(document.querySelector('.ProseMirror')?.getAttribute('contenteditable')).toBe('false');
+        await React.act(async () => {
+            root!.render(<TiptapEditorSurface ref={ref} resetKey="delayed" value={value} onChange={onChange} />);
+        });
+        await React.act(async () => { await ref.current?.flushPendingChange(); });
+        expect(document.querySelector('.ProseMirror')?.textContent).toBe(value);
+        expect(document.querySelector('.ProseMirror')?.getAttribute('contenteditable')).toBe('true');
+        expect(ref.current?.getValue()).toBe(value);
+        expect(onChange).not.toHaveBeenCalled();
+    });
+
     it('keeps source bytes through a no-edit flush even when the serializer normalizes them', async () => {
         const value = '# Guide\n\n- one\n- two\n';
         const ref = React.createRef<MarkdownEditorSurfaceRef>();

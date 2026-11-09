@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { Text } from '@/components/ui/text/Text';
@@ -16,12 +16,25 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock({});
 });
 
-// The primary pointer (finger or precise) is a platform fact: the one boundary these rows read.
-const pointer = vi.hoisted(() => ({ touch: false }));
-vi.mock('@happier-dev/plugin-ui/environment', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@happier-dev/plugin-ui/environment')>()),
-    isHappierTouchPrimaryPointer: () => pointer.touch,
-}));
+// Media queries are the platform boundary; the shared pointer owner stays real.
+const pointer = vi.hoisted(() => {
+    const state = { touch: false };
+    const listeners = new Set<() => void>();
+    const matchMedia = (query: string) => ({
+        get matches() {
+            return query === '(pointer: coarse)' || query === '(hover: none)' ? state.touch : !state.touch;
+        },
+        addEventListener: (_event: string, listener: () => void) => listeners.add(listener),
+        removeEventListener: (_event: string, listener: () => void) => listeners.delete(listener),
+    });
+    vi.stubGlobal('matchMedia', matchMedia);
+    return { install() { vi.stubGlobal('matchMedia', matchMedia); }, setTouch(touch: boolean) {
+        state.touch = touch;
+        for (const listener of listeners) listener();
+    } };
+});
+
+beforeEach(() => pointer.install());
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -44,6 +57,22 @@ const folderError: FilesystemBrowserNode = {
  * cause, and an inline retry of that folder — never "Error / Please try again".
  */
 describe('FilesystemBrowserRow folder error', () => {
+    it('keeps the isolation refusal and hides the folder retry', async () => {
+        const screen = await renderScreen(
+            <FilesystemBrowserRow
+                testID="tree-row-src"
+                node={{ ...folderError, errorMessage: 'agent_isolation_unavailable' }}
+                title=""
+                icon={null}
+                onRetryError={vi.fn()}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain(t('errors.agentIsolationUnavailable'));
+        expect(screen.findByTestId('tree-row-src-folder-error-diagnostic-agent_isolation_unavailable')).toBeTruthy();
+        expect(screen.findAllByTestId('tree-row-src-folder-error-action')).toHaveLength(0);
+    });
+
     it('states what failed and why, and retries that folder', async () => {
         const onRetryError = vi.fn();
         const screen = await renderScreen(
@@ -166,7 +195,7 @@ describe('FilesystemBrowserRow row actions (… only when the row is in play)', 
         screen.findAll((node) => node.props?.testID === 'row' && typeof node.props?.onHoverIn === 'function')[0];
 
     it('keeps the … out of a pointer row until it is hovered, focused or selected', async () => {
-        pointer.touch = false;
+        await act(async () => pointer.setTouch(false));
         const screen = await render();
         expect(screen.findAllByTestId('row-actions')).toHaveLength(0);
 
@@ -186,7 +215,7 @@ describe('FilesystemBrowserRow row actions (… only when the row is in play)', 
     });
 
     it('never draws the … under a finger; a long press opens the same actions', async () => {
-        pointer.touch = true;
+        await act(async () => pointer.setTouch(true));
         controls.length = 0;
         const screen = await render();
         expect(screen.findAllByTestId('row-actions')).toHaveLength(0);
@@ -195,6 +224,6 @@ describe('FilesystemBrowserRow row actions (… only when the row is in play)', 
         const last = controls.at(-1);
         expect(last?.open).toBe(true);
         expect(last?.triggerHidden).toBe(true);
-        pointer.touch = false;
+        await act(async () => pointer.setTouch(false));
     });
 });

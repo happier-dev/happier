@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
+import { usePaneRegion } from '@/components/appShell/panes/paneRegionContext';
 
 /** A focused detail lends its existing model to shell chrome; no selection or body state is copied. */
 export function createPresentedDetailContext<T>() {
@@ -36,7 +37,10 @@ export function createPresentedDetailContext<T>() {
     }
     function usePublish(model: T, presented: boolean) {
         const focused = useDestinationFocus();
-        const active = presented && focused;
+        // The page chrome belongs to the page: a detail drawn in the side column (a companion's embedded Session)
+        // is beside the page, not nested in it, so it never takes the page's chrome.
+        const region = usePaneRegion();
+        const active = presented && focused && region !== 'side';
         const depth = React.useContext(Depth);
         const publisher = React.useContext(Publication);
         const owner = React.useRef({});

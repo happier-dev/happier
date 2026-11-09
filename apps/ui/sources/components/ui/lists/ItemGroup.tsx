@@ -35,7 +35,7 @@ import {
     ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX,
 } from './itemGroupSpacing';
 import { Text } from '@/components/ui/text/Text';
-import { MenuSectionRowsContext, useFloatingListSurface, useListPresentation, usePageListInsets } from './listPresentation';
+import { MenuSectionRowsContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge } from './listPresentation';
 import { MENU_ROW_METRICS } from './itemDensityMetrics';
 import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
@@ -277,12 +277,18 @@ const stylesheet = StyleSheet.create((theme) => {
         },
         // A page section's sheet sits on the same content margin as the grouped card; its look is the
         // shared page sheet's (`HappierPageSheet`).
+        // A flat sheet's rows are full-bleed: they reach into the margin by their own padding on both sides, so
+        // their glyphs and text start, and their values and chevrons end, on the content's edges; the
+        // hairlines run from the text to that trailing edge (`happierPageRowDividerInset`, unframed).
         pageSheetFlat: {
-            marginLeft: (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12)
+            marginHorizontal: (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12)
                 + PAGE_LIST_METRICS.headingOpticalInsetPx - PAGE_LIST_METRICS.rowPaddingHorizontalPx,
-            // The hairlines end on the content's trailing edge, where the section's controls end.
-            marginRight: (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12)
-                + PAGE_LIST_METRICS.headingOpticalInsetPx,
+        },
+        // In a side pane there is no sheet edge to sit inside: the rows' glyphs and the heading start on the
+        // pane's text edge, the line its header title starts on, and their trailing ends on the line its
+        // header's close ends on.
+        pageSheetFlatSidePane: {
+            marginHorizontal: (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) - PAGE_LIST_METRICS.rowPaddingHorizontalPx,
         },
         pageSheet: {
             marginHorizontal: Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX),
@@ -339,7 +345,8 @@ const ItemGroupSharedCardBody = React.memo(function ItemGroupSharedCardBody(prop
                 aria-label={Platform.OS === 'web' ? props.accessibilityLabel : undefined}
                 style={[styles.contentContainerBare, props.containerStyle]}
             >
-                {props.children}
+                {/* Without the card the rows still have positions: the last one draws no hairline. */}
+                {withItemGroupDividers(props.children, virtualizedSegment)}
             </View>
         );
     }
@@ -392,6 +399,8 @@ const ItemGroupPageSheetBody = React.memo(function ItemGroupPageSheetBody(props:
     clipContent?: boolean;
     /** `flat`: the same rows and hairlines laid on the pane, without the card. */
     flat?: boolean;
+    /** Flat in a side pane: the rows start on the pane's text edge. */
+    sidePane?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -415,7 +424,7 @@ const ItemGroupPageSheetBody = React.memo(function ItemGroupPageSheetBody(props:
                     styles.pageSheet,
                     // Without a card, the rows' glyphs and text start on the section heading's edge; the
                     // press fill and hairlines take the row padding into the margin.
-                    props.flat ? styles.pageSheetFlat : undefined,
+                    props.flat ? (props.sidePane ? styles.pageSheetFlatSidePane : styles.pageSheetFlat) : undefined,
                     props.clipContent ? styles.contentContainerInnerClipped : undefined,
                     // A virtualized section's chunks read as one sheet: no grounding between them.
                     virtualizedSegment ? styles.virtualizedSurfaceSegment : undefined,
@@ -612,6 +621,9 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     const isPage = presentation === 'page';
     // A contained scope (a column or widget body that owns its padding) adds no second inset, page or grouped.
     const contained = usePageListInsets() === 'contained';
+    // A grouped contained scope is a widget body (WidgetFrame): its rows reach the card's edges at any card width,
+    // never the reading column centred inside a wide card.
+    const widgetBody = contained && !isPage;
     const {
         title,
         description,
@@ -637,6 +649,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     } = props;
     const defaultSurface = React.useContext(ItemGroupDefaultSurfaceContext);
     const floatingSurface = useFloatingListSurface();
+    const sidePaneTextEdge = useSidePaneTextEdge();
     const inspector = usePageRowDensityOverride() === 'inspector';
     const renderPageDescription = (content: React.ReactNode) => (
         <Text style={[styles.pageDescription, inspector ? styles.pageDescriptionInspector : null]}>{content}</Text>
@@ -645,6 +658,8 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     // grouped rows, and a section laid out as its own surface (`none`) stays as it is.
     const surface = surfaceProp ?? 'sheet';
     const flatSheet = surfaceProp === undefined && isPage && defaultSurface === 'flat';
+    // A flat page section in a side pane (Session Info) keeps the pane's text edge, not a page's optical inset.
+    const sidePaneFlat = sidePaneTextEdge && flatSheet;
     const resolvedAccessibilityLabel = accessibilityLabel ?? (typeof title === 'string' ? title : undefined);
     // Bare rows in a contained scope (a widget body or flow, grouped or page) bleed by their own padding: their
     // marks and titles keep the column's edge (the frame header's mark, a flow's Name and section titles), while
@@ -723,7 +738,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
 
     return (
         <View testID={testID} style={[styles.wrapper, style]}>
-            <View style={[styles.container, contained ? styles.containedContainer : null, constrainToContentWidth ? { maxWidth } : undefined]}>
+            <View style={[styles.container, contained ? styles.containedContainer : null, constrainToContentWidth && !widgetBody ? { maxWidth } : undefined]}>
                 {/* Header */}
                 {props.header === 'none' ? null : isPage && (title || description || action) ? (
                     <HappierPageSectionHeader
@@ -737,10 +752,10 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                                 {titleAccessory}
                             </View>
                         ) : title}
-                        description={description}
+                        description={typeof description === 'string' ? description : description ? renderPageDescription(description) : undefined}
                         action={action ?? undefined}
                         actionLayout={actionLayout}
-                        insetPx={contained ? 0 : (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + PAGE_LIST_METRICS.headingOpticalInsetPx}
+                        insetPx={contained ? 0 : (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + (sidePaneFlat ? 0 : PAGE_LIST_METRICS.headingOpticalInsetPx)}
                         renderText={(input) => input.role === 'sectionTitle'
                             ? <Text accessibilityRole="header" style={[styles.pageTitle, titleStyle]}>{input.text}</Text>
                             : renderPageDescription(input.text)}
@@ -790,6 +805,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                                 containerStyle={resolvedContainerStyle}
                                 clipContent={clipContent}
                                 flat={flatSheet}
+                                sidePane={sidePaneFlat}
                             >
                                 {projectedChildren}
                             </ItemGroupPageSheetBody>

@@ -3,20 +3,33 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { findTestInstanceByTypeWithProps, pressTestInstance, renderScreen } from '@/dev/testkit';
 import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
+import type { PopoverRenderProps } from '@/components/ui/popover';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 installDropdownCommonModuleMocks();
 
-const useSelectableMenuSpy = vi.fn();
-const handleSelectableKeyPressSpy = vi.fn();
+describe('DropdownMenu inline chooser content', () => {
+    it('uses the resolved popover size and close lifecycle for an inline chooser', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const close = vi.fn();
+        const renderContent = vi.fn(({ maxHeight, requestClose }: PopoverRenderProps) =>
+            React.createElement('InlineChooser', { maxHeight, onChoose: () => requestClose('selection') }));
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true, onOpenChange: close, items: [], onSelect: () => {}, renderContent,
+        }));
+        const chooser = screen.findByType('InlineChooser' as never);
+        expect(chooser.props.maxHeight).toBe(200);
+        expect(screen.tree.root.findAllByType('SelectableMenuResults' as never)).toHaveLength(0);
+        await act(async () => { chooser.props.onChoose(); });
+        expect(close).toHaveBeenCalledWith(false);
+    });
+});
+
 const scrollRegistrySpy = vi.fn();
 let uiItemDensitySetting: 'comfortable' | 'cozy' | 'compact' = 'comfortable';
 let reducedMotion = false;
-let selectableSearchQuery = '';
-// The menu model is replaced in this file; a test that reads category headings groups its items by category, as the model does.
-let selectableGroupsByCategory = false;
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {
@@ -46,7 +59,7 @@ vi.mock('@/components/ui/popover', () => ({
             props,
             typeof props.children === 'function'
                 // A phone sheet's render props say so, as the real Popover's sheet branch does on a phone.
-                ? props.children({ maxHeight: 200, maxWidth: 400, placement: props.placement ?? 'bottom', presentation: props.phonePresentation === 'sheet' && popoverDevice.phone ? 'sheet' : 'anchored' })
+                ? props.children({ maxHeight: 200, maxWidth: 400, placement: props.placement ?? 'bottom', presentation: props.phonePresentation === 'sheet' && popoverDevice.phone ? 'sheet' : 'anchored', requestClose: props.onRequestClose })
                 : props.children,
         );
     },
@@ -61,26 +74,6 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
         const React = require('react');
         return React.createElement('FloatingOverlay', props, props.header, props.children);
     },
-}));
-
-vi.mock('@/components/ui/forms/dropdown/useSelectableMenu', () => ({
-    useSelectableMenu: (args: any) => {
-        useSelectableMenuSpy(args);
-        return {
-            searchQuery: selectableSearchQuery,
-            selectedIndex: 0,
-            filteredCategories: selectableGroupsByCategory
-                ? [...new Set((args.items as { category?: string }[]).map((item) => item.category ?? ''))].map((title) => ({
-                    id: title, title, items: (args.items as { category?: string }[]).filter((item) => (item.category ?? '') === title),
-                }))
-                : [],
-            inputRef: { current: null },
-            setSelectedIndex: () => {},
-            handleSearchChange: () => {},
-            handleKeyPress: handleSelectableKeyPressSpy,
-        };
-    },
-    CREATE_ITEM_ID: '__create__',
 }));
 
 vi.mock('@/components/ui/forms/dropdown/SelectableMenuResults', () => ({
@@ -138,15 +131,41 @@ vi.mock('@/components/ui/text/Text', () => ({
 describe('DropdownMenu', () => {
     beforeEach(() => {
         vi.resetModules();
-        useSelectableMenuSpy.mockReset();
-        handleSelectableKeyPressSpy.mockReset();
         scrollRegistrySpy.mockReset();
         uiItemDensitySetting = 'comfortable';
         reducedMotion = false;
-        selectableSearchQuery = '';
     });
 
     afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('draws a shortcut hint only where a hardware keyboard can press it', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const { KeyHint } = await import('@/components/ui/keyboard/KeyHint');
+        const readHintRow = () => screenRef.current?.findByType('SelectableMenuResults' as never)?.props.categories[0]?.items[0]?.right ?? null;
+        const screenRef: { current: Awaited<ReturnType<typeof renderScreen>> | null } = { current: null };
+        const render = () => renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: () => {},
+            items: [{ id: 'queue', title: 'Queue', shortcut: 'Cmd+Enter' }],
+            onSelect: () => {},
+            trigger: () => null,
+        }));
+
+        const listeners = { addEventListener: () => {}, removeEventListener: () => {} };
+        vi.stubGlobal('window', { ...listeners, matchMedia: () => ({ matches: false }) });
+        const touch = await render();
+        screenRef.current = touch;
+        expect(readHintRow()).toBeNull();
+        await touch.unmount();
+
+        vi.stubGlobal('window', { ...listeners, matchMedia: () => ({ matches: true }) });
+        vi.stubGlobal('navigator', { maxTouchPoints: 0 });
+        const desktop = await render();
+        screenRef.current = desktop;
+        expect(readHintRow()?.type).toBe(KeyHint);
+        await desktop.unmount();
         vi.unstubAllGlobals();
     });
 
@@ -251,7 +270,7 @@ describe('DropdownMenu', () => {
         });
 
         act(() => {
-            useSelectableMenuSpy.mock.calls.at(-1)?.[0]?.onRequestClose();
+            screen.findByType('SelectableMenuResults' as any)?.props.onKeyDown({ nativeEvent: { key: 'Escape' } });
         });
         expect(getTrigger()?.props.accessibilityState).toEqual({ expanded: false });
         expect(getTrigger()?.props['aria-expanded']).toBe(false);
@@ -364,7 +383,7 @@ describe('DropdownMenu', () => {
         expect(onOpenChange).toHaveBeenCalledWith(false);
         expect(onSelect).not.toHaveBeenCalled();
         act(() => scheduled.shift()?.(0));
-        expect(onSelect).toHaveBeenCalledWith('a');
+        expect(onSelect).toHaveBeenCalledWith('a', { anchor: expect.objectContaining({ kind: 'view' }) });
     });
 
     it('commits a closing menu selection after the selection press has completed', async () => {
@@ -400,10 +419,6 @@ describe('DropdownMenu', () => {
             scheduled.push(callback);
             return scheduled.length;
         });
-        handleSelectableKeyPressSpy.mockImplementationOnce((_key, onSelect) => {
-            onSelect({ id: 'open-modal' });
-            return true;
-        });
         const { DropdownMenu } = await import('./DropdownMenu');
         const events: string[] = [];
 
@@ -432,11 +447,6 @@ describe('DropdownMenu', () => {
             scheduled.push(callback);
             return scheduled.length;
         });
-        selectableSearchQuery = '  New tag  ';
-        handleSelectableKeyPressSpy.mockImplementationOnce((_key, onSelect) => {
-            onSelect({ id: '__create__' });
-            return true;
-        });
         const { DropdownMenu } = await import('./DropdownMenu');
         const events: string[] = [];
 
@@ -449,6 +459,8 @@ describe('DropdownMenu', () => {
             trigger: React.createElement('View'),
             search: true,
         }));
+        const { CompactSearchField } = await import('@/components/ui/forms/CompactSearchField');
+        act(() => screen.findByType(CompactSearchField).props.onChangeText('  New tag  '));
         const event = {
             nativeEvent: { key: 'Enter' },
             preventDefault: vi.fn(),
@@ -481,7 +493,7 @@ describe('DropdownMenu', () => {
         await act(async () => {
             await new Promise<void>((resolve) => setTimeout(resolve, 120));
         });
-        expect(onSelect).toHaveBeenCalledWith('open-modal');
+        expect(onSelect).toHaveBeenCalledWith('open-modal', { anchor: expect.objectContaining({ kind: 'view' }) });
     });
 
     it('does not let the timeout fallback overtake an available animation frame', async () => {
@@ -514,7 +526,7 @@ describe('DropdownMenu', () => {
 
             expect(scheduled).toHaveLength(1);
             act(() => scheduled.shift()?.(0));
-            expect(onSelect).toHaveBeenCalledWith('open-modal');
+            expect(onSelect).toHaveBeenCalledWith('open-modal', { anchor: expect.objectContaining({ kind: 'view' }) });
             await act(async () => {
                 await vi.advanceTimersByTimeAsync(100);
             });
@@ -562,7 +574,7 @@ describe('DropdownMenu', () => {
             selectableResults?.props?.onPressItem?.({ id: 'a' });
         });
 
-        expect(onSelect).toHaveBeenCalledWith('a');
+        expect(onSelect).toHaveBeenCalledWith('a', { anchor: expect.objectContaining({ kind: 'view' }) });
         expect(onOpenChange).not.toHaveBeenCalledWith(false);
     });
 
@@ -592,34 +604,9 @@ describe('DropdownMenu', () => {
         expect(capped.findByType('Popover' as any)?.props?.placementMinSpace).toBe(240);
     });
 
-    it('presents a menu whose rows open submenus as a phone sheet, so its submenus push inside it rather than squeeze beside it', async () => {
-        const { DropdownMenu } = await import('./DropdownMenu');
-        const render = (items: readonly unknown[]) => renderScreen(React.createElement(DropdownMenu as any, {
-            open: true, onOpenChange: vi.fn(), items, onSelect: vi.fn(), trigger: React.createElement('View'),
-        }));
-        const withSubmenu = await render([
-            { id: 'mark', title: 'Leading mark', submenu: { placement: 'right', items: [{ id: 'auto', title: 'Auto' }] } },
-            { id: 'status', title: 'Status words' },
-        ]);
-        expect(withSubmenu.findAllByType('Popover' as any)[0]?.props?.phonePresentation).toBe('sheet');
-        act(() => {
-            withSubmenu.findByType('SelectableMenuResults' as any)?.props?.onOpenSubmenu?.('mark', {
-                current: { getBoundingClientRect: () => ({ width: 300, height: 44 }) },
-            });
-        });
-        // Popover decides from the device: on a phone the submenu is a sheet inside the menu's sheet (a push).
-        expect(withSubmenu.findAllByType('Popover' as any)[1]?.props?.phonePresentation).toBe('sheet');
-        act(() => { withSubmenu.tree.unmount(); });
-
-        const plain = await render([{ id: 'status', title: 'Status words' }]);
-        expect(plain.findAllByType('Popover' as any)[0]?.props?.phonePresentation).toBeUndefined();
-    });
-
     it('titles a submenu by its own name once, never again as the first heading of its phone sheet', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const chooserTitle = 'Move “Client work” to';
-        selectableGroupsByCategory = true;
-        try {
         const render = async (phone: boolean) => {
             popoverDevice.phone = phone;
             const screen = await renderScreen(React.createElement(DropdownMenu as any, {
@@ -656,7 +643,172 @@ describe('DropdownMenu', () => {
         // A desktop menu has no title of its own, so its chooser keeps the heading.
         expect(await render(false)).toEqual({ label: chooserTitle, headings: [chooserTitle] });
         popoverDevice.phone = false;
-        } finally { selectableGroupsByCategory = false; }
+    });
+
+    it('presents a menu whose rows open submenus as a phone sheet, so its submenus push inside it rather than squeeze beside it', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const render = (items: readonly unknown[]) => renderScreen(React.createElement(DropdownMenu as any, {
+            open: true, onOpenChange: vi.fn(), items, onSelect: vi.fn(), trigger: React.createElement('View'),
+        }));
+        const withSubmenu = await render([
+            { id: 'mark', title: 'Leading mark', submenu: { placement: 'right', items: [{ id: 'auto', title: 'Auto' }] } },
+            { id: 'status', title: 'Status words' },
+        ]);
+        expect(withSubmenu.findAllByType('Popover' as any)[0]?.props?.phonePresentation).toBe('sheet');
+        act(() => {
+            withSubmenu.findByType('SelectableMenuResults' as any)?.props?.onOpenSubmenu?.('mark', {
+                current: { getBoundingClientRect: () => ({ width: 300, height: 44 }) },
+            });
+        });
+        // Popover decides from the device: on a phone the submenu is a sheet inside the menu's sheet (a push).
+        expect(withSubmenu.findAllByType('Popover' as any)[1]?.props?.phonePresentation).toBe('sheet');
+        act(() => { withSubmenu.tree.unmount(); });
+
+        const plain = await render([{ id: 'status', title: 'Status words' }]);
+        expect(plain.findAllByType('Popover' as any)[0]?.props?.phonePresentation).toBeUndefined();
+    });
+
+    describe('submenu hover intent', () => {
+        const items = [
+            { id: 'color', title: 'Set color', submenu: { items: [{ id: 'color:blue', title: 'Blue' }] } },
+            { id: 'rename', title: 'Rename' },
+        ];
+        async function renderMenu() {
+            const { DropdownMenu } = await import('./DropdownMenu');
+            const screen = await renderScreen(React.createElement(DropdownMenu, {
+                open: true, onOpenChange: vi.fn(), items, onSelect: vi.fn(), trigger: React.createElement('View'),
+            }));
+            const results = () => screen.findAllByType('SelectableMenuResults' as any)[0];
+            const popovers = () => screen.findAllByType('Popover' as any);
+            const submenuSurface = () => screen.findByTestId('dropdown-submenu-surface') as any;
+            return { screen, results, popovers, submenuSurface };
+        }
+        const mouse = { nativeEvent: { pointerType: 'mouse' } };
+        beforeEach(() => {
+            vi.useFakeTimers();
+        });
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('does not open a submenu when the pointer only passes over its row', async () => {
+            const menu = await renderMenu();
+            act(() => {
+                menu.results()?.props?.onHoverItem?.({ id: 'color', hasSubmenu: true }, { current: 'row' });
+            });
+            act(() => {
+                vi.advanceTimersByTime(40);
+                menu.results()?.props?.onHoverItem?.({ id: 'rename' }, { current: 'other-row' });
+            });
+            act(() => {
+                vi.advanceTimersByTime(1000);
+            });
+            expect(menu.popovers()).toHaveLength(1);
+        });
+
+        it('opens after a short dwell beside the whole parent row, so a flip to the left clears the parent menu', async () => {
+            const menu = await renderMenu();
+            const rowAnchor = { current: 'color-row' };
+            act(() => {
+                menu.results()?.props?.onHoverItem?.({ id: 'color', hasSubmenu: true }, rowAnchor);
+            });
+            act(() => {
+                vi.advanceTimersByTime(400);
+            });
+            expect(menu.popovers()).toHaveLength(2);
+            expect(menu.popovers()[1]?.props?.anchorRef).toBe(rowAnchor);
+            expect(menu.popovers()[1]?.props?.placement).toBe('auto-horizontal');
+        });
+
+        it('closes the open submenu when another parent row is hovered, but keeps it while the pointer moves into it', async () => {
+            const menu = await renderMenu();
+            act(() => {
+                menu.results()?.props?.onHoverItem?.({ id: 'color', hasSubmenu: true }, { current: 'row' });
+            });
+            act(() => {
+                vi.advanceTimersByTime(400);
+            });
+            // Diagonal travel crosses Rename on its way into the submenu: entering the submenu keeps it.
+            act(() => {
+                menu.results()?.props?.onHoverItem?.({ id: 'rename' }, { current: 'other-row' });
+                vi.advanceTimersByTime(60);
+                menu.submenuSurface().props.onPointerEnter(mouse);
+                vi.advanceTimersByTime(1000);
+            });
+            expect(menu.popovers()).toHaveLength(2);
+
+            // Leaving the submenu for a sibling closes it after the grace period.
+            act(() => {
+                menu.submenuSurface().props.onPointerLeave(mouse);
+                menu.results()?.props?.onHoverItem?.({ id: 'rename' }, { current: 'other-row' });
+                vi.advanceTimersByTime(1000);
+            });
+            expect(menu.popovers()).toHaveLength(1);
+        });
+
+        it('ignores touch pointer leave so a tapped submenu stays open', async () => {
+            const menu = await renderMenu();
+            act(() => {
+                menu.results()?.props?.onOpenSubmenu?.('color', { current: 'row' });
+            });
+            act(() => {
+                menu.submenuSurface().props.onPointerLeave({ nativeEvent: { pointerType: 'touch' } });
+                vi.advanceTimersByTime(1000);
+            });
+            expect(menu.popovers()).toHaveLength(2);
+        });
+    });
+
+    it('reveals the swatch highlight only once the person hovers or uses the keyboard', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange: vi.fn(),
+            items: [{ id: 'blue', title: 'Blue', swatch: { color: '#0000FF' } }, { id: 'red', title: 'Red', swatch: { color: '#FF0000' } }],
+            onSelect: vi.fn(),
+            trigger: React.createElement('View'),
+        }));
+        const results = () => screen.findByType('SelectableMenuResults' as any);
+        expect(results()?.props?.swatchHighlightVisible).toBe(false);
+        act(() => {
+            results()?.props?.onSelectionChange?.(1);
+        });
+        expect(results()?.props?.swatchHighlightVisible).toBe(true);
+    });
+
+    it('keeps the menus open for an item that finishes its own work, and announces a submenu opening', async () => {
+        vi.stubGlobal('requestAnimationFrame', () => 1);
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const onOpenChange = vi.fn();
+        const onSelect = vi.fn();
+        const onSubmenuOpen = vi.fn();
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
+            open: true,
+            onOpenChange,
+            items: [{
+                id: 'color',
+                title: 'Set color',
+                submenu: {
+                    onOpen: onSubmenuOpen,
+                    items: [{ id: 'color:custom-picker', title: 'Custom color…', keepMenuOpen: true }],
+                },
+            }],
+            onSelect,
+            trigger: React.createElement('View'),
+        }));
+
+        act(() => {
+            screen.findByType('SelectableMenuResults' as any)?.props?.onOpenSubmenu?.('color', { current: 'anchor' });
+        });
+        expect(onSubmenuOpen).toHaveBeenCalledOnce();
+
+        const results = screen.findAllByType('SelectableMenuResults' as any);
+        act(() => {
+            results[1]?.props?.onPressItem?.({ id: 'color:custom-picker' });
+        });
+        expect(onSelect).toHaveBeenCalledWith('color:custom-picker', { anchor: expect.objectContaining({ kind: 'view' }) });
+        expect(onOpenChange).not.toHaveBeenCalledWith(false);
+        expect(screen.findAllByType('SelectableMenuResults' as any)).toHaveLength(2);
     });
 
     it('opens submenu items without selecting the parent row', async () => {
@@ -720,7 +872,7 @@ describe('DropdownMenu', () => {
         expect(onOpenChange).toHaveBeenCalledWith(false);
         expect(onSelect).not.toHaveBeenCalled();
         act(() => scheduled.shift()?.(1));
-        expect(onSelect).toHaveBeenCalledWith('folder-planning');
+        expect(onSelect).toHaveBeenCalledWith('folder-planning', { anchor: expect.objectContaining({ kind: 'view' }) });
     });
 
     it('supports a static trigger node and keeps popover unmounted when closed', async () => {
@@ -914,7 +1066,7 @@ describe('DropdownMenu', () => {
     it('does not add a default chevron right element to selectable items', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
 
-        await renderScreen(React.createElement(DropdownMenu, {
+        const screen = await renderScreen(React.createElement(DropdownMenu, {
                     open: true,
                     onOpenChange: vi.fn(),
                     items: [{ id: 'a', title: 'A' }],
@@ -922,12 +1074,8 @@ describe('DropdownMenu', () => {
                     trigger: React.createElement('View'),
                 }));
 
-        expect(useSelectableMenuSpy).toHaveBeenCalled();
-        const args = useSelectableMenuSpy.mock.calls[0]?.[0];
-        expect(args).toBeTruthy();
-        expect(Array.isArray(args.items)).toBe(true);
-        expect(args.items[0]?.id).toBe('a');
-        expect(args.items[0]?.right).toBe(null);
+        const results = screen.findByType('SelectableMenuResults' as any);
+        expect(results?.props.categories[0]?.items[0]).toMatchObject({ id: 'a', right: null });
     });
 
     it('can render an Item-style trigger that shows the selected label and subtitle by default', async () => {
@@ -1091,5 +1239,19 @@ describe('DropdownMenu', () => {
         const results = screen.findByType('SelectableMenuResults' as any)!;
         expect(results.findAllByType(TextInput as any)).toEqual([]);
         expect(screen.findAllByType(TextInput as any)).toHaveLength(1);
+    });
+});
+
+describe('untitleSheetCategories', () => {
+    it('drops a leading heading that repeats the sheet title', async () => {
+        const { untitleSheetCategories } = await import('./DropdownMenu');
+        const out = untitleSheetCategories([{ title: 'More', items: [1] }, { title: 'Other', items: [2] }], 'More');
+        expect(out.map((category) => category.title)).toEqual(['', 'Other']);
+    });
+
+    it('keeps the repeated heading when an earlier titled group precedes it, so its rows do not join that group', async () => {
+        const { untitleSheetCategories } = await import('./DropdownMenu');
+        const out = untitleSheetCategories([{ title: 'On the bar', items: [1] }, { title: 'More', items: [2] }], 'More');
+        expect(out.map((category) => category.title)).toEqual(['On the bar', 'More']);
     });
 });

@@ -11,6 +11,10 @@ vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub, createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({ useLocalSetting: createUseLocalSettingMock() });
+});
 vi.mock('@/utils/web/radixCjs', async () => {
     const { createRadixCjsRealModule } = await import('@/dev/testkit/mocks/radixCjs');
     return createRadixCjsRealModule();
@@ -24,7 +28,234 @@ vi.mock('react-native-keyboard-controller', () => ({
 }));
 
 import { BaseModal } from '@/modal/components/BaseModal';
+import { ModalProvider } from '@/modal/ModalProvider';
+import { Modal } from '@/modal/ModalManager';
+import type { CustomModalInjectedProps } from '@/modal/types';
 import { DropdownMenu } from './DropdownMenu';
+import { Dimensions } from 'react-native';
+
+it('settles controlled card selection while its dependent picker follows the selected value', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const errors: unknown[] = [];
+    const root = createRoot(container, { onUncaughtError: (error) => { errors.push(error); } });
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(100, 400, 300, 44));
+    type Field = 'scope' | 'project';
+    const item = (field: Field) => ({ id: field, title: field, testID: `controlled-${field}-option` });
+    type Selection = { scope: string; project: string };
+    function Picker(props: CustomModalInjectedProps & { value: Selection }) {
+        return <output data-testid="controlled-picker-value">{props.value.project}</output>;
+    }
+    function DependentPicker({ value }: { value: Selection }) {
+        const id = React.useRef<string | null>(null);
+        // Like the connected-account chooser, an open picker follows the parent's
+        // controlled value, including an equivalent object from a later render.
+        React.useEffect(() => {
+            if (!value.project) return;
+            if (id.current) Modal.update(id.current, { value });
+            else id.current = Modal.show({ component: Picker, props: { value }, chrome: { kind: 'card', title: 'Selected project' } });
+        }, [value]);
+        return null;
+    }
+    function Sheet({ setChrome }: CustomModalInjectedProps) {
+        const [values, setValues] = React.useState({ scope: '', project: '' });
+        const [openField, setOpenField] = React.useState<string | null>(null);
+        const choose = (field: Field, id: string) => {
+            setValues((current) => ({ ...current, [field]: id }));
+        };
+        React.useEffect(() => {
+            setChrome?.({ kind: 'card', title: 'Link project', footer: <button disabled={!values.project}>Inspect</button> });
+        });
+        return <>{(['scope', 'project'] as const).map((field) => (
+            (field === 'scope' || values.scope) ?
+                <DropdownMenu key={field} open={openField === field} selectedId={values[field]}
+                    onOpenChange={(open) => setOpenField(open ? field : null)}
+                    onSelect={(id) => choose(field, id)}
+                    items={[item(field)]}
+                    itemTrigger={{ title: field, itemProps: { testID: `controlled-${field}-trigger` } }} /> : null
+        ))}<output data-testid="controlled-values">{JSON.stringify(values)}</output>
+            <DependentPicker value={{ ...values }} />
+        </>;
+    }
+    try {
+        await act(async () => { root.render(<ModalProvider><button data-testid="open-controlled-sheet" onClick={() => Modal.show({ component: Sheet, chrome: {
+                kind: 'card', title: 'Link project', scrollHost: 'bounded', bodyScroll: 'auto',
+                dimensions: { width: 640, maxHeightRatio: 0.9, size: 'md' },
+            } })}>Link project</button></ModalProvider>); });
+        await act(async () => { document.querySelector<HTMLElement>('[data-testid="open-controlled-sheet"]')!.click(); });
+        for (const field of ['scope', 'project']) {
+            await act(async () => { document.querySelector<HTMLElement>(`[data-testid="controlled-${field}-trigger"]`)!.click(); });
+            await vi.waitFor(() => expect(document.querySelector(`[data-testid="controlled-${field}-option"]`)).not.toBeNull());
+            const option = document.querySelector<HTMLElement>(`[data-testid="controlled-${field}-option"]`)!;
+            await act(async () => { option.focus(); option.click(); });
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                expect(errors).toEqual([]);
+                expect(document.querySelector('[data-testid="controlled-values"]')?.textContent).toContain(`"${field}":"${field}"`);
+            });
+            expect(document.querySelector(`[data-testid="controlled-${field}-option"]`)).toBeNull();
+        }
+        expect(document.querySelector('[data-testid="controlled-picker-value"]')?.textContent).toBe('project');
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove();
+    }
+});
+
+it('keeps a phone submenu open when its opening touch retargets the compatibility click onto the sheet', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const dimensions = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 760, 350, 44));
+    function Harness() {
+        const [open, setOpen] = React.useState(false);
+        const [selected, setSelected] = React.useState('');
+        return <><DropdownMenu open={open} onOpenChange={setOpen} onSelect={setSelected}
+            popoverPhonePresentation="sheet" popoverAccessibilityLabel="Folder"
+            items={[{ id: 'move', title: 'Move', testID: 'touch-move-parent', submenu: {
+                title: 'Move folder to', items: [{ id: 'destination', title: 'Destination', testID: 'touch-move-destination' }],
+            } }]}
+            trigger={({ toggle }) => <button data-testid="touch-move-trigger" onClick={toggle}>Options</button>} />
+            <output data-testid="touch-move-selection">{selected}</output></>;
+    }
+    try {
+        await act(async () => { root.render(<Harness />); });
+        await act(async () => { document.querySelector<HTMLElement>('[data-testid="touch-move-trigger"]')!.click(); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="touch-move-parent"]')).not.toBeNull());
+        const parentSheet = document.querySelector<HTMLElement>('[role="dialog"][aria-label="Folder"]')!;
+        await act(async () => {
+            document.querySelector<HTMLElement>('[data-testid="touch-move-parent"]')!
+                .dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+        });
+        expect(document.querySelector('[data-testid="touch-move-destination"]')).not.toBeNull();
+        // Native Chromium touch trace: compatibility mousedown opens the new sheet, then the
+        // release/click targets its viewport shell instead of the now-covered parent row.
+        await act(async () => {
+            parentSheet.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
+            parentSheet.click();
+        });
+        expect(document.querySelector('[data-testid="touch-move-trigger"]')?.getAttribute('aria-expanded')).toBe('true');
+        expect(document.querySelector('[data-testid="touch-move-destination"]')).not.toBeNull();
+        expect(document.querySelector('[data-testid="touch-move-selection"]')?.textContent).toBe('');
+        await act(async () => { document.querySelector<HTMLElement>('[data-testid="touch-move-destination"]')!.click(); });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(document.querySelector('[data-testid="touch-move-selection"]')?.textContent).toBe('destination');
+            expect(document.querySelector('[data-testid="touch-move-trigger"]')?.getAttribute('aria-expanded')).toBe('false');
+        });
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        dimensions.mockRestore();
+        container.remove();
+    }
+});
+
+it.each(['keyboard', 'pointer', 'create'] as const)('returns focus to the trigger after %s selection', async (input) => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        x: 100, y: 100, width: 200, height: 40, top: 100, left: 100, right: 300, bottom: 140, toJSON: () => ({}),
+    });
+    function Harness() {
+        const [open, setOpen] = React.useState(false);
+        const [selected, setSelected] = React.useState('');
+        return <><DropdownMenu open={open} search={input !== 'pointer'} onOpenChange={setOpen} onSelect={setSelected} onCreateItem={setSelected}
+            items={[{ id: 'choice', title: 'Choice', testID: 'return-focus-option' }]}
+            trigger={({ toggle }) => <button data-testid="return-focus-trigger" onClick={toggle}>Choose</button>} />
+            <output data-testid="return-focus-selection">{selected}</output></>;
+    }
+    try {
+        await act(async () => { root.render(<Harness />); });
+        const trigger = document.querySelector<HTMLElement>('[data-testid="return-focus-trigger"]')!;
+        trigger.focus();
+        await act(async () => { trigger.click(); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="return-focus-option"]')).not.toBeNull());
+        const optionSelector = input === 'create' ? '[data-testid="dropdown-option-__create__"]' : '[data-testid="return-focus-option"]';
+        if (input === 'create') {
+            await act(async () => {
+                const search = document.querySelector<HTMLInputElement>('input')!;
+                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'new-choice');
+                search.dispatchEvent(new InputEvent('input', { bubbles: true, data: 'new-choice', inputType: 'insertText' }));
+            });
+            await vi.waitFor(() => expect(document.querySelector(optionSelector)).not.toBeNull());
+        }
+        const option = document.querySelector<HTMLElement>(optionSelector)!;
+        await act(async () => {
+            if (input !== 'pointer') {
+                const search = document.querySelector<HTMLInputElement>('input')!;
+                search.focus();
+                search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+            } else {
+                option.focus();
+                option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+                option.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
+                option.click();
+            }
+        });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(document.querySelector('[data-testid="return-focus-selection"]')?.textContent).toBe(input === 'create' ? 'new-choice' : 'choice');
+        });
+        expect(document.querySelector(optionSelector)).toBeNull();
+        expect(document.activeElement).toBe(trigger);
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove();
+    }
+});
+
+it.each(['pane', 'modal'] as const)('keeps focus at the %s opened by the selected item', async (destination) => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const measure = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        x: 100, y: 100, width: 200, height: 40, top: 100, left: 100, right: 300, bottom: 140, toJSON: () => ({}),
+    });
+    function Pane() {
+        const titleRef = React.useRef<HTMLHeadingElement>(null);
+        React.useLayoutEffect(() => { titleRef.current?.focus(); }, []);
+        return <h2 ref={titleRef} tabIndex={-1} data-testid="selection-destination">Details</h2>;
+    }
+    function Harness() {
+        const [open, setOpen] = React.useState(false);
+        const [selected, setSelected] = React.useState(false);
+        return <><DropdownMenu open={open} onOpenChange={setOpen} onSelect={() => setSelected(true)}
+            items={[{ id: 'open', title: 'Open', testID: 'destination-option' }]}
+            trigger={({ toggle }) => <button data-testid="destination-trigger" onClick={toggle}>Choose</button>} />
+            {selected && (destination === 'pane' ? <Pane /> :
+                <BaseModal visible onClose={() => setSelected(false)}>
+                    <input autoFocus data-testid="selection-destination" />
+                </BaseModal>)}</>;
+    }
+    try {
+        await act(async () => { root.render(<Harness />); });
+        const trigger = document.querySelector<HTMLElement>('[data-testid="destination-trigger"]')!;
+        trigger.focus();
+        await act(async () => { trigger.click(); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="destination-option"]')).not.toBeNull());
+        await act(async () => {
+            const option = document.querySelector<HTMLElement>('[data-testid="destination-option"]')!;
+            option.focus();
+            option.click();
+        });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            const target = document.querySelector('[data-testid="selection-destination"]');
+            expect(target).not.toBeNull();
+            expect(document.activeElement).toBe(target);
+        });
+        expect(document.querySelector('[data-testid="destination-option"]')).toBeNull();
+    } finally {
+        await act(async () => root.unmount());
+        measure.mockRestore();
+        container.remove();
+    }
+});
 
 it('opens the Item trigger with Enter and Space and closes with Escape without selecting', async () => {
     const container = document.createElement('div');

@@ -2,7 +2,6 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
 
 import type {
     SelectionListOption,
@@ -15,13 +14,10 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-const { module: capturedLegendList, state: legendListState } = createCapturingLegendListMock({
-    renderItems: true,
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true });
 });
-
-vi.mock('@legendapp/list/react-native', () => ({
-    LegendList: capturedLegendList.LegendList,
-}));
 
 function makeOptions(count: number, prefix = 'opt'): ReadonlyArray<SelectionListOption> {
     return Array.from({ length: count }, (_, i) => ({
@@ -76,7 +72,6 @@ describe('SelectionList virtualized row ARIA parity (R9 blocker 4)', () => {
         option,
         expectedId,
     }) => {
-        legendListState.reset();
         const root: SelectionListStep = {
             id: 'root',
             inputPlaceholder: 'Search',
@@ -110,7 +105,6 @@ describe('SelectionList virtualized row ARIA parity (R9 blocker 4)', () => {
     });
 
     it('virtualized rows expose role="option" + aria-selected + id matching the plain path', async () => {
-        legendListState.reset();
         const root: SelectionListStep = {
             id: 'root',
             inputPlaceholder: 'Search',
@@ -150,7 +144,6 @@ describe('SelectionList virtualized row ARIA parity (R9 blocker 4)', () => {
     });
 
     it('applies option accessibility labels to virtualized actionable option rows', async () => {
-        legendListState.reset();
         const optionWithA11yName = {
             id: 'native',
             label: 'Backend native auth',

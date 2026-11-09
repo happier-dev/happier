@@ -40,6 +40,13 @@ describe('resolveHappierPageRowFieldMaxWidth', () => {
     expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16, titleNaturalWidthPx: 60, fieldSaturatedAtPx: 174 })).toBe(254);
   });
 
+  it('keeps the shared column for a short name with a description, so the description is not squeezed beside the field', () => {
+    // "MCP" over "Follow the product default for this surface." on a 358px phone row: the description
+    // shares the label's column, so the 200px column holds and the field moves beneath, as its siblings do.
+    expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16, titleNaturalWidthPx: 34, described: true })).toBeNull();
+    expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 358, rowInsetPx: 16, titleNaturalWidthPx: 34 })).toBe(280);
+  });
+
   it('never gives a name less than it needs, and still stacks a field that would not fit its minimum', () => {
     // A name wider than the shared column keeps the shared column.
     expect(resolveHappierPageRowFieldMaxWidth({ rowWidthPx: 323, rowInsetPx: 16, titleNaturalWidthPx: 260 })).toBeNull();

@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import type { ValueRefV1 } from '@happier-dev/protocol';
+import type { ValueRefV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
 
 import { renderHook } from '@/dev/testkit';
 

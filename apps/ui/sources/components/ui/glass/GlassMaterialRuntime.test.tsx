@@ -15,20 +15,33 @@ vi.mock('react-native-unistyles', async () => {
 const host = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(async (_name: string, _listener: (value: unknown) => void) => () => {}) }));
 vi.mock('@/utils/platform/desktopHost', () => ({
     isDesktopHost: () => true,
+    desktopHostKind: () => 'tauri',
     invokeDesktopHost: host.invoke,
     listenDesktopHostEvent: host.listen,
 }));
 
 // Which webview this is comes from the host's window location, an environment boundary.
-const windowContext = vi.hoisted(() => ({ panel: false }));
+const windowContext = vi.hoisted(() => ({ panel: false, label: 'capture' }));
 vi.mock('@/desktop/window/isDesktopAuxiliaryWindowContext', () => ({
     resolveDesktopWindowContext: () => ({ role: windowContext.panel ? 'presenter' : 'primary', chrome: windowContext.panel ? 'destination' : 'full' }),
-    isDesktopGlassPanelWindowContext: () => windowContext.panel,
+    resolveDesktopGlassPanelLabel: () => windowContext.panel ? windowContext.label : null,
 }));
 
-afterEach(() => { standardCleanup(); vi.clearAllMocks(); windowContext.panel = false; });
+afterEach(() => { standardCleanup(); vi.clearAllMocks(); windowContext.panel = false; windowContext.label = 'capture'; });
 
 describe('desktop window material projection', () => {
+    it('lets the notch follow the main window on its own event, never asking for material itself', async () => {
+        windowContext.panel = true;
+        windowContext.label = 'activity_overlay';
+        const { GlassMaterialRuntime } = await import('./GlassMaterialRuntime');
+        host.listen.mockResolvedValue(() => {});
+        host.invoke.mockResolvedValue({ supported: true, materialLive: true, reduceTransparency: false, highContrast: false, windowActive: true });
+        await renderScreen(<GlassMaterialRuntime><></></GlassMaterialRuntime>);
+        await act(async () => {});
+        expect(host.listen).toHaveBeenCalledWith('desktopGlass://state/activity_overlay', expect.any(Function));
+        expect(host.invoke.mock.calls.filter(([name]) => name === 'desktop_apply_glass_material')).toEqual([]);
+    });
+
     it('lets a capture panel follow the main window: its native backing, and the projected settings live', async () => {
         windowContext.panel = true;
         const { GlassMaterialRuntime } = await import('./GlassMaterialRuntime');

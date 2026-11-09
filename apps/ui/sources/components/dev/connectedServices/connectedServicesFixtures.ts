@@ -1,7 +1,7 @@
 import type {
     QualifiedConnectedAccountGroupV4,
     QualifiedConnectedAccountProfileV4,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import { getLegacyConnectedServiceRegistryEntry, type ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 

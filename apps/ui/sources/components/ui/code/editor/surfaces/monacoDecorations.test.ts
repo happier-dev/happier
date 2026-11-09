@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type * as Monaco from 'monaco-editor';
 import { createMonacoDecorations } from './monacoDecorations';
 
 describe('Monaco tracked decoration ranges', () => {
     it('uses engine ranges after edits and leaves other layers intact when change markers reseed', async () => {
-        // jsdom has no media-query adapter; Monaco's real model still initializes its browser service.
+        // jsdom lacks browser services used by Monaco's supported root entry; only the model is exercised.
         window.matchMedia ??= () => ({ matches: false, addEventListener() {}, removeEventListener() {} } as unknown as MediaQueryList);
-        const monaco = await import('monaco-editor/esm/vs/editor/editor.api.js');
+        document.queryCommandSupported ??= () => false;
+        vi.stubGlobal('CSS', { escape: (value: string) => value }); // No CSS rendering in this model-only fixture.
+        const monaco = await import('monaco-editor');
         const model = monaco.editor.createModel('first\nsecond\nthird\nlast');
         let position = { lineNumber: 1, column: 1 };
         const presses: unknown[] = [];

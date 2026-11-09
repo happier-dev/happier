@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 
 export type ItemGroupTitleAction = {
@@ -29,10 +30,9 @@ export const ItemGroupTitleWithAction = React.memo((props: ItemGroupTitleWithAct
                 {props.title}
             </Text>
             {props.action ? (
-                <Pressable
+                <HappierPressable
                     testID={props.action.testID}
                     onPress={props.action.onPress}
-                    hitSlop={10}
                     style={{ padding: 2, marginLeft: 8 }}
                     accessibilityRole="button"
                     accessibilityLabel={props.action.accessibilityLabel}
@@ -41,7 +41,7 @@ export const ItemGroupTitleWithAction = React.memo((props: ItemGroupTitleWithAct
                     {props.action.loading === true
                         ? <ActivitySpinner size="small" color={props.action.iconColor} />
                         : <Icon name={props.action.iconName} size={16} color={props.action.iconColor} />}
-                </Pressable>
+                </HappierPressable>
             ) : null}
         </View>
     );

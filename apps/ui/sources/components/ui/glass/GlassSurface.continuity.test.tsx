@@ -1,4 +1,5 @@
 import * as React from 'react';
+import Color from 'color';
 import type { OpaqueColorValue } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -168,7 +169,13 @@ describe('native material child continuity', () => {
         const screen = await renderScreen(<GradientSurface fallbackColor="#2244ee" gradient={fill} overlay={overlay} borderRadius={12}><DraftInput /></GradientSurface>);
         expect(screen.findAllByType('Svg')).toHaveLength(1);
         expect(screen.findAllByType('Rect')).toHaveLength(2);
-        expect(screen.findAllByType('Stop').map(node => node.props.stopColor)).toEqual([...fill.colors, ...overlay.colors]);
+        const stops = screen.findAllByType('Stop');
+        expect(stops).toHaveLength(4);
+        for (const [index, color] of [...fill.colors, ...overlay.colors].entries()) {
+            const stop = stops[index]!;
+            expect(Color(stop.props.stopColor).rgb().array().slice(0, 3)).toEqual(Color(color).rgb().array().slice(0, 3));
+            expect(Color(stop.props.stopColor).alpha() * (stop.props.stopOpacity ?? 1)).toBeCloseTo(Color(color).alpha(), 2);
+        }
         await act(async () => { screen.changeTextByTestId('draft', 'keep the primary draft'); });
         await screen.update(<GradientSurface fallbackColor="#2244ee" gradient={fill} overlay={null} borderRadius={12}><DraftInput /></GradientSurface>);
         expect(screen.findAllByType('Svg')).toHaveLength(1);

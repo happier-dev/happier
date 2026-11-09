@@ -2,10 +2,13 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createThemeFixture } from '@/dev/testkit';
 import { installCodeViewCommonModuleMocks } from './codeViewTestHelpers';
 import { buildCodeLinesFromFile } from '../model/buildCodeLinesFromFile';
+import { createCodeIntelligenceController } from '@/sync/domains/workspaces/languageIntelligence/createCodeIntelligenceController';
+import type { CodeIntelligenceServerPort } from '@/sync/domains/workspaces/languageIntelligence/codeIntelligenceDocument';
 
-installCodeViewCommonModuleMocks({ reactNative: async () => import('react-native-web') });
+installCodeViewCommonModuleMocks({ reactNative: async () => import('react-native-web'), realVirtualizer: true });
 const { CodeLinesViewCore } = await import('./CodeLinesViewCore');
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
@@ -23,6 +26,108 @@ function touch(type: 'touchstart' | 'touchend' | 'touchcancel', target: Element)
 }
 
 describe('code-row browser touch lifecycle', () => {
+    it.each([true, false])('activates colored and plain View tokens without throwing with semantic highlighting %s', async enabled => {
+        const host = document.createElement('div'); document.body.appendChild(host);
+        const root = createRoot(host);
+        const activate = vi.fn(() => true), select = vi.fn();
+        const lines = buildCodeLinesFromFile({ text: 'const target = plain;' });
+        // Script only the remote language server; the controller and document holder stay real.
+        const request = vi.fn<CodeIntelligenceServerPort['query']>().mockResolvedValue({ status: 'ok', kind: 'semanticTokens',
+            tokens: [{ serverId: 's', legend: { tokenTypes: ['function'], tokenModifiers: [] }, data: [0, 6, 6, 0, 0] }] });
+        const controller = createCodeIntelligenceController({
+            scope: { serverId: 'home', machineId: 'machine', rootPath: '/repo' }, path: 'a.ts', languageId: 'typescript',
+            accountLifetime: { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true,
+                onRetire: () => ({ dispose() {} }) },
+            getText: () => lines[0]!.renderCodeText,
+            query: async () => ({ status: 'ok', source: 'text_matches', coverage: 'complete', hasMore: false, locations: [] }),
+            openLocation() {},
+            languageServer: {
+                sync: async input => ({ status: 'ok', generation: 'g1', ...('version' in input.op ? { version: input.op.version } : {}),
+                    servers: [{ serverId: 's', label: 'Server', state: 'ready', loading: false, generation: 'g1' }],
+                    capabilities: { hover: true, definition: true, references: true, documentSymbol: false, diagnostics: 'none',
+                        acceptsExternalChanges: false, semanticTokensRange: true } }),
+                query: request,
+                watch: (_input, signal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true })),
+                restart: async () => ({ status: 'ok' }),
+            },
+        });
+        const observers: Array<{ callback: IntersectionObserverCallback; nodes: Element[]; observer: IntersectionObserver }> = [];
+        class VisibleRowsObserver {
+            nodes: Element[] = [];
+            constructor(callback: IntersectionObserverCallback) {
+                // Browser viewport observation is the boundary; semantic demand and row rendering stay real.
+                observers.push({ callback, nodes: this.nodes, observer: this as unknown as IntersectionObserver });
+            }
+            observe(node: Element) { this.nodes.push(node); }
+            disconnect() {}
+        }
+        vi.stubGlobal('IntersectionObserver', VisibleRowsObserver);
+        const previousCaret = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint');
+        const errors: unknown[] = [];
+        const onError = (event: ErrorEvent) => { errors.push(event.error); event.preventDefault(); };
+        window.addEventListener('error', onError);
+        try {
+            await controller.activate(); // Model the already-warmed server used by a View consumer.
+            await act(async () => root.render(<CodeLinesViewCore lines={lines} virtualized={false}
+                onPressLine={select} intelligence={{ onPointerToken: vi.fn(), onActivateToken: activate, semantic: { controller, enabled } }}
+                syntaxHighlighting={{ mode: 'simple', language: 'typescript', maxBytes: lines[0]!.renderCodeText.length,
+                    maxLines: lines.length, maxLineLength: lines[0]!.renderCodeText.length }} />));
+            await act(async () => {
+                for (const { callback, nodes, observer } of observers) callback(nodes.map(target => ({ target, isIntersecting: true }) as IntersectionObserverEntry), observer);
+            });
+            expect(request).toHaveBeenCalledTimes(enabled ? 1 : 0);
+            const code = host.querySelector('[data-code-text]')!;
+            for (const name of ['target', 'plain']) {
+                const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+                let text = walker.nextNode();
+                while (text && !text.textContent?.includes(name)) text = walker.nextNode();
+                expect(text).not.toBeNull();
+                const offset = text!.textContent!.indexOf(name) + 1;
+                Object.defineProperty(document, 'caretPositionFromPoint', { configurable: true, value: () => ({ offsetNode: text, offset }) });
+                const target = text!.parentElement!;
+                const expectedInk = document.createElement('span');
+                const syntax = createThemeFixture().colors.syntax;
+                expectedInk.style.color = enabled && name === 'target' ? syntax.function : syntax.default;
+                expect(getComputedStyle(target).color).toBe(expectedInk.style.color);
+                activate.mockClear(); select.mockClear();
+                await act(async () => { target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 60, clientY: 10 })); });
+                expect(errors).toEqual([]);
+                expect(activate).not.toHaveBeenCalled();
+                expect(select).toHaveBeenCalledExactlyOnceWith(lines[0], expect.anything());
+                select.mockClear();
+                await act(async () => { target.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true, clientX: 60, clientY: 10 })); });
+                expect(errors).toEqual([]);
+                expect(activate).toHaveBeenCalledExactlyOnceWith(lines[0]!.id, lines[0]!.renderCodeText.indexOf(name) + 1,
+                    expect.objectContaining({ via: 'modifier' }), 1);
+                expect(select).not.toHaveBeenCalled();
+                activate.mockClear();
+                await act(async () => {
+                    pointer('pointerdown', target); touch('touchstart', target); pointer('pointerup', target);
+                    touch('touchend', target); pointer('click', target);
+                });
+                expect(errors).toEqual([]);
+                expect(activate).toHaveBeenCalledExactlyOnceWith(lines[0]!.id, lines[0]!.renderCodeText.indexOf(name) + 1,
+                    expect.objectContaining({ via: 'touch' }), 1);
+                expect(select).not.toHaveBeenCalled();
+                activate.mockClear();
+                // RN-web's document keyup handler delivers the DOM event itself, unlike its synthetic click.
+                // The same row press must accept both shapes without treating keyboard selection as a token click.
+                const rowPress = code.closest('[tabindex="0"]')!;
+                await act(async () => {
+                    rowPress.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
+                    rowPress.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter' }));
+                });
+                expect(errors).toEqual([]);
+                expect(activate).not.toHaveBeenCalled();
+                expect(select).toHaveBeenCalledExactlyOnceWith(lines[0], expect.anything());
+            }
+        } finally {
+            window.removeEventListener('error', onError);
+            await act(async () => root.unmount()); controller.dispose(); host.remove(); vi.unstubAllGlobals();
+            if (previousCaret) Object.defineProperty(document, 'caretPositionFromPoint', previousCaret);
+            else Reflect.deleteProperty(document, 'caretPositionFromPoint');
+        }
+    });
     it('commits tap-to-name on the real row press, never before the compatibility click, and leaves gutter/blank taps selecting', async () => {
         const host = document.createElement('div'); document.body.appendChild(host);
         const root = createRoot(host);

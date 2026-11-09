@@ -5,6 +5,7 @@ import { DeferredAnchoredTooltip } from './DeferredAnchoredTooltip';
 
 /** Focusable help text, with no action unless the text itself is the control. */
 export function Tooltip(props: Readonly<{
+    /** Empty: the host stays but shows no help text. */
     label: string;
     /** What assistive tech reads when the help text alone would drop the visible text it explains. */
     accessibilityLabel?: string;
@@ -26,7 +27,7 @@ export function Tooltip(props: Readonly<{
             accessibilityRole={props.onPress ? 'button' : 'text'}
             onPress={props.onPress}
             focusable={props.focusable}
-            accessibilityLabel={props.accessibilityLabel ?? props.label}
+            accessibilityLabel={props.accessibilityLabel ?? (props.label === '' ? undefined : props.label)}
             onHoverIn={() => setHovered(true)}
             onHoverOut={() => setHovered(false)}
             onFocus={() => setFocused(true)}
@@ -34,7 +35,7 @@ export function Tooltip(props: Readonly<{
             style={props.style}
         >
             {props.children}
-            {Platform.OS === 'web' && (hovered || focused) ? (
+            {Platform.OS === 'web' && props.label !== '' && (hovered || focused) ? (
                 <DeferredAnchoredTooltip activationKey={`${hovered}:${focused}`} anchorRef={anchorRef} label={props.label} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
             ) : null}
         </Pressable>

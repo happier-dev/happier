@@ -10,8 +10,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { HappierTreeRow, resolveHappierTreeRowIndentPx } from '@happier-dev/plugin-ui/presentation';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { resolveFilesystemErrorReason } from './filesystemErrorReason';
-import { isHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
+import { isFilesystemErrorRetryable, resolveFilesystemErrorReason } from './filesystemErrorReason';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SelectionCheckGlyph, type SelectionCheckState } from '@/components/ui/selection/SelectionCheckGlyph';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -106,7 +106,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
     const showDivider = props.showDivider === true;
 
     const errorNode = props.node;
-    const touch = isHappierTouchPrimaryPointer(Platform.OS);
+    const touch = useHappierTouchPrimaryPointer(Platform.OS);
     const treeTouch = touch || phone;
     const selection = props.selection ? (
         <IconButton
@@ -134,7 +134,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
                     title={t('files.repositoryFolderLoadFailed')}
                     reason={resolveFilesystemErrorReason(errorNode.errorMessage)}
                     diagnosticCode={errorNode.errorMessage ?? null}
-                    action={props.onRetryError
+                    action={props.onRetryError && isFilesystemErrorRetryable(errorNode.errorMessage)
                         ? { label: t('surfaceState.tryAgain'), onPress: () => props.onRetryError!(errorNode) }
                         : undefined}
                 />

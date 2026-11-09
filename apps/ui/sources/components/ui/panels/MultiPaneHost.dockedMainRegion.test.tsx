@@ -74,6 +74,34 @@ describe('MultiPaneHost (docked main region)', () => {
         expect(tracker.mounts.info).toBe(1);
         expect(tracker.mounts.plugin).toBe(1);
     });
+    it('keeps a hidden list page presented while the detail it owns stays docked', async () => {
+        // A page's list steps aside for its detail and the detail's companion: the detail on screen belongs to
+        // that page, so the page stays presented (its navigation names the companion) though its list is hidden.
+        const presented: boolean[] = [];
+        function Page() { presented.push(useLayoutPresentationActive()); return null; }
+        const tree = (hideMain: boolean, mainOwnsDetails: boolean) => <MultiPaneHost
+            main={<Page />}
+            detailsPane={<Right />}
+            rightPane={<Right />}
+            hideMain={hideMain}
+            mainOwnsDetails={mainOwnsDetails}
+            layout={{ main: 'docked', kind: 'threePane', right: 'docked', details: 'docked' }}
+            rightDockWidthPx={380}
+            detailsDockWidthPx={750}
+            onCloseRight={() => {}}
+            onCloseDetails={() => {}}
+            onCommitRightDockWidthPx={() => {}}
+            onCommitDetailsDockWidthPx={() => {}}
+        />;
+        const screen = await renderScreen(tree(false, true));
+        expect(presented.at(-1)).toBe(true);
+        await screen.update(tree(true, false));
+        expect(presented.at(-1)).toBe(false);
+        await screen.update(tree(true, true));
+        expect(presented.at(-1)).toBe(true);
+        await screen.unmount();
+    });
+
     it('allows the main region to shrink beside a docked right pane on web', async () => {
         const screen = await renderScreen(
             <MultiPaneHost

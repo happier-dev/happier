@@ -5,14 +5,19 @@ import type { ReactElement } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     MENTION_KIND_V1,
-    RPC_METHODS,
     buildMentionRefForKindV1,
-    readHappierStructuredInputV1FromMeta,
-    parseMentionRefV1,
-    type PluginContributionLifecycleRecordV1,
-    type PluginProjectionV2,
+    parseMentionRefV1} from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import {
+    RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
+import {
+    readHappierStructuredInputV1FromMeta} from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import {
+    type PluginContributionLifecycleRecordV1} from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import {
+    type PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
     type PluginUiIconTokenV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/ui/tokens';
 import type { AutocompleteSuggestion } from './autocompleteTypes';
 import type { FileItem, FileSuggestionScope } from '@/sync/domains/input/suggestionFile';
 import { formatInlineReferenceTokenV1, scanInlineReferenceTokensV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
@@ -128,8 +133,6 @@ function composerReferenceProjection(entries: readonly Readonly<{
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {},

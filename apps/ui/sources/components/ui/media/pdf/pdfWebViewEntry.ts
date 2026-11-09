@@ -56,9 +56,9 @@ const container = () => {
     if (!element) throw new Error('PDF WebView requires the pdf-pages scroll container');
     return element;
 };
-const scaleFor = () => {
+const scaleFor = (mode: PdfZoom = zoom) => {
     const element = container();
-    return resolvePdfScale(zoom, { pageWidth: firstPageWidth, pageHeight: firstPageHeight, ...readPdfViewport(element) });
+    return resolvePdfScale(mode, { pageWidth: firstPageWidth, pageHeight: firstPageHeight, ...readPdfViewport(element) });
 };
 const loader = createPdfDocumentLoader({
     getDocument: bytes => pdfjs.getDocument({ data: bytes, useWorkerFetch: false, useWasm: false }),
@@ -80,7 +80,8 @@ const loader = createPdfDocumentLoader({
                 onError: () => send({ type: 'state', state: 'error' }),
                 onReaderMove: () => position?.readerMoved(), onLocationChange: value => position?.locationChanged(value),
                 onPagesInit: count => position?.pagesInit(count), onPagesLoaded: count => position?.pagesLoaded(count),
-                onScaleChange: value => { zoom = value; emit('happier-pdf-zoom', value); },
+                fitScale: () => scaleFor('fit-width'),
+                onScaleChange: (_scale, next) => { zoom = next; send({ type: 'zoom', zoom: next }); emit('happier-pdf-zoom', next); },
             });
             return viewer.ready.then(() => {
                 if (signal?.aborted) return;

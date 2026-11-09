@@ -44,7 +44,8 @@ export type PopoverPortalOptions = Readonly<{
     matchAnchorWidth?: boolean;
     /**
      * Horizontal alignment relative to the anchor for top/bottom placements.
-     * Defaults to 'start' to preserve historical behavior.
+     * Defaults to 'start' to preserve historical behavior. `auto` hangs from the edge facing the larger
+     * side of the boundary (start for a trigger on the left, end for one on the right).
      */
     anchorAlign?: 'start' | 'center' | 'end' | 'auto';
     /**

@@ -1,4 +1,4 @@
-import type { AnchoredListPositionV1 } from '@happier-dev/protocol';
+import type { AnchoredListPositionV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
 import type { WindowBounds, WindowPointer } from '../treeDragDropTypes';
 
 /** How a flat list lays its items out: a column of rows, or a row of tabs (the spaces strip). */

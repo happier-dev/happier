@@ -11,19 +11,20 @@ import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback'
 import { isPierreDiffKillSwitchEnabled, supportsPierreRuntime } from './pierre/pierreRuntimeSupport.web';
 import { useInitialPresentationReadiness } from '@/components/ui/presentation/InitialPresentationReadinessContext';
 import { useEffectiveDiffWrapLines } from './diffPresentationStyle';
+import { getLoadedPierreRenderer, loadPierreRenderer } from './pierre/pierreRendererLoader.web';
 import { ProseDiffViewer } from './prose/ProseDiffViewer';
 import { useDiffHunkSlots } from './hunks/useDiffHunkSlots';
 import { renderDiffHunkRow } from './hunks/DiffHunkRow';
 
-const PierreDiffViewer = retryableLazy(async () => {
-    const renderer = await import('./pierre/PierreDiffViewer.web');
-    return { default: renderer.PierreDiffViewer };
-});
+const PierreDiffViewer = retryableLazy(async () => ({ default: (await loadPierreRenderer()).PierreDiffViewer }));
 
 const boundedLazyMountStyle: React.CSSProperties = { height: '100%', minHeight: 0, position: 'relative' };
 
 export const DiffViewer = React.memo<DiffViewerProps>((props) => {
     const rendererMode = useSetting('filesDiffRendererMode');
+    // A body that mounts once the renderer has loaded draws it directly; one mounted earlier keeps its
+    // lazy boundary for its lifetime, so the renderer never remounts under it.
+    const [loadedPierreViewer] = React.useState(() => getLoadedPierreRenderer()?.PierreDiffViewer ?? null);
     const initialPresentationReadiness = useInitialPresentationReadiness();
     const wrapLines = useEffectiveDiffWrapLines(props.wrapLines);
     const { renderAfterLine, reviewedLineIds } = useDiffHunkSlots(props, renderDiffHunkRow);
@@ -51,11 +52,13 @@ export const DiffViewer = React.memo<DiffViewerProps>((props) => {
             : props.mode === 'unified'
                 ? <HappierUnifiedDiffViewer {...props} renderAfterLine={renderAfterLine} reviewedLineIds={reviewedLineIds} wrapLines={wrapLines} />
                 : <HappierTextDiffViewer {...props} renderAfterLine={renderAfterLine} reviewedLineIds={reviewedLineIds} wrapLines={wrapLines} />;
-        const viewer = (
-            <React.Suspense fallback={loading}>
-                <PierreDiffViewer {...props} renderAfterLine={renderAfterLine} reviewedLineIds={reviewedLineIds} wrapLines={wrapLines} />
-            </React.Suspense>
-        );
+        const viewer = loadedPierreViewer
+            ? React.createElement(loadedPierreViewer, { ...props, renderAfterLine, reviewedLineIds, wrapLines })
+            : (
+                <React.Suspense fallback={loading}>
+                    <PierreDiffViewer {...props} renderAfterLine={renderAfterLine} reviewedLineIds={reviewedLineIds} wrapLines={wrapLines} />
+                </React.Suspense>
+            );
         return props.virtualized === true ? (
             <LazyMountOnScreen
                 initiallyVisible={initialPresentationReadiness?.presentationPending === true}

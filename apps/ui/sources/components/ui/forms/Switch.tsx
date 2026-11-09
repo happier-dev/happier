@@ -3,15 +3,14 @@ import { Platform, type Switch as ReactNativeSwitch, type SwitchProps } from 're
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierSwitchNative, type HappierSwitchProps } from '@happier-dev/plugin-ui/presentation';
 
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { ITEM_ROW_SWITCH, useItemRowAccessibleName, useItemRowOwnsSwitch } from '@/components/ui/lists/ItemRowAccessibleName';
 
 import { Deferred } from './Deferred';
 
-const MINIMUM_INTERACTIVE_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
-
 export type AppSwitchProps = SwitchProps & {
     compact?: boolean;
+    /** How far the switch's hit area may reach past it on each side (the shared hit-area owner's reach). */
+    hitReach?: HappierSwitchProps['hitReach'];
 };
 
 /**
@@ -27,7 +26,7 @@ function useForwardedControlRef<T>(ref: React.ForwardedRef<T>) {
 }
 
 export const Switch = React.forwardRef<React.ElementRef<typeof ReactNativeSwitch>, AppSwitchProps>(function Switch(
-    { compact: _compact, style, value, onValueChange, disabled, ...rest },
+    { compact: _compact, style, value, onValueChange, disabled, hitReach, ...rest },
     ref,
 ) {
     const controlRef = useForwardedControlRef(ref);
@@ -49,9 +48,9 @@ export const Switch = React.forwardRef<React.ElementRef<typeof ReactNativeSwitch
                 }}
                 accessibilityLabel={accessibleName}
                 accessibilityHint={rest.accessibilityHint}
-                minimumTouchTarget={MINIMUM_INTERACTIVE_TARGET_SIZE}
                 nativeID={rest.nativeID}
                 testID={rest.testID}
+                hitReach={hitReach}
             presentational={rowOwnsSwitch}
                 controlRef={controlRef}
                 style={style as HappierSwitchProps['style']}

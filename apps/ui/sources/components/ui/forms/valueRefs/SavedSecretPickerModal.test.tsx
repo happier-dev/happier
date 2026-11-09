@@ -264,7 +264,9 @@ describe('SavedSecretPickerModal', () => {
 
         const staleRow = screen.findAllByTestId('saved-secret:happier:shared-secret:v1:shared-ready')
             .find(node => typeof node.props.title === 'string');
-        expect(staleRow?.props.subtitle).toBe('secrets.catalog.status.temporarily_unavailable');
+        // The unreachable Home is said once above the rows (#9), not on each row.
+        expect(staleRow?.props.subtitle).toBeUndefined();
+        expect(screen.findByTestId('saved-secret-catalog-unreachable')).toBeTruthy();
         expect(staleRow?.props.selected).toBe(true);
         expect(staleRow?.props.disabled).toBe(true);
         expect(staleRow?.props.onPress).toBeUndefined();

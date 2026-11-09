@@ -15,7 +15,7 @@ type FakeElement = {
 
 type ObserverRecord = Readonly<{
     options: Readonly<{ root: unknown; rootMargin: string }>;
-    intersect: () => void;
+    intersect: (visible?: boolean) => void;
 }>;
 
 /** Runs `run` with the browser boundary (window, document, IntersectionObserver) replaced by controlled fakes. */
@@ -37,7 +37,7 @@ async function withControlledBrowser(
             callback: (entries: readonly Readonly<{ isIntersecting: boolean }>[]) => void,
             options: ObserverRecord['options'],
         ) {
-            observers.push({ options, intersect: () => callback([{ isIntersecting: true }]) });
+            observers.push({ options, intersect: (visible = true) => callback([{ isIntersecting: visible }]) });
         }
 
         public disconnect() {}
@@ -93,6 +93,34 @@ describe('LazyMountOnScreen web', () => {
             });
 
             expect(mountedContent).toHaveBeenCalledTimes(1);
+            await act(async () => { observers[0]?.intersect(false); });
+            expect(screen.findAllByType(Content)).toHaveLength(1);
+            await screen.unmount();
+        });
+    });
+
+    it('stops clipped preview work and resumes once with current input on re-entry', async () => {
+        const renders = vi.fn();
+        await withControlledBrowser(async (observers) => {
+            function Preview({ value }: Readonly<{ value: string }>) {
+                renders(value);
+                return <div />;
+            }
+            const preview = (value: string) => <LazyMountOnScreen unmountWhenHidden rootMargin="0px">
+                <Preview value={value} />
+            </LazyMountOnScreen>;
+            const screen = await renderScreen(preview('first'), {
+                createNodeMock: element => (element as Readonly<{ type?: unknown }>).type === 'div' ? {} : null,
+            });
+            expect(renders).toHaveBeenCalledTimes(0);
+            expect(observers[0]?.options.rootMargin).toBe('0px');
+            await act(async () => { observers[0]?.intersect(true); });
+            expect(renders.mock.calls).toEqual([['first']]);
+            await act(async () => { observers[0]?.intersect(false); });
+            await screen.update(preview('current'));
+            expect(renders.mock.calls).toEqual([['first']]);
+            await act(async () => { observers[0]?.intersect(true); });
+            expect(renders.mock.calls).toEqual([['first'], ['current']]);
             await screen.unmount();
         });
     });

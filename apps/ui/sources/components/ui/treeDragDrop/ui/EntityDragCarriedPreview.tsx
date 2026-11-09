@@ -1,5 +1,6 @@
 import {
     resolveHappierCarriedPreviewPlacement,
+    type HappierCarriedPreviewPlacement,
     type HappierReleasePreviewIdentity,
 } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
@@ -12,7 +13,7 @@ import { POPOVER_PORTAL_Z_INDEX, tryRenderWebPortal, useNativeOverlayPortalNode 
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { installEntityDragCancellation } from '../entityDragCancellation';
-import { useEntityDragDropSnapshot, useEntityDragPointer } from '../entityDragDropHooks';
+import { useEntityDragDropSnapshot } from '../entityDragDropHooks';
 import type { EntityDragDropRuntime } from '../entityDragDropTypes';
 import { useEntityDropSettledNotices } from './EntityDropSettledFeedback';
 import { useEntityDragFeel } from './entityDragFeel';
@@ -68,8 +69,8 @@ function CarriedCardContent(props: EntityDragCarriedPreviewProps & Readonly<{ si
 const MemoCarriedCardContent = React.memo(CarriedCardContent);
 
 function CarriedCardPosition(props: EntityDragCarriedPreviewProps): React.ReactElement | null {
-    const pointer = useEntityDragPointer(props.runtime);
-    const snapshot = useEntityDragDropSnapshot(props.runtime);
+    const { runtime } = props;
+    const snapshot = useEntityDragDropSnapshot(runtime);
     const reducedMotion = useReducedMotionPreference();
     const viewport = useWindowDimensions();
     const [size, setSize] = React.useState<Readonly<{ width: number; height: number }>>({ width: 0, height: 0 });
@@ -78,19 +79,39 @@ function CarriedCardPosition(props: EntityDragCarriedPreviewProps): React.ReactE
         setSize((previous) => (previous.width === width && previous.height === height ? previous : { width, height }));
     }, []);
     const touch = props.density === 'touch';
-    const point = pointer ?? { x: 0, y: 0 };
-    const placement = touch
-        ? { left: TOUCH_CARD_INSET_PX, top: Math.max(0, point.y - TOUCH_CARD_LIFT_PX), side: 'right' as const }
-        : keepCarriedPreviewClear({
-            placement: resolveHappierCarriedPreviewPlacement({ pointer: point, size, viewport }), size, viewport,
-            clear: pointer && snapshot.targetId ? props.runtime.getTargetClearBounds(snapshot.targetId) : null,
-        });
-    const placementRef = React.useRef(placement);
-    placementRef.current = placement;
+    // Pointer frames never render this component: it wakes only when a pointer appears or leaves and when
+    // the card flips sides. The card's position rides shared values written from the pointer channel.
+    const hasPointer = React.useSyncExternalStore(runtime.subscribePointer, () => runtime.getPointer() !== null, () => false);
+    const side = React.useSyncExternalStore(runtime.subscribePointer, () => {
+        const point = runtime.getPointer();
+        return touch || !point ? 'right' : resolveHappierCarriedPreviewPlacement({ pointer: point, size, viewport }).side;
+    }, () => 'right' as const);
+    const placementRef = React.useRef<HappierCarriedPreviewPlacement>({ left: 0, top: 0, side: 'right' });
+    const placeX = useSharedValue(0);
+    const placeY = useSharedValue(0);
+    const baseLeft = touch ? TOUCH_CARD_INSET_PX : 0;
+    const targetId = snapshot.targetId;
+    React.useLayoutEffect(() => {
+        const place = () => {
+            const point = runtime.getPointer();
+            if (!point) return;
+            const placement = touch
+                ? { left: TOUCH_CARD_INSET_PX, top: Math.max(0, point.y - TOUCH_CARD_LIFT_PX), side: 'right' as const }
+                : keepCarriedPreviewClear({
+                    placement: resolveHappierCarriedPreviewPlacement({ pointer: point, size, viewport }), size, viewport,
+                    clear: targetId ? runtime.getTargetClearBounds(targetId) : null,
+                });
+            placementRef.current = placement;
+            placeX.value = placement.left - baseLeft;
+            placeY.value = placement.top;
+        };
+        place();
+        return runtime.subscribePointer(place);
+    }, [runtime, hasPointer, touch, size, viewport, targetId, baseLeft, placeX, placeY]);
     const returnX = useSharedValue(0);
     const returnY = useSharedValue(0);
     const opacity = useSharedValue(1);
-    const returning = snapshot.phase === 'settled' && snapshot.outcome?.status === 'refused' && pointer !== null;
+    const returning = snapshot.phase === 'settled' && snapshot.outcome?.status === 'refused' && hasPointer;
     React.useEffect(() => {
         cancelAnimation(returnX);
         cancelAnimation(returnY);
@@ -125,10 +146,10 @@ function CarriedCardPosition(props: EntityDragCarriedPreviewProps): React.ReactE
         };
     }, [opacity, props.runtime, reducedMotion, returnX, returnY, returning, snapshot]);
     const animatedStyle = useAnimatedStyle(() => ({
-        transform: [{ translateX: returnX.value }, { translateY: returnY.value }],
+        transform: [{ translateX: placeX.value + returnX.value }, { translateY: placeY.value + returnY.value }],
         opacity: opacity.value,
     }));
-    if (!pointer) return null;
+    if (!hasPointer) return null;
     return (
         <View
             pointerEvents="none"
@@ -136,8 +157,8 @@ function CarriedCardPosition(props: EntityDragCarriedPreviewProps): React.ReactE
             style={[
                 {
                     position: Platform.OS === 'web' ? ('fixed' as 'absolute') : 'absolute',
-                    left: placement.left,
-                    top: placement.top,
+                    left: baseLeft,
+                    top: 0,
                     zIndex: POPOVER_PORTAL_Z_INDEX,
                     // Hidden until measured once, so the first frame never lands on the wrong side.
                     opacity: touch || size.width > 0 ? 1 : 0,
@@ -146,7 +167,7 @@ function CarriedCardPosition(props: EntityDragCarriedPreviewProps): React.ReactE
             ]}
         >
             <Animated.View style={animatedStyle}>
-                <MemoCarriedCardContent {...props} side={placement.side} />
+                <MemoCarriedCardContent {...props} side={side} />
             </Animated.View>
         </View>
     );

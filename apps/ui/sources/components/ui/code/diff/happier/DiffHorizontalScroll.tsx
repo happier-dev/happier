@@ -19,8 +19,10 @@ export function DiffHorizontalScroll(props: Readonly<{ children: React.ReactNode
         const offsetX = Math.max(0, Math.round(event.nativeEvent.contentOffset.x));
         setViewport((previous) => (!previous || previous.offsetX === offsetX ? previous : { ...previous, offsetX }));
     }, []);
+    // In a bounded pane it shrinks to the pane (a virtualized list inside scrolls); under an
+    // unbounded parent it still takes the content's height.
     return (
-        <View style={{ flexGrow: 1, minWidth: 0 }} onLayout={onLayout}>
+        <View style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, minHeight: 0 }} onLayout={onLayout}>
             <DiffHunkRowViewportContext.Provider value={viewport}>
                 <HorizontalOverflowScrollView showsHorizontalScrollIndicator={true} contentContainerStyle={{ flexGrow: 1 }}
                     onScroll={onScroll}>

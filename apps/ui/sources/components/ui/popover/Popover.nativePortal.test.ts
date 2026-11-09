@@ -665,6 +665,38 @@ describe('Popover (native portal)', () => {
         expect(findFirstHostNodeByTestId(tree, 'host-slot')?.findAllByType('PopoverChild' as any).length).toBe(0);
     });
 
+    it('carries a live-picture backdrop into the portal host, so a menu opened over an HTML frame keeps the readable coat on native too', async () => {
+        vi.useFakeTimers();
+
+        const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
+        const { Popover } = await import('./Popover');
+        const { GlassLivePictureBackdropContext } = await import('@/components/ui/glass/livePictureBackdrop');
+
+        const anchorRef = { current: { measureInWindow: (cb: any) => cb(200, 200, 20, 20) } } as any;
+        // Stands where the menu's floating surface reads the declaration (GlassSurface).
+        const Probe = () => React.createElement('Probe', { overPicture: React.useContext(GlassLivePictureBackdropContext) });
+        const tree = (await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(
+                GlassLivePictureBackdropContext.Provider,
+                { value: true },
+                React.createElement(Popover, {
+                    open: true,
+                    anchorRef,
+                    portal: { native: true },
+                    backdrop: false,
+                    children: () => React.createElement(Probe),
+                }),
+            ),
+            React.createElement('View', { testID: 'host-slot' }, React.createElement(OverlayPortalHost)),
+        ))).tree;
+
+        const probes = findFirstHostNodeByTestId(tree, 'host-slot')?.findAllByType('Probe' as any) ?? [];
+        expect(probes).toHaveLength(1);
+        expect(probes[0]!.props.overPicture).toBe(true);
+    });
+
     it('keeps portal content hidden until it can be positioned (prevents visible jiggle)', async () => {
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');

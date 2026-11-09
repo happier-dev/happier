@@ -20,6 +20,7 @@ import type {
 } from '../diffViewerTypes';
 import { DiffHunkRowRegistryContext } from './diffHunkReadingLine';
 import { HunkContextMenu } from './HunkContextMenu';
+import { useDiffHunkNumber } from './diffHunkNumbering';
 
 /** The row label begins where the code text begins: past the two number columns of a diff gutter. */
 const ROW_TEXT_INSET = resolveCodeEditorGutterMetrics({
@@ -95,8 +96,7 @@ export const DiffHunkRow = React.memo(function DiffHunkRow(
   }, []);
   const state = review.stateOf?.(hunk) ?? 'open';
   const current = review.currentIndex === hunk.index;
-  const n = (review.numberOffset ?? 0) + hunk.index + 1;
-  const total = review.numberTotal ?? n;
+  const { n, total } = useDiffHunkNumber(review.numbering, hunk.index);
   const range = describeDiffHunkRange(hunk);
   const reason = (action: DiffHunkAction) =>
     review.disabledReason?.(hunk, action) ?? null;
@@ -180,7 +180,7 @@ export const DiffHunkRow = React.memo(function DiffHunkRow(
           >{narrow ? '' : `· ${range}`}</Text>
         </View>
       ) : (
-        <View style={[styles.label, narrow ? styles.labelNarrow : null]}>
+        <View style={[styles.label, narrow || shownReason ? styles.labelNarrow : null]}>
           <Text
             variant="micro"
             emphasis="semiBold"

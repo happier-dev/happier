@@ -1,6 +1,11 @@
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
 
-export type CodeLineInteractionMode = 'read' | 'comment' | 'commitSelection';
+/**
+ * `selectRange` is a touch reading surface that selects lines for Ask: a long-press selects a row, a tap
+ * extends the range from it (or clears it on the row alone), and the range is reported through
+ * `onPressLineRange` (an empty list clears). The owner shows it back through `selectedLineIds`.
+ */
+export type CodeLineInteractionMode = 'read' | 'comment' | 'commitSelection' | 'selectRange';
 
 export function resolveCodeLineRangeSelection(params: Readonly<{
     lines: readonly CodeLine[];

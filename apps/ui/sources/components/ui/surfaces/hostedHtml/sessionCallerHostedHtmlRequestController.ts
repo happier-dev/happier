@@ -1,4 +1,6 @@
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { formatQualifiedPluginResourcePolicyId, isActionEnabledByActionsSettings, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     PluginUiExecuteActionRequestV1Schema,
@@ -14,8 +16,11 @@ import {
 import type { CallerHostedHtmlHostApiRequestHandler } from '@/components/plugins/hostApi/hostedWebAdapter';
 import {
     dispatchPluginSurfaceAction,
+    type PluginSurfaceContributedActionTransport,
     type PluginSurfaceHostActionExecute,
 } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import { createPluginSurfaceHostApiError } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
+import { createPluginSurfaceActionFailurePayload } from '@/components/plugins/surfaces/actionFailure';
 import {
     createPluginSurfaceResourceReadHandler,
     type PluginSurfaceResourceReadTransport,
@@ -23,7 +28,9 @@ import {
 } from '@/components/plugins/surfaces/pluginSurfaceResourceRead';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
 import type { PluginUiLaunchInputV1 } from '@happier-dev/protocol/plugins/ui';
-import type { PluginResourceContextV1 } from '@happier-dev/protocol';
+import type { PluginUiHostApiSurfaceTargetV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginResourceContextV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import {
     createPluginSurfaceResourceWatchHandlers,
     type PluginSurfaceResourceWatchTransport,
@@ -38,6 +45,7 @@ export type CurrentCallerHostedHtmlPluginTarget = Readonly<{
 
 export type SessionCallerHostedHtmlRequestController = Readonly<{
     handleRequest: CallerHostedHtmlHostApiRequestHandler;
+    updateSurfaceTarget?(target: PluginUiHostApiSurfaceTargetV1): void;
     dispose(): void;
 }>;
 
@@ -71,6 +79,7 @@ export function resolveCallerHostedHtmlResourceBindingV1(input: Readonly<{
     sessionId?: string;
     mountInstanceKey?: string;
     launchInput?: PluginUiLaunchInputV1;
+    surfaceTarget?: PluginUiHostApiSurfaceTargetV1;
 }>): Readonly<{ machineId: string; serverId: string; expectedCallerOccurrenceId: string; context: PluginResourceContextV1 }> | null {
     const { target, reference } = input;
     if (!target.isCurrent()) return null;
@@ -88,9 +97,11 @@ export function resolveCallerHostedHtmlResourceBindingV1(input: Readonly<{
         || origin && (origin.phase !== 'current' || !origin.interactionEnabled || origin.machineId !== machineId || origin.serverId !== serverId)
         || packageOrigin && (packageOrigin.machineId !== machineId || packageOrigin.serverId !== serverId)) return null;
     const context = declaration.scope === 'global' ? { kind: 'global' as const }
-        : declaration.scope === 'session' && input.sessionId ? { kind: 'session' as const, sessionId: input.sessionId }
+        : declaration.scope === 'session' && input.sessionId
+            && (!input.surfaceTarget || input.surfaceTarget.kind === 'session' && input.surfaceTarget.sessionId === input.sessionId)
+            ? { kind: 'session' as const, sessionId: input.sessionId, ...(input.surfaceTarget ? { target: input.surfaceTarget } : {}) }
         : declaration.scope === 'surface' && input.mountInstanceKey ? { kind: 'surface' as const, mountInstanceKey: input.mountInstanceKey,
-            launchInput: input.launchInput ?? {} } : null;
+            launchInput: input.launchInput ?? {}, ...(input.surfaceTarget ? { target: input.surfaceTarget } : {}) } : null;
     return context ? { machineId, serverId, expectedCallerOccurrenceId: plugin.occurrenceId, context } : null;
 }
 
@@ -115,23 +126,41 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
     isAccountCurrent: () => boolean;
     /** Current exact-Home Session read authority supplied by the canonical Session projection. */
     isSessionCurrent?: () => boolean;
+    /** Host-observed ownership, not a fact supplied by the document. Missing ownership fails closed. */
+    isSessionOwned?: () => boolean;
+    readActionsSettings?: (signal?: AbortSignal) => Promise<ActionsSettingsV1>;
     pluginTarget: CurrentCallerHostedHtmlPluginTarget | null;
+    surfaceTarget?: PluginUiHostApiSurfaceTargetV1;
     mountInstanceKey?: string;
     launchInput?: PluginUiLaunchInputV1;
     publishResourceEvent: (event: PluginUiResourceSubscriptionEventV1) => void;
     notify: (input: Readonly<{ requestId: string; message: string; severity: 'info' | 'warning' | 'error' }>) => void;
-    dispatchAction?: typeof dispatchPluginSurfaceAction;
+    executeContributedAction?: PluginSurfaceContributedActionTransport;
     readResource?: PluginSurfaceResourceReadTransport;
     watchResource?: Partial<PluginSurfaceResourceWatchTransport>;
 }>): SessionCallerHostedHtmlRequestController {
     let disposed = false;
     const watchHandlersByResourceKey = new Map<string, ResourceHandlers>();
     const subscriptionResourceKeys = new Map<string, string>();
+    let surfaceTarget = input.surfaceTarget;
+    let resourceTargetController = new AbortController();
+    const retireResourceTarget = () => {
+        resourceTargetController.abort();
+        for (const handlers of watchHandlersByResourceKey.values()) handlers.dispose();
+        watchHandlersByResourceKey.clear();
+        subscriptionResourceKeys.clear();
+    };
     const isCurrent = (): boolean => !disposed && input.isAccountCurrent()
         && (input.sessionId === undefined || input.isSessionCurrent?.() === true);
+    const callerContext = () => input.sessionId !== undefined && input.isSessionOwned?.() !== true
+        ? { callerSurface: 'foreign_session_html' as const } : {};
+    const readSettings = async (signal?: AbortSignal) => {
+        const settings = await input.readActionsSettings?.(signal) ?? { v: 1 as const, actions: {} };
+        return settings;
+    };
     const readPluginTarget = (): CurrentCallerHostedHtmlPluginTarget => {
         const target = input.pluginTarget;
-        if (!target || !isCurrent() || !target.isCurrent()) {
+        if (!target || !target.isCurrent()) {
             throw new Error('caller_surface_retired');
         }
         return target;
@@ -139,11 +168,12 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
     const watchHandlers = (key: string, pluginId: string, target: CurrentCallerHostedHtmlPluginTarget, binding: PluginSurfaceResourceBinding): ResourceHandlers => {
         const existing = watchHandlersByResourceKey.get(key);
         if (existing) return existing;
+        const resourceSignal = resourceTargetController.signal;
         const created = createPluginSurfaceResourceWatchHandlers({
             pluginId,
             resource: binding,
             deliver: input.publishResourceEvent,
-            isCurrent: () => isCurrent() && target.isCurrent(),
+            isCurrent: () => isCurrent() && target.isCurrent() && !resourceSignal.aborted,
             ...(input.watchResource === undefined ? {} : { transport: input.watchResource }),
         });
         watchHandlersByResourceKey.set(key, created);
@@ -165,12 +195,6 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
             if (typeof parsed.data.action === 'string') {
                 const actionId = ActionIdSchema.safeParse(parsed.data.action);
                 if (!actionId.success) throw new Error('caller_surface_action_invalid');
-                if (
-                    actionId.data === 'session.message.send'
-                    && options?.consumeHostTransientActivation?.() !== true
-                ) {
-                    throw new Error('caller_surface_transient_activation_required');
-                }
                 const result = await input.executeHostAction(actionId.data, parsed.data.input, {
                     serverId: input.serverId,
                     serverIdentityId: input.serverIdentityId,
@@ -178,6 +202,7 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
                     ...(input.sessionId ? { defaultSessionId: input.sessionId } : {}),
                     actionRequestId: request.requestId,
                     surface: 'ui',
+                    ...callerContext(),
                     // Caller-authored HTML is executable automation, not a
                     // host-observed present-user gesture. Stamp this at the
                     // bridge so the shared Action policy keeps its dangerous
@@ -186,7 +211,7 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
                     authority: 'account_automation',
                     ...(options?.signal ? { signal: options.signal } : {}),
                 });
-                if (!result.ok) throw new Error(result.errorCode);
+                if (!result.ok) return createPluginSurfaceHostApiError(result.errorCode, [result.errorCode]);
                 return result.result as PluginUiJsonValueV1;
             }
             const target = readPluginTarget();
@@ -196,22 +221,28 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
             const serverId = target.serverId ?? origin?.serverId;
             if (!machineId || serverId !== input.serverId || origin && (origin.phase !== 'current' || !origin.interactionEnabled
                 || origin.machineId !== machineId || origin.serverId !== serverId)) throw new Error('caller_surface_retired');
-            const outcome = await (input.dispatchAction ?? dispatchPluginSurfaceAction)({
+            const settings = await readSettings(options?.signal);
+            const outcome = await dispatchPluginSurfaceAction({
                 action: parsed.data.action,
                 ...(parsed.data.input === undefined ? {} : { input: parsed.data.input }),
                 resolveContributedAction: createPluginUiProjectedActionResolver(target.projection.actionsById),
                 contributedAction: {
                     machineId,
                     serverId,
+                    ...(input.executeContributedAction ? { execute: input.executeContributedAction } : {}),
                     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
                 },
                 ...(input.sessionId ? { clientAction: { sessionId: input.sessionId } } : {}),
                 invocationSurface: 'ui',
+                hostAction: { execute: input.executeHostAction, context: {
+                    serverId: input.serverId, serverIdentityId: input.serverIdentityId, runtimeAccountId: input.accountId,
+                    authority: 'account_automation', surface: 'ui', actionsSettings: settings, ...callerContext(),
+                } },
                 isContributedActionAvailable: target.isCurrent,
                 isCurrent: () => isCurrent() && target.isCurrent(),
                 ...(options?.signal ? { signal: options.signal } : {}),
             });
-            if (!outcome.ok) throw new Error(outcome.reason);
+            if (!outcome.ok) return createPluginSurfaceActionFailurePayload(outcome);
             return outcome.result;
         }
         if (request.method === 'readResource' || request.method === 'watchResource') {
@@ -219,9 +250,25 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
             const record = readJsonRecord(payload);
             const reference = readExactQualifiedReference(record?.resource);
             if (!reference) throw new Error('caller_surface_resource_invalid');
-            const target = readPluginTarget();
+            const target = input.pluginTarget;
+            if (!target) throw new Error('caller_surface_retired');
             const binding = resolveCallerHostedHtmlResourceBindingV1({ target, reference, serverId: input.serverId,
-                sessionId: input.sessionId, mountInstanceKey: input.mountInstanceKey, launchInput: input.launchInput });
+                sessionId: input.sessionId, mountInstanceKey: input.mountInstanceKey, launchInput: input.launchInput, surfaceTarget });
+            // Own-Session callers keep the incumbent missing-declaration result without
+            // acquiring Account settings for a Resource that cannot be read.
+            if (!binding && !callerContext().callerSurface) throw new Error('plugin_resource_not_found');
+            const settings = await readSettings(options?.signal);
+            const context = { surface: 'ui' as const, ...callerContext() };
+            const policyId = formatQualifiedPluginResourcePolicyId(reference);
+            if (!isActionEnabledByActionsSettings(policyId, settings, context)) {
+                return createPluginSurfaceHostApiError('action_disabled', ['action_disabled']);
+            }
+            // Resources have no approval continuation. Ask refuses without creating a prompt;
+            // an explicit Allowed choice reaches the incumbent read/watch RPC unchanged.
+            if (isApprovalRequiredByActionsSettings(policyId, settings, context)) {
+                return createPluginSurfaceHostApiError('approval_required', ['approval_required']);
+            }
+            const resourceSignal = resourceTargetController.signal;
             if (!binding) throw new Error('plugin_resource_not_found');
             if (request.method === 'readResource') {
                 const handler = createPluginSurfaceResourceReadHandler({
@@ -230,9 +277,10 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
                         ...binding,
                         ...(input.readResource === undefined ? {} : { read: input.readResource }),
                     },
-                    isCurrent: () => isCurrent() && target.isCurrent(),
                 });
-                return await handler(request, options);
+                const cancellation = mergeAbortSignals([resourceSignal, options?.signal]);
+                try { return await handler(request, { ...options, signal: cancellation.signal }); }
+                finally { cancellation.dispose(); }
             }
             const parsedWatch = PluginUiResourceSubscriptionRequestV1Schema.safeParse(record);
             if (!parsedWatch.success) throw new Error('caller_surface_resource_invalid');
@@ -246,6 +294,7 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
                 });
             }
             const result = await watchHandlers(key, reference.pluginId, target, binding).watchResource(request, options);
+            if (resourceSignal.aborted) throw new Error('caller_surface_retired');
             subscriptionResourceKeys.set(parsedWatch.data.subscriptionId, key);
             return result;
         }
@@ -280,12 +329,19 @@ export function createSessionCallerHostedHtmlRequestController(input: Readonly<{
 
     return Object.freeze({
         handleRequest,
+        updateSurfaceTarget(target: PluginUiHostApiSurfaceTargetV1): void {
+            if (disposed || target === surfaceTarget) return;
+            if (input.sessionId !== undefined && (target.kind !== 'session' || target.sessionId !== input.sessionId)) {
+                throw new Error('caller_surface_session_mismatch');
+            }
+            retireResourceTarget();
+            surfaceTarget = target;
+            resourceTargetController = new AbortController();
+        },
         dispose(): void {
             if (disposed) return;
             disposed = true;
-            for (const handlers of watchHandlersByResourceKey.values()) handlers.dispose();
-            watchHandlersByResourceKey.clear();
-            subscriptionResourceKeys.clear();
+            retireResourceTarget();
         },
     });
 }

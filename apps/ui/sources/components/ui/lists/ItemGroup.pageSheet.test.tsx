@@ -18,7 +18,11 @@ vi.mock('react-native', async () => {
 // The user's list density is a stored local setting (storage boundary); the density owner itself runs.
 vi.mock('@/sync/store/hooks', async () => {
     const { createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return { useLocalSetting: createUseLocalSettingMock({ values: { uiItemDensity: 'cozy', uiFontScale: 1 } }) };
+    return {
+        useLocalSetting: createUseLocalSettingMock({ values: { uiItemDensity: 'cozy', uiFontScale: 1 } }),
+        // No signed-in Account at this boundary: list rows that read the active scope see none.
+        useActiveServerAccountScope: () => null,
+    };
 });
 
 // Supply the persisted preference at the storage boundary; exercise the real page-width owner.
@@ -160,6 +164,22 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
                 <ItemGroup title="Connection">
                     <WrappedRow testID="row-a" title="Name" />
                     <WrappedRow testID="row-b" title="Show in model picker" />
+                </ItemGroup>
+            </ListPresentationProvider>,
+        );
+        const dividers = rowDividers(screen, ['row-a', 'row-b']);
+        expect(dividers.map((color) => color !== null)).toEqual([true, false]);
+    });
+
+    it('draws no hairline under the last row of a bare group, so a panel footer below it keeps the only line', async () => {
+        const { ItemGroup, Item, ListPresentationProvider } = await loadModules();
+        // A flow panel's choices (Network access): rows without the group's card, its footer rule beneath.
+        const screen = await renderScreen(
+            <ListPresentationProvider value="page" pageInsets="contained">
+                <ItemGroup surface="none" density="compact" header="none">
+                    <Item testID="row-a" title="Can contact" />
+                    {null}
+                    <Item testID="row-b" title="Sites" />
                 </ItemGroup>
             </ListPresentationProvider>,
         );

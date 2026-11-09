@@ -110,6 +110,22 @@ describe('IconButton', () => {
         expect(hitSlopAfterLayout(screen, 'icon-btn', 26)).toEqual({ top: 9, bottom: 9, left: 1, right: 3 });
     });
 
+    it('bounds only the sides it is given: a header control keeps its top or bottom to the room it has and takes the rest', async () => {
+        const screen = await renderScreen(
+            <IconButton
+                testID="icon-btn"
+                iconName="plus"
+                accessibilityLabel="Add"
+                size={28}
+                minimumInteractiveTargetSize={44}
+                interactiveTargetEdgesPx={{ top: 0, bottom: 2 }}
+                onPress={() => {}}
+            />,
+        );
+        // The bounded sides keep only the room they declared; the sides left open reach their half.
+        expect(hitSlopAfterLayout(screen, 'icon-btn', 28)).toEqual({ top: 0, bottom: 2, left: 8, right: 8 });
+    });
+
     it('paints hover, press and selection on the drawn square, never on the hit area', async () => {
         const screen = await renderScreen(
             <IconButton

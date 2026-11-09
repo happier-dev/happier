@@ -283,6 +283,21 @@ describe('mounted entity drag owner', () => {
         expect(await next.release()).toEqual({ status: 'applied' });
         expect(f.effects).toHaveLength(1);
     });
+    it('reads the carried source description once per carry, not on every pointer frame', async () => {
+        const f = fixture();
+        let describes = 0;
+        let boundsReads = 0;
+        f.runtime.registerSource({ id: 'source', scope, getItem: () => session, isCurrent: () => true,
+            describe: () => { describes += 1; return { title: 'Child' }; },
+            getBounds: () => { boundsReads += 1; return { x: 0, y: 0, width: 200, height: 30 }; } });
+        const carry = f.runtime.begin('source')!;
+        const atBegin = describes;
+        for (let frame = 0; frame < 50; frame += 1) carry.move({ x: 10 + frame, y: 50 });
+        // The source line's geometry follows the pointer stream (it can scroll); its identity does not.
+        expect(boundsReads).toBeGreaterThanOrEqual(50);
+        expect(describes).toBe(atBegin);
+        expect(await carry.release()).toEqual({ status: 'applied' });
+    });
     it('reads source descriptions live and hides unavailable or retired source identity', () => {
         const runtime = createEntityDragDropRuntime();
         let title = 'Child';

@@ -9,6 +9,7 @@ const deviceState = vi.hoisted(() => ({
     platformOs: 'ios' as 'ios' | 'web',
     windowWidth: 360,
     windowHeight: 800,
+    realWebPermissions: false,
 }));
 
 const cameraState = vi.hoisted(() => ({
@@ -77,14 +78,45 @@ vi.mock('@expo/vector-icons', async () => {
     };
 });
 
+// Keep Expo's permission hook and browser permission implementation real. Only
+// the camera preview and browser APIs are boundaries in the permission regression.
+vi.mock('expo-modules-core', async () => {
+    const { createRequire } = await import('node:module');
+    const appRequire = createRequire(import.meta.url);
+    const coreRequire = createRequire(appRequire.resolve('expo-modules-core/package.json'));
+    const core = await import('@/dev/expoModulesCoreStub');
+    const { UnavailabilityError } = await vi.importActual<typeof import('expo-modules-core')>(
+        coreRequire.resolve('./src/errors/UnavailabilityError.ts'),
+    );
+    return { ...core, UnavailabilityError };
+});
+
 let lastCameraProps: any = null;
-vi.mock('expo-camera', () => ({
-    CameraView: (props: any) => {
-        lastCameraProps = props;
-        return React.createElement('CameraView', props);
-    },
-    useCameraPermissions: () => [cameraState.permission, cameraState.requestPermission],
-}));
+vi.mock('expo-camera', async () => {
+    const { createRequire } = await import('node:module');
+    const appRequire = createRequire(import.meta.url);
+    const coreRequire = createRequire(appRequire.resolve('expo-modules-core/package.json'));
+    const { createPermissionHook } = await vi.importActual<typeof import('expo-modules-core')>(
+        coreRequire.resolve('./src/PermissionsHook.ts'),
+    );
+    const cameraRequire = createRequire(appRequire.resolve('expo-camera/package.json'));
+    const { default: camera } = await vi.importActual<{
+        default: Pick<typeof import('expo-camera').Camera, 'getCameraPermissionsAsync' | 'requestCameraPermissionsAsync'>;
+    }>(cameraRequire.resolve('./src/ExpoCameraManager.web.ts'));
+    const useWebPermissions = createPermissionHook({
+        getMethod: () => camera.getCameraPermissionsAsync(),
+        requestMethod: () => camera.requestCameraPermissionsAsync(),
+    });
+    return {
+        CameraView: (props: any) => {
+            lastCameraProps = props;
+            return React.createElement('CameraView', props);
+        },
+        useCameraPermissions: (options?: Parameters<typeof useWebPermissions>[0]) => deviceState.realWebPermissions
+            ? useWebPermissions(options)
+            : [cameraState.permission, cameraState.requestPermission],
+    };
+});
 
 describe('QrCodeScannerView', () => {
     function flattenStyle(style: unknown): Record<string, unknown> {
@@ -103,6 +135,7 @@ describe('QrCodeScannerView', () => {
         deviceState.platformOs = 'ios';
         deviceState.windowWidth = 360;
         deviceState.windowHeight = 800;
+        deviceState.realWebPermissions = false;
         cameraState.permission = { granted: true };
         cameraState.requestPermission.mockReset();
         cameraState.requestPermission.mockResolvedValue({ granted: true });
@@ -169,6 +202,30 @@ describe('QrCodeScannerView', () => {
         expect(lastCameraProps).not.toBeNull();
     });
 
+    it('requests camera access without querying an unavailable browser Permissions API', async () => {
+        deviceState.platformOs = 'web';
+        deviceState.realWebPermissions = true;
+        const track = { stop: vi.fn() };
+        const stream = { getTracks: () => [track], removeTrack: vi.fn() };
+        const getUserMedia = vi.fn(async () => stream);
+        vi.stubGlobal('navigator', { maxTouchPoints: 5, mediaDevices: { getUserMedia } });
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+
+        await renderScreen(<QrCodeScannerView
+            title="t"
+            permissionRequiredMessage="perm"
+            onCancel={vi.fn()}
+            onScan={vi.fn()}
+            testIDPrefix="test"
+        />);
+
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(getUserMedia).toHaveBeenCalledWith({ video: true });
+        expect(track.stop).toHaveBeenCalled();
+        expect(lastCameraProps).not.toBeNull();
+    });
+
     it('does not keep the camera mounted when scanner activity is paused', async () => {
         const { QrCodeScannerView } = await import('./QrCodeScannerView');
 
@@ -203,6 +260,7 @@ describe('QrCodeScannerView', () => {
     });
 
     it('renders a high-contrast close affordance over the camera preview', async () => {
+        vi.stubGlobal('navigator', { maxTouchPoints: 1 });
         const { QrCodeScannerView } = await import('./QrCodeScannerView');
 
         const screen = await renderScreen(<QrCodeScannerView
@@ -218,8 +276,11 @@ describe('QrCodeScannerView', () => {
         const closeIcon = screen.root.findByProps({ testID: 'test-close-icon' });
         const closeStyle = flattenStyle(closeButton.props.style);
         expect(closeStyle.backgroundColor).toBe(lightTheme.colors.overlay.foreground);
-        expect(closeStyle.minWidth).toBe(44);
-        expect(closeStyle.minHeight).toBe(44);
+        // A touch target is a hit area, not a drawn size (DESIGN.md): the 40 circle reaches 44 past its edge.
+        expect(closeStyle.width).toBe(40);
+        expect(closeStyle.height).toBe(40);
+        expect(screen.findHostByTestId('test-close')?.props.hitSlop).toEqual({ top: 2, bottom: 2, left: 2, right: 2 });
+        vi.unstubAllGlobals();
         expect(closeIcon.props.color).toBe(lightTheme.colors.text.primary);
     });
 

@@ -1,14 +1,10 @@
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
-let storage: typeof import('@/sync/domains/state/storage')['storage'];
-let previousState: ReturnType<typeof storage.getState>;
-beforeAll(async () => {
-    ({ storage } = await import('@/sync/domains/state/storage'));
-    previousState = storage.getState();
-});
+const { storage } = await import('@/sync/domains/state/storageStore');
+const previousState = storage.getState();
 afterEach(() => {
     standardCleanup();
     act(() => storage.setState(previousState, true));
@@ -19,6 +15,21 @@ function setBlurSettings(enabled: boolean, intensity: 'light' | 'regular' | 'str
 }
 
 describe('useGlassBlurSetting', () => {
+    it('consumes the write-owned material hold while the acknowledged setting remains unchanged', async () => {
+        const { useGlassBlurSetting } = await import('./useGlassBlurSetting');
+        const { holdSettingWrite } = await import('@/sync/store/settingsPreview');
+        setBlurSettings(true, 'regular');
+        act(() => storage.setState({ settingsScope: { serverId: 'held-material-home', accountId: 'owner' } }));
+        const reader = await renderHook(useGlassBlurSetting);
+        let withdraw!: () => void;
+        try {
+            await act(async () => { withdraw = holdSettingWrite({ anchor: 'appearance.glassPreset' }, 'solid'); });
+            expect(reader.getCurrent().blurEnabled).toBe(false);
+            expect(storage.getState().settings.glassBlurEnabled).toBe(true);
+            await act(async () => { withdraw(); });
+            expect(reader.getCurrent().blurEnabled).toBe(true);
+        } finally { withdraw?.(); }
+    });
     it('uses Strong for the default floating preset regardless of the global intensity', async () => {
         const { useGlassBlurSetting } = await import('./useGlassBlurSetting');
 

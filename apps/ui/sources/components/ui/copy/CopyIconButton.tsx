@@ -5,7 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton, type IconButtonVariant } from '@/components/ui/buttons/IconButton';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { t } from '@/text';
 
 const ICON_SIZE = 14;
@@ -31,10 +31,11 @@ export const CopyIconButton = React.memo<CopyIconButtonProps>(({ text, style, te
     const { theme } = useUnistyles();
     const { copy, isCopied } = useHappierCopyFeedback();
     const copied = isCopied();
+    const writeClipboard = useClipboardWrite();
 
     const onCopy = React.useCallback(() => copy(
-        () => setClipboardStringSafe(typeof text === 'function' ? text() : text),
-    ), [copy, text]);
+        () => writeClipboard(typeof text === 'function' ? text() : text),
+    ), [copy, text, writeClipboard]);
 
     return (
         <View style={style}>

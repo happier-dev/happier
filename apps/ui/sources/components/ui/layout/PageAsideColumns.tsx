@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import { HAPPIER_COLUMN_MIN_WIDTH_PX, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import type { PageAsideColumnsProps } from '@happier-dev/plugin-ui/components';
 
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 
@@ -24,13 +25,7 @@ const PAGE_ASIDE_COLUMN_WIDTH_PX = PAGE_ASIDE_SHEET_WIDTH_PX + 2 * HAPPIER_PAGE_
  * only mirrors what the sections can show themselves: pass `children` as a function to learn which
  * layout is in effect.
  */
-export const PageAsideColumns = React.memo(function PageAsideColumns(props: Readonly<{
-    children: React.ReactNode | ((layout: Readonly<{ sideBySide: boolean }>) => React.ReactNode);
-    aside: React.ReactNode | null;
-    compact: boolean;
-    closing?: React.ReactNode;
-    compactAside?: 'first' | 'last' | 'none';
-}>) {
+export const PageAsideColumns = React.memo(function PageAsideColumns(props: Omit<PageAsideColumnsProps, 'fallback'>) {
     const columnWidth = useLayoutMaxWidthStyle();
     // Split panes are wide enough by construction, so the first paint is already final there.
     const [wide, setWide] = React.useState(!props.compact);

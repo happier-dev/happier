@@ -6,14 +6,19 @@ import type { CodeEditorProps } from '../codeEditorTypes';
 import { resolveMonacoLanguageId } from '../codeEditorTypes';
 import type { CodeEditorFindHandle, CodeEditorFindSnapshot, CodeEditorHandle, CodeEditorHistory } from '../codeEditorTypes';
 import { createMonacoCommands } from './monacoCommands';
+import { createMonacoInlineSuggestions } from './monacoInlineSuggestions';
+import { createMonacoNextEdit } from './monacoNextEdit';
+import { keepSuggestWidgetInFrame } from './monacoSuggestClearance';
+import { bindMonacoLanguageIntelligence } from './monacoLanguageIntelligence';
+import { CODE_EDITOR_LANGUAGE_COMMANDS, type CodeEditorLanguageCommand, type CodeEditorLanguageIntelligence } from '../codeEditorTypes';
 import { createMonacoPeekZone } from './monacoPeekZone';
 import type { CodeEditorFindSet } from '../bridge/codeEditorFindBridge';
 import type { editor as MonacoEditorApi } from 'monaco-editor';
 import { TextInput } from '@/components/ui/text/Text';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
-import { CODE_EDITOR_TAB_SIZE, CODE_GUTTER_METRICS, resolveCodeEditorFontMetrics, resolveCodeEditorGutterMetrics } from '../codeEditorFontMetrics';
+import { CODE_EDITOR_FORMATTING_OPTIONS, CODE_GUTTER_METRICS, resolveCodeEditorFontMetrics, resolveCodeEditorGutterMetrics } from '../codeEditorFontMetrics';
 import { resolveCodeMonoFontFamily } from '../../codeTypography';
-import { buildMonacoEditorThemeData, formatCodeEditorBlameMarkCss, formatCodeEditorChangeMarkCss, formatCodeEditorDiagnosticCss, resolveCodeEditorTheme } from '../editorTheme';
+import { buildMonacoEditorThemeData, formatCodeEditorBlameMarkCss, formatCodeEditorChangeMarkCss, formatCodeEditorDiagnosticCss, formatCodeEditorNextEditCss, resolveCodeEditorTheme } from '../editorTheme';
 
 /** One shared stylesheet for every mounted Monaco editor's change marks; rewritten when the theme changes. */
 const CHANGE_MARK_STYLE_ID = 'happier-editor-change-marks';
@@ -25,6 +30,8 @@ import { useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor
 import { createMonacoDecorations } from './monacoDecorations';
 import type { EditorDecoration, EditorDecorationLayer } from '../codeEditorTypes';
 import { useKeyboardCommand } from '@/keyboard/KeyboardShortcutProvider';
+import { useMonacoEscapeLayer } from './useMonacoEscapeLayer';
+import { t } from '@/text';
 
 
 type MonacoType = any;
@@ -41,10 +48,10 @@ const MONACO_LOADER_SCRIPT_SRC = '/monaco/vs/loader.js';
 
 let loaderPromise: Promise<void> | null = null;
 let basicLanguagesPromise: Promise<void> | null = null;
-const configuredTypeScriptInstances = new WeakSet<object>();
+const configuredLanguageServices = new WeakSet<object>();
 
-function disableMonacoTypeScriptServices(monaco: Pick<typeof import('monaco-editor'), 'typescript'>): void {
-    if (configuredTypeScriptInstances.has(monaco)) return;
+function disableMonacoLanguageIntelligence(monaco: Pick<typeof import('monaco-editor'), 'typescript' | 'json' | 'css' | 'html'>): void {
+    if (configuredLanguageServices.has(monaco)) return;
     const off: import('monaco-editor').typescript.ModeConfiguration = {
         completionItems: false, hovers: false, documentSymbols: false, definitions: false, references: false,
         documentHighlights: false, rename: false, diagnostics: false, documentRangeFormattingEdits: false,
@@ -52,7 +59,12 @@ function disableMonacoTypeScriptServices(monaco: Pick<typeof import('monaco-edit
     };
     monaco.typescript.typescriptDefaults.setModeConfiguration(off);
     monaco.typescript.javascriptDefaults.setModeConfiguration(off);
-    configuredTypeScriptInstances.add(monaco);
+    // Keep engine-owned syntax/folding/colour support, but never a second semantic answer beside the Machine controller.
+    for (const defaults of [monaco.json.jsonDefaults, monaco.css.cssDefaults, monaco.css.scssDefaults, monaco.css.lessDefaults,
+        monaco.html.htmlDefaults, monaco.html.handlebarDefaults, monaco.html.razorDefaults]) {
+        defaults.setModeConfiguration({ ...defaults.modeConfiguration, ...off, documentFormattingEdits: false, selectionRanges: false });
+    }
+    configuredLanguageServices.add(monaco);
 }
 
 function ensureMonacoLoader(): Promise<void> {
@@ -121,7 +133,7 @@ async function ensureMonaco(): Promise<MonacoType> {
     if (window.monaco) {
         // Best-effort: register Monaco basic languages (markdown, yaml, python, etc.).
         await ensureMonacoBasicLanguages();
-        disableMonacoTypeScriptServices(window.monaco);
+        disableMonacoLanguageIntelligence(window.monaco);
         return window.monaco;
     }
     if (!window.require) throw new Error('Monaco loader did not initialize require()');
@@ -147,7 +159,7 @@ async function ensureMonaco(): Promise<MonacoType> {
     await ensureMonacoBasicLanguages();
 
     if (!window.monaco) throw new Error('Monaco loaded but window.monaco is missing');
-    disableMonacoTypeScriptServices(window.monaco);
+    disableMonacoLanguageIntelligence(window.monaco);
     return window.monaco;
 }
 
@@ -268,6 +280,8 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
             theme.colors.text.secondary,
             theme.colors.text.tertiary,
             theme.colors.diff.added.border,
+            theme.colors.diff.inlineAdded,
+            theme.colors.diff.inlineRemoved,
         ],
     );
     // The change gutter's marks (P4-R9) are Monaco line decorations; their stroke comes from the theme owner.
@@ -282,17 +296,25 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                 { inset: `calc(${CODE_GUTTER_METRICS.columnGap + 2}px - var(${LINE_NUMBER_SLACK_VAR}, 0px))` }),
             formatCodeEditorDiagnosticCss(editorTheme, (severity) => `.monaco-editor .happier-editor-diagnostic-${severity}`),
             formatCodeEditorBlameMarkCss(editorTheme, (tone) => `.monaco-editor .cldr.happier-editor-blame-${tone}`),
+            formatCodeEditorNextEditCss(editorTheme, (part) => `.monaco-editor .happier-next-edit-${part}`),
             // The code view's numbers (CodeGutter): the smaller number size, right edge where View draws it.
             `.monaco-editor .margin-view-overlays .line-numbers{font-size:var(${LINE_NUMBER_FONT_SIZE_VAR});padding-right:var(${LINE_NUMBER_SLACK_VAR}, 0px)}`,
+            // The sticky scroll header pins a scope's first line: its number reads like every other number.
+            `.monaco-editor .sticky-line-number-inner{font-size:var(${LINE_NUMBER_FONT_SIZE_VAR});padding-right:var(${LINE_NUMBER_SLACK_VAR}, 0px)}`,
+            // Monaco 0.57 types through a focusable EditContext element that its generic focus rule rings in blue,
+            // a box around the caret's line (worst around ghost text). The caret is the editor's focus mark.
+            '.monaco-editor .native-edit-context.native-edit-context:focus{outline:none}',
         ].join('\n');
     }, [editorTheme]);
     const containerRef = React.useRef<any>(null);
+    const textSurfaceRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const editorRef = React.useRef<any>(null);
     const modelRef = React.useRef<any>(null);
     const changeDebounceMsRef = React.useRef<number>(typeof props.changeDebounceMs === 'number' ? props.changeDebounceMs : 250);
     const onChangeRef = React.useRef(props.onChange);
     const ignoreChangeRef = React.useRef(false);
     const latestValueRef = React.useRef(props.value);
+    const [fallbackValue, setFallbackValue] = React.useState(props.value);
     const latestLanguageRef = React.useRef(resolveMonacoLanguageId(props.language));
     const latestReadOnlyRef = React.useRef(props.readOnly ?? false);
     const latestWrapLinesRef = React.useRef(props.wrapLines ?? true);
@@ -325,12 +347,29 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     const activationListenersRef = React.useRef(new Set<Parameters<NonNullable<CodeEditorHandle['onActivatePosition']>>[0]>());
     const composingRef = React.useRef(false);
     const commandsRef = React.useRef<ReturnType<typeof createMonacoCommands> | null>(null);
+    const inlineRuntimeRef = React.useRef<ReturnType<typeof createMonacoInlineSuggestions> | null>(null);
+    const nextEditRuntimeRef = React.useRef<ReturnType<typeof createMonacoNextEdit> | null>(null);
+    const intelligenceRef = React.useRef<CodeEditorLanguageIntelligence | null>(null);
+    const intelligenceBindingRef = React.useRef<ReturnType<typeof bindMonacoLanguageIntelligence> | null>(null);
+    const setLanguageIntelligence = React.useCallback((port: CodeEditorLanguageIntelligence | null) => {
+        intelligenceBindingRef.current?.dispose(); intelligenceBindingRef.current = null;
+        intelligenceRef.current = port;
+        nextEditRuntimeRef.current?.setPort(port?.nextEditSuggestions ?? null, port?.nextEditKeys !== false);
+        if (port && editorRef.current && window.monaco) intelligenceBindingRef.current = bindMonacoLanguageIntelligence(window.monaco, editorRef.current, port);
+    }, []);
+    const documentHistoryRef = React.useRef(props.history);
+    documentHistoryRef.current = props.history;
+    const commandHistoryRef = React.useRef<'undo' | 'redo' | undefined>(undefined);
     const peekZoneRef = React.useRef<ReturnType<typeof createMonacoPeekZone> | null>(null);
     const historyListenersRef = React.useRef(new Set<(state: CodeEditorHistory) => void>());
     const publishHistory = React.useCallback(() => {
+        if (documentHistoryRef.current) return;
         const state = commandsRef.current?.getHistory() ?? { canUndo: false, canRedo: false };
         for (const listener of historyListenersRef.current) listener(state);
     }, []);
+    React.useEffect(() => props.history?.subscribe(state => {
+        for (const listener of historyListenersRef.current) listener(state);
+    }), [props.history]);
     const pendingRevealRef = React.useRef<null | { line: number; options?: Parameters<CodeEditorHandle['revealLine']>[1] }>(
         props.initialLine ? { line: props.initialLine, options: { behavior: 'instant' } } : null,
     );
@@ -388,8 +427,9 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
         const selection = editor?.getSelection?.();
         if (!editor || !selection || !model) return null;
         const empty = selection.startLineNumber === selection.endLineNumber && selection.startColumn === selection.endColumn;
-        const position = editor.getScrolledVisiblePosition?.({ lineNumber: selection.startLineNumber, column: selection.startColumn });
-        const bounds = editor.getDomNode?.()?.getBoundingClientRect();
+        // Only a range gets a toolbar to anchor; locating a bare caret forces a synchronous layout on every keystroke.
+        const position = empty ? null : editor.getScrolledVisiblePosition?.({ lineNumber: selection.startLineNumber, column: selection.startColumn });
+        const bounds = position ? editor.getDomNode?.()?.getBoundingClientRect() : null;
         return {
             startLine: selection.startLineNumber,
             endLine: selection.endLineNumber > selection.startLineNumber && selection.endColumn === 1
@@ -401,7 +441,8 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     }, []);
     const applyFind = React.useCallback((request?: CodeEditorFindSet) => {
         const editor = editorRef.current as MonacoEditorApi.IStandaloneCodeEditor | null;
-        if (!editor) { pendingFindRef.current = request ?? 'open'; return; }
+        // A seed already opens Find, so a later bare open while the engine boots keeps the pending seed.
+        if (!editor) { pendingFindRef.current = request ?? (pendingFindRef.current && pendingFindRef.current !== 'open' ? pendingFindRef.current : 'open'); return; }
         pendingFindRef.current = null;
         if (!request) {
             // No arguments preserve a nonempty native query/options. actions.find would reseed
@@ -414,13 +455,23 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
             editor.setPosition(position);
             editor.revealPositionInCenter(position);
         }
-        editor.trigger('happier.find', 'editor.actions.findWithArgs', {
-            searchString: request.query,
-            isRegex: request.options.regex,
-            isCaseSensitive: request.options.matchCase,
-            matchWholeWord: false,
-            findInSelection: false,
-        });
+        // Monaco's findWithArgs seeds from the word at the caret while its own Find state is empty, and that
+        // seed wins over the given search string. The host's query is what this start shows, so selection
+        // seeding is off for exactly this synchronous start (Monaco reads the option before its first await).
+        const seeding = (editor.getRawOptions?.().find as { seedSearchStringFromSelection?: 'never' | 'always' | 'selection' } | undefined)
+            ?.seedSearchStringFromSelection ?? 'always';
+        editor.updateOptions({ find: { seedSearchStringFromSelection: 'never' } });
+        try {
+            editor.trigger('happier.find', 'editor.actions.findWithArgs', {
+                searchString: request.query,
+                isRegex: request.options.regex,
+                isCaseSensitive: request.options.matchCase,
+                matchWholeWord: false,
+                findInSelection: false,
+            });
+        } finally {
+            editor.updateOptions({ find: { seedSearchStringFromSelection: seeding } });
+        }
     }, []);
     const find = React.useMemo<CodeEditorFindHandle>(() => {
         const editor = () => editorRef.current as MonacoEditorApi.IStandaloneCodeEditor | null;
@@ -454,9 +505,12 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
 
     React.useEffect(() => {
         latestValueRef.current = props.value;
+        setFallbackValue(props.value);
     }, [props.value]);
 
-    const [ready, setReady] = React.useState(false);
+    const [readySurface, setReadySurface] = React.useState<Readonly<{ runtime: ReturnType<typeof createMonacoInlineSuggestions> | null }> | null>(null);
+    const ready = readySurface?.runtime != null;
+    useMonacoEscapeLayer({ editorRef, inline: readySurface?.runtime ?? null, nextEditRef: nextEditRuntimeRef, find });
     const language = resolveMonacoLanguageId(props.language);
     const wrapLines = props.wrapLines ?? true;
     const showLineNumbers = props.showLineNumbers ?? true;
@@ -528,6 +582,78 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
         }, debounceMs);
     }, [flushPendingChange]);
 
+    const runLanguageCommand = React.useCallback(async (command: CodeEditorLanguageCommand) => {
+        flushPendingChange();
+        try {
+            await intelligenceBindingRef.current?.runCommand(command);
+        } finally {
+            flushPendingChange();
+        }
+    }, [flushPendingChange]);
+
+    const runCommand = React.useCallback<CodeEditorHandle['runCommand']>((command) => {
+        if (composingRef.current) return;
+        if (nextEditRuntimeRef.current?.command(command)) return;
+        if (inlineRuntimeRef.current?.command(command)) return;
+        if (typeof command === 'string' && CODE_EDITOR_LANGUAGE_COMMANDS.includes(command as CodeEditorLanguageCommand)) {
+            void runLanguageCommand(command as CodeEditorLanguageCommand); return;
+        }
+        const history = documentHistoryRef.current;
+        // An explicit edit is its own undo step, even while typing is debounced.
+        if (history && typeof command === 'object') flushPendingChange();
+        if (history && (command === 'undo' || command === 'redo')) {
+            if (latestReadOnlyRef.current) return;
+            flushPendingChange();
+            const value = modelRef.current?.getValue?.() ?? latestValueRef.current;
+            const next = history[command](value);
+            if (next === null) return;
+            command = { replaceDocument: next, history: command };
+        }
+        commandHistoryRef.current = typeof command === 'object' && 'replaceDocument' in command ? command.history : undefined;
+        try {
+            if (commandsRef.current) commandsRef.current.runCommand(command);
+            else if (!latestReadOnlyRef.current && typeof command === 'object' && 'replaceDocument' in command) {
+                latestValueRef.current = command.replaceDocument;
+                setFallbackValue(command.replaceDocument);
+                if (command.history) onChangeRef.current(command.replaceDocument, { history: command.history });
+                else onChangeRef.current(command.replaceDocument);
+            }
+        }
+        finally {
+            if (history && typeof command === 'object') flushPendingChange();
+            commandHistoryRef.current = undefined;
+        }
+        publishHistory();
+    }, [flushPendingChange, publishHistory, runLanguageCommand]);
+    const captureHistoryKey = React.useCallback((event: KeyboardEvent) => {
+        if (!documentHistoryRef.current || (!event.metaKey && !event.ctrlKey) || event.altKey || event.isComposing || composingRef.current) return false;
+        const key = event.key.toLowerCase();
+        if (key !== 'z' && key !== 'y') return false;
+        event.preventDefault(); event.stopImmediatePropagation();
+        runCommand(key === 'y' || event.shiftKey ? 'redo' : 'undo');
+        return true;
+    }, [runCommand]);
+    const captureHistoryInput = React.useCallback((event: InputEvent) => {
+        if (!documentHistoryRef.current || event.isComposing || composingRef.current) return;
+        if (event.inputType !== 'historyUndo' && event.inputType !== 'historyRedo') return;
+        event.preventDefault(); event.stopImmediatePropagation();
+        runCommand(event.inputType === 'historyUndo' ? 'undo' : 'redo');
+    }, [runCommand]);
+    React.useEffect(() => {
+        const node = textSurfaceRef.current as unknown as HTMLElement | null;
+        node?.addEventListener('keydown', captureHistoryKey, true);
+        node?.addEventListener('beforeinput', captureHistoryInput, true);
+        return () => {
+            node?.removeEventListener('keydown', captureHistoryKey, true);
+            node?.removeEventListener('beforeinput', captureHistoryInput, true);
+        };
+    }, [captureHistoryInput, captureHistoryKey]);
+    const onFallbackChange = React.useCallback((value: string) => {
+        latestValueRef.current = value;
+        setFallbackValue(value);
+        onChangeRef.current(value);
+    }, []);
+
     React.useImperativeHandle(
         ref,
         () => ({
@@ -543,6 +669,7 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
             },
             focus: () => editorRef.current?.focus?.(),
             find,
+            inlineSuggestions: readySurface?.runtime?.handle,
             getSelection,
             getLineRect: (line) => {
                 const editor = editorRef.current as MonacoEditorApi.IStandaloneCodeEditor | null;
@@ -574,10 +701,12 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
             setPeekZone: (zone) => peekZoneRef.current?.setPeekZone(zone),
             getPeekZoneRect: () => peekZoneRef.current?.getPeekZoneRect() ?? null,
             revealLine,
-            runCommand: (command) => commandsRef.current?.runCommand(command),
+            runCommand,
+            setLanguageIntelligence,
+            formatDocument: () => runLanguageCommand('format'),
             subscribeHistory: (listener) => {
                 historyListenersRef.current.add(listener);
-                listener(commandsRef.current?.getHistory() ?? { canUndo: false, canRedo: false });
+                listener(documentHistoryRef.current?.getSnapshot() ?? commandsRef.current?.getHistory() ?? { canUndo: false, canRedo: false });
                 return () => { historyListenersRef.current.delete(listener); };
             },
             setDecorations: (layer, items) => {
@@ -606,8 +735,13 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                 return position ? { line: position.lineNumber, character: position.column - 1 } : null;
             },
         }),
-        [find, flushPendingChange, getSelection, publishHistory, revealLine],
+        [find, flushPendingChange, getSelection, publishHistory, readySurface, revealLine, runCommand, runLanguageCommand, setLanguageIntelligence],
     );
+
+    React.useEffect(() => {
+        // Consumers bind in onReady, after this runtime's imperative handle has committed.
+        if (readySurface) onReadyRef.current?.();
+    }, [readySurface]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -635,6 +769,7 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                     theme: initialEditorTheme.monacoThemeName,
                     readOnly: initialReadOnly,
                     hover: { enabled: false },
+                    inlineSuggest: { enabled: true, suppressSuggestions: false, showToolbar: 'never' },
                     minimap: { enabled: false },
                     // No ruler marks beside the text: the cursor's tick reads as a stray dark box in a framed editor.
                     hideCursorInOverviewRuler: true,
@@ -660,20 +795,39 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                     fontSize: initialFontMetrics.fontSize,
                     lineHeight: initialFontMetrics.lineHeight,
                     fontFamily: resolveCodeMonoFontFamily(),
-                    tabSize: CODE_EDITOR_TAB_SIZE,
-                    insertSpaces: true,
+                    ...CODE_EDITOR_FORMATTING_OPTIONS,
                     automaticLayout: true,
                     renderWhitespace: 'selection',
                 });
                 editorRef.current = editor;
+                // Public editor actions also own command-picker/trigger dispatch.
+                const historyActions = documentHistoryRef.current ? (['undo', 'redo'] as const).map(command => editor.addAction({
+                    id: command, label: t(command === 'undo' ? 'common.undo' : 'files.editing.redo'), run: () => runCommand(command),
+                })) : [];
+                inlineRuntimeRef.current = createMonacoInlineSuggestions(monaco, editor, model, {
+                    readOnly: () => latestReadOnlyRef.current,
+                    beforeAccept: flushPendingChange,
+                    afterAccept: () => { editor.pushUndoStop(); flushPendingChange(); },
+                });
+                const inlineContext = inlineRuntimeRef.current.handle.getContext;
+                nextEditRuntimeRef.current = createMonacoNextEdit(editor, model, {
+                    getContext: inlineContext,
+                    readOnly: () => latestReadOnlyRef.current,
+                    beforeApply: flushPendingChange,
+                    afterApply: flushPendingChange,
+                });
+                setLanguageIntelligence(intelligenceRef.current);
                 // Capture before Monaco's keybinding and modifier-click contributions see the event.
                 const captureGotoKey = (event: KeyboardEvent) => {
-                    if ((event.key !== 'F12' && event.key !== 'F2') || event.isComposing || composingRef.current || event.ctrlKey || event.metaKey) return;
+                    if (captureHistoryKey(event)) return;
+                    if ((event.key !== 'F12' && event.key !== 'F2') || event.isComposing || composingRef.current) return;
                     // F2 is Happier's semantic rename (P7 U7), never Monaco's single-model rename.
-                    if (event.key === 'F2' && (event.shiftKey || event.altKey)) return;
+                    if (event.key === 'F2' && (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey)) return;
                     event.preventDefault();
                     event.stopImmediatePropagation();
-                    executeKeyboardCommandRef.current(event.key === 'F2' ? 'code.rename' : event.shiftKey ? 'code.findReferences' : 'code.goToDefinition');
+                    executeKeyboardCommandRef.current(event.key === 'F2' ? 'code.rename'
+                        : event.ctrlKey || event.metaKey ? event.shiftKey ? 'code.goToImplementation' : 'code.goToTypeDefinition'
+                            : event.altKey ? 'code.peekReferences' : event.shiftKey ? 'code.findReferences' : 'code.goToDefinition');
                 };
                 const captureGotoClick = (event: MouseEvent) => {
                     if ((!event.metaKey && !event.ctrlKey) || event.button > 0 || composingRef.current) return;
@@ -715,6 +869,7 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                 if (pendingFindRef.current) applyFind(pendingFindRef.current === 'open' ? undefined : pendingFindRef.current);
 
                 disposablesRef.current = [
+                    ...historyActions,
                     { dispose: () => {
                         node.removeEventListener('keydown', captureGotoKey, true);
                         node.removeEventListener('mousedown', captureGotoClick, true);
@@ -722,6 +877,8 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                     editor.onMouseMove?.((event: MonacoEditorApi.IEditorMouseEvent) => publishPointer(event.target.position)),
                     editor.onMouseLeave?.(() => publishPointer(null)),
                     editor.onDidLayoutChange?.(alignGutter),
+                    // The completion list stays inside the frame above the key row (Monaco sizes it against the window).
+                    keepSuggestWidgetInFrame(editor),
                     editor.onDidCompositionStart?.(() => { composingRef.current = true; }),
                     editor.onDidCompositionEnd?.(() => { composingRef.current = false; }),
                     editor.onDidChangeCursorSelection?.(() => {
@@ -739,7 +896,8 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                         for (const listener of selectionListenersRef.current) listener();
                         if (ignoreChangeRef.current) return;
                         const next = model.getValue();
-                        scheduleChange(next, event.isUndoing ? 'undo' : event.isRedoing ? 'redo' : undefined);
+                        latestValueRef.current = next;
+                        scheduleChange(next, commandHistoryRef.current ?? (event.isUndoing ? 'undo' : event.isRedoing ? 'redo' : undefined));
                     }),
                     editor.onDidBlurEditorText(() => {
                         flushPendingChange();
@@ -749,12 +907,13 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
                 for (const listener of selectionListenersRef.current) listener();
 
                 editor.render?.(true);
-                setReady(true);
+                setReadySurface({ runtime: inlineRuntimeRef.current });
                 publishHistory();
-                onReadyRef.current?.();
             } catch {
                 // Best-effort: stay on fallback surface.
-                setReady(false);
+                if (!cancelled) {
+                    setReadySurface({ runtime: null });
+                }
             }
         }
 
@@ -770,6 +929,11 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
             } catch {}
             try {
                 decorationControllerRef.current?.dispose();
+                nextEditRuntimeRef.current?.dispose();
+                nextEditRuntimeRef.current = null;
+                inlineRuntimeRef.current?.dispose();
+                inlineRuntimeRef.current = null;
+                intelligenceBindingRef.current?.dispose(); intelligenceBindingRef.current = null;
                 decorationControllerRef.current = null;
                 peekZoneRef.current?.dispose();
                 peekZoneRef.current = null;
@@ -865,13 +1029,13 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
     // even while Monaco is loading, otherwise `containerRef.current` never materializes and Monaco
     // cannot boot (leaving the editor stuck on the fallback textarea).
     return (
-        <View style={borderStyle}>
+        <View ref={textSurfaceRef} style={borderStyle}>
             <View testID={props.testID} ref={containerRef} style={{ flex: 1, backgroundColor: editorTheme.backgroundColor }} />
             {ready ? null : (
                 <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
                     <TextInput
-                        value={props.value}
-                        onChangeText={props.onChange}
+                        value={fallbackValue}
+                        onChangeText={onFallbackChange}
                         editable={!readOnly}
                         multiline
                         disableUiFontScaling

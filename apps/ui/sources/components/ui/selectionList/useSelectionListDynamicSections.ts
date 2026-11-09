@@ -1,7 +1,7 @@
 import * as React from 'react';
+import { scheduleSearchQuery } from '@happier-dev/plugin-sdk/async';
 
 import {
-    SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS,
     SELECTION_LIST_DEFAULT_LOADING_SKELETON_ROWS,
 } from './_constants';
 import {
@@ -190,9 +190,11 @@ export function useSelectionListDynamicSections(params: {
     const [stateMap, setStateMap] = React.useState<ReadonlyMap<string, DynamicSectionState>>(
         () => makeInitialState(dynamicSections, inputBehavior, inputValue, cache),
     );
+    const currentStateRef = React.useRef(stateMap);
+    currentStateRef.current = stateMap;
 
     // Per-section refs for debounce timer, abort controller, and latest sequence.
-    const debounceTimers = React.useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+    const debounceTimers = React.useRef<Map<string, () => void>>(new Map());
     const abortControllers = React.useRef<Map<string, AbortController>>(new Map());
     const sequenceCounters = React.useRef<Map<string, number>>(new Map());
     const currentRequestIdentityByIdRef = React.useRef<Map<string, string>>(new Map());
@@ -232,7 +234,7 @@ export function useSelectionListDynamicSections(params: {
         const activeIds = new Set(dynamicSections.map((section) => section.id));
         for (const [id, timer] of debounceTimers.current) {
             if (activeIds.has(id)) continue;
-            clearTimeout(timer);
+            timer();
             debounceTimers.current.delete(id);
             sequenceCounters.current.set(id, (sequenceCounters.current.get(id) ?? 0) + 1);
         }
@@ -336,7 +338,7 @@ export function useSelectionListDynamicSections(params: {
         return () => {
             isMountedRef.current = false;
             // Abort and clear all pending work on unmount.
-            debounceTimers.current.forEach((timer) => clearTimeout(timer));
+            debounceTimers.current.forEach((cancel) => cancel());
             debounceTimers.current.clear();
             abortControllers.current.forEach((ctrl) => ctrl.abort());
             abortControllers.current.clear();
@@ -384,7 +386,7 @@ export function useSelectionListDynamicSections(params: {
             // Clear any pending debounce timer for this section.
             const existingTimer = debounceTimers.current.get(id);
             if (existingTimer !== undefined) {
-                clearTimeout(existingTimer);
+                existingTimer();
                 debounceTimers.current.delete(id);
             }
             // Abort the previous in-flight request (if any) for this section.
@@ -425,7 +427,6 @@ export function useSelectionListDynamicSections(params: {
                 });
             }
 
-            const debounceMs = section.debounceMs ?? SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS;
             // A section that names its first load (`loadingHint`) shows that line, never placeholder rows.
             const skeletonCount = section.loadingHint
                 ? 0
@@ -441,6 +442,8 @@ export function useSelectionListDynamicSections(params: {
                 abortControllers.current.set(id, controller);
                 const sequence = (sequenceCounters.current.get(id) ?? 0) + 1;
                 sequenceCounters.current.set(id, sequence);
+                const current = resolverChanged || wasVisible === false ? undefined : currentStateRef.current.get(id);
+                const previousOptions = current?.lastSuccessOptions ?? current?.options;
 
                 // Enter loading state with skeleton rows. Preserve last-success
                 // options so the error path can show stale-cache rows.
@@ -540,18 +543,14 @@ export function useSelectionListDynamicSections(params: {
                 try {
                     section.resolve(seed, controller.signal, result => {
                         if (!settled) publishResult(result, false);
-                    }).then(result => { settled = true; publishResult(result, true); }, handleError);
+                    }, previousOptions).then(result => { settled = true; publishResult(result, true); }, handleError);
                 } catch (err) {
                     handleError(err);
                 }
             };
 
-            if (debounceMs <= 0) {
-                dispatch();
-            } else {
-                const timer = setTimeout(dispatch, debounceMs);
-                debounceTimers.current.set(id, timer);
-            }
+            const cancel = scheduleSearchQuery(dispatch, section.debounceMs);
+            if (section.debounceMs === undefined || section.debounceMs > 0) debounceTimers.current.set(id, cancel);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps -- recompute when inputs change
     }, [inputValue, sectionIdsKey, inputBehavior, descriptorIdentityKey, visibilityKey]);

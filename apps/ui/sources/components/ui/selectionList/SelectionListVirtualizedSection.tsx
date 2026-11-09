@@ -7,7 +7,7 @@ import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtu
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX } from './_constants';
-import { PlanOptionRow } from './SelectionListOptionRow';
+import { SelectionListVirtualizedOptionRow, SelectionListVirtualizedRowStateProvider } from './SelectionListVirtualizedRowState';
 import { SelectionListSectionHeader } from './SelectionListSectionHeader';
 import { renderSelectionListAccessory } from './renderSelectionListAccessory';
 import { selectionListTestId } from './_shared';
@@ -44,6 +44,8 @@ export type SelectionListVirtualizedSectionProps = Readonly<{
     stepId: string;
     /** Root testID prefix forwarded from the SelectionList orchestrator. */
     rootTestID?: string;
+    /** The hidden measurement uses the same bounded viewport without live identities or focus. */
+    measureMode?: boolean;
     selectedOptionIds: ReadonlySet<string>;
     /**
      * F4 — Currently focused option id (keyboard navigation). Mirrors the
@@ -104,7 +106,9 @@ export function SelectionListVirtualizedSection(
         'section',
         props.section.id,
     );
-    const sectionGroupA11y = props.a11yPattern === undefined
+    const measureMode = props.measureMode === true;
+    const focusedOptionId = measureMode ? null : props.focusedOptionId ?? null;
+    const sectionGroupA11y = measureMode || props.a11yPattern === undefined
         ? null
         : buildSelectionListSectionGroupA11yProps({
             pattern: props.a11yPattern,
@@ -121,31 +125,29 @@ export function SelectionListVirtualizedSection(
     // popup-wide index — which counts this section's header row and every row
     // above it, and therefore is not the option's position in the set.
     const rowIndexOffset = props.rowIndexOffset;
+    const { rootTestID, stepId, onSelect, onPushStep } = props;
+    const options = props.section.options;
+    // Focus, selection and set position reach rows through the row-state provider below, so the
+    // cell renderer (the list's `extraData`) changes only with the row configuration and options.
     const renderRow = React.useCallback(
         (option: SelectionListOption): React.ReactElement => (
-            <PlanOptionRow
+            <SelectionListVirtualizedOptionRow
                 key={option.id}
                 option={option}
-                rootTestID={props.rootTestID}
-                stepId={props.stepId}
-                isSelected={props.selectedOptionIds.has(option.id)}
-                // F4 — focus parity: keep keyboard focus visual state separate
-                // from the row's selected accessibility state, matching the
-                // plain mapped path.
-                isFocused={props.focusedOptionId != null && props.focusedOptionId === option.id}
-                onSelect={props.onSelect}
-                onPushStep={props.onPushStep}
-                positionInSet={props.optionPositionById?.get(option.id)
-                    ?? props.section.options.findIndex((candidate) => candidate.id === option.id) + 1}
-                setSize={props.optionSetSize ?? props.section.options.length}
+                measureMode={measureMode}
+                rootTestID={rootTestID}
+                stepId={stepId}
+                onSelect={onSelect}
+                onPushStep={onPushStep}
+                positionInSet={options.findIndex((candidate) => candidate.id === option.id) + 1}
                 {...(rowIndexOffset === undefined ? {} : {
                     rowIndex: rowIndexOffset
-                        + props.section.options.findIndex((candidate) => candidate.id === option.id)
+                        + options.findIndex((candidate) => candidate.id === option.id)
                         + 1,
                 })}
             />
         ),
-        [props, rowIndexOffset],
+        [rootTestID, stepId, onSelect, onPushStep, options, rowIndexOffset, measureMode],
     );
 
     const headerTestId = selectionListTestId(sectionTestId, 'header');
@@ -160,7 +162,6 @@ export function SelectionListVirtualizedSection(
     // different section, do nothing — the other section's virtualized host
     // (if any) owns its own scroll behavior.
     const virtualizedListRef = React.useRef<VirtualizedListRef | null>(null);
-    const focusedOptionId = props.focusedOptionId ?? null;
     const focusedItemIndex = React.useMemo(
         () => focusedOptionId === null
             ? -1
@@ -176,32 +177,43 @@ export function SelectionListVirtualizedSection(
 
     return (
         <View
-            testID={sectionTestId}
+            testID={measureMode ? undefined : sectionTestId}
             style={[styles.container, styles.virtualizedHost, props.viewportHeight === undefined ? null : { height: props.viewportHeight }]}
+            {...(measureMode ? { accessibilityElementsHidden: true,
+                importantForAccessibility: 'no-hide-descendants' as const, pointerEvents: 'none' as const,
+                'aria-hidden': true } : {})}
             {...(sectionGroupA11y ?? {})}
             {...(sectionGroupA11y === null ? {} : { role: 'group' as const })}
         >
             <SelectionListSectionHeader
-                testID={headerTestId}
+                testID={measureMode ? undefined : headerTestId}
                 title={props.section.title}
                 rightAccessory={renderSelectionListAccessory(props.section.rightAccessory)}
                 count={props.section.count}
-                action={props.section.action}
-                {...(headerGridRow === undefined ? {} : { gridRow: headerGridRow })}
+                action={measureMode ? undefined : props.section.action}
+                {...(measureMode || headerGridRow === undefined ? {} : { gridRow: headerGridRow })}
             />
-            <VirtualizedList
-                ref={virtualizedListRef}
-                testID={selectionListTestId(sectionTestId, 'virtualized')}
-                data={props.section.options as SelectionListOption[]}
-                keyExtractor={(option: SelectionListOption) => option.id}
-                renderItem={({ item }: { item: SelectionListOption }) => renderRow(item)}
-                getItemType={(option: SelectionListOption) => (option.openStep ? 'drilldown' : 'option')}
-                estimatedItemSize={SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX}
-                recycleItems={false}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
-                onLayout={onViewportLayout}
-            />
+            <SelectionListVirtualizedRowStateProvider
+                selectedOptionIds={props.selectedOptionIds}
+                focusedOptionId={focusedOptionId}
+                optionPositionById={props.optionPositionById}
+                optionSetSize={props.optionSetSize ?? options.length}
+            >
+                <VirtualizedList
+                    ref={virtualizedListRef}
+                    testID={measureMode ? undefined : selectionListTestId(sectionTestId, 'virtualized')}
+                    data={props.section.options as SelectionListOption[]}
+                    extraData={renderRow}
+                    keyExtractor={(option: SelectionListOption) => option.id}
+                    renderItem={({ item }: { item: SelectionListOption }) => renderRow(item)}
+                    getItemType={(option: SelectionListOption) => (option.openStep ? 'drilldown' : 'option')}
+                    estimatedItemSize={SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX}
+                    recycleItems={false}
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
+                    onLayout={measureMode ? undefined : onViewportLayout}
+                />
+            </SelectionListVirtualizedRowStateProvider>
         </View>
     );
 }

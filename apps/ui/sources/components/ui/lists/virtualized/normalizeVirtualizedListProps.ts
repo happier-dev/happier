@@ -71,6 +71,7 @@ export type NormalizedVirtualizationProps<T> = Readonly<{
     estimatedItemSize?: number;
     getItemType?: (item: T, index: number) => string | number | undefined;
     getFixedItemSize?: VirtualizedListProps<T>['getFixedItemSize'];
+    getEstimatedItemSize?: VirtualizedListProps<T>['getEstimatedItemSize'];
     drawDistance?: number;
     recycleItems?: boolean;
     onStartReached?: (info?: { distanceFromStart: number }) => void;
@@ -141,6 +142,7 @@ export function normalizeVirtualizedListProps<T>(
             estimatedItemSize: props.estimatedItemSize,
             getItemType: props.getItemType,
             getFixedItemSize: props.getFixedItemSize,
+            getEstimatedItemSize: props.getEstimatedItemSize,
             drawDistance: props.drawDistance,
             recycleItems: props.recycleItems,
             onStartReached: props.onStartReached,

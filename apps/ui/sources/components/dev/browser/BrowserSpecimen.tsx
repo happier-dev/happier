@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { BrowserContextCapabilities, BrowserEventV1, BrowserRecordingCapabilities, BrowserViewTargetV1 } from '@happier-dev/protocol';
+import type { BrowserContextCapabilities, BrowserRecordingCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import type { BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
+import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 
 import { BrowserShell } from '@/components/browser/BrowserShell';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -173,6 +175,34 @@ const BROWSER_ENABLED = {
 
 type StreamFixture = 'live' | 'connecting' | 'stalled' | 'ended' | 'unavailable';
 
+/**
+ * What the page asks of the person (human input): its dialog, file request and downloads as the
+ * daemon projects them on the stream, and whether this viewer is the one in control. `letterbox`
+ * draws a page another viewer's phone has sized (390 × 844).
+ */
+type HumanInputFixture = Readonly<{
+    interaction?: NonNullable<NonNullable<BrowserStreamedSurfaceRuntime['input']>['interaction']>;
+    controlling: boolean;
+    letterbox?: boolean;
+    editable?: boolean;
+}>;
+
+const NO_INTERACTION = { dialog: null, fileChooser: null, downloads: [] } as const;
+
+function humanInput(fixture: HumanInputFixture): NonNullable<BrowserStreamedSurfaceRuntime['input']> {
+    return {
+        sourceId: 'specimen-source',
+        streamId: 'specimen-stream',
+        send: NOOP,
+        sendInput: NOOP,
+        saveDownload: NOOP,
+        viewerInput: { controlling: fixture.controlling, controlEpoch: 2 },
+        viewport: fixture.letterbox ? { width: 390, height: 844, deviceScaleFactor: 3 } : null,
+        editableTarget: fixture.editable ? { editable: true, inputMode: 'email', multiline: false, secret: false } : null,
+        interaction: fixture.interaction ?? NO_INTERACTION,
+    };
+}
+
 function streamRuntime(fixture: StreamFixture, frameUrl: string) {
     if (fixture === 'unavailable') return { machineName: 'MacBook Pro', playerState: null };
     const base = { selectedCodec: 'image.frame.v1', activeRenderer: 'mjpeg', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 } as const;
@@ -213,6 +243,7 @@ function SpecimenShell(props: Readonly<{
     /** The typed first-use state of the agent's open, with what allowing the sandbox answers. */
     firstUse?: NonNullable<BrowserStreamedSurfaceRuntime['firstUse']>;
     sandboxAnswer?: BrowserSandboxInstallOutcome;
+    human?: HumanInputFixture;
     /** Diagnostics for this view (open the drawer from ⋯). */
     diagnostics?: 'enabled' | 'disabled';
 }>) {
@@ -261,7 +292,8 @@ function SpecimenShell(props: Readonly<{
                     ...(props.firstUse === 'preparing' || props.firstUse === 'opening' ? { firstUseTargetUrl: 'http://localhost:5173/login' } : {}) }
                 : props.prerequisite
                 ? { machineName: 'MacBook Pro', playerState: null, unavailableReason: 'managed_package_missing' as const, onRetry: NOOP }
-                : props.kind === 'streamed' ? streamRuntime(props.stream ?? 'live', frameUrl) : null}
+                : props.kind === 'streamed' ? { ...streamRuntime(props.stream ?? 'live', frameUrl),
+                    ...(props.human ? { input: humanInput(props.human) } : {}) } : null}
             testID={`browser-specimen-shell`}
         />
     );
@@ -369,6 +401,25 @@ const FRAMES: readonly Frame[] = [
     { id: 'STe', title: 'ST · ended', render: () => <SpecimenShell kind="streamed" controller="idle" stream="ended" /> },
     { id: 'STu', title: 'ST · unavailable', render: () => <SpecimenShell kind="streamed" controller="agent" stream="unavailable" /> },
     { id: 'M', title: 'M · motion (takeover, stream)', render: () => <MotionSpecimen /> },
+    { id: 'Ha', title: 'Human input · page alert', render: () => <SpecimenShell kind="streamed" controller="agent" human={{ controlling: false,
+        interaction: { ...NO_INTERACTION, dialog: { dialogId: 'd1', type: 'alert', message: 'Your session expired. Sign in again to keep your changes.' } } }} /> },
+    { id: 'Hc', title: 'Human input · page confirm', render: () => <SpecimenShell kind="streamed" controller="human" human={{ controlling: true,
+        interaction: { ...NO_INTERACTION, dialog: { dialogId: 'd2', type: 'confirm', message: 'Discard the draft “Q4 launch notes”? This can’t be undone.' } } }} /> },
+    { id: 'Hp', title: 'Human input · page prompt', render: () => <SpecimenShell kind="streamed" controller="human" human={{ controlling: true,
+        interaction: { ...NO_INTERACTION, dialog: { dialogId: 'd3', type: 'prompt', message: 'Name this workspace', defaultPrompt: 'Lumen design' } } }} /> },
+    { id: 'Ho', title: 'Human input · another viewer answers', render: () => <SpecimenShell kind="streamed" controller="human" human={{ controlling: false,
+        interaction: { ...NO_INTERACTION, dialog: { dialogId: 'd4', type: 'confirm', message: 'Discard the draft “Q4 launch notes”? This can’t be undone.' } } }} /> },
+    { id: 'Hf', title: 'Human input · page asks for a file', render: () => <SpecimenShell kind="streamed" controller="human" human={{ controlling: true,
+        interaction: { ...NO_INTERACTION, fileChooser: { chooserId: 'c1', multiple: false } } }} /> },
+    { id: 'Hd', title: 'Human input · downloads', render: () => <SpecimenShell kind="streamed" controller="agent" human={{ controlling: false,
+        interaction: { ...NO_INTERACTION, downloads: [
+            { downloadId: 'dl1', name: 'lumen-invoice-2026-10.pdf', state: 'completed', receivedBytes: 184_320, totalBytes: 184_320 },
+            { downloadId: 'dl2', name: 'brand-assets-final.zip', state: 'inProgress', receivedBytes: 23_400_000, totalBytes: 61_200_000 },
+        ] } }} /> },
+    { id: 'Hu', title: 'Human input · uploads unavailable', render: () => <SpecimenShell kind="streamed" controller="human" human={{ controlling: true,
+        interaction: { ...NO_INTERACTION, unavailable: { fileChooser: 'runtime_unavailable' } } }} /> },
+    { id: 'Hl', title: 'Human input · sized by another viewer', render: () => <SpecimenShell kind="streamed" controller="human" human={{ controlling: false, letterbox: true }} /> },
+    { id: 'Hk', title: 'Human input · phone keyboard', render: () => <SpecimenShell kind="streamed" controller="human" human={{ controlling: true, editable: true }} /> },
 ];
 
 export function BrowserSpecimen(props: Readonly<{ only: string | null; phone: boolean }>) {

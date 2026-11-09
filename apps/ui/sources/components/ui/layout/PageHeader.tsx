@@ -3,6 +3,7 @@ import * as React from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
+    HAPPIER_BALANCED_TEXT_WRAP,
     HappierPageHeader,
     HappierPageHeaderPlaceholder,
     HappierPageHeaderMetaId,
@@ -363,6 +364,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('regular'),
         ...happierPageTextMetrics('pageDescription'),
         color: theme.colors.text.secondary,
+        // A purpose that needs a second line splits evenly instead of leaving one word alone on it.
+        ...HAPPIER_BALANCED_TEXT_WRAP,
     },
     actions: {
         flexDirection: 'row',

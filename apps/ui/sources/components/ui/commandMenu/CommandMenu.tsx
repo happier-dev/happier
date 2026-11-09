@@ -99,8 +99,9 @@ export const CommandMenu = React.memo((props: CommandMenuProps) => {
             kind: 'static' as const,
             id: g.group ?? `section-${index}`,
             title: g.group,
+            // Default `auto`: a group past the SelectionList threshold (a bare `@` Recent group lists every
+            // Session of the Home) mounts a viewport of rows; ordinary menus stay plain-mapped.
             options: g.options,
-            virtualization: 'never' as const,
         }))];
     }, [items, testID, props.leadingEmptyGroup]);
 

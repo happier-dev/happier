@@ -9,6 +9,7 @@ import { ImageWell } from '@/components/ui/media/ImageWell';
 import { STORED_IMAGE_HOST } from '@/components/ui/media/StoredImagePicture';
 import type { MediaStageItem } from '@/components/ui/media/stage/mediaStageItems';
 import { useMediaStage } from '@/components/ui/media/stage/useMediaStage';
+import { CHECKOUT_PAGE_URI, TERMINAL_URI } from '@/components/screenCapture/dev/screenCaptureFixtures';
 import type { UseFilePreviewSourceInput } from '@/components/ui/media/useFilePreviewSource';
 import { Text } from '@/components/ui/text/Text';
 import { FileViewerBody } from '@/components/workspaces/files/file/FileViewerBody';
@@ -34,6 +35,9 @@ function assetUri(source: unknown): string {
   }
   return '';
 }
+
+const CHECKOUT_ITEM: MediaStageItem = { kind: 'image', title: 'Screenshot 2026-10-31 at 10.42.png', source: uriSource(CHECKOUT_PAGE_URI) };
+const TERMINAL_ITEM: MediaStageItem = { kind: 'image', title: 'storefront — vitest.png', source: uriSource(TERMINAL_URI) };
 
 const encoder = new TextEncoder();
 
@@ -161,6 +165,21 @@ export function MediaViewerSpecimen() {
         onPress={() => stage.open(gallery, 3)}
         testID="dev-media-open-pdf"
       />
+      {/* The annotator's lab picture, as a composer tray opens it: marks land in place (P2 F1). */}
+      <RoundButton
+        size="small"
+        display="secondary"
+        title="Annotate a composer screenshot"
+        onPress={() => stage.open([{ ...CHECKOUT_ITEM, edit: { commit: async () => ({ ok: false, reason: 'specimen' }), revert: async () => ({ ok: false, reason: 'specimen' }) } }, TERMINAL_ITEM], 0)}
+        testID="dev-media-open-composer-picture"
+      />
+      <RoundButton
+        size="small"
+        display="secondary"
+        title="Annotate a message picture"
+        onPress={() => stage.open([CHECKOUT_ITEM, TERMINAL_ITEM], 0)}
+        testID="dev-media-open-message-picture"
+      />
       {/* MS1 failure: a picture whose read does not finish; the stage offers Retry (RFSM-02). */}
       <RoundButton
         size="small"
@@ -217,6 +236,22 @@ export function MediaViewerSpecimen() {
           alphaCapable={false}
           layout="inline"
           testID="dev-media-well-too-large"
+        />
+      </View>
+
+      <Text variant="heading" style={{ color: theme.colors.text.primary }}>Image compare · transparent picture</Text>
+      <View style={[styles.compare, { borderColor: theme.colors.border.default }]}>
+        <ImageCompare
+          testID="dev-media-compare-alpha"
+          filePath="assets/icon.png"
+          kind="image"
+          alphaCapable
+          before={{ kind: 'present', uri: assetUri(SAMPLES.icon), sizeBytes: null }}
+          after={{ kind: 'present', uri: assetUri(SAMPLES.favicon), sizeBytes: null }}
+          beforePreviewInput={uriSource(assetUri(SAMPLES.icon))}
+          afterPreviewInput={uriSource(assetUri(SAMPLES.favicon))}
+          beforeLabel="HEAD"
+          afterLabel="working tree"
         />
       </View>
 

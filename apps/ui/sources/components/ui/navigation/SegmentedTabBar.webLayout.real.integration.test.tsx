@@ -15,6 +15,50 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 
 installWebLayoutBridge();
 
+it('retains tab focus and local wrapper state when fit measurement turns on and off', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const tabs = [{ id: 'overview', label: 'Overview' }, { id: 'code', label: 'Code' }];
+    function StatefulTab(props: Readonly<{ children: React.ReactNode }>) {
+        const [draft, setDraft] = React.useState('');
+        return <div>{props.children}<input data-testid="tab-draft" value={draft}
+            onInput={event => setDraft(event.currentTarget.value)} /></div>;
+    }
+    const wrapTab = (id: string, tab: React.ReactElement) => id === 'overview'
+        ? <StatefulTab key={id}>{tab}</StatefulTab> : tab;
+    async function render(fit: boolean) {
+        await act(async () => root.render(
+            <View style={{ width: 600 }}>
+                <SegmentedTabBar tabs={tabs} activeTabId="overview" onSelectTab={() => {}} presentation="plain"
+                    wrapTab={wrapTab} overflow={fit ? { label: 'More', testID: 'pages.more' } : undefined} testIDPrefix="pages" />
+            </View>,
+        ));
+        await measureWebLayout(host, { viewport: { width: 800, height: 200 }, settle: replay => act(replay) });
+    }
+    try {
+        await render(false);
+        const tab = host.querySelector<HTMLElement>('[data-testid="pages:overview"]')!;
+        const draft = host.querySelector<HTMLInputElement>('[data-testid="tab-draft"]')!;
+        await act(async () => {
+            draft.value = 'Unsubmitted note';
+            draft.dispatchEvent(new Event('input', { bubbles: true }));
+            tab.focus();
+        });
+        expect(document.activeElement).toBe(tab);
+        for (const fit of [true, false, true]) {
+            await render(fit);
+            expect(host.querySelector('[data-testid="pages:overview"]')).toBe(tab);
+            expect(document.activeElement).toBe(tab);
+            expect(host.querySelector('[data-testid="tab-draft"]')).toBe(draft);
+            expect(draft.value).toBe('Unsubmitted note');
+        }
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
 it.each([false, true])('keeps a column mode control at its natural height beside growing content (compact=%s)', async compact => {
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -72,7 +116,34 @@ it('lets a pointer reach every visible page tab and More when the row overflows'
     }
 });
 
-it('reserves measured room for explicit More and keeps its active page reachable at wide and narrow widths', async () => {
+it('keeps the selected page a visible tab, before More and inside the row, however narrow the row gets', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const pages = ['Overview', 'Code', 'Changes', 'Scripts', 'Services', 'Context'].map(label => ({ id: label.toLowerCase(), label }));
+    try {
+        for (const width of [360, 260, 160]) {
+            await act(async () => root.render(
+                <View testID="project-row" style={{ width }}>
+                    <SegmentedTabBar tabs={pages} activeTabId="context" onSelectTab={() => {}} presentation="plain"
+                        overflow={{ label: 'More', testID: 'pages.more' }} testIDPrefix="pages" />
+                </View>,
+            ));
+            const layout = await measureWebLayout(host, { viewport: { width: 400, height: 200 }, settle: replay => act(replay) });
+            const selected = layout.rect('pages:context');
+            const more = layout.rect('pages.more');
+            expect(selected.receivesPointer).toBe(true);
+            expect(selected.right).toBeLessThanOrEqual(more.left + 0.5);
+            expect(more.right).toBeLessThanOrEqual(layout.rect('project-row').right + 0.5);
+            expect(host.querySelector('[data-testid="pages:context"]')?.getAttribute('aria-selected')).toBe('true');
+        }
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
+it('reserves measured room for explicit More and keeps its pages reachable at wide and narrow widths', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -86,7 +157,7 @@ it('reserves measured room for explicit More and keeps its active page reachable
             const width = narrow ? constrainedWidth : 600;
             await act(async () => root.render(
                 <View testID="project-row" style={{ width }}>
-                    <SegmentedTabBar tabs={pages} activeTabId="actions" onSelectTab={onSelectTab} presentation="plain"
+                    <SegmentedTabBar tabs={pages} activeTabId="overview" onSelectTab={onSelectTab} presentation="plain"
                         overflow={{ label: 'More', testID: 'pages.more', items: [{ id: 'actions', label: 'Actions', count: 'Running 2 · Failed 1' }] }} testIDPrefix="pages" />
                 </View>,
             ));
@@ -94,7 +165,7 @@ it('reserves measured room for explicit More and keeps its active page reachable
             const more = layout.rect('pages.more');
             expect(more.receivesPointer).toBe(true);
             expect(more.right).toBeLessThanOrEqual(layout.rect('project-row').right + 0.5);
-            expect(host.querySelector('[data-testid="pages.more"]')?.getAttribute('aria-label')).toBe('More, Actions Running 2 · Failed 1');
+            expect(host.querySelector('[data-testid="pages.more"]')?.getAttribute('aria-label')).toBe('More');
             expect(layout.rects.has('pages:code')).toBe(!narrow);
             // Just less than the measured complete row: both pinned names fit without More,
             // but the explicit menu must reserve its own width and move the trailing tab.

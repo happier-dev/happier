@@ -22,6 +22,22 @@ vi.mock('./SelectableRow', async (importOriginal) => {
 });
 
 describe('ActionListSection', () => {
+    it('keeps a disabled action recovery explanation readable without truncating it to one menu line', async () => {
+        const { ActionListSection } = await import('./ActionListSection');
+        const reason = 'File transfer is unavailable. Reconnect this session or ask its owner to check the machine.';
+        const screen = await renderScreen(<ActionListSection actions={[
+            { id: 'attach', label: 'Attach', subtitle: reason, disabled: true },
+            { id: 'available', label: 'Other action', subtitle: 'Ordinary summary' },
+        ]} />);
+        const reasonText = screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.children === reason);
+        expect(reasonText.length).toBeGreaterThan(0);
+        // React Native's zero line count means no truncation; undefined uses
+        // the shared OptionRow's ordinary two-line default.
+        expect(reasonText.every(node => node.props.numberOfLines === 0)).toBe(true);
+        expect(screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.children === 'Ordinary summary')
+            .every(node => node.props.numberOfLines === 1)).toBe(true);
+    });
+
     it('labels its section through the shared popover section-header owner, in the title\'s own case', async () => {
         const { ActionListSection } = await import('./ActionListSection');
         const { SelectionListSectionHeader } = await import('@/components/ui/selectionList/SelectionListSectionHeader');

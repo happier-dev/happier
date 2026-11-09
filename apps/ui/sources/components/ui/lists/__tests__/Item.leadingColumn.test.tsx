@@ -21,9 +21,11 @@ vi.mock('react-native-svg', async () => import('@/dev/testkit/mocks/reactNativeS
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 
-vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: (key: string) => (key === 'uiItemDensity' ? 'cozy' : key === 'uiFontScale' ? 1 : null),
-}));
+// The canonical store-hooks stub: rows that read the active Account scope see the fixture's (none here).
+vi.mock('@/sync/store/hooks', async () => {
+    const { createStorageModuleStub, createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({ useLocalSetting: createUseLocalSettingMock({ values: { uiItemDensity: 'cozy', uiFontScale: 1 } }) });
+});
 
 // ItemGroup renders the real GlassSurface, whose Account preferences use this storage boundary.
 vi.mock('@/sync/domains/state/storage', async () => {

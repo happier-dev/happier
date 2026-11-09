@@ -2,6 +2,8 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
+import { HappierUiPlatformProvider } from '@happier-dev/plugin-ui/environment';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -146,24 +148,24 @@ describe('FavoriteToggleButton', () => {
         expect(flattenStyle(styleProp({ pressed: true, hovered: false })).opacity).toBe(motionTokens.press.opacity);
     });
 
-    it('reaches 8 px past the drawn star on every side without enlarging it', async () => {
+    it('keeps the drawn star as its target inside its row, reaching into none of it', async () => {
         const { FavoriteToggleButton } = await import('./FavoriteToggleButton');
 
         const screen = await renderScreen(
-            <FavoriteToggleButton
-                id="/x"
-                isFavorite={false}
-                addLabel="Add"
-                removeLabel="Remove"
-                onToggle={() => {}}
-                testID="favorite-toggle-hit"
-            />,
+            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+                <FavoriteToggleButton
+                    id="/x"
+                    isFavorite={false}
+                    addLabel="Add"
+                    removeLabel="Remove"
+                    onToggle={() => {}}
+                    testID="favorite-toggle-hit"
+                />
+            </HappierUiPlatformProvider>,
         );
 
-        const pressable = screen.findByTestId('favorite-toggle-hit');
-        expect(pressable!.props.hitSlop).toEqual({ top: 8, right: 8, bottom: 8, left: 8 });
-        const restingStyle = flattenStyle(pressable!.props.style({ pressed: false, hovered: false }));
-        expect(restingStyle.width).toBe(24);
-        expect(restingStyle.height).toBe(24);
+        const area = await layoutHitArea(() => screen.findByTestId('favorite-toggle-hit'), { width: 24, height: 24 });
+        expect(area.drawn).toEqual({ width: 24, height: 24 });
+        expect(area.insets).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
     });
 });

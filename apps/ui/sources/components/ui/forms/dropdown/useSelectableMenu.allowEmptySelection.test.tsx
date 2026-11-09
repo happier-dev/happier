@@ -11,6 +11,39 @@ import { installDropdownCommonModuleMocks } from './dropdownTestHelpers';
 installDropdownCommonModuleMocks();
 
 describe('useSelectableMenu (allowEmptySelection)', () => {
+  it('keeps keyboard selection work local in a 54,935-item source and admits a real replacement', async () => {
+    const { useSelectableMenu } = await import('./useSelectableMenu');
+    let identityReads = 0;
+    const makeItem = (id: string, title: string): SelectableMenuItem => ({
+      get id() { identityReads += 1; return id; }, title,
+    });
+    const items = Array.from({ length: 54_935 }, (_, index) => makeItem(`file-${index}`, `File ${index}`));
+    const makeSource = (rows: readonly SelectableMenuItem[]) => ({
+      items: rows,
+      indexById: new Map(rows.map((item, index) => [item.id, index])),
+      getItem: (index: number) => rows[index],
+    });
+    let itemSource = makeSource(items);
+    const hook = await renderHook(() => useSelectableMenu({
+      items: itemSource.items, itemSource, initialSelectedId: 'file-54934', open: true, onRequestClose: () => {},
+    }));
+    try {
+      expect(hook.getCurrent().selectedIndex).toBe(54_934);
+      identityReads = 0;
+      await act(async () => { hook.getCurrent().handleKeyPress('ArrowUp', () => {}); });
+      expect(hook.getCurrent().selectedIndex).toBe(54_933);
+      expect(identityReads).toBeLessThanOrEqual(8);
+      const changed = [...items];
+      changed[54_933] = makeItem('file-54933', 'Freshly renamed file');
+      itemSource = makeSource(changed);
+      await hook.rerender();
+      let activated: SelectableMenuItem | undefined;
+      await act(async () => { hook.getCurrent().handleKeyPress('Enter', item => { activated = item; }); });
+      expect(activated?.title).toBe('Freshly renamed file');
+      expect(hook.getCurrent().filteredCategories[0]?.items).toHaveLength(54_935);
+    } finally { await hook.unmount(); }
+  });
+
   it('starts with no highlighted item when enabled and no preferred id exists', async () => {
     const { useSelectableMenu } = await import('./useSelectableMenu');
     const items: SelectableMenuItem[] = [

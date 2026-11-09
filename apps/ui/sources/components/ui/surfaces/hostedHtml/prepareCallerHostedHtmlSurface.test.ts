@@ -4,26 +4,18 @@ import { describe, expect, it } from 'vitest';
 import { prepareCallerHostedHtmlSurface } from './prepareCallerHostedHtmlSurface';
 
 describe('prepareCallerHostedHtmlSurface', () => {
-    it('returns source_invalid when a declared local asset is unavailable', async () => {
+    it('returns source_invalid for malformed source before mounting', async () => {
         expect(await prepareCallerHostedHtmlSurface({
-            serverIdentityId: 'server-1', accountId: 'account-1', approvalSubject: 'record-1',
-            source: artifactHtmlBundleFromBodyV1('<script src="missing.js"></script>'),
+            source: { v: 1, files: {} },
             requestedCapabilities: {},
             admittedHostMethods: [],
-            frameIdentity: { instanceId: 'instance-1', mountNonce: 'nonce-1' },
-            hostOrigin: 'https://app.example.com',
         })).toEqual({ kind: 'rejected', code: 'source_invalid' });
     });
-    it('produces one stable approval identity and keeps context/input out of authored source', async () => {
+    it('projects admitted source and capabilities without building an unused review document', async () => {
         const prepared = await prepareCallerHostedHtmlSurface({
-            serverIdentityId: 'server-1',
-            accountId: 'account-1',
-            approvalSubject: 'record:server-1/session-1/surface/item.v1/note-1',
             source: artifactHtmlBundleFromBodyV1('<main id="app"></main>'),
             requestedCapabilities: { hostMethods: ['context'], networkOrigins: ['https://api.example.com'] },
             admittedHostMethods: ['context', 'executeAction'],
-            frameIdentity: { instanceId: 'instance-1', mountNonce: 'nonce-1' },
-            hostOrigin: 'https://app.example.com',
         });
         expect(prepared.kind).toBe('admitted');
         if (prepared.kind !== 'admitted') return;
@@ -44,48 +36,36 @@ describe('prepareCallerHostedHtmlSurface', () => {
             network: undefined,
         });
         expect(prepared.advertisedHostMethods).toEqual(['context']);
-        expect(prepared.document).toContain('connect-src data: https://api.example.com');
-        expect(prepared.document).toContain('<main id="app"></main>');
-        expect(prepared.document).not.toContain('session-1');
-        expect(prepared.approvalKey).not.toContain('session-1');
+        expect(Object.keys(prepared).sort()).toEqual(['advertisedHostMethods', 'capabilityManifest', 'frameSource', 'kind']);
     });
 
-    it('forwards explicit open admission through the physical frame input and fingerprint', async () => {
-        const input = { serverIdentityId: 'server-1', accountId: 'account-1', approvalSubject: 'record-1',
-            source: artifactHtmlBundleFromBodyV1('<p>Hello</p>'), admittedHostMethods: [],
-            frameIdentity: { instanceId: 'instance-1', mountNonce: 'nonce-1' }, hostOrigin: 'https://app.example.com' };
+    it('forwards explicit open admission through the physical frame input', async () => {
+        const input = { source: artifactHtmlBundleFromBodyV1('<p>Hello</p>'), admittedHostMethods: [] };
         const open = await prepareCallerHostedHtmlSurface({ ...input, requestedCapabilities: { network: 'open' } });
         const none = await prepareCallerHostedHtmlSurface(input);
         expect(open.kind).toBe('admitted');
         expect(none.kind).toBe('admitted');
         if (open.kind !== 'admitted' || none.kind !== 'admitted') return;
         expect(open.frameSource).toMatchObject({ network: 'open', networkOrigins: [] });
-        expect(open.document).toContain('connect-src data: https:');
-        expect(open.approval.executableSecurityFingerprint).not.toBe(none.approval.executableSecurityFingerprint);
+        expect(none.frameSource).toMatchObject({ network: 'none', networkOrigins: [] });
     });
 
     it('rejects an installed-only host method instead of silently narrowing it', async () => {
         expect(await prepareCallerHostedHtmlSurface({
-            serverIdentityId: 'server-1', accountId: 'account-1', approvalSubject: 'record-1',
             source: artifactHtmlBundleFromBodyV1('<p>Hi</p>'),
             requestedCapabilities: { hostMethods: ['readAccountData'] },
             admittedHostMethods: ['context'],
-            frameIdentity: { instanceId: 'instance-1', mountNonce: 'nonce-1' },
-            hostOrigin: 'https://app.example.com',
         })).toEqual({ kind: 'rejected', code: 'capability_request_invalid' });
     });
 
-    it('refuses an explicit host-method request when the current realm can serve none of it', async () => {
+    it('admits local HTML when an optional requested method is unavailable in the current realm', async () => {
         expect(await prepareCallerHostedHtmlSurface({
-            serverIdentityId: 'server-1', accountId: 'account-1', approvalSubject: 'record-1',
             source: artifactHtmlBundleFromBodyV1('<p>Hi</p>'),
             requestedCapabilities: {
                 hostMethods: ['readResource'],
                 resources: [{ pluginId: 'acme.preview', localId: 'status' }],
             },
             admittedHostMethods: ['context'],
-            frameIdentity: { instanceId: 'instance-1', mountNonce: 'nonce-1' },
-            hostOrigin: 'https://app.example.com',
-        })).toEqual({ kind: 'rejected', code: 'capability_request_invalid' });
+        })).toMatchObject({ kind: 'admitted', advertisedHostMethods: ['context'] });
     });
 });

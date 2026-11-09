@@ -257,3 +257,67 @@ describe('Item page operation placement', () => {
         expect(direction()).toBe('column');
     });
 });
+
+describe('Item catalog row trailing placement', () => {
+  it('keeps a catalog row\'s trailing count and menu on its line in a narrow rail (the description yields, ST-5)', async () => {
+    const { act } = await import('react-test-renderer');
+    const { Item } = await import('./Item');
+    const screen = await renderScreen(
+      <Item
+        rowRole="catalogRow"
+        title="Q1 Round 4 Source"
+        subtitle="github.com/acme/q1-round-4-source"
+        rightElement={React.createElement('Operation', { testID: 'operation' })}
+        rightElementOutsidePressable
+        showChevron={false}
+      />,
+    );
+    // A 228px tree/rail row whose count and menu take 120px: wider than an operation's share of the row.
+    await act(async () => {
+      for (const node of screen.findAll((candidate) => typeof candidate.type === 'string'
+        && typeof candidate.props?.onLayout === 'function'
+        && candidate.findAll((child) => child.props?.testID === 'operation').length > 0)) {
+        const operationOnly = node.findAll((child) => typeof child.type === 'string' && typeof child.props?.onLayout === 'function'
+          && child !== node).length === 0;
+        node.props.onLayout({ nativeEvent: { layout: { width: operationOnly ? 120 : 228, height: 40, x: 0, y: 0 } } });
+      }
+    });
+    const operation = screen.findByTestId('operation')!;
+    let ancestor = operation.parent;
+    while (ancestor) {
+      const style = [ancestor.props?.style].flat(Infinity).filter(Boolean) as Array<Record<string, unknown>>;
+      expect(style.some((entry) => entry.flexDirection === 'column' || entry.flexBasis === '100%')).toBe(false);
+      ancestor = ancestor.parent;
+    }
+  });
+});
+
+describe('Item chevron with a stacked accessory', () => {
+  it('keeps a destination row\'s chevron on its label\'s line when its limits move beneath', async () => {
+    const { act } = await import('react-test-renderer');
+    const { Item } = await import('./Item');
+    const { ListPresentationProvider } = await import('./listPresentation');
+    const screen = await renderScreen(
+      <ListPresentationProvider value="page">
+        <Item
+          title="Leeroy"
+          rightElement={React.createElement('Operation', { testID: 'operation' })}
+          accessoryLayout="adaptive"
+          keepChevronWithRightElement
+          onPress={() => {}}
+        />
+      </ListPresentationProvider>,
+    );
+    const { direction, layout } = measuredRow(screen, act);
+    await layout({ row: 358, operation: 320 });
+    expect(direction()).toBe('column');
+    // One band holds the label and the chevron, without the control placed beneath them.
+    const contains = (node: { findAll: (test: (child: any) => boolean) => unknown[] }, test: (child: any) => boolean) => node.findAll(test).length > 0;
+    const isChevron = (child: any) => child.props?.name === 'caret-right';
+    const isTitle = (child: any) => child.props?.children === 'Leeroy';
+    const isOperation = (child: any) => child.props?.testID === 'operation';
+    const bands = screen.findAll((node) => typeof node.type === 'string'
+      && contains(node, isChevron) && contains(node, isTitle) && !contains(node, isOperation));
+    expect(bands.length).toBeGreaterThan(0);
+  });
+});

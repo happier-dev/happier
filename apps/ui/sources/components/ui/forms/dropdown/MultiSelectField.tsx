@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -36,7 +37,7 @@ export type MultiSelectFieldProps = Readonly<{
     /** Always offer search (a members list the person scans by name), not only for long lists. */
     searchable?: boolean;
     menuChrome?: boolean;
-    connectAction?: Readonly<{ label: string; onPress: () => void }>;
+    connectAction?: Readonly<{ label: string; onPress: (anchor?: PopoverAnchor) => void }>;
     /** Controlled open state, for a surface that opens the menu from elsewhere (an empty state). */
     open?: boolean;
     onOpenChange?: (open: boolean) => void;
@@ -114,8 +115,8 @@ export const MultiSelectField = React.memo(function MultiSelectField(
     return (
         <DropdownMenu
             header={props.menuChrome ? <Item title={props.title} subtitle={props.subtitle(selectedCount, props.candidates.length, selected)} mode="info" showChevron={false} showDivider={false} /> : undefined}
-            footer={props.menuChrome ? <View style={{ padding: theme.space.s12, borderTopWidth: 1, borderTopColor: theme.colors.border.default, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s12 }}>
-                {props.connectAction ? <RoundButton testID={`${props.testID}:connect`} size="small" display="inverted" title={props.connectAction.label} onPress={() => { handleOpenChange(false); props.connectAction?.onPress(); }} /> : <View />}
+            footer={props.menuChrome ? (selection) => <View style={{ padding: theme.space.s12, borderTopWidth: 1, borderTopColor: theme.colors.border.default, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s12 }}>
+                {props.connectAction ? <RoundButton testID={`${props.testID}:connect`} size="small" display="inverted" title={props.connectAction.label} onPress={() => { handleOpenChange(false); props.connectAction?.onPress(selection.anchor); }} /> : <View />}
                 <RoundButton testID={`${props.testID}:done`} size="small" display="secondary" title={t('common.done')} onPress={() => handleOpenChange(false)} />
             </View> : undefined}
             open={open}

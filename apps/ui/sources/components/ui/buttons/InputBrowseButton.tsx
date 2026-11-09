@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const styles = StyleSheet.create((theme) => ({
     button: {
@@ -29,7 +29,7 @@ export function InputBrowseButton(props: Readonly<{
     const paintColor = useHappierMaterialColorResolver();
 
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel}
@@ -37,7 +37,6 @@ export function InputBrowseButton(props: Readonly<{
             onPress={() => {
                 void props.onPress();
             }}
-            hitSlop={10}
             style={({ pressed }) => [
                 styles.button,
                 { backgroundColor: paintColor(theme.colors.input.background) },
@@ -49,6 +48,6 @@ export function InputBrowseButton(props: Readonly<{
                 size={16}
                 color={theme.colors.text.secondary}
             />
-        </Pressable>
+        </HappierPressable>
     );
 }

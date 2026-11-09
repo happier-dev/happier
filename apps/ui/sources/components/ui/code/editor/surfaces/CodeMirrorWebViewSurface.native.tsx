@@ -4,7 +4,7 @@ import { WebView } from 'react-native-webview';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
-import type { CodeEditorFindHandle, CodeEditorFindSnapshot, CodeEditorHandle, CodeEditorProps, CodeEditorHistory, EditorDecoration, EditorDecorationLayer } from '../codeEditorTypes';
+import type { CodeEditorCommand, CodeEditorDocumentChange, CodeEditorFindHandle, CodeEditorFindSnapshot, CodeEditorHandle, CodeEditorProps, CodeEditorHistory, EditorDecoration, EditorDecorationLayer } from '../codeEditorTypes';
 import { encodeChunkedEnvelope, decodeChunkedEnvelope } from '@/components/ui/webview/bridge/chunkedBridge';
 import { buildCodeMirrorWebViewHtml } from '../bridge/codemirrorWebViewHtml';
 import { resolveCodeMirrorWebViewLanguageSpec } from '../bridge/resolveCodeMirrorWebViewLanguageSpec';
@@ -13,6 +13,22 @@ import { readCodeMirrorFindStatus } from '../bridge/codeEditorFindBridge';
 import type { CodeEditorFindMessage, CodeEditorFindSet } from '../bridge/codeEditorFindBridge';
 import { useEmbeddedEditorKeyboard } from '@/keyboard/KeyboardShortcutProvider';
 import { resolveCodeMonoFontFamily } from '../../codeTypography';
+import type { CodeEditorLanguageIntelligence } from '../codeEditorTypes';
+import { DaemonLspQueryRequestSchema, LanguageIntelligenceSignatureHelpSchema, type LanguageIntelligenceSignatureHelp } from '@happier-dev/protocol/machines/languageIntelligence';
+import type { CodeEditorInlineContext, CodeEditorInlineEvent, CodeEditorInlineSuggestion, CodeEditorInlineSuggestions } from '../codeEditorTypes';
+import type { CodeMirrorNextEditProjection } from '../bridge/codeMirrorInlineSuggestions';
+import type { CodeNextEditAdapter } from '@/sync/domains/workspaces/languageIntelligence/codeNextEditSuggestions';
+import { t } from '@/text';
+
+function readInlineContext(value: unknown): CodeEditorInlineContext | null {
+    if (!value || typeof value !== 'object') return null;
+    const context = value as Record<string, unknown>;
+    for (const key of ['line', 'character', 'offset', 'version', 'selectionCount']) if (typeof context[key] !== 'number' || !Number.isInteger(context[key]) || context[key] < 0) return null;
+    for (const key of ['hasSelection', 'composing', 'suggestWidgetOpen']) if (typeof context[key] !== 'boolean') return null;
+    if (context.eol !== undefined && context.eol !== '\n' && context.eol !== '\r\n' && context.eol !== '\r') return null;
+    if (Number(context.line) < 1 || Number(context.selectionCount) < 1) return null;
+    return context as CodeEditorInlineContext;
+}
 
 function createMessageId(): string {
     return Math.random().toString(36).slice(2);
@@ -62,9 +78,25 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
     );
     const webViewRef = React.useRef<WebView>(null);
     const readyRef = React.useRef(false);
+    const intelligenceRef = React.useRef<CodeEditorLanguageIntelligence | null>(null);
+    const intelligenceSubscriptionRef = React.useRef<(() => void) | null>(null);
+    const nextEditSubscriptionRef = React.useRef<(() => void) | null>(null);
+    const intelligenceRequestsRef = React.useRef(new Map<string, AbortController>());
+    const formatRequestsRef = React.useRef(new Map<string, () => void>());
+    const nextEditApplyRef = React.useRef<null | { requestId: string; resolve(applied: boolean): void }>(null);
+    const settleNextEditApply = React.useCallback((applied: boolean) => {
+        const pending = nextEditApplyRef.current;
+        nextEditApplyRef.current = null;
+        pending?.resolve(applied);
+    }, []);
+    const signatureRef = React.useRef<LanguageIntelligenceSignatureHelp | null>(null);
+    const signatureListenersRef = React.useRef(new Set<() => void>());
     const pendingInitRef = React.useRef<null | { doc: string }>(null);
     const lastDocRef = React.useRef(props.value);
-    const pendingDocRequestRef = React.useRef(new Map<string, { resolve: () => void; timeoutId: any }>());
+    const propsRef = React.useRef(props);
+    propsRef.current = props;
+    const historyCommandRef = React.useRef<Promise<void> | null>(null);
+    const pendingDocRequestRef = React.useRef(new Map<string, { resolve: (confirmed: boolean) => void; timeoutId: ReturnType<typeof setTimeout>; change?: CodeEditorDocumentChange }>());
     const latestLanguageRef = React.useRef(props.language);
     const latestReadOnlyRef = React.useRef(false);
     const gutterPropsRef = React.useRef({ lineNumberDigits: props.lineNumberDigits ?? 1, reviewLaneWidth: props.reviewLaneWidth ?? 0 });
@@ -79,6 +111,11 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
     const cursorRef = React.useRef<ReturnType<NonNullable<CodeEditorHandle['getCursorPosition']>>>(null);
     const pointerListenersRef = React.useRef(new Set<Parameters<NonNullable<CodeEditorHandle['onPointerPosition']>>[0]>());
     const activationListenersRef = React.useRef(new Set<Parameters<NonNullable<CodeEditorHandle['onActivatePosition']>>[0]>());
+    const inlineContextRef = React.useRef<CodeEditorInlineContext | null>(null);
+    const inlineSuggestionRef = React.useRef<CodeEditorInlineSuggestion | null>(null);
+    const inlineListenersRef = React.useRef(new Set<() => void>());
+    const inlineEventsRef = React.useRef(new Set<(event: CodeEditorInlineEvent) => void>());
+    const inlineGuardRef = React.useRef<((id: string) => boolean) | null>(null);
     const historyRef = React.useRef<CodeEditorHistory>({ canUndo: false, canRedo: false });
     const historyListenersRef = React.useRef(new Set<(state: CodeEditorHistory) => void>());
     const pendingRevealRef = React.useRef<null | { line: number; focus?: boolean; select?: boolean; behavior?: 'smooth' | 'instant' }>(
@@ -87,6 +124,9 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
     const onReadyRef = React.useRef(props.onReady);
     onReadyRef.current = props.onReady;
     React.useEffect(() => {
+        lastDocRef.current = props.value;
+        historyCommandRef.current = null;
+        pendingInitRef.current = { doc: props.value };
         pendingRevealRef.current = props.initialLine ? { line: props.initialLine, behavior: 'instant' } : null;
         historyRef.current = { canUndo: false, canRedo: false };
         for (const listener of historyListenersRef.current) listener(historyRef.current);
@@ -153,9 +193,72 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
         },
         [maxChunkBytes],
     );
+    const inlineSuggestions = React.useMemo<CodeEditorInlineSuggestions>(() => ({
+        set: suggestion => { if (readyRef.current) postEnvelope({ v: 1, type: 'inline.set', payload: suggestion }); },
+        getContext: () => inlineContextRef.current,
+        getSuggestion: () => inlineSuggestionRef.current,
+        subscribeContext: listener => { inlineListenersRef.current.add(listener); return () => { inlineListenersRef.current.delete(listener); }; },
+        onEvent: listener => { inlineEventsRef.current.add(listener); return () => { inlineEventsRef.current.delete(listener); }; },
+        setAcceptGuard: guard => { inlineGuardRef.current = guard; },
+    }), [postEnvelope]);
     React.useEffect(() => {
         if (readyRef.current) postEnvelope({ v: 1, type: 'keyboard.config', payload: { signatures: keyboard.signatures } });
     }, [keyboard.signatures, postEnvelope]);
+
+    const postIntelligence = React.useCallback(() => {
+        const port = intelligenceRef.current;
+        if (readyRef.current) postEnvelope({ v: 1, type: 'intelligence.configure', payload: port ? {
+            path: port.path, inlayHints: port.inlayHints, semanticHighlighting: port.semanticHighlighting, capabilities: port.getSnapshot().capabilities,
+        } : null });
+    }, [postEnvelope]);
+    /** The shared next-edit snapshot, drawn by the WebView; hint words come from the host's locale. */
+    const postNextEdit = React.useCallback(() => {
+        if (!readyRef.current) return;
+        const snapshot = intelligenceRef.current?.nextEditSuggestions?.getSnapshot();
+        const suggestion = snapshot?.suggestion;
+        const first = suggestion?.edits[0];
+        let payload: CodeMirrorNextEditProjection | null = snapshot?.status === 'requesting' ? { status: 'requesting' } : null;
+        if (suggestion && first && (snapshot.status === 'ready' || snapshot.status === 'preview')) {
+            const line = first.range.start.line + 1;
+            // Without keys (phone) the key row carries Go/Apply/Dismiss; the ready label stays as a tappable place name.
+            const keys = intelligenceRef.current?.nextEditKeys !== false;
+            const place = { text: inlineContextRef.current?.line === line ? t('files.editing.aiSuggestions.nextEditHere') : t('files.editing.aiSuggestions.nextEditAt', { line }) };
+            const hint = snapshot.status === 'preview'
+                ? keys ? [{ key: true, text: 'Tab' }, { text: t('files.editing.aiSuggestions.nextEditApply') }, { key: true, text: 'Esc' }, { text: t('files.editing.aiSuggestions.nextEditDismiss') }] : []
+                : keys ? [{ key: true, text: 'Tab' }, place] : [place];
+            payload = { id: suggestion.id, status: snapshot.status, hint,
+                edits: suggestion.edits.map(edit => ({ start: edit.range.start, end: edit.range.end, oldText: edit.oldText, newText: edit.newText })) };
+        }
+        postEnvelope({ v: 1, type: 'nextEdit.set', payload });
+    }, [postEnvelope]);
+    const nextEditAdapter = React.useMemo<CodeNextEditAdapter>(() => ({
+        jump: position => { postEnvelope({ v: 1, type: 'nextEdit.jump', payload: position }); },
+        apply: (_edits, captured) => {
+            // The WebView re-checks its own buffer against the drawn preview before its one transaction.
+            const id = intelligenceRef.current?.nextEditSuggestions?.getSnapshot().suggestion?.id;
+            if (!readyRef.current || !id || nextEditApplyRef.current || lastDocRef.current !== captured.text || inlineContextRef.current?.version !== captured.version) return false;
+            const requestId = createMessageId();
+            return new Promise<boolean>(resolve => {
+                nextEditApplyRef.current = { requestId, resolve };
+                postEnvelope({ v: 1, type: 'nextEdit.apply', payload: { id, requestId } });
+            });
+        },
+    }), [postEnvelope]);
+    const setLanguageIntelligence = React.useCallback((port: CodeEditorLanguageIntelligence | null) => {
+        settleNextEditApply(false);
+        intelligenceSubscriptionRef.current?.(); intelligenceSubscriptionRef.current = null;
+        nextEditSubscriptionRef.current?.(); nextEditSubscriptionRef.current = null;
+        for (const request of intelligenceRequestsRef.current.values()) request.abort(); intelligenceRequestsRef.current.clear();
+        intelligenceRef.current = port;
+        let capabilities = port?.getSnapshot().capabilities;
+        if (port) intelligenceSubscriptionRef.current = port.subscribe(() => {
+            const next = port.getSnapshot().capabilities;
+            if (next !== capabilities) { capabilities = next; postIntelligence(); }
+        });
+        if (port?.nextEditSuggestions) nextEditSubscriptionRef.current = port.nextEditSuggestions.subscribe(postNextEdit);
+        postIntelligence();
+        postNextEdit();
+    }, [postIntelligence, postNextEdit, settleNextEditApply]);
 
     const publishFind = React.useCallback((snapshot: CodeEditorFindSnapshot) => {
         findSnapshotRef.current = snapshot;
@@ -193,22 +296,61 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
         isInputFocused: () => false, // The host's shared FindBar owns its input focus.
     }), [postFind, publishFind, seedFind]);
 
-    const flushPendingChange = React.useCallback(async (): Promise<void> => {
-        if (!readyRef.current) return;
+    const requestDocumentSnapshot = React.useCallback(async (change?: CodeEditorDocumentChange): Promise<void> => {
+        if (!readyRef.current) throw new Error('editor_document_snapshot_unconfirmed');
         const requestId = createMessageId();
-        return await new Promise<void>((resolve) => {
+        const confirmed = await new Promise<boolean>((resolve) => {
             const timeoutId = setTimeout(() => {
                 pendingDocRequestRef.current.delete(requestId);
-                resolve();
+                resolve(false);
             }, 1500);
-            pendingDocRequestRef.current.set(requestId, { resolve, timeoutId });
+            pendingDocRequestRef.current.set(requestId, { resolve, timeoutId, change });
             postEnvelope({
                 v: 1,
                 type: 'requestDoc',
                 payload: { requestId },
             });
         });
+        if (!confirmed) throw new Error('editor_document_snapshot_unconfirmed');
     }, [postEnvelope]);
+    const flushPendingChange = React.useCallback(async (): Promise<void> => {
+        const command = historyCommandRef.current;
+        if (command) {
+            try { await command; }
+            catch (error) {
+                if (historyCommandRef.current === command) historyCommandRef.current = null;
+                throw error;
+            }
+        }
+        await requestDocumentSnapshot();
+    }, [requestDocumentSnapshot]);
+
+    const runCommand = React.useCallback((command: CodeEditorCommand) => {
+        if ((command === 'undo' || command === 'redo' || typeof command === 'object') && propsRef.current.history) {
+            // Commands cross an asynchronous bridge; preserve consecutive Undo key presses in order.
+            const pending = (historyCommandRef.current ?? Promise.resolve()).catch(() => {}).then(async () => {
+                const history = propsRef.current.history;
+                if (!history || propsRef.current.readOnly) return;
+                await requestDocumentSnapshot();
+                if (history !== propsRef.current.history || !readyRef.current) return;
+                if (typeof command === 'object') {
+                    postEnvelope({ v: 1, type: 'command', payload: { command } });
+                    await requestDocumentSnapshot('replaceDocument' in command && command.history ? { history: command.history } : undefined);
+                    return;
+                }
+                const next = history[command](lastDocRef.current);
+                if (next === null) return;
+                lastDocRef.current = next;
+                if (readyRef.current) postEnvelope({ v: 1, type: 'command', payload: { command: { replaceDocument: next, history: command } } });
+                propsRef.current.onChange(next, { history: command });
+            });
+            historyCommandRef.current = pending;
+            // Keep the failure for the public flush without leaking a void command's rejection.
+            void pending.catch(() => {});
+            return;
+        }
+        if (readyRef.current) postEnvelope({ v: 1, type: 'command', payload: { command } });
+    }, [requestDocumentSnapshot, postEnvelope]);
 
     const readGeometry = React.useCallback((line: number, character: number | null): GeometryRect | null => {
         const key = `${line}:${character ?? ''}`;
@@ -230,6 +372,7 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                 if (readyRef.current) postEnvelope({ v: 1, type: 'focus', payload: {} });
             },
             find,
+            inlineSuggestions,
             getSelection: () => selectionRef.current,
             getLineRect: (line) => readGeometry(line, null),
             getPositionRect: (line, character) => readGeometry(line, character),
@@ -242,10 +385,11 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                 pendingRevealRef.current = payload;
                 if (readyRef.current) { postEnvelope({ v: 1, type: 'reveal', payload }); pendingRevealRef.current = null; }
             },
-            runCommand: (command) => {
-                if (readyRef.current) postEnvelope({ v: 1, type: 'command', payload: { command } });
-            },
+            runCommand,
             subscribeHistory: (listener) => {
+                if (propsRef.current.history) {
+                    return propsRef.current.history.subscribe(listener);
+                }
                 historyListenersRef.current.add(listener);
                 listener(historyRef.current);
                 return () => { historyListenersRef.current.delete(listener); };
@@ -272,12 +416,21 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                 return () => { activationListenersRef.current.delete(listener); };
             },
             getCursorPosition: () => cursorRef.current,
+            setLanguageIntelligence,
+            formatDocument: async () => {
+                if (!readyRef.current || !intelligenceRef.current) return;
+                const id = createMessageId();
+                await new Promise<void>(resolve => { formatRequestsRef.current.set(id, resolve); postEnvelope({ v: 1, type: 'intelligence.format', payload: { id } }); });
+            },
+            getSignatureHelp: () => signatureRef.current,
+            subscribeSignatureHelp: listener => { signatureListenersRef.current.add(listener); return () => { signatureListenersRef.current.delete(listener); }; },
         }),
-        [find, flushPendingChange, postEnvelope, readGeometry],
+        [find, flushPendingChange, inlineSuggestions, postEnvelope, readGeometry, runCommand, setLanguageIntelligence],
     );
 
     const sendInit = React.useCallback(() => {
         if (!readyRef.current) return;
+        settleNextEditApply(false);
         const doc = pendingInitRef.current?.doc ?? lastDocRef.current;
         pendingInitRef.current = null;
         lastDocRef.current = doc;
@@ -288,16 +441,19 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                 doc,
                 language: resolveCodeMirrorWebViewLanguageSpec(latestLanguageRef.current),
                 readOnly: latestReadOnlyRef.current,
+                sharedHistory: Boolean(propsRef.current.history),
                 ...gutterPropsRef.current,
                 ...(pendingRevealRef.current ? { reveal: pendingRevealRef.current } : {}),
             },
         });
         pendingRevealRef.current = null;
         postEnvelope({ v: 1, type: 'keyboard.config', payload: { signatures: keyboardRef.current.signatures } });
+        postIntelligence();
+        postNextEdit();
         if (findRequestRef.current) postFind({ v: 1, type: 'find.set', payload: findRequestRef.current });
         for (const [layer, items] of decorationsRef.current) postEnvelope({ v: 1, type: 'decorations.set', payload: { layer, items } });
         if (geometryWatchRef.current.size) postEnvelope({ v: 1, type: 'geometry.watch', payload: { positions: [...geometryWatchRef.current.values()] } });
-    }, [postEnvelope, postFind]);
+    }, [postEnvelope, postFind, postIntelligence, postNextEdit, settleNextEditApply]);
 
     React.useEffect(() => {
         if (lastDocRef.current === props.value) return;
@@ -320,17 +476,25 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
     React.useEffect(() => {
         return () => {
             readyRef.current = false;
+            settleNextEditApply(false);
+            intelligenceSubscriptionRef.current?.(); intelligenceSubscriptionRef.current = null;
+            nextEditSubscriptionRef.current?.(); nextEditSubscriptionRef.current = null;
+            for (const request of intelligenceRequestsRef.current.values()) request.abort(); intelligenceRequestsRef.current.clear();
+            for (const resolve of formatRequestsRef.current.values()) resolve(); formatRequestsRef.current.clear();
             focusedRef.current = false;
             cursorRef.current = null;
+            inlineContextRef.current = null;
+            inlineSuggestionRef.current = null;
+            for (const listener of inlineListenersRef.current) listener();
             for (const listener of pointerListenersRef.current) listener(null);
             publishSelection(null);
             for (const pending of pendingDocRequestRef.current.values()) {
                 clearTimeout(pending.timeoutId);
-                pending.resolve();
+                pending.resolve(false);
             }
             pendingDocRequestRef.current.clear();
         };
-    }, [props.resetKey, html]);
+    }, [props.resetKey, html, settleNextEditApply]);
 
     return (
         <View
@@ -354,6 +518,99 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                     }
                     const decoded = decodeChunkedEnvelope({ message: parsed });
                     if (!decoded) return;
+                    if (decoded.type === 'intelligence.cancel') {
+                        const payload = decoded.payload as { id?: unknown } | null;
+                        if (typeof payload?.id === 'string') { intelligenceRequestsRef.current.get(payload.id)?.abort(); intelligenceRequestsRef.current.delete(payload.id); }
+                        return;
+                    }
+                    if (decoded.type === 'intelligence.request') {
+                        const payload = decoded.payload as { id?: unknown; kind?: unknown; options?: unknown } | null;
+                        if (typeof payload?.id !== 'string') return;
+                        const port = intelligenceRef.current, id = payload.id;
+                        const parsed = DaemonLspQueryRequestSchema.safeParse({ ...(payload.options && typeof payload.options === 'object' ? payload.options : {}),
+                            kind: payload.kind, rootPath: '/', path: port?.path ?? 'unavailable' });
+                        if (!port || !parsed.success) { postEnvelope({ v: 1, type: 'intelligence.result', payload: { id, result: null } }); return; }
+                        const { rootPath: _root, path: _path, kind, version: _version, generation: _generation, text: _text, ...options } = parsed.data;
+                        const abort = new AbortController(); intelligenceRequestsRef.current.set(id, abort);
+                        void port.request(kind, options, abort.signal).then(result => {
+                            if (!abort.signal.aborted && port === intelligenceRef.current) postEnvelope({ v: 1, type: 'intelligence.result', payload: { id, result } });
+                        }).catch(() => { if (!abort.signal.aborted) postEnvelope({ v: 1, type: 'intelligence.result', payload: { id, result: null } }); })
+                            .finally(() => intelligenceRequestsRef.current.delete(id));
+                        return;
+                    }
+                    if (decoded.type === 'intelligence.signature') {
+                        const payload = decoded.payload as { help?: unknown } | null;
+                        const parsed = payload?.help === null ? null : LanguageIntelligenceSignatureHelpSchema.safeParse(payload?.help);
+                        signatureRef.current = parsed?.success ? parsed.data : null;
+                        for (const listener of signatureListenersRef.current) listener();
+                        return;
+                    }
+                    if (decoded.type === 'intelligence.formatted') {
+                        const payload = decoded.payload as { id?: unknown } | null;
+                        if (typeof payload?.id === 'string') { formatRequestsRef.current.get(payload.id)?.(); formatRequestsRef.current.delete(payload.id); }
+                        return;
+                    }
+                    if (decoded.type === 'nextEdit.applied') {
+                        const payload = decoded.payload as { requestId?: unknown; applied?: unknown } | null;
+                        if (typeof payload?.requestId === 'string' && typeof payload.applied === 'boolean'
+                            && payload.requestId === nextEditApplyRef.current?.requestId) settleNextEditApply(payload.applied);
+                        return;
+                    }
+
+                    if (decoded.type === 'inline.context') {
+                        const payload = decoded.payload as { context?: unknown; changes?: unknown; suggestion?: unknown } | null;
+                        const context = readInlineContext(payload?.context);
+                        if (!context) return;
+                        if (Array.isArray(payload?.changes)) {
+                            // Offsets refer to the pre-transaction UTF-16 document; apply from its end.
+                            for (const change of [...payload.changes].reverse()) {
+                                if (!change || typeof change !== 'object') continue;
+                                const { from, to, insert } = change as Record<string, unknown>;
+                                if (typeof from === 'number' && typeof to === 'number' && Number.isInteger(from) && Number.isInteger(to)
+                                    && from >= 0 && to >= from && to <= lastDocRef.current.length && typeof insert === 'string') {
+                                    lastDocRef.current = lastDocRef.current.slice(0, from) + insert + lastDocRef.current.slice(to);
+                                }
+                            }
+                        }
+                        inlineContextRef.current = context;
+                        const suggestion = payload?.suggestion as Record<string, unknown> | null;
+                        const position = readEditorPosition(suggestion);
+                        if (suggestion && position && typeof suggestion.id === 'string' && typeof suggestion.text === 'string') {
+                            const previous = inlineSuggestionRef.current;
+                            if (!previous || previous.id !== suggestion.id || previous.text !== suggestion.text
+                                || previous.line !== position.line || previous.character !== position.character) {
+                                inlineSuggestionRef.current = { id: suggestion.id, text: suggestion.text, ...position };
+                            }
+                        } else inlineSuggestionRef.current = null;
+                        for (const listener of inlineListenersRef.current) listener();
+                        return;
+                    }
+                    if (decoded.type === 'inline.acceptRequested') {
+                        const payload = decoded.payload as { id?: unknown; version?: unknown; partial?: unknown } | null;
+                        if (typeof payload?.id === 'string' && typeof payload.partial === 'boolean'
+                            && payload.version === inlineContextRef.current?.version && inlineGuardRef.current?.(payload.id) === true) {
+                            postEnvelope({ v: 1, type: 'inline.accept', payload });
+                        }
+                        return;
+                    }
+                    if (decoded.type === 'nextEdit.key') {
+                        const kind = (decoded.payload as { kind?: unknown } | null)?.kind;
+                        const port = intelligenceRef.current?.nextEditSuggestions;
+                        const context = inlineContextRef.current;
+                        if (!port) return;
+                        if (kind === 'dismiss') port.dismiss();
+                        else if (kind === 'tab' && context) port.tab(context, lastDocRef.current, nextEditAdapter);
+                        return;
+                    }
+                    if (decoded.type === 'inline.event') {
+                        const payload = decoded.payload as Record<string, unknown> | null;
+                        if (!payload || !['shown', 'accepted', 'partiallyAccepted', 'dismissed', 'trigger'].includes(String(payload.kind))) return;
+                        const event: CodeEditorInlineEvent = { kind: payload.kind as CodeEditorInlineEvent['kind'],
+                            ...(typeof payload.id === 'string' ? { id: payload.id } : {}),
+                            ...(typeof payload.acceptedText === 'string' ? { acceptedText: payload.acceptedText } : {}) };
+                        for (const listener of inlineEventsRef.current) listener(event);
+                        return;
+                    }
 
                     if (decoded.type === 'cursor') {
                         const position = readEditorPosition(decoded.payload);
@@ -402,7 +659,13 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                         });
                         return;
                     }
+                    if (decoded.type === 'history.command') {
+                        const payload = decoded.payload;
+                        if (payload && typeof payload === 'object' && 'command' in payload && (payload.command === 'undo' || payload.command === 'redo')) runCommand(payload.command);
+                        return;
+                    }
                     if (decoded.type === 'history.state') {
+                        if (propsRef.current.history) return;
                         const payload = decoded.payload;
                         if (payload && typeof payload === 'object' && 'canUndo' in payload && 'canRedo' in payload
                             && typeof payload.canUndo === 'boolean' && typeof payload.canRedo === 'boolean') {
@@ -472,6 +735,7 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                     }
                     if (decoded.type === 'error') {
                         readyRef.current = false;
+                        settleNextEditApply(false);
                         cursorRef.current = null;
                         for (const listener of pointerListenersRef.current) listener(null);
                         publishSelection(null);
@@ -496,15 +760,16 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
                         const doc = payload && typeof payload.doc === 'string' ? payload.doc : null;
                         if (!requestId || doc === null) return;
 
-                        lastDocRef.current = doc;
-                        props.onChange(doc);
-
                         const pending = pendingDocRequestRef.current.get(requestId);
-                        if (pending) {
-                            pendingDocRequestRef.current.delete(requestId);
-                            clearTimeout(pending.timeoutId);
-                            pending.resolve();
+                        if (!pending) return;
+                        if (lastDocRef.current !== doc) {
+                            lastDocRef.current = doc;
+                            if (pending.change) props.onChange(doc, pending.change);
+                            else props.onChange(doc);
                         }
+                        pendingDocRequestRef.current.delete(requestId);
+                        clearTimeout(pending.timeoutId);
+                        pending.resolve(true);
                         return;
                     }
                 }}

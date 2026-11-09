@@ -101,6 +101,34 @@ const recovery: WorkflowInvocationRecoveryPresentation = {
 };
 
 describe('plain-text MultiTextInput web consumers', () => {
+    it.each([
+        ['', 'AND more'],
+        ['first.', 'first. AND more'],
+        ['first. ', 'first. AND more'],
+        ['first.\n', 'first.\nAND more'],
+    ])('inserts dictation after %j with only the needed whitespace separator', async (prefix, expected) => {
+        const inputRef = React.createRef<MultiTextInputHandle>();
+        const states: Array<{ text: string; selection: { start: number; end: number } }> = [];
+        const onSubmit = vi.fn();
+        function Authoring() {
+            const [value, setValue] = React.useState(prefix);
+            return <SessionAuthoringComposer ref={inputRef} composerRef={null} value={value} onChangeText={setValue}
+                testID="dictation-separator" onStateChange={state => states.push(state)}
+                submitBehavior="submit" onKeyPress={() => { onSubmit(); return true; }} />;
+        }
+        const page = await render(<Authoring />);
+        const selection = { start: prefix.length, end: prefix.length };
+        await act(async () => {
+            applyDictationToComposer({ input: inputRef.current, state: { text: prefix, selection }, text: 'AND more' });
+        });
+        expect(page.querySelector<HTMLElement>('[data-testid="dictation-separator"]')).not.toBeNull();
+        // The real editor's plain-text publication retains paragraph breaks;
+        // DOM textContent alone omits the newline between rendered blocks.
+        expect(states.at(-1)?.text).toBe(expected);
+        expect(states.at(-1)?.selection).toEqual({ start: expected.length, end: expected.length });
+        expect(onSubmit).not.toHaveBeenCalled();
+    });
+
     it('keeps authoring typing, literal paste, selection, dictation and submit as plain text', async () => {
         const inputRef = React.createRef<MultiTextInputHandle>();
         const states: Array<{ text: string; selection: { start: number; end: number } }> = [];

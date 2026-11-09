@@ -89,12 +89,12 @@ describe('SelectionListSearchHeader', () => {
                 testID="hdr"
             />,
         );
-        const chip = screen.findByTestId('hdr:leading:back-chip');
+        const chip = screen.findHostByTestId('hdr:leading:back-chip');
         expect(chip).not.toBeNull();
         expect(screen.findByTestId('hdr:leading:search-icon')).toBeNull();
         // The chip names its destination for sight and for assistive tech.
         expect(screen.getTextContent()).toContain('Worktrees');
-        expect(chip?.props.accessibilityRole).toBe('button');
+        expect(chip?.props.role).toBe('button');
         expect(chip?.props.accessibilityLabel).toBe(t('selectionList.backTo', { label: 'Worktrees' }));
         screen.pressByTestId('hdr:leading:back-chip');
         expect(onPopStep).toHaveBeenCalled();

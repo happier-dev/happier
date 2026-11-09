@@ -3,7 +3,7 @@ import Color from 'color';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
-import { glassContrastRatio, renderGlassOver } from '@/dev/testkit/glassBackdrop';
+import { glassContrastRatio, renderGlassOver, resolveBrowserMaterialPaint } from '@/dev/testkit/glassBackdrop';
 
 const browser = await vi.hoisted(async () => {
     const { installBrowserRuntimeForTests } = await import('@/dev/testkit/harness/browserRuntimeHarness');
@@ -94,6 +94,119 @@ function useAutoPreset() {
 }
 
 describe('web glass material', () => {
+    it('gives the shared main-area plane the Sessions reading coat exactly once', async () => {
+        const { AppShellMaterialPlane } = await import('@/components/navigation/shell/appShellMaterialPlane');
+        const { atmosphereStageStore } = await import('@/components/atmosphere/atmosphereStage');
+        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        const pictureShown = atmosphereStageStore.get().pictureShown;
+        act(() => atmosphereStageStore.setPictureShown(true));
+        try {
+            for (const dark of [false, true]) {
+                themeMode.dark = dark;
+                for (const settings of [
+                    { glassSurfaceMaterials: glassPresetMaterials('everywhere') },
+                    { glassSurfaceMaterials: glassPresetMaterials('solid') },
+                    { glassSurfaceMaterials: { ...glassPresetMaterials('clear'), content: { blur: 'light' as const, opacity: 0.23 } } },
+                ]) {
+                    const screen = await renderScreen(<GlassMaterialSettingsProvider value={settings}>
+                        <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'wallpaper' }}>
+                            <GlassSurface testID="sessions-reference" plane surfaceGroup="content" atmosphereCoat="reading" solidColor="#112233">{null}</GlassSurface>
+                            <AppShellMaterialPlane testID="main-area" group="content" color="#112233" translucentColor="transparent" style={{ flex: 1 }}>
+                                <AppShellMaterialPlane testID="nested-page" group="content" color="#112233" translucentColor="transparent" style={{ flex: 1 }}>
+                                    <DraftInput />
+                                </AppShellMaterialPlane>
+                            </AppShellMaterialPlane>
+                        </GlassRuntimeEnvironmentProvider>
+                    </GlassMaterialSettingsProvider>);
+                    try {
+                        const paints = (id: string) => screen.findHostByTestId(id)!.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true');
+                        const painted = (id: string) => resolveBrowserMaterialPaint(
+                            flattenTestStyle(paints(id)[0]!.props.style)!.backgroundColor as string,
+                            flattenTestStyle(screen.findHostByTestId(id)!.props.style) as Record<string, string>,
+                        );
+                        const main = paints('main-area');
+                        expect(painted('main-area')).toBe(painted('sessions-reference'));
+                        expect(hasBackdrop(main[0]!)).toBe(hasBackdrop(paints('sessions-reference')[0]!));
+                        expect(painted('nested-page')).toBe('#00000000');
+                        expect(main.filter(hasBackdrop)).toHaveLength(hasBackdrop(main[0]!) ? 1 : 0);
+                    } finally { await screen.unmount(); }
+                }
+            }
+        } finally { act(() => atmosphereStageStore.setPictureShown(pictureShown)); }
+    });
+
+    it('repaints held presets through CSS without rendering memoized descendant material readers', async () => {
+        const { useHappierMaterialColorResolver } = await import('@happier-dev/plugin-ui/presentation');
+        const { GlassMaterialRuntime } = await import('./GlassMaterialRuntime');
+        const { holdSettingWrite } = await import('@/sync/store/settingsPreview');
+        const { APPEARANCE_GLASS_SETTINGS } = await import('@/components/settings/appearance/appearanceSettings');
+        act(() => storage.setState({ settingsScope: { serverId: 'material-cost', accountId: 'material-reader' },
+            settings: { ...previousState.settings, ...resolvePreset(previousState.settings, 'solid') } }));
+        let renders = 0;
+        const Reader = React.memo(function MaterialReader() {
+            renders++;
+            const resolve = useHappierMaterialColorResolver();
+            return React.createElement('MaterialPaint', { color: resolve('#112233', 'rgba(235,230,225,0.1)') });
+        });
+        const screen = await renderScreen(<GlassMaterialRuntime><GlassSurface surfaceGroup="floating" finishRole={null}><Reader /></GlassSurface></GlassMaterialRuntime>);
+        const paint = screen.findByType('MaterialPaint').props.color;
+        renders = 0;
+        let release = () => {};
+        try {
+            await act(async () => { release = holdSettingWrite(APPEARANCE_GLASS_SETTINGS.settings.glassPreset, 'everywhere'); });
+            expect(document.documentElement.style.getPropertyValue('--happier-glass-floating-nested-opacity')).toBe('0%');
+            expect(renders).toBe(0);
+            expect(screen.findByType('MaterialPaint').props.color).toBe(paint);
+            await act(async () => release());
+            expect(document.documentElement.style.getPropertyValue('--happier-glass-floating-nested-opacity')).toBe('100%');
+            expect(renders).toBe(0);
+        } finally { await act(async () => release()); }
+    });
+
+    it('binds opaque web paint to the live material while preserving authored alpha and the clear content plane', async () => {
+        const { useHappierMaterialColorResolver } = await import('@happier-dev/plugin-ui/presentation');
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
+        const { applyGlassDocumentPresentation } = await import('./glassDocumentPresentation');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        const opaque = 'var(--fx33-opaque)', alpha = 'var(--fx33-alpha)';
+        document.documentElement.style.setProperty('--fx33-opaque', '#112233');
+        document.documentElement.style.setProperty('--fx33-alpha', 'rgba(17,34,51,0.25)');
+        function Reader() {
+            const resolve = useHappierMaterialColorResolver();
+            return React.createElement('MaterialPaint', { opaque: resolve(opaque, 'rgba(235,230,225,0.1)'),
+                alpha: resolve(alpha, 'rgba(235,230,225,0.1)'), plane: resolve(alpha, 'transparent'),
+                opaqueRgba: resolve('rgba(17,34,51,1)', 'rgba(235,230,225,0.1)') });
+        }
+        const child = <GlassSurface testID="material-plane" plane surfaceGroup="content" finishRole={null}><Reader /></GlassSurface>;
+        const screen = await renderScreen(child);
+        try {
+            for (const atmosphereBehind of ['none', 'wallpaper'] as const) {
+                for (const preset of ['solid', 'everywhere'] as const) {
+                    const settings = { glassSurfaceMaterials: glassPresetMaterials(preset) };
+                    const environment = { atmosphereBehind, desktopWindow: true, nativeWindowMaterialLive: true };
+                    const stop = applyGlassDocumentPresentation(document, settings, environment);
+                    try {
+                        await screen.update(<GlassMaterialSettingsProvider value={settings}><GlassRuntimeEnvironmentProvider value={environment}>{child}</GlassRuntimeEnvironmentProvider></GlassMaterialSettingsProvider>);
+                        const paint = screen.findByType('MaterialPaint').props;
+                        const variables = flattenTestStyle(screen.findHostByTestId('material-plane')?.props.style) as Record<string, string>;
+                        const painted = (color: string) => resolveBrowserMaterialPaint(color, variables);
+                        expect(painted(paint.opaque)).toBe(Color(preset === 'solid' ? '#112233' : 'rgba(235,230,225,0.1)').hexa());
+                        expect(paint.alpha).toBe(alpha);
+                        expect(painted(paint.alpha)).toBe('#11223340');
+                        expect(painted(paint.opaqueRgba)).toBe(painted(paint.opaque));
+                        expect(painted(paint.plane)).toBe(atmosphereBehind === 'wallpaper' ? '#00000000' : '#11223340');
+                    } finally { stop(); }
+                }
+            }
+        } finally {
+            document.documentElement.style.removeProperty('--fx33-opaque');
+            document.documentElement.style.removeProperty('--fx33-alpha');
+        }
+    });
+
     it('retains an opened layer when the containing coat disappears without another glass plane', async () => {
         const { HappierSurface } = await import('@happier-dev/plugin-ui/presentation');
         const { renderThemeMaterialSurface, GlassOpenedLayer } = await import('./GlassSurface');
@@ -108,6 +221,40 @@ describe('web glass material', () => {
             const current = screen.findHostByTestId('draft');
             expect(current?.props.value).toBe('keep the opened draft');
             expect(current).toBe(input);
+        }
+    });
+
+    it('keeps widget state and controls when its card coat is hidden, inheriting the parent plane', async () => {
+        const { HappierWidgetFrame, useContainingHappierMaterialRole } = await import('@happier-dev/plugin-ui/presentation');
+        const { renderThemeMaterialSurface, useContainingGlassSurfaceGroup } = await import('./GlassSurface');
+        function Body() {
+            const role = useContainingHappierMaterialRole();
+            const group = useContainingGlassSurfaceGroup();
+            return <><DraftInput />{React.createElement('PlaneProbe', { role, group })}</>;
+        }
+        const scene = (frameStyle: 'card' | 'plain') => <GlassSurface surfaceGroup="floating" finishRole={null}>
+            <HappierWidgetFrame testID="widget" frameStyle={frameStyle} placement="board" title="Vitals"
+                renderMaterialSurface={renderThemeMaterialSurface} accessory={<DraftInput />}>
+                <Body />
+            </HappierWidgetFrame>
+        </GlassSurface>;
+        const screen = await renderScreen(scene('card'));
+        const [options, body] = screen.findAllByType('DraftInput');
+        act(() => { body!.props.onChangeText('edited'); options!.props.onChangeText('menu open'); });
+        for (const frameStyle of ['plain', 'card'] as const) {
+            await act(async () => screen.update(scene(frameStyle)));
+            expect(screen.findAllByType('DraftInput')).toEqual([options, body]);
+            expect(body!.props.value).toBe('edited');
+            expect(options!.props.value).toBe('menu open');
+            const role = frameStyle === 'plain' ? 'floating' : 'card';
+            expect(screen.findByType('PlaneProbe').props).toMatchObject({ role, group: role });
+            if (frameStyle === 'plain') {
+                const widget = screen.findHostByTestId('widget')!;
+                expect(widget.findAll(hasBackdrop)).toHaveLength(0);
+                const paint = widget.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true');
+                expect(paint).toHaveLength(1);
+                expect(flattenTestStyle(paint[0]!.props.style)?.backgroundColor).toBe('transparent');
+            }
         }
     });
 
@@ -135,7 +282,8 @@ describe('web glass material', () => {
         const { glassPresetMaterials } = await import('./glassMaterial');
         const scene = (atmosphereBehind: 'wallpaper' | 'none') => <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
             <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind }}>
-                <GlassSurface surfaceGroup="content" finishRole={null}>
+                {/* The shell's content plane clears over the picture; Elements own their coat inside it. */}
+                <GlassSurface plane surfaceGroup="content" finishRole={null}>
                     <GlassSurface testID="card" surfaceGroup="card" nested finishRole="card" solidColor="#221c1c">
                         <GlassSurface testID="inner-card" surfaceGroup="card" nested finishRole="card"><DraftInput /></GlassSurface>
                     </GlassSurface>
@@ -153,6 +301,51 @@ describe('web glass material', () => {
         expect(screen.findHostByTestId('draft')?.props.value).toBe('keep the web card draft');
         expect(screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === '#221c1c')).toHaveLength(1);
     });
+    it('frosts Auto reading surfaces over a shown background and retains drafts through opaque overrides', async () => {
+        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        const { darkTheme, lightTheme } = await import('@/theme');
+        type Environment = import('./glassMaterial').GlassMaterialEnvironment;
+        const scene = (environment: Environment, preset: 'auto' | 'solid' = 'auto') =>
+            <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials(preset) }}>
+                <GlassRuntimeEnvironmentProvider value={environment}>
+                    <GlassSurface plane surfaceGroup="content" atmosphereCoat="reading" finishRole={null}>
+                        <DraftInput />
+                    </GlassSurface>
+                </GlassRuntimeEnvironmentProvider>
+            </GlassMaterialSettingsProvider>;
+        const screen = await renderScreen(scene({ atmosphereBehind: 'wallpaper' }));
+        const draft = screen.findHostByTestId('draft');
+        await act(async () => { screen.changeTextByTestId('draft', 'keep the reading draft'); });
+        for (const dark of [false, true]) {
+            themeMode.dark = dark;
+            const theme = dark ? darkTheme : lightTheme;
+            for (const atmosphereBehind of ['band', 'wallpaper'] as const) {
+                const environment = { atmosphereBehind };
+                for (const state of [
+                    { environment, preset: 'auto', opacity: dark ? 0.66 : 0.56 },
+                    { environment, preset: 'solid', opacity: 1 },
+                    { environment: { ...environment, reduceTransparency: true }, preset: 'auto', opacity: 1 },
+                    { environment: { ...environment, windowActive: false }, preset: 'auto', opacity: 1 },
+                    { environment, preset: 'auto', opacity: dark ? 0.66 : 0.56 },
+                ] as const) {
+                    await screen.update(scene(state.environment, state.preset));
+                    const paint = screen.findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true');
+                    expect(paint).toHaveLength(1);
+                    const style = flattenTestStyle(paint[0]!.props.style);
+                    expect(style?.backgroundColor).toBe(
+                        'color-mix(in srgb, ' + theme.colors.surface.base + ' ' + state.opacity * 100 + '%, transparent)',
+                    );
+                    expect(screen.findAll(hasBackdrop)).toHaveLength(state.opacity < 1 ? 1 : 0);
+                    expect(screen.findHostByTestId('draft')).toBe(draft);
+                    expect(draft?.props.value).toBe('keep the reading draft');
+                    expect(backdropAncestors(draft!)).toHaveLength(0);
+                }
+            }
+        }
+    });
+
     it('backs sidebar Elements with the sidebar plane: solid unless that plane is glass over a wallpaper', async () => {
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
@@ -854,8 +1047,15 @@ describe('web glass material', () => {
         const pill = screen.findAll(node => String(node.type) === 'Animated.View')[0]!;
         const fill = flattenTestStyle(pill.props.style)?.backgroundColor;
         if (typeof fill !== 'string') throw new Error('Expected a resolved material color');
-        expect(Color(fill).alpha()).toBeGreaterThan(0);
-        expect(Color(fill).alpha()).toBeLessThan(1);
+        const variables: Record<string, string> = {};
+        for (let ancestor: ReactTestInstance | null = pill; ancestor; ancestor = ancestor.parent) {
+            for (const [key, value] of Object.entries(flattenTestStyle(ancestor.props.style) ?? {})) {
+                if (key.startsWith('--') && typeof value === 'string' && variables[key] === undefined) variables[key] = value;
+            }
+        }
+        const painted = Color(resolveBrowserMaterialPaint(fill, variables));
+        expect(painted.alpha()).toBeGreaterThan(0);
+        expect(painted.alpha()).toBeLessThan(1);
         expect(flattenTestStyle(pill.props.style)?.backgroundImage).toContain('rgba');
     });
     it('keeps an actionable core card to one coat and drops its finish while focused or flat even under a shared theme', async () => {

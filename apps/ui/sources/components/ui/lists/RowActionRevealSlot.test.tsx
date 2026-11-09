@@ -217,6 +217,76 @@ describe('RowActionRevealSlot', () => {
 
         expect(animatedState.timingCalls).toBe(0);
         expect(readOpacity(screen.findByTestId('slot')?.props.style)).toBe(1);
+        // The CSS fade collapses to an instant change.
+        expect(flattenStyle(screen.findByTestId('slot')?.props.style).transitionDuration).toBe('0ms');
+    });
+
+    it('fades by CSS: a reveal starts no JS animation and only the opacity transitions', async () => {
+        const { RowActionRevealSlot } = await import('./RowActionRevealSlot');
+
+        const screen = await renderScreen(
+            <RowActionRevealSlot revealed={false} testID="slot">
+                <Pressable testID="slot-action" onPress={() => undefined} />
+            </RowActionRevealSlot>,
+        );
+
+        act(() => {
+            screen.findByTestId('slot')?.props.onFocus?.();
+        });
+
+        // Animated on web runs on the JS driver: one timing per reveal re-rendering the slot per frame.
+        expect(animatedState.timingCalls).toBe(0);
+        const style = flattenStyle(screen.findByTestId('slot')?.props.style);
+        expect(style.opacity).toBe(1);
+        expect(style.transitionProperty).toBe('opacity');
+    });
+
+    it('mounts a hidden slot\'s deferred icons on first reveal and keeps them through the hide', async () => {
+        const { RowActionRevealSlot, RowActionDeferredIcon } = await import('./RowActionRevealSlot');
+        let glyphMounts = 0;
+        function Glyph(): React.ReactElement {
+            React.useEffect(() => {
+                glyphMounts += 1;
+            }, []);
+            return <Pressable testID="glyph" />;
+        }
+
+        // A transcript mounts one closed slot per row on every Session switch: the action stays mounted,
+        // labelled and focusable, but nobody can see its icon until the row is revealed.
+        const screen = await renderScreen(
+            <>
+                {Array.from({ length: 10 }, (_, index) => (
+                    <RowActionRevealSlot key={index} revealed={false} testID={`slot-${index}`}>
+                        <Pressable testID={`slot-action-${index}`} accessibilityLabel="Pin message" onPress={() => undefined}>
+                            <RowActionDeferredIcon size={14}>
+                                <Glyph />
+                            </RowActionDeferredIcon>
+                        </Pressable>
+                    </RowActionRevealSlot>
+                ))}
+            </>,
+        );
+
+        expect(glyphMounts).toBe(0);
+        expect(screen.findByTestId('slot-action-0')?.props.accessibilityLabel).toBe('Pin message');
+        // The icon's box is held, so revealing never changes the action's hit size.
+        const placeholder = screen.findByTestId('slot-action-0')?.findAll((node) => {
+            const style = flattenStyle(node.props?.style);
+            return typeof node.type === 'string' && style.width === 14 && style.height === 14;
+        });
+        expect(placeholder?.length ?? 0).toBeGreaterThan(0);
+
+        act(() => {
+            screen.findByTestId('slot-0')?.props.onFocus?.();
+        });
+        expect(glyphMounts).toBe(1);
+
+        act(() => {
+            screen.findByTestId('slot-0')?.props.onBlur?.();
+        });
+        // Latched: the icon stays through the fade-out and for the row's life.
+        expect(glyphMounts).toBe(1);
+        expect(screen.findAllByTestId('glyph').length).toBeGreaterThan(0);
     });
 
     it('uses the native pointerEvents prop off web', async () => {

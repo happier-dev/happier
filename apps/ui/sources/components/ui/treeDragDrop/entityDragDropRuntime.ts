@@ -39,11 +39,14 @@ export function createEntityDragDropRuntime(options: Readonly<{
     // The source registration can retire on acknowledgement. Its return feedback lasts only until
     // the existing cancel/new-begin boundary; it grants no dispatch or registration authority.
     let sourceFeedback: Readonly<{ sourceId: string; description: EntityDragSourceDescription | null; bounds: WindowBounds | null }> | null = null;
-    const captureSourceFeedback = (source: EntityDragSource) => {
+    // Pointer frames refresh only the source's geometry (its line can scroll under the carry); its
+    // identity is read when the carry begins and at release, not once per frame.
+    const captureSourceFeedback = (source: EntityDragSource, describe = true) => {
         const bounds = source.getBounds?.() ?? null;
+        const retained = !describe && sourceFeedback?.sourceId === source.id;
         sourceFeedback = {
             sourceId: source.id,
-            description: source.describe?.() ?? null,
+            description: retained ? sourceFeedback!.description : source.describe?.() ?? null,
             bounds: bounds && isFiniteRect(bounds) && bounds.width > 0 && bounds.height > 0
                 ? { ...bounds } : sourceFeedback?.sourceId === source.id ? sourceFeedback.bounds : null,
         };
@@ -206,7 +209,7 @@ export function createEntityDragDropRuntime(options: Readonly<{
         if (!carry || carry.dispatched || carry.releasePromise) return;
         carry.input = 'pointer';
         carry.destination = null;
-        captureSourceFeedback(carry.source);
+        captureSourceFeedback(carry.source, false);
         setPointer(next && Number.isFinite(next.x) && Number.isFinite(next.y) ? next : null);
         refresh();
     };

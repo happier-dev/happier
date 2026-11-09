@@ -8,7 +8,7 @@ import {
 } from '@/components/capabilities/add/CapabilityAddModal';
 import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
 import { buildCapabilityCollectionAnatomy } from '@/components/capabilities/row/buildCapabilityCollectionAnatomy';
-import { AcpAgentGlyph } from '@/components/settings/acpCatalog/CustomAcpAgentMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import {
   AgentAddingFrame,
   AgentInstallProgressItem,
@@ -133,7 +133,7 @@ function Detail(props: Readonly<{ agent: FixtureAgent; added: boolean }>) {
     <View style={{ gap: theme.space.s24 }}>
       <CapabilityDetailHeader
         testID="agents.add.detail.header"
-        mark={<AcpAgentGlyph iconUrl={null} size={28} />}
+        mark={<HappierBrandMark brand={{ displayName: agent.name }} pixelSize={28} externallyLabelled />}
         title={agent.name}
         purpose={agent.description}
         facts={{
@@ -196,7 +196,6 @@ export function AgentAddFixtureSpecimen(
           {
             key: 'acp',
             title: 'ACP Registry',
-            trailing: String(AGENTS.length),
             itemKeys: AGENTS.map((agent) => agent.id),
           },
         ],
@@ -204,7 +203,7 @@ export function AgentAddFixtureSpecimen(
         anatomy: buildCapabilityCollectionAnatomy<FixtureAgent>({
           title: (agent) => agent.name,
           description: (agent) => agent.description,
-          mark: () => <AcpAgentGlyph iconUrl={null} size={20} />,
+          mark: (agent) => <HappierBrandMark brand={{ displayName: agent.name }} pixelSize={20} externallyLabelled />,
           facts: (agent) => ({
             presentation: 'row',
             extra: [

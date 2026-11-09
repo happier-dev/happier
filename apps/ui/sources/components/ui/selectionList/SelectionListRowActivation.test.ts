@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { GestureResponderEvent } from 'react-native';
 
 import { activateSelectionListRow } from './SelectionListRowActivation';
 import type { SelectionListOption, SelectionListStep } from './_types';
@@ -26,9 +27,11 @@ describe('activateSelectionListRow', () => {
 
     it('selects normally when requiresInputValue is absent (option then orchestrator onSelect)', () => {
         const callbacks = activation();
-        const option = { id: 'pick', label: 'Pick', onSelect: () => { callbacks.events.push('option'); } };
-        activateSelectionListRow({ ...callbacks, option });
-        expect(callbacks.events).toEqual(['option', { selected: 'pick', option }]);
+        // The event is a native/browser boundary fixture; activation preserves it without reading its payload.
+        const event = {} as GestureResponderEvent;
+        const option = { id: 'pick', label: 'Pick', onSelect: (pressed?: GestureResponderEvent) => { callbacks.events.push(pressed); } };
+        activateSelectionListRow({ ...callbacks, option, event });
+        expect(callbacks.events).toEqual([event, { selected: 'pick', option }]);
     });
 
     it.each([false, true])('does nothing for a disabled row (requiresInputValue=%s)', (requiresInputValue) => {

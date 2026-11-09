@@ -5,6 +5,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
+import { SESSION_ACTION_STOP_ID } from '@/components/sessions/actions/sessionActionIds';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,6 +58,41 @@ vi.mock('@/components/ui/text/Text', async () => {
 });
 
 describe('SelectableMenuResults (React Native Web Pressable)', () => {
+    it('keeps the Stop button mounted and activates it once after menu updates', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+        const selected: string[] = [];
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        const renderMenu = (title: string) => <SelectableMenuResults
+            categories={[{ id: 'lifecycle', title: '', items: [
+                { id: SESSION_ACTION_STOP_ID, title: 'Stop session' },
+                { id: 'other', title },
+            ] }]}
+            selectedIndex={0}
+            onSelectionChange={() => {}}
+            onPressItem={item => selected.push(item.id)}
+            rowVariant="slim"
+        />;
+        try {
+            await act(async () => { root.render(renderMenu('Before arrival')); });
+            const stop = container.querySelector<HTMLElement>('[data-testid="dropdown-option-ui_session_stop"]');
+            expect(stop).not.toBeNull();
+            expect(stop?.getAttribute('role')).toBe('button');
+            expect(stop?.getAttribute('aria-disabled')).not.toBe('true');
+            await act(async () => { root.render(renderMenu('After arrival')); });
+            expect(container.querySelector('[data-testid="dropdown-option-ui_session_stop"]')).toBe(stop);
+            await act(async () => {
+                stop!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, cancelable: true }));
+                stop!.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, cancelable: true }));
+            });
+            expect(selected).toEqual([SESSION_ACTION_STOP_ID]);
+        } finally {
+            await act(async () => { root.unmount(); });
+            container.remove();
+        }
+    });
+
     it('leaves decorated destination rows mounted through mouse-down and drag, while ordinary clicks still select', async () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
         const selected: string[] = [];

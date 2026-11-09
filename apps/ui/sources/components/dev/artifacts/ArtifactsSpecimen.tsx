@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ArtifactStorageUsageV1 } from '@happier-dev/protocol';
+import type { ArtifactStorageUsageV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 
 import { ArtifactsBrowser } from '@/components/artifacts/ArtifactsBrowserScreen';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';

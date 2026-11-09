@@ -8,6 +8,29 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('expo-image', () => ({ Image: (props: object) => React.createElement('DecodedImage', props) }));
 
 describe('MediaPicture shared host image', () => {
+    it('draws validated native SVG text and reports its real parsed dimensions', async () => {
+        const { MediaPicture } = await import('./MediaPicture');
+        const onSize = vi.fn();
+        const onError = vi.fn();
+        const screen = await renderScreen(<MediaPicture
+            kind="svg"
+            uri="file:///drawing.svg"
+            svgText={'<svg width="24" height="16"><circle cx="8" cy="8" r="4"/></svg>'}
+            size={{ width: 48, height: 32 }}
+            onIntrinsicSize={onSize}
+            onError={onError}
+        />);
+        try {
+            const drawing = screen.findByType('SvgAst');
+            expect(React.isValidElement(drawing.props.ast.children[0])).toBe(true);
+            const circle = drawing.props.ast.children[0].props;
+            expect({ cx: circle.cx, cy: circle.cy, r: circle.r }).toEqual({ cx: 8, cy: 8, r: 4 });
+            expect(drawing.props.override).toMatchObject({ width: 48, height: 32 });
+            expect(onSize).toHaveBeenLastCalledWith({ width: 24, height: 16 });
+            expect(onError).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+
     it('allows fit downscaling and preserves full resolution when zoom settles above fit', async () => {
         const { MediaPicture } = await import('./MediaPicture');
         const onSize = vi.fn();

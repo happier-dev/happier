@@ -1,6 +1,7 @@
 import type React from 'react';
 import type { GestureResponderEvent } from 'react-native';
 import type { IconName } from '@/components/ui/icons/Icon';
+import type { PopoverAnchor } from '@/components/ui/popover';
 
 export type ItemAction = {
     id: string;
@@ -13,7 +14,7 @@ export type ItemAction = {
      * or a fully-rendered icon node for custom surfaces (e.g. header icons with badges).
      */
     icon: IconName | React.ReactElement;
-    onPress?: (event?: GestureResponderEvent) => void;
+    onPress?: (event?: GestureResponderEvent, selection?: Readonly<{ anchor: PopoverAnchor }>) => void;
     /** Optional testID for the inline icon pressable. */
     inlineTestID?: string;
     disabled?: boolean;

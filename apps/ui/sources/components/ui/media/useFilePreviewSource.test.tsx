@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import type { ComposerContentHandleV1 } from '@happier-dev/protocol';
+import type { ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { FilesystemDownloadOutput } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';

@@ -61,10 +61,11 @@ export const DEFAULT_SESSION_WIDTH_PX = 440;
 export const DEFAULT_RIGHT_MIN_PX = 260;
 export const DEFAULT_DETAILS_MIN_PX = 320;
 /**
- * The right sidebar's width until the user drags it (the labs' side column, 340 px). It stays this
- * width at every window size, clamped only by the measured dock budget.
+ * The right sidebar's width until the user drags it (calm-shell `csinfo`/`csrail` side panel, 380 px):
+ * the panel sheet's own width; on the canvas its gap to the page is added outside it. It stays this
+ * width at every window size, clamped only by the measured dock budget; a saved width wins.
  */
-export const DEFAULT_RIGHT_PREFERRED_PX = 340;
+export const DEFAULT_RIGHT_PREFERRED_PX = 380;
 
 export function resolvePaneLayout(input: ResolvePaneLayoutInput): ResolvedPaneLayout {
     const width = input.containerWidthPx;
@@ -76,6 +77,20 @@ export function resolvePaneLayout(input: ResolvePaneLayoutInput): ResolvedPaneLa
         return { main, kind: side === 'docked' ? 'threePane' : 'twoPane', right: side, details: 'docked' };
     }
     return { main: 'docked', ...resolveSessionPaneLayout(input) };
+}
+
+/**
+ * A page whose detail is its content (an entry beside its list) with a companion open beside that detail:
+ * when the three cannot all dock, the list steps aside (the main column hides, as when the person hides it)
+ * and the detail keeps its own column. The detail never becomes a drawer over a dimmed list. Auxiliary
+ * Details (a Session's file viewer) keep the ordinary rules above.
+ */
+export function resolveDestinationListYields(
+    layout: ResolvedPaneLayout,
+    input: Pick<ResolvePaneLayoutInput, 'destinationOwnsDetails' | 'rightOpen' | 'detailsOpen'>,
+): boolean {
+    return input.destinationOwnsDetails === true && input.rightOpen && input.detailsOpen
+        && layout.kind !== 'single' && (layout.details !== 'docked' || layout.right !== 'docked');
 }
 
 function resolveSessionPaneLayout(input: ResolvePaneLayoutInput): Omit<ResolvedPaneLayout, 'main'> {
