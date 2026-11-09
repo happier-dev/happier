@@ -12,7 +12,12 @@ import {
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pathnameState = vi.hoisted(() => ({ value: '/settings' }));
-const paramsState = vi.hoisted(() => ({ category: undefined as string | undefined }));
+const paramsState = vi.hoisted(() => ({
+    category: undefined as string | undefined,
+    settingsReturn: undefined as string | undefined,
+}));
+const historyState = vi.hoisted(() => ({ canGoBack: true }));
+const backSpy = vi.hoisted(() => vi.fn());
 const navigateSpy = vi.hoisted(() => vi.fn());
 const dismissToSpy = vi.hoisted(() => vi.fn());
 
@@ -20,7 +25,7 @@ const dismissToSpy = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', () => ({
     usePathname: () => pathnameState.value,
     useLocalSearchParams: () => paramsState,
-    useRouter: () => ({ navigate: navigateSpy, dismissTo: dismissToSpy, back: () => {} }),
+    useRouter: () => ({ navigate: navigateSpy, dismissTo: dismissToSpy, back: backSpy, canGoBack: () => historyState.canGoBack }),
 }));
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
@@ -29,6 +34,9 @@ const identity = (key: string): string => key;
 afterEach(() => {
     pathnameState.value = '/settings';
     paramsState.category = undefined;
+    paramsState.settingsReturn = undefined;
+    historyState.canGoBack = true;
+    backSpy.mockReset();
     navigateSpy.mockReset();
     dismissToSpy.mockReset();
     clearActiveUnsavedChangesGuard();
@@ -99,6 +107,30 @@ describe('getSettingsStackScreenDefinitions', () => {
 });
 
 describe('settings header Back', () => {
+    it.each([true, false])('returns to the invoking page for a repair open when history exists (%s)', async (canGoBack) => {
+        pathnameState.value = '/settings/plugins/happier.scm.github/settings';
+        paramsState.settingsReturn = '1';
+        historyState.canGoBack = canGoBack;
+        const headerLeft = getSettingsStackScreenDefinitions(identity)
+            .find((candidate) => candidate.name === 'plugins/[pluginId]/[pageId]')?.options.headerLeft;
+        let tree!: ReactTestRenderer;
+        await act(async () => {
+            tree = create(React.createElement(headerLeft as React.ElementType, { tintColor: '#111111' }));
+        });
+        const back = tree.root.findAll((node) => (
+            node.props?.accessibilityLabel === 'common.back' && typeof node.props?.onPress === 'function'
+        ))[0];
+        await act(async () => { back.props.onPress(); });
+        if (canGoBack) {
+            expect(backSpy).toHaveBeenCalledOnce();
+            expect(dismissToSpy).not.toHaveBeenCalled();
+        } else {
+            expect(backSpy).not.toHaveBeenCalled();
+            expect(dismissToSpy).toHaveBeenCalledWith('/settings/plugins/happier.scm.github');
+        }
+        await act(async () => { tree.unmount(); });
+    });
+
     it('leaves the focused Defaults category before leaving Defaults', async () => {
         pathnameState.value = '/settings/machines/defaults';
         paramsState.category = 'local';

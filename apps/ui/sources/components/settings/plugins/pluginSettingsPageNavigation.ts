@@ -5,11 +5,15 @@ import type {
     PluginSurfaceDestinationContainerHandler,
     PluginSurfaceDestinationOpenResolution,
 } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import type { PluginSurfaceOpenOutcome } from '@/components/plugins/surfaces/openPluginSurface';
+import { usePluginSurfaceWindowPresentation } from '@/components/plugins/surfaces/pluginSurfaceWindowPresentation';
 import type {
     PluginUiProjectionModel,
     PluginUiSettingsPageProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import { getPreferredLanguage } from '@/text';
+import { withInternalRouteQueryParams } from '@/utils/path/routeUtils';
+import { SETTINGS_RETURN_QUERY_PARAM } from '../navigation/settingsRouteRegistry';
 
 import {
     pluginSettingsPageRoute,
@@ -33,6 +37,7 @@ export function createPluginSettingsPageDestinationHandler(input: Readonly<{
     locale: string;
     pathname: string;
     navigate: (routePath: string) => void;
+    openWindow?: (routePath: string) => Promise<PluginSurfaceOpenOutcome>;
 }>): PluginSurfaceDestinationContainerHandler<PluginUiSettingsPageProjection> {
     return (resolution: PluginSurfaceDestinationOpenResolution<PluginUiSettingsPageProjection>) => {
         if (resolution.placement.binding.container !== 'settingsPage') {
@@ -55,8 +60,16 @@ export function createPluginSettingsPageDestinationHandler(input: Readonly<{
             page.page.pluginId,
             page.page.descriptorId,
         );
+        if (resolution.request.presentation === 'window') {
+            return input.openWindow?.(routePath) ?? {
+                ok: false, code: 'unsupported_method', reason: 'plugin_surface_open_window_unsupported',
+            };
+        }
         if (routePath !== input.pathname) {
-            input.navigate(routePath);
+            const fromSettings = input.pathname === '/settings' || input.pathname.startsWith('/settings/');
+            input.navigate(fromSettings ? routePath : withInternalRouteQueryParams(routePath, {
+                [SETTINGS_RETURN_QUERY_PARAM]: '1',
+            }));
         }
         return { ok: true };
     };
@@ -69,12 +82,14 @@ export function usePluginSettingsPageDestinationHandler(input: Readonly<{
     const router = useRouter();
     const pathname = usePathname();
     const locale = getPreferredLanguage();
+    const openWindow = usePluginSurfaceWindowPresentation();
     return React.useMemo(() => createPluginSettingsPageDestinationHandler({
         projection: input.projection,
         locale,
         pathname,
+        openWindow,
         navigate: (routePath) => {
             router.push(routePath as Parameters<typeof router.push>[0]);
         },
-    }), [input.projection, locale, pathname, router]);
+    }), [input.projection, locale, pathname, router, openWindow]);
 }

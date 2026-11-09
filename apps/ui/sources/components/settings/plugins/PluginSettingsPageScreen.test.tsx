@@ -595,6 +595,35 @@ describe('PluginSettingsPageScreen', () => {
         expect(routerPushSpy).not.toHaveBeenCalled();
     });
 
+    it.each(['/plugins/happier.triage/list', '/settings/plugins'])('preserves return navigation when opening source settings from %s', async (pathname) => {
+        const page = settingsPage();
+        const { createPluginSettingsPageDestinationHandler } = await import('./pluginSettingsPageNavigation');
+        const handler = createPluginSettingsPageDestinationHandler({
+            projection: { ...EMPTY_PLUGIN_UI_PROJECTION, settingsPagesById: { [page.id]: page } },
+            locale: 'en', pathname, navigate: routerPushSpy,
+        });
+        expect(await handler({ ok: true, placement: page, authority: null,
+            request: { destination: page.binding.destination } })).toEqual({ ok: true });
+        const route = new URL(routerPushSpy.mock.calls.at(-1)![0], 'https://happier.invalid');
+        expect(route.pathname).toBe('/settings/plugins/examples.descriptor-only/settings');
+        expect(route.searchParams.get('settingsReturn')).toBe(pathname.startsWith('/settings') ? null : '1');
+    });
+
+    it('opens the admitted Settings page through its window adapter without replacing the current route', async () => {
+        const page = settingsPage();
+        const opened: string[] = [];
+        const { createPluginSettingsPageDestinationHandler } = await import('./pluginSettingsPageNavigation');
+        const handler = createPluginSettingsPageDestinationHandler({
+            projection: { ...EMPTY_PLUGIN_UI_PROJECTION, settingsPagesById: { [page.id]: page } },
+            locale: 'en', pathname: '/', navigate: routerPushSpy,
+            openWindow: async href => { opened.push(href); return { ok: true }; },
+        });
+        expect(await handler({ ok: true, placement: page, authority: null,
+            request: { destination: page.binding.destination, presentation: 'window' } })).toEqual({ ok: true });
+        expect(opened).toEqual(['/settings/plugins/examples.descriptor-only/settings']);
+        expect(routerPushSpy).not.toHaveBeenCalled();
+    });
+
     it('uses the exact Administration daemon target for declarative Settings fields, not the app-shell origin', async () => {
         const page = settingsPage();
         appShellState.projection = {

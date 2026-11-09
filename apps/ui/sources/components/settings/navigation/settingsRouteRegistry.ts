@@ -21,6 +21,9 @@ type Translate = (key: TranslationKeyNoParams) => string;
 /** A result opened from the retained Settings-page search returns to that page on Back. */
 export const SETTINGS_SEARCH_RETURN_QUERY_PARAM = 'settingsSearch';
 
+/** A Settings page opened from another surface returns through the existing navigation history. */
+export const SETTINGS_RETURN_QUERY_PARAM = 'settingsReturn';
+
 export type SettingsStackScreenDefinition = Readonly<{
     name: string;
     options: NativeStackNavigationOptions;
@@ -201,17 +204,27 @@ export function shouldShowSettingsParentBackButton(params: Readonly<{
 export function useSettingsParentBack(tag: string): Readonly<{ parentPathname: string | null; goToParent: () => void }> {
     const pathname = usePathname();
     const router = useRouter();
-    const params = useLocalSearchParams<SettingsParentRouteParams & { settingsSearch?: string | string[] }>();
+    const params = useLocalSearchParams<SettingsParentRouteParams & {
+        settingsSearch?: string | string[];
+        settingsReturn?: string | string[];
+    }>();
     const searchOrigin = params[SETTINGS_SEARCH_RETURN_QUERY_PARAM];
+    const returnToOrigin = params[SETTINGS_RETURN_QUERY_PARAM] === '1';
     const parentHref = searchOrigin === '1' ? '/settings' : resolveSettingsRouteParentHref(pathname, params);
     const parentPathname = parentHref?.split('?')[0] ?? null;
     const goToParent = React.useCallback(() => {
         if (!parentHref) return;
-        const result = runGuardedNavigation(() => router.dismissTo(parentHref as never));
+        const result = runGuardedNavigation(() => {
+            if (returnToOrigin && router.canGoBack()) {
+                router.back();
+            } else {
+                router.dismissTo(parentHref as never);
+            }
+        });
         if (result !== true) {
             fireAndForget(result, { tag });
         }
-    }, [parentHref, router, tag]);
+    }, [parentHref, returnToOrigin, router, tag]);
     return { parentPathname, goToParent };
 }
 
