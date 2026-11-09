@@ -8,6 +8,9 @@
  */
 export const BITBUCKET_PLUGIN_ID = 'happier.scm.forge.bitbucket';
 
+/** The local id of this plugin's one Triage source contribution. */
+export const BITBUCKET_TRIAGE_CONTRIBUTION_ID = 'bitbucket-forge';
+
 /** The plugin-local id of the one contributed SCM hosting provider. */
 export const BITBUCKET_SCM_HOSTING_PROVIDER_LOCAL_ID = 'bitbucket';
 

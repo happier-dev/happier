@@ -27,6 +27,7 @@ import { bitbucketConnectedAccountRuntime } from './auth/connectedAccountRuntime
 import {
   BITBUCKET_PLUGIN_ID,
   BITBUCKET_SCM_HOSTING_PROVIDER_LOCAL_ID,
+  BITBUCKET_TRIAGE_CONTRIBUTION_ID,
 } from './bitbucketContracts.js';
 import { bitbucketApiAdapter } from './operations/bitbucketApiAdapter.js';
 import {
@@ -46,13 +47,11 @@ import { BITBUCKET_TRIAGE_ACTION_IDS, prepareBitbucketReviewWorkspaceAction, ver
 
 
 
-/** The local id of this plugin's one Triage source contribution. */
-export const BITBUCKET_TRIAGE_CONTRIBUTION_ID = 'bitbucket-forge';
-
 /** The network host-access request that owns this plugin's Bitbucket origins. */
 
 
 export {
+  BITBUCKET_TRIAGE_CONTRIBUTION_ID,
   BITBUCKET_TRIAGE_DETAIL_ARTIFACT_ID,
   BITBUCKET_TRIAGE_DETAIL_RENDERER_ID,
 };

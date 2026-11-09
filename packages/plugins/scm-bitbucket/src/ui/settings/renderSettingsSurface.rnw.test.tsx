@@ -7,8 +7,7 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import { TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { BITBUCKET_PLUGIN_ID } from '../../bitbucketContracts.js';
-import { BITBUCKET_TRIAGE_CONTRIBUTION_ID } from '../../manifest.js';
+import { BITBUCKET_PLUGIN_ID, BITBUCKET_TRIAGE_CONTRIBUTION_ID } from '../../bitbucketContracts.js';
 import { BITBUCKET_TRIAGE_ACTION_IDS } from '../../triage/source/descriptor.js';
 import { BITBUCKET_TRIAGE_DESCRIPTOR } from '../../triage/source/descriptor.js';
 
