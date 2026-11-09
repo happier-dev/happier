@@ -9,8 +9,9 @@
 // projection a source mount asserts against. Everything else reads
 // `Schema.jsonSchema`.
 export * from './bounds.js';
+export { TRIAGE_SAVE_ACTION_DEFAULTS_ACTION_REF_V1, TRIAGE_SAVE_ACTION_DEFAULTS_WORKSPACE_MODE_REASON_V1, TriageSaveActionDefaultsInputV1Schema, readTriageSavedActionDefaultProfileIdV1, type TriageSaveActionDefaultsInputV1 } from './actionDefaults.js';
 export * from './resourceLinks.js';
-export { TriageSourceScopeUnitIdV1Schema, type TriageSourceScopeUnitIdV1 } from './identity.js';
+export { TriageActionLabelV1Schema, TriageSourceScopeUnitIdV1Schema, type TriageSourceScopeUnitIdV1 } from './identity.js';
 export {
     TriageSourceScopeSelectionV1Schema,
     TriageSourceScopeUnitV1Schema,

@@ -198,6 +198,8 @@ export const TriageTaskCapabilitiesV1Schema = defineProtocolObject({
         isDefault: triageProtocolTrue.optional(),
     }, { policy: 'closed' })).optional(),
     editFields: defineProtocolUniqueArray(TriageTaskFieldV1Schema).optional(),
+    /** The source can answer `includeTaskFieldChoices` on an exact read: name-valued fields pick from its directory. */
+    fieldChoices: defineProtocolLiteral(true).optional(),
     transitions: defineProtocolArray(TriageTaskTransitionV1Schema).optional(),
     /** Explicit source opt-in to one-step completion. A completed state alone never implies this; absent means use the workflow menu. */
     completingTransitionId: TriageIdentifierV1ProtocolSchema.optional(),

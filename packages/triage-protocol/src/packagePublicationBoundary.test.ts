@@ -79,7 +79,7 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 describe('Triage protocol publication boundary', () => {
-    it('is publishable and contains exactly the explicit root, V1, and testing-V1 entrypoints', async () => {
+    it('is publishable and contains exactly the explicit source, CI and release V1 entrypoints', async () => {
         const packageJson = JSON.parse(await readFile(
             new URL('package.json', packageDirectory),
             'utf8',
@@ -99,6 +99,10 @@ describe('Triage protocol publication boundary', () => {
         expect(packageJson.files).toContain('README.md');
         expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual([
             '.',
+            './ci/testing/v1',
+            './ci/v1',
+            './releases/testing/v1',
+            './releases/v1',
             './testing/v1',
             './v1',
         ]);
@@ -107,8 +111,12 @@ describe('Triage protocol publication boundary', () => {
             subpath, (entry as Readonly<Record<string, unknown>>)['happier-source'],
         ]))).toEqual({
             '.': './src/index.ts',
+            './ci/v1': './src/ci/v1/index.ts',
+            './ci/testing/v1': './src/ci/testing/v1/index.ts',
             './v1': './src/v1/index.ts',
             './testing/v1': './src/testing/v1/index.ts',
+            './releases/v1': './src/releases/v1/index.ts',
+            './releases/testing/v1': './src/releases/testing/v1/index.ts',
         });
 
         await expect(Promise.all([
@@ -117,24 +125,48 @@ describe('Triage protocol publication boundary', () => {
             'src/v1/index.ts',
             'src/v1/sourceAdministration.ts',
             'src/testing/v1/index.ts',
+            'src/ci/v1/index.ts',
+            'src/ci/testing/v1/index.ts',
+            'src/releases/v1/index.ts',
+            'src/releases/testing/v1/index.ts',
             'dist/index.js',
             'dist/index.d.ts',
             'dist/v1/index.js',
             'dist/v1/index.d.ts',
             'dist/testing/v1/index.js',
             'dist/testing/v1/index.d.ts',
+            'dist/ci/v1/index.js',
+            'dist/ci/v1/index.d.ts',
+            'dist/ci/testing/v1/index.js',
+            'dist/ci/testing/v1/index.d.ts',
+            'dist/releases/v1/index.js',
+            'dist/releases/v1/index.d.ts',
+            'dist/releases/testing/v1/index.js',
+            'dist/releases/testing/v1/index.d.ts',
         ].map(async (path) => ({ path, exists: await fileExists(path) })))).resolves.toEqual([
             { path: 'README.md', exists: true },
             { path: 'src/index.ts', exists: true },
             { path: 'src/v1/index.ts', exists: true },
             { path: 'src/v1/sourceAdministration.ts', exists: true },
             { path: 'src/testing/v1/index.ts', exists: true },
+            { path: 'src/ci/v1/index.ts', exists: true },
+            { path: 'src/ci/testing/v1/index.ts', exists: true },
+            { path: 'src/releases/v1/index.ts', exists: true },
+            { path: 'src/releases/testing/v1/index.ts', exists: true },
             { path: 'dist/index.js', exists: true },
             { path: 'dist/index.d.ts', exists: true },
             { path: 'dist/v1/index.js', exists: true },
             { path: 'dist/v1/index.d.ts', exists: true },
             { path: 'dist/testing/v1/index.js', exists: true },
             { path: 'dist/testing/v1/index.d.ts', exists: true },
+            { path: 'dist/ci/v1/index.js', exists: true },
+            { path: 'dist/ci/v1/index.d.ts', exists: true },
+            { path: 'dist/ci/testing/v1/index.js', exists: true },
+            { path: 'dist/ci/testing/v1/index.d.ts', exists: true },
+            { path: 'dist/releases/v1/index.js', exists: true },
+            { path: 'dist/releases/v1/index.d.ts', exists: true },
+            { path: 'dist/releases/testing/v1/index.js', exists: true },
+            { path: 'dist/releases/testing/v1/index.d.ts', exists: true },
         ]);
     });
 
@@ -162,8 +194,16 @@ describe('Triage protocol publication boundary', () => {
         const targets = exportTargets(manifest);
 
         expect(targets).toEqual([
+            'dist/ci/testing/v1/index.d.ts',
+            'dist/ci/testing/v1/index.js',
+            'dist/ci/v1/index.d.ts',
+            'dist/ci/v1/index.js',
             'dist/index.d.ts',
             'dist/index.js',
+            'dist/releases/testing/v1/index.d.ts',
+            'dist/releases/testing/v1/index.js',
+            'dist/releases/v1/index.d.ts',
+            'dist/releases/v1/index.js',
             'dist/testing/v1/index.d.ts',
             'dist/testing/v1/index.js',
             'dist/v1/index.d.ts',

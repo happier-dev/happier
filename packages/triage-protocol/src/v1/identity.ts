@@ -44,6 +44,12 @@ export const TriageActionIdV1Schema = defineProtocolString({
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
 
+/** The configured action label grammar; catalog normalization remains its writer's authority. */
+export const TriageActionLabelV1Schema = defineProtocolString({
+    minLength: 1,
+    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+});
+
 /** @internal Relative-only bounded one-line display text. */
 export const TriageTextV1ProtocolSchema = defineTriageSingleLineStringV1(
     MAX_TRIAGE_TEXT_UTF8_BYTES_V1,

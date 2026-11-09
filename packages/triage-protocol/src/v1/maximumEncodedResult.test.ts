@@ -275,6 +275,7 @@ describe('the derivation follows the schema', () => {
     });
 
     it('refuses to measure a value the schema does not bound', () => {
+        expect(() => buildMaximalSchemaValue({}, 'json')).toThrow(/unbounded JSON/u);
         expect(() => buildMaximalSchemaValue({ type: 'string' }, 'string')).toThrow(/unbounded string/u);
         expect(() => buildMaximalSchemaValue({ type: 'array', items: { const: 1 } }, 'array'))
             .toThrow(/unbounded array/u);
@@ -287,12 +288,12 @@ describe('maximum encoded value derivation', () => {
     it('derives the exact maximum encoded bytes of every finite operation shape', () => {
         // Pinned so that any bound, count, field, or grammar change reruns the
         // derivation instead of silently consuming the remaining headroom.
-        // 2026-10-08: +2 × 1_041 for the snapshot's optional `authorLabel` and `designation` display lines.
-        // 019088e707 (2026-10-12): +1_046 for the source-authored optional `scopeDisplayName`.
+        // The shared presentation/control allocation is derived from the real
+        // Action envelope, not the retired independent display field quotas.
         expect(derivedMaxima).toEqual({
-            getInput: 11_496,
-            prepareReviewWorkspaceInput: 14_243,
-            administrationInput: 8_325,
+            getInput: 106_266,
+            prepareReviewWorkspaceInput: 122_619,
+            administrationInput: 62_149,
         });
     });
 

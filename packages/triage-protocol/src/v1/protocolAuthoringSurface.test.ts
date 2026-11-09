@@ -14,6 +14,8 @@ const ALLOWED_SDK_SUBPATHS = [
     '@happier-dev/plugin-sdk/sessions',
     '@happier-dev/plugin-sdk/automations',
     '@happier-dev/plugin-sdk/scm',
+    '@happier-dev/plugin-sdk/actions',
+    '@happier-dev/plugin-sdk/collections',
 ] as const;
 
 const RETIRED_AUTHORING_SPELLINGS = [
@@ -80,7 +82,7 @@ describe('Triage protocol authoring surface', () => {
         }
     });
 
-    it('declares no runtime dependency and no validator dependency', async () => {
+    it('declares only its public Channels protocol dependency and no validator dependency', async () => {
         const packageJson = JSON.parse(await readFile(
             new URL('../../package.json', import.meta.url),
             'utf8',
@@ -100,6 +102,6 @@ describe('Triage protocol authoring surface', () => {
             expect(group?.['@happier-dev/protocol']).toBeUndefined();
             expect(group?.zod).toBeUndefined();
         }
-        expect(Object.keys(packageJson.dependencies ?? {})).toEqual([]);
+        expect(Object.keys(packageJson.dependencies ?? {})).toEqual(['@happier-dev/channels-protocol']);
     });
 });

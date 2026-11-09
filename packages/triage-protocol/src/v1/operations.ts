@@ -12,7 +12,7 @@ import { ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
 import { SessionInputForgeEvidenceV1Schema } from '@happier-dev/plugin-sdk/sessions';
 
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
-import { TriageTaskFieldsV1Schema } from './tasks.js';
+import { TriageTaskFieldChoicesV1Schema, TriageTaskFieldsV1Schema } from './tasks.js';
 import {
     TriageEntryLocatorV1Schema,
     TriageIdentifierV1ProtocolSchema,
@@ -130,6 +130,8 @@ export type TriageScanResultV1 = ReturnType<typeof TriageScanResultV1Schema.pars
 export const triageGetInputFieldsV1 = {
     localRef: TriageSourceEntryLocalRefV1Schema,
     lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
+    /** The detail about to offer task editing; a source with a directory answers with `taskFieldChoices`. */
+    includeTaskFieldChoices: defineProtocolLiteral(true).optional(),
 } as const;
 export const TriageGetInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -163,6 +165,8 @@ export const TriageGetResultV1Schema = defineProtocolUnion([
          * unavailable, never empty or truncated. Exact-read-only, not snapshot,
          * scan, retained projection, or mutation authority. */
         taskFields: TriageTaskFieldsV1Schema.optional(),
+        /** What the name-valued task fields can be set to, when the read asked. Exact-read-only, never retained. */
+        taskFieldChoices: TriageTaskFieldChoicesV1Schema.optional(),
         /** Source-owned presentation from this exact read, never persisted or used as authority. */
         detailData: defineProtocolJsonValue().optional(),
         /** Fresh source detail for this exact dispatch. Descriptive data only;

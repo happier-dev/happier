@@ -340,6 +340,7 @@ function buildMaximalArray(fragment: PluginJsonSchema, path: string): unknown[] 
 
 /** The largest value one JSON Schema projection admits, at every depth. */
 export function buildMaximalSchemaValue(fragment: PluginJsonSchema, path: string): unknown {
+    if (Object.keys(fragment).length === 0) throw new Error(`${path}: an unbounded JSON value has no maximum`);
     const serializedBound = fragment['x-happier-max-serialized-utf8-bytes'];
     if (isOpaqueBoundedJson(fragment) && serializedBound !== undefined) {
         return buildOpaqueJsonBytes(serializedBound, path);

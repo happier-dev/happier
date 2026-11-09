@@ -77,6 +77,13 @@ export type ProtocolJsonValue =
     | string
     | readonly ProtocolJsonValue[]
     | { readonly [key: string]: ProtocolJsonValue };
+export type FileDownloadDestinationV1 = Readonly<{ destinationId: string }>;
+// This boundary fixture names SDK's public transfer family. The transfer
+// owner's own vectors validate its nested prepared/entry-tree representation.
+export type FileDownloadResultV1 =
+    | Readonly<{ success: false; status: 'failed' | 'cancelled' | 'unknown'; error: string; errorCode?: string }>
+    | Readonly<{ success: true; status: 'accepted'; operationId: string; destinationId: string; prepared: ProtocolJsonValue; entryTree?: ProtocolJsonValue }>
+    | Readonly<{ success: true; status: 'completed'; transferId: string; destinationId: string; name: string; sizeBytes: number; sha256: string }>;
 export type PluginJsonSchema = Readonly<Record<string, ProtocolJsonValue>>;
 export type ProtocolValidationIssue = Readonly<{
     path: readonly (string | number)[];
@@ -160,6 +167,9 @@ export type SessionId = string;
 import type { ProtocolComposableSchema, ProtocolJsonValue } from './protocol.js';
 export type ProtocolScmHostingProviderKind =
     | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops' | 'custom' | 'unknown';
+export type ScmHostingRepositoryIdentityV1<TKind extends ProtocolScmHostingProviderKind = ProtocolScmHostingProviderKind> = Readonly<{
+    kind: TKind; deployment: string; repository: string;
+}>;
 export type ScmComparisonSource =
     | Readonly<{ kind: 'workingTree' }>
     | Readonly<{ kind: 'session'; sessionId: string }>
@@ -236,6 +246,35 @@ import {
     TriageTaskFieldsV1Schema as RootFields,
     TriageTaskWriteResultV1Schema as RootWriteResult,
 } from '@happier-dev/triage-protocol';
+import {
+    ForgeCiRunV1Schema,
+    ForgeCiActionInputSchemasV1,
+    ForgeCiActionResultSchemasV1,
+    type ForgeCiActionInputByOperationV1,
+    type ForgeCiActionResultByOperationV1,
+} from '@happier-dev/triage-protocol/ci/v1';
+import { createForgeCiConformanceVectorsV1 } from '@happier-dev/triage-protocol/ci/testing/v1';
+import {
+    ForgeReleaseV1Schema,
+    ForgeReleaseActionInputSchemasV1,
+    ForgeReleaseActionResultSchemasV1,
+    type ForgeReleaseActionInputByOperationV1,
+    type ForgeReleaseActionResultByOperationV1,
+} from '@happier-dev/triage-protocol/releases/v1';
+import { createForgeReleaseV1Fixture } from '@happier-dev/triage-protocol/releases/testing/v1';
+
+const ciVector = createForgeCiConformanceVectorsV1();
+export const ciRun = ForgeCiRunV1Schema.parse(ciVector.github.run);
+export const ciReadInput: ForgeCiActionInputByOperationV1['readRun'] =
+    ForgeCiActionInputSchemasV1.readRun.parse({ repository: ciVector.github.repository, runId: ciRun.ref.runId });
+export const ciReadResult: ForgeCiActionResultByOperationV1['readRun'] =
+    ForgeCiActionResultSchemasV1.readRun.parse({ kind: 'value', value: ciRun });
+
+export const release = ForgeReleaseV1Schema.parse(createForgeReleaseV1Fixture());
+export const releaseReadInput: ForgeReleaseActionInputByOperationV1['readRelease'] =
+    ForgeReleaseActionInputSchemasV1.readRelease.parse({ repository: release.repository, releaseId: release.releaseId });
+export const releaseReadResult: ForgeReleaseActionResultByOperationV1['readRelease'] =
+    ForgeReleaseActionResultSchemasV1.readRelease.parse({ kind: 'value', value: release });
 
 type RootContributionPoint = typeof import('@happier-dev/triage-protocol')
     .TriageSourcesContributionPointV1;
