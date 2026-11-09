@@ -2549,6 +2549,7 @@ describe('workflow Session step executor', () => {
     { denied: false, boundSessionId: 'new-session', policy: 'disabled', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-reclaim', surface: 'agent' },
+    { denied: false, boundSessionId: 'new-session', policy: 'composed-unknown', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-reject', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-automation', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-current-require', surface: 'agent' },
@@ -2673,7 +2674,7 @@ describe('workflow Session step executor', () => {
         serverId: 'server-1', serverIdentityId: 'srv_home', runtimeAccountId: 'account-1', actionsSettings: settings,
         externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } },
       }),
-        ...(composed && policy !== 'composed-reclaim' ? { observeApproval: async ({ artifactId, actionRequestId, signal }: Parameters<NonNullable<WorkflowActionExecutor['observeApproval']>>[0]) => host.observeRecordedApprovalExecution({
+        ...(composed && policy !== 'composed-reclaim' && policy !== 'composed-unknown' ? { observeApproval: async ({ artifactId, actionRequestId, signal }: Parameters<NonNullable<WorkflowActionExecutor['observeApproval']>>[0]) => host.observeRecordedApprovalExecution({
           artifactId, signal, expectedOrigin: { actionId: 'discussion.invite', requestId: actionRequestId,
             accountId: 'account-1', serverIdentityId: 'srv_home', machineId: 'machine-1' },
           isCurrent: async () => !signal.aborted,
@@ -2775,6 +2776,20 @@ describe('workflow Session step executor', () => {
         expect(reservations).toEqual([]); expect(launches).toEqual([]); expect(births).toEqual([]);
         expect(invitationCards).toBe(1);
         expect(inputs).toEqual([]);
+        if (policy === 'composed-unknown') {
+          expect(await running).toMatchObject({ result: { state: 'paused', reason: 'approval_required' } });
+          if (!stored) throw new Error('Expected retained invitation Approval');
+          stored = ApprovalRequestV2Schema.parse({ ...stored, status: 'outcome_unknown',
+            decision: { kind: 'approve', authority: 'present_user', decidedAtMs: Date.now() },
+            execution: { executedAtMs: Date.now(), ok: false, effectAttempted: true,
+              errorCode: 'approval_execution_outcome_unknown', error: 'Acknowledgement lost' } });
+          expect(await coordinator.run(run)).toMatchObject({ state: 'interrupted', reason: 'approval_execution_outcome_unknown' });
+          expect(await coordinator.run(run)).toMatchObject({ state: 'interrupted', reason: 'approval_execution_outcome_unknown' });
+          expect(store.list().find(row => row.blockId === 'review')).toMatchObject({ lifecycle: 'outcome_uncertain' });
+          expect(invitationCards).toBe(1);
+          expect(reservations).toEqual([]); expect(launches).toEqual([]); expect(births).toEqual([]); expect(inputs).toEqual([]);
+          return;
+        }
         if (policy === 'composed-reclaim') expect(await running).toMatchObject({ result: { state: 'paused', reason: 'approval_required' } });
         expect(await executor.execute('approval.request.decide', { artifactId: 'invitation-approval',
           decision: policy === 'composed-reject' ? 'reject' : 'approve' },

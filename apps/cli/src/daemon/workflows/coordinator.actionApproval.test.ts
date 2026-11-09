@@ -135,7 +135,7 @@ describe('workflow built-in Action approval holds', () => {
       expect(reads).toEqual(['invitation-approval']);
     });
 
-  it.each(['executed', 'rejected'] as const)('parks a built-in Ask receipt and observes its existing settlement (%s)', async settlement => {
+  it.each(['executed', 'rejected', 'outcome_unknown', 'failed_unknown', 'failed'] as const)('parks a built-in Ask receipt and observes its existing settlement (%s)', async settlement => {
     const workspace = { machineId: 'machine', directory: '/repo', checkoutRootPath: '/repo' };
     const leaf: WorkflowActionLeafV1 = { kind: 'action', id: 'trigger', actionId: 'workflow.trigger.add', input: {
       workflow: { kind: 'literal', value: 'builtin:review-and-converge' },
@@ -202,13 +202,27 @@ describe('workflow built-in Action approval holds', () => {
       health: 'available', triggers: [] } });
     // This is the persisted response from the separate approval execution owner,
     // not execution by the coordinator or evidence of a live confirmation replay.
+    const uncertain = settlement === 'outcome_unknown' || settlement === 'failed_unknown';
     stored = ApprovalRequestV2Schema.parse(settlement === 'executed' ? { ...stored, status: 'executed',
       execution: { executedAtMs: Date.now(), ok: true, result: output } }
-      : { ...original, status: 'rejected', decision: { kind: 'reject', authority: 'present_user', decidedAtMs: Date.now() } });
+      : settlement === 'rejected' ? { ...original, status: 'rejected', decision: { kind: 'reject', authority: 'present_user', decidedAtMs: Date.now() } }
+      : { ...stored, status: settlement === 'failed_unknown' ? 'failed' : settlement, execution: { executedAtMs: Date.now(), ok: false,
+        errorCode: uncertain ? 'approval_execution_outcome_unknown' : 'storage_unavailable',
+        error: 'Receipt effect did not settle', details: { operation: 'trigger-write' },
+        failureCause: { phase: 'workflow.trigger.write', errorClass: 'HttpStatusError', errorCode: 'database_transaction_timeout', httpStatus: 503 } } });
+    const expected = settlement === 'executed' ? { lifecycle: 'completed', result: output }
+      : settlement === 'rejected' ? { lifecycle: 'failed', reason: 'approval_rejected' }
+      : uncertain ? { lifecycle: 'outcome_uncertain', reason: 'approval_execution_outcome_unknown' }
+      : { lifecycle: 'failed', reason: 'storage_unavailable', result: { operation: 'trigger-write' },
+        failureCause: { phase: 'workflow.trigger.write', errorClass: 'HttpStatusError', errorCode: 'database_transaction_timeout', httpStatus: 503 },
+        reasonMessage: 'Receipt effect did not settle' };
     expect(await coordinator.run(input)).toMatchObject(settlement === 'executed'
-      ? { state: 'succeeded' } : { state: 'failed', reason: 'approval_rejected' });
-    expect(store.list().find(value => value.blockId === leaf.id)).toMatchObject(settlement === 'executed'
-      ? { lifecycle: 'completed', result: output } : { lifecycle: 'failed', reason: 'approval_rejected' });
+      ? { state: 'succeeded' } : { state: uncertain ? 'outcome_uncertain' : 'failed', reason: expected.reason });
+    expect(store.list().find(value => value.blockId === leaf.id)).toMatchObject(expected);
+    if (uncertain) {
+      expect(await coordinator.run(input)).toMatchObject({ state: 'outcome_uncertain' });
+      expect(store.list().filter(value => value.blockId === leaf.id)).toHaveLength(1);
+    }
     expect(approvals).toBe(1);
     expect(effects).toBe(0);
   });

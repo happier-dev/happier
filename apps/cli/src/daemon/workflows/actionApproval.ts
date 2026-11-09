@@ -1,4 +1,4 @@
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { prepareActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import { ApprovalRequestPublicReadSchema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -51,12 +51,19 @@ export async function readWorkflowActionApprovalSettlement(params: Readonly<{
     if (request.data.status === 'canceled') return { kind: 'failed', code: 'approval_canceled' };
     const execution = request.data.execution;
     if (!execution) return { kind: 'unresolved', code: 'approval_required' };
+    if (request.data.status === 'outcome_unknown' || !execution.ok && isActionOutcomeUnknownErrorCodeV1(execution.errorCode)) {
+      return { kind: 'outcome_uncertain', code: execution.errorCode ?? 'approval_execution_outcome_unknown' };
+    }
     const completion = prepareActionCompletionV1(undefined, execution.ok ? { ok: true, result: execution.result }
-      : { ok: false, errorCode: execution.errorCode ?? 'action_failed', error: execution.error ?? 'action_failed' });
-    return completion.kind === 'completed' ? { kind: 'completed', result: completion.value }
-      : { kind: 'failed', code: completion.kind === 'awaiting' ? 'outcome_uncertain' : completion.errorCode,
-        ...(completion.kind === 'failed' && 'error' in completion && completion.error !== undefined
-          ? { message: completion.error } : {}) };
+      : { ok: false, errorCode: execution.errorCode ?? 'action_failed', error: execution.error ?? 'action_failed',
+        ...('details' in execution ? { details: execution.details } : {}),
+        ...('failureCause' in execution ? { failureCause: execution.failureCause } : {}) });
+    if (completion.kind === 'completed') return { kind: 'completed', result: completion.value };
+    if (completion.kind === 'awaiting') return { kind: 'outcome_uncertain', code: 'outcome_uncertain' };
+    return { kind: 'failed', code: completion.errorCode,
+      ...('value' in completion && completion.value !== undefined ? { result: completion.value } : {}),
+      ...('failureCause' in completion && completion.failureCause !== undefined ? { failureCause: completion.failureCause } : {}),
+      ...('error' in completion && completion.error !== undefined ? { message: completion.error } : {}) };
   } catch {
     return { kind: 'unresolved', code: 'approval_unavailable' };
   }

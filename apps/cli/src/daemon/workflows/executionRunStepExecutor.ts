@@ -623,6 +623,7 @@ export function createWorkflowDetachedExecutionRunStepExecutor(
             return observed.ok ? observed.result : null;
           } });
         if (!settlement || settlement.kind === 'unresolved') return { kind: 'needs_attention', code: settlement?.code ?? 'approval_unavailable' };
+        if (settlement.kind === 'outcome_uncertain') return settlement;
         if (settlement.kind !== 'completed') return { kind: 'failed', code: settlement.code ?? 'action_failed' };
         const started = existing.actionId === 'execution.run.start' ? ExecutionRunStartResponseSchema.safeParse(settlement.result) : null;
         const runId = started?.success ? started.data.runId

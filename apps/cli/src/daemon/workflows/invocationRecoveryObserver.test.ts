@@ -46,8 +46,11 @@ vi.mock('@/api/session/sockets', async (importOriginal) => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('exact Workflow recovery observation', () => {
-  it.each(['run-1', 'other-run'])('binds recovered approval evidence to the original Workflow Run (%s)', async receiptRunId => {
-    const request = { v: 1, kind: 'plugin_target_action', status: 'executed', createdAtMs: 1, updatedAtMs: 3,
+  it.each([
+    { receiptRunId: 'run-1', unknown: false }, { receiptRunId: 'other-run', unknown: false },
+    { receiptRunId: 'run-1', unknown: true },
+  ])('binds recovered approval evidence to the original Workflow Run ($receiptRunId, unknown=$unknown)', async ({ receiptRunId, unknown }) => {
+    const request = { v: 1, kind: 'plugin_target_action', status: unknown ? 'outcome_unknown' : 'executed', createdAtMs: 1, updatedAtMs: 3,
       createdBy: { surface: 'agent' }, requestedSurface: 'agent', summary: 'Update',
       qualifiedActionId: 'example.workflow/actions/update', input: {}, secretInputPaths: [],
       sourceCustody: { kind: 'development', registeredRootId: 'root' },
@@ -57,7 +60,8 @@ describe('exact Workflow recovery observation', () => {
         requestId: 'invocation', caller: { kind: 'workflowRun', runId: receiptRunId,
           authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } } },
       decision: { kind: 'approve', decidedAtMs: 2 },
-      execution: { executedAtMs: 3, ok: true, effectAttempted: true, result: { updated: true } } };
+      execution: unknown ? { executedAtMs: 3, ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown' }
+        : { executedAtMs: 3, ok: true, effectAttempted: true, result: { updated: true } } };
     const observed = await observeWorkflowInvocationRecoveryEvidence({ runId: 'run-1',
       credentials: { token: 'token', encryption: null }, machineId: 'machine',
       progress: { ...progress, execution: { kind: 'action', actionId: 'example.workflow/actions/update',
@@ -66,8 +70,8 @@ describe('exact Workflow recovery observation', () => {
       getRun: async () => { throw new Error('Approval recovery does not read detached Runs'); },
       getApproval: async () => ({ artifactId: 'receipt', request }),
     });
-    expect(observed).toEqual({ activity: receiptRunId === 'run-1' ? 'not_active' : 'unknown',
-      canReattach: receiptRunId === 'run-1', canContinueConversation: false });
+    expect(observed).toEqual({ activity: receiptRunId === 'run-1' && !unknown ? 'not_active' : 'unknown',
+      canReattach: receiptRunId === 'run-1' && !unknown, canContinueConversation: false });
   });
   it.each(['current', 'replaced', 'no-target'] as const)
   ('starts a Home-qualified input participant and readies only its accepted exact Machine (%s)', async scenario => {

@@ -69,7 +69,7 @@ export type WorkflowInvocationRecoveryObservation = (
     setupConsentOutput?: Readonly<{ operation: ActionOperationSnapshotV1 }> }>
   | Readonly<{ kind: 'completed'; result: JsonValue; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'needs_attention'; code: string; message?: string; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
-  | Readonly<{ kind: 'failed'; code: string; message?: string; failureCause?: ActionFailureCauseV1; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
+  | Readonly<{ kind: 'failed'; code: string; result?: JsonValue; message?: string; failureCause?: ActionFailureCauseV1; runtimeIssueV1?: NonNullable<WorkflowProgressEnvelopeV1['reason']>['runtimeIssueV1']; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'cancelled'; code?: string; usage?: WorkflowUsageV1 }>
   | Readonly<{ kind: 'stopped'; code: string }>
   | Readonly<{ kind: 'outcome_uncertain'; code: string; usage?: WorkflowUsageV1 }>
@@ -382,7 +382,8 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
       ...applyWorkflowInvocationFactV1(progress, {
         ...(observed.execution ? { execution: observed.execution } : {}),
         ...(observed.replyOutcome ? { replyOutcome: observed.replyOutcome } : {}),
-        ...(observation.kind === 'completed' ? { result: observation.result } : {}),
+        ...(observation.kind === 'completed' || observation.kind === 'failed' && observation.result !== undefined
+          ? { result: observation.result } : {}),
         ...(observation.kind !== 'unresolved' && observation.usage ? { usage: observation.usage } : {}),
         ...(observation.kind !== 'completed' && observation.code ? { reason: observation.code,
           ...(observation.kind === 'failed' && observation.failureCause ? { failureCause: observation.failureCause } : {}),

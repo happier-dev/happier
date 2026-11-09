@@ -8,6 +8,21 @@ import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from './bugRep
 import { collectBugReportMachineDiagnosticsSnapshot } from './bugReportMachineDiagnostics';
 
 describe('selected bug report machine diagnostics', () => {
+  it('uses the artifact owner budget beyond the former selected-log cap', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-selected-log-budget-' }, async () => {
+      await mkdir(configuration.logsDir, { recursive: true });
+      const daemonLogPath = join(configuration.logsDir, 'large.log');
+      const content = 'x'.repeat(200_000);
+      await writeFile(daemonLogPath, content);
+      writeDaemonState({ pid: process.pid, httpPort: 1, startedAt: 1, startedWithCliVersion: 'fixture', daemonLogPath });
+      for (const maxArtifactBytes of [180_000, 256_000]) {
+        const result = await collectBugReportMachineDiagnosticsSnapshotForBugReport({
+          logSelection: { daemon: true, session: false, provider: false },
+        }, { maxArtifactBytes });
+        expect(result.sessionDiagnostics?.logs[0]?.artifact?.content).toBe(content.slice(-maxArtifactBytes));
+      }
+    });
+  });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
   it('includes the doctor snapshot when machine diagnostics are requested', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-requested-doctor-' }, async () => {

@@ -1,7 +1,8 @@
 import { createTestWorkflowCoordinator as createWorkflowCoordinator } from './workflowCoordinator.testkit';
 import { describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKeyV2, createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema, buildBackendTargetKeyV2, createActionExecutor, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { readExecutionRunWorkflowObservationSink, type ExecutionRunWorkflowObservationSink } from '@/agent/runtime/bridges/executionRun/executionRunWorkflowObservation';
+import { deriveExecutionRunIdFromActionRequestId } from '@/agent/runtime/bridges/executionRun/startExecutionRun';
 
 import {
   projectWorkflowRetainedRuntimeSelectionV1,
@@ -12,6 +13,9 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 
 import {  workflowInvocationKey, WORKFLOW_CANCEL_REQUESTED_ABORT_REASON, WorkflowRuntimeInterruption, type WorkflowStepExecutor } from './coordinator';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
+import { buildWorkflowActionContext } from './workflowActionContext';
+import { resolveApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createWorkflowProducerBinding } from './workflowScopeBinding';
 import { createCoordinatorWorkspaceResolver } from './resolveWorkflowWorkspace';
 import { createGitWorkflowWorkspaceTestDependencies } from './workflowWorkspace.testkit';
@@ -146,6 +150,238 @@ function baseParams(overrides: Record<string, unknown> = {}) {
 }
 
 describe('workflow detached Execution Run step executor', () => {
+  it.each([
+    { approvalProfileId: 'builtin:full-trust', decision: 'approve', fallback: false },
+    { approvalProfileId: null, decision: 'approve', fallback: false },
+    { approvalProfileId: null, decision: 'reject', fallback: false },
+    { approvalProfileId: 'builtin:full-trust', decision: 'approve', fallback: true },
+    { approvalProfileId: null, decision: 'unknown', fallback: false },
+  ] as const)('retains native start approval and its returned Run identity ($approvalProfileId, $decision, fallback=$fallback)', async ({ approvalProfileId, decision, fallback }) => {
+    let approvals = 0;
+    let starts = 0;
+    let approval: ApprovalRequestV2 | undefined;
+    let localInputId = '';
+    let createdRunId = '';
+    const origin = { kind: 'direct' as const, originSessionId: 'origin',
+      actionRequestAttributionV1: { requestRef: 'request', requester: { serverId: 'home', accountId: 'account-1' },
+        persona: { serverId: 'home', sessionId: 'origin' }, origin: null },
+      actionPolicy: { authority: 'account_automation' as const, approvalProfileId: fallback ? 'builtin:full-trust' : 'builtin:apply-safe' } };
+    const params = baseParams({ origin, originSessionId: 'origin', execution: { agentTarget: CLAUDE_TARGET,
+      permissionMode: 'default', approvalProfileId, conversation: { kind: fallback ? 'shared_run' : 'fresh' } } });
+    const providerResumeIdentity = { kind: 'provider_session.v1' as const,
+      backendTarget: { kind: 'backend' as const, backendId: 'claude', sourceKind: 'built_in' as const }, providerSessionId: 'vanished-provider' };
+    const actionExecutor = createActionExecutor({
+      approvalsCreate: async ({ request }) => { approvals++; approval = ApprovalRequestV2Schema.parse(request); return { artifactId: 'detached-profile-review' }; },
+      approvalsGet: async () => approval ?? null,
+      approvalsUpdate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'machine-1' }),
+      executionRunStart: async (_sessionId, input, options) => {
+        starts++; localInputId = String(input.localInputId);
+        if (fallback) expect(input.resumeHandle).toEqual(providerResumeIdentity);
+        createdRunId = deriveExecutionRunIdFromActionRequestId(String(options?.actionRequestId));
+        return { runId: createdRunId, callId: 'call', sidechainId: 'side' };
+      },
+      detachedExecutionRunSend: async () => ({ ok: false, errorCode: 'execution_run_not_found', error: 'gone' }),
+      executionRunGet: async (_sessionId, input) => {
+        expect(input.runId).toBe(createdRunId);
+        return completedRun(createdRunId, localInputId, { done: true });
+      },
+    });
+    const execute = createWorkflowDetachedExecutionRunStepExecutor({ actionExecutor, workDepth: 0,
+      buildActionContext: execution => ({ ...buildWorkflowActionContext(execution),
+        serverId: 'home', runtimeAccountId: 'account-1', defaultSessionId: 'origin',
+        sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+        ...(fallback ? { actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+          actions: { 'execution.run.start': { approvalRequiredSurfaces: ['agent'] } }, approvalWaivedSurfaces: { 'execution.run.send': ['agent'] } }) } : {}) }),
+      resolveSharedRunConversation: async () => fallback ? { runId: 'vanished', machineId: 'machine-1', directory: '/repo',
+        runtimeSelection: projectWorkflowRetainedRuntimeSelectionV1(params.execution), providerResumeIdentity } : null,
+      resolveProducerConversation: async () => null });
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const makeCoordinator = () => createWorkflowCoordinator({ store, executeStep: execute,
+      resolveWorkspace: async () => ({ ok: true, workspace: params.workspace }) });
+    const input = { runId: params.runId, definition: { version: 1 as const, inputs: [], defaults: params.execution, blocks: [params.step] },
+      inputs: {}, executionTarget: params.executionTarget, origin, originSessionId: 'origin', authorization: params.authorization };
+    expect(await makeCoordinator().run(input)).toMatchObject({ state: 'paused', reason: 'approval_required' });
+    expect(store.list().find(row => row.blockId === params.step.id)).toMatchObject({ lifecycle: 'waiting_for_approval',
+      execution: { kind: 'action', actionId: 'execution.run.start', output: { kind: 'approval_request_created' } } });
+    expect(approvals).toBe(1);
+    expect(starts).toBe(0);
+    expect(await makeCoordinator().run(input)).toMatchObject({ state: 'paused', reason: 'approval_required' });
+    expect(approvals).toBe(1);
+    if (decision === 'unknown') {
+      if (!approval) throw new Error('Expected retained native start Approval');
+      approval = ApprovalRequestV2Schema.parse({ ...approval, status: 'outcome_unknown',
+        decision: { kind: 'approve', authority: 'present_user', decidedAtMs: Date.now() },
+        execution: { executedAtMs: Date.now(), ok: false, effectAttempted: true,
+          errorCode: 'approval_execution_outcome_unknown', error: 'Acknowledgement lost' } });
+      expect(await makeCoordinator().run(input)).toMatchObject({ state: 'interrupted', reason: 'approval_execution_outcome_unknown' });
+      expect(await makeCoordinator().run(input)).toMatchObject({ state: 'interrupted', reason: 'approval_execution_outcome_unknown' });
+      expect(store.list().find(row => row.blockId === params.step.id)).toMatchObject({ lifecycle: 'outcome_uncertain' });
+      expect(approvals).toBe(1);
+      expect(starts).toBe(0);
+      return;
+    }
+    expect(await actionExecutor.execute('approval.request.decide', { artifactId: 'detached-profile-review', decision },
+      { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account-1',
+        actionCaller: { kind: 'host' }, actionRequestId: 'decision' })).toMatchObject({ ok: true });
+    expect(approval).toMatchObject(decision === 'approve' ? { status: 'executed', execution: { ok: true } } : { status: 'rejected' });
+    expect(await makeCoordinator().run(input)).toMatchObject(decision === 'approve'
+      ? { state: 'succeeded' } : { state: 'interrupted', reason: 'approval_rejected' });
+    expect(store.list().find(row => row.blockId === params.step.id)).toMatchObject(decision === 'approve'
+      ? { lifecycle: 'completed', result: { done: true } } : { lifecycle: 'failed', reason: 'approval_rejected' });
+    expect(starts).toBe(decision === 'approve' ? 1 : 0);
+    if (fallback) expect(store.list().find(row => row.blockId === params.step.id)?.execution)
+      .toMatchObject({ kind: 'detached_run', providerResumeIdentity });
+    expect(approvals).toBe(1);
+  });
+  it.each([
+    { approvalProfileId: 'builtin:full-trust', decision: 'approve' },
+    { approvalProfileId: null, decision: 'approve' },
+    { approvalProfileId: null, decision: 'reject' },
+  ] as const)('retains a shared Run send approval across coordinator reclaim ($approvalProfileId, $decision)', async ({ approvalProfileId, decision }) => {
+    let approvals = 0;
+    let sends = 0;
+    let starts = 0;
+    let approval: ApprovalRequestV2 | undefined;
+    let localInputId = '';
+    const origin = { kind: 'direct' as const, originSessionId: 'origin',
+      actionRequestAttributionV1: { requestRef: 'retained-request', requester: { serverId: 'home', accountId: 'account-1' },
+        persona: { serverId: 'home', sessionId: 'origin' }, origin: null },
+      actionPolicy: { authority: 'account_automation' as const, approvalProfileId: 'builtin:apply-safe' } };
+    const params = baseParams({ origin, originSessionId: 'origin', execution: { agentTarget: CLAUDE_TARGET,
+      permissionMode: 'default', approvalProfileId, conversation: { kind: 'shared_run' } } });
+    const providerResumeIdentity = { kind: 'provider_session.v1' as const,
+      backendTarget: { kind: 'backend' as const, backendId: 'claude', sourceKind: 'built_in' as const }, providerSessionId: 'retained-provider' };
+    const actionExecutor = createActionExecutor({
+      // Artifact persistence and native Run transport are the process boundaries.
+      approvalsCreate: async ({ request }) => {
+        approvals++; approval = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'retained-send-review' };
+      },
+      approvalsGet: async () => approval ?? null,
+      approvalsUpdate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'machine-1' }),
+      executionRunStart: async () => {
+        starts++;
+        return { runId: 'unexpected-new-run', callId: 'call', sidechainId: 'side' };
+      },
+      detachedExecutionRunSend: async (_sessionId, request) => {
+        expect(request.runId).toBe('retained');
+        sends++; localInputId = String(request.localInputId);
+        return { ok: true };
+      },
+      executionRunGet: async (_sessionId, request) => {
+        expect(request.runId).toBe('retained');
+        return completedRun('retained', localInputId, { done: true });
+      },
+    });
+    const execute = createWorkflowDetachedExecutionRunStepExecutor({ actionExecutor, workDepth: 0,
+      buildActionContext: execution => ({ ...buildWorkflowActionContext(execution),
+        serverId: 'home', runtimeAccountId: 'account-1', defaultSessionId: 'origin',
+        sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'execution.run.send': ['agent'] } }) }),
+      resolveSharedRunConversation: async () => ({ runId: 'retained', machineId: 'machine-1', directory: '/repo',
+        runtimeSelection: projectWorkflowRetainedRuntimeSelectionV1(params.execution), providerResumeIdentity }),
+      resolveProducerConversation: async () => null });
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const makeCoordinator = () => createWorkflowCoordinator({ store, executeStep: execute,
+      resolveWorkspace: async () => ({ ok: true, workspace: params.workspace }) });
+    const input = { runId: params.runId, definition: { version: 1 as const, inputs: [], defaults: params.execution, blocks: [params.step] },
+      inputs: {}, executionTarget: params.executionTarget, origin, originSessionId: 'origin', authorization: params.authorization };
+    expect(await makeCoordinator().run(input)).toMatchObject({ state: 'paused', reason: 'approval_required' });
+    expect(store.list().find(row => row.blockId === params.step.id)).toMatchObject({ lifecycle: 'waiting_for_approval',
+      execution: { kind: 'action', actionId: 'execution.run.send', output: { kind: 'approval_request_created' } } });
+    expect(sends).toBe(0);
+    expect(starts).toBe(0);
+    expect(await makeCoordinator().run(input)).toMatchObject({ state: 'paused', reason: 'approval_required' });
+    expect(approvals).toBe(1);
+    expect(await actionExecutor.execute('approval.request.decide', { artifactId: 'retained-send-review', decision },
+      { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account-1',
+        actionCaller: { kind: 'host' }, actionRequestId: 'retained-decision' })).toMatchObject({ ok: true });
+    expect(await makeCoordinator().run(input)).toMatchObject(decision === 'approve'
+      ? { state: 'succeeded' } : { state: 'interrupted', reason: 'approval_rejected' });
+    expect(store.list().find(row => row.blockId === params.step.id)).toMatchObject(decision === 'approve'
+      ? { lifecycle: 'completed', result: { done: true } } : { lifecycle: 'failed', reason: 'approval_rejected' });
+    if (decision === 'approve') expect(store.list().find(row => row.blockId === params.step.id)?.execution)
+      .toMatchObject({ kind: 'detached_run', runId: 'retained', providerResumeIdentity });
+    expect(sends).toBe(decision === 'approve' ? 1 : 0);
+    expect(starts).toBe(0);
+    expect(approvals).toBe(1);
+  });
+
+  it.each(['builtin:full-trust', null] as const)('retains the accepted starter and step approval reference through detached Action admission (%s)', async approvalProfileId => {
+    const origin = { kind: 'direct' as const, authenticatedStarterV1: {
+      requestRef: 'starter', requester: { serverId: 'home', accountId: 'account-1' },
+    }, actionPolicy: { authority: 'account_automation' as const, approvalProfileId: 'builtin:read-propose' } };
+    const params = baseParams({ origin, execution: { agentTarget: CLAUDE_TARGET,
+      permissionMode: 'default', approvalProfileId, conversation: { kind: 'fresh' } } });
+    let localInputId = '';
+    const requests: Array<ReturnType<typeof resolveApprovalRequesterConfirmationV1>> = [];
+    // Native transport is the boundary. Its admission consumer uses the real
+    // requester owner, rather than treating the daemon Account as the starter.
+    const actionExecutor = createActionExecutor({
+      executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'machine-1' }),
+      executionRunStart: async (_sessionId, request, options) => {
+        expect(request).toHaveProperty('approvalProfileId', approvalProfileId);
+        localInputId = String(request.localInputId);
+        const requester = resolveApprovalRequesterConfirmationV1({ actionId: 'execution.run.start', input: request,
+          required: false, context: { ...options, surface: 'agent', serverId: 'home', runtimeAccountId: 'account-1' } });
+        requests.push(requester);
+        if (!requester.ok) return { ...requester, code: requester.errorCode,
+          details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } };
+        return { runId: 'native', callId: 'call', sidechainId: 'side' };
+      },
+      executionRunGet: async () => completedRun('native', localInputId, { done: true }),
+    });
+    const execute = createWorkflowDetachedExecutionRunStepExecutor({ actionExecutor, workDepth: 0,
+      buildActionContext: execution => buildWorkflowActionContext(execution),
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null });
+    const result = await execute(params);
+    expect(requests).toMatchObject([{ ok: true }]);
+    expect(result).toMatchObject({ kind: 'completed', result: { done: true } });
+  });
+
+  it('settles a detached requester refusal as a visible typed failed step without re-polling', async () => {
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const params = baseParams({ execution: { agentTarget: CLAUDE_TARGET, permissionMode: 'default',
+      conversation: { kind: 'fresh' } } });
+    let localInputId = '';
+    let reads = 0;
+    // Only native Run start/read transport is substituted. Action admission,
+    // exact-turn observation and the Workflow failure writer stay real.
+    const actionExecutor = createActionExecutor({
+      executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'machine-1' }),
+      executionRunStart: async (_sessionId, request) => {
+        localInputId = String(request.localInputId);
+        return { runId: 'detached-requester-refusal', callId: 'call', sidechainId: 'sidechain' };
+      },
+      executionRunGet: async () => {
+        reads++;
+        const { run } = completedRun('detached-requester-refusal', localInputId, 'unused');
+        return { run: { ...run, status: 'failed', error: { code: 'approval_requester_unavailable',
+          message: 'The detached request has no bindable Session requester.' },
+          inputTurns: { occurrenceId: run.inputTurns.occurrenceId, last: {
+            turnId: `turn-${localInputId}`, inputIds: [localInputId], state: 'failed',
+          } },
+        } };
+      },
+    });
+    const executeStep = createWorkflowDetachedExecutionRunStepExecutor({ actionExecutor, workDepth: 0,
+      buildActionContext, resolveSharedRunConversation: async () => null,
+      resolveProducerConversation: async () => null });
+    const coordinator = createWorkflowCoordinator({ store, executeStep,
+      resolveWorkspace: async () => ({ ok: true, workspace: params.workspace }) });
+    await expect(coordinator.run({ runId: params.runId,
+      definition: { version: 1, inputs: [], defaults: params.execution, blocks: [params.step] },
+      inputs: {}, executionTarget: { kind: 'detached_run' }, authorization: params.authorization,
+    })).resolves.toEqual({ state: 'interrupted', reason: 'approval_requester_unavailable' });
+    expect(store.list().find(row => row.blockId === params.step.id))
+      .toMatchObject({ lifecycle: 'failed', reason: 'approval_requester_unavailable' });
+    expect(reads).toBe(1);
+  });
+
   it.each([1_794_340_800_000, null])('settles a detached refusal with quota attention and its reported reset (%s)', async resetAtMs => {
     const runtimeIssueV1 = {
       v: 1, scope: 'primary_session', status: 'failed', code: 'claude.usage_limit', source: 'usage_limit', occurredAt: 100,
@@ -197,6 +433,7 @@ describe('workflow detached Execution Run step executor', () => {
       // Exact-Machine capability discovery is a transport boundary. Keep the
       // Action executor, noRunCreated evidence and Workflow coordinator real.
       const actionExecutor = createActionExecutor({ executionRunStart,
+        executionRunGet: async () => { throw new Error('refused target must not be read'); },
         executionRunCheckProtocolV2: async () => ({ ok: false, errorCode, error: errorCode }),
       } as unknown as ActionExecutorDeps);
       const executeStep = createWorkflowDetachedExecutionRunStepExecutor({ actionExecutor, workDepth: 0,
@@ -358,8 +595,7 @@ describe('workflow detached Execution Run step executor', () => {
           throw new Error(`unexpected ${actionId}`);
         } },
       });
-      const deps = { store, executeStep, resolveWorkspace: async () => ({ ok: true as const, workspace: params.workspace }),
-        isAcceptedAuthorizationCurrent: async () => true };
+      const deps = { store, executeStep, resolveWorkspace: async () => ({ ok: true as const, workspace: params.workspace }) };
       const run = { runId: params.runId, definition: { version: 1 as const, inputs: [], defaults: params.execution,
         blocks: [{ ...params.step, timeoutMs: 500, pauseForReview: true, result: { kind: 'text' as const } }] },
         inputs: {}, executionTarget: params.executionTarget, authorization: params.authorization };
@@ -639,7 +875,7 @@ describe('workflow detached Execution Run step executor', () => {
         agent: { backendMode: 'acp' },
       },
     }), expect.objectContaining({
-      surface: 'rpc',
+      surface: 'ui',
       agentStartWorkDepth: 1,
       authority: 'present_user',
       actionCaller: {
@@ -663,10 +899,10 @@ describe('workflow detached Execution Run step executor', () => {
     }
   });
 
-  it('uses the portable Launch Profile selection and frozen role without execution-profile custody', async () => {
+  it.each([false, true])('uses the portable Launch Profile and preserves frozen rendered input=%s without duplicate role text', async (retained) => {
     let localInputId = '';
     // Native daemon transport is the boundary; the Action executor remains real.
-    const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async (_sessionId, value: unknown) => {
+    const executionRunStart = vi.fn<NonNullable<ActionExecutorDeps['executionRunStart']>>(async (_sessionId, value: unknown) => {
       localInputId = String(requireActionInput(value).localInputId);
       return { runId: 'run-profile', callId: 'call-profile', sidechainId: 'sidechain-profile' };
     });
@@ -687,17 +923,22 @@ describe('workflow detached Execution Run step executor', () => {
       resolveProducerConversation: async () => null,
     });
 
+    const frozenText = 'Original role\n\n<happier_forge_evidence v="1">Original PR comment</happier_forge_evidence>';
+    const beforeInputAdmission = vi.fn(async (_renderedText?: string) => {});
     const result = await execute(baseParams({
       execution: { ...baseParams().execution, profileId: 'launch-profile-1' },
+      beforeInputAdmission,
+      ...(retained ? { input: { ...baseParams().input, renderedText: frozenText } } : {}),
     }));
     expect(result, JSON.stringify(result)).toMatchObject({ kind: 'completed' });
     expect(executionRunStart).toHaveBeenCalledWith(null, expect.objectContaining({
-      instructions: expect.stringContaining('Frozen reviewer instructions'),
+      instructions: retained ? frozenText : expect.stringContaining('Frozen reviewer instructions'),
       modelSelection: baseParams().execution.modelSelection.ref,
     }), expect.objectContaining({ workDepth: 3, workspaceWrites: 'deny', exactMachineId: 'machine-1',
       actionCaller: { kind: 'workflowRun', runId: 'workflow-1', authorization: baseParams().authorization },
     }));
     const start = requireActionInput(executionRunStart.mock.calls[0]![1]);
+    expect(beforeInputAdmission).toHaveBeenCalledWith(start.instructions);
     expect(start).not.toHaveProperty('profileId');
     expect(start).not.toHaveProperty('profileSourceCustody');
     await expect(execute(baseParams({ authorization: { admittedPermissionCeiling: 'read-only', principal: { kind: 'host' } } })))

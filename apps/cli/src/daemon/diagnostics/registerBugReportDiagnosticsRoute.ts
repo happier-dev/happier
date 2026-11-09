@@ -18,7 +18,6 @@ export function registerBugReportDiagnosticsRoute(app: FastifyInstance, input: R
     try {
       return await lifetime.run(() => collectBugReportMachineDiagnosticsSnapshotForBugReport(parsed.data, {
         machineId: input.machineId, signal: lifetime.signal,
-        assertCurrentAuthority: async () => lifetime.signal.throwIfAborted(),
       }));
     } finally { lifetime.dispose(); }
   });

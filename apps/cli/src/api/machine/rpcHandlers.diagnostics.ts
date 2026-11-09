@@ -3,6 +3,9 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
 import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from '@/diagnostics/bugReportMachineDiagnosticsRecipe';
+import { BugReportDiagnosticsRequestSchema } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
+import type { BugReportMachineDiagnosticsSnapshot } from '@happier-dev/protocol';
+import { projectIdentityFreeDiagnosticLogTail, projectIdentityFreeMachineDiagnostics } from '@/diagnostics/identityFreeMachineDiagnostics';
 import { configuration } from '@/configuration';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
@@ -10,6 +13,8 @@ import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { BUG_REPORT_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
+import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 async function toCanonicalPath(path: string): Promise<string | null> {
   const normalized = String(path ?? '').trim();
@@ -26,11 +31,14 @@ function isPathInside(targetPath: string, allowedDir: string): boolean {
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
 }
 
-async function collectBugReportDiagnostics() {
-  return await collectBugReportMachineDiagnosticsSnapshotForBugReport();
+async function collectBugReportDiagnostics(input: unknown, scope: Parameters<typeof collectBugReportMachineDiagnosticsSnapshotForBugReport>[1]) {
+  const request = BugReportDiagnosticsRequestSchema.parse(input);
+  return await collectBugReportMachineDiagnosticsSnapshotForBugReport(
+    'sessionId' in request || 'logSelection' in request ? request : undefined, scope,
+  );
 }
 
-async function readAllowedBugReportLogTail(rawParams: any) {
+async function readAllowedBugReportLogTail(rawParams: any, signal?: AbortSignal) {
   const maxBytes = typeof rawParams?.maxBytes === 'number' && Number.isFinite(rawParams.maxBytes)
     ? Math.min(Math.max(Math.floor(rawParams.maxBytes), 1024), 1_000_000)
     : 200_000;
@@ -80,7 +88,7 @@ async function readAllowedBugReportLogTail(rawParams: any) {
   }
 
   try {
-    const tail = await readBugReportLogTail(targetPath, maxBytes);
+    const tail = await readBugReportLogTail(targetPath, maxBytes, { signal });
     return {
       ok: true,
       path: targetPath,
@@ -89,6 +97,7 @@ async function readAllowedBugReportLogTail(rawParams: any) {
   } catch (error) {
     return {
       ok: false,
+      ...(readRpcErrorCode(error) ? { errorCode: readRpcErrorCode(error) } : {}),
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -96,12 +105,14 @@ async function readAllowedBugReportLogTail(rawParams: any) {
 
 function createBugReportDiagnosticsRpcActionExecutor(): RpcActionExecutor {
   return {
-    execute: async (actionId, input) => {
+    execute: async (actionId, input, context) => {
       if (actionId === 'bugreport.collectDiagnostics') {
-        return { ok: true, result: await collectBugReportDiagnostics() };
+        return { ok: true, result: await collectBugReportDiagnostics(input, {
+          ...(context?.signal ? { signal: context.signal } : {}),
+        }) };
       }
       if (actionId === 'bugreport.getLogTail') {
-        return { ok: true, result: await readAllowedBugReportLogTail(input) };
+        return { ok: true, result: await readAllowedBugReportLogTail(input, context?.signal) };
       }
       if (actionId === 'bugreport.uploadArtifact') {
         const rawParams = input as any;
@@ -126,10 +137,19 @@ function createBugReportDiagnosticsRpcActionExecutor(): RpcActionExecutor {
 export function registerMachineDiagnosticsRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   actionExecutor?: RpcActionExecutor;
+  filesystemEffectAdmission?: FilesystemEffectAdmission;
 }>): void {
   const { rpcHandlerManager } = params;
+  const admission = params.filesystemEffectAdmission ?? createFilesystemEffectAdmission();
+  const executor = params.actionExecutor ?? createBugReportDiagnosticsRpcActionExecutor();
 
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_LOG_TAIL, async (rawParams: any) => {
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_LOG_TAIL, async (rawParams: any, context) => {
+    const failure = await admission.rpc(context);
+    if (failure) return { success: false, ...failure };
+    if (context?.machineAdmission?.role === 'use') {
+      const omitted = projectIdentityFreeDiagnosticLogTail();
+      return { success: omitted.ok, error: omitted.error };
+    }
     const maxBytes = typeof rawParams?.maxBytes === 'number' && Number.isFinite(rawParams.maxBytes)
       ? Math.min(Math.max(Math.floor(rawParams.maxBytes), 1024), 1_000_000)
       : 200_000;
@@ -176,7 +196,7 @@ export function registerMachineDiagnosticsRpcHandlers(params: Readonly<{
 
     try {
       const fileStat = await stat(canonicalRequestedPath);
-      const tail = await readBugReportLogTail(canonicalRequestedPath, maxBytes);
+      const tail = await readBugReportLogTail(canonicalRequestedPath, maxBytes, { signal: context?.signal });
       return {
         success: true,
         path: canonicalRequestedPath,
@@ -186,6 +206,7 @@ export function registerMachineDiagnosticsRpcHandlers(params: Readonly<{
     } catch (error) {
       return {
         success: false,
+        ...(readRpcErrorCode(error) ? { errorCode: readRpcErrorCode(error) } : {}),
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -193,7 +214,22 @@ export function registerMachineDiagnosticsRpcHandlers(params: Readonly<{
 
   registerActionSpecRpcHandlers({
     rpcHandlerManager,
-    actionExecutor: params.actionExecutor ?? createBugReportDiagnosticsRpcActionExecutor(),
+    actionExecutor: { execute: async (actionId, input, context) => {
+      // Both a supplied CLI executor and the local fallback spend the same
+      // receiving filesystem authority; neither can borrow daemon log custody.
+      const failure = await admission.action(context);
+      if (failure) return { ok: false, ...failure };
+      if (actionId === RPC_METHODS.BUGREPORT_GET_LOG_TAIL && context?.machineAdmission?.role === 'use') {
+        return { ok: true, result: projectIdentityFreeDiagnosticLogTail() };
+      }
+      const result = await executor.execute(actionId, input, context);
+      context?.signal?.throwIfAborted();
+      // The installed diagnostics executor owns this output; only the verified
+      // ingress role selects its cross-Account disclosure projection.
+      return result.ok && actionId === RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS && context?.machineAdmission?.role === 'use'
+        ? { ...result, result: projectIdentityFreeMachineDiagnostics(result.result as BugReportMachineDiagnosticsSnapshot) }
+        : result;
+    } },
     scopes: BUG_REPORT_RPC_SCOPES,
   });
 }

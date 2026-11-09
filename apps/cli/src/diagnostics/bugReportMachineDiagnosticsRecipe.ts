@@ -30,7 +30,6 @@ type CollectionScope = Readonly<{
   machineId?: string;
   maxArtifactBytes?: number;
   signal?: AbortSignal;
-  assertCurrentAuthority?: () => Promise<void>;
 }>;
 
 async function containedFile(candidate: unknown, containmentRoot: string): Promise<string | null> {
@@ -48,7 +47,6 @@ export async function collectBugReportMachineDiagnosticsSnapshotForBugReport(
 ): Promise<BugReportMachineDiagnosticsSnapshot> {
   if (request === undefined) return await collectBugReportMachineDiagnosticsSnapshot(BUG_REPORT_MACHINE_DIAGNOSTICS_RECIPE);
   scope.signal?.throwIfAborted();
-  await scope.assertCurrentAuthority?.();
   const selection = resolveBugReportLogSelection(request.logSelection);
   const requestedSessionId = request.sessionId?.trim() ?? '';
   const sessionDiagnostics: BugReportSessionDiagnostics = {
@@ -113,7 +111,6 @@ export async function collectBugReportMachineDiagnosticsSnapshotForBugReport(
     }
     try {
       scope.signal?.throwIfAborted();
-      await scope.assertCurrentAuthority?.();
       let path: string | null = null;
       if (kind === 'daemon') {
         const files = daemonState?.daemonLogPath ? [] : await listDaemonLogFiles(1);
@@ -135,9 +132,7 @@ export async function collectBugReportMachineDiagnosticsSnapshotForBugReport(
         sessionDiagnostics.logs.push({ kind, status: 'unavailable', detail: 'No matching local log file' });
         continue;
       }
-      const content = await readBugReportLogTail(path, Math.min(150_000, scope.maxArtifactBytes ?? 150_000), {
-        assertCurrentAuthority: async () => { scope.signal?.throwIfAborted(); await scope.assertCurrentAuthority?.(); },
-      });
+      const content = await readBugReportLogTail(path, scope.maxArtifactBytes, { signal: scope.signal });
       if (!content.trim()) {
         sessionDiagnostics.logs.push({ kind, status: 'unavailable', detail: 'Log file is empty' });
         continue;
@@ -148,10 +143,9 @@ export async function collectBugReportMachineDiagnosticsSnapshotForBugReport(
       } });
     } catch {
       scope.signal?.throwIfAborted();
-      await scope.assertCurrentAuthority?.();
       sessionDiagnostics.logs.push({ kind, status: 'unavailable', detail: 'Log file could not be read' });
     }
   }
-  await scope.assertCurrentAuthority?.();
+  scope.signal?.throwIfAborted();
   return result;
 }

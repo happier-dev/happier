@@ -188,6 +188,7 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
     if (execution.kind === 'action') {
       const approval = await readWorkflowActionApprovalSettlement({ runId: params.runId, execution,
         read: async artifactId => await params.getApproval?.(artifactId) });
+      if (approval?.kind === 'outcome_uncertain') return unavailable;
       if (approval) return { activity: approval.kind === 'unresolved' ? 'unknown' : 'not_active',
         canReattach: approval.kind !== 'unresolved' || approval.code === 'approval_required', canContinueConversation: false };
       if (execution.awaitedOperations?.length && params.getOperation) {

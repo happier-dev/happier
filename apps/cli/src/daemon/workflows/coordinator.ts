@@ -1855,7 +1855,8 @@ async function executeActionBlock(
     input = projectWorkflowFiniteActionInputV1({ machineId: actionWorkspace.machineId, actionId, input });
     const localInputId = `workflow:${createHash('sha256').update(row.recordId).digest('hex')}:action`;
     const actionRequestId = `${context.runId}/${row.logicalInvocationRecordId ?? row.recordId}/${row.attempt}`;
-    const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, invocationRecordId: row.recordId, authorization: context.authorization,
+    const invocationRecordId = row.recordId;
+    const actionContext: ActionExecutorContext = { ...await context.holds.track(() => context.deps.action!.buildContext({ runId: context.runId, invocationRecordId, authorization: context.authorization,
       workDepth: context.workDepth, workspace: actionWorkspace, ...(context.originSessionId ? { originSessionId: context.originSessionId } : {}),
       ...(context.origin ? { origin: context.origin } : {}),
       ...(frozen.selection.approvalProfileId === undefined ? {} : { approvalProfileId: frozen.selection.approvalProfileId }),
@@ -1961,8 +1962,9 @@ async function executeActionBlock(
         return observed.ok ? observed.result : null;
       } }));
     if (!settlement || settlement.kind === 'unresolved') throw new WorkflowControlBoundary('paused', settlement?.code ?? 'approval_unavailable');
+    if (settlement.kind === 'outcome_uncertain') return await fail(settlement.code, 'outcome_uncertain');
     if (settlement.kind !== 'completed') return await fail(settlement.code ?? 'action_failed', 'failed', true,
-      undefined, settlement.kind === 'failed' ? settlement.failureCause : undefined,
+      settlement.kind === 'failed' ? settlement.result : undefined, settlement.kind === 'failed' ? settlement.failureCause : undefined,
       settlement.kind === 'failed' ? settlement.message : undefined);
     completed = { kind: 'completed', value: settlement.result };
   }

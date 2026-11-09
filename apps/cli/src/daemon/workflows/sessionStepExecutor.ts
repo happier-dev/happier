@@ -45,7 +45,7 @@ import {
   type WorkflowStepPreparer,
   type WorkflowActionExecutor,
 } from './coordinator';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
 import {
   classifyWorkflowSessionInputResult,
@@ -832,6 +832,9 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       if (error instanceof WorkflowSessionCompositionError && (error.code === 'approval_required' || error.code === 'approval_unavailable')) {
         return { kind: 'needs_attention', code: error.code };
       }
+      if (error instanceof WorkflowSessionCompositionError && isActionOutcomeUnknownErrorCodeV1(error.code)) {
+        return { kind: 'outcome_uncertain', code: error.code };
+      }
       if (error instanceof WorkflowSessionCompositionError) return { kind: workflowRuntimeFailureKind(error.runtimeIssueV1), code: error.code,
         ...(error.runtimeIssueV1 ? { runtimeIssueV1: error.runtimeIssueV1 } : {}),
         ...(error.details ? { reasonDetails: error.details } : {}),
@@ -883,6 +886,9 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       if (params.signal?.aborted) return settleBeforeAdmissionAfterAbort();
       if (error instanceof WorkflowSessionCompositionError && (error.code === 'approval_required' || error.code === 'approval_unavailable')) {
         return { kind: 'needs_attention', code: error.code };
+      }
+      if (error instanceof WorkflowSessionCompositionError && isActionOutcomeUnknownErrorCodeV1(error.code)) {
+        return { kind: 'outcome_uncertain', code: error.code };
       }
       if (error instanceof WorkflowSessionCompositionError) return { kind: workflowRuntimeFailureKind(error.runtimeIssueV1), code: error.code,
         ...(error.runtimeIssueV1 ? { runtimeIssueV1: error.runtimeIssueV1 } : {}),
