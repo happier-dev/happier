@@ -31,7 +31,8 @@ import { useSessionViewContentBottomSpacing } from '@/components/sessions/shell/
 import { SESSION_VIEW_AGENT_INPUT_OUTER_BOTTOM_PADDING_PX } from '@/components/sessions/shell/view/resolveSessionViewContentBottomSpacing';
 import { useReportSessionCockpitFloatingBottomChromeHeight, useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { useActiveServerAccountScope, useSession, useSetting } from '@/sync/store/hooks';
-import { getStorage, useLocalSetting } from '@/sync/domains/state/storage';
+import { useLocalSetting } from '@/sync/domains/state/storage';
+import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
 import { focusNewSessionComposerWhenPresented } from '../navigation/newSessionComposerFocus';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { OVERLAY_CAPSULE_BUTTON_SIZE, OverlayCapsuleButton } from '@/components/ui/overlays/OverlayCapsuleButton';
@@ -123,10 +124,6 @@ function useDockSeat() {
     const pillBottom = height - pane.bottom + Math.max(0, (bandBelowComposer - OVERLAY_CAPSULE_BUTTON_SIZE) / 2);
     return { phone, pane, reach, pillBottom, clearedChrome, dockGap, composerWidth, columnWidth, windowWidth: width };
 }
-
-const commitDockWidth = (widthPx: number | null) => getStorage().getState().applyLocalSettings({ newSessionDockedWidthPx: widthPx }, { source: 'ui' });
-// Reset returns the card to the Session composer's width, whatever that is in the column it is in.
-const resetDockWidth = () => commitDockWidth(null);
 
 /** The folded dock: a capsule in the card's seat that names it and marks a draft with text. Pressing it is New again. */
 function DockedPill() {
@@ -281,6 +278,11 @@ function DockedComposer(props: Readonly<{ nativeFocused: boolean; onNativeFocusC
     const resizable = Platform.OS === 'web' && !phone;
     const minWidth = Math.min(DOCK_MIN_WIDTH, composerWidth);
     const storedWidth = useLocalSetting('newSessionDockedWidthPx');
+    const writeSetting = useSettingActionWriter();
+    const commitDockWidth = React.useCallback(async (widthPx: number | null) => {
+        await writeSetting({ anchor: 'appearance.newSessionDockedWidth' }, widthPx);
+    }, [writeSetting]);
+    const resetDockWidth = React.useCallback(() => commitDockWidth(null), [commitDockWidth]);
     const dockWidth = storedWidth === null ? composerWidth : Math.min(columnWidth, Math.max(minWidth, storedWidth));
     // The frost clears within the page column: it never spills over the navigation column or a side panel.
     const sideRoom = Math.max(0, (pane.width - dockWidth) / 2);

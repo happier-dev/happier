@@ -14,6 +14,7 @@ function featureToggleSection(featureId: FeatureId) {
 }
 
 export const BUILT_IN_SETTINGS_METADATA_V1 = [
+  {"anchor":"appearance.newSessionDockedWidth","pageId":"appearance","sectionId":"appearance.display","titleKey":"settingsAppearance.newSessionDockedWidth","title":"New session dock width","description":"Set the docked New Session composer width on this device. Set null to follow the Session composer width.","storage":{"scope":"local","key":"newSessionDockedWidthPx","access":"read_write"},"targetKinds":[],"sensitive":false,"agentSafety":"safe"},
   {"anchor":"spaces.enabled","pageId":"session","sectionId":"session.list","titleKey":"sessionsList.spacesTitle","title":"Spaces","storage":{"scope":"account","key":"collectionSpacesEnabled","access":"read_write","allowedValues":[false,true]},"targetKinds":[],"sensitive":false,"agentSafety":"safe"},
   {"anchor":"session.list.spacesEnabled","pageId":"session","sectionId":"session.list","titleKey":"sessionsList.spacesManageSessions","title":"Session spaces","storage":{"scope":"account","key":"sessionSpacesEnabled","access":"read_write","allowedValues":[false,true]},"targetKinds":[],"sensitive":false,"agentSafety":"safe"},
   {"anchor":"workflow.list.spacesEnabled","pageId":"settings","sectionId":"workflow.list","titleKey":"sessionsList.spacesManageWorkflows","title":"Workflow spaces","storage":{"scope":"account","key":"workflowSpacesEnabled","access":"read_write","allowedValues":[false,true]},"targetKinds":[],"sensitive":false,"agentSafety":"safe"},

@@ -5932,6 +5932,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         display: '顯示',
         displayDescription: '控制版面配置和間距',
+        newSessionDockedWidth: '新對話停靠寬度',
         contentWidth: '內容寬度',
         contentWidthDescription: '選擇主內容可擴展到的最大寬度',
         contentWidthOptions: {

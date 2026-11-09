@@ -1,5 +1,10 @@
 import { Platform } from 'react-native';
-import type { AccountSettingKey, AutomationV3Settings, FeatureId, PluginContributionIdentityV1, SettingsDeclarationOperationInputV1, StrictJsonValueSchema } from '@happier-dev/protocol';
+import type { AccountSettingKey} from '@happier-dev/protocol/account/settings/accountSettings';
+import type { AutomationV3Settings} from '@happier-dev/protocol/automations/automationApiV3';
+import type { FeatureId} from '@happier-dev/protocol/features/catalog';
+import type { PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type { SettingsDeclarationOperationInputV1} from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import type { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 
 import type { TranslationKeyNoParams } from '@/text';
 import { desktopHostKind, isDesktopHost } from '@/utils/platform/desktopHost';
@@ -21,7 +26,9 @@ import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1, rea
     parseBuiltInAccountSettingValueV1, readBuiltInAccountSettingValueV1, buildBuiltInAccountSettingMutationV1,
     type PortableSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { BUILT_IN_SETTINGS_METADATA_V1 } from '@happier-dev/protocol/actions/settings/builtInSettingsMetadata';
-import type { AtmospherePresentation } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { AtmospherePresentation, ProjectAtmosphere } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { SessionAutoFollowPreferencesV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { homeAtmosphereStorageBinding } from '@/components/atmosphere/atmosphereSettings';
 
 export type SettingValue = z.infer<typeof SettingsDeclarationValueV1Schema>;
 export type SettingScalarValue = Extract<SettingValue, string | number | boolean | null>;
@@ -78,6 +85,12 @@ export type SettingsMutationServices = Readonly<{
         read(): AtmospherePresentation;
         update(edit: (value: AtmospherePresentation) => AtmospherePresentation): void | Promise<void>;
     }>;
+    /** One mounted Project edit, applied to fresh row state only after Settings Action admission. */
+    projectAtmosphereEdit?: Readonly<{
+        target: Readonly<{ serverId: string; projectKey: string }>;
+        edit: 'home' | ((value: ProjectAtmosphere) => ProjectAtmosphere);
+        shownHomePicture?: AtmospherePresentation['picture']['ref'];
+    }>;
     /** The host owns native picker custody; Action input carries no local bytes or URI. */
     pickAtmospherePicture?: (signal?: AbortSignal) => Promise<Blob | string | null>;
     readAtmospherePictureLibrary?: (signal?: AbortSignal) => Promise<SettingValue>;
@@ -97,7 +110,6 @@ export type SettingsMutationServices = Readonly<{
     readAgentCatalog?: import('@happier-dev/protocol/voice/settings/voiceSettingBindings').VoiceSettingsMutationServicesV1<Settings>['readAgentCatalog'];
 }>;
 
-type ScalarSettingKeys<T> = { [K in keyof T]: T[K] extends string | number | boolean | null | undefined ? K : never }[keyof T] & string;
 /** Explicitly admitted preference; declarations never infer a writer from a row id. */
 export type SettingStorageBinding = Readonly<{
     access: 'read_write' | 'read_only' | 'sensitive';
@@ -109,10 +121,10 @@ export type SettingStorageBinding = Readonly<{
     | Readonly<{ scope: 'home'; kind: 'homeSettings'; key: string }>
     | Readonly<{ scope: 'project'; kind: 'projectAtmosphere' }>
     | Readonly<{ scope: 'local'; kind: 'atmospherePictureLibrary' }>
-    | Readonly<{ scope: 'home'; kind: 'sessionAutoFollowPreferences'; field: 'assigned' | 'direct' | 'team' | 'group' }>
+    | Readonly<{ scope: 'home'; kind: 'sessionAutoFollowPreferences'; field: keyof SessionAutoFollowPreferencesV1 }>
     | TeamSettingBindingV1
     | Readonly<{ scope: 'account'; key: AccountSettingKey & WritableSettingsKey }>
-    | Readonly<{ scope: 'local'; key: ScalarSettingKeys<LocalSettings> }>
+    | Readonly<{ scope: 'local'; key: keyof LocalSettings }>
     | Readonly<{
         scope: 'account';
         kind: 'automationSettings';
@@ -148,7 +160,7 @@ export type SettingStorageBinding = Readonly<{
             context?: Readonly<{ signal?: AbortSignal; isCurrent(): boolean; readLocalSettings?: () => LocalSettings;
                 accountScope?: ServerAccountScope; readSettings?: () => Promise<Settings>;
                 /** Compound device owners persist their account-owned facts through the admitted CAS owner. */
-                mutateSettings?: (mutate: SettingOwnerMutation) => Promise<void> }>) =>
+                mutateSettings?: (mutate: SettingOwnerMutation, options?: Pick<import('@/sync/ops/actions/accountSettingsMutation').RawSettingsMutationOptions, 'themeProfileMigration'>) => Promise<void> }>) =>
             void | typeof SETTING_VALUE_UNAVAILABLE | Promise<void | typeof SETTING_VALUE_UNAVAILABLE>;
     }>
 );
@@ -308,7 +320,7 @@ export type SettingsPageDeclaration<Sections extends Record<string, SettingsSect
     sections: Sections;
     /** Every declared section, keyed by its id, ready to hand to `SettingSection`. */
     sectionRefs: Readonly<Record<keyof Sections & string, SettingsSectionRef>>;
-    /** Every declared setting, keyed by its id, ready to hand to `SettingRow`. */
+    /** Declared rows and Actions, keyed by id. Section refs identify the rows search can reveal. */
     settings: Readonly<Record<SettingIds<Sections>, SettingRef>>;
 }>;
 
@@ -350,6 +362,10 @@ export function builtInSettingsPageSections(anchorPrefix: string): Record<string
 function portableStorageBinding(declaration: PortableSettingDeclarationV1): SettingStorageBinding | undefined {
     const binding = declaration.storage;
     if (!binding) return undefined;
+    if (binding.owner === 'homeAtmosphereStorageBinding'
+        && (declaration.anchor === 'appearance.homeAtmosphere' || declaration.anchor === 'appearance.atmosphereLooks')) {
+        return homeAtmosphereStorageBinding(declaration.anchor);
+    }
     if (binding.scope === 'local' && binding.kind === 'atmospherePictureLibrary') return { scope: 'local', kind: 'atmospherePictureLibrary', access: 'read_only' };
     if (binding.scope === 'project' && binding.kind === 'projectAtmosphere') return { scope: 'project', kind: 'projectAtmosphere', access: binding.access };
     const platformBinding = readPortablePlatformAccountSettingBindingV1(declaration, Platform.OS === 'web' ? 'web' : 'native');
@@ -373,10 +389,16 @@ function portableStorageBinding(declaration: PortableSettingDeclarationV1): Sett
             access: binding.access, allowedValues: binding.allowedValues, invertBoolean: binding.invertBoolean };
     }
     if (binding.scope === 'local' && !binding.kind && binding.key) return {
-        scope: 'local', key: binding.key as ScalarSettingKeys<LocalSettings>, access: binding.access,
+        scope: 'local', key: binding.key as keyof LocalSettings, access: binding.access,
         allowedValues: binding.allowedValues, invertBoolean: binding.invertBoolean,
     };
     return undefined;
+}
+
+/** Resolve the same canonical host binding without loading every searchable Settings page. */
+export function readBuiltInSettingUiStorage(anchor: string) {
+    const declaration = readBuiltInSettingDeclarationV1(anchor);
+    return declaration ? portableStorageBinding(declaration) : undefined;
 }
 
 function projectPortableDeclaration(anchor: string, adapter: SettingDeclaration, labelVariant?: string): SettingDeclaration & { titleKey: TranslationKeyNoParams } {
@@ -414,8 +436,17 @@ export function builtInSettingUiDeclaration(anchor: string, labelVariant?: strin
     return projectPortableDeclaration(anchor, {}, labelVariant);
 }
 
-/** Picker preferences have portable value owners without pretending to be searchable page rows. */
-export function readBuiltInAccountSettingUiRef(anchor: string, ownerBinding?: Readonly<{
+/** Search and writes resolve the same authored row rather than reconstructing its binding. */
+export function findSettingDeclaration(pages: readonly SettingsPageDeclaration[], anchor: string) {
+    for (const page of pages) {
+        const ref = Object.values(page.settings).find(candidate => candidate.anchor === anchor);
+        if (ref) return { pageId: page.pageId, page, ref };
+    }
+    return null;
+}
+
+/** Portable preference owners need not pretend to be searchable page rows. */
+export function readBuiltInSettingUiRef(anchor: string, ownerBinding?: Readonly<{
     owner: string;
     storage: Extract<SettingStorageBinding, { scope: 'account'; kind: 'owner' }>;
 }>): SettingRef | null {
@@ -424,8 +455,9 @@ export function readBuiltInAccountSettingUiRef(anchor: string, ownerBinding?: Re
     if (!portable || !labels || portable.operation) return null;
     if (ownerBinding && portable.storage?.owner !== ownerBinding.owner) return null;
     const declaration = projectPortableDeclaration(anchor, ownerBinding ? { storage: ownerBinding.storage } : {});
-    if (declaration.storage?.scope !== 'account' || !('key' in declaration.storage) && !ownerBinding) return null;
-    return { ...declaration, anchor, sectionId: portable.sectionId,
+    if ((declaration.storage?.scope !== 'account' && declaration.storage?.scope !== 'local')
+        || !('key' in declaration.storage) && !ownerBinding) return null;
+    return { ...declaration, description: portable.description, anchor, sectionId: portable.sectionId,
         sectionTitleKey: labels.sectionTitleKey, featureId: labels.featureId };
 }
 

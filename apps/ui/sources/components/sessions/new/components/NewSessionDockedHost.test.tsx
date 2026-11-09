@@ -382,6 +382,30 @@ describe('web shell Docked composer', () => {
     await act(async () => screen.unmount());
   });
 
+  it('shares dock width and reset with the agent settings Action and honors the same disabled policy', async () => {
+    const { screen } = await openDockedDraft('Shared width');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const executor = createDefaultActionExecutor();
+    const context = { surface: 'agent', authority: 'account_automation', serverId: account.serverId } as const;
+    await act(async () => {
+      const result = await executor.execute('settings.set', { anchor: 'appearance.newSessionDockedWidth', value: 640 }, context);
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+    });
+    expect(resizePanes(screen)[0]!.props.widthPx).toBe(640);
+    await act(async () => {
+      expect(await executor.execute('settings.set', { anchor: 'appearance.newSessionDockedWidth', value: null }, context)).toMatchObject({ ok: true });
+    });
+    expect(getStorage().getState().localSettings.newSessionDockedWidthPx).toBeNull();
+    await act(async () => {
+      const state = getStorage().getState();
+      state.applySettings({ ...state.settings, actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui', 'agent'] } } } }, state.settingsVersion + 1);
+      await resizePanes(screen)[0]!.props.onCommitWidthPx(700);
+      expect(await executor.execute('settings.set', { anchor: 'appearance.newSessionDockedWidth', value: 700 }, context)).toMatchObject({ ok: false });
+    });
+    expect(getStorage().getState().localSettings.newSessionDockedWidthPx).toBeNull();
+    await act(async () => screen.unmount());
+  });
+
   it('keeps the phone-width dock full width, without a resize edge or collapse', async () => {
     boundary.width = 390;
     const { screen } = await openDockedDraft('Phone draft');
