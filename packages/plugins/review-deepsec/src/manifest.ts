@@ -80,6 +80,7 @@ export const DEEPSEC_PLUGIN = definePlugin({
             loginLaunches: [],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'executionRuns',
         connectedAccounts: [{
           purpose: DEEPSEC_CLAUDE_ACCOUNT_PURPOSE,

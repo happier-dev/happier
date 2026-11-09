@@ -1,3 +1,5 @@
+import { PI_PROVIDER_BINDING_ADAPTER, PI_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
@@ -93,6 +95,7 @@ export const PI_PLUGIN = definePlugin({
             loginLaunches: [],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
@@ -100,11 +103,28 @@ export const PI_PLUGIN = definePlugin({
           agentCliSystemTool: { toolId: 'pi-cli' },
         },
         connectedAccounts: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map((declaration) => ({
-          ...declaration,
+          purpose: declaration.purpose,
           service: { ...declaration.service },
           materializationKinds: [...declaration.materializationKinds],
           credentialKinds: [...declaration.credentialKinds],
         })),
+        providerRequirements: {
+          acceptsProtocols: ['openai-responses'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: {
+            supportsNoAuth: false,
+            apiKeyTransports: [{ protocol: 'openai-responses', destination: {
+              kind: 'httpHeader', names: ['authorization'], formats: ['bearer'],
+            } }],
+          },
+          authIsolation: {
+            suppressConnectedServiceIds: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map(row => buildQualifiedPluginContributionKey(row.service)),
+            ownedEnvKeys: [...PI_PROVIDER_OWNED_ENV_KEYS],
+          },
+          materialization: 'configFile',
+          applyPolicy: 'restart_session',
+          supportsFreeformModelIds: true,
+        },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           skills: {
             delivery: 'session_dir', nativeDisable: 'unsupported', liveReload: 'unsupported',
@@ -162,6 +182,7 @@ export const PI_PLUGIN = definePlugin({
         },
       },
       factory: createPiAgentRuntime,
+      providerBinding: PI_PROVIDER_BINDING_ADAPTER,
       connectedAccountLaunch: {
         switchContinuity: {
           continuityMode: 'restart_same_home',

@@ -18,6 +18,7 @@ export const CUSTOM_ACP_PLUGIN = definePlugin({
       declaration: {
         title: 'Custom ACP Agent',
         runtime: { kind: 'custom' },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: { vendorResume: { support: 'supported' } },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {

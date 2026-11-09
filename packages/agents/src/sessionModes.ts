@@ -1,19 +1,14 @@
 import type { AgentId, BundledAgentId, CanonicalAgentId } from './types.js';
 import { AGENT_IDS } from './types.js';
 import { mergeAuthoredWithGeneratedAgentFacts, readBundledAgentFact } from './definitions/generatedFacts.js';
-import type { AgentRuntimeModeSwitchKind } from './advancedModes.js';
+import type { AgentSessionModeDescriptor } from '@happier-dev/protocol/plugins/contributions/v2';
+export type { AgentSessionModeDescriptor } from '@happier-dev/protocol/plugins/contributions/v2';
 
 export type AgentSessionModesKind = 'none' | 'acpPolicyPresets' | 'acpAgentModes' | 'staticAgentModes';
 
-export type AgentSessionModeSource = 'none' | 'acp' | 'provider-native';
+export type AgentSessionModeSource = AgentSessionModeDescriptor['source'];
 
-export type AgentSessionModeSemantics = 'none' | 'policy-presets' | 'agent-modes';
-
-export type AgentSessionModeDescriptor = Readonly<{
-  source: AgentSessionModeSource;
-  semantics: AgentSessionModeSemantics;
-  runtimeSwitch: AgentRuntimeModeSwitchKind;
-}>;
+export type AgentSessionModeSemantics = AgentSessionModeDescriptor['semantics'];
 
 /**
  * Session mode surfacing intent for each agent.

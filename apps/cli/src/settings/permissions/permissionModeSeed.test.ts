@@ -81,7 +81,7 @@ describe('resolvePermissionModeSeedForAgentStart', () => {
     expect(res).toEqual({ mode: 'read-only', source: 'account_default' });
   });
 
-  it('keeps plan defaults for claude (not clamped)', () => {
+  it('keeps native planning behavior for account defaults (01C)', () => {
     const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'claude' });
     const res = resolvePermissionModeSeedForAgentStart({
       agentId: 'claude',
@@ -90,6 +90,24 @@ describe('resolvePermissionModeSeedForAgentStart', () => {
       accountSettings: { sessionDefaultPermissionModeByTargetKey: { [targetKey]: 'plan' } },
     });
     expect(res).toEqual({ mode: 'plan', source: 'account_default' });
+  });
+
+  it.each(['acme.agent', 'codex'])('fails unsupported planning closed at start for %s (01C)', (agentId) => {
+    expect(resolvePermissionModeSeedForAgentStart({
+      agentId,
+      explicitPermissionMode: 'plan',
+      inferredPermissionMode: 'yolo',
+      accountSettings: null,
+    })).toEqual({ mode: 'read-only', source: 'explicit' });
+  });
+
+  it('uses the resolved installed Agent descriptor without requiring bundled roster membership (01C)', () => {
+    expect(resolvePermissionModeSeedForAgentStart({
+      agentId: 'acme.agent',
+      sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
+      explicitPermissionMode: 'plan',
+      accountSettings: null,
+    })).toEqual({ mode: 'plan', source: 'explicit' });
   });
 
   it('falls back to default when no valid candidates are present', () => {

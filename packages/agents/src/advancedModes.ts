@@ -1,7 +1,7 @@
 import type { AgentId, BundledAgentId } from './types.js';
-import { getAgentSessionModeDescriptor } from './sessionModes.js';
+import { getAgentSessionModeDescriptor, type AgentSessionModeDescriptor } from './sessionModes.js';
 
-export type AgentRuntimeModeSwitchKind = 'none' | 'metadata-gating' | 'acp-setSessionMode' | 'provider-native';
+export type AgentRuntimeModeSwitchKind = AgentSessionModeDescriptor['runtimeSwitch'];
 
 export type AgentAdvancedModeCapabilities = Readonly<{
   /**

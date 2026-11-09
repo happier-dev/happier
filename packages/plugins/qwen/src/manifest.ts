@@ -60,6 +60,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
             loginLaunches: [{ kind: 'primary', args: [], initialInput: '/auth\r' }],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           agentCliSystemTool: { toolId: QWEN_ACP_COMMAND.toolId },

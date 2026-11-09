@@ -145,6 +145,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
             loginLaunches: [{ kind: 'primary', target: 'agent_acp', args: [] }],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           agentCliSystemTool: { toolId: ANTIGRAVITY_CLI_SYSTEM_TOOL_ID },

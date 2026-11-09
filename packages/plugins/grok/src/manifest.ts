@@ -1,7 +1,10 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
+import { XAI_DEVICE_SCOPES, xaiConnectedAccountRuntime } from './connectedAccounts/runtime.js';
+
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { GROK_CONNECTED_ACCOUNT_LAUNCH } from './agent/connectedAccount.js';
 import { GROK_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { createGrokAgentRuntime } from './agent/runtime/factory.js';
 import { grokExternalSessionsContribution } from './agent/externalSessions/contribution.js';
@@ -21,10 +24,48 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       reason: 'Run the declared Grok CLI executable with its declared xAI API-key environment.',
       scope: {
         executables: [{ kind: 'systemTool', id: 'grok-cli' }],
-        envKeys: ['XAI_API_KEY'],
+        envKeys: [...new Set([
+          'XAI_API_KEY',
+          ...GROK_CONNECTED_ACCOUNT_LAUNCH.environmentUses.map(use => use.environmentKey),
+          ...GROK_CONNECTED_ACCOUNT_LAUNCH.environmentUnsetUses.map(use => use.environmentKey),
+          GROK_CONNECTED_ACCOUNT_LAUNCH.stateSharingDescriptor.nativeHome.environmentKey,
+          GROK_CONNECTED_ACCOUNT_LAUNCH.stateSharingDescriptor.nativeHome.sourceEnvironmentKey,
+        ])],
       },
+    }, {
+      id: 'xai-account-network', capability: 'network',
+      reason: 'Connect the selected xAI account and read its identity and usage.',
+      scope: { targets: [
+        { kind: 'fixedOrigin', origin: 'https://auth.x.ai' },
+        { kind: 'fixedOrigin', origin: 'https://cli-chat-proxy.grok.com' },
+      ], methods: ['GET', 'POST'] },
     }],
     optional: [],
+  },
+  connectedAccountDescriptors: {
+    xai: {
+      declaration: {
+        title: 'xAI',
+        authentication: {
+          native: { systemTool: 'grok-cli' },
+          defaultModeId: 'device',
+          modes: [{
+            id: 'device', kind: 'oauthDeviceCode', title: 'Grok subscription',
+            browserReachability: 'unreachable', outcomeReconciliation: 'none',
+            scopes: [...XAI_DEVICE_SCOPES],
+          }, {
+            id: 'api-key', kind: 'manual', apiKey: true, title: 'Paid xAI API key',
+            credentialOrigin: 'authentication', outcomeReconciliation: 'none',
+            fields: [{ id: 'apiKey', title: 'xAI API key', secret: true, schema: { type: 'string', minLength: 1 } }],
+          }, {
+            id: 'native-import', kind: 'manual', title: 'Import Grok login',
+            credentialOrigin: 'native_import', outcomeReconciliation: 'none',
+            fields: [{ id: 'source', title: 'Source', secret: false, default: 'native', schema: { type: 'string', enum: ['native'] } }],
+          }],
+        },
+      },
+      runtime: xaiConnectedAccountRuntime,
+    },
   },
   agents: {
     grok: {
@@ -34,7 +75,10 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
           key: 'profiles.aiBackend.grokSubtitleExperimental',
           fallback: 'Grok Build CLI (experimental)',
         },
+        connectedAccounts: [{ purpose: 'primary', service: 'xai', required: false,
+          materializationKinds: ['files', 'environment'], credentialKinds: ['oauth', 'token'] }],
         runtime: { kind: 'custom' },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           agentCliSystemTool: { toolId: 'grok-cli' },
@@ -114,6 +158,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         },
       },
       factory: createGrokAgentRuntime,
+      connectedAccountLaunch: GROK_CONNECTED_ACCOUNT_LAUNCH,
       externalSessions: grokExternalSessionsContribution,
       preflightSessionControls: GROK_PREFLIGHT_SESSION_CONTROLS,
       sessionRunnerFactory: {

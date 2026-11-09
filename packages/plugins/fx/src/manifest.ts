@@ -25,17 +25,18 @@ export const FX_PLUGIN = definePlugin({
       runtime: { kind: 'custom', permissionModeMapping: FX_PERMISSION_MODE_MAPPING },
       providerRequirements: {
         acceptsProtocols: ['openai-chat'], required: { streaming: true, toolRoundTrips: true },
-        credentialSupport: { supportsNoAuth: false, apiKeyTransports: [
+        credentialSupport: { supportsNoAuth: true, apiKeyTransports: [
           { protocol: 'openai-chat', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
         ] },
         authIsolation: { suppressConnectedServiceIds: [FX_CODEX_SERVICE.localId], ownedEnvKeys: [...FX_PROVIDER_OWNED_ENV_KEYS] },
-        materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        materialization: 'configFile', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
       },
       cli: {
         displayName: 'FX CLI', executable: { binaryName: 'fx', knownUserBinDirSuffixes: ['.local/bin'], sourcePreference: 'system-first', systemCommandResolutionStrategy: 'path-first' },
         install: { managed: null, manual: { kind: 'vendor_recipe', recipes: { darwin: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://fx.sh/setup.sh | bash'] }], linux: [{ cmd: 'bash', args: ['-lc', 'curl -fsSL https://fx.sh/setup.sh | bash'] }] } }, guideUrl: 'https://github.com/vercel-labs/fx', docsUrl: 'https://github.com/vercel-labs/fx' },
         auth: { support: 'login_terminal', nonInteractiveStatusProbe: true, loginLaunches: [{ kind: 'primary', args: ['login'] }] },
       },
+      sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
       primary: 'sessions',
       connectedAccounts: [{ purpose: FX_CODEX_PURPOSE, service: FX_CODEX_SERVICE, required: false, materializationKinds: ['httpHeaders'], credentialKinds: ['oauth'] }],
       catalog: { agentCliSystemTool: { toolId: FX_ACP_COMMAND.toolId }, vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume } },

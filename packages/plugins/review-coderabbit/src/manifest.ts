@@ -66,6 +66,7 @@ export const CODERABBIT_PLUGIN = definePlugin({
             loginLaunches: [],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'executionRuns',
         catalog: {
           agentCliSystemTool: { toolId: CODERABBIT_SYSTEM_TOOL_ID },

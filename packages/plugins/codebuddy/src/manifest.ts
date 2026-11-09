@@ -45,6 +45,7 @@ export const CODEBUDDY_PLUGIN = definePlugin({
           loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login\r' }],
         },
       },
+      sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
       primary: 'sessions',
       catalog: { agentCliSystemTool: { toolId: 'codebuddy-cli' }, acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds], vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume } },
       capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {

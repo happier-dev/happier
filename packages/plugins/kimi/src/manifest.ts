@@ -6,6 +6,16 @@ import { AGENT_DEFINITION } from './agent/definition.js';
 import { KIMI_ACP_COMMAND } from './agent/acp/preflight.js';
 import { KIMI_SYSTEM_TOOL_READINESS } from './agent/readiness/declaration.js';
 import { kimiExternalSessionsContribution } from './agent/externalSessions/contribution.js';
+import { KIMI_CONNECTED_ACCOUNT_LAUNCH } from './agent/connectedAccount.js';
+import { createKimiNativeConnectedAccountRuntime } from './connectedAccounts/nativeRuntime.js';
+import { kimiPortableAccountRuntime } from './connectedAccounts/runtime.js';
+
+const regionConfiguration = {
+  scope: 'account', changeBehavior: 'reconnect', fields: [{
+    id: 'region', title: 'Kimi region', secret: false, required: true, default: 'cn',
+    schema: { type: 'string', enum: ['cn', 'global'] },
+  }],
+} as const;
 
 
 export const KIMI_PLUGIN = definePlugin({
@@ -24,9 +34,51 @@ export const KIMI_PLUGIN = definePlugin({
       reason: 'Run the declared Kimi CLI executable.',
       scope: {
         executables: [{ kind: 'systemTool', id: KIMI_ACP_COMMAND.toolId }],
+        envKeys: ['KIMI_CODE_HOME', 'HAPPIER_KIMI_ACCESS_TOKEN', ...KIMI_CONNECTED_ACCOUNT_LAUNCH.environmentUnsetUses.map(use => use.environmentKey)],
       },
+    }, {
+      id: 'kimi-account-network', capability: 'network',
+      reason: 'Connect the selected Kimi account and read its models, identity and usage.',
+      scope: { targets: [
+        { kind: 'fixedOrigin', origin: 'https://auth.kimi.com' },
+        { kind: 'fixedOrigin', origin: 'https://auth.kimi.ai' },
+        { kind: 'fixedOrigin', origin: 'https://api.kimi.com' },
+        { kind: 'fixedOrigin', origin: 'https://api.kimi.ai' },
+        { kind: 'fixedOrigin', origin: 'https://api.moonshot.cn' },
+        { kind: 'fixedOrigin', origin: 'https://api.moonshot.ai' },
+      ], methods: ['GET', 'POST'] },
     }],
-    optional: [],
+  },
+  connectedAccountDescriptors: {
+    'kimi-code': {
+      declaration: {
+        title: 'Kimi Code',
+        authentication: {
+          account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
+          native: { systemTool: KIMI_ACP_COMMAND.toolId },
+          defaultModeId: 'device',
+          modes: [{
+            id: 'device', kind: 'oauthDeviceCode', title: 'Kimi Code subscription',
+            browserReachability: 'unreachable', outcomeReconciliation: 'none', scopes: [],
+            configuration: regionConfiguration,
+          }, {
+            id: 'api-key', kind: 'manual', apiKey: true, title: 'Kimi API key', outcomeReconciliation: 'none',
+            credentialOrigin: 'authentication',
+            fields: [{ id: 'token', title: 'API key', secret: true, schema: { type: 'string', minLength: 1 } }],
+            configuration: { ...regionConfiguration, fields: [...regionConfiguration.fields, {
+              id: 'apiKind', title: 'API', secret: false, required: true, default: 'code',
+              schema: { type: 'string', enum: ['code', 'platform'] },
+            }] },
+          }, {
+            id: 'native-import', kind: 'manual', title: 'Import Node Kimi login',
+            browserReachability: 'unreachable', credentialOrigin: 'native_import', outcomeReconciliation: 'none',
+            fields: [{ id: 'source', title: 'Source', secret: false, default: 'native', schema: { type: 'string', enum: ['native'] } }],
+          }],
+        },
+      },
+      runtime: createKimiNativeConnectedAccountRuntime(),
+      accountRuntime: kimiPortableAccountRuntime,
+    },
   },
   agents: {
     kimi: {
@@ -69,7 +121,10 @@ export const KIMI_PLUGIN = definePlugin({
             loginLaunches: [{ kind: 'primary', args: ['login'] }],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
+        connectedAccounts: [{ purpose: 'primary', service: 'kimi-code', required: false,
+          materializationKinds: ['files', 'environment'], credentialKinds: ['oauth', 'token'] }],
         catalog: {
           agentCliSystemTool: { toolId: KIMI_ACP_COMMAND.toolId },
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
@@ -104,6 +159,7 @@ export const KIMI_PLUGIN = definePlugin({
         }),
       },
       factory: createKimiAgentRuntime,
+      connectedAccountLaunch: KIMI_CONNECTED_ACCOUNT_LAUNCH,
       externalSessions: kimiExternalSessionsContribution,
       sessionRunnerFactory: {
         module: './agent/runtime/factory', export: 'createKimiAgentRuntime',
@@ -128,7 +184,7 @@ export const KIMI_PLUGIN = definePlugin({
     // provider-owned guidance below. `kimi-cli` names only inform the legacy
     // diagnostic; they are never granted or launched. The declaration lives in
     // `agent/readiness/declaration.ts` so it stays independently testable.
-    'kimi-cli': {
+    [KIMI_ACP_COMMAND.toolId]: {
       title: 'Kimi Code CLI',
       executableNames: ['kimi'],
       readiness: KIMI_SYSTEM_TOOL_READINESS,

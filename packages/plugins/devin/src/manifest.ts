@@ -1,6 +1,7 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { devinConnectedAccountRuntime } from './connectedAccounts/runtime.js';
+import { devinNativeConnectedAccountRuntime } from './connectedAccounts/nativeRuntime.js';
+import { DEVIN_CONNECTED_ACCOUNT_LAUNCH, DEVIN_NATIVE_PURPOSE } from './agent/connectedAccount.js';
 import { devinAccountAuthentication } from './connectedAccounts/account.js';
 
 import { detectDevinCliAuthStatus } from './agent/auth/status.js';
@@ -33,7 +34,7 @@ export const DEVIN_PLUGIN = definePlugin({
       reason: 'Run the declared Devin CLI executable.',
       scope: {
         executables: [{ kind: 'systemTool', id: 'devin-cli' }],
-        envKeys: ['XDG_CONFIG_HOME', 'APPDATA'],
+        envKeys: ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'APPDATA', 'WINDSURF_API_KEY', 'HAPPIER_DEVIN_NATIVE_DATA_HOME'],
       },
     }, {
       id: 'devin-native-history',
@@ -49,6 +50,7 @@ export const DEVIN_PLUGIN = definePlugin({
         title: 'Devin',
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
+          native: { systemTool: 'devin-cli' },
           defaultModeId: 'browser-session',
           modes: [{
             id: 'browser-session', kind: 'oauthAuthorizationCode', title: 'Sign in with Devin',
@@ -65,10 +67,15 @@ export const DEVIN_PLUGIN = definePlugin({
               { id: 'seatToken', title: 'Enterprise seat credential', secret: true, schema: { type: 'string', minLength: 1 } },
               { id: 'apiServerUrl', title: 'API server URL', secret: false, schema: { type: 'string', minLength: 1 } },
             ],
+          }, {
+            id: 'native-import', kind: 'manual', title: 'Import native login', credentialOrigin: 'native_import',
+            browserReachability: 'unreachable', outcomeReconciliation: 'none',
+            fields: [{ id: 'source', title: 'Source', secret: false, default: 'native',
+              schema: { type: 'string', enum: ['native'] } }],
           }],
         },
       },
-      runtime: devinConnectedAccountRuntime,
+      runtime: devinNativeConnectedAccountRuntime,
       accountRuntime: devinAccountAuthentication,
     },
   },
@@ -103,6 +110,8 @@ export const DEVIN_PLUGIN = definePlugin({
         },
         sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
+        connectedAccounts: [{ purpose: DEVIN_NATIVE_PURPOSE, service: 'devin-account',
+          materializationKinds: ['files'], credentialKinds: ['oauth', 'token'], required: false }],
         catalog: {
           agentCliSystemTool: { toolId: 'devin-cli' },
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
@@ -136,6 +145,7 @@ export const DEVIN_PLUGIN = definePlugin({
           },
         },
       },
+      connectedAccountLaunch: DEVIN_CONNECTED_ACCOUNT_LAUNCH,
       externalSessions: devinExternalSessionsContribution,
       cliAuth: {
         detectAuthStatus: async ({ runDeclaredSystemToolCommand }) =>

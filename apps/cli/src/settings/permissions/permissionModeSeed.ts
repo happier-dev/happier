@@ -1,10 +1,7 @@
 import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { AGENT_IDS, resolvePermissionModeGroupForAgent, type AgentId } from '@happier-dev/agents';
-
-import type { PermissionMode } from '@/api/types';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permissions/modeCanonical';
+import { AGENT_IDS, getAgentSessionModeDescriptor, normalizePermissionModeForSessionDescriptor, parsePermissionIntentAlias, type AgentId, type AgentSessionModeDescriptor, type PermissionMode } from '@happier-dev/agents';
 
 export type PermissionModeSeedSource = 'explicit' | 'inferred' | 'account_default' | 'fallback';
 
@@ -13,31 +10,22 @@ export type PermissionModeSeed = Readonly<{
   source: PermissionModeSeedSource;
 }>;
 
-function clampPermissionModeForAgent(agentId: AgentId, mode: PermissionMode): PermissionMode {
-  const group = resolvePermissionModeGroupForAgent(agentId);
-  if (group === 'codexLike' && mode === 'plan') {
-    // Fail closed: codex-like providers do not support plan as a permission mode.
-    return 'read-only';
-  }
-  return mode;
-}
-
 function isBuiltInAgentId(agentId: string): agentId is AgentId {
   return (AGENT_IDS as readonly string[]).includes(agentId);
 }
 
-function clampPermissionModeForAgentStart(agentId: string, mode: PermissionMode): PermissionMode {
-  return isBuiltInAgentId(agentId) ? clampPermissionModeForAgent(agentId, mode) : mode;
-}
-
-export function normalizePermissionModeForAgentStart(opts: { agentId: string; value: unknown }): PermissionMode | null {
-  const normalized = normalizePermissionModeToIntent(opts.value);
+export function normalizePermissionModeForAgentStart(opts: { agentId: string; value: unknown; sessionModeDescriptor?: AgentSessionModeDescriptor | null }): PermissionMode | null {
+  const normalized = parsePermissionIntentAlias(opts.value);
   if (!normalized) return null;
-  return clampPermissionModeForAgentStart(opts.agentId, normalized);
+  return normalizePermissionModeForSessionDescriptor({
+    mode: normalized,
+    descriptor: opts.sessionModeDescriptor === undefined ? getAgentSessionModeDescriptor(opts.agentId) : opts.sessionModeDescriptor,
+  });
 }
 
 export function resolveAccountDefaultPermissionModeFromAccountSettings(opts: {
   agentId: string;
+  sessionModeDescriptor?: AgentSessionModeDescriptor | null;
   backendTarget?: BackendTargetRefV2Input;
   accountSettings: unknown;
 }): PermissionMode | null {
@@ -57,24 +45,26 @@ export function resolveAccountDefaultPermissionModeFromAccountSettings(opts: {
       { kind: 'builtInAgent', agentId: opts.agentId },
     )
     : undefined);
-  return normalizePermissionModeForAgentStart({ agentId: opts.agentId, value: candidate });
+  return normalizePermissionModeForAgentStart({ ...opts, value: candidate });
 }
 
 export function resolvePermissionModeSeedForAgentStart(opts: {
   agentId: string;
+  sessionModeDescriptor?: AgentSessionModeDescriptor | null;
   backendTarget?: BackendTargetRefV2Input;
   explicitPermissionMode: unknown;
   inferredPermissionMode?: unknown;
   accountSettings: unknown;
 }): PermissionModeSeed {
-  const explicit = normalizePermissionModeForAgentStart({ agentId: opts.agentId, value: opts.explicitPermissionMode });
+  const explicit = normalizePermissionModeForAgentStart({ ...opts, value: opts.explicitPermissionMode });
   if (explicit) return { mode: explicit, source: 'explicit' };
 
-  const inferred = normalizePermissionModeForAgentStart({ agentId: opts.agentId, value: opts.inferredPermissionMode });
+  const inferred = normalizePermissionModeForAgentStart({ ...opts, value: opts.inferredPermissionMode });
   if (inferred) return { mode: inferred, source: 'inferred' };
 
   const accountDefault = resolveAccountDefaultPermissionModeFromAccountSettings({
     agentId: opts.agentId,
+    sessionModeDescriptor: opts.sessionModeDescriptor,
     backendTarget: opts.backendTarget,
     accountSettings: opts.accountSettings,
   });

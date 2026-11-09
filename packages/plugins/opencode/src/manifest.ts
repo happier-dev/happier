@@ -10,10 +10,9 @@ import { detectOpenCodeCliAuthStatus } from './agent/cli/auth.js';
 import { OPENCODE_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { readOpenCodeMcpConfigServers } from './agent/mcp/discovery.js';
 import {
-  OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
-  OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-  OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
-  OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+  OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS,
+  OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS,
+  OPEN_CODE_REQUEST_AUTH_USES,
 } from './agent/auth/services/purposes.js';
 import {
   OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -118,45 +117,14 @@ export const OPENCODE_PLUGIN = definePlugin({
             loginLaunches: [{ kind: 'primary', args: ['auth', 'login'] }],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
           agentCliSystemTool: { toolId: OPEN_CODE_SYSTEM_TOOL_ID },
         },
-        connectedAccounts: [{
-          purpose: OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-          service: {
-            pluginId: 'happier.agent.claude',
-            localId: 'claude-subscription',
-          },
-          materializationKinds: ['environment', 'httpHeaders'],
-          credentialKinds: ['oauth', 'token'],
-        }, {
-          purpose: OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-          service: {
-            pluginId: 'happier.agent.codex',
-            localId: 'openai-codex',
-          },
-          materializationKinds: ['httpHeaders'],
-          credentialKinds: ['oauth'],
-        }, {
-          purpose: OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID,
-          service: {
-            pluginId: 'happier.voice.openai',
-            localId: 'openai',
-          },
-          materializationKinds: ['environment'],
-          credentialKinds: ['token'],
-        }, {
-          purpose: OPEN_CODE_ANTHROPIC_API_KEY_PURPOSE_ID,
-          service: {
-            pluginId: 'happier.agent.claude',
-            localId: 'anthropic',
-          },
-          materializationKinds: ['environment'],
-          credentialKinds: ['token'],
-        }],
+        connectedAccounts: OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS,
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported',
             nativeRoots: {
@@ -198,7 +166,7 @@ export const OPENCODE_PLUGIN = definePlugin({
             ],
           },
           authIsolation: {
-            suppressConnectedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
+            suppressConnectedServiceIds: OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS,
             ownedEnvKeys: [...OPENCODE_PROVIDER_OWNED_ENV_KEYS],
           },
           materialization: 'configFile',
@@ -245,21 +213,7 @@ export const OPENCODE_PLUGIN = definePlugin({
           continuityMode: 'restart_same_home',
           supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
         },
-        requestAuthUses: [{
-          purpose: OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://api.anthropic.com',
-            headerNames: ['authorization'],
-          },
-        }, {
-          purpose: OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-          materialization: {
-            kind: 'httpHeaders',
-            origin: 'https://chatgpt.com',
-            headerNames: ['authorization', 'chatgpt-account-id'],
-          },
-        }],
+        requestAuthUses: OPEN_CODE_REQUEST_AUTH_USES,
         stateSharingDescriptor: OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR,
       },
       preflightSessionControls: OPENCODE_PREFLIGHT_SESSION_CONTROLS,

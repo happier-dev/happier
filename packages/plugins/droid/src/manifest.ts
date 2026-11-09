@@ -63,6 +63,7 @@ export const DROID_PLUGIN = definePlugin({
         },
         auth: { support: 'login_terminal', environmentVariables: ['FACTORY_API_KEY'], missingCredentialState: 'unknown', loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login' }] },
       },
+      sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
       primary: 'sessions',
       catalog: { agentCliSystemTool: { toolId: DROID_ACP_COMMAND.toolId }, acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds], vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume } },
       // The host keeps Session V1 canonical and exposes the separately

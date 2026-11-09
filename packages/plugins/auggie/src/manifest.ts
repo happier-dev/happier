@@ -52,6 +52,7 @@ export const AUGGIE_PLUGIN = definePlugin({
             loginLaunches: [{ kind: 'primary', args: ['login'] }],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           agentCliSystemTool: { toolId: 'auggie-cli' },

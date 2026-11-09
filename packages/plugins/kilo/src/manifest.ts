@@ -65,6 +65,7 @@ export const KILO_PLUGIN = definePlugin({
             loginLaunches: [{ kind: 'primary', args: [], initialInput: '/connect\r' }],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         connectedAccounts: [{
           purpose: KILO_CODEX_PURPOSE,

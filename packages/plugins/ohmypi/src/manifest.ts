@@ -1,5 +1,7 @@
+import { OH_MY_PI_PROVIDER_BINDING_ADAPTER, OH_MY_PI_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import { resolveSessionFileStoreLaunchEnvironment } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
@@ -22,13 +24,7 @@ import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from './agent/sessionFileSt
 import { OH_MY_PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 
-const OH_MY_PI_AUTH_ENV_KEYS = [
-  'OPENAI_CODEX_OAUTH_TOKEN',
-  'OPENAI_API_KEY',
-  'ANTHROPIC_OAUTH_TOKEN',
-  'ANTHROPIC_API_KEY',
-  'GEMINI_API_KEY',
-] as const;
+const OH_MY_PI_AUTH_ENV_KEYS = OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map((row) => row.launchEnvironmentKey);
 
 const resolveOhMyPiDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
   resolveOhMyPiDaemonSpawnPrerequisites(event, context);
@@ -50,7 +46,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
       reason: 'Launch the user-installed Oh My Pi CLI through the host execution service.',
       scope: {
         executables: [{ kind: 'systemTool', id: OH_MY_PI_SYSTEM_TOOL_ID }],
-        envKeys: [...OH_MY_PI_AUTH_ENV_KEYS, 'PI_CODING_AGENT_DIR'],
+        envKeys: [...OH_MY_PI_PROVIDER_OWNED_ENV_KEYS, 'PI_CODING_AGENT_DIR'],
       },
     }],
     optional: [],
@@ -92,6 +88,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
             loginLaunches: [],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           agentCliSystemTool: { toolId: OH_MY_PI_SYSTEM_TOOL_ID },
@@ -104,6 +101,23 @@ export const OH_MY_PI_PLUGIN = definePlugin({
           materializationKinds: ['environment' as const],
           credentialKinds: [...credentialKinds],
         })),
+        providerRequirements: {
+          acceptsProtocols: ['openai-responses'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: {
+            supportsNoAuth: false,
+            apiKeyTransports: [{ protocol: 'openai-responses', destination: {
+              kind: 'httpHeader', names: ['authorization'], formats: ['bearer'],
+            } }],
+          },
+          authIsolation: {
+            suppressConnectedServiceIds: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(row => buildQualifiedPluginContributionKey(row.service)),
+            ownedEnvKeys: [...OH_MY_PI_PROVIDER_OWNED_ENV_KEYS],
+          },
+          materialization: 'configFile',
+          applyPolicy: 'restart_session',
+          supportsFreeformModelIds: true,
+        },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           skills: {
             delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported',
@@ -158,6 +172,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
         },
       },
       factory: createOhMyPiAgentRuntime,
+      providerBinding: OH_MY_PI_PROVIDER_BINDING_ADAPTER,
       connectedAccountLaunch: {
         environmentUses: OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES.map(({ purpose, materializationKey }) => ({
           purpose,

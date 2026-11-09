@@ -63,6 +63,7 @@ export const KIRO_PLUGIN = definePlugin({
             loginLaunches: [{ kind: 'primary', args: ['login'] }],
           },
         },
+        sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
         primary: 'sessions',
         catalog: {
           agentCliSystemTool: { toolId: KIRO_ACP_COMMAND.toolId },
