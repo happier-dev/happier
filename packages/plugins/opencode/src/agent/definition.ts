@@ -1,3 +1,5 @@
+import { OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS } from './auth/services/purposes.js';
+
 const OPENCODE_SESSION_COMPACTION_CAPABILITY = {
   events: true,
   manual: true,
@@ -11,7 +13,7 @@ const OPENCODE_AGENT_CORE = Object.freeze({
   flavorAliases: ['open-code'],
   cloudConnect: null,
   connectedServices: {
-    supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
+    supportedServiceIds: OPEN_CODE_CONNECTED_ACCOUNT_SERVICE_IDS,
   },
   resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'opencodeSessionId' },
   sessionStorage: { direct: true, persisted: true },

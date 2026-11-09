@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
+  type RequestAuthHeadersV1,
+} from '@happier-dev/protocol/connect/connected-account-request-auth';
 
 import {
   buildConnectedAccountRequestAuthClientSource,
@@ -76,10 +80,73 @@ async function loadWithOpenCodeV1_14_41PluginSemantics(path: string): Promise<Re
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   delete globalThis.__happierOpenCodeRequestAuthTest;
 });
 
 describe('OpenCode request-auth plugin source', () => {
+  it.each(['openai', 'anthropic'] as const)('applies the canonical header material through the real SDK transport for $0', async (provider) => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-opencode-request-auth-headers-'));
+    const path = join(root, 'plugin.mjs');
+    const capabilityPath = join(root, 'capability.json');
+    const purpose = {
+      consumer: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+      purpose: provider === 'openai' ? 'openai-codex-model-request' : 'anthropic-model-request',
+    };
+    await writeFile(capabilityPath, JSON.stringify({
+      v: CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
+      materializationId: 'fixture', subjectScopeDigest: 'a'.repeat(64),
+      capability: 'b'.repeat(43), httpPort: 41111,
+    }));
+    vi.stubEnv(CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV, capabilityPath);
+    await writeFile(path, buildOpenCodeRequestAuthPluginSource({
+      provider, purpose,
+      requestAuthClientSource: buildConnectedAccountRequestAuthClientSource({
+        capabilityPathEnv: CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV,
+      }),
+    }));
+    const material = {
+      headers: {
+        Authorization: 'Bearer canonical-token',
+        ...(provider === 'openai' ? { 'ChatGPT-Account-Id': 'canonical-account' } : {}),
+      },
+      facts: {},
+      credentialContext: {
+        account: {
+          service: provider === 'openai'
+            ? { pluginId: 'happier.agent.codex', localId: 'openai-codex' }
+            : { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
+          accountId: 'fixture',
+        },
+        credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+      },
+    } satisfies RequestAuthHeadersV1;
+    const upstream = vi.fn<typeof fetch>(async () => new Response('ok'));
+    // HTTP transport is the boundary; the generated SDK parser and native adapter stay real.
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).startsWith('http://127.0.0.1:41111/')) {
+        expect(JSON.parse(String(init?.body))).toEqual({ purpose });
+        return Response.json({ ok: true, value: material });
+      }
+      return upstream(input, init);
+    });
+    const plugin = await import(`${pathToFileURL(path).href}?${Math.random()}`);
+    const contribution = await plugin.default();
+    const loaded = await contribution.auth.loader(async () => ({
+      type: 'api', key: `happier-request-auth:${provider}:1`,
+    }));
+    await loaded.fetch(provider === 'openai'
+      ? 'https://chatgpt.com/backend-api/responses'
+      : 'https://api.anthropic.com/v1/messages', {
+      method: 'POST', body: '{}',
+      headers: { authorization: 'stale', 'chatgpt-account-id': 'stale', 'x-api-key': 'stale' },
+    });
+    const headers = new Headers(upstream.mock.calls[0]?.[1]?.headers);
+    expect(headers.get('authorization')).toBe('Bearer canonical-token');
+    expect(headers.get('chatgpt-account-id')).toBe(provider === 'openai' ? 'canonical-account' : null);
+    expect(headers.get('x-api-key')).toBeNull();
+  });
+
   it('loads through the released V2 definition ABI and injects the bound bearer at the request hook', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-opencode-request-auth-v2-'));
     const path = join(root, 'plugin.mjs');
@@ -93,13 +160,13 @@ describe('OpenCode request-auth plugin source', () => {
     }), 'utf8');
     const lookup = vi.fn()
       .mockResolvedValueOnce({
-        accessToken: 'bound-v2-token',
-        requiredHeaders: { 'ChatGPT-Account-Id': 'bound-account' },
+        headers: { authorization: 'Bearer bound-v2-token', 'ChatGPT-Account-Id': 'bound-account' },
+        facts: {},
         credentialContext: { credentialRevision: 'revision-v2' },
       })
       .mockResolvedValueOnce({
-        accessToken: 'refreshed-v2-token',
-        requiredHeaders: { 'ChatGPT-Account-Id': 'bound-account' },
+        headers: { authorization: 'Bearer refreshed-v2-token', 'ChatGPT-Account-Id': 'bound-account' },
+        facts: {},
         credentialContext: { credentialRevision: 'revision-v2-refreshed' },
       });
     const reportAuth = vi.fn(async () => ({ status: 'current_changed' }));
@@ -255,7 +322,8 @@ describe('OpenCode request-auth plugin source', () => {
       requestAuthClientSource: CLIENT_SOURCE,
     }), 'utf8');
     const lookup = vi.fn(async () => ({
-      accessToken: 'must-not-leak',
+      headers: { authorization: 'Bearer must-not-leak' },
+      facts: {},
       credentialContext: { credentialRevision: 'current-revision' },
     }));
     const reportAuth = vi.fn();
@@ -307,7 +375,8 @@ describe('OpenCode request-auth plugin source', () => {
       requestAuthClientSource: CLIENT_SOURCE,
     }), 'utf8');
     const lookup = vi.fn(async () => ({
-      accessToken: 'current-token',
+      headers: { authorization: 'Bearer current-token' },
+      facts: {},
       credentialContext: { credentialRevision: 'current-revision' },
     }));
     const reportAuth = vi.fn();
@@ -344,7 +413,8 @@ describe('OpenCode request-auth plugin source', () => {
       requestAuthClientSource: CLIENT_SOURCE,
     }), 'utf8');
     const lookup = vi.fn(async () => ({
-      accessToken: 'current-token',
+      headers: { authorization: 'Bearer current-token' },
+      facts: {},
       credentialContext: { credentialRevision: 'current-revision' },
     }));
     const reportAuth = vi.fn();
@@ -392,13 +462,13 @@ describe('OpenCode request-auth plugin source', () => {
     }), 'utf8');
     const lookup = vi.fn()
       .mockResolvedValueOnce({
-        accessToken: 'attempt-one',
-        requiredHeaders: { 'ChatGPT-Account-Id': 'account-one' },
+        headers: { authorization: 'Bearer attempt-one', 'ChatGPT-Account-Id': 'account-one' },
+        facts: {},
         credentialContext: { credentialRevision: 'revision-one' },
       })
       .mockResolvedValueOnce({
-        accessToken: 'attempt-two',
-        requiredHeaders: { 'ChatGPT-Account-Id': 'account-two' },
+        headers: { authorization: 'Bearer attempt-two', 'ChatGPT-Account-Id': 'account-two' },
+        facts: {},
         credentialContext: { credentialRevision: 'revision-two' },
       });
     const reportAuth = vi.fn<RequestAuthReporter>(async () => ({ status: 'current_changed' }));
@@ -473,7 +543,8 @@ describe('OpenCode request-auth plugin source', () => {
       requestAuthClientSource: CLIENT_SOURCE,
     }), 'utf8');
     const lookup = vi.fn(async () => ({
-      accessToken: 'current-token',
+      headers: { authorization: 'Bearer current-token' },
+      facts: {},
       credentialContext: { credentialRevision: 'current-revision' },
     }));
     const reportAuth = vi.fn();
@@ -517,11 +588,13 @@ describe('OpenCode request-auth plugin source', () => {
     }), 'utf8');
     const lookup = vi.fn()
       .mockResolvedValueOnce({
-        accessToken: 'attempt-one',
+        headers: { authorization: 'Bearer attempt-one' },
+        facts: {},
         credentialContext: { credentialRevision: 'revision-one' },
       })
       .mockResolvedValueOnce({
-        accessToken: 'attempt-two',
+        headers: { authorization: 'Bearer attempt-two' },
+        facts: {},
         credentialContext: { credentialRevision: 'revision-two' },
       });
     const reportAuth = vi.fn(async () => ({ status: 'current_unchanged' }));
@@ -576,7 +649,8 @@ describe('OpenCode request-auth plugin source', () => {
       requestAuthClientSource: CLIENT_SOURCE,
     }), 'utf8');
     const lookup = vi.fn(async () => ({
-      accessToken: 'current-token',
+      headers: { authorization: 'Bearer current-token' },
+      facts: {},
       credentialContext: { credentialRevision: 'current-revision' },
     }));
     const reportAuth = vi.fn(async () => ({ status: 'current_unchanged' }));
@@ -615,7 +689,8 @@ describe('OpenCode request-auth plugin source', () => {
       requestAuthClientSource: CLIENT_SOURCE,
     }), 'utf8');
     const lookup = vi.fn(async () => ({
-      accessToken: 'current-token',
+      headers: { authorization: 'Bearer current-token' },
+      facts: {},
       credentialContext: { credentialRevision: 'current-revision' },
     }));
     const reportAuth = vi.fn(async () => ({ status: 'current_changed' }));
@@ -661,7 +736,8 @@ describe('OpenCode request-auth plugin source', () => {
     }), 'utf8');
     const abortController = new AbortController();
     const lookup = vi.fn(async () => ({
-      accessToken: 'current-token',
+      headers: { authorization: 'Bearer current-token' },
+      facts: {},
       credentialContext: { credentialRevision: 'current-revision' },
     }));
     const reportAuth = vi.fn(async () => {
@@ -704,7 +780,8 @@ describe('OpenCode request-auth plugin source', () => {
       requestAuthClientSource: CLIENT_SOURCE,
     }), 'utf8');
     const lookup = vi.fn(async () => ({
-      accessToken: 'current-token',
+      headers: { authorization: 'Bearer current-token' },
+      facts: {},
       credentialContext: { credentialRevision: 'current-revision' },
     }));
     const reportAuth = vi.fn(async () => ({ status: 'current_changed' }));

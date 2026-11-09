@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { OPEN_CODE_NATIVE_AUTH_ENV_KEYS } from '../auth/services/purposes.js';
 
 import type {
   AgentProviderBindingAdapter,
@@ -19,11 +20,8 @@ export const OPENCODE_PROVIDER_CONFIG_RELATIVE_PATH = 'opencode/opencode.json';
 
 export const OPENCODE_PROVIDER_OWNED_ENV_KEYS = Object.freeze([
   OPENCODE_PROVIDER_SECRET_ENV_KEY,
-  'OPENCODE_AUTH_CONTENT',
   'OPENCODE_CONFIG_CONTENT',
-  'OPENAI_API_KEY',
-  'ANTHROPIC_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
+  ...OPEN_CODE_NATIVE_AUTH_ENV_KEYS,
 ] as const);
 
 const DRIVER_BY_PROTOCOL = Object.freeze({

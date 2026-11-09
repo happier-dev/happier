@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createHappierMcpToolNamingResolver } from '../../../../../../../apps/cli/src/mcp/runtime/projectMcpToolNames';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { buildOpenCodeSessionMcpProjection } from './mcpRegistration.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -25,6 +25,8 @@ import { materializeOpenCodeAuthEnvironment } from '../../auth/services/material
 import { OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } from '../../auth/services/requestAuth/source.js';
 
 import { createContextFixture } from './assembly.managedServices.testkit.js';
+import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from '../../providerBinding/adapter.js';
+import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from '../../../../../cliproxyapi/src/provider/contribution.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -855,22 +857,33 @@ describe('OpenCode server managed-service assembly', () => {
     }
   });
 
-  it('loads the host-materialized Provider config as OpenCode runtime config', async () => {
+  it.each(['openai-chat', 'openai-responses'] as const)('loads the produced Muse gateway family through the generic %s Provider launch', async protocol => {
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-opencode-provider-'));
-    const relativePath = 'opencode/opencode.json';
-    const configPath = join(rootPath, relativePath);
-    const configContent = JSON.stringify({
-      enabled_providers: ['happier_test'],
-      model: 'happier_test/gateway-model',
-      provider: {
-        happier_test: {
-          npm: '@ai-sdk/openai-compatible',
-          models: { 'gateway-model': { name: 'Gateway model' } },
-        },
-      },
+    const contribution = CLIPROXYAPI_PROVIDER_CONTRIBUTION;
+    const family = contribution.managedRuntime.connectedAccounts.find(row => row.service.pluginId === 'happier.agent.muse');
+    const endpoint = contribution.endpointTemplates.find(row => row.protocol === protocol && family?.endpointTemplateIds.includes(row.id));
+    const model = family?.staticModels[0];
+    const transport = contribution.credential.transports[0]!;
+    if (!endpoint || !model) throw new Error('Produced Muse gateway route unavailable');
+    const connectionId = ProviderConnectionIdSchema.parse('pc_muse_gateway');
+    const agentTargetKey = 'agent:happier.agent.opencode/opencode';
+    const prepared = OPENCODE_PROVIDER_BINDING_ADAPTER_V1.prepare({ v: 1, connectionId, agentTargetKey });
+    const output = await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({
+      v: 1,
+      prepared,
+      binding: { v: 1, agentTargetKey, selection: { connectionId, model },
+        contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
+        endpoint: { endpointTemplateId: endpoint.id, protocol, normalizedUrl: endpoint.localUrlCandidates[0]!, publicHeaders: {} },
+        runtimeCredentialTransport: transport, compatibilityFingerprint: 'pcf1:muse-gateway-fixture' },
+      credential: { kind: 'apiKey', transport, value: 'fixture-downstream-bearer' },
     });
-    await mkdir(join(rootPath, 'opencode'));
-    await writeFile(configPath, configContent, 'utf8');
+    if (output.kind !== 'configFile') throw new Error('Expected OpenCode private config');
+    for (const file of output.files) {
+      const path = join(rootPath, file.relativePath);
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, file.utf8, 'utf8');
+    }
+    const configContent = output.files[0]!.utf8;
 
     const ctx = createContextFixture({
       managedServerBaseUrl: 'http://127.0.0.1:49199',
@@ -883,6 +896,7 @@ describe('OpenCode server managed-service assembly', () => {
         happierSessionId: 'happy-session-provider',
         endpoint: { mode: 'managed-spawn' },
         env: {
+          ...Object.fromEntries(output.env.map(row => [row.name, row.value ?? ''])),
           OPENCODE_CONFIG_CONTENT: '{"provider":{"ambient":{}}}',
         },
         request: {
@@ -890,13 +904,13 @@ describe('OpenCode server managed-service assembly', () => {
           sessionId: 'happy-session-provider',
           cwd: '/repo',
           providerBinding: {
-            connectionId: ProviderConnectionIdSchema.parse('pc_openrouter_work'),
-            model: { id: 'gateway-model', name: 'Gateway model' },
+            connectionId,
+            model,
             materialization: {
               v: 1,
               kind: 'configFile',
               rootPath,
-              relativePaths: [relativePath],
+              relativePaths: output.files.map(file => file.relativePath),
             },
           },
         },
@@ -907,6 +921,16 @@ describe('OpenCode server managed-service assembly', () => {
       expect(JSON.parse(launchEnv?.OPENCODE_CONFIG_CONTENT ?? '{}')).toEqual({
         ...JSON.parse(configContent),
         provider: { ambient: {}, ...JSON.parse(configContent).provider },
+      });
+      expect(launchEnv?.HAPPIER_OPENCODE_PROVIDER_API_KEY).toBe('fixture-downstream-bearer');
+      expect(launchEnv?.OPENCODE_CONFIG_CONTENT).not.toContain('fixture-downstream-bearer');
+      expect(JSON.parse(launchEnv?.OPENCODE_CONFIG_CONTENT ?? '{}')).toMatchObject({
+        model: `${prepared.adapterBindingKey}/${model.id}`,
+        provider: { [prepared.adapterBindingKey!]: {
+          npm: protocol === 'openai-chat' ? '@ai-sdk/openai-compatible' : '@ai-sdk/openai',
+          options: { baseURL: endpoint.localUrlCandidates[0], apiKey: '{env:HAPPIER_OPENCODE_PROVIDER_API_KEY}' },
+          models: { [model.id]: { name: model.name } },
+        } },
       });
     } finally {
       await assembly?.dispose();

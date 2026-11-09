@@ -23,6 +23,7 @@ import {
   type OpenCodeRequestAuthPurposeMap,
 } from '../requestAuth/index.js';
 import { buildOpenCodeRequestAuthMarker } from '../requestAuth/source.js';
+import { OPEN_CODE_NATIVE_PROVIDERS } from '../purposes.js';
 
 export type OpenCodeAuthMaterializationInput = Readonly<{
   openaiCodex?: OauthCredentialRecord | TokenCredentialRecord | null;
@@ -49,7 +50,7 @@ function readDirectApiKeys(materialized: MaterializedAuth): Readonly<
   Partial<Record<OpenCodeRequestAuthProvider, string>>
 > {
   const keys: Partial<Record<OpenCodeRequestAuthProvider, string>> = {};
-  for (const provider of ['openai', 'anthropic'] as const) {
+  for (const provider of OPEN_CODE_NATIVE_PROVIDERS) {
     if (materialized.requestAuthProviders.includes(provider)) continue;
     const entry = materialized.auth[provider];
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
@@ -198,7 +199,7 @@ export function buildOpenCodeQualifiedAuthContent(input: Readonly<{
   const base = readAuthContentRecord(input.baseAuthContent);
   const auth: Record<string, unknown> = {};
   const nativeAccountServicesByProvider: Partial<Record<OpenCodeRequestAuthProvider, PluginContributionRef>> = {};
-  for (const provider of ['openai', 'anthropic'] as const) {
+  for (const provider of OPEN_CODE_NATIVE_PROVIDERS) {
     if (hasExactRequestAuthMarker(base, provider)) {
       auth[provider] = {
         type: 'api',
@@ -211,7 +212,7 @@ export function buildOpenCodeQualifiedAuthContent(input: Readonly<{
       throw new Error(`OpenCode qualified auth materialization is missing the ${provider} request-auth marker`);
     }
   }
-  for (const provider of ['openai', 'anthropic'] as const) {
+  for (const provider of OPEN_CODE_NATIVE_PROVIDERS) {
     const credential = input.directAccountCredentials?.[provider];
     if (credential?.key.trim()) {
       auth[provider] = { type: 'api', key: credential.key };

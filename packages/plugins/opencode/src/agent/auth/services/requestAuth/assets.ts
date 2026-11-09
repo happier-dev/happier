@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import type { OpenCodeRequestAuthPurposeMap } from './env.js';
+import { OPEN_CODE_NATIVE_PROVIDERS } from '../purposes.js';
 import type { OpenCodeConfigPart } from '../../../runtime/server/opencodeConfigContent.js';
 import {
   buildOpenCodeRequestAuthPluginSource,
@@ -55,7 +56,7 @@ export function buildOpenCodeV2ConnectedAuthConfigPart(input: Readonly<{
 }>): OpenCodeConfigPart {
   const connectedProviders: Record<string, unknown> = {};
   const legacyProviders: Record<string, unknown> = {};
-  for (const provider of ['openai', 'anthropic'] as const) {
+  for (const provider of OPEN_CODE_NATIVE_PROVIDERS) {
     const directKey = input.directApiKeys[provider];
     if (typeof directKey === 'string' && directKey.trim().length > 0) {
       connectedProviders[provider] = { settings: { apiKey: directKey } };
@@ -121,7 +122,7 @@ export async function ensureOpenCodeRequestAuthPluginAssets(
   const pluginDir = resolveOpenCodeRequestAuthPluginDir(configHome);
   await mkdir(pluginDir, { recursive: true });
   const written: string[] = [];
-  for (const provider of ['openai', 'anthropic'] as const) {
+  for (const provider of OPEN_CODE_NATIVE_PROVIDERS) {
     const purpose = purposes[provider];
     if (!purpose) continue;
     const path = resolveOpenCodeRequestAuthPluginPath(configHome, provider);

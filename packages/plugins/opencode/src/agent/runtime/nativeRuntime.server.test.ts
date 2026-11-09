@@ -74,7 +74,7 @@ function createConnectedAccountsHarness(input: Readonly<{
   ) => unknown | Promise<unknown>;
   emitInitial?: boolean;
 }> = {}) {
-  const listeners = new Map<string, (event: { kind: 'resync' }) => unknown>();
+  const listeners = new Map<string, (event: { kind: 'resync'; authorityChanged: boolean }) => unknown>();
   const watcherDisposals = new Map<string, ReturnType<typeof vi.fn>>();
   const connectedAccounts = {
     getBinding: vi.fn(async (purpose: string) => {
@@ -93,11 +93,11 @@ function createConnectedAccountsHarness(input: Readonly<{
       if (!input.materialize) throw new Error(`Unexpected materialization for ${purpose}`);
       return await input.materialize(purpose, request);
     }),
-    watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
+    watch: vi.fn((purpose: string, listener: (event: { kind: 'resync'; authorityChanged: boolean }) => unknown) => {
       listeners.set(purpose, listener);
       const dispose = vi.fn();
       watcherDisposals.set(purpose, dispose);
-      if (input.emitInitial !== false) listener({ kind: 'resync' });
+      if (input.emitInitial !== false) listener({ kind: 'resync', authorityChanged: false });
       return { dispose };
     }),
   };
@@ -444,7 +444,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
         'openai-api-key': { pluginId: 'happier.voice.openai', localId: 'openai' },
       },
       materialize: async () => {
-        await harness.listeners.get('openai-api-key')?.({ kind: 'resync' });
+        await harness.listeners.get('openai-api-key')?.({ kind: 'resync', authorityChanged: true });
         return { kind: 'environment', env: { OPENAI_API_KEY: 'sk-openai-public' } };
       },
     });
@@ -484,7 +484,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     const session = createSession();
     let harness!: ReturnType<typeof createConnectedAccountsHarness>;
     const openAcp = vi.fn(async () => {
-      await harness.listeners.get('openai-api-key')?.({ kind: 'resync' });
+      await harness.listeners.get('openai-api-key')?.({ kind: 'resync', authorityChanged: true });
       return session;
     });
     harness = createConnectedAccountsHarness({
@@ -803,7 +803,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES,
     );
     expect(harness.connectedAccounts.materialize).not.toHaveBeenCalled();
-    await harness.listeners.get('openai-api-key')?.({ kind: 'resync' });
+    await harness.listeners.get('openai-api-key')?.({ kind: 'resync', authorityChanged: true });
     expect(session.dispose).toHaveBeenCalledWith('runtime_recovery');
     for (const dispose of harness.watcherDisposals.values()) {
       expect(dispose).toHaveBeenCalledTimes(1);
@@ -840,7 +840,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     expect(openAcp).not.toHaveBeenCalled();
 
     for (const purpose of OPEN_CODE_CONNECTED_ACCOUNT_PURPOSES) {
-      await harness.listeners.get(purpose)?.({ kind: 'resync' });
+      await harness.listeners.get(purpose)?.({ kind: 'resync', authorityChanged: true });
     }
     const opened = await opening;
 

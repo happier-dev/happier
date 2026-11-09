@@ -5,6 +5,7 @@ import {
 
 import { isDeclaredOpenCodeRequestAuthPurpose } from './purposes.js';
 import type { OpenCodeRequestAuthProvider } from './source.js';
+import { OPEN_CODE_REQUEST_AUTH_DESCRIPTORS } from '../purposes.js';
 
 export {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV as OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -101,12 +102,9 @@ export function readOpenCodeRequestAuthMaterialization(
     const parsed = readBinding(candidate);
     if (!parsed) return null;
     const { service, purpose, target } = parsed;
-    const provider: OpenCodeRequestAuthProvider | null =
-      service.pluginId === 'happier.agent.codex' && service.localId === 'openai-codex'
-        ? 'openai'
-        : service.pluginId === 'happier.agent.claude' && service.localId === 'claude-subscription'
-          ? 'anthropic'
-          : null;
+    const provider = OPEN_CODE_REQUEST_AUTH_DESCRIPTORS.find(({ declaration }) =>
+      declaration.service.pluginId === service.pluginId
+      && declaration.service.localId === service.localId)?.provider;
     if (
       !provider
       || purposes[provider] !== undefined

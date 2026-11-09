@@ -2,7 +2,8 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import { OPEN_CODE_REQUEST_AUTH_TARGET_ORIGINS } from './purposes.js';
 
-export type OpenCodeRequestAuthProvider = 'openai' | 'anthropic';
+import type { OpenCodeRequestAuthProvider } from '../purposes.js';
+export type { OpenCodeRequestAuthProvider } from '../purposes.js';
 
 export const OPEN_CODE_REQUEST_AUTH_PLUGIN_VERSION = '1';
 export const OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
@@ -81,8 +82,7 @@ function mergeRequiredHeaders(init, lease) {
   headers.delete("chatgpt-account-id");
   headers.delete("x-api-key");
   headers.delete("x-claude-code-session-id");
-  headers.set("authorization", "Bearer " + lease.accessToken);
-  for (const [name, value] of Object.entries(lease.requiredHeaders || {})) {
+  for (const [name, value] of Object.entries(lease.headers)) {
     headers.set(name, value);
   }
   if (PROVIDER === "openai") {
