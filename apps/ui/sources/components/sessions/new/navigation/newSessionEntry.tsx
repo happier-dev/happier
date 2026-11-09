@@ -17,6 +17,11 @@ export type NewSessionShellHost = Readonly<{
      */
     visible: boolean;
     /**
+     * Open, on this screen or another: its draft and its composer document live (a picker opened from it still reads
+     * it by its exact ref). Hidden is not retired; only close or send retires it.
+     */
+    retained: boolean;
+    /**
      * The open dock folded to its pill, in the same seat (desktop). Host state, not a setting: it lives as
      * long as the shell, survives page navigation, and every New entry (`open`) unfolds it.
      */
@@ -108,9 +113,10 @@ export function NewSessionShellHostProvider(props: React.PropsWithChildren) {
     const host = React.useMemo<NewSessionEmbeddedHost>(() => ({ ...embeddedHost,
         kind: 'docked', createdSessionPresentation: 'inPlace', onHandedOff,
     }), [embeddedHost, onHandedOff]);
-    const shown = enabled && visible && screen === pathname;
-    const value = React.useMemo<NewSessionShellHost>(() => ({ enabled, host, visible: shown, collapsed, focusRequest, origin, open, close, collapse, returnToHost }),
-        [host, enabled, shown, collapsed, focusRequest, origin, open, close, collapse, returnToHost] as const);
+    const retained = enabled && visible;
+    const shown = retained && screen === pathname;
+    const value = React.useMemo<NewSessionShellHost>(() => ({ enabled, host, visible: shown, retained, collapsed, focusRequest, origin, open, close, collapse, returnToHost }),
+        [host, enabled, shown, retained, collapsed, focusRequest, origin, open, close, collapse, returnToHost] as const);
     React.useLayoutEffect(() => close(), [scope?.serverId, scope?.accountId, close]);
     // Provider retirement also retires the only imperative entry port.
     React.useLayoutEffect(() => {

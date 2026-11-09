@@ -1,6 +1,5 @@
 import * as React from 'react';
 
-import { useIsFocused } from '@react-navigation/native';
 import type { Href, Router } from 'expo-router';
 
 import { buildBackendTargetRouteParams, type SerializedBackendTargetRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
@@ -11,6 +10,7 @@ import {
     type NewSessionDraftTextSource,
 } from '@/components/sessions/new/hooks/useNewSessionDraftAutoPersist';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
+import { useNewSessionHostFocused } from '@/components/sessions/new/navigation/newSessionHost';
 
 export function useNewSessionProfileEditPersistence(params: Readonly<{
     router: Router;
@@ -80,10 +80,9 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
         params.persistDraftIfEnabled(params.buildCurrentPersistedDraft());
     }, [params.buildCurrentPersistedDraft, params.persistDraftIfEnabled]);
 
-    // Only the focused new-session screen instance may auto-persist the shared scoped
-    // draft: an unfocused instance (stacked /new modal, screen behind a picker) holds a
-    // stale prompt and persisting it would clobber the focused instance's live typing.
-    const isFocused = useIsFocused();
+    // The host owns draft activity: a docked composer stays active across navigation,
+    // while an unfocused route instance must not overwrite the live draft.
+    const isFocused = useNewSessionHostFocused();
 
     useNewSessionDraftAutoPersist({
         persistDraftNow,

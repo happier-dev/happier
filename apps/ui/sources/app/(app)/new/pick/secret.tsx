@@ -1,6 +1,6 @@
+import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import React from 'react';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { Pressable } from 'react-native';
 
 import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -12,16 +12,19 @@ import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } fro
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
-import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export default React.memo(function SecretPickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         agentType?: string;
@@ -38,11 +41,10 @@ export default React.memo(function SecretPickerScreen() {
         || (typeof params.dataId === 'string' && params.dataId.trim().length > 0)
         || (typeof params.machineId === 'string' && params.machineId.trim().length > 0),
     );
+    const remembered = useLastUsedBackendSelection();
     const settings = useSettingsSelector((settings) => ({
-        lastUsedAgent: settings.lastUsedAgent,
-        lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
+    }), ["backendEnabledByTargetKey"]);
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
@@ -50,16 +52,17 @@ export default React.memo(function SecretPickerScreen() {
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
     const machineIdParam = typeof params.machineId === 'string' ? params.machineId : null;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        // The backend preference reads Agent declarations only.
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId: machineIdParam,
         serverId: spawnServerId,
         enabled: Boolean(machineIdParam),
-        staleMs: 60_000,
     });
     const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
         return resolvePreferredBackendTargetFromProjection({
-            lastUsedAgent: settings.lastUsedAgent,
-            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            lastUsedAgent: remembered.lastUsedAgent,
+            lastUsedBackendTarget: remembered.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSnapshot: acpCatalog && !acpCatalog.stale ? acpCatalog.catalog : undefined,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
@@ -68,8 +71,8 @@ export default React.memo(function SecretPickerScreen() {
         daemonMergedProjection.inputs,
         acpCatalog,
         settings.backendEnabledByTargetKey,
-        settings.lastUsedAgent,
-        settings.lastUsedBackendTarget,
+        remembered.lastUsedAgent,
+        remembered.lastUsedBackendTarget,
     ]);
 
     const savedSecretCatalog = useSavedSecretCatalog();
@@ -95,6 +98,7 @@ export default React.memo(function SecretPickerScreen() {
                 secretId,
             },
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: {
                 ...roundTripBackendParams,
                 ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
@@ -107,6 +111,7 @@ export default React.memo(function SecretPickerScreen() {
             safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
     }, [
+        returnToHost,
         currentRouteParams,
         navigation,
         params.agentType,
@@ -117,8 +122,8 @@ export default React.memo(function SecretPickerScreen() {
         params.spawnServerId,
         router,
         settings.backendEnabledByTargetKey,
-        settings.lastUsedAgent,
-        settings.lastUsedBackendTarget,
+        remembered.lastUsedAgent,
+        remembered.lastUsedBackendTarget,
         preferredBackendTarget,
         spawnServerId,
     ]);
@@ -137,18 +142,16 @@ export default React.memo(function SecretPickerScreen() {
 
     const headerLeft = React.useCallback(() => {
         return (
-            <Pressable
+            <HappierPressable
                 onPress={handleBackPress}
-                hitSlop={10}
                 style={({ pressed }) => ({ marginLeft: theme.space.s10, padding: theme.space.s4, opacity: pressed ? motionTokens.press.opacity : 1 })}
                 accessibilityRole="button"
                 accessibilityLabel={t('common.back')}
             >
                 <Icon name="caret-left" size={20} color={theme.colors.chrome.header.foreground} />
-            </Pressable>
+            </HappierPressable>
         );
     }, [handleBackPress, theme.colors.chrome.header.foreground]);
-    const presentation = useNewSessionPickerRoutePresentation();
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -156,10 +159,9 @@ export default React.memo(function SecretPickerScreen() {
             title: headerTitle,
             headerTitle,
             headerBackTitle,
-            presentation,
             headerLeft,
         } as const;
-    }, [headerBackTitle, headerLeft, headerTitle, presentation]);
+    }, [headerBackTitle, headerLeft, headerTitle]);
 
     return (
         <>

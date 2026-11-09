@@ -26,6 +26,7 @@ import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwit
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { buildNewSessionAuthContinuationRootHref } from '@/components/sessions/new/navigation/newSessionAuthContinuation';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
@@ -91,6 +92,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
         ownsScrollViewport = false,
     } = props;
     const router = useRouter();
+    const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
     const authContext = useAuth();
     const params = useLocalSearchParams<ServerSelectionParams>();
@@ -163,6 +165,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                 spawnServerId: serverId,
             },
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: {
                 ...(dataId ? { dataId } : {}),
                 spawnServerId: serverId,
@@ -174,7 +177,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
         if (dismissOnSelection) {
             onClose();
         }
-    }, [currentRouteParams, dismissOnSelection, navigation, onClose, params.dataId, pickerFallbackHref, router]);
+    }, [returnToHost, currentRouteParams, dismissOnSelection, navigation, onClose, params.dataId, pickerFallbackHref, router]);
 
     const handleServerPress = React.useCallback((serverId: string) => {
         fireAndForget((async () => {

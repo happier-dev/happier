@@ -23,10 +23,12 @@ import type { SessionListStorageFilter } from '@/sync/domains/session/sessionSto
 import { resolveSessionListShellFlags } from './resolveSessionListShellFlags';
 import { resolveSessionListDensityViewState } from './resolveSessionListDensityViewState';
 import { resolveSessionListOrderingPersistenceState } from './resolveSessionListOrderingPersistenceState';
-import { SessionListHeaderItem } from './sessionListHeaderItem';
+import {
+    SessionListHeaderItemWithFacts,
+    SessionListSessionRowWithFacts,
+    type SessionListRowFacts,
+} from './sessionListRowFacts';
 import { SESSION_LIST_SUPPORTING_SECTIONS_NODE } from './sessionListVirtualizedNodes';
-import { SessionListRowViewModelBoundary } from './SessionListRowViewModelBoundary';
-import { selectSessionListRowContextInput } from './sessionListRowViewModels';
 import { resolveSessionSectionDraftAnchor, useSessionSectionDraft, type SessionSectionDraftController } from '@/components/sessions/organization/useSessionSectionDraft';
 import { normalizeSessionListIdentityDisplay } from './SessionListIdentity';
 import { SessionItem } from './SessionItem';
@@ -2006,7 +2008,6 @@ export function useSessionListViewStateFromPaneState(
         scopeHintByLegacyWorkspaceKey,
         projectHeaderViewModelByGroupKey,
         projectDisplayByKey,
-        groupProjectByGroupKey,
     } = renderModels.projectHeaderViewModelState;
     sectionMoveSourcesRef.current = { sections: organizationListViewState.sections, projectDisplayByKey };
     const handleRequestBulkMoveToFolder = React.useCallback(async (targets: readonly SessionBulkActionTarget[]) => {
@@ -2081,11 +2082,10 @@ export function useSessionListViewStateFromPaneState(
     // A Runs-only list holds no place a Session could start: its group headers carry no "+".
     const newSessionEnabled = filterController.displayFilters.show !== 'runs';
     const renderHeaderItem = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>, first: boolean) => (
-        <SessionListHeaderItem
+        <SessionListHeaderItemWithFacts
             item={item}
             first={first}
             collapsedKeys={collapsedKeys}
-            projectHeaderViewModelByGroupKey={projectHeaderViewModelByGroupKey}
 
             onOpenProject={handleOpenProject}
             onCreateSessionFromWorkspaceScope={handleCreateSessionFromWorkspaceScope}
@@ -2127,7 +2127,6 @@ export function useSessionListViewStateFromPaneState(
         setWorkspaceColor,
         handleResetWorkspaceName,
         handleToggleCollapse,
-        projectHeaderViewModelByGroupKey,
         renderModels.audience,
         rowInteractions.dropOverlayShared,
         rowInteractions.handleFolderHeaderTreeDropResult,
@@ -2161,7 +2160,7 @@ export function useSessionListViewStateFromPaneState(
             layoutV1: sessionListLayoutChoice,
         });
         return (
-            <SessionListRowViewModelBoundary
+            <SessionListSessionRowWithFacts
                 audienceScope={item.serverId ? renderModels.audience.scopes.get(item.serverId) : undefined}
                 homeObservation={item.serverId ? homeObservations[item.serverId] ?? null : null}
                 audienceLabel={item.serverId ? renderModels.audience.labelsBySessionKey.get(audienceSessionAddressKey({ serverId: item.serverId, sessionId: item.sessionId })) : null}
@@ -2199,18 +2198,13 @@ export function useSessionListViewStateFromPaneState(
                     ? sessionListIdentityDisplay
                     : 'avatar'}
                 draftScope={draftScope}
-                {...selectSessionListRowContextInput(item, {
+                rowContextChoices={{
                     enabled: sessionListRowContextV1 !== false,
                     identityDisplay: normalizeSessionListIdentityDisplay(sessionListIdentityDisplay),
-                    projectDisplayByKey,
-                    groupProjectByGroupKey,
                     statusWords: sessionListStatusWords === true,
                     faviconsEnabled: workspaceFaviconsEnabled,
-                })}
+                }}
                 pinnedSessionKeys={orderingPersistenceState.pinnedKeySet}
-                reachableSessionDisplay={(item.serverId ? renderModels.reachableSessionDisplayByKey.get(
-                    audienceSessionAddressKey({ serverId: item.serverId, sessionId: item.sessionId }),
-                ) : undefined) ?? renderModels.reachableSessionDisplayById.get(item.sessionId)}
                 rowViewport={rowViewport}
                 selectedSessionId={selectedSessionId}
                 selectedSessionServerId={selectedSessionServerId}
@@ -2240,8 +2234,6 @@ export function useSessionListViewStateFromPaneState(
         densityViewState.rowHeight,
         draftScope,
         rowViewport,
-        groupProjectByGroupKey,
-        projectDisplayByKey,
         sessionListRowContextV1,
         sessionListStatusWords,
         workspaceFaviconsEnabled,
@@ -2254,8 +2246,6 @@ export function useSessionListViewStateFromPaneState(
         orderingPersistenceState.pinnedKeySet,
         homeObservations,
         renderModels.audience,
-        renderModels.reachableSessionDisplayById,
-        renderModels.reachableSessionDisplayByKey,
         rowInteractions.draggingSessionKey,
         rowInteractions.activeDragSnapshot,
         rowInteractions.dropOverlayShared,
@@ -2409,6 +2399,11 @@ export function useSessionListViewStateFromPaneState(
         () => buildStringRecordSignature(normalizedShellState.workspaceLabels),
         [normalizedShellState.workspaceLabels],
     );
+    const rowFacts = React.useMemo<SessionListRowFacts>(() => ({
+        reachableSessionDisplayById: renderModels.reachableSessionDisplayById,
+        reachableSessionDisplayByKey: renderModels.reachableSessionDisplayByKey,
+        projectHeaderViewModelState: renderModels.projectHeaderViewModelState,
+    }), [renderModels.projectHeaderViewModelState, renderModels.reachableSessionDisplayById, renderModels.reachableSessionDisplayByKey]);
     const virtualizedRowExtraData = React.useMemo(() => ({
         allKnownTagsSignature,
         attentionStandingEnabled: attentionStanding.actionEnabled,
@@ -2429,8 +2424,6 @@ export function useSessionListViewStateFromPaneState(
         homeObservations,
         nativeContextMenuSessionKey: rowInteractions.nativeContextMenuSessionKey,
         pinnedSessionKeys: orderingPersistenceState.pinnedKeySet,
-        reachableSessionDisplayById: renderModels.reachableSessionDisplayById,
-        reachableSessionDisplayByKey: renderModels.reachableSessionDisplayByKey,
         rowHeight: densityViewState.rowHeight,
         selectedSessionId,
         selectedSessionServerId,
@@ -2445,11 +2438,11 @@ export function useSessionListViewStateFromPaneState(
         sessionListSurfaceDataActive: surfaceOwnership.dataActive,
         // Mounted Section headers read these facts, so a member's move redraws the count with its row.
         sectionFactsByGroupKey,
-        // Row-context inputs (P5 U5): mounted cells redraw only when extraData changes, so every
-        // choice and Project display the row context reads is here, or a toggle shows after reload.
+        // Row-context choices (P5 U5): mounted cells redraw only when extraData changes, so every
+        // choice the row context reads is here, or a toggle shows after reload. The Project display
+        // index and reachable displays are row lookups and reach rows through the row facts instead.
         rowContextEnabled: sessionListRowContextV1 !== false,
         rowContextIdentityDisplay: normalizeSessionListIdentityDisplay(sessionListIdentityDisplay),
-        rowContextProjectState: renderModels.projectHeaderViewModelState,
         rowContextStatusWords: sessionListStatusWords === true,
         sessionTagsEnabled: sessionTagsEnabled === true,
         sessionTagsSignature,
@@ -2472,9 +2465,6 @@ export function useSessionListViewStateFromPaneState(
         orderingPersistenceState.pinnedKeySet,
         renderModels.audience,
         renderModels.hasMultipleMachines,
-        renderModels.projectHeaderViewModelState,
-        renderModels.reachableSessionDisplayById,
-        renderModels.reachableSessionDisplayByKey,
         rowInteractions.draggingSessionKey,
         rowInteractions.nativeContextMenuSessionKey,
         sessionListRowContextV1,
@@ -2569,6 +2559,7 @@ export function useSessionListViewStateFromPaneState(
         scrollToIndex: scrollToRetainedIndex,
         measureNodeViewportOffset: measureVirtualizedNodeViewportOffset,
         virtualizedRowExtraData,
+        rowFacts,
         onViewableItemsChanged: handleViewableItemsChangedRef.current,
         viewabilityConfig: viewabilityConfigRef.current,
         virtualizedListRef,

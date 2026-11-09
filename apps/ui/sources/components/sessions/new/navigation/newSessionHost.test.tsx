@@ -2,12 +2,15 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
+import { NavigationContext } from '@react-navigation/native';
+import { createNavigationPropMock } from '@/dev/testkit/mocks/reactNavigation';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import {
     mergeNewSessionHostParams,
     NewSessionEmbeddedHostProvider,
     useNewSessionHostDemanded,
+    useNewSessionHostFocused,
     useNewSessionHostNavigation,
     useNewSessionHostParams,
     type NewSessionEmbeddedHost,
@@ -38,6 +41,26 @@ function useHostSurface() {
 }
 
 describe('newSessionHost', () => {
+    it('keeps a docked draft active when the background route loses focus', async () => {
+        const navigation = createNavigationPropMock({ isFocused: () => false });
+        let host: NewSessionEmbeddedHost = {
+            kind: 'docked', params: { draftId: 'dock-draft' }, demanded: true,
+            setParams: vi.fn(), openDraft: vi.fn(), onHandedOff: vi.fn(),
+        };
+        const hook = await renderHook(useNewSessionHostFocused, {
+            wrapper: ({ children }: React.PropsWithChildren) => (
+                <NavigationContext.Provider value={navigation}>
+                    <NewSessionEmbeddedHostProvider host={host}>{children}</NewSessionEmbeddedHostProvider>
+                </NavigationContext.Provider>
+            ),
+        });
+        try {
+            expect(hook.getCurrent()).toBe(true);
+            host = { ...host, kind: undefined };
+            await hook.rerender();
+            expect(hook.getCurrent()).toBe(false);
+        } finally { await hook.unmount(); }
+    });
     it('withdraws route demand while the New Session surface is retained out of view', async () => {
         let presented = false;
         const hook = await renderHook(useNewSessionHostDemanded, {
@@ -162,5 +185,29 @@ describe('newSessionHost', () => {
         const current = { draftId: 'd', machineId: 'm1' };
         expect(mergeNewSessionHostParams(current, { machineId: 'm1' })).toBe(current);
         expect(mergeNewSessionHostParams(current, { machineId: undefined, directory: '/w' })).toEqual({ draftId: 'd', directory: '/w' });
+    });
+
+    it('docked in place, opens a picker for its draft but hands off without replacing the page', async () => {
+        routeBoundary.push.mockClear();
+        routeBoundary.replace.mockClear();
+        const onHandedOff = vi.fn();
+        const host: NewSessionEmbeddedHost = {
+            kind: 'docked', params: { draftId: 'dock-draft' }, demanded: true,
+            setParams: vi.fn(), openDraft: vi.fn(), onHandedOff,
+            createdSessionPresentation: 'inPlace',
+        };
+        const hook = await renderHook(useHostSurface, {
+            wrapper: ({ children }: React.PropsWithChildren) => <NewSessionEmbeddedHostProvider host={host}>{children}</NewSessionEmbeddedHostProvider>,
+        });
+        try {
+            hook.getCurrent().navigation.router.push({ pathname: '/new/pick/profile-edit', params: { profileId: 'profile' } });
+            expect(routeBoundary.push).toHaveBeenCalledWith({ pathname: '/new/pick/profile-edit', params: {
+                profileId: 'profile', newSessionHostDraftId: 'dock-draft',
+            } }, undefined);
+            hook.getCurrent().navigation.router.replace('/session/created');
+            expect(onHandedOff).toHaveBeenCalledWith('/session/created');
+            expect(routeBoundary.replace).not.toHaveBeenCalled();
+            expect(routeBoundary.push).toHaveBeenCalledTimes(1);
+        } finally { await hook.unmount(); }
     });
 });

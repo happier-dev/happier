@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { act } from 'react-test-renderer';
-import { SessionDraftAddressV2Schema } from '@happier-dev/protocol';
+import { SessionDraftAddressV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -12,20 +12,22 @@ import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/stora
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ExpoRouterParams } from '@/dev/testkit/mocks/router';
+import { readOrdinaryNewSessionDraftId } from '@/sync/domains/state/newSessionTargetUiState';
 
 installTokenStorageWebPlatformMocks();
 installDisconnectedServerSocketBoundary();
 const routeState = vi.hoisted<{
     params: ExpoRouterParams;
     setParams: ReturnType<typeof vi.fn>;
+    replace: ReturnType<typeof vi.fn>;
     listeners: Set<() => void>;
 }>(() => ({
-    params: {}, setParams: vi.fn(), listeners: new Set(),
+    params: {}, setParams: vi.fn(), replace: vi.fn(), listeners: new Set(),
 }));
 vi.mock('expo-router', async () => {
     const module = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
         pathname: '/new', params: () => routeState.params,
-        router: { setParams: routeState.setParams },
+        router: { setParams: routeState.setParams, replace: routeState.replace, canGoBack: () => false },
     }).module;
     // This route needs reactive framework-param delivery, which the canonical
     // navigation boundary's snapshot-only hook does not supply.
@@ -87,6 +89,7 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 beforeEach(async () => {
     routeState.params = {};
     routeState.setParams.mockClear();
+    routeState.replace.mockClear();
     routeState.setParams.mockImplementation((params: ExpoRouterParams) => {
         routeState.params = { ...routeState.params, ...params };
         for (const listener of routeState.listeners) listener();
@@ -126,7 +129,7 @@ beforeEach(async () => {
         ...profileDefaults, id: scope.accountId,
     });
     storage.getState().applySettingsLocal({
-        newSessionOrdinaryEntryDraftId: null, useEnhancedSessionWizard: false,
+        useEnhancedSessionWizard: false,
     });
     storage.getState().applyMachines([], true, { sourceServerId: scope.serverId });
     await saveHomeViewState({
@@ -169,13 +172,28 @@ async function mountRoute() {
 }
 
 describe('/new route entry', () => {
+    it('transfers a direct seeded route into Docked New and returns Home without mounting another composer', async () => {
+        const { NewSessionShellHostProvider, useNewSessionShellHost } = await import('@/components/sessions/new/navigation/newSessionEntry');
+        routeState.params = { draftId, machineId: 'direct-machine', directory: '/direct/project', prompt: 'Keep the incoming seed' };
+        storage.getState().applySettingsLocal({ newSessionPresentationModeV1: 'docked' });
+        function HostProbe() {
+            const shell = useNewSessionShellHost();
+            return React.createElement('DockedHostProbe', { visible: shell?.visible, params: shell?.host.params });
+        }
+        screen = await renderScreen(<AuthProvider initialCredentials={credentials}><NewSessionShellHostProvider><Route /><HostProbe /></NewSessionShellHostProvider></AuthProvider>);
+        expect(screen.tree.root.findByType('DockedHostProbe' as never).props).toMatchObject({ visible: true, params: routeState.params });
+        expect(screen.findByTestId('new-session-composer-input')).toBeNull();
+        expect(routeState.setParams).not.toHaveBeenCalled();
+        expect(routeState.replace).toHaveBeenCalledWith('/');
+    });
+
     it('resolves a bare route through the ordinary-entry owner and preserves its origin', async () => {
         await mountRoute();
         const generatedDraftId = routeState.params.draftId;
         expect(SessionDraftAddressV2Schema.safeParse({ kind: 'newSession', draftId: generatedDraftId }).success).toBe(true);
         expect(routeState.setParams).toHaveBeenCalledWith({ draftId: generatedDraftId, draftOrigin: 'ordinary' });
         if (typeof generatedDraftId !== 'string') throw new Error('Expected a canonical generated route draft id');
-        expect(storage.getState().settings.newSessionOrdinaryEntryDraftId).toBeNull();
+        expect(readOrdinaryNewSessionDraftId(scope)).toBeNull();
         expect(getSessionDraftSnapshot(
             scope, { kind: 'newSession', draftId: generatedDraftId })?.materialized ?? false).toBe(false);
     });
@@ -183,7 +201,7 @@ describe('/new route entry', () => {
         routeState.params = { draftId, draftOrigin: 'ordinary' };
         writeNewSessionDraft({ scope, draftId, patch: { text: 'A meaningful saved draft' }, materializationIntent: 'userEdit' });
         await mountRoute();
-        expect(storage.getState().settings.newSessionOrdinaryEntryDraftId).toBe(draftId);
+        expect(readOrdinaryNewSessionDraftId(scope)).toBe(draftId);
     });
     // 58d AF1: no machine yet is not a setup page; the real composer asks where to run.
     it('opens the composer asking "Run on…" when the Home has no machine yet', async () => {
@@ -206,6 +224,6 @@ describe('/new route entry', () => {
         await vi.waitFor(() => expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.materialized).toBe(true));
         expect(rendered.findByTestId('new-session-composer-input')).toBe(before);
         expect(rendered.findByTestId('new-session-composer-input')?.props.value).toBe('Keep this live composer text');
-        expect(storage.getState().settings.newSessionOrdinaryEntryDraftId).toBe(draftId);
+        expect(readOrdinaryNewSessionDraftId(scope)).toBe(draftId);
     });
 });

@@ -1,19 +1,24 @@
 import type {
-    ActionInputHints,
-    PluginActionConfirmationV2,
+    InputHints as ActionInputHints} from '@happier-dev/protocol/inputs/inputFields';
+import type {
+    PluginActionConfirmationV2} from '@happier-dev/protocol/plugins/actions/v2';
+import type {
     PluginProjectedActionV2,
-    PluginLocalizedStringV2,
     PluginProjectedResourceV2,
     PluginProjectedSettingsFieldV2,
     PluginProjectedSettingsV2,
     PluginProjectionV2,
     PluginProjectionInstalledPackageV2,
-    PluginContributionIdentityV1,
-    PluginDiagnosticDataV1,
     DaemonContributionRegistryProjectionAutomationEligibleEventsV1,
     DaemonPluginUiComposerSurfaceCatalogEntryV1,
     DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type {
+    PluginLocalizedStringV2} from '@happier-dev/protocol/plugins/contributions/public-types';
+import type {
+    PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
+    PluginDiagnosticDataV1} from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
 import { normalizePluginUiProjection, resolvePluginUiProjectionPlatform, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { preparePluginUiProjectionOrigins } from '@/sync/domains/plugins/ui/projectionOrigins';
@@ -82,15 +87,29 @@ export function readPublishedDaemonProjectionFamily<K extends keyof PluginProjec
 }
 
 /** Own only changed wire fields; equality is decided once before deriving presentation. */
-function publishProjectionFields<T extends Readonly<Record<string, unknown>>>(input: T, previous?: T): T {
-    const fields: Readonly<Record<string, unknown>> = Object.fromEntries(Object.entries(input).flatMap(([key, value]) =>
-        value === undefined ? [] : [[key, previous && Object.hasOwn(previous, key) && sameStrictJsonValue(previous[key], value)
-            ? previous[key] : projectNativeJsonValueForTransport(value)]]));
-    if (previous && Object.keys(previous).length === Object.keys(fields).length
-        && Object.entries(fields).every(([key, value]) => previous[key] === value)) return previous;
+function publishProjectionFields<T extends Readonly<Record<string, unknown>>>(input: T, previous?: T,
+    publishChanged?: (value: T[keyof T], before: T[keyof T] | undefined) => unknown): T {
+    let fields: Record<string, unknown> | undefined;
+    for (const key in input) {
+        if (!Object.hasOwn(input, key)) continue;
+        const value = input[key];
+        if (value === undefined) continue;
+        const before = previous?.[key];
+        if (previous && Object.hasOwn(previous, key) && sameStrictJsonValue(before, value)) continue;
+        fields ??= { ...previous };
+        Object.defineProperty(fields, key, { value: publishChanged ? publishChanged(value, before) : projectNativeJsonValueForTransport(value),
+            enumerable: true, configurable: true, writable: true });
+    }
+    if (previous) for (const key in previous) {
+        if (Object.hasOwn(previous, key) && (!Object.hasOwn(input, key) || input[key] === undefined)) {
+            fields ??= { ...previous };
+            delete fields[key];
+        }
+    }
+    if (!fields && previous) return previous;
     // These are schema-admitted DTO fields. Protocol supplies immutable native
     // JSON ownership; retained children are already owned and are not recopied.
-    return projectNativeJsonValueForTransport(fields) as T;
+    return projectNativeJsonValueForTransport(fields ?? {}) as T;
 }
 
 function publishPluginProjectionEntries(
@@ -136,19 +155,14 @@ export function publishDaemonMergedProjectionInputs(params: Readonly<{
     // The describe/selected-read transport already used the strict V2 schema.
     // Keep its public raw identity, but never use its mutable graph as our prior
     // comparison authority or lend its aliases to ready descriptive slices.
-    const familiesById = publishProjectionFields(Object.fromEntries(Object.entries(params.projection.familiesById).flatMap(([id, family]) => {
-        if (!family) return [];
-        const before = prior?.projection.familiesById[id as keyof PluginProjectionV2['familiesById']];
-        return [[id, publishProjectionFields({ ...family,
+    const familiesById = publishProjectionFields(params.projection.familiesById, prior?.projection.familiesById,
+        (family, before) => family ? publishProjectionFields({ ...family,
             entriesById: publishProjectionFields(family.entriesById, before?.entriesById),
-        }, before)]];
-    })) as PluginProjectionV2['familiesById'], prior?.projection.familiesById);
+        }, before) : undefined);
     const projection = publishProjectionFields({ ...params.projection,
         installedPackagesById: publishProjectionFields(params.projection.installedPackagesById, prior?.projection.installedPackagesById),
         agentsById: publishProjectionFields(params.projection.agentsById, prior?.projection.agentsById),
         actionsById: publishProjectionFields(params.projection.actionsById, prior?.projection.actionsById),
-
-
         resourcesById: publishProjectionFields(params.projection.resourcesById, prior?.projection.resourcesById),
         settingsById: publishProjectionFields(params.projection.settingsById, prior?.projection.settingsById),
         familiesById,
@@ -207,7 +221,8 @@ export function publishDaemonMergedProjectionInputs(params: Readonly<{
         pluginProjectionV2: params.projection,
         pluginUiProjectionPlatform: platform,
         pluginUiProjection,
-        connectedAccountProjection: readConnectedAccountDescriptorProjection(projection),
+        connectedAccountProjection: ownedPrevious && prior?.projection.familiesById.connectedAccounts === projection.familiesById.connectedAccounts
+            ? ownedPrevious.connectedAccountProjection : readConnectedAccountDescriptorProjection(projection),
         composerSurfaceActionInputSelectionFacts: new Map(composerSelections.map(({ row, publication }) => [row, selection(row, publication)])),
         ephemeralInputSurfaceActionInputSelectionFacts: new Map(setupSelections.map(({ row, publication }) => [row, selection(row, publication)])),
         ...(composerSurfaceCatalog === undefined ? {} : { composerSurfaceCatalog }),
@@ -578,8 +593,10 @@ export function resolvePluginProjectionEditableSettingsGroup(
     };
 }
 
-function buildV2PluginProjectionById(
-    projection: PluginProjectionV2,
+/** Presentation only: both held Account declarations and daemon replies use the same mapper. */
+export function buildV2PluginProjectionById(
+    projection: Pick<PluginUiProjectionModel, 'generation' | 'installedPackagesById' | 'actionsById' | 'resourcesById'>
+        & Partial<Pick<PluginProjectionV2, 'diagnostics' | 'agentsById' | 'settingsById' | 'familiesById'>>,
 ): Readonly<Record<string, PluginProjectionEntry>> {
     const actionsByPluginId = new Map<string, PluginProjectionAction[]>();
     for (const action of Object.values(projection.actionsById)) {
@@ -603,7 +620,7 @@ function buildV2PluginProjectionById(
     }
 
     const diagnosticsByPluginId = new Map<string, PluginProjectionDiagnostic[]>();
-    for (const diagnostic of projection.diagnostics) {
+    for (const diagnostic of projection.diagnostics ?? []) {
         const pluginId = diagnostic.plugin.id;
         const diagnostics = diagnosticsByPluginId.get(pluginId) ?? [];
         diagnostics.push({
@@ -617,7 +634,7 @@ function buildV2PluginProjectionById(
     }
 
     const iconAgentIdByPluginId = new Map<string, AgentId>();
-    for (const [agentEntryId, agent] of Object.entries(projection.agentsById)) {
+    for (const [agentEntryId, agent] of Object.entries(projection.agentsById ?? {})) {
         const pluginId = agent.identity?.pluginId;
         if (!pluginId || iconAgentIdByPluginId.has(pluginId)) continue;
         // The same rule the Agent picker's mark reads (`resolveAgentMarkAgentId`).
@@ -635,8 +652,8 @@ function buildV2PluginProjectionById(
         if (!kinds.includes(kind)) kinds.push(kind);
         contributionKindsByPluginId.set(pluginId, kinds);
     };
-    for (const agent of Object.values(projection.agentsById)) addKind(agent.identity?.pluginId, 'agent');
-    for (const [familyId, family] of Object.entries(projection.familiesById) as [keyof PluginProjectionV2['familiesById'], { entriesById?: Readonly<Record<string, Readonly<{ pluginId?: string | null }>>> } | undefined][]) {
+    for (const agent of Object.values(projection.agentsById ?? {})) addKind(agent.identity?.pluginId, 'agent');
+    for (const [familyId, family] of Object.entries(projection.familiesById ?? {}) as [keyof PluginProjectionV2['familiesById'], { entriesById?: Readonly<Record<string, Readonly<{ pluginId?: string | null }>>> } | undefined][]) {
         for (const entry of Object.values(family?.entriesById ?? {})) addKind(entry.pluginId, familyId);
     }
     const entries: Record<string, PluginProjectionEntry> = {};
@@ -651,7 +668,7 @@ function buildV2PluginProjectionById(
             version: installedPackage.version ?? null,
             enabled: installedPackage.enabled,
             generation: projection.generation,
-            generationLabel: String(projection.generation),
+            generationLabel: projection.generation === null ? null : String(projection.generation),
             status: null,
             provenance: {
                 sourceKind: installedPackage.source.kind,

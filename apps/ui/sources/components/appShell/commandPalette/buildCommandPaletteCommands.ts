@@ -54,6 +54,20 @@ function extractRecentSessionIds(sessionsById: Record<string, any>): string[] {
     .slice(0, 5);
 }
 
+export type CommandPaletteRecentSession = Readonly<{ sessionId: string; serverId: string; title: string; subtitle: string }>;
+
+/** The Sessions the palette lists, and the only Session facts its rows show. */
+export function selectCommandPaletteRecentSessions(sessionsById: Record<string, any>): readonly CommandPaletteRecentSession[] {
+  return extractRecentSessionIds(sessionsById).map((sessionId) => {
+    const session = sessionsById[sessionId];
+    return {
+      sessionId,
+      serverId: typeof session?.serverId === 'string' ? session.serverId.trim() : '',
+      ...readSessionLabel(session),
+    };
+  });
+}
+
 function readSessionLabel(session: any): Readonly<{ title: string; subtitle: string }> {
   const metadata = readSessionOwnerMetadataView(session);
   const title = getSessionName(session);
@@ -403,15 +417,12 @@ export function buildCommandPaletteCommands(
     });
   }
 
-  for (const sessionId of extractRecentSessionIds(sessionsById)) {
-    const session = sessionsById[sessionId];
-    const rowServerId = typeof session?.serverId === 'string' ? session.serverId.trim() : '';
-    const label = readSessionLabel(session);
+  for (const { sessionId, serverId: rowServerId, title, subtitle } of selectCommandPaletteRecentSessions(sessionsById)) {
     cmds.push({
       id: `session-${sessionId}`,
       kind: 'recentSession',
-      title: label.title,
-      subtitle: label.subtitle,
+      title,
+      subtitle,
       icon: 'clock',
       category: t('commandPalette.commands.recentSessionsCategory'),
       // The recent row already names its Home; a bare id would re-resolve it and can

@@ -1,4 +1,4 @@
-import type { SessionForkPoint } from '@happier-dev/protocol';
+import type { SessionForkPoint } from '@happier-dev/protocol/sessions/fork';
 
 import { buildNewSessionTempDataFromSessionConfiguration, buildNewSessionConfigurationDraft } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import type { ExistingSessionAuthoringSnapshotSession } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
@@ -6,6 +6,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { seedAndOpenNewSession } from '../newSessionSeedComposer';
+import { interceptNewSessionEntry } from './newSessionEntry';
 
 export type NewSessionSourceContextNavigation = Readonly<{
     pathname: '/new';
@@ -62,11 +63,14 @@ export function openNewSessionSourceContextNavigation(params: Readonly<{
             sourceContextServerId: params.serverId,
         },
         scope: lifetime.scope, isCurrent: lifetime.isCurrent, createDraftId: params.createDraftId,
-        navigateToNewSession: ({ draftId, dataId }) => params.navigateToNewSession({
-            pathname: '/new', params: {
-                draftId, draftServerId: lifetime.scope.serverId, draftAccountId: lifetime.scope.accountId,
-                ...(dataId ? { dataId } : {}), ...(serverId ? { spawnServerId: serverId } : {}),
-            },
-        }),
+        navigateToNewSession: ({ draftId, dataId }) => {
+            const href: NewSessionSourceContextNavigation = {
+                pathname: '/new', params: {
+                    draftId, draftServerId: lifetime.scope.serverId, draftAccountId: lifetime.scope.accountId,
+                    ...(dataId ? { dataId } : {}), ...(serverId ? { spawnServerId: serverId } : {}),
+                },
+            };
+            if (!interceptNewSessionEntry(href)) params.navigateToNewSession(href);
+        },
     });
 }

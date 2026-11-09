@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { peekTempData, storeTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
-import { SessionAuthoringExecutionTargetV2Schema } from '@happier-dev/protocol';
+import { SessionAuthoringExecutionTargetV2Schema } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 
 import {
     buildNewSessionPickerFallbackHref,
@@ -11,6 +11,10 @@ import {
 } from './setNewSessionPickerReturnParams';
 
 describe('pickNewSessionRouteParams', () => {
+    it('preserves the embedded host identity across nested picker routes', () => {
+        expect(pickNewSessionRouteParams({ newSessionHostDraftId: 'host-draft', unrelated: 'drop' }))
+            .toEqual({ newSessionHostDraftId: 'host-draft' });
+    });
     it('preserves a no-folder choice on the pushed folder picker round trip', () => {
         expect(pickNewSessionRouteParams({ directoryKind: 'managed', directory: undefined }))
             .toEqual({ directoryKind: 'managed' });
@@ -123,7 +127,41 @@ describe('resolveNewSessionPickerReturnRouteKey', () => {
 });
 
 describe('setNewSessionPickerReturnParams', () => {
-    it('returns reviewed managed intent through the existing one-shot draft channel', () => {
+    it('returns a picker result to its live embedded host before considering a stacked /new route', () => {
+        const dispatch = vi.fn();
+        const replace = vi.fn();
+        const returnToHost = vi.fn(() => true);
+        const result = setNewSessionPickerReturnParams({
+            navigation: { dispatch, getState: () => ({ index: 1, routes: [
+                { key: 'old-new', name: '(app)/new/index' },
+                { key: 'picker', name: '(app)/new/pick/profile-edit' },
+            ] }) },
+            router: { replace },
+            currentParams: { newSessionHostDraftId: 'host-draft' },
+            routeParams: { profileId: 'saved-profile' },
+            returnToHost,
+        });
+        expect(result).toBe('dispatch');
+        expect(returnToHost).toHaveBeenCalledWith('host-draft', { profileId: 'saved-profile' });
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(replace).not.toHaveBeenCalled();
+    });
+    it('retains the route fallback when the embedded draft is no longer hosted', () => {
+        const replace = vi.fn();
+        const returnToHost = vi.fn(() => false);
+        const result = setNewSessionPickerReturnParams({
+            navigation: { dispatch: vi.fn(), getState: () => ({ routes: [] }) },
+            router: { replace },
+            currentParams: { newSessionHostDraftId: 'retired-draft', draftId: 'retired-draft' },
+            routeParams: { profileId: 'saved-profile' },
+            returnToHost,
+        });
+        expect(result).toBe('replace');
+        expect(replace).toHaveBeenCalledWith({ pathname: '/new', params: {
+            newSessionHostDraftId: 'retired-draft', draftId: 'retired-draft', profileId: 'saved-profile',
+        } });
+    });
+    it.each([false, true])('returns reviewed managed intent through the existing one-shot draft channel (send: %s)', send => {
         const selection = createManagedMachineSelectionDraft({ selection: { kind: 'preset', homeId: 'srv_home', id: 'recipe', revision: 3 },
             receipt: { controller: { machineId: 'controller', installationId: 'installation' },
                 launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Work', choices: {} },
@@ -135,10 +173,10 @@ describe('setNewSessionPickerReturnParams', () => {
         setNewSessionPickerReturnParams({ navigation: { dispatch, getState: () => ({ index: 1, routes: [
             { key: 'composer', name: '(app)/new/index' }, { key: 'picker', name: '(app)/new/pick/machine' },
         ] }) }, router: { replace: vi.fn() }, currentParams: { dataId }, routeParams: { machineId: undefined, spawnServerId: 'home' },
-            managedMachineSelection: selection });
+            managedMachineSelection: selection, managedMachineUseOptions: { send } });
         const returnedDataId = dispatch.mock.calls[0][0].payload.params.dataId as string;
         expect(peekTempData<NewSessionData>(returnedDataId)).toEqual(expect.objectContaining({
-            prompt: 'Keep my prompt', executionTarget: null, managedMachineSelection: selection,
+            prompt: 'Keep my prompt', executionTarget: null, managedMachineSelection: selection, managedMachineUseOptions: { send },
         }));
         expect(peekTempData<NewSessionData>(returnedDataId)?.machineId).toBeUndefined();
         const temporaryTarget = SessionAuthoringExecutionTargetV2Schema.parse({
@@ -152,6 +190,7 @@ describe('setNewSessionPickerReturnParams', () => {
         expect(peekTempData<NewSessionData>(temporaryDataId)).toEqual(expect.objectContaining({
             prompt: 'Keep my prompt', executionTarget: temporaryTarget, managedMachineSelection: null,
         }));
+        expect(peekTempData<NewSessionData>(temporaryDataId)?.managedMachineUseOptions).toBeUndefined();
         setNewSessionPickerReturnParams({ navigation: { dispatch, getState: () => ({ index: 1, routes: [
             { key: 'composer', name: '(app)/new/index' }, { key: 'picker', name: '(app)/new/pick/machine' },
         ] }) }, router: { replace: vi.fn() }, currentParams: { dataId: returnedDataId }, routeParams: { machineId: 'chosen' },

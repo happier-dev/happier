@@ -1,3 +1,4 @@
+import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import { useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
 import React from 'react';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
@@ -22,7 +23,7 @@ import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
 import { ProfilesList } from '@/components/profiles/ProfilesList';
 import { useDeleteAiLaunchProfile, useProfileFavoriteIdsMutable } from '@/sync/store/settingsWriters';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
-import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
+import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
@@ -30,21 +31,24 @@ import { PopoverScope } from '@/components/ui/popover';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { buildSecretRequirementRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { buildProfileEditPickerRouteParams } from '@/components/sessions/new/navigation/buildProfileEditPickerRouteParams';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { Icon } from '@/components/ui/icons/Icon';
 
 export default React.memo(function ProfilePickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         agentType?: string;
+        newSessionHostDraftId?: string;
         backendTarget?: string;
         backendTargetKey?: string;
         dataId?: string;
@@ -56,16 +60,15 @@ export default React.memo(function ProfilePickerScreen() {
         spawnServerId?: string;
     }>();
     const useProfiles = useSetting('useProfiles');
-    const [secrets, setSecrets] = useSavedSecretsMutable();
+    const { personalSecrets: secrets } = useSavedSecretCatalog();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const deleteAiLaunchProfile = useDeleteAiLaunchProfile();
     const profiles = useAiLaunchProfilesForLegacyUi();
     const [favoriteProfileIds, setFavoriteProfileIds] = useProfileFavoriteIdsMutable();
+    const remembered = useLastUsedBackendSelection();
     const settings = useSettingsSelector((settings) => ({
-        lastUsedAgent: settings.lastUsedAgent,
-        lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
+    }), ["backendEnabledByTargetKey"]);
 
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
     const dataId = typeof params.dataId === 'string' ? params.dataId : undefined;
@@ -90,16 +93,17 @@ export default React.memo(function ProfilePickerScreen() {
     }, [params]);
     const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        // The backend preference reads Agent declarations only.
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId: machineId ?? null,
         serverId: spawnServerId,
         enabled: Boolean(machineId),
-        staleMs: 60_000,
     });
     const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
         return resolvePreferredBackendTargetFromProjection({
-            lastUsedAgent: settings.lastUsedAgent,
-            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            lastUsedAgent: remembered.lastUsedAgent,
+            lastUsedBackendTarget: remembered.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSnapshot: acpCatalog && !acpCatalog.stale ? acpCatalog.catalog : undefined,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
@@ -108,8 +112,8 @@ export default React.memo(function ProfilePickerScreen() {
         daemonMergedProjection.inputs,
         acpCatalog,
         settings.backendEnabledByTargetKey,
-        settings.lastUsedAgent,
-        settings.lastUsedBackendTarget,
+        remembered.lastUsedAgent,
+        remembered.lastUsedBackendTarget,
     ]);
     const roundTripBackendParams = React.useMemo(() => {
         const roundTripFallbackTarget = resolveRouteCloseoutFallbackTarget({
@@ -136,6 +140,7 @@ export default React.memo(function ProfilePickerScreen() {
             router,
             routeParams: next,
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: {
                 ...roundTripBackendParams,
                 ...(dataId ? { dataId } : {}),
@@ -147,7 +152,7 @@ export default React.memo(function ProfilePickerScreen() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [currentRouteParams, dataId, machineId, navigation, roundTripBackendParams, router, spawnServerId]);
+    }, [returnToHost, currentRouteParams, dataId, machineId, navigation, roundTripBackendParams, router, spawnServerId]);
 
     React.useEffect(() => {
         if (hasUsableRouteState) return;
@@ -231,6 +236,7 @@ export default React.memo(function ProfilePickerScreen() {
             router.push({
                 pathname: '/new/pick/secret-requirement',
                 params: {
+                    ...(params.newSessionHostDraftId ? { newSessionHostDraftId: params.newSessionHostDraftId } : {}),
                     ...roundTripBackendParams,
                     ...buildSecretRequirementRouteParams({
                         dataId: dataId ?? null,
@@ -286,17 +292,16 @@ export default React.memo(function ProfilePickerScreen() {
                 secretEnvVarName: requiredSecretName,
                 secretEnvVarNames: requiredSecretNames,
                 machineId: machineId ?? null,
-                secrets,
                 defaultSecretId: secretBindingsByProfileId[profile.id]?.[requiredSecretName] ?? null,
                 defaultSecretIdByEnvVarName: secretBindingsByProfileId[profile.id] ?? null,
-                onChangeSecrets: setSecrets,
+                allowManage: true,
                 allowSessionOnly: true,
                 onResolve: handleResolve,
             },
             onRequestClose: () => handleResolve({ action: 'cancel' }),
             closeOnBackdrop: true,
         });
-    }, [dataId, machineId, roundTripBackendParams, router, secretBindingsByProfileId, secrets, setParamsOnPreviousAndClose, setSecretBindingsByProfileId, setSecrets, spawnServerId]);
+    }, [dataId, machineId, params.draftId, params.newSessionHostDraftId, roundTripBackendParams, router, secretBindingsByProfileId, setParamsOnPreviousAndClose, setSecretBindingsByProfileId, spawnServerId]);
 
     const handleProfilePress = React.useCallback(async (profile: AIBackendProfile) => {
         profilePreviewRequest.current?.abort();
@@ -395,16 +400,19 @@ export default React.memo(function ProfilePickerScreen() {
     const pushProfileEdit = React.useCallback((nextParams: Readonly<Record<string, string>>) => {
         router.push({
             pathname: '/new/pick/profile-edit',
-            params: buildProfileEditPickerRouteParams({
-                backendTargetRouteParams: roundTripBackendParams,
-                dataId,
-                draftId: params.draftId,
-                machineId,
-                spawnServerId: spawnServerId ?? undefined,
-                nextParams,
-            }),
+            params: {
+                ...buildProfileEditPickerRouteParams({
+                    backendTargetRouteParams: roundTripBackendParams,
+                    dataId,
+                    draftId: params.draftId,
+                    machineId,
+                    spawnServerId: spawnServerId ?? undefined,
+                    nextParams,
+                }),
+                ...(params.newSessionHostDraftId ? { newSessionHostDraftId: params.newSessionHostDraftId } : {}),
+            },
         });
-    }, [dataId, machineId, params.draftId, roundTripBackendParams, router, spawnServerId]);
+    }, [dataId, machineId, params.draftId, params.newSessionHostDraftId, roundTripBackendParams, router, spawnServerId]);
 
     const openProfileCreate = React.useCallback(() => {
         pushProfileEdit({});
@@ -459,7 +467,6 @@ export default React.memo(function ProfilePickerScreen() {
             onPress={handleBackPress}
         />
     ), [handleBackPress]);
-    const presentation = useNewSessionPickerRoutePresentation();
 
     const screenOptions = React.useCallback(() => {
         return {
@@ -467,10 +474,9 @@ export default React.memo(function ProfilePickerScreen() {
             title: t('profiles.title'),
             headerTitle: t('profiles.title'),
             headerBackTitle: t('common.back'),
-            presentation,
             headerLeft,
         } as const;
-    }, [headerLeft, presentation]);
+    }, [headerLeft]);
 
     return (
         <PopoverScope>

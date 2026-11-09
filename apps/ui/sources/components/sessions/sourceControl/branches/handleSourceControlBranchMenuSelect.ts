@@ -3,6 +3,7 @@ import type { Router } from 'expo-router';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { interceptNewSessionEntry } from '@/components/sessions/new/navigation/newSessionEntry';
 
 export type SourceControlBranchMenuMachineTarget = Readonly<{
     machineId: string;
@@ -44,10 +45,13 @@ export async function handleSourceControlBranchMenuSelect(input: Readonly<{
             },
             scope: lifetime.scope,
             isCurrent: lifetime.isCurrent,
-            navigateToNewSession: ({ draftId, worktree }) => input.router.push({
-                pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId, worktree,
-                    ...(!input.machineTarget?.machineId ? { targetServerId: input.targetServerId } : {}) }),
-            }),
+            navigateToNewSession: ({ draftId, worktree }) => {
+                const href = {
+                    pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId, worktree,
+                        ...(!input.machineTarget?.machineId ? { targetServerId: input.targetServerId } : {}) }),
+                } as const;
+                if (!interceptNewSessionEntry(href)) input.router.push(href);
+            },
         });
         return;
     }

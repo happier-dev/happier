@@ -16,6 +16,7 @@ import {
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { useProjectAccountRows, useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { resolveWorkspaceSyncRelationshipStateLabel, type WorkspaceSyncRelationshipStateLabelKey } from './workspaceSyncPresentation';
 
 function scopeFor(summary: WorkspaceSyncRelationshipSummary): WorkspaceSyncStatusScope {
     const controllerEndpoint = [summary.alpha, summary.beta].find(
@@ -112,4 +113,18 @@ export function useWorkspaceSyncRelationshipSummaries(
 
 export function resolveWorkspaceSyncStatusScope(summary: WorkspaceSyncRelationshipSummary): WorkspaceSyncStatusScope {
     return scopeFor(summary);
+}
+
+/**
+ * The one human state of a link, for every surface that names it (its row and its Details): the
+ * summary's live status plus whether the controller's status read failed, read from the status
+ * store this module subscribes for those surfaces.
+ */
+export function resolveWorkspaceSyncSummaryStateLabel(summary: WorkspaceSyncRelationshipSummary): WorkspaceSyncRelationshipStateLabelKey {
+    return resolveWorkspaceSyncRelationshipStateLabel({
+        enabled: summary.relationship.enabled,
+        statusState: summary.status?.state,
+        errorCode: summary.status?.errorCode,
+        statusPhase: getWorkspaceSyncStatusSnapshot(scopeFor(summary)).phase,
+    });
 }

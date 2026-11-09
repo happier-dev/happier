@@ -4,7 +4,8 @@ import * as React from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Fonts from 'expo-font';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
-import { Slot, Stack, usePathname, useRouter } from 'expo-router';
+import { Slot, Stack } from 'expo-router';
+import { useCurrentRoutePathname } from '@/components/appShell/workspace/currentRouteLocation';
 import { ctx } from 'expo-router/_ctx';
 import { registerWorkspaceRouteContext } from '@/components/appShell/workspace/workspaceRouteContext';
 import {
@@ -17,6 +18,8 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarNavigator } from '@/components/navigation/shell/SidebarNavigator';
+import { HorizontalSafeAreaRoot } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { WindowFoldMetricsProvider } from '@/utils/platform/useWindowFoldMetrics';
 import sodium from '@/encryption/libsodium.lib';
 import { View, Platform } from 'react-native';
 import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneModalProvider';
@@ -39,7 +42,11 @@ import { VoiceEnergyAppProvider } from '@/components/voice/light/VoiceEnergyAppP
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
 import { BotsRosterRuntimeProvider } from '@/components/sessions/bots/BotsRosterRuntime';
 import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
+import { NewSessionShellHostProvider } from '@/components/sessions/new/navigation/newSessionEntry';
+import { NewSessionDockedHost } from '@/components/sessions/new/components/NewSessionDockedHost';
 import { WorkspaceAppShellProvider } from '@/components/appShell/workspace/WorkspaceAppShellProvider';
+import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { BrowserPresentationRetentionProvider } from '@/components/browser/surfaces/browserPresentationRetention';
 import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
@@ -54,9 +61,9 @@ import { configureBugReportUserActionTrail } from '@/utils/system/bugReportActio
 import { AsyncLock } from '@/utils/system/lock';
 import { useWebUiFontScale } from '@/components/ui/text/useWebUiFontScale';
 import { GlassMaterialRuntime } from '@/components/ui/glass/GlassMaterialRuntime';
-import { GlassNavigationThemeProvider } from '@/components/ui/glass/GlassNavigationThemeProvider';
-import { SurfaceFinishRuntime } from '@/theme/SurfaceFinishRuntime';
+import { ThemeProfileRuntimeSync } from '@/theme/ThemeProfileRuntimeSync';
 import { useWebRootCanvasPresentation } from '@/theme/useWebRootCanvasPresentation';
+import { GlassNavigationThemeProvider } from '@/components/ui/glass/GlassNavigationThemeProvider';
 import { initializeSentryOnce, wrapWithSentryIfEnabled } from '@/utils/system/sentry';
 import { t } from '@/text';
 import { preloadTranslations } from '@/text/i18n';
@@ -82,9 +89,9 @@ import { useIsTablet } from '@/utils/platform/responsive';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { resolveDesktopAppWindowBootCredentials, runDesktopAppWindowBootSequence } from '@/desktop/window/appWindowBoot';
-import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
+import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 import { installWebFontFaces } from '@/platform/installWebFontFaces';
 import { AppPresentationPlatformProvider } from '@/components/ui/presentation/AppPresentationPlatformProvider';
@@ -481,20 +488,6 @@ if (shouldCaptureRnwUnexpectedTextNodeStacks()) {
     installReactNativeViewRenderUnexpectedTextNodeCaptureOnce();
 }
 
-// Component to apply horizontal safe area padding
-function HorizontalSafeAreaWrapper({ children }: { children: React.ReactNode }) {
-    const insets = useChromeSafeAreaInsets();
-    return (
-        <View style={{
-            flex: 1,
-            paddingLeft: insets.left,
-            paddingRight: insets.right
-        }}>
-            {children}
-        </View>
-    );
-}
-
 let lock = new AsyncLock();
 let loaded = false;
 let suppressFontTimeoutErrorsUntilMs = 0;
@@ -698,7 +691,7 @@ function FullAppRootLayout() {
         <AppPresentationPlatformProvider>
             <CompanionNoDragRegionProvider>
             <GlassMaterialRuntime>
-            {!embedWindowContext ? <SurfaceFinishRuntime /> : null}
+            <ThemeProfileRuntimeSync enabled={!embedWindowContext} />
             <WebCryptoStartupGate>
                 <AppCrashRecoveryBoundary
                     onRestart={onRestart}
@@ -719,18 +712,54 @@ function FullAppRootLayout() {
     );
 }
 
+/** Recovery enters through the same retained-destination owner as ordinary navigation. */
+function RestartBugReportNavigation(props: Readonly<{ pending: boolean; onDispatched: () => void }>) {
+    const router = useDestinationRouter();
+    const workspace = useOptionalWorkspaceNavigation();
+    // The provider also exists on native, where the stack owns navigation and
+    // an inactive workspace is not a hydration barrier for that stack.
+    const ready = Platform.OS !== 'web' || workspace?.active === true;
+    React.useEffect(() => {
+        if (!props.pending || !ready) return;
+        try {
+            router.push('/settings/report-issue');
+            props.onDispatched();
+        } catch {
+            console.warn('[bug-report] Could not open the saved crash report');
+        }
+    }, [props.onDispatched, props.pending, ready, router]);
+    return null;
+}
+
 function AppBoot() {
     //
     // Init sequence
     //
-    const router = useRouter();
-    const pathname = usePathname();
+    const pathname = useCurrentRoutePathname();
     const isDesktopOverlayWindow = desktopWindowContext.role === 'presenter';
     const primaryRealm = desktopWindowContext.role === 'primary';
     const fullChrome = desktopWindowContext.chrome === 'full';
     const [initState, setInitState] = React.useState<AppBootReadyState | null>(null);
+    const bootReady = initState !== null;
     const [bootError, setBootError] = React.useState<Error | null>(null);
-    const restartBugReportCheckedRef = React.useRef(false);
+    const [restartBugReportPending, setRestartBugReportPending] = React.useState(false);
+    const restartBugReportIntent = React.useRef<Promise<boolean> | null>(null);
+    const onRestartBugReportDispatched = React.useCallback(() => setRestartBugReportPending(false), []);
+
+    React.useEffect(() => {
+        if (!bootReady || !primaryRealm) return;
+        let current = true;
+        // Account/catalog admission can withdraw the workspace subtree. Keep its
+        // one-time recovery request here until that owner can accept navigation.
+        restartBugReportIntent.current ??= consumeRestartBugReportIntent();
+        void restartBugReportIntent.current.then((requested) => {
+            if (current) setRestartBugReportPending(requested);
+        }).catch(() => {
+            console.warn('[bug-report] Could not read the restart report intent');
+        });
+        return () => { current = false; };
+    }, [bootReady, primaryRealm]);
+
     const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
 
     React.useEffect(() => {
@@ -765,28 +794,6 @@ function AppBoot() {
             cancelled = true;
         };
     }, [isDesktopOverlayWindow]);
-
-    React.useEffect(() => {
-        if (!initState) return;
-        if (restartBugReportCheckedRef.current) return;
-        restartBugReportCheckedRef.current = true;
-
-        let cancelled = false;
-        (async () => {
-            try {
-                const shouldOpenBugReport = await consumeRestartBugReportIntent();
-                if (!shouldOpenBugReport) return;
-                if (cancelled) return;
-                router.push('/(app)/settings/report-issue');
-            } catch {
-                // ignore
-            }
-        })();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [initState, router]);
 
     React.useEffect(() => {
         if (initState) {
@@ -832,19 +839,17 @@ function AppBoot() {
 
     const appContent = (
         <ThemePreferenceTransitionHost>
-            <HorizontalSafeAreaWrapper>
-                <MainAppTabStateProvider>
-                    <CurrentUiContextProvider>
-                        <CurrentUiContextActionHost />
-                        <OrganizationPolicyDiagnostic />
-                        {/* Routes and hosted workspace destinations share the retained source owner.
-                            Keep its portal beneath the same keyboard and current-UI contexts. */}
-                        <BrowserPresentationRetentionProvider>
-                            {appShellWithRootDesktopDragSurface}
-                        </BrowserPresentationRetentionProvider>
-                    </CurrentUiContextProvider>
-                </MainAppTabStateProvider>
-            </HorizontalSafeAreaWrapper>
+            <HorizontalSafeAreaRoot>
+                <CurrentUiContextActionHost />
+                <OrganizationPolicyDiagnostic />
+                {/* Routes and hosted workspace destinations share the retained source owner.
+                    Keep its portal beneath the same keyboard and current-UI contexts. */}
+                <BrowserPresentationRetentionProvider>
+                    {fullChrome && !isTerminalConnectRoute
+                        ? <NewSessionDockedHost>{appShellWithRootDesktopDragSurface}</NewSessionDockedHost>
+                        : appShellWithRootDesktopDragSurface}
+                </BrowserPresentationRetentionProvider>
+            </HorizontalSafeAreaRoot>
         </ThemePreferenceTransitionHost>
     );
     /*
@@ -857,6 +862,7 @@ function AppBoot() {
         <SafeAreaProvider initialMetrics={initialWindowMetrics}>
             <KeyboardProvider>
                 <GestureHandlerRootView style={{ flex: 1 }}>
+                    <WindowFoldMetricsProvider>
                     {/*
                       * Keyed on the boot auth generation: `0` on every normal boot, so the key never
                       * changes and nothing remounts. It only advances when a keychain read that missed
@@ -870,19 +876,27 @@ function AppBoot() {
                                 <WebServerOverrideGate>
                                 <ConcurrentSessionCacheRuntime>
                                 <SessionCockpitChromeRegistryProvider>
-                                <BotsRosterRuntimeProvider>
                                 <WorkspaceAppShellProvider>
+                                {primaryRealm ? <RestartBugReportNavigation pending={restartBugReportPending} onDispatched={onRestartBugReportDispatched} /> : null}
+                                <NewSessionShellHostProvider>
+                                <MainAppTabStateProvider>
+                                <CurrentUiContextProvider>
+                                <BotsRosterRuntimeProvider>
                                 <CommandPaletteProvider>
                                     {appContent}
                                 </CommandPaletteProvider>
-                                </WorkspaceAppShellProvider>
                                 </BotsRosterRuntimeProvider>
+                                </CurrentUiContextProvider>
+                                </MainAppTabStateProvider>
+                                </NewSessionShellHostProvider>
+                                </WorkspaceAppShellProvider>
                                 </SessionCockpitChromeRegistryProvider>
                                 </ConcurrentSessionCacheRuntime>
                                 </WebServerOverrideGate>
                             </AppPaneModalProvider>
                         </GlassNavigationThemeProvider>
                     </AuthProvider>
+                    </WindowFoldMetricsProvider>
                 </GestureHandlerRootView>
             </KeyboardProvider>
         </SafeAreaProvider>

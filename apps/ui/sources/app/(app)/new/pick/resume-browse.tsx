@@ -1,3 +1,4 @@
+import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import React from 'react';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
@@ -8,6 +9,7 @@ import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { getResolvedBackendCatalogEntries, resolveBackendTargetOperationalAgentId } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { ExternalSessionsBrowseScreen } from '@/components/sessions/external/browse/ExternalSessionsBrowseScreen';
 import { ExternalSessionsBrowseRouteGate } from '@/components/sessions/external/browse/ExternalSessionsBrowseRouteGate';
@@ -16,15 +18,16 @@ import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } f
 import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { normalizeOptionalParam } from '@/profileRouteParams';
 import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/domains/state/storage';
+import { useExternalSessionBrowseSettings } from '@/agents/catalog/useAgentUiSettings';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useProfile as useAccountProfile } from '@/sync/store/hooks';
-import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -32,6 +35,7 @@ import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTarget
 type RouteParamValue = string | string[] | undefined;
 type ResumeBrowseRouteParams = Readonly<{
     agentType?: AgentId | string | string[];
+    newSessionHostDraftId?: string;
     providerId?: string | string[];
     backendTarget?: string | string[];
     backendTargetKey?: string | string[];
@@ -60,8 +64,10 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
     params: ResumeBrowseRouteParams;
 }>) {
     const router = useRouter();
+    const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
-    const settings = useSettings() ?? settingsDefaults;
+    const remembered = useLastUsedBackendSelection();
+    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const accountProfile = useAccountProfile();
     const params = props.params;
 
@@ -84,6 +90,8 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
         return directParam || null;
     }, [params.serverId, params.spawnServerId]);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        // Backend entries and external-session sources read Agent declarations only.
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId: effectiveMachineId,
         serverId: effectiveServerId,
     });
@@ -92,9 +100,9 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
     const catalogReady = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale;
     const resolvedBackendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
-            enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: settings.backendEnabledByTargetKey }),
+            enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: backendEnabledByTargetKey }),
             acpCatalogSnapshot: acpCatalog?.catalog,
-            backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+            backendEnabledByTargetKey: backendEnabledByTargetKey,
             collapseConfiguredBackendProviderSentinels: true,
             mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
             mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
@@ -105,7 +113,7 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
         daemonMergedProjectionInputs?.mergedBackendProjectionById,
         daemonMergedProjectionInputs?.mergedProviderProjectionById,
         acpCatalog,
-        settings.backendEnabledByTargetKey,
+        backendEnabledByTargetKey,
     ]);
     const routeBackendTarget = React.useMemo(() => {
         return resolveBackendTargetFromRouteParams({
@@ -119,10 +127,10 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
             tempBackendTarget: tempSessionData?.backendTarget ?? null,
             routeBackendTarget,
             availableBackendTargets: resolvedBackendEntries.map((entry) => entry.backendTarget),
-            lastUsedAgent: settings.lastUsedAgent,
-            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            lastUsedAgent: remembered.lastUsedAgent,
+            lastUsedBackendTarget: remembered.lastUsedBackendTarget,
         });
-    }, [resolvedBackendEntries, routeBackendTarget, settings.lastUsedAgent, settings.lastUsedBackendTarget, tempSessionData?.backendTarget]);
+    }, [resolvedBackendEntries, routeBackendTarget, remembered.lastUsedAgent, remembered.lastUsedBackendTarget, tempSessionData?.backendTarget]);
     const effectiveBackendTargetKey = React.useMemo(() => {
         return resolveBackendTargetKeyV2(effectiveBackendTarget);
     }, [effectiveBackendTarget]);
@@ -165,6 +173,7 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
      */
     const awaitingProjection = !catalogReady || daemonMergedProjection.phase === 'loading';
 
+    const settings = useExternalSessionBrowseSettings(daemonMergedProjectionInputs?.pluginProjectionV2, operationalAgentId ? [operationalAgentId] : []);
     const lockScope = React.useMemo(() => {
         if (!catalogReady) return null;
         if (!effectiveMachineId) return null;
@@ -228,6 +237,7 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
                                     resumeSessionId: remoteSessionId,
                                 },
                                 currentParams: currentRouteParams,
+                                returnToHost,
                                 replaceParams: {
                                     ...roundTripBackendParams,
                                     ...(normalizeNonEmptyParam(params.dataId) ? { dataId: normalizeNonEmptyParam(params.dataId) } : {}),

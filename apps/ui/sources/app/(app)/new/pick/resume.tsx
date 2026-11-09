@@ -1,3 +1,4 @@
+import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import React from 'react';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
@@ -8,23 +9,25 @@ import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } fr
 import { getResolvedBackendCatalogEntries, resolveBackendTargetOperationalAgentId, resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import { openExternalSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal';
 import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { resolveResumePickerBackendTarget } from '@/components/sessions/new/navigation/resolveResumePickerBackendTarget';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { canBrowseExternalSessions, resolveExternalSessionBrowseLockedSource } from '@/components/sessions/external/browse/resolveExternalSessionBrowseLockedSourceOption';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/domains/state/storage';
+import { useExternalSessionBrowseSettings } from '@/agents/catalog/useAgentUiSettings';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useProfile as useAccountProfile } from '@/sync/store/hooks';
-import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
@@ -44,9 +47,11 @@ function resolveExplicitSelectedBuiltInAgentId(
 
 export default function ResumePickerScreen() {
     const router = useRouter();
+    const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
     const modalPortalTarget = useModalPortalTarget();
-    const settings = useSettings() ?? settingsDefaults;
+    const remembered = useLastUsedBackendSelection();
+    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const accountProfile = useAccountProfile();
     const params = useLocalSearchParams<{
         currentResumeId?: string;
@@ -83,6 +88,8 @@ export default function ResumePickerScreen() {
         serverId: effectiveServerId,
     });
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        // Backend entries and external-session sources read Agent declarations only.
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId: effectiveMachineId,
         serverId: effectiveServerId,
     });
@@ -91,9 +98,9 @@ export default function ResumePickerScreen() {
     const catalogReady = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale;
     const resolvedBackendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
-            enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: settings.backendEnabledByTargetKey }),
+            enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: backendEnabledByTargetKey }),
             acpCatalogSnapshot: acpCatalog?.catalog,
-            backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+            backendEnabledByTargetKey: backendEnabledByTargetKey,
             collapseConfiguredBackendProviderSentinels: true,
             mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
             mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
@@ -104,8 +111,9 @@ export default function ResumePickerScreen() {
         daemonMergedProjectionInputs?.mergedBackendProjectionById,
         daemonMergedProjectionInputs?.mergedProviderProjectionById,
         acpCatalog,
-        settings.backendEnabledByTargetKey,
+        backendEnabledByTargetKey,
     ]);
+    const settings = useExternalSessionBrowseSettings(daemonMergedProjectionInputs?.pluginProjectionV2, resolvedBackendEntries.map(entry => entry.agentId));
     const routeBackendTarget = React.useMemo(() => {
         return resolveBackendTargetFromRouteParams({
             backendTarget: params.backendTarget,
@@ -118,10 +126,10 @@ export default function ResumePickerScreen() {
             tempBackendTarget: tempSessionData?.backendTarget ?? null,
             routeBackendTarget,
             availableBackendTargets: resolvedBackendEntries.map((entry) => entry.backendTarget),
-            lastUsedAgent: settings.lastUsedAgent,
-            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            lastUsedAgent: remembered.lastUsedAgent,
+            lastUsedBackendTarget: remembered.lastUsedBackendTarget,
         });
-    }, [resolvedBackendEntries, routeBackendTarget, settings.lastUsedAgent, settings.lastUsedBackendTarget, tempSessionData?.backendTarget]);
+    }, [resolvedBackendEntries, routeBackendTarget, remembered.lastUsedAgent, remembered.lastUsedBackendTarget, tempSessionData?.backendTarget]);
     const effectiveBackendTargetKey = React.useMemo(() => {
         return resolveBackendTargetKeyV2(effectiveBackendTarget);
     }, [effectiveBackendTarget]);
@@ -129,8 +137,8 @@ export default function ResumePickerScreen() {
         return resolvedBackendEntries.find((entry) => entry.backendTargetKey === effectiveBackendTargetKey) ?? null;
     }, [effectiveBackendTargetKey, resolvedBackendEntries]);
     const explicitSelectedBuiltInAgentId = React.useMemo(() => {
-        return resolveExplicitSelectedBuiltInAgentId(params.agentType, settings.lastUsedAgent);
-    }, [params.agentType, settings.lastUsedAgent]);
+        return resolveExplicitSelectedBuiltInAgentId(params.agentType, remembered.lastUsedAgent);
+    }, [params.agentType, remembered.lastUsedAgent]);
     const staticAgentId = React.useMemo<AgentId | null>(() => {
         if (selectedBackendEntry?.catalogAgentId) {
             return selectedBackendEntry.catalogAgentId;
@@ -142,14 +150,14 @@ export default function ResumePickerScreen() {
             }
             return resolvePersistedAgentIdForBackendTarget({
                 backendTarget: effectiveBackendTarget,
-                persistedAgentId: params.agentType ?? settings.lastUsedAgent,
+                persistedAgentId: params.agentType ?? remembered.lastUsedAgent,
                 selectedBuiltInAgentId: explicitSelectedBuiltInAgentId,
             });
         }
         return effectiveBackendTarget.kind === 'agent'
             ? resolveBundledAgentIdFromContributionIdentity(effectiveBackendTarget.identity)
             : resolveCatalogAgentIdForBackendTarget(effectiveBackendTarget);
-    }, [effectiveBackendTarget, explicitSelectedBuiltInAgentId, params.agentType, selectedBackendEntry?.catalogAgentId, settings.lastUsedAgent]);
+    }, [effectiveBackendTarget, explicitSelectedBuiltInAgentId, params.agentType, selectedBackendEntry?.catalogAgentId, remembered.lastUsedAgent]);
     const operationalAgentId = React.useMemo(() => {
         return resolveBackendTargetOperationalAgentId({
             backendTarget: effectiveBackendTarget,
@@ -200,6 +208,7 @@ export default function ResumePickerScreen() {
                 resumeSessionId: nextValue,
             },
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: {
                 ...roundTripBackendParams,
                 ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
@@ -211,7 +220,7 @@ export default function ResumePickerScreen() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [currentRouteParams, navigation, roundTripBackendParams, router, params.dataId, params.machineId, params.spawnServerId]);
+    }, [returnToHost, currentRouteParams, navigation, roundTripBackendParams, router, params.dataId, params.machineId, params.spawnServerId]);
 
     const handleClear = React.useCallback(() => {
         const returnMode = setNewSessionPickerReturnParams({
@@ -222,6 +231,7 @@ export default function ResumePickerScreen() {
                 resumeSessionId: '',
             },
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: {
                 ...roundTripBackendParams,
                 ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
@@ -233,7 +243,7 @@ export default function ResumePickerScreen() {
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
-    }, [currentRouteParams, navigation, roundTripBackendParams, router, params.dataId, params.machineId, params.spawnServerId]);
+    }, [returnToHost, currentRouteParams, navigation, roundTripBackendParams, router, params.dataId, params.machineId, params.spawnServerId]);
 
     React.useEffect(() => {
         if (hasUsableRouteState) return;

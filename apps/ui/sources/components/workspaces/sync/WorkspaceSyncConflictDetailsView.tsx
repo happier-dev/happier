@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import { useUnistyles } from 'react-native-unistyles';
 import type {
     ReadWorkspaceSyncFileResultV1,
@@ -9,7 +9,7 @@ import type {
     WorkspaceSyncConflictResolutionResultV1,
     WorkspaceSyncEntryExpectationV1,
     WorkspaceSyncPathSelectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { areWorkspaceSyncEntryExpectationsEqual } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
@@ -32,14 +32,15 @@ import {
     subscribeWorkspaceSyncConflicts,
 } from '@/sync/domains/sessionHandoff/workspaceSyncConflictStore';
 import { projectLoadedWorkspaceSyncConflicts, buildReviewedWorkspaceSyncResolution, isReviewedWorkspaceSyncResolutionCurrent, resolveWorkspaceSyncComparisonText } from '@/sync/domains/sessionHandoff/workspaceSyncConflictReviewModel';
-import { useWorkspaceSyncRelationshipSummaries, resolveWorkspaceSyncStatusScope } from '@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries';
+import { useWorkspaceSyncRelationshipSummaries, resolveWorkspaceSyncStatusScope, resolveWorkspaceSyncSummaryStateLabel } from '@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries';
 import { refreshWorkspaceSyncStatuses } from '@/sync/domains/sessionHandoff/workspaceSyncStatusStore';
-import { resolveWorkspaceSyncErrorTranslationKey, resolveWorkspaceSyncModeTranslationKey, resolveWorkspaceSyncRelationshipStateLabel } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
+import { formatWorkspaceSyncRelationshipTitle, resolveWorkspaceSyncErrorTranslationKey, resolveWorkspaceSyncModeTranslationKey } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { invokeDesktopHost, isDesktopHost } from '@/utils/platform/desktopHost';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX } from '@/utils/platform/viewportClass';
 
 export function usesWorkspaceSyncSplitComparison(width: number): boolean {
@@ -179,16 +180,18 @@ function selectionLabel(decision: WorkspaceSyncPathSelectionV1): string {
 
 function WorkspaceSyncRecoveryLocation(props: Readonly<{
     path: string;
+    serverId?: string | null;
     machineId: string | null;
     machineLabel: string;
 }>) {
+    const actionExecution = useMountedActionExecution(props.serverId);
     const localMachineId = useLocalDaemonControl().status?.machineId ?? null;
     const canReveal = isDesktopHost() && localMachineId !== null && localMachineId === props.machineId;
     return <View style={{ gap: 8 }}>
         <Item title={t('workspaceSync.review.recoveryNeeded')}
             subtitle={`${props.machineLabel} · ${props.path}`} copy={props.path} subtitleLines={0} showChevron={false} />
         {canReveal ? <RoundButton size="normal" display="inverted" title={t('workspaceSync.legacyRecovery.openFolder')}
-            onPress={() => { void invokeDesktopHost('system_tasks_open_log_path', { path: props.path }); }} /> : null}
+            onPress={() => { void actionExecution.execute('relay.runtime.open_path', { path: props.path }); }} /> : null}
     </View>;
 }
 
@@ -654,6 +657,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                                     subtitle={[resultLabel(endpoint.status), 'errorCode' in endpoint ? endpoint.errorCode : null].filter(Boolean).join(' · ')} mode="info" />)}
                                 {visibleOutcome.endpoints.flatMap((endpoint) => endpoint.status === 'recovery_needed' ? [
                                     <WorkspaceSyncRecoveryLocation key={`recovery:${endpoint.workspaceRefId}`}
+                                        serverId={currentServerId}
                                         path={endpoint.recoveryPath}
                                         machineId={endpointFor(endpoint.workspaceRefId)?.workspaceRef?.machineId ?? null}
                                         machineLabel={endpointLabel(endpoint.workspaceRefId)} />,
@@ -668,6 +672,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                                     copy={preserved.path} subtitleLines={0} mode="info" />)}
                                 {visibleOutcome.preserved?.flatMap((preserved) => preserved.outcome.status === 'recovery_needed' ? [
                                     <WorkspaceSyncRecoveryLocation key={`preserved-recovery:${preserved.alternativeIndex}`}
+                                        serverId={currentServerId}
                                         path={preserved.outcome.recoveryPath}
                                         machineId={endpointFor(preserved.destinationWorkspaceRefId)?.workspaceRef?.machineId ?? null}
                                         machineLabel={endpointLabel(preserved.destinationWorkspaceRefId)} />,
@@ -737,15 +742,13 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                 {summaries.map((summary) => {
                     const mode = resolveWorkspaceSyncModeTranslationKey(summary.relationship.mode);
                     const error = summary.status?.errorCode ? resolveWorkspaceSyncErrorTranslationKey(summary.status.errorCode) : null;
+                    // Named and stated exactly as its row on the page that opened it.
                     return <Item key={summary.relationshipId}
-                        title={`${summary.alpha.name} · ${summary.beta.name}`}
+                        title={formatWorkspaceSyncRelationshipTitle({ alphaLabel: summary.alpha.name, betaLabel: summary.beta.name,
+                            mode: summary.relationship.mode })} titleLines={2}
                         subtitle={[summary.relationshipId === props.resource.initialRelationshipId ? t('workspaceSync.error.needsAttention') : null,
-                            mode ? t(mode) : t('workspaceSync.unknownMode'), t(resolveWorkspaceSyncRelationshipStateLabel({
-                            enabled: summary.relationship.enabled,
-                            statusState: summary.status?.state,
-                            errorCode: summary.status?.errorCode,
-                            statusPhaseHasError: false,
-                        })), error ? t(error) : null].filter(Boolean).join(' · ')}
+                            mode ? t(mode) : t('workspaceSync.unknownMode'), t(resolveWorkspaceSyncSummaryStateLabel(summary)),
+                            error ? t(error) : null].filter(Boolean).join(' · ')}
                         mode="info" />;
                 })}
             </ItemGroup>
@@ -770,7 +773,8 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                 {scopes.length > 0 && projection.coverage.complete && !invalidated && projection.rows.length === 0
                     ? <Item title={t('workspaceSync.noConflicts')} mode="info" /> : null}
                 {scopes.length === 0 || !projection.coverage.complete || invalidated
-                    ? <Item title={t('workspaceSync.review.coverageIncomplete')} mode="info" /> : null}
+                    // A sentence, not a name: it is read whole, never clipped at the narrow sheet width.
+                    ? <Item title={t('workspaceSync.review.coverageIncomplete')} titleLines={0} mode="info" /> : null}
                 {snapshots.flatMap(({ scope, snapshot }) => snapshot.hasMore ? [<Item key={`more:${scope.relationshipId}`}
                     title={t('workspaceSync.review.moreOnLink', { name: relationshipLabel(scope.relationshipId) })}
                     loading={snapshot.phase === 'loading_more' || snapshot.phase === 'refreshing'}

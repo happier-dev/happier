@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';

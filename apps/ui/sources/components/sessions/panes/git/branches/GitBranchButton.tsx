@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Modal } from '@/modal';

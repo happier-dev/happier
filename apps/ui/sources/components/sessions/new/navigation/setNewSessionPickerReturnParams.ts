@@ -5,7 +5,7 @@ import {
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import { peekTempData, storeTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
-import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
+import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
 type RouteLike = Readonly<{
@@ -50,6 +50,7 @@ const NEW_SESSION_PARAM_KEYS = new Set([
     'draftOrigin',
     'machineId',
     'machinePoolId',
+    'newSessionHostDraftId',
     'path',
     'profileId',
     'previewMachineId',
@@ -194,6 +195,8 @@ export function setNewSessionPickerReturnParams(params: Readonly<{
     routeParams: RouteParams;
     currentParams?: RouteParams;
     replaceParams?: RouteParams;
+    /** The shell host applies results only while this exact draft is still open. */
+    returnToHost?: ((draftId: string, patch: Readonly<Record<string, unknown>>) => boolean) | null;
     /**
      * Rich target selected by a nested picker. It rides the existing one-shot
      * NewSessionData channel; route params remain routing/compatibility fields.
@@ -201,6 +204,7 @@ export function setNewSessionPickerReturnParams(params: Readonly<{
     authoringExecutionTarget?: SessionAuthoringExecutionTargetV2;
     /** Reviewed composer intent, never an acquisition. */
     managedMachineSelection?: ManagedMachineSelectionDraft | null;
+    managedMachineUseOptions?: NewSessionData['managedMachineUseOptions'];
 }>): 'dispatch' | 'replace' {
     const currentDataId = isNonEmptyString(params.currentParams?.dataId)
         ? params.currentParams.dataId
@@ -215,11 +219,16 @@ export function setNewSessionPickerReturnParams(params: Readonly<{
             machineId: undefined,
             executionTarget: params.managedMachineSelection ? null : params.authoringExecutionTarget,
             managedMachineSelection: params.managedMachineSelection ?? null,
+            managedMachineUseOptions: params.managedMachineSelection ? params.managedMachineUseOptions : undefined,
             temporaryComputerActivationRef: null,
         } satisfies NewSessionData);
     const routeParams = authoringDataId === null
         ? params.routeParams
         : { ...params.routeParams, dataId: authoringDataId };
+    const hostDraftId = params.currentParams?.newSessionHostDraftId;
+    if (isNonEmptyString(hostDraftId) && params.returnToHost?.(hostDraftId, routeParams)) {
+        return 'dispatch';
+    }
     const navigationState = params.navigation.getState();
     const targetRouteKey = resolveNewSessionPickerReturnRouteKey(navigationState);
     if (targetRouteKey) {

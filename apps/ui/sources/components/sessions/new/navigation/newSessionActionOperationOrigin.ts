@@ -1,12 +1,13 @@
 import { router } from 'expo-router';
 
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import type { ActionOperationReentryOrigin } from '@/components/inbox/actionOperations/actionOperationPresentationCoordinator';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationRequestAddressKey } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getSessionDraftSnapshot } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { interceptNewSessionEntry } from './newSessionEntry';
 
 function shouldReopenPersistedDraft(snapshot: ActionOperationSnapshotV1, scope: ServerAccountScope): boolean {
     if (snapshot.state === 'failed' || snapshot.state === 'cancelled') {
@@ -45,10 +46,10 @@ export function createNewSessionActionOperationOrigin(
             if (!getSessionDraftSnapshot(persistedDraftScope, { kind: 'newSession', draftId: persistedDraftId })) {
                 return null;
             }
-            return () => router.push({
-                pathname: '/new',
-                params: { draftId: persistedDraftId },
-            } as never);
+            return () => {
+                const href = { pathname: '/new', params: { draftId: persistedDraftId } } as const;
+                if (!interceptNewSessionEntry(href)) router.push(href);
+            };
         },
     });
 }

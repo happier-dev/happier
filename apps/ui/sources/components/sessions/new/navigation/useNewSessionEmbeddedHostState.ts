@@ -22,9 +22,12 @@ function paramsForDraft(entry: NewSessionHostDraftEntry): NewSessionHostParams {
  * After the surface hands its draft to a created session, the next time the page is focused it
  * starts a fresh draft with the same context, so returning never shows the draft already launched.
  */
-export function useNewSessionEmbeddedHostState(initialParams?: NewSessionHostParams): Readonly<{
+export function useNewSessionEmbeddedHostState(initialParams?: NewSessionHostParams, options?: Readonly<{
+    renewOnHandOff?: boolean;
+}>): Readonly<{
     host: NewSessionEmbeddedHost;
     markDemanded: () => void;
+    replaceParams: (params: NewSessionHostParams) => void;
 }> {
     const resolveOrdinaryEntry = useResolveNewSessionOrdinaryEntryRoute();
     // Contextual embeds start a separate draft; ordinary Home keeps its remembered entry.
@@ -46,9 +49,15 @@ export function useNewSessionEmbeddedHostState(initialParams?: NewSessionHostPar
             ? { ...initialParams, draftId: entry.draftId }
             : paramsForDraft(entry));
     }, [initialParams]);
+    const renewOnHandOff = options?.renewOnHandOff === true;
     const onHandedOff = React.useCallback(() => {
-        handedOffRef.current = true;
-    }, []);
+        if (renewOnHandOff) {
+            handedOffRef.current = false;
+            setParamsState(freshParams());
+        } else {
+            handedOffRef.current = true;
+        }
+    }, [freshParams, renewOnHandOff]);
     const markDemanded = React.useCallback(() => {
         setDemanded(true);
     }, []);
@@ -68,5 +77,5 @@ export function useNewSessionEmbeddedHostState(initialParams?: NewSessionHostPar
         demanded,
     }), [demanded, onHandedOff, openDraft, params, setParams, targetServerId]);
 
-    return { host, markDemanded };
+    return { host, markDemanded, replaceParams: setParamsState };
 }

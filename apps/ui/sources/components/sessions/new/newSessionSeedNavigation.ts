@@ -14,11 +14,14 @@ export async function openOrdinaryNewSessionSeed(params: Readonly<{
     scope: ServerAccountScope;
     signal?: AbortSignal;
     isCurrent: () => boolean;
+    /** The control that asked; a docked New Session seats in the pane that holds it. */
+    origin?: unknown;
 }>): Promise<SessionNewSessionSeedOutcome> {
     try {
-        const [{ seedAndOpenNewSession }, { router }] = await Promise.all([
+        const [{ seedAndOpenNewSession }, { router }, { interceptNewSessionEntry }] = await Promise.all([
             import('./newSessionSeedComposer'),
             import('expo-router'),
+            import('./navigation/newSessionEntry'),
         ]);
         const outcome = seedAndOpenNewSession({
             seed: params.seed,
@@ -30,7 +33,7 @@ export async function openOrdinaryNewSessionSeed(params: Readonly<{
             isCurrent: params.isCurrent,
             admitOrigin: origin => admitProjectAuthoringOrigin(origin, params.scope),
             navigateToNewSession: ({ dataId, draftId, worktree, spawnServerId, machineId, directory }) => {
-                router.push({
+                const href = {
                     pathname: '/new',
                     params: {
                         draftId,
@@ -44,7 +47,8 @@ export async function openOrdinaryNewSessionSeed(params: Readonly<{
                         ...(machineId === undefined ? {} : { machineId }),
                         ...(directory === undefined ? {} : { directory }),
                     },
-                });
+                } as const;
+                if (!interceptNewSessionEntry(href, params.origin)) router.push(href);
             },
         });
         if (outcome.kind === 'opened' && params.media) {

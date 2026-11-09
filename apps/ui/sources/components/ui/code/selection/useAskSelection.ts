@@ -5,10 +5,10 @@ import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/rev
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import { t } from '@/text';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useNewSessionEntryRouter as useRouter } from '@/components/sessions/new/navigation/newSessionEntry';
 import { askAboutRanges, type AskSelectionSessionTarget } from './askAboutRanges';
 import { askSelectionContext } from './askSelectionContext';
 import { buildAskSelectionQuote, type AskSelectionRange, type FilesAskWithoutSessionTarget } from './askSelectionModel';
@@ -19,11 +19,15 @@ export { askAboutRanges } from './askAboutRanges';
 export type { AskSelectionTargetContext } from './askSelectionTarget';
 export type { AskSelectionSource } from './askSelectionSource';
 
-export type AskSelection = AskSelectionRange & Readonly<{ text: string; rect?: Rect | null; collapsed?: boolean }>;
+export type AskSelection = AskSelectionRange & Readonly<{ text: string; rect?: Rect | null; collapsed?: boolean;
+    /** Stable source identity when identical text can be selected from different records. */
+    key?: string;
+}>;
 
 export type UseAskSelectionInput = Readonly<{
     scopeId: string;
-    workspaceScope: WorkspaceScopeBase;
+    /** Prose in a mounted Session needs no file/workspace context. */
+    workspaceScope: WorkspaceScopeBase | null;
     filePath?: string;
     source: AskSelectionSource;
     /** Markdown selection positions are source-file lines, not rendered rows. */
@@ -40,8 +44,20 @@ export type UseAskSelectionInput = Readonly<{
     openDetailsTab: AskSelectionTargetContext['openDetailsTab'];
     onComment?: (drafts: readonly ReviewCommentDraft[]) => void;
     onDetachedUnavailable?: (reason: string) => void;
+    /** A surface can handle its selection at the same keyboard/toolbar action boundary. Null uses Ask. */
+    onAskSelection?: (selection: AskSelection) => Promise<boolean> | null;
     active?: boolean;
 }>;
+
+/**
+ * A caret carries its line's text only so Ask can quote it, and Ask reads the live selection when it runs. The
+ * published state therefore changes when the caret moves to another line, not on each character typed into it.
+ */
+function sameSelectionState(previous: AskSelection | null, next: AskSelection | null): boolean {
+    if (previous === next) return true;
+    if (!previous || !next || previous.collapsed !== true || next.collapsed !== true) return false;
+    return previous.startLine === next.startLine && previous.endLine === next.endLine && previous.key === next.key;
+}
 
 type AskSelectionTargetInput = Readonly<Pick<UseAskSelectionInput, 'accountLifetime' | 'withoutSessionTarget' | 'openDetailsTab' | 'onDetachedUnavailable'>>;
 
@@ -68,8 +84,9 @@ export function useAskSelectionTargetContext(read: () => AskSelectionTargetInput
 
 /** One Ask operation behind toolbars, phone actions, menus and the selection keyboard command. */
 export function useAskSelection(input: UseAskSelectionInput) {
+    const writeClipboard = useClipboardWrite(input.accountLifetime === undefined ? undefined : input.accountLifetime?.scope ?? null);
     const sourceId = React.useId();
-    const ownerKey = JSON.stringify([input.scopeId, buildWorkspaceCacheKey(input.workspaceScope), input.filePath ?? null,
+    const ownerKey = JSON.stringify([input.scopeId, input.workspaceScope ? buildWorkspaceCacheKey(input.workspaceScope) : null, input.filePath ?? null,
         input.source, input.source === 'markdown' && input.sourceLinesMapped === true]);
     const [selectionState, setSelectionState] = React.useState(() => ({ ownerKey, selection: input.getSelection() }));
     const selection = selectionState.ownerKey === ownerKey ? selectionState.selection : null;
@@ -82,7 +99,7 @@ export function useAskSelection(input: UseAskSelectionInput) {
     const refreshSelection = React.useCallback((claimContext: boolean) => {
         if (latestOwnerKey.current !== ownerKey) return;
         const next = latest.current.getSelection();
-        setSelectionState((previous) => previous.ownerKey === ownerKey && previous.selection === next
+        setSelectionState((previous) => previous.ownerKey === ownerKey && sameSelectionState(previous.selection, next)
             ? previous : { ownerKey, selection: next });
         if (next) {
             rememberedSelection.current = { ownerKey, selection: next };
@@ -115,6 +132,9 @@ export function useAskSelection(input: UseAskSelectionInput) {
         setUnavailableReason(null);
         const selected = readSelection();
         if (!selected) return false;
+        const handled = params.onAskSelection?.(selected);
+        if (handled) return handled;
+        if (!params.workspaceScope) return false;
         const text = selected.text || (params.getLinesText?.() ?? params.savedText ?? '').split('\n').slice(selected.startLine - 1, selected.endLine).join('\n');
         const anchorSource = resolveAskSelectionAnchorSource(params);
         if (anchorSource) {
@@ -133,7 +153,7 @@ export function useAskSelection(input: UseAskSelectionInput) {
         const params = latest.current;
         const selected = readSelection();
         const anchorSource = resolveAskSelectionAnchorSource(params);
-        if (!selected || !params.filePath || !anchorSource) return false;
+        if (!selected || !params.workspaceScope || !params.filePath || !anchorSource) return false;
         const result = await askAboutRanges({ workspaceScope: params.workspaceScope, filePath: params.filePath,
             ranges: [selected], savedText: params.savedText ?? params.getLinesText?.() ?? '', text: params.getLinesText?.(),
             source: anchorSource, lines: params.lines, sessionTarget: null, includeInPrompt: false });
@@ -144,8 +164,8 @@ export function useAskSelection(input: UseAskSelectionInput) {
         const params = latest.current;
         const selected = readSelection();
         if (!selected) return Promise.resolve(false);
-        return setClipboardStringSafe(selected.text || (params.getLinesText?.() ?? params.savedText ?? '').split('\n').slice(selected.startLine - 1, selected.endLine).join('\n'));
-    }, [readSelection]);
+        return writeClipboard(selected.text || (params.getLinesText?.() ?? params.savedText ?? '').split('\n').slice(selected.startLine - 1, selected.endLine).join('\n'));
+    }, [readSelection, writeClipboard]);
     useKeyboardShortcutHandlers(input.active !== false && (selection || (rememberedSelection.current.ownerKey === ownerKey && rememberedSelection.current.selection)) && lastSource === sourceId
         ? { 'editor.selection.ask': () => { void ask(); return 'handled'; } } : {});
     const menuItems = React.useMemo(() => input.sessionTarget ? [{ id: 'ask-in-side-run' as const,

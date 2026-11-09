@@ -1,18 +1,16 @@
+import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import { useAiLaunchProfiles } from '@/sync/store/useAiLaunchProfiles';
 import React from 'react';
-import { View, Platform, useWindowDimensions, Pressable } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
-import { useHeaderHeight } from '@react-navigation/elements';
-import Constants from 'expo-constants';
 import { t } from '@/text';
 import { LaunchProfileEditForm } from '@/components/profiles/edit';
 import { layout } from '@/components/ui/layout/layout';
 import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { PopoverScope } from '@/components/ui/popover';
-import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import {
     type ActiveUnsavedChangesGuard,
@@ -20,12 +18,13 @@ import {
 } from '@/utils/navigation/runGuardedNavigation';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
-import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { readAiLaunchProfileCollection, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
 import type { ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordSchemaV1';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -36,15 +35,19 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { promptLaunchProfileUnsavedChanges, useSaveLaunchProfile } from '@/components/profiles/edit/useSaveLaunchProfile';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export default React.memo(function ProfileEditScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         agentType?: string;
+        newSessionHostDraftId?: string;
         backendTarget?: string;
         backendTargetKey?: string;
         dataId?: string | string[];
@@ -54,32 +57,32 @@ export default React.memo(function ProfileEditScreen() {
         machineId?: string | string[];
         spawnServerId?: string | string[];
     }>();
+    const remembered = useLastUsedBackendSelection();
     const settings = useSettingsSelector((settings) => ({
-        lastUsedAgent: settings.lastUsedAgent,
-        lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
+    }), ["backendEnabledByTargetKey"]);
     const machineIdParam = Array.isArray(params.machineId) ? params.machineId[0] : params.machineId;
     const spawnServerIdParam = resolveSpawnServerRouteParam(Array.isArray(params.spawnServerId) ? params.spawnServerId[0] : params.spawnServerId);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        // The backend preference reads Agent declarations only.
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId: machineIdParam ?? null,
         serverId: spawnServerIdParam,
         enabled: Boolean(machineIdParam),
-        staleMs: 60_000,
     });
     const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerIdParam);
     const preferredBackendTarget = React.useMemo(() => {
         return resolvePreferredBackendTargetFromProjection({
-            lastUsedAgent: settings.lastUsedAgent,
-            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            lastUsedAgent: remembered.lastUsedAgent,
+            lastUsedBackendTarget: remembered.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSnapshot: acpCatalog && !acpCatalog.stale ? acpCatalog.catalog : undefined,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
         daemonMergedProjection.inputs,
-        settings.lastUsedAgent,
-        settings.lastUsedBackendTarget,
+        remembered.lastUsedAgent,
+        remembered.lastUsedBackendTarget,
         settings.backendEnabledByTargetKey,
         acpCatalog,
     ]);
@@ -107,7 +110,6 @@ export default React.memo(function ProfileEditScreen() {
     const cloneFromProfileIdParam = Array.isArray(params.cloneFromProfileId) ? params.cloneFromProfileId[0] : params.cloneFromProfileId;
     const profileDataParam = Array.isArray(params.profileData) ? params.profileData[0] : params.profileData;
     const screenWidth = useWindowDimensions().width;
-    const headerHeight = useHeaderHeight();
     const launchProfiles = useAiLaunchProfiles();
     const profileScope = useAccountSettingsScope();
     const [isDirty, setIsDirty] = React.useState(false);
@@ -210,6 +212,7 @@ export default React.memo(function ProfileEditScreen() {
                 profileId: saved.profile.id,
             },
             currentParams: currentRouteParams,
+            returnToHost,
         });
         if (returnMode === 'dispatch') {
             safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
@@ -217,30 +220,29 @@ export default React.memo(function ProfileEditScreen() {
         return true;
     };
 
-    const handleCancel = React.useCallback(() => {
+    const handleCancel = useEventCallback(() => {
         void runUnsavedChangesGuard(
             unsavedChangesGuard,
             () => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref }),
         );
-    }, [navigation, pickerFallbackHref, router, unsavedChangesGuard]);
+    });
 
     const headerTitle = profile?.name ? t('profiles.editProfile') : t('profiles.addProfile');
     const headerBackTitle = t('common.back');
 
     const headerLeft = React.useCallback(() => {
         return (
-            <Pressable
+            <HappierPressable
                 onPress={handleCancel}
                 accessibilityRole="button"
                 accessibilityLabel={t('common.cancel')}
-                hitSlop={12}
                 style={({ pressed }) => ({
                     opacity: pressed ? motionTokens.press.opacity : 1,
                     padding: theme.space.s4,
                 })}
             >
                 <Icon name="x" size={24} color={theme.colors.chrome.header.foreground} />
-            </Pressable>
+            </HappierPressable>
         );
     }, [handleCancel, theme.colors.chrome.header.foreground]);
 
@@ -250,22 +252,20 @@ export default React.memo(function ProfileEditScreen() {
 
     const headerRight = React.useCallback(() => {
         return (
-            <Pressable
+            <HappierPressable
                 onPress={handleSavePress}
                 disabled={!isDirty}
                 accessibilityRole="button"
                 accessibilityLabel={t('common.save')}
-                hitSlop={12}
                 style={({ pressed }) => ({
                     opacity: !isDirty ? 0.35 : pressed ? motionTokens.press.opacity : 1,
                     padding: theme.space.s4,
                 })}
             >
                 <Icon name="check" size={24} color={theme.colors.chrome.header.foreground} />
-            </Pressable>
+            </HappierPressable>
         );
     }, [handleSavePress, isDirty, theme.colors.chrome.header.foreground]);
-    const presentation = useNewSessionPickerRoutePresentation();
 
     const screenOptions = React.useMemo(() => {
         return {
@@ -273,17 +273,13 @@ export default React.memo(function ProfileEditScreen() {
             headerBackTitle,
             headerLeft,
             headerRight,
-            presentation,
         } as const;
-    }, [headerBackTitle, headerLeft, headerRight, headerTitle, presentation]);
+    }, [headerBackTitle, headerLeft, headerRight, headerTitle]);
 
     return (
         <PopoverScope>
-            <KeyboardAwareScreen
-                mode="form"
-                keyboardVerticalOffset={Platform.OS === 'ios' ? Constants.statusBarHeight + headerHeight : 0}
-                style={profileEditScreenStyles.container}
-            >
+            {/* The profile editor's keyboard-aware list owns keyboard avoidance for this screen. */}
+            <View style={profileEditScreenStyles.container}>
                 <Stack.Screen
                     options={screenOptions}
                 />
@@ -313,7 +309,7 @@ export default React.memo(function ProfileEditScreen() {
                         />}
                     </View>
                 </View>
-            </KeyboardAwareScreen>
+            </View>
         </PopoverScope>
     );
 });

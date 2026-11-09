@@ -1,10 +1,10 @@
+import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import React from 'react';
-import { Pressable } from 'react-native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
-import { useAllMachines, useSettingMutable, useSettingsSelector } from '@/sync/domains/state/storage';
+import { useSettingMutable, useSettingsSelector, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
@@ -13,15 +13,18 @@ import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } fro
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
-import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export default React.memo(function PreviewMachinePickerScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         agentType?: string;
@@ -32,13 +35,12 @@ export default React.memo(function PreviewMachinePickerScreen() {
         selectedId?: string;
         spawnServerId?: string;
     }>();
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
+    const remembered = useLastUsedBackendSelection();
     const settings = useSettingsSelector((settings) => ({
-        lastUsedAgent: settings.lastUsedAgent,
-        lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
+    }), ["backendEnabledByTargetKey"]);
 
     const selectedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
     const selectedMachine = machines.find((m) => m.id === selectedMachineId) ?? null;
@@ -50,16 +52,17 @@ export default React.memo(function PreviewMachinePickerScreen() {
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId) ?? activeServerId;
     const machineIdParam = typeof params.machineId === 'string' ? params.machineId : null;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        // The backend preference reads Agent declarations only.
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId: machineIdParam,
         serverId: spawnServerId,
         enabled: Boolean(machineIdParam),
-        staleMs: 60_000,
     });
     const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
         return resolvePreferredBackendTargetFromProjection({
-            lastUsedAgent: settings.lastUsedAgent,
-            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            lastUsedAgent: remembered.lastUsedAgent,
+            lastUsedBackendTarget: remembered.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSnapshot: acpCatalog && !acpCatalog.stale ? acpCatalog.catalog : undefined,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
@@ -68,32 +71,29 @@ export default React.memo(function PreviewMachinePickerScreen() {
         daemonMergedProjection.inputs,
         acpCatalog,
         settings.backendEnabledByTargetKey,
-        settings.lastUsedAgent,
-        settings.lastUsedBackendTarget,
+        remembered.lastUsedAgent,
+        remembered.lastUsedBackendTarget,
     ]);
 
     const headerLeft = React.useCallback(() => (
-        <Pressable
+        <HappierPressable
             onPress={() => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref })}
-            hitSlop={10}
             style={({ pressed }) => ({ padding: theme.space.s2, opacity: pressed ? motionTokens.press.opacity : 1 })}
             accessibilityRole="button"
             accessibilityLabel={t('common.back')}
         >
             <Icon name="caret-left" size={20} color={theme.colors.chrome.header.foreground} />
-        </Pressable>
+        </HappierPressable>
     ), [navigation, router, theme.colors.chrome.header.foreground]);
-    const presentation = useNewSessionPickerRoutePresentation();
 
     const screenOptions = React.useCallback(() => {
         return {
             headerShown: true,
             title: t('profiles.previewMachine.title'),
             headerBackTitle: t('common.back'),
-            presentation,
             headerLeft,
         } as const;
-    }, [headerLeft, presentation]);
+    }, [headerLeft]);
 
     const favoriteMachineList = React.useMemo(() => {
         const byId = new Map(machines.map((m) => [m.id, m] as const));
@@ -129,6 +129,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
                 previewMachineId,
             },
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: {
                 ...roundTripBackendParams,
                 ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
@@ -138,6 +139,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
             },
         });
     }, [
+        returnToHost,
         currentRouteParams,
         navigation,
         params.agentType,
@@ -148,8 +150,8 @@ export default React.memo(function PreviewMachinePickerScreen() {
         params.spawnServerId,
         router,
         settings.backendEnabledByTargetKey,
-        settings.lastUsedAgent,
-        settings.lastUsedBackendTarget,
+        remembered.lastUsedAgent,
+        remembered.lastUsedBackendTarget,
         preferredBackendTarget,
         spawnServerId,
     ]);

@@ -1,6 +1,7 @@
+import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import { useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
 import React from 'react';
-import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
 import {
     useCurrentSecretBindingsByProfileIdMutable,
@@ -8,7 +9,6 @@ import {
 } from '@/sync/domains/state/storage';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { SecretRequirementScreen, type SecretRequirementModalResult } from '@/components/secrets/requirements';
-import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { PopoverScope } from '@/components/ui/popover';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -16,9 +16,10 @@ import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } fro
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
+import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
-import { useNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 
 type SecretRequirementRoutePayload = Readonly<{
     profileId: string;
@@ -48,9 +49,11 @@ function parseJsonRecord(raw: unknown): Record<string, string | null | undefined
 
 export default React.memo(function SecretRequirementPickerScreen() {
     const router = useRouter();
+    const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
     const params = useLocalSearchParams<{
         agentType?: string;
+        newSessionHostDraftId?: string;
         backendTarget?: string;
         backendTargetKey?: string;
         dataId?: string;
@@ -68,13 +71,11 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const revertOnCancel = params.revertOnCancel === '1';
 
     const profiles = useAiLaunchProfilesForLegacyUi();
-    const [secrets, setSecrets] = useSavedSecretsMutable();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
+    const remembered = useLastUsedBackendSelection();
     const settings = useSettingsSelector((settings) => ({
-        lastUsedAgent: settings.lastUsedAgent,
-        lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }), ["lastUsedAgent","lastUsedBackendTarget","backendEnabledByTargetKey"]);
+    }), ["backendEnabledByTargetKey"]);
 
     const profile = profileId ? resolveProfileById(profileId, profiles) : null;
 
@@ -92,16 +93,17 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const pickerFallbackHref = React.useMemo(() => buildNewSessionPickerFallbackHref(params), [params]);
     const spawnServerId = resolveSpawnServerRouteParam(params.spawnServerId);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        // The backend preference reads Agent declarations only.
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
         machineId,
         serverId: spawnServerId,
         enabled: Boolean(machineId),
-        staleMs: 60_000,
     });
     const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
         return resolvePreferredBackendTargetFromProjection({
-            lastUsedAgent: settings.lastUsedAgent,
-            lastUsedBackendTarget: settings.lastUsedBackendTarget,
+            lastUsedAgent: remembered.lastUsedAgent,
+            lastUsedBackendTarget: remembered.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
             acpCatalogSnapshot: acpCatalog && !acpCatalog.stale ? acpCatalog.catalog : undefined,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
@@ -110,17 +112,9 @@ export default React.memo(function SecretRequirementPickerScreen() {
         daemonMergedProjection.inputs,
         acpCatalog,
         settings.backendEnabledByTargetKey,
-        settings.lastUsedAgent,
-        settings.lastUsedBackendTarget,
+        remembered.lastUsedAgent,
+        remembered.lastUsedBackendTarget,
     ]);
-    const presentation = useNewSessionSecretRequirementRoutePresentation();
-
-    const screenOptions = React.useMemo(() => {
-        return {
-            headerShown: false,
-            presentation,
-        } as const;
-    }, [presentation]);
 
     const didSendResultRef = React.useRef(false);
 
@@ -156,6 +150,7 @@ export default React.memo(function SecretRequirementPickerScreen() {
                 secretRequirementResultId: id,
             },
             currentParams: currentRouteParams,
+            returnToHost,
             replaceParams: {
                 ...roundTripBackendParams,
                 ...(typeof params.dataId === 'string' && params.dataId.trim().length > 0 ? { dataId: params.dataId } : {}),
@@ -169,6 +164,7 @@ export default React.memo(function SecretRequirementPickerScreen() {
             safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref });
         }
     }, [
+        returnToHost,
         currentRouteParams,
         machineId,
         navigation,
@@ -183,8 +179,8 @@ export default React.memo(function SecretRequirementPickerScreen() {
         revertOnCancel,
         router,
         settings.backendEnabledByTargetKey,
-        settings.lastUsedAgent,
-        settings.lastUsedBackendTarget,
+        remembered.lastUsedAgent,
+        remembered.lastUsedBackendTarget,
         preferredBackendTarget,
         spawnServerId,
     ]);
@@ -214,9 +210,6 @@ export default React.memo(function SecretRequirementPickerScreen() {
     if (!profile || !secretEnvVarName) {
         return (
             <>
-                <Stack.Screen
-                    options={screenOptions}
-                />
             </>
         );
     }
@@ -226,16 +219,12 @@ export default React.memo(function SecretRequirementPickerScreen() {
     return (
         <PopoverScope>
             <>
-                <Stack.Screen
-                    options={screenOptions}
-                />
 
                 <SecretRequirementScreen
                     profile={profile}
                     secretEnvVarName={secretEnvVarName}
                     secretEnvVarNames={secretEnvVarNames.length > 0 ? secretEnvVarNames : undefined}
                     machineId={machineId}
-                    secrets={secrets}
                     defaultSecretId={defaultBindingsForProfile?.[secretEnvVarName] ?? null}
                     selectedSavedSecretId={
                         typeof selectedSecretIdByEnvVarName?.[secretEnvVarName] === 'string' &&
@@ -255,7 +244,7 @@ export default React.memo(function SecretRequirementPickerScreen() {
                             },
                         });
                     }}
-                    onChangeSecrets={setSecrets}
+                    allowManage
                     allowSessionOnly={true}
                     onResolve={sendResultToNewSession}
                     onClose={handleCancel}
