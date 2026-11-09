@@ -20,13 +20,17 @@ export function resolveProviderSourceFacts(record: ResolvedProviderConnectionRec
   const rawEndpoints = source.kind === 'contribution'
     ? source.definition.endpointTemplates
     : source.template.endpointTemplates;
+  const credential = source.kind === 'contribution'
+    ? source.definition.credential
+    : source.template.credential;
   if (record.deployment.kind === 'managedLocal') {
     return {
       endpointTemplates: rawEndpoints.map((template) =>
         ProviderEndpointTemplateV1Schema.parse(template)),
-      credential: source.kind === 'contribution'
-        ? source.definition.credential
-        : source.template.credential,
+      credential: credential && source.kind === 'contribution'
+        && source.definition.managedRuntime?.credentialRequired === true
+        ? { ...credential, required: true }
+        : credential,
       catalog: source.kind === 'contribution'
         ? source.definition.catalog
         : source.template.catalog,
@@ -49,7 +53,7 @@ export function resolveProviderSourceFacts(record: ResolvedProviderConnectionRec
   });
   return {
     endpointTemplates,
-    credential: source.kind === 'contribution' ? source.definition.credential : source.template.credential,
+    credential,
     catalog: source.kind === 'contribution' ? source.definition.catalog : source.template.catalog,
     compatibilityOverrides: source.kind === 'contribution' ? source.definition.compatibilityOverrides : undefined,
     contributionKey: source.kind === 'contribution' ? source.contributionKey : null,

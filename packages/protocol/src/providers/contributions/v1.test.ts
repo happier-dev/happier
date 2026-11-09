@@ -43,6 +43,45 @@ function validContribution() {
 }
 
 describe('ProviderContributionV1Schema', () => {
+  it('preserves declared operation restriction copy without changing managed runtime identity', () => {
+    const connectedAccount = { purpose: 'vendor-upstream', service: 'subscription' };
+    const operationRestriction = {
+      summary: { key: 'vendor.restriction.summary', fallback: 'Chat only' },
+      sentence: { key: 'vendor.restriction.sentence', fallback: 'This vendor supports chat only.' },
+    };
+    const value = {
+      ...validContribution(),
+      catalog: { ...validContribution().catalog, sourceRegistryVersion: 'managed-client/v1' },
+      managedRuntime: { kind: 'managed', endpointTemplateIds: ['responses'], connectedAccounts: [connectedAccount] },
+    };
+    const base = ProviderContributionV1Schema.parse(value);
+    const restricted = ProviderContributionV1Schema.parse({ ...value, managedRuntime: {
+      ...value.managedRuntime, connectedAccounts: [{ ...connectedAccount, operationRestriction }],
+    } });
+    const identity = { pluginId: 'acme.gateway', localId: 'gateway' };
+    const resolve = (managedRuntime: NonNullable<typeof base.managedRuntime>) =>
+      resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: identity, managedRuntime });
+    expect(resolve(restricted.managedRuntime!).connectedAccounts[0]).toMatchObject({ operationRestriction });
+    expect(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity: identity, managedRuntime: restricted.managedRuntime! }))
+      .toBe(createProviderManagedRuntimeDeclarationEqualityKeyV1({ implementationIdentity: identity, managedRuntime: base.managedRuntime! }));
+  });
+
+  it('preserves an explicit managed client credential requirement without accepting an optional override', () => {
+    const value = {
+      ...validContribution(),
+      catalog: { ...validContribution().catalog, sourceRegistryVersion: 'managed-client/v1' },
+      managedRuntime: { kind: 'managed', endpointTemplateIds: ['responses'], credentialRequired: true },
+    };
+    const contribution = ProviderContributionV1Schema.parse(value);
+    expect(resolveProviderManagedRuntimeDeclarationV1({
+      implementationIdentity: { pluginId: 'acme.gateway', localId: 'gateway' },
+      managedRuntime: contribution.managedRuntime!,
+    })).toMatchObject({ credentialRequired: true });
+    expect(ProviderContributionV1Schema.safeParse({
+      ...value, managedRuntime: { ...value.managedRuntime, credentialRequired: false },
+    }).success).toBe(false);
+  });
+
   it('admits required endpoint coordinates and declaration-owned family and public policy constraints', () => {
     const { baseUrl: _base, ...endpoint } = validContribution().endpointTemplates[0];
     const constrained = { ...endpoint, requiresEndpointOverride: true,
@@ -182,7 +221,7 @@ describe('ProviderContributionV1Schema', () => {
           purpose: 'upstream',
           materialization: {
             kind: 'httpHeaders',
-            origins: ['https://api.openai.com'],
+            origin: 'https://api.openai.com',
             headerNames: ['authorization'],
           },
         }],
@@ -299,7 +338,7 @@ describe('ProviderContributionV1Schema', () => {
           purpose: 'upstream',
           materialization: {
             kind: 'httpHeaders' as const,
-            origins: ['https://api.example.test', 'https://regional.example.test'],
+            origin: 'https://api.example.test',
             headerNames: ['authorization', 'x-trace-id'],
           },
         },
@@ -307,7 +346,7 @@ describe('ProviderContributionV1Schema', () => {
           purpose: 'audit',
           materialization: {
             kind: 'httpHeaders' as const,
-            origins: ['https://audit.example.test'],
+            origin: 'https://audit.example.test',
             headerNames: ['authorization'],
           },
         },
@@ -339,7 +378,6 @@ describe('ProviderContributionV1Schema', () => {
             ...use,
             materialization: {
               ...use.materialization,
-              origins: [...use.materialization.origins].reverse(),
               headerNames: [...use.materialization.headerNames].reverse(),
             },
           }))
@@ -489,7 +527,7 @@ describe('ProviderContributionV1Schema', () => {
         purpose: 'provider.inference',
         materialization: {
           kind: 'httpHeaders',
-          origins: ['https://api.openai.com'],
+          origin: 'https://api.openai.com',
           headerNames: ['authorization'],
         },
       }],
@@ -538,7 +576,7 @@ describe('ProviderContributionV1Schema', () => {
       purpose,
       materialization: {
         kind: 'httpHeaders' as const,
-        origins: [`https://api-${index}.example.com`],
+        origin: `https://api-${index}.example.com`,
         headerNames: ['authorization'],
       },
     }));
@@ -567,7 +605,7 @@ describe('ProviderContributionV1Schema', () => {
           purpose: 'provider.request-32',
           materialization: {
             kind: 'httpHeaders',
-            origins: ['https://api-32.example.com'],
+            origin: 'https://api-32.example.com',
             headerNames: ['authorization'],
           },
         }],

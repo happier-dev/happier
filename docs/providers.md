@@ -697,6 +697,15 @@ These rows are `account_unverified`, with unknown load state, unchecked health,
 no probe observation and no runtime confirmation. Their declaration fingerprint
 is not executable-adapter evidence and cannot prompt runtime confirmation.
 
+Connected Account source catalogs in 0.3 development also retain a plugin's static
+fallback models as `account_unverified` diagnostics when no exact-account model
+observation is available. The CLI's
+`modelManagement/sourceCatalog.ts#projectCurrentProviderSourceModelCatalogs` owns
+runnable source-catalog membership for Provider connections and Connected Account
+or pool targets. It excludes unverified, stale, hidden and incompatible rows.
+Current exact-account observations and ordinary Provider `verified_static` or
+`manual` rows remain eligible under the same visibility and compatibility rules.
+
 In 0.3 development, retained 0.2 Voice OpenAI-compatible Chat settings import
 into the connection's `modelSettings`, not per-prompt Voice configuration. The
 spawn resolver passes only the selected model's settings to an adapter that
@@ -2806,6 +2815,7 @@ continue to fail the existing reachability check.
 2. Declare stable identity, endpoint templates, wire protocols, capability facts, credential transports, and catalog sources. A wire protocol is the rendezvous key between this Provider's endpoint and an Agent's `acceptsProtocols`; both sides are contributed, so declaring a protocol Happier does not bundle is ordinary — the host matches the two declarations and never interprets the value.
 3. Keep an ordinary Provider descriptor-only. For a local descriptor-only Provider, add only bounded declarative detection facts and a provider-specific availability probe. A command-output catalog fallback names its own output format the same way an HTTP catalog probe does, and the declaring plugin implements it with the same registered parser.
 4. When the Provider owns a supervised local runtime, declare its single cold `managedRuntime` facet and register exactly one matching runtime with `api.providers.register(localId, runtime)`.
+   In 0.3 development source, a runtime that always supplies its declared client credential may set `managedRuntime.credentialRequired: true`, derived from the same canonical client-access declaration used by its runtime. The shared source-fact owner then marks the existing credential slot and transports as required for `managedLocal` compatibility. External connections retain the contribution's ordinary credential requirement. Omit the managed field when the runtime has no such guarantee; `false` is not a declaration value.
    In 0.3 development source, a managed Connected Account purpose may declare `endpointTemplateIds` for its supported downstream broker routes. Each endpoint must belong to that managed runtime and be unique within its purpose; different upstream services may support the same endpoint. The broker validates the signed implementation, exact endpoint/protocol and source service against the current Provider registry, requiring exactly one matching purpose before selecting the declared account. Missing or ambiguous declarations make the route unavailable. CLIProxyAPI projects its proven downstream translations from the same upstream-family contract used by ordinary managed serving; an endpoint alone never selects a vendor or authorizes an unbound account.
 5. When the Provider's catalog endpoint answers in a wire format Happier does not bundle, name that format in the catalog probe's `parser` and register its implementation with `api.providers.registerCatalogParser(localId, format, parse)`. Happier bundles `openai-models`, `anthropic-models`, `ollama-tags`, and `lmstudio-native-models`; every other declared format is implemented by the declaring plugin, and a format with no reachable implementation fails the probe with `provider_contribution_unavailable` rather than being read by another Provider's parser. Set the probe's `reportsModelLoadState` when the format carries per-model load state, which is what makes model loading available — not whether the host bundles the format.
 6. Register every arm the contribution declares. Activation validates the complete declared-vs-registered composite: a Provider that declares a managed runtime and a contributed catalog format must register both, and registering a managed runtime or catalog format the contribution does not declare is refused. A partial registration fails activation instead of silently publishing the half that registered.

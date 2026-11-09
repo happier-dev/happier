@@ -1,4 +1,5 @@
 import type { ProviderContribution as ProviderContributionV1 } from '@happier-dev/plugin-sdk/providers';
+import { CLIPROXYAPI_MANAGED_CLIENT_ACCESS } from './managedContract.js';
 import {
   CLIPROXYAPI_MANAGED_CONNECTED_ACCOUNTS,
   CLIPROXYAPI_MANAGED_CATALOG_SOURCE_REGISTRY_VERSION,
@@ -98,6 +99,7 @@ export const CLIPROXYAPI_PROVIDER_CONTRIBUTION = {
   },
   managedRuntime: {
     kind: 'managed',
+    credentialRequired: CLIPROXYAPI_MANAGED_CLIENT_ACCESS.kind === 'hostBearer' ? true : undefined,
     sharing: 'connectionMachine',
     sourceEnvelopeTransport: 'cpx-v1',
     connectedAccountPurposeBindingPolicy: { minimumBound: 1 },

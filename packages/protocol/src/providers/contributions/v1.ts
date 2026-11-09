@@ -29,6 +29,7 @@ import {
   PluginContributionLocalIdSchema,
   type PluginContributionIdentityV1,
 } from '../../plugins/contributionIdentity.js';
+import { ProviderManagedPurposeOperationRestrictionV1Schema } from '../managedPurposeOperationRestrictionV1.js';
 import type { PluginLocalizedStringV2 } from '../../plugins/contributions/publicTypes.js';
 import type { ConnectedServiceCredentialKind } from '../../connect/connectedServiceCredentialKind.js';
 import {
@@ -138,12 +139,16 @@ export type ProviderManagedConnectedAccountPurposeBindingPolicyV1 = z.infer<
 
 export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('managed'),
+  /** The managed runtime always supplies its declared client credential. */
+  credentialRequired: z.optional(z.literal(true)),
   /** Opts connected-account request-auth consumers into daemon connection custody. */
   sharing: z.optional(z.literal('connectionMachine')),
   /** Implements the private exact-source envelope consumed by the host broker. */
   sourceEnvelopeTransport: z.optional(z.literal('cpx-v1')),
   dependencies: z.optional(z.array(asProtocolZod(PluginContributionLocalIdSchema)).check(z.maxLength(16))),
   connectedAccounts: z.optional(z.array(z.extend(ConnectedAccountPurposeDeclarationV1Schema, {
+    /** Passive copy for a restriction enforced by the family's operation owner. */
+    operationRestriction: z.optional(ProviderManagedPurposeOperationRestrictionV1Schema),
     /** Exact managed endpoints supported by this upstream purpose; absent means no broker route. */
     endpointTemplateIds: z.optional(z.array(ProviderLocalIdSchema).check(z.minLength(1))),
     /** Credential-free compatibility catalog for this exact upstream service, never account entitlement. */
@@ -155,7 +160,7 @@ export const ProviderManagedRuntimeDeclarationV1Schema = lazyZodSchema(() => z.s
     ])),
   })).check(z.superRefine((declarations, context) => {
     const checked = ConnectedAccountPurposeDeclarationsV1Schema.safeParse(
-      declarations.map(({ endpointTemplateIds: _endpoints, staticModels: _models, catalogObservation: _observation, ...declaration }) => declaration),
+      declarations.map(({ endpointTemplateIds: _endpoints, staticModels: _models, catalogObservation: _observation, operationRestriction: _restriction, ...declaration }) => declaration),
     );
     if (!checked.success) checked.error.issues.forEach((issue) => context.addIssue({ ...issue }));
     declarations.forEach((declaration, index) => {
@@ -239,10 +244,12 @@ export type ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 =
     endpointTemplateIds?: string[];
     staticModels?: NonNullable<ProviderManagedRuntimeDeclarationV1['connectedAccounts']>[number]['staticModels'];
     catalogObservation?: NonNullable<ProviderManagedRuntimeDeclarationV1['connectedAccounts']>[number]['catalogObservation'];
+    operationRestriction?: NonNullable<ProviderManagedRuntimeDeclarationV1['connectedAccounts']>[number]['operationRestriction'];
   }>;
 
 export type ResolvedProviderManagedRuntimeDeclarationV1 = Readonly<{
   kind: 'managed';
+  credentialRequired?: true;
   sharing?: 'connectionMachine';
   sourceEnvelopeTransport?: 'cpx-v1';
   dependencies: string[];
@@ -368,6 +375,7 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
         ...(purposeEndpointTemplateIds === undefined ? {} : { endpointTemplateIds: purposeEndpointTemplateIds }),
         ...(staticModels === undefined ? {} : { staticModels }),
         ...(declaration.catalogObservation === undefined ? {} : { catalogObservation: Object.freeze(declaration.catalogObservation) }),
+        ...(declaration.operationRestriction === undefined ? {} : { operationRestriction: Object.freeze(declaration.operationRestriction) }),
       });
     }).sort((left, right) =>
       compareProviderCanonicalStringsV1(left.purpose, right.purpose));
@@ -381,7 +389,6 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
     purpose: use.purpose,
     materialization: Object.freeze({
       ...use.materialization,
-      origins: Object.freeze([...use.materialization.origins].sort(compareProviderCanonicalStringsV1)),
       headerNames: Object.freeze([
         ...use.materialization.headerNames,
       ].sort(compareProviderCanonicalStringsV1)),
@@ -394,6 +401,7 @@ export function resolveProviderManagedRuntimeDeclarationV1(input: Readonly<{
   Object.freeze(endpointTemplateIds);
   return Object.freeze({
     kind: 'managed',
+    ...(parsed.credentialRequired === undefined ? {} : { credentialRequired: parsed.credentialRequired }),
     ...(parsed.sharing === undefined ? {} : { sharing: parsed.sharing }),
     ...(parsed.sourceEnvelopeTransport === undefined ? {} : { sourceEnvelopeTransport: parsed.sourceEnvelopeTransport }),
     dependencies,
@@ -430,7 +438,7 @@ export function createProviderManagedRuntimeDeclarationEqualityKeyV1(input: Read
     managedRuntime: {
       ...managedRuntime,
       connectedAccounts: managedRuntime.connectedAccounts.map(
-        ({ title: _title, ...declaration }) => declaration,
+        ({ title: _title, operationRestriction: _restriction, ...declaration }) => declaration,
       ),
     },
   });
