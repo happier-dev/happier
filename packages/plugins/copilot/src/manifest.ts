@@ -4,9 +4,12 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { createCopilotAgentRuntime } from './agent/runtime/factory.js';
 import { COPILOT_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
-import { COPILOT_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
 import { COPILOT_PREFLIGHT_SESSION_CONTROLS } from './agent/acp/preflight.js';
 import { copilotExternalSessionsContribution } from './agent/externalSessions/contribution.js';
+import { COPILOT_PROVIDER_BINDING_ADAPTER_V1, COPILOT_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
+import { COPILOT_CONNECTED_ACCOUNT_PURPOSES } from './agent/auth/services/accountPurposes.js';
+import { COPILOT_CONNECTED_ACCOUNT_LAUNCH } from './agent/auth/services/continuity.js';
 
 const COPILOT_AUTH_ENV_KEYS = [
   'COPILOT_GITHUB_TOKEN',
@@ -23,7 +26,6 @@ export const COPILOT_PLUGIN = definePlugin({
   id: 'happier.agent.copilot',
   version: '0.0.0',
   displayName: 'GitHub Copilot',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -34,7 +36,7 @@ export const COPILOT_PLUGIN = definePlugin({
         executables: [
           { kind: 'systemTool', id: 'copilot-cli' },
         ],
-        envKeys: [...COPILOT_AUTH_ENV_KEYS],
+        envKeys: [...COPILOT_AUTH_ENV_KEYS, ...COPILOT_PROVIDER_OWNED_ENV_KEYS],
       },
     }],
     optional: [],
@@ -43,6 +45,24 @@ export const COPILOT_PLUGIN = definePlugin({
     copilot: {
       declaration: {
         title: 'GitHub Copilot',
+        connectedAccounts: COPILOT_CONNECTED_ACCOUNT_PURPOSES.map(declaration => ({
+          ...declaration, service: { ...declaration.service },
+          credentialKinds: [...declaration.credentialKinds], materializationKinds: [...declaration.materializationKinds],
+        })),
+        providerRequirements: {
+          acceptsProtocols: ['openai-chat', 'anthropic'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: {
+            supportsNoAuth: true,
+            apiKeyTransports: [
+              { protocol: 'openai-chat', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+              { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+              { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] } },
+            ],
+          },
+          authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [...COPILOT_PROVIDER_OWNED_ENV_KEYS] },
+          materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        },
         runtime: { kind: 'custom' },
         cli: {
           displayName: 'GitHub Copilot CLI',
@@ -71,6 +91,7 @@ export const COPILOT_PLUGIN = definePlugin({
         },
         primary: 'sessions',
         catalog: {
+          agentCliSystemTool: { toolId: 'copilot-cli' },
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
@@ -98,6 +119,8 @@ export const COPILOT_PLUGIN = definePlugin({
         } },
       },
       factory: createCopilotAgentRuntime,
+      providerBinding: COPILOT_PROVIDER_BINDING_ADAPTER_V1,
+      connectedAccountLaunch: COPILOT_CONNECTED_ACCOUNT_LAUNCH,
       externalSessions: copilotExternalSessionsContribution,
       preflightSessionControls: COPILOT_PREFLIGHT_SESSION_CONTROLS,
       sessionRunnerFactory: {
@@ -115,7 +138,34 @@ export const COPILOT_PLUGIN = definePlugin({
     },
   },
   ui: {
-    translations: COPILOT_UI_TRANSLATION_BUNDLES,
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ],
+  },
+  resources: {
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
   settings: {
     [COPILOT_AGENT_SETTINGS_CONTRIBUTION_ID]: COPILOT_AGENT_SETTINGS_DECLARATION,

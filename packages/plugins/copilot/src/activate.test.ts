@@ -14,6 +14,7 @@ describe('Copilot activation', () => {
   it('reexports the activation compiled by its canonical public plugin definition', async () => {
     expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
       'agents',
+      'resources',
       'settings',
       'systemTools',
       'ui',
@@ -61,6 +62,7 @@ describe('Copilot activation', () => {
     };
 
     await expect(runtime.sessions.open(request, {
+      services: { connectedAccounts: { getBinding: async () => null } },
       protocols: { acp: { open } },
     } as AgentSessionRuntimeContext)).resolves.toBe(session);
     expect(open).toHaveBeenCalledWith(request, {

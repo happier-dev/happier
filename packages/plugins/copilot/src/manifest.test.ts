@@ -1,11 +1,94 @@
-import { ingestPluginManifestV2 } from '@happier-dev/protocol';
-import type { AgentPreflightSessionControlsContributionV1, AgentPreflightSessionControlsProbeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { AgentProviderBindingMaterializationV1Schema, ingestPluginManifestV2 } from '@happier-dev/protocol';
+import type { AgentProviderBindingAdapter, AgentProviderBindingMaterializeInput, AgentPreflightSessionControlsContributionV1, AgentPreflightSessionControlsProbeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { COPILOT_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
+import { COPILOT_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
 import { COPILOT_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Copilot plugin manifest', () => {
+  it('offers ChatGPT as an optional qualified access-only account purpose', () => {
+    expect(PLUGIN_MANIFEST.contributes.agents?.[0]?.connectedAccounts).toEqual([{
+      purpose: 'openai-codex',
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      materializationKinds: ['httpHeaders'],
+      credentialKinds: ['oauth'],
+    }]);
+  });
+
+  async function registeredProviderAdapter(): Promise<AgentProviderBindingAdapter> {
+    const register = vi.fn();
+    // Plugin registration is the host boundary; the registered adapter remains real.
+    await COPILOT_PLUGIN.activate({ agents: { register, registerExternalSessions() {} } } as never);
+    const adapter: AgentProviderBindingAdapter | undefined = register.mock.calls[0]?.[2]?.providerBinding;
+    expect(adapter, 'Copilot registers its native Provider binding').toBeDefined();
+    if (!adapter) throw new Error('Missing Copilot Provider binding');
+    return adapter;
+  }
+
+  function bindingInput(adapter: AgentProviderBindingAdapter, protocol: 'openai-chat' | 'anthropic'): AgentProviderBindingMaterializeInput {
+    return {
+      v: 1,
+      binding: {
+        v: 1, agentTargetKey: 'backend:copilot:built_in',
+        selection: { connectionId: 'pc_copilot_test', model: { id: 'exact/native-model', name: 'Test model' } },
+        contributionKey: null,
+        endpoint: { endpointTemplateId: 'custom', normalizedUrl: 'http://127.0.0.1:11434/v1', protocol, publicHeaders: {} },
+        runtimeCredentialTransport: null,
+        compatibilityFingerprint: 'pcf1:copilot-test',
+      },
+      prepared: adapter.prepare({ v: 1, agentTargetKey: 'backend:copilot:built_in', connectionId: 'pc_copilot_test' }),
+      credential: { kind: 'none' },
+    };
+  }
+
+  it.each(['openai-chat', 'anthropic'] as const)('materializes the registered %s binding without ambient credentials or model overrides', async protocol => {
+    const adapter = await registeredProviderAdapter();
+    const output = AgentProviderBindingMaterializationV1Schema.parse(await adapter.materialize(bindingInput(adapter, protocol)));
+    const environment = Object.fromEntries(output.env.map(row => [row.name, row.value]));
+    expect(output.kind).toBe('spawnEnv');
+    expect(environment).toMatchObject({
+      COPILOT_PROVIDER_BASE_URL: 'http://127.0.0.1:11434/v1',
+      COPILOT_PROVIDER_TYPE: protocol === 'anthropic' ? 'anthropic' : 'openai',
+      COPILOT_MODEL: 'exact/native-model',
+      COPILOT_PROVIDER_API_KEY: null, COPILOT_PROVIDER_BEARER_TOKEN: null,
+      COPILOT_PROVIDER_WIRE_API: null, COPILOT_PROVIDER_WIRE_MODEL: null,
+      COPILOT_PROVIDER_MODEL_ID: null, COPILOT_PROVIDER_AZURE_API_VERSION: null,
+      COPILOT_PROVIDER_MAX_PROMPT_TOKENS: null, COPILOT_PROVIDER_MAX_OUTPUT_TOKENS: null,
+    });
+    const requirements = PLUGIN_MANIFEST.contributes.agents?.[0]?.providerRequirements;
+    expect(requirements).toMatchObject({
+      acceptsProtocols: ['openai-chat', 'anthropic'], required: { streaming: true, toolRoundTrips: true },
+      credentialSupport: { supportsNoAuth: true }, materialization: 'spawnEnv',
+      applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+    });
+    expect(output.env.map(row => row.name).sort()).toEqual([...requirements!.authIsolation.ownedEnvKeys].sort());
+  });
+
+  it.each([
+    ['openai-chat', 'authorization', 'bearer', 'COPILOT_PROVIDER_BEARER_TOKEN'],
+    ['anthropic', 'authorization', 'bearer', 'COPILOT_PROVIDER_BEARER_TOKEN'],
+    ['anthropic', 'x-api-key', 'raw', 'COPILOT_PROVIDER_API_KEY'],
+  ] as const)('materializes %s %s credentials only through their selected native transport', async (protocol, name, format, variable) => {
+    const adapter = await registeredProviderAdapter();
+    const input = bindingInput(adapter, protocol);
+    const transport = { id: 'test-key', protocols: [protocol], uses: ['runtime'] as const, destination: { kind: 'httpHeader' as const, name, format } };
+    const output = await adapter.materialize({ ...input,
+      binding: { ...input.binding, runtimeCredentialTransport: transport },
+      credential: { kind: 'apiKey', transport, value: 'test-secret' },
+    });
+    expect(output.env.filter(row => row.value === 'test-secret')).toEqual([{ name: variable, value: 'test-secret', source: 'provider' }]);
+    await expect(adapter.materialize({ ...input, binding: { ...input.binding, runtimeCredentialTransport: transport } })).rejects.toThrow();
+  });
+
+  it('refuses unsupported public headers instead of silently dropping them', async () => {
+    const adapter = await registeredProviderAdapter();
+    const input = bindingInput(adapter, 'openai-chat');
+    await expect(adapter.materialize({ ...input, binding: { ...input.binding,
+      endpoint: { ...input.binding.endpoint, publicHeaders: { 'x-required-route': 'route' } },
+    } })).rejects.toThrow();
+  });
+
   it('projects only the observed current model controls through the declared ACP process', async () => {
     // Host registration and JSON-RPC execution are the plugin's external boundaries.
     const register = vi.fn();
@@ -56,7 +139,7 @@ describe('Copilot plugin manifest', () => {
           capability: 'process',
           scope: {
             executables: [{ kind: 'systemTool', id: 'copilot-cli' }],
-            envKeys: ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN'],
+            envKeys: ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN', ...COPILOT_PROVIDER_OWNED_ENV_KEYS],
           },
         }],
         optional: [],

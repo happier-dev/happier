@@ -25,6 +25,7 @@ export const AGENT_DEFINITION = Object.freeze({
   sessionModesKind: 'acpAgentModes',
   modelConfig: {
     supportsSelection: true,
+    supportsFreeform: true,
     nonAcpApplyScope: 'next_prompt',
     acpModelConfigOptionId: 'model',
     defaultMode: 'default',
