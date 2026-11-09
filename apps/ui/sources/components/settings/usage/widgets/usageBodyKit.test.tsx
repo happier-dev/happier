@@ -36,6 +36,11 @@ describe('the page failure fact', () => {
     const accounting = [{ sources: [{ source: 'accounting', status: 'error' }, { source: 'work', status: 'error' }] }] as never;
     expect(isUsagePageFailureOnlyWork(accounting)).toBe(false);
   });
+  it('keeps a Work failure beside partially read activity quiet: every figure still stands (R135 item 12)', async () => {
+    const { isUsagePageFailureOnlyWork } = await import('./usageBodyKit');
+    const both = [{ sources: [{ source: 'work', status: 'error' }, { source: 'how_you_work', status: 'partial' }] }] as never;
+    expect(isUsagePageFailureOnlyWork(both)).toBe(true);
+  });
 });
 
 describe('shared Usage identity and dependent coverage', () => {

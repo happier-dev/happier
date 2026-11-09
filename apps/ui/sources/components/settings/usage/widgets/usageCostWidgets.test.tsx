@@ -351,6 +351,14 @@ describe('one selected money basis across Usage bodies', () => {
     if (previousTokens === 0) expect(comparison).toBeUndefined();
     else expect(comparison).toMatchObject({ value: previousTokens === 100 ? '▲ 228×' : '▲ 14%' });
   });
+  it('says the Period cost once in Cost mode: the hero is the cost, so its column shows the tokens (R135 N2)', async () => {
+    const props = mountedCosts(true);
+    const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} id="usage_period_summary" testID="summary" />);
+    const metrics = screen.findAllByType(HappierDataMetric);
+    expect(metrics.filter(metric => metric.props.label === t('usage.cost'))).toHaveLength(1);
+    expect(metrics.find(metric => metric.props.testID === 'summary.hero')?.props.label).toBe(t('usage.cost'));
+    expect(metrics.find(metric => metric.props.label === t('usage.tokens'))?.props.value).toBe(props.slice.accounting!.totals.tokens.total);
+  });
   it('keeps the Agent time slot stable and publishes only complete interval figures', async () => {
     const props = mountedCosts();
     const query = normalizeUsageQuery({ ...props.query, includeSessionEvidence: true });
@@ -374,7 +382,8 @@ describe('one selected money basis across Usage bodies', () => {
       slice={cold.results[0]!} id="usage_period_summary" testID="summary" />);
     const statLabels = () => screen.findAllByType(HappierDataMetric)
       .filter(metric => metric.props.size === 'stat').map(metric => metric.props.label);
-    const expectedLabels = [t('usage.cost'), t('usage.board.page.mergedPrs'), t('usage.board.page.agentTime')];
+    // A Cost-mode hero is the cost, so the first column is the tokens (R135 N2).
+    const expectedLabels = [t('usage.tokens'), t('usage.board.page.mergedPrs'), t('usage.board.page.agentTime')];
     for (const [batch, expected] of [[cold, '—'], [partial, '—'], [complete, 1], [completeIntervals, 1], [pending, 1], [partial, '—'], [refused, '—']] as const) {
       await screen.update(<UsagePeriodSummaryWidget {...props} query={query}
         slice={batch.results[0]!} id="usage_period_summary" testID="summary" />);

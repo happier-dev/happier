@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View, type LayoutChangeEvent } from 'react-native';
 import { UsageAccountingMetricSchema } from '@happier-dev/protocol/inputs/usageQuery';
 import { useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
@@ -225,22 +226,29 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   const caption = byAgent ? `${metric === 'cost' ? t('usage.cost') : t('usage.tokens')} ${t('usage.board.page.byAgent')} · ${usagePeriodPhrase(props.query)}` : measure;
   const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), Boolean(view && count > 0));
   const compact = presentation?.size === 'small' || presentation?.size === 'wide';
-  // What the frame's cell has beyond the body's own box goes to the plot. Measured as a difference, so it settles at
-  // zero once filled and never feeds back; a partner that later shrinks leaves the chart tall until the next mount.
+  // What the frame's cell has beyond the chart actually drawn goes to the plot. Measured against the drawn chart, not
+  // the body's room: a grown cell's declared room is taller than the capped plot fills, and that gap stayed empty
+  // under the legend (R135 item 9). The chart is the body's only content, so the difference settles at zero once
+  // filled and never feeds back; a partner that later shrinks leaves the chart tall until the next mount.
   const cellHeight = React.useContext(WidgetFrameCellHeightContext);
-  const bodyHeight = presentation?.geometry?.height;
+  const [drawnPx, setDrawnPx] = React.useState<number>();
+  const onDrawnLayout = React.useCallback((event: LayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    if (Number.isFinite(height) && height > 0) setDrawnPx(height);
+  }, []);
   const [stretchPx, setStretchPx] = React.useState(0);
   React.useEffect(() => {
-    if (phone || compact || cellHeight === undefined || bodyHeight === undefined) return;
-    const unused = cellHeight - bodyHeight;
+    if (phone || compact || cellHeight === undefined || drawnPx === undefined) return;
+    const unused = cellHeight - drawnPx;
     if (Math.abs(unused) > 1) setStretchPx(current => Math.max(0, current + unused));
-  }, [phone, compact, cellHeight, bodyHeight]);
+  }, [phone, compact, cellHeight, drawnPx]);
   const shape = resolveUsageDailyChartShape(presentation, phone, compact ? 0 : stretchPx);
   const height = shape.plotPx;
   if (!view || count === 0)
     // Until the first read answers, the body holds the settled chart's shape (its plot, axis and legend room).
     return <UsageBodyNoUsage slice={props.slice} testID={props.testID} readingShape={shape} onRetry={props.model.refresh} />;
   return (
+    <View testID={`${props.testID}.drawn`} onLayout={onDrawnLayout}>
     <UsageDailyChart theme={chartTheme} gap={theme.space.s10} testID={props.testID} chart={{
         ...details,
         label: caption,
@@ -284,5 +292,6 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         onRetry={props.model.refresh}
         testID={`${props.testID}.coverage`}
       />} />
+    </View>
   );
 }

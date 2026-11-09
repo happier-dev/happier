@@ -626,6 +626,17 @@ describe('Work and Coach widget bodies', () => {
     expect(linkedRow[2]).toBe(t('usage.board.work.reason_missing_pr'));
     expect(String(linkedRow[linkedRow.length - 1])).toContain('checkpoint/s1/t1');
   });
+  it('leads a long Session\'s turns and folds the rest behind Show all · N (R135 item 3)', async () => {
+    const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
+    const many = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+      contributions: Array.from({ length: 12 }, (_, index) => contribution(`turn-${index}`, 's1', `t${index}`)), evidence: [] }));
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery}
+      slice={{ ...slice, shownQuery: sessionQuery, work: many }} id="usage_session_value" testID="value" />);
+    const turns = () => screen.findAllByType(HappierDataRows).find(rows => rows.props.testID === 'value.autopsy.turns')!.props.rows;
+    expect(turns()).toHaveLength(6);
+    await screen.pressByTestIdAsync('value.autopsy.turns.more.toggle');
+    expect(turns()).toHaveLength(12);
+  });
   it('retains exact Autopsy summary and mixed-basis turn amounts behind their compact values', async () => {
     const sessionQuery = normalizeUsageQuery({ ...query, session: 's1', costBasis: 'auto' });
     const reported = { ...contribution('eur-exact', 's1', 't1'),

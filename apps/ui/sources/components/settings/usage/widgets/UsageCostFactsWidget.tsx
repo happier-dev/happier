@@ -144,5 +144,6 @@ const styles = StyleSheet.create((theme) => ({
   partial: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
   body: { gap: 16 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 24, rowGap: 18 },
-  cell: { flexGrow: 1, flexBasis: 150, minWidth: 0 },
+  // Two figures share a phone row (lab d2views P, 2×2): two bases and the gap fit a 390 px sheet's column.
+  cell: { flexGrow: 1, flexBasis: 128, minWidth: 0 },
 }));

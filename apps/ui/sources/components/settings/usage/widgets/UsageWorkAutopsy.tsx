@@ -20,6 +20,8 @@ import { usageMeterFill, usageSignatureAccent } from '../usageAccent';
 import {
   UsageBodyInsufficient,
   UsageCoverageLine,
+  UsageShowAllRows,
+  leadingUsageRows,
   usageDimensionLabel,
   useUsagePluginTheme,
   type UsageBodyProps,
@@ -101,6 +103,7 @@ export function UsageWorkAutopsy(
   const width = presentation?.geometry?.width;
   const details = useUsageChartDetails(`${t(`usage.widgets.${props.id}`)}: ${t('usage.board.work.costOverTime')}`,
     selected !== null && Boolean(autopsy?.costTimeline.length) && (width === undefined || width >= PLOT_MIN_WIDTH_PX));
+  const [turnsExpanded, setTurnsExpanded] = React.useState(false);
   if (!selected) return null;
   const turns = autopsy?.turns ?? [];
   // A turn is named by its place in the witnessed order, never by its raw id.
@@ -202,6 +205,8 @@ export function UsageWorkAutopsy(
   const ranked = [...turns].sort((left, right) => (right.amount ?? -1) - (left.amount ?? -1));
   const largest = ranked[0]?.amount != null && ranked[0].amount > 0 && ranked[0].turnId !== null ? ranked[0] : null;
   const largestShare = largest && autopsy?.amount ? Math.round((largest.amount! / autopsy.amount) * 100) : null;
+  // A long Session leads with its largest turns; the rest fold behind the Usage show-all footer (R135 item 3).
+  const shownTurns = leadingUsageRows(ranked, turnsExpanded);
   // What every turn shares is said once in the summary, not on each row.
   const identities = new Set(turns.map(identityLine));
   const sharedIdentity = identities.size === 1 ? [...identities][0]! : null;
@@ -315,8 +320,8 @@ export function UsageWorkAutopsy(
             density="compact"
             showProportionShares={false}
             valueFormatter={format}
-            rowIds={ranked.map((turn) => turn.contributionId)}
-            rowDatums={ranked.map(turn => datum(turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId), turn.amount, turn.moneyBasis))}
+            rowIds={shownTurns.rows.map((turn) => turn.contributionId)}
+            rowDatums={shownTurns.rows.map(turn => datum(turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId), turn.amount, turn.moneyBasis))}
             columns={[
               { label: t('usage.board.work.turn') },
               { label: metricLabel, proportion: true },
@@ -326,7 +331,7 @@ export function UsageWorkAutopsy(
               { label: `${t('usage.board.page.byModel')} · ${t('common.machine')}` },
               { label: t('usage.board.work.checkpoint') },
             ]}
-            rows={ranked.map((turn) => [
+            rows={shownTurns.rows.map((turn) => [
               turn.turnId === null ? t('usage.board.work.reason_missing_turn') : turnLabel(turn.turnId),
               cell(turn.amount, turn.moneyBasis),
               outcomeLine(turn),
@@ -337,6 +342,9 @@ export function UsageWorkAutopsy(
               turn.checkpoints.join(' · '),
             ])}
           />
+          <UsageShowAllRows label={`${t(`usage.widgets.${props.id}`)}: ${t('usage.board.work.turns')}`}
+            total={ranked.length} hidden={shownTurns.hidden} expanded={turnsExpanded}
+            onToggle={() => setTurnsExpanded(value => !value)} testID={`${props.testID}.turns.more`} />
           {turns.some(turn => turn.retainedChanges.length > 0) ?
             <Text style={[styles.note, caption]}>{t('usage.board.work.linesKeptMethod')}</Text> : null}
         </View>

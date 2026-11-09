@@ -16,6 +16,9 @@ describe('shared Usage formatting', () => {
         };
         expect(formatUsageDuration(0, labels)).toBe('0 min');
         expect(formatUsageDuration(40_000, labels)).toBe('40 s');
+        // A measured turn too short to round to a second is under one, never "0 min" (R135 N4).
+        expect(formatUsageDuration(300, labels)).toBe('<1 s');
+        expect(formatUsageDurationCompact(300, 'en-US')).toBe('<1s');
         expect(formatUsageDuration(59_500, labels)).toBe('1 min');
         expect(formatUsageDuration(3_570_000, labels)).toBe('1 h 0 min');
         expect(formatUsageDuration(11_520_000, labels)).toBe('3 h 12 min');

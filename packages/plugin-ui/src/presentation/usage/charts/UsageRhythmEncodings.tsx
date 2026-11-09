@@ -64,9 +64,12 @@ export function UsageWeekTide(props: UsageChartBaseProps & Readonly<{ model: Usa
           const px = axis + (peak.hour / 23) * plot;
           const py = peakBase - Math.pow(Math.max(0, peak.value) / max, 0.9) * rowHeight * 2.2;
           const right = px > width - 200;
+          // A peak on the top ridge sits near the drawing's edge: its label's baseline stays a line below the top, so the
+          // label is never clipped; it still sits beside the dot (R135 N4).
+          const labelY = Math.max(py - 5, (svgText.styles.body.fontSize ?? svgText.fontSize) + 1);
           return [...shapes,
             peak.value > 0 ? <Circle key="peak" cx={r1(px)} cy={r1(py)} r={3} fill={props.paint.accent} /> : null,
-            peak.value > 0 ? svgText.draw({ x: right ? px - 7 : px + 7, y: py - 5, anchor: right ? 'end' : 'start', tone: 'text', size: 'body', halo: props.paint.paper,
+            peak.value > 0 ? svgText.draw({ x: right ? px - 7 : px + 7, y: labelY, anchor: right ? 'end' : 'start', tone: 'text', size: 'body', halo: props.paint.paper,
               text: props.labels.peak(peak.row, peak.hour, peak.value) }, 'peak-label') : null,
             ...[0, 6, 12, 18, 24].filter((hour) => hour < 24 || width >= 380).map((hour) => svgText.draw({ x: axis + (Math.min(hour, 23) / 23) * plot, y: height - 3,
               anchor: hour === 24 ? 'end' : 'start', text: props.labels.clock(hour) }, `t${hour}`)),

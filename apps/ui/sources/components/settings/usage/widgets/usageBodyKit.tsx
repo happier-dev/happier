@@ -793,17 +793,20 @@ export function describeUsagePageNewerServerSources(slices: readonly Pick<UsageQ
  * The page header's one "Couldn't read …" fact: every shared read that failed, named once for the page. A read
  * that settled with only some Sessions' evidence joins the same sentence, so "Showing what arrived" is said once.
  */
-/** Only Work's linked pull requests and branches went unread: every figure still stands, so the page says it quietly. */
+/**
+ * Only Work's linked pull requests and branches went unread: every figure still stands, so the page says it quietly,
+ * with its Retry. Activity read from only some Sessions joins the same quiet line; it shows what arrived (R135 item 12).
+ */
 export function isUsagePageFailureOnlyWork(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): boolean {
   const failed = slices.flatMap(slice => slice.sources.filter(source => source.status === 'error' && isUsagePageReadSource(source.source)));
-  return failed.length > 0 && failed.every(source => source.source === 'work') && readUsagePageWitnessedNames(slices).length === 0;
+  return failed.length > 0 && failed.every(source => source.source === 'work');
 }
 
 export function describeUsagePageFailedSources(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): string | null {
   const names = readUsagePageFailedNames(slices);
   if (!names.length) return null;
-  if (isUsagePageFailureOnlyWork(slices)) return t('usage.board.page.workNotRead');
   const witnessed = readUsagePageWitnessedNames(slices);
+  if (isUsagePageFailureOnlyWork(slices) && witnessed.length === 0) return t('usage.board.page.workNotRead');
   return witnessed.length
     ? t('usage.board.page.coverageFailedWitnessed', { sources: names.join(', '), witnessed: witnessed.join(', ') })
     : t('usage.board.page.coverageFailed', { sources: names.join(', ') });

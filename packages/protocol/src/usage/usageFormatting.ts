@@ -79,7 +79,9 @@ function usageDurationParts(ms: number) {
 /** A measured duration; labels retain the host's language and a measured zero is not missing. */
 export function formatUsageDuration(ms: number, labels: UsageDurationLabels): string {
     const { seconds, minutes } = usageDurationParts(ms);
-    if (seconds < 60) return seconds === 0 ? labels.minutes(0) : labels.seconds(seconds);
+    // A measured nothing reads "0 min"; a real duration too short to round to a second is under one, never zero.
+    if (seconds === 0) return ms > 0 ? `<${labels.seconds(1)}` : labels.minutes(0);
+    if (seconds < 60) return labels.seconds(seconds);
     if (minutes < 60) return labels.minutes(minutes);
     return labels.hours(Math.floor(minutes / 60), minutes % 60);
 }
@@ -89,6 +91,7 @@ export function formatUsageDurationCompact(ms: number, locales?: Intl.LocalesArg
     const { seconds, minutes } = usageDurationParts(ms);
     const unit = (value: number, name: 'hour' | 'minute' | 'second') =>
         new Intl.NumberFormat(locales, { style: 'unit', unit: name, unitDisplay: 'narrow' }).format(value);
+    if (seconds === 0 && ms > 0) return `<${unit(1, 'second')}`;
     if (seconds > 0 && seconds < 60) return unit(seconds, 'second');
     if (minutes < 60) return unit(minutes, 'minute');
     return minutes % 60 === 0 ? unit(minutes / 60, 'hour')

@@ -4,7 +4,9 @@ import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { WidgetFrameCellHeightContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -129,6 +131,19 @@ describe('Daily keeps its shape: declared plot height and a chart-shaped first r
     const tall = await renderScreen(<WidgetPresentationProvider value={{ ...medium, geometry: { width: 560, height: 920 } }}><UsageDailyWidget {...props} /></WidgetPresentationProvider>);
     expect(plotOf(tall)).toBe(plotOf(own));
     expect(plotOf(own)).toBeGreaterThanOrEqual(200);
+  });
+  it('gives the plot every pixel its stretched cell leaves under the drawn chart, even inside a declared room', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(start + 20 * day);
+    const props = fixture([10, 30, 20], start + 3 * day);
+    // A grown cell declares a 500 px room and its band stretches it to 700; the capped chart draws 400 of it.
+    const screen = await renderScreen(<WidgetFrameCellHeightContext.Provider value={700}>
+      <WidgetPresentationProvider value={{ ...medium, geometry: { width: 560, height: 500 } }}><UsageDailyWidget {...props} /></WidgetPresentationProvider>
+    </WidgetFrameCellHeightContext.Provider>);
+    const before = plotOf(screen);
+    await act(async () => {
+      screen.findHostByTestId('daily.drawn')!.props.onLayout({ nativeEvent: { layout: { width: 560, height: 400 } } });
+    });
+    expect(plotOf(screen)).toBe(before + 300);
   });
   it('holds the settled chart\'s room while its first read is pending, then says what it is still reading', async () => {
     vi.useFakeTimers();

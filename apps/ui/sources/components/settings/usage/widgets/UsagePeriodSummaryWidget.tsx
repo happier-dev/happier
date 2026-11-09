@@ -77,7 +77,13 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   const unmeasured = (source: 'how_you_work' | 'work') => readUsageSourceNeedsNewerServer(props.slice, source)
     ? t('usage.board.page.needsNewerServer') : t('usage.board.page.notMeasuredYet');
   const stats: UsageSummaryMetric[] = [];
-  if (!cost && invoice?.amountUsd != null)
+  // The column carries the metric the hero does not: in Cost mode the hero already says the cost and why it may be
+  // unavailable, so the column shows the tokens and the one cost message is said once (R135 N2).
+  if (cost)
+    stats.push(
+      { id: 'tokens', label: t('usage.tokens'), value: view.hero.totalTokens, valueFormatter: formatTokenCount },
+    );
+  else if (invoice?.amountUsd != null)
     stats.push(
       { id: 'paid', label: t('usage.board.page.youPaid'), value: invoice.amountUsd,
         valueFormatter: (value) => formatUsageCost(value, currency), caption: usageCostKindPhrase('invoice') },

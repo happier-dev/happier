@@ -69,8 +69,9 @@ export function UsageFilterBar(
         const label = (key: string) => options.find(option => option.id === key)?.label ?? key;
         const value =
           selected.length === 0
-            // The bare count reads as "everything" and keeps the row on one line at 1440 (R133 fix 7).
-            ? (options.length > 1 ? '' : t('usage.board.page.filterAll'))
+            // An unnarrowed scope reads "All" (lab d2views, d2filter); a bare count reads as a selection, so the
+            // count stays with the menu's "All N" row. Width-neutral, so the row keeps its one line (R135 call 1).
+            ? t('usage.board.page.filterAll')
             : selected.length <= 2
               ? selected.map(label).join(', ')
               : t('usage.board.page.filterCount', { count: selected.length });
@@ -80,11 +81,6 @@ export function UsageFilterBar(
           showLabel: true,
           valueLabel: value,
           active: selected.length > 0,
-          ...(selected.length === 0 && options.length > 1
-            ? { count: String(options.length - 1) }
-            : {}),
-          // The count arrives with the read; its slot is held so the chips beside this one never move.
-          ...(selected.length === 0 ? { reserveCount: true } : {}),
           // The gap dot comes and goes with coverage; its slot stays so the chips beside Sources never move.
           ...(field === 'sources' ? { reservePresence: true } : {}),
           ...(field === 'sources' && coverageIncomplete ? { presence: 'attention' as const } : {}),
@@ -197,8 +193,9 @@ export function UsageFilterBar(
           />
         </View>
       ) : null}
-      {/* The basis only changes money: with Tokens shown it says nothing, so the row keeps its one line (R133 fix 7). */}
-      {costFilter && props.metric !== 'tokens' ? <SelectionListFilterChip filter={costFilter} currentUiContextCommandScope={costFilter.testID} /> : null}
+      {/* Shown in Tokens and Cost alike (labs d2views, d2top, d2work): a Tokens page still shows basis-dependent
+          money, and a chip that came and went with the toggle reshaped the bar under the pointer (R135 call 2). */}
+      {costFilter ? <SelectionListFilterChip filter={costFilter} currentUiContextCommandScope={costFilter.testID} /> : null}
     </>
   );
   const period = (

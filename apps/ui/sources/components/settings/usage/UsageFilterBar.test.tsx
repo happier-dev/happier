@@ -80,6 +80,29 @@ function renderBar(selections: string[], overrides: Partial<Bar> = {}) {
 }
 
 describe('UsageFilterBar', () => {
+  it('reads an unnarrowed scope as "All", leaving the count to the menu\'s All row (lab d2views, d2filter)', async () => {
+    Object.assign(viewport, { width: 1280, height: 900 });
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
+    const { t } = await import('@/text');
+    const screen = await renderBar([]);
+    const sources = screen.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter)
+      .find((chip) => chip.id === 'sources')!;
+    expect(sources.valueLabel).toBe(t('usage.board.page.filterAll'));
+    expect(sources.count).toBeUndefined();
+    expect(sources.reserveCount).toBeUndefined();
+    await screen.unmount();
+  });
+
+  it('keeps the cost basis chip in Tokens and Cost alike, so the bar keeps its shape on every toggle', async () => {
+    Object.assign(viewport, { width: 1280, height: 900 });
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
+    for (const metric of ['tokens', 'cost', null] as const) {
+      const screen = await renderBar([], { metric, costBasisOptions: ['auto', 'reported'], onMetricChange: () => {} });
+      expect(screen.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter.id)).toContain('costBasis');
+      await screen.unmount();
+    }
+  });
+
   it('collapses every scope filter into one Filters chooser on a phone, keeping each choice and the narrowed count', async () => {
     const selections: string[] = [];
     const screen = await renderBar(selections);
@@ -132,10 +155,8 @@ describe('UsageFilterBar', () => {
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
     const pending = await renderBar([], { costBasisPending: true, metric: null });
     const chips = pending.findAllByType(SelectionListFilterChip).map((chip) => chip.props.filter);
-    // The basis in force is the chip's only known choice; the scope chips hold their count slot until it is known.
+    // The basis in force is the chip's only known choice.
     expect(chips.find((chip) => chip.id === 'costBasis')?.options.map((option: { id: string }) => option.id)).toEqual(['auto']);
-    expect(chips.find((chip) => chip.id === 'sources')).toMatchObject({ reserveCount: true, count: '1' });
-    expect(chips.find((chip) => chip.id === 'agents')?.reserveCount).toBeUndefined();
     await pending.unmount();
     // Answered with one basis only: nothing to choose, so the chip is gone.
     const settled = await renderBar([]);
