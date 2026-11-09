@@ -13,6 +13,7 @@ import {
     ConnectedAccountIndexRoles,
     ConnectedAccountIndexStatusLines,
     ConnectedAccountIndexUsageBlock,
+    resolveConnectedAccountUsageRefresh,
     type ConnectedAccountIndexEntry,
     type ConnectedAccountIndexFacts,
 } from './ConnectedAccountIndexRow';
@@ -52,7 +53,7 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
             menu={<ConnectedAccountIndexActions
                     testID={props.testID}
                     star={props.star}
-                    refresh={props.signedOut || facts.usage.kind === 'noLimits' ? null : facts.refresh}
+                    refresh={resolveConnectedAccountUsageRefresh(facts, props.signedOut)}
                     refreshing={facts.refreshing}
                 />}
             body={{ kind: 'content', children: <View pointerEvents="box-none" style={styles.body}>

@@ -17,6 +17,7 @@ import type {
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import type { PopoverAnchor } from '@/components/ui/popover/_types';
 import { Item } from '@/components/ui/lists/Item';
+import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -251,6 +252,14 @@ export const ConnectedAccountIndexActions = React.memo(function ConnectedAccount
     );
 });
 
+/** The usage an account can read again: none while it needs a sign-in or reports no limits (rows and cards alike). */
+export function resolveConnectedAccountUsageRefresh(
+    facts: ConnectedAccountIndexFacts,
+    signedOut: ConnectedAccountIndexEntry['signedOut'],
+): (() => void) | null {
+    return signedOut || facts.usage.kind === 'noLimits' ? null : facts.refresh;
+}
+
 export type ConnectedAccountIndexRowViewProps = ConnectedAccountIndexEntry & Readonly<{
     facts: ConnectedAccountIndexFacts;
     now: number;
@@ -295,8 +304,9 @@ export const ConnectedAccountSignInRecovery = React.memo(function ConnectedAccou
 /**
  * An account on the Credentials list (lab `cr` crHome A): one sheet row like every other on the page. The
  * service's mark, the account (a subscription's email) and one fact line (its name and plan, or its
- * service), then one trailing thing: its limits, or the fix when it needs a new sign-in. Old usage says so
- * under the fact line. The row opens the account, where its default, refresh, resets and pools live.
+ * service), then its trailing side: its limits with the card's quiet actions (↻ reads them again), or the fix
+ * when it needs a new sign-in. Old usage says so under the fact line. The row opens the account, where its
+ * default, resets and pools live.
  */
 export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccountIndexRowView(props: ConnectedAccountIndexRowViewProps) {
     const { facts } = props;
@@ -305,14 +315,30 @@ export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccount
         props.identityLabel,
         accessMode ? presentConnectedAccountAccessMode(accessMode, facts.planLabel) : facts.planLabel ?? props.serviceFact ?? null,
     ].filter(Boolean).join(' · ');
-    const trailing = props.signedOut ? (
-        <ConnectedAccountSignInRecovery testID={props.testID} signedOut={props.signedOut}
-            onOpen={props.onOpen} compact={props.compact} prominence={props.fixProminence} />
-    ) : (
-        <View pointerEvents={facts.usage.kind === 'error' ? 'box-none' : 'none'} style={props.compact ? null : styles.use}>
+    const refresh = resolveConnectedAccountUsageRefresh(facts, props.signedOut);
+    // The card's own actions, after the limits they act on; a row without any keeps its limits alone.
+    const actions = !props.signedOut && (props.star || refresh) ? (
+        <ConnectedAccountIndexActions testID={props.testID} star={props.star} refresh={refresh} refreshing={facts.refreshing} />
+    ) : null;
+    // A page row lends its trailing control the row's padding; a stack of meters is taller than one control, so it
+    // keeps that padding and the row grows around it instead of the stack crossing its dividers (R137 Credentials).
+    const rowPadding = usePageRowMetrics().paddingVerticalPx;
+    const keepRowPadding = props.compact ? null : { marginVertical: rowPadding };
+    const usage = (
+        <View pointerEvents={facts.usage.kind === 'error' ? 'box-none' : 'none'}
+            style={props.compact ? (actions ? styles.useCompact : null) : [styles.use, actions ? null : keepRowPadding]}>
             <ConnectedAccountIndexUsageBlock testID={props.testID} usage={facts.usage} now={props.now} align="end" />
         </View>
     );
+    const trailing = props.signedOut ? (
+        <ConnectedAccountSignInRecovery testID={props.testID} signedOut={props.signedOut}
+            onOpen={props.onOpen} compact={props.compact} prominence={props.fixProminence} />
+    ) : actions ? (
+        <View pointerEvents="box-none" style={[styles.useWithActions, keepRowPadding]}>
+            {usage}
+            {actions}
+        </View>
+    ) : usage;
     const staleOrFailed = facts.staleSince !== null || (facts.usage.kind === 'meters' && Boolean(facts.usage.error));
     return (
         <Item
@@ -321,7 +347,7 @@ export const ConnectedAccountIndexRowView = React.memo(function ConnectedAccount
             subtitle={fact || undefined}
             icon={<ConnectedServiceMark legacyServiceId={props.legacyServiceId} pluginId={props.pluginId} size="inline" />}
             rightElement={trailing}
-            rightElementOutsidePressable={Boolean(props.signedOut) || facts.usage.kind === 'error'}
+            rightElementOutsidePressable={Boolean(props.signedOut) || facts.usage.kind === 'error' || actions !== null}
             keepChevronWithRightElement={!props.signedOut}
             showChevron={!props.signedOut}
             accessoryLayout="adaptive"
@@ -525,6 +551,18 @@ const styles = StyleSheet.create((theme) => ({
         minWidth: 0,
         paddingTop: theme.space.s2,
         gap: theme.space.s8,
+    },
+    // Limits, then their actions on the first meter's line; on a phone the limits take the stacked width.
+    useWithActions: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s4,
+        minWidth: 0,
+        flexShrink: 1,
+    },
+    useCompact: {
+        flex: 1,
+        minWidth: 0,
     },
     actions: {
         flexDirection: 'row',
