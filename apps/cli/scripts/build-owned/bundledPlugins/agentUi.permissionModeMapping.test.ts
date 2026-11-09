@@ -3,6 +3,7 @@ import { ScriptKind, ScriptTarget, createSourceFile, isIdentifier, isObjectLiter
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 
 import { renderUiBundledPluginEntriesTs } from './agentUi.ts';
+import { renderRetainedUiBundledPluginEntriesTs } from './retainedUi.ts';
 import type { BundledPluginPackage } from './projectionFacts.ts';
 
 import { PLUGIN_MANIFEST as DEVIN_PLUGIN_MANIFEST } from '../../../../../packages/plugins/devin/src/manifest';
@@ -14,6 +15,9 @@ import { PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST } from '../../../../../packag
 import { CLAUDE_UI_DESCRIPTOR } from '../../../../../packages/plugins/claude/src/ui/descriptor';
 import { PLUGIN_MANIFEST as QWEN_PLUGIN_MANIFEST } from '../../../../../packages/plugins/qwen/src/manifest';
 import { QWEN_ACP_RUNTIME_DEFINITION } from '../../../../../packages/plugins/qwen/src/agent/acp/definition';
+import { PLUGIN_MANIFEST as CODEBUDDY_PLUGIN_MANIFEST } from '../../../../../packages/plugins/codebuddy/src/manifest';
+import { CODEBUDDY_UI_DESCRIPTOR } from '../../../../../packages/plugins/codebuddy/src/ui/descriptor';
+import { CODEBUDDY_ACP_RUNTIME_DECLARATION } from '../../../../../packages/plugins/codebuddy/src/agent/acp/runtimeDeclaration';
 
 
 function emittedCorePermissionMapping(source: string, coreName: string): unknown {
@@ -36,6 +40,20 @@ function emittedCorePermissionMapping(source: string, coreName: string): unknown
 }
 
 describe('bundled Agent permission mapping projection', () => {
+    it('preserves CodeBuddy permission controls through custom runtime admission and both UI publication paths', () => {
+        const parsed = ingestPluginManifestV2(CODEBUDDY_PLUGIN_MANIFEST);
+        if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+        const pluginPackage: BundledPluginPackage = {
+            pluginPackageId: 'codebuddy', pluginId: parsed.manifest.id,
+            packageName: '@happier-dev/plugins-codebuddy', packageVersion: '0.0.0',
+            agentId: 'codebuddy', manifest: parsed.manifest, agentUiDescriptor: CODEBUDDY_UI_DESCRIPTOR,
+        };
+        const ui = renderUiBundledPluginEntriesTs({ packageNames: [pluginPackage.packageName], pluginPackages: [pluginPackage] });
+        const expected = CODEBUDDY_ACP_RUNTIME_DECLARATION.definition.permissionModeMapping;
+        expect(emittedCorePermissionMapping(ui, 'CODEBUDDY_CORE')).toEqual(expected);
+        expect(emittedCorePermissionMapping(renderRetainedUiBundledPluginEntriesTs(ui, [pluginPackage], 'projection.ts'), 'CODEBUDDY_CORE')).toEqual(expected);
+    });
+
     it('publishes declared ACP mappings from real manifests, including null policy, and omits unmapped/native Agents', () => {
         const inputs = [
             { agentId: 'devin', manifest: DEVIN_PLUGIN_MANIFEST, descriptor: DEVIN_UI_DESCRIPTOR },

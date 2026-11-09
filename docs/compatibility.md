@@ -7385,6 +7385,19 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 custom Agent runtime declarations add optional
+`permissionModeMapping`, using the existing native permission mapping grammar.
+CodeBuddy projects the same mapping its ACP factory consumes, preserving permission
+controls when launch moves to a custom factory. Both full and retained bundled UI
+publication read this admitted declaration. Omission keeps existing custom Agents
+unmapped; declarative ACP mappings retain their existing location and meaning.
+Earlier strict development readers reject the added field, so Protocol, SDK,
+CodeBuddy, daemon and UI declarations reload together under the 0.3 direct cut.
+No persisted format, wire epoch or compatibility adapter changes. The inspected
+`../0.2` frontier `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no corresponding
+custom runtime schema or SDK author declaration at these paths, including scoped
+local changes.
+
 Unreleased 0.3 Session launch errors add optional closed `pluginCodeRefusal`
 with the existing closed Machine setup remedy union. Linux plugin-code access
 failures retain `plugin_code_unreadable` and the admitted requester's remedy:

@@ -11,6 +11,13 @@ function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('sessionModeControl', () => {
+  it('keeps CodeBuddy native Default separate from clearing its permission override after custom runtime publication', async () => {
+    const { getSessionModePickerOptions } = await import('./sessionModeControl');
+    const native = [{ id: 'default', name: 'Native default' }];
+    expect(getSessionModePickerOptions(native, 'codebuddy').map(option => option.id)).toEqual(['', 'default']);
+    expect(getSessionModePickerOptions(native, 'droid').map(option => option.id)).toEqual(['default']);
+  });
+
   it('does not reinterpret a different Agent mode catalog as an explicit override before catalog arrival', async () => {
     const { computeSessionModePickerControl } = await import('./sessionModeControl');
     const metadata = createMetadata({

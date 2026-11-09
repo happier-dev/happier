@@ -2,11 +2,26 @@
 import { collectBundledAgentContributionIdentities } from './agentFacts.ts';
 import { readDeclaredAgentTitle } from '../../../../../packages/agents/src/declaredAgentTitle.ts';
 import {
+  readProviderOwnedEnvironmentKeys,
+  readPermissionModeMapping,
+  renderBundledPluginPresentationTs,
+  renderBundledAgentDeclarationsTs,
+  renderBundledAccountProviderDeclarationsTs,
+  renderBundledAccountConnectedServiceDeclarationsTs,
+  renderBundledMachineProvisionerDeclarationsTs,
+  renderBundledUiDeclarationImportsTs,
+  renderBundledAgentDeclarationTypeTs,
+} from './uiDeclarations.ts';
+export {
+  renderBundledAccountProviderDeclarationsTs,
+  renderBundledAccountConnectedServiceDeclarationsTs,
+  renderBundledMachineProvisionerDeclarationsTs,
+} from './uiDeclarations.ts';
+import {
   readJsonArrayProperty,
   readJsonObjectProperty,
   readManifestContributionArray,
   readOptionalJsonStringProperty,
-  readRequiredContributionId,
   readRequiredRecord,
   readRequiredString,
   renderJsonLiteral,
@@ -207,35 +222,6 @@ function readDescriptorGeneratedSvgIcon(
 export function buildVisibleMessageDescriptor(descriptor: AgentUiDescriptor): JsonObject | undefined {
   const visibleMessages = readJsonObjectProperty(descriptor.session ?? {}, 'visibleMessages');
   return hasDescriptorFields(visibleMessages ?? undefined) ? visibleMessages ?? undefined : undefined;
-}
-
-function readProviderOwnedEnvironmentKeys(
-  pluginPackage: BundledPluginPackage,
-  agentId: string,
-): readonly string[] {
-  const contribution = readManifestContributionArray(pluginPackage.manifest, 'agents')
-    .find((entry) => readRequiredContributionId(entry, 'agents', pluginPackage.packageName) === agentId);
-  if (!contribution) return [];
-  const providerRequirements = readJsonObjectProperty(contribution, 'providerRequirements');
-  const authIsolation = providerRequirements ? readJsonObjectProperty(providerRequirements, 'authIsolation') : undefined;
-  const raw = authIsolation?.ownedEnvKeys;
-  if (raw === undefined) return [];
-  if (!Array.isArray(raw) || raw.some((value) => typeof value !== 'string')) {
-    throw new Error(`${pluginPackage.packageName}.contributes.agents.${agentId}.providerRequirements.authIsolation.ownedEnvKeys must be a string array`);
-  }
-  return raw;
-}
-
-function readPermissionModeMapping(
-  pluginPackage: BundledPluginPackage,
-  agentId: string,
-): JsonObject | undefined {
-  const contribution = readManifestContributionArray(pluginPackage.manifest, 'agents')
-    .find((entry) => readRequiredContributionId(entry, 'agents', pluginPackage.packageName) === agentId);
-  const runtime = contribution ? readJsonObjectProperty(contribution, 'runtime') : null;
-  if (runtime?.kind !== 'acp') return undefined;
-  const definition = readJsonObjectProperty(runtime, 'definition');
-  return definition ? readJsonObjectProperty(definition, 'permissionModeMapping') ?? undefined : undefined;
 }
 
 function createDescriptorAgentUiProjectionSource(
@@ -484,11 +470,7 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
   lines.push(' */');
   lines.push('');
   lines.push('import type { AgentCoreConfig, CanonicalAgentId } from \'./registryCore\';');
-  lines.push('import type { PluginAgentAcpDefinitionV2, PluginAgentCliMetadata, PluginAgentContributionV2, PluginContributionIdentityV1 } from \'@happier-dev/protocol\';');
-  lines.push('import type { PluginSettingsContributionV2 } from \'@happier-dev/protocol/plugins/contributions/settings\';');
-  lines.push('import type { ProviderContributionV1 } from \'@happier-dev/protocol/providers/contributions\';');
-  lines.push('import type { MachineProvisionerContributionV1 } from \'@happier-dev/protocol/plugins/contributions/machineProvisioners\';');
-  lines.push('import type { PluginConnectedAccountDescriptorContributionV2 } from \'@happier-dev/protocol\';');
+  lines.push(renderBundledUiDeclarationImportsTs());
   lines.push(usesGeneratedSvgIcons
     ? 'import type { AgentIconSvgXmlResolver, AgentUiConfig } from \'./registryUi\';'
     : 'import type { AgentUiConfig } from \'./registryUi\';');
@@ -524,12 +506,7 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
   lines.push(']);');
   lines.push('');
   lines.push('/** First-party manifest presentation only; no installation or execution authority. */');
-  lines.push('export const BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION: Readonly<Record<string, Readonly<{ displayName: string; description?: string }>>> = Object.freeze({');
-  for (const plugin of params.pluginPackages) {
-    const { displayName, description } = plugin.manifest;
-    lines.push(`  ${JSON.stringify(plugin.pluginId)}: Object.freeze(${renderJsonLiteral({ displayName, ...(description ? { description } : {}) })}),`);
-  }
-  lines.push('});');
+  lines.push(renderBundledPluginPresentationTs(params.pluginPackages));
   lines.push('');
   lines.push('export const BUNDLED_CANONICAL_AGENTS_CORE: Readonly<Partial<Record<CanonicalAgentId, AgentCoreConfig>>> = Object.freeze({');
   for (const agentId of AGENT_UI_PROJECTION_ORDER) {
@@ -554,67 +531,16 @@ export function renderUiBundledPluginEntriesTs(params: Readonly<{
   lines.push('} satisfies Readonly<Partial<Record<CanonicalAgentId, AgentUiConfig>>>);');
   lines.push('');
   lines.push('/** Admitted bundled declarations only; no installed version, runtime generation or activation authority. */');
-  lines.push('export type BundledAgentDeclaration = Readonly<{');
-  lines.push('    identity: PluginContributionIdentityV1;');
-  lines.push('    acpStderrRules: PluginAgentAcpDefinitionV2[\'stderrRules\'] | null;');
-  lines.push('    cli: PluginAgentCliMetadata | null;');
-  lines.push('    acpRegistryIds?: readonly string[];');
-  lines.push('    connectedAccounts: NonNullable<PluginAgentContributionV2[\'connectedAccounts\']>;');
-  lines.push('    providerStateSharing: PluginAgentContributionV2[\'capabilities\'][\'providerStateSharing\'] | null;');
-  lines.push('    accountSettings: readonly PluginSettingsContributionV2[];');
-  lines.push('    providerRequirements: PluginAgentContributionV2[\'providerRequirements\'] | null;');
-  lines.push('}>;');
-  lines.push('export const BUNDLED_CANONICAL_AGENT_DECLARATIONS: Readonly<Partial<Record<CanonicalAgentId, BundledAgentDeclaration>>> = Object.freeze({');
-  const contributionIdentities = collectBundledAgentContributionIdentities(params.pluginPackages);
-  for (const entry of params.pluginPackages) {
-    if (!entry.agentId) continue;
-    const identity = contributionIdentities[entry.agentId];
-    const agent = entry.manifest.contributes.agents?.find((definition) => definition.id === identity?.localId);
-    if (!agent) throw new Error(`Missing admitted Agent declaration for ${entry.packageName}`);
-    const accountSettings = (entry.manifest.contributes.settings ?? [])
-      .filter((definition) => definition.scope === 'account');
-    const declaration = {
-      identity,
-      acpStderrRules: agent.runtime.kind === 'acp' ? agent.runtime.definition?.stderrRules ?? null : null,
-      cli: agent.cli ?? null,
-      acpRegistryIds: agent.catalog?.acpRegistryIds ?? [],
-      connectedAccounts: agent.connectedAccounts ?? [],
-      providerStateSharing: agent.capabilities.providerStateSharing ?? null,
-      accountSettings,
-      providerRequirements: agent.providerRequirements ?? null,
-    };
-    lines.push(`    ${renderTsStringLiteral(entry.agentId)}: ${JSON.stringify(declaration)},`);
-  }
-  lines.push('});');
+  lines.push(renderBundledAgentDeclarationTypeTs());
+  lines.push(renderBundledAgentDeclarationsTs(params.pluginPackages));
   lines.push('');
   lines.push('/** Provider declarations from the same admitted bundled manifests; no activation or Machine facts. */');
-  lines.push('export const BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS: Readonly<Record<string, Readonly<{ contributionKey: string; definition: ProviderContributionV1; provenance: \'first_party\' }>>> = Object.freeze({');
-  for (const entry of params.pluginPackages) {
-    for (const definition of entry.manifest.contributes.providers ?? []) {
-      const contributionKey = `${entry.pluginId}/${definition.id}`;
-      lines.push(`    ${renderTsStringLiteral(contributionKey)}: ${JSON.stringify({ contributionKey, definition, provenance: 'first_party' })},`);
-    }
-  }
-  lines.push('});');
+  lines.push(renderBundledAccountProviderDeclarationsTs(params.pluginPackages));
   lines.push('');
-  lines.push('export const BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS: Readonly<Record<string, Readonly<{ service: PluginContributionIdentityV1; descriptor: PluginConnectedAccountDescriptorContributionV2 }>>> = Object.freeze({');
-  for (const entry of params.pluginPackages) {
-    for (const descriptor of entry.manifest.contributes.connectedAccountDescriptors ?? []) {
-      const service = { pluginId: entry.pluginId, localId: descriptor.id };
-      lines.push(`    ${renderTsStringLiteral(`${service.pluginId}/${service.localId}`)}: ${JSON.stringify({ service, descriptor })},`);
-    }
-  }
-  lines.push('});');
+  lines.push(renderBundledAccountConnectedServiceDeclarationsTs(params.pluginPackages));
   lines.push('');
   lines.push('/** Declared machine kinds and billing; these facts do not grant controller availability or execution. */');
-  lines.push('export const BUNDLED_MACHINE_PROVISIONER_DECLARATIONS: Readonly<Record<string, Readonly<{ contribution: PluginContributionIdentityV1; descriptor: MachineProvisionerContributionV1 }>>> = Object.freeze<Record<string, Readonly<{ contribution: PluginContributionIdentityV1; descriptor: MachineProvisionerContributionV1 }>>>({');
-  for (const entry of params.pluginPackages) {
-    for (const descriptor of entry.manifest.contributes.machineProvisioners ?? []) {
-      const contribution = { pluginId: entry.pluginId, localId: descriptor.id };
-      lines.push(`    ${renderTsStringLiteral(`${contribution.pluginId}/${contribution.localId}`)}: ${JSON.stringify({ contribution, descriptor })},`);
-    }
-  }
-  lines.push('});');
+  lines.push(renderBundledMachineProvisionerDeclarationsTs(params.pluginPackages));
   lines.push('');
   return lines.join('\n');
 }

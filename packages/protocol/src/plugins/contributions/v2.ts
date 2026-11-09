@@ -419,6 +419,8 @@ export type PluginAgentRuntimeAcpV2 = z.infer<typeof PluginAgentRuntimeAcpV2Sche
 
 export const PluginAgentRuntimeCustomV2Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('custom'),
+  /** Static native permission facts also apply when a custom factory owns launch. */
+  permissionModeMapping: z.optional(PluginAgentAcpPermissionModeMappingV2Schema),
 }));
 export type PluginAgentRuntimeCustomV2 = z.infer<typeof PluginAgentRuntimeCustomV2Schema>;
 

@@ -3,6 +3,7 @@ import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { CODEBUDDY_ACP_RUNTIME_DECLARATION } from './agent/acp/runtimeDeclaration.js';
 
 describe('CodeBuddy plugin', () => {
   it('declares the native transcript reader for content search', () => {
@@ -15,20 +16,21 @@ describe('CodeBuddy plugin', () => {
     const [agent] = PLUGIN_MANIFEST.contributes.agents;
     expect(agent).toMatchObject({
       id: 'codebuddy', primary: 'sessions',
-      runtime: {
-        kind: 'acp',
-        transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'codebuddy-cli' }, args: ['--acp'] },
-        definition: {
-          modelConfigOptionId: 'model',
-          permissionModeMapping: { default: null, 'read-only': 'dontAsk', 'safe-yolo': 'auto', yolo: 'bypassPermissions', plan: 'plan' },
-          mcp: { policy: 'pass_through' },
-        },
-      },
+      runtime: { kind: 'custom' },
+      connectedAccounts: [{ purpose: 'openai-codex-model-request',
+        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        materializationKinds: ['httpHeaders'], credentialKinds: ['oauth'] }],
       cli: {
         executable: { binaryName: 'codebuddy', sourcePreference: 'system-first' },
         install: { managed: { kind: 'managed_package', packageName: '@tencent-ai/codebuddy-code', binaryName: 'codebuddy' } },
         auth: { support: 'login_terminal', environmentVariables: ['CODEBUDDY_API_KEY'], missingCredentialState: 'unknown', loginLaunches: [{ kind: 'primary', args: [], initialInput: '/login\r' }] },
       },
+    });
+    expect(CODEBUDDY_ACP_RUNTIME_DECLARATION).toMatchObject({
+      transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'codebuddy-cli' }, args: ['--acp'] },
+      definition: { modelConfigOptionId: 'model',
+        permissionModeMapping: { default: null, 'read-only': 'dontAsk', 'safe-yolo': 'auto', yolo: 'bypassPermissions', plan: 'plan' },
+        mcp: { policy: 'pass_through' } },
     });
     expect(agent).not.toHaveProperty('factory');
     expect(agent.cli.auth).not.toHaveProperty('probe');
@@ -51,7 +53,7 @@ describe('CodeBuddy plugin', () => {
         media: { acceptsImageInput: 'experimental', emitsSessionMedia: 'supported', nativeImageGeneration: 'unsupported' },
       },
       sessionModeDescriptor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
-      modelConfig: { supportsSelection: true, supportsFreeform: false, acpModelConfigOptionId: 'model', acpModelSetMethod: 'config_option' },
+      modelConfig: { supportsSelection: true, supportsFreeform: true, acpModelConfigOptionId: 'model', acpModelSetMethod: 'config_option' },
     });
   });
 });
