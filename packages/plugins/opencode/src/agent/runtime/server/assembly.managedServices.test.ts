@@ -22,6 +22,7 @@ import {
   resolveOpenCodeRequestAuthV2PluginSourcePath,
 } from '../../auth/services/requestAuth/index.js';
 import { materializeOpenCodeAuthEnvironment } from '../../auth/services/materialize.js';
+import { OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } from '../../auth/services/requestAuth/source.js';
 
 import { createContextFixture } from './assembly.managedServices.testkit.js';
 
@@ -30,6 +31,42 @@ afterEach(() => {
 });
 
 describe('OpenCode server managed-service assembly', () => {
+  it.each(['session', 'execution_run'] as const)('enforces workspace denial in launch and native Session rules through %s', async scope => {
+    let sessionBody: Record<string, unknown> | undefined;
+    const ctx = createContextFixture({ managedServerBaseUrl: 'http://127.0.0.1:49213', managedServerRequest: async input => {
+      const path = input.pathAndQuery.split('?')[0]!;
+      if (path === '/session' && input.method === 'POST') {
+        sessionBody = JSON.parse(new TextDecoder().decode(input.body));
+      }
+      return { ok: true, status: 200, headers: { 'content-type': 'application/json' },
+        body: new Response(JSON.stringify(path === '/session' ? { id: 'oc-deny-writes' } : {})).body };
+    } });
+    const configuration = { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
+      permissionIntent: { value: 'yolo' as const, updatedAtMs: 1 }, workspaceWrites: 'deny' as const, options: {} };
+    const common = { ctx, directory: '/repo', endpoint: { mode: 'managed-spawn' as const }, permissionMode: 'yolo' };
+    const assembly = scope === 'session'
+      ? await createOpenCodeServerRuntimeAssembly({ ...common, happierSessionId: 'session-deny-writes',
+        request: { kind: 'create', sessionId: 'session-deny-writes', cwd: '/repo', configuration } })
+      : await createOpenCodeServerRuntimeAssembly({ ...common, executionRunId: 'run-deny-writes',
+        request: { kind: 'create', runId: 'run-deny-writes', cwd: '/repo', input: { text: 'review' },
+          profile: { pluginId: 'happier.agent.opencode', localId: 'opencode' }, configuration } });
+    try {
+      const spec = vi.mocked(ctx.managedServices.supervise).mock.calls[0]![0];
+      if (spec.mode.kind !== 'spawn') throw new Error('Expected managed spawn');
+      const config = JSON.parse(spec.mode.launch.env?.OPENCODE_CONFIG_CONTENT ?? '{}');
+      expect(config.permission).toMatchObject({ edit: 'deny', write: 'deny', patch: 'deny', bash: 'deny', task: 'deny' });
+      expect(JSON.parse(spec.mode.launch.env?.OPENCODE_PERMISSION ?? '{}')).toMatchObject(config.permission);
+      expect(sessionBody?.permission).toEqual(expect.arrayContaining([
+        { permission: 'edit', pattern: '*', action: 'deny' },
+        { permission: 'bash', pattern: '*', action: 'deny' },
+      ]));
+      if ('updateConfiguration' in assembly.runtime) {
+        await expect(assembly.runtime.updateConfiguration?.({ ...configuration, workspaceWrites: 'allow' }))
+          .resolves.toMatchObject({ status: 'unsupported' });
+      }
+    } finally { await assembly.dispose(); }
+  });
+
   it.each(['omitted', 'custom', 'malformed', 'refused'] as const)(
     'admits detached prompts only after their declared MCP dependencies settle (%s)', async (configuration) => {
       const registrations: string[] = [];
@@ -584,7 +621,7 @@ describe('OpenCode server managed-service assembly', () => {
         support: 'supported',
       });
       expect(assembly.runtime.runtimeCapabilities?.sessionCapabilities?.compaction).toEqual({
-        manual: 'supported',
+        events: true, manual: true, idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 100000 },
       });
     } finally {
       await assembly.dispose();
@@ -649,7 +686,8 @@ describe('OpenCode server managed-service assembly', () => {
       expect(launchEnv).toMatchObject({
         OPENCODE_AUTH_CONTENT: expect.stringContaining('happier-request-auth:openai:1'),
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
-          providers: { openai: {} },
+          provider: { openai: { options: { baseURL: OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } } },
+          providers: { openai: { settings: { baseURL: OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } } },
           plugins: [resolveOpenCodeRequestAuthV2PluginDir(configHome, 'openai')],
         }),
         OPENAI_API_KEY: '',
@@ -698,7 +736,7 @@ describe('OpenCode server managed-service assembly', () => {
         support: 'supported',
       });
       expect(assembly.runtime.runtimeCapabilities?.sessionCapabilities?.compaction).toEqual({
-        manual: 'supported',
+        events: true, manual: true, idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 100000 },
       });
     } finally {
       await assembly.dispose();
@@ -999,7 +1037,7 @@ describe('OpenCode server managed-service assembly', () => {
       '/session?directory=%2Frepo',
     ]);
     expect(assembly.runtime.runtimeCapabilities?.sessionCapabilities?.compaction).toEqual({
-      manual: 'supported',
+      events: true, manual: true, idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 100000 },
     });
     await assembly.dispose();
     expect(onManagedServerDispose).toHaveBeenCalledOnce();
@@ -1056,7 +1094,7 @@ describe('OpenCode server managed-service assembly', () => {
     expect(requests.some((path) => path.startsWith('/session'))).toBe(false);
     expect(requests).not.toContain('/global/health');
     expect(assembly.runtime.runtimeCapabilities?.sessionCapabilities?.compaction).toEqual({
-      manual: 'supported',
+      events: true, manual: true, idle: { mode: 'host', defaultEnabled: false, defaultMinContextTokens: 100000 },
     });
     await assembly.dispose();
   });

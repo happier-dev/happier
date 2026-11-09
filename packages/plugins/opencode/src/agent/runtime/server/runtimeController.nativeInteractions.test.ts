@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { OpenCodeServerClient } from './openCodeServerClient.js';
+import { createOpenCodeServerClient, type OpenCodeServerClient } from './openCodeServerClient.js';
+import { buildOpenCodeV2ConnectedAuthConfigPart } from '../../auth/services/requestAuth/assets.js';
+import { asRecord } from './openCodeParsing.js';
 import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 import { createOpenCodeServerRuntime } from './runtime.js';
 import { normalizeOpenCodeV2Messages } from './openCodeV2Wire.js';
@@ -121,6 +123,42 @@ async function createRuntime(params: Readonly<{
 }
 
 describe('OpenCode native interactions', () => {
+  it.each(['v1', 'v2'] as const)('withdraws unproven ChatGPT catalog rows without preventing an explicit native selection (%s)', async dialect => {
+    const config = buildOpenCodeV2ConnectedAuthConfigPart({ configHome: '/opencode', requestAuthProviders: ['openai'], directApiKeys: {} });
+    const nativeProviders = dialect === 'v1' ? asRecord(config.provider) : asRecord(config.providers);
+    const settings = asRecord(asRecord(nativeProviders?.openai)?.[dialect === 'v1' ? 'options' : 'settings']);
+    const openai = { id: 'gpt-5.4-mini', name: 'GPT-5.4 mini' };
+    const sonnet = { id: 'sonnet', name: 'Sonnet' };
+    let otherProviderAvailable = true;
+    let chatGptRoute = true;
+    // The HTTP transport is the process boundary; decoding and catalog ownership stay real.
+    const nativeClient = createOpenCodeServerClient({ dialect, transport: {
+      fetch: vi.fn(async () => new Response()),
+      request: async request => {
+        const path = new URL(request.url, 'http://opencode.invalid').pathname;
+        const routeSettings = chatGptRoute ? settings : { baseURL: 'https://api.openai.com/v1' };
+        const value = dialect === 'v1'
+          ? { all: [{ id: 'openai', options: routeSettings, models: { [openai.id]: openai } }, ...(otherProviderAvailable ? [{ id: 'anthropic', models: { sonnet } }] : [])], connected: ['openai', 'anthropic'] }
+          : { data: path === '/api/model'
+            ? [{ ...openai, providerID: 'openai' }, ...(otherProviderAvailable ? [{ ...sonnet, providerID: 'anthropic' }] : [])]
+            : [{ id: 'openai', settings: routeSettings }, ...(otherProviderAvailable ? [{ id: 'anthropic' }] : [])] };
+        const response = new Response(JSON.stringify(value));
+        return { ok: true, status: 200, headers: {}, text: () => response.text(), json: () => response.json(), arrayBuffer: () => response.arrayBuffer() };
+      },
+    } });
+    const client = { ...createClient(), providersList: () => nativeClient.providersList() };
+    const runtime = await createRuntime({ client, dialect, askQuestions: vi.fn() });
+    expect(runtime.readModelCatalog().models).toMatchObject([{ id: 'anthropic/sonnet', name: 'Sonnet' }]);
+    await expect(runtime.updateSessionRuntimeConfig({ modelId: 'openai/gpt-5.4-mini' })).resolves.toBeDefined();
+    otherProviderAvailable = false;
+    await runtime.handleProviderEvent({ type: 'provider.updated', properties: {} });
+    expect(runtime.readModelCatalog().models).toBeNull();
+    chatGptRoute = false;
+    await runtime.handleProviderEvent({ type: 'provider.updated', properties: {} });
+    expect(runtime.readModelCatalog().models).toMatchObject([{ id: 'openai/gpt-5.4-mini' }]);
+    await runtime.resetOrDisposeRuntime();
+  });
+
   it.each(['v1', 'v2'] as const)('preserves idle origin without foreground work for %s summarize', async (dialect) => {
     const client = createClient();
     const runtime = await createRuntime({ client, dialect, askQuestions: vi.fn() });
@@ -200,7 +238,7 @@ describe('OpenCode native interactions', () => {
     const events: unknown[] = [];
     const dispose = runtime.subscribeRuntimeEvents((event) => events.push(event));
     vi.mocked(client.sessionMessages).mockResolvedValue(normalizeOpenCodeV2Messages([{ id: 'v2-paid', type: 'compaction',
-      status: 'completed', model: { providerID: 'anthropic', modelID: 'sonnet' }, time: { created: 100, completed: 200 },
+      status: 'completed', model: { providerID: 'anthropic', id: 'sonnet' }, time: { created: 100, completed: 200 },
       cost: 0.2, tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 3, write: 4 } } }], 'provider-session-1'));
     await runtime.handleProviderEvent({ type: 'session.next.compaction.ended', properties: { sessionID: 'provider-session-1', messageID: 'v2-paid' } });
     expect(events.filter((value) => value && typeof value === 'object' && Reflect.get(value, 'kind') === 'usage-observed'))

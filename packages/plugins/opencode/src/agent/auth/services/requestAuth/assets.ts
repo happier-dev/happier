@@ -12,6 +12,7 @@ import type { OpenCodeConfigPart } from '../../../runtime/server/opencodeConfigC
 import {
   buildOpenCodeRequestAuthPluginSource,
   buildOpenCodeRequestAuthV2PluginSource,
+  OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL,
   type OpenCodeRequestAuthProvider,
 } from './source.js';
 
@@ -53,15 +54,22 @@ export function buildOpenCodeV2ConnectedAuthConfigPart(input: Readonly<{
   directApiKeys: Readonly<Partial<Record<OpenCodeRequestAuthProvider, string>>>;
 }>): OpenCodeConfigPart {
   const connectedProviders: Record<string, unknown> = {};
+  const legacyProviders: Record<string, unknown> = {};
   for (const provider of ['openai', 'anthropic'] as const) {
     const directKey = input.directApiKeys[provider];
     if (typeof directKey === 'string' && directKey.trim().length > 0) {
       connectedProviders[provider] = { settings: { apiKey: directKey } };
     } else if (input.requestAuthProviders.includes(provider)) {
-      connectedProviders[provider] = {};
+      connectedProviders[provider] = provider === 'openai'
+        ? { settings: { baseURL: OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } }
+        : {};
+      if (provider === 'openai') legacyProviders[provider] = { options: { baseURL: OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } };
     }
   }
   return {
+    // V1 reapplies native config after its auth loader; both dialects must report
+    // the same effective route used by the generated request-auth fetch adapter.
+    ...(Object.keys(legacyProviders).length > 0 ? { provider: legacyProviders } : {}),
     providers: connectedProviders,
     plugins: [
       ...input.requestAuthProviders.map((provider) => (

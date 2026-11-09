@@ -65,15 +65,28 @@ export function buildOpenCodePreflightModels(
 }
 
 /** Both preflight and bound Sessions consume the native server's provider inventory. */
-export function buildOpenCodeModelsFromProviders(
+export function buildOpenCodeModelCatalogFromProviders(
   providers: Awaited<ReturnType<OpenCodeServerClient['providersList']>>,
   observedAt: number,
-): readonly OpenCodePreflightModel[] | null {
-  const blocks = providers.flatMap((provider) => Object.entries(provider.models ?? {}).flatMap(([id, raw]) => {
-    const record = asRecord(raw);
-    return record ? [{ fullId: `${provider.id}/${normalizeString(record.id) || id}`, record }] : [];
-  }));
-  return buildOpenCodePreflightModels(blocks, observedAt);
+): Readonly<{ models: readonly OpenCodePreflightModel[] | null; unavailableReason?: string }> {
+  // Native inventory is a model registry, not this ChatGPT Account's entitlement.
+  // Keep its models for explicit runtime selections but do not advertise them.
+  let unavailable = false;
+  const blocks = providers.flatMap(provider => {
+    if (provider.usesChatGptAccount) {
+      unavailable = true;
+      return [];
+    }
+    return Object.entries(provider.models ?? {}).flatMap(([id, raw]) => {
+      const record = asRecord(raw);
+      return record ? [{ fullId: `${provider.id}/${normalizeString(record.id) || id}`, record }] : [];
+    });
+  });
+  const models = buildOpenCodePreflightModels(blocks, observedAt);
+  return {
+    models: unavailable && models?.length === 0 ? null : models,
+    ...(unavailable ? { unavailableReason: 'ChatGPT account model entitlement is unavailable from the native OpenCode inventory.' } : {}),
+  };
 }
 
 export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
@@ -100,10 +113,27 @@ export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
       configuredBackendMode: context.runtimeKindOverride, accountSettings: context.accountSettings });
     if (backendMode === 'acp') {
       const toolId = resolveOpenCodeSystemToolId(context.accountSettings?.opencodeCliGeneration);
-      return (await context.probeDeclaredAcpSessionControls?.({ toolId, args: ['acp'] }))?.models ?? null;
+      const controls = await context.probeDeclaredAcpSessionControls?.({ toolId, args: ['acp'] });
+      return controls?.refreshError
+        ? { availableModels: controls.models ?? [], refreshError: true, source: controls.models === null ? 'unavailable' : 'dynamic',
+          ...(controls.observedAt === undefined ? {} : { observedAt: controls.observedAt }),
+          ...(controls.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: controls.refreshErrorMessage }) }
+        : controls?.models ?? null;
     }
-    return await withOpenCodePreflightServer(context, async client =>
-      buildOpenCodeModelsFromProviders(await client.providersList(), Date.now()));
+    return await withOpenCodePreflightServer(context, async client => {
+      const catalog = buildOpenCodeModelCatalogFromProviders(await client.providersList(), Date.now());
+      return catalog.unavailableReason
+        ? { availableModels: catalog.models ?? [], source: catalog.models?.length ? 'dynamic' as const : 'unavailable' as const,
+          refreshError: true, refreshErrorMessage: catalog.unavailableReason }
+        : catalog.models;
+    });
+  },
+  probeConfigOptions: async context => {
+    const backendMode = resolveOpenCodeBackendMode({ runtimeDescriptorV1: context.runtimeDescriptorV1,
+      configuredBackendMode: context.runtimeKindOverride, accountSettings: context.accountSettings });
+    if (backendMode !== 'acp') return { configOptions: [], source: 'static' };
+    const toolId = resolveOpenCodeSystemToolId(context.accountSettings?.opencodeCliGeneration);
+    return await context.probeDeclaredAcpSessionControls?.({ toolId, args: ['acp'] }) ?? null;
   },
   managedServiceCommands: Object.freeze([OPEN_CODE_SYSTEM_TOOL_ID, OPEN_CODE_STABLE_SYSTEM_TOOL_ID, OPEN_CODE_V2_SYSTEM_TOOL_ID].map((toolId) => Object.freeze({
     toolId, args: Object.freeze(['serve', '--hostname', '127.0.0.1']),

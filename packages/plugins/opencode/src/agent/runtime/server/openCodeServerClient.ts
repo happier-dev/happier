@@ -8,6 +8,7 @@ import {
 } from './dialect.js';
 import { readOpenCodeEventReconnectBackoffMs } from './openCodeEventReconnect.js';
 import { asRecord, normalizeString, readNonBlankOpaqueIdentifier } from './openCodeParsing.js';
+import { isOpenCodeChatGptAccountRoute, type OpenCodeProviderInventory } from '../../models/eligibility.js';
 import {
   buildOpenCodeV2ModelRef,
   buildOpenCodeV2PermissionRuleset,
@@ -213,11 +214,7 @@ export type OpenCodeServerClient = Readonly<{
   }>): Promise<void>;
   globalConfigGet(): Promise<Readonly<Record<string, unknown>>>;
   agentsList(): Promise<readonly Readonly<{ id: string; name: string; description?: string; mode?: string; hidden?: boolean }>[]>;
-  providersList(): Promise<readonly Readonly<{
-    id: string;
-    env?: readonly string[];
-    models?: Readonly<Record<string, unknown>>;
-  }>[]>;
+  providersList(): Promise<readonly OpenCodeProviderInventory[]>;
 }>;
 
 export type OpenCodeServerRequestOperation =
@@ -452,11 +449,7 @@ function readProviderId(value: unknown): string {
   return normalizeString(asRecord(value)?.id);
 }
 
-function readProviderList(raw: unknown): readonly Readonly<{
-  id: string;
-  env?: readonly string[];
-  models?: Readonly<Record<string, unknown>>;
-}>[] {
+function readProviderList(raw: unknown): readonly OpenCodeProviderInventory[] {
   const record = asRecord(raw);
   if (!Array.isArray(record?.all)) throw new Error('Invalid OpenCode provider inventory');
   const all = record.all;
@@ -479,6 +472,7 @@ function readProviderList(raw: unknown): readonly Readonly<{
     const models = asRecord(providerRecord?.models) ?? undefined;
     return [{
       id,
+      ...(isOpenCodeChatGptAccountRoute(id, asRecord(providerRecord?.options)?.baseURL) ? { usesChatGptAccount: true as const } : {}),
       ...(env && env.length > 0 ? { env } : {}),
       ...(models ? { models } : {}),
     }];
@@ -614,6 +608,15 @@ async function subscribeOpenCodeEvents(params: Readonly<{
   while (!params.signal.aborted) {
     let connectionBoundarySeen = false;
     let unavailableError: unknown = null;
+    const connectionAbort = new AbortController();
+    const signal = AbortSignal.any([params.signal, connectionAbort.signal]);
+    let stopWaiting!: () => void;
+    const interrupted = new Promise<void>(resolve => { stopWaiting = resolve; });
+    signal.addEventListener('abort', stopWaiting, { once: true });
+    if (signal.aborted) stopWaiting();
+    let semanticWork = Promise.resolve();
+    let projectionFailed = false;
+    let projectionFailure: unknown;
     try {
       connectionGeneration += 1;
       const currentConnectionGeneration = connectionGeneration;
@@ -630,31 +633,51 @@ async function subscribeOpenCodeEvents(params: Readonly<{
           : params.eventPath,
         headers,
         fetch: params.fetch,
-        signal: params.signal,
-        onMessage: async (rawEvent) => {
+        signal,
+        onMessage: (rawEvent) => {
+          if (signal.aborted) return;
           const event = params.decodeEvent(rawEvent);
           if (!event) return;
           const eventType = normalizeString(event.payload?.type ?? event.type);
-          if (eventType === 'server.connected') {
-            connectionBoundarySeen = true;
-            await params.onEvent(event, {
-              provenance: 'connection-boundary',
-              connectionGeneration: currentConnectionGeneration,
-            });
-            return;
-          }
-          if (!connectionBoundarySeen) return;
-          await params.onEvent(event, {
-            provenance: params.liveProvenance,
+          const isBoundary = eventType === 'server.connected';
+          if (isBoundary) connectionBoundarySeen = true;
+          else if (!connectionBoundarySeen) return;
+          const delivery: OpenCodeGlobalEventDelivery = {
+            provenance: isBoundary ? 'connection-boundary' : params.liveProvenance,
             connectionGeneration: currentConnectionGeneration,
+          };
+          // Intake owns receipt; one connection-owned tail preserves semantic order
+          // while catalog HTTP work awaits. A stopped connection cannot deliver its tail.
+          semanticWork = semanticWork.then(async () => {
+            if (!signal.aborted) await params.onEvent(event, delivery);
+          }).catch((error: unknown) => {
+            if (signal.aborted) return;
+            projectionFailed = true;
+            projectionFailure = error;
+            connectionAbort.abort(error);
           });
         },
       });
-      await subscription.done;
+      let streamFailed = false;
+      let streamFailure: unknown;
+      const streamDone = subscription.done.catch((error: unknown) => {
+        streamFailed = true;
+        streamFailure = error;
+      });
+      await Promise.race([streamDone, interrupted]);
+      // A transport end cannot discard work admitted before it. Owner cancellation
+      // and semantic failure still interrupt this drain through the same signal.
+      if (!signal.aborted) await Promise.race([semanticWork, interrupted]);
+      if (projectionFailed) throw projectionFailure;
+      if (params.signal.aborted) return;
+      if (streamFailed) throw streamFailure;
       unavailableError = new Error(params.streamEndedMessage);
     } catch (error) {
       if (params.signal.aborted) return;
       unavailableError = error;
+    } finally {
+      connectionAbort.abort('event connection retired');
+      signal.removeEventListener('abort', stopWaiting);
     }
     if (params.signal.aborted) return;
     try {

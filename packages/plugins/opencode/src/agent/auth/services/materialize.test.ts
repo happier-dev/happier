@@ -6,6 +6,7 @@ import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV } from '../../runtime/server/managedServerState.js';
+import { OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } from './requestAuth/source.js';
 import {
   buildOpenCodeRequestAuthMarker,
   OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -132,7 +133,8 @@ describe('OpenCode connected-account auth materialization', () => {
       expect(env.XDG_CONFIG_HOME).toBe(configHome);
       expect(env.OPENCODE_CONFIG_CONTENT).toBeUndefined();
       expect(configPart).toEqual({
-        providers: { openai: {} },
+        provider: { openai: { options: { baseURL: OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } } },
+        providers: { openai: { settings: { baseURL: OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } } },
         plugins: [resolveOpenCodeRequestAuthV2PluginDir(configHome, 'openai')],
       });
       const pluginSource = await readFile(resolveOpenCodeRequestAuthPluginPath(configHome, 'openai'), 'utf8');

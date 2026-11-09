@@ -1,4 +1,5 @@
 import { asRecord, normalizeString, readNonBlankOpaqueIdentifier } from './openCodeParsing.js';
+import { isOpenCodeChatGptAccountRoute, type OpenCodeProviderInventory } from '../../models/eligibility.js';
 import type { OpenCodePromptPart } from './promptParts.js';
 
 /**
@@ -270,11 +271,7 @@ export function buildOpenCodeV2PermissionRuleset(
 export function combineOpenCodeV2Providers(
   providers: readonly unknown[],
   models: readonly unknown[],
-): readonly Readonly<{
-  id: string;
-  env?: readonly string[];
-  models?: Readonly<Record<string, unknown>>;
-}>[] {
+): readonly OpenCodeProviderInventory[] {
   const modelsByProvider = new Map<string, Record<string, unknown>>();
   for (const rawModel of models) {
     const model = asRecord(rawModel);
@@ -293,6 +290,7 @@ export function combineOpenCodeV2Providers(
     const providerModels = modelsByProvider.get(id);
     return [{
       id,
+      ...(isOpenCodeChatGptAccountRoute(id, asRecord(asRecord(rawProvider)?.settings)?.baseURL) ? { usesChatGptAccount: true as const } : {}),
       ...(providerModels ? { models: providerModels } : {}),
     }];
   });
@@ -419,7 +417,7 @@ export function normalizeOpenCodeV2Message(params: Readonly<{
   };
   // Accounting belongs to the native assistant/compaction message, including
   // messages deliberately omitted from the user-facing transcript.
-  const modelId = readNonBlankOpaqueIdentifier(asRecord(record.model)?.modelID);
+  const modelId = readNonBlankOpaqueIdentifier(asRecord(record.model)?.id);
   const providerId = readNonBlankOpaqueIdentifier(asRecord(record.model)?.providerID);
   const accounting = {
     ...(record.tokens === undefined ? {} : { tokens: record.tokens }),

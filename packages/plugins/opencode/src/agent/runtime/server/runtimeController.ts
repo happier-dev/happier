@@ -4,7 +4,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { randomUUID } from 'node:crypto';
 import { normalizeOpenCodePaidUsage } from '../../usage/paidUsage.js';
 import { isOpenCodeModelSelectable } from '../../models/eligibility.js';
-import { buildOpenCodeModelsFromProviders } from '../../preflight/models.js';
+import { buildOpenCodeModelCatalogFromProviders } from '../../preflight/models.js';
 import { buildOpenCodeModesFromAgents } from '../../preflight/modes.js';
 import type { OpenCodeModelCatalogSnapshot, OpenCodeModeCatalogSnapshot } from './operations.js';
 import { publishOpenCodeNativeTodosWorkState } from '../workState.js';
@@ -43,6 +43,7 @@ import type { OpenCodePromptModel } from './promptConfig.js';
 import { OpenCodePromptIdentityUnresolvedError } from './promptSubmissionError.js';
 import { normalizeOpenCodePromptConfigUpdate } from './promptConfig.js';
 import { maybeFailOnOpenCodeRetryStatus } from './retryFailure.js';
+import { createOpenCodeRetryProgress } from './retryProgress.js';
 import { publishOpenCodeProviderSessionId } from './sessionIdentity.js';
 import {
   createOpenCodeServerRuntimeState,
@@ -193,14 +194,16 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   client: OpenCodeServerClient;
   env?: Readonly<Record<string, string>>;
   permissionMode?: string | null;
+  workspaceWrites?: NonNullable<AgentSessionOpenRequest['configuration']>['workspaceWrites'];
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
   dialect?: OpenCodeServerDialect;
+  providerModelId?: string;
   readManagedServiceSnapshot?: () => ManagedServiceSnapshot | null | undefined;
   mcpRegistration: Promise<OpenCodeMcpRegistrationResult>;
   mcpProjection: OpenCodeSessionMcpProjection;
 }>): OpenCodeRuntimeTurnOperations {
   const client = params.client;
-  const sessionPermissions = buildOpenCodeSessionScopedPermissionRuleset(params.permissionMode, params.mcpProjection, params.mcpToolPolicy);
+  const sessionPermissions = buildOpenCodeSessionScopedPermissionRuleset(params.permissionMode, params.mcpProjection, params.mcpToolPolicy, params.workspaceWrites);
   const state = createOpenCodeServerRuntimeState();
   const foregroundToolTracker = createOpenCodeForegroundToolTracker();
   const messageHandlers = new Set<(message: OpenCodeRuntimeEvent) => void>();
@@ -226,7 +229,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   let historicalIdentityReconciliationPending = false;
   let promptModel: OpenCodePromptModel | null = null;
   let promptAgent: string | null = null;
-  let modelCatalog: OpenCodeModelCatalogSnapshot = { observedAt: 0, models: null };
+  let modelCatalog: OpenCodeModelCatalogSnapshot = { observedAt: 0, models: null, currentModelId: null };
   let modeCatalog: OpenCodeModeCatalogSnapshot = { observedAt: 0, modes: null, currentModeId: null };
   let commandCatalog: Array<Readonly<{ name: string; description?: string }>> | null = null;
   let providerObservedBusy = false;
@@ -343,6 +346,11 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     if (!parsed.hasModel) return null;
     const trimmed = normalizeString(modelId);
     if (!trimmed || trimmed === 'default') return null;
+    if (params.providerModelId) {
+      const boundModel = normalizeOpenCodePromptConfigUpdate({ modelId: params.providerModelId }).model;
+      return boundModel && (trimmed === params.providerModelId || trimmed === boundModel.modelID)
+        ? boundModel : null;
+    }
     let providers: Awaited<ReturnType<OpenCodeServerClient['providersList']>>;
     try {
       providers = await client.providersList();
@@ -380,6 +388,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
 
   const resolveEffectivePromptModel = async (): Promise<OpenCodePromptModel | null> => {
     if (promptModel) return promptModel;
+    if (params.providerModelId) return normalizeOpenCodePromptConfigUpdate({ modelId: params.providerModelId }).model;
     const config = await client.globalConfigGet().catch(() => ({}));
     const configuredDefault = normalizeString(asRecord(config)?.model);
     if (!configuredDefault || configuredDefault === 'default') return null;
@@ -387,7 +396,32 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   };
 
   const publishRuntimeEvent = (event: OpenCodeRuntimeEvent): void => {
+    retryProgress.observePublishedEvent(event);
     publishMessage(event);
+  };
+  const retryProgress = createOpenCodeRetryProgress({ state, scope: params.scope, publish: publishRuntimeEvent });
+  const observeNativeModel = (info: Readonly<Record<string, unknown>> | null): boolean => {
+    if (!info || info.role !== 'assistant' || info.summary === true
+      || readNonBlankOpaqueIdentifier(info.sessionID) !== state.providerSessionId) return false;
+    const providerId = readNonBlankOpaqueIdentifier(info.providerID);
+    const modelId = readNonBlankOpaqueIdentifier(info.modelID);
+    if (!providerId || !modelId) return false;
+    const currentModelId = `${providerId}/${modelId}`;
+    if (currentModelId !== modelCatalog.currentModelId) {
+      const observedAt = Date.now();
+      modelCatalog = { ...modelCatalog, currentModelId, observedAt };
+      publishRuntimeEvent({ kind: 'model-catalog-observed', ...projectOpenCodeRuntimeScope(params.scope), emittedAtMs: observedAt });
+    }
+    return true;
+  };
+  const observeNativeModelFromHistory = (messages: readonly unknown[]): void => {
+    // Native history is chronological. Observe only its newest exact-session assistant,
+    // so rereading several model selections cannot replay older selections into the host.
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const info = asRecord(asRecord(messages[index])?.info);
+      if (state.turnInFlight && readNonBlankOpaqueIdentifier(info?.parentID) !== state.currentTurnProviderUserMessageId) continue;
+      if (observeNativeModel(info)) return;
+    }
   };
   const paidUsageFingerprints = new Map<string, string>();
   let turnStartedAtMs: number | undefined;
@@ -444,6 +478,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   const refreshSettledNativeAccounting = async (nativeSessionId: string): Promise<void> => {
     try {
       const messages = await client.sessionMessages({ sessionId: nativeSessionId });
+      observeNativeModelFromHistory(messages);
       for (const message of messages) {
         publishPaidUsage(asRecord(asRecord(message)?.info), true);
       }
@@ -452,10 +487,15 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     }
   };
   const refreshModelCatalog = async (): Promise<void> => {
+    if (params.providerModelId) return;
     try {
       const providers = await client.providersList();
       const observedAt = Date.now();
-      modelCatalog = { observedAt, models: buildOpenCodeModelsFromProviders(providers, observedAt) };
+      const catalog = buildOpenCodeModelCatalogFromProviders(providers, observedAt);
+      modelCatalog = { ...modelCatalog, observedAt, models: catalog.models };
+      if (catalog.unavailableReason) {
+        params.ctx.logger.warn('[OpenCodeServer] native model catalog is incomplete', { operation: 'model_inventory', reason: catalog.unavailableReason });
+      }
       publishRuntimeEvent({ kind: 'model-catalog-observed', ...projectOpenCodeRuntimeScope(params.scope), emittedAtMs: observedAt });
     } catch {
       // A failed observation is not an authoritative withdrawal of the last usable inventory.
@@ -530,6 +570,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     turnStartedAtMs = undefined;
     lastNonModelItemCompletedAtMs = undefined;
     currentTurnCacheMessageIds.clear();
+    retryProgress.reset();
     abortPendingPermissionDecisions('OpenCode turn no longer owns pending permission decisions');
     retirePendingQuestions();
     state.currentTurnObservedMessageIds.clear();
@@ -709,6 +750,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     hostTurnId: string,
   ): Promise<AssistantHistoryProjectionResult> => {
     if (!ownsActiveHostTurn(hostTurnId) || !state.providerSessionId) return EMPTY_ASSISTANT_HISTORY_PROJECTION_RESULT;
+    observeNativeModelFromHistory(messages);
     const currentProviderUserMessageAnchor = resolveCurrentProviderUserMessageAnchor(messages);
     const currentProviderUserMessageAnchorIndex = currentProviderUserMessageAnchor.status === 'resolved'
       ? currentProviderUserMessageAnchor.index
@@ -954,6 +996,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
           return;
         }
         if (!scopeCurrent()) return;
+        observeNativeModelFromHistory(messages);
         for (const message of messages) publishPaidUsage(asRecord(asRecord(message)?.info));
         if (historicalIdentityReconciliationPending) {
           try {
@@ -1785,11 +1828,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   };
 
   const handleProviderEvent = async (event: unknown): Promise<void> => {
-    const { type, properties } = readProviderEvent(event);
-    if (!type) return;
-    const eventDirectory = normalizeString(asRecord(event)?.directory);
-    if (eventDirectory && eventDirectory !== params.directory) return;
-    const eventSessionId = readEventSessionId(properties);
+    const { type, properties, directory: eventDirectory, sessionId: eventSessionId } = readProviderEvent(event);
+    if (!type || (eventDirectory && eventDirectory !== params.directory)) return;
 
     if (type.startsWith('session.next.tool.')) {
       if (!eventSessionId || (eventSessionId !== state.providerSessionId && !providerNativeChildSessions.has(eventSessionId))) return;
@@ -1843,6 +1883,10 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     }
 
     if (type.startsWith('session.next.')) {
+      if (type === 'session.next.retried') {
+        if (eventSessionId && eventSessionId === state.providerSessionId) retryProgress.observeRetry();
+        return;
+      }
       const messageId = readNonBlankOpaqueIdentifier(properties.messageID)
         ?? readNonBlankOpaqueIdentifier(properties.assistantMessageID)
         ?? '';
@@ -1947,7 +1991,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     if (type === 'session.status') {
       await handleStatus(
         asRecord(properties.status) ?? properties.status,
-        { forceHistoryRefresh: true },
+        { forceHistoryRefresh: true, allowRetryProgress: eventSessionId === state.providerSessionId },
       );
       return;
     }
@@ -2018,6 +2062,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       publishPaidUsage(info, true);
       const messageId = readNonBlankOpaqueIdentifier(info?.id) ?? '';
       const messageProjection = classifyOpenCodeMessageForProjection({ info });
+      observeNativeModel(info);
       if (messageId && messageProjection.kind === 'assistant_transcript'
         && (!asRecord(info?.time)?.completed || liveMessageProjectionById.get(messageId) === 'assistant'
           || (state.currentTurnProviderUserMessageId !== null
@@ -2127,9 +2172,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   };
 
   const handleProviderObservation = async (event: unknown): Promise<void> => {
-    const { type, properties } = readProviderEvent(event);
+    const { type, properties, sessionId: eventSessionId } = readProviderEvent(event);
     if (!type) return;
-    const eventSessionId = readEventSessionId(properties);
     if (eventSessionId && state.providerSessionId && eventSessionId !== state.providerSessionId) return;
 
     if (type === 'message.updated') {
@@ -2211,7 +2255,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
 
   const handleStatus = async (
     status: unknown,
-    options: Readonly<{ forceHistoryRefresh?: boolean }> = {},
+    options: Readonly<{ forceHistoryRefresh?: boolean; allowRetryProgress?: boolean }> = {},
   ): Promise<void> => {
     if (activeHostCompaction && !state.turnInFlight) return;
     await managedServerTurnInterruptionSupervisor.observeManagedServiceSnapshot();
@@ -2225,9 +2269,11 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     });
     if (await failCurrentTurnForProviderErrorStatus(status)) return;
     const statusType = readStatusType(status);
+    if (statusType === 'retry' && options.allowRetryProgress !== false) retryProgress.observeRetry(status);
     if (statusType === 'busy') {
       providerObservedBusy = true;
       beginProviderTurnIfNeeded();
+      retryProgress.observeProgress();
       state.currentTurnIdleObserved = false;
       return;
     }
@@ -2508,7 +2554,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
           if (meta?.delivery !== 'steer' && state.activeTurnId === turnId && !providerObservedBusy) {
             await handleStatus({ type: 'idle' }, { forceHistoryRefresh: true });
           }
-          return { providerUserMessageId: null, ...(modelForPrompt ? { effectiveModelId: `${modelForPrompt.providerID}/${modelForPrompt.modelID}` } : {}) };
+          return { providerUserMessageId: null };
         }
         const committedInput = createDeferred<string>();
         let committedProviderUserMessageId: string | null = null;
@@ -2630,9 +2676,6 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         });
         return {
           providerUserMessageId,
-          ...(modelForPrompt
-            ? { effectiveModelId: `${modelForPrompt.providerID}/${modelForPrompt.modelID}` }
-            : {}),
         };
       } catch (error) {
         if (meta?.delivery === 'steer' && isPromptRejectedBeforeProviderEffect(error)) throw error;

@@ -1,4 +1,25 @@
 import { asRecord, normalizeString } from '../runtime/server/openCodeParsing.js';
+import { OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL } from '../auth/services/requestAuth/source.js';
+
+export type OpenCodeProviderInventory = Readonly<{
+  id: string;
+  env?: readonly string[];
+  models?: Readonly<Record<string, unknown>>;
+  usesChatGptAccount?: true;
+}>;
+
+/** Decode only the nonsecret route fact, never provider options or credentials. */
+export function isOpenCodeChatGptAccountRoute(providerId: string, baseURL: unknown): boolean {
+  if (providerId !== 'openai' || typeof baseURL !== 'string') return false;
+  try {
+    const route = new URL(baseURL);
+    const chatGpt = new URL(OPEN_CODE_REQUEST_AUTH_CODEX_BASE_URL);
+    return route.origin === chatGpt.origin
+      && (route.pathname === chatGpt.pathname || route.pathname.startsWith(`${chatGpt.pathname}/`));
+  } catch {
+    return false;
+  }
+}
 
 type KnownUnavailableOpenCodeModel = Readonly<{
   retiredAtMs: number;
