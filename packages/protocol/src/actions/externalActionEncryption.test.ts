@@ -61,10 +61,10 @@ describe('whole external Action encryption', () => {
       : actionId === 'deployments.cancel'
       ? { serverId: 'home', environmentId: 'environment', deploymentId: 'private-value', expectedReceiptRevision: 2 }
       : actionId === 'deployments.restart'
-      ? { serverId: 'home', environmentId: 'environment', deploymentId: 'private-value', targetLinkId: 'link',
+      ? { serverId: 'home', environmentId: 'environment', deploymentId: 'deployment', targetLinkId: 'link',
         machineId: 'machine-1', installationId: 'installation', expectedGeneration: 'generation',
         service: { kind: 'deployment', machineId: 'machine-1', environmentId: 'environment',
-          environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } }
+          environmentInstanceId: 'private-value', composeService: 'web', serviceId: 'private-value/web' } }
       : { serverId: 'home', environmentId: 'environment', expectedRevision: 2,
         set: [{ purpose: 'variable', name: 'PUBLIC_LABEL', phase: 'runtime', source: { kind: 'value', value: 'private-value' } }], remove: [] };
     const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
