@@ -847,9 +847,11 @@ describe('Machine → Setup tab (P-M1)', () => {
     await waitForHomeGovernance(() => expect({
       door: screen.findByTestId('machine-setup-save-preset') !== null,
       failures: screen.tree.findAll(node => typeof node.props?.diagnosticCode === 'string').map(node => node.props.diagnosticCode),
-    }).toEqual({ door: true, failures: [] }));
+      text: screen.findByTestId('machine-setup-save-preset') ? '' : screen.getTextContent(),
+    }).toEqual({ door: true, failures: [], text: '' }));
     const setupActions = () => harness.requests.filter(request => request.path.startsWith('/v1/actions/machines.setup.')).map(request => request.path);
     const planned = setupActions();
+    expect(planned).toEqual(['/v1/actions/machines.setup.plan']);
     await screen.pressByTestIdAsync('machine-setup-save-preset');
     const shown = show.mock.calls.at(-1)![0] as unknown as Readonly<{ component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> }>;
     const setChrome = vi.fn();
@@ -867,6 +869,7 @@ describe('Machine → Setup tab (P-M1)', () => {
     expect(created).not.toHaveProperty('controller');
     expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1);
     expect(setupActions()).toEqual(planned);
+    expect(harness.requestsFor('/v1/actions/machines.setup.apply')).toHaveLength(0);
     await waitForHomeGovernance(() => expect(routerHandle.current?.spies.push.mock.calls.at(-1)?.[0])
       .toBe(`/settings/machines/presets/${encodeURIComponent(created!.id)}?serverId=${encodeURIComponent(serverId)}`));
     expect(onClose).toHaveBeenCalled();

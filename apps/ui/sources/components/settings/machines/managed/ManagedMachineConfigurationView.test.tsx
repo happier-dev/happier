@@ -53,6 +53,14 @@ const route = vi.hoisted(() => ({
   params: {} as Record<string, string>,
 }));
 const nativeBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
+// The renderer has no physical page position. Keep the real viewport tracker and
+// Collection windowing, supplying only the native layout measurement boundary.
+vi.mock('@/components/widgets/nearViewport', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/components/widgets/nearViewport')>();
+  return { ...actual, createScrollViewNearViewportTracker: (...args: Parameters<typeof actual.createScrollViewNearViewportTracker>) => ({
+    ...actual.createScrollViewNearViewportTracker(...args), measureSpan: async () => ({ top: 0 }),
+  }) };
+});
 vi.mock('@legendapp/list/react-native', async () => {
   const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
   return createLegendListModuleMock({ renderItems: true });
@@ -1184,10 +1192,9 @@ describe('mounted managed configurator', () => {
     await waitForHomeGovernance(() =>
       expect({
         size: screen.findByTestId('managed-config.sizes:small') !== null,
-        lists: screen.findByTestId('managed-config.sizes:small') ? [] : screen.tree.findAll(node => typeof node.type === 'string' && /List/.test(node.type)).map(node => ({ type: node.type, data: node.props.data?.length, sections: node.props.sections?.length })),
         failures: screen.tree.findAll(node => typeof node.props?.diagnosticCode === 'string').map(node => node.props.diagnosticCode),
         text: screen.findByTestId('managed-config.sizes:small') ? '' : screen.getTextContent(),
-      }).toEqual({ size: true, lists: [], failures: [], text: '' }),
+      }).toEqual({ size: true, failures: [], text: '' }),
     );
     if (choose)
       await act(async () =>
@@ -1442,9 +1449,10 @@ describe('mounted managed configurator', () => {
     expect(onUse).not.toHaveBeenCalled();
     expect(show).toHaveBeenCalledTimes(1);
     const shown = show.mock.calls[0]![0] as unknown as Readonly<{ component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> }>;
+    expect(shown.props).toMatchObject({ preset: { name: 'Hardened server', revision: 3 }, setup });
     const setChrome = vi.fn();
     const review = await renderScreen(<shown.component {...shown.props} setChrome={setChrome} onClose={() => {}} />);
-    expect(review.getTextContent()).toContain('Hardened server');
+    expect(review.findByTestId('managed-config.review')).not.toBeNull();
     expect(review.getTextContent()).toContain('editor');
     expect(onUse).not.toHaveBeenCalled();
     const chrome = setChrome.mock.calls.at(-1)![0] as { footer: React.ReactElement<{ primary: { onPress(): void } }> };
