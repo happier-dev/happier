@@ -9,6 +9,7 @@ const reachableFailures = [
     ['required_fact_unavailable', 'history'],
     ['template_domain_route_required', 'domains'],
     ['template_domain_required', 'domains'],
+    ['template_domain_unknown', 'domains'],
     ['unsupported_domain', 'domains'],
     ['native_route_unavailable', 'domains'],
     ['port_in_use', 'domains'],

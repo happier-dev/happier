@@ -355,6 +355,11 @@ it.each(['active', 'warning', 'failed', 'nativeFailure', 'discoveryFailure', 'op
             const unselected = await templates.prepareCreate({ ...input, domainBindings: undefined }, context);
             expect(unselected).toHaveProperty('input');
             if ('preview' in unselected) expect(unselected.preview).toMatchObject({ template: { domains: [] } });
+            for (const domainBindings of [[{ templateDomainId: 'unknown', hostname: 'unused.example.test' }],
+                [...input.domainBindings!, { templateDomainId: 'unknown', hostname: 'unused.example.test' }]]) {
+                expect(await templates.prepareCreate({ ...input, domainBindings }, context))
+                    .toMatchObject({ ok: false, errorCode: 'template_domain_unknown' });
+            }
             expect(writes).toEqual([]);
         } else {
             expect(await templates.prepareCreate({ ...input, domainBindings: undefined }, { runtimeAccountId: accountId }))

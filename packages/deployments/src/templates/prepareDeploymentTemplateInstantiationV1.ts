@@ -128,9 +128,14 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
         }
     }
     const replacements = new Set(input.replace ?? []);
+    const declaredDomains = new Set(template.domains.map(domain => domain.key));
+    const unknownDomain = input.domainBindings?.find(binding => !declaredDomains.has(binding.templateDomainId));
+    if (unknownDomain) return refuse('template_domain_unknown', { key: unknownDomain.templateDomainId });
     const domains = template.domains.flatMap(domain => {
         const selected = input.domainBindings?.find(binding => binding.templateDomainId === domain.key);
         if (!selected) return domain.required ? refuse('template_domain_required') : [];
+        // The existing own-server Domain route and probe contract is HTTP only.
+        if (domain.protocol === 'tcp') return refuse('template_needs_review');
         // Literal DNS labels only: IDNs arrive as punycode, never URL syntax or Caddy placeholders.
         if (/[^a-z0-9.-]/.test(selected.hostname)
             || selected.hostname.split('.').some(label => !label || label.startsWith('-') || label.endsWith('-'))) {

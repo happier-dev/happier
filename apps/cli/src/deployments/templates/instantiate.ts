@@ -178,8 +178,9 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         const definition = { ...candidateDefinition, contentRevision };
         await admitStoredComposeDefinition(definition);
         // Every install root reviews selected-Domain deployment before allocating its Environment.
-        if (input.environment.kind === 'create' && !input.deploy && prepared.domains.length) {
-            input = { ...input, deploy: creationReview?.deploy ?? readDeploymentTemplateDeployIntentV1(input) };
+        const deployIntent = readDeploymentTemplateDeployIntentV1(input);
+        if (!input.deploy && deployIntent) {
+            input = { ...input, deploy: creationReview?.deploy ?? deployIntent };
         }
         const name = current?.content.name ?? (input.environment.kind === 'create' ? input.environment.name : '');
         const projectOwner = input.newProject?.owner ?? source?.source.owner

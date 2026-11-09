@@ -1493,6 +1493,11 @@ preserves existing services, and plans the selected data-service dependencies,
 public defaults, opaque Saved Secret bindings and declared generation profiles.
 Create inputs identify selected template Domains with
 `domainBindings: [{ templateDomainId, hostname }]`. Preparation admits those
+ids against the pinned template; in 0.3 development, an undeclared id returns
+`template_domain_unknown`, including a selection mixing declared and unknown ids.
+The signed intent projection and installer share `readDeploymentTemplateDeployIntentV1`
+to decide whether selected Domains imply a first deploy for a new Environment.
+Preparation admits the selected
 hostnames as lowercase DNS labels (letters, digits and interior hyphens,
 separated by dots; IDNs use punycode). Other forms
 return `template_needs_review`. Presenters forward the choice and display this

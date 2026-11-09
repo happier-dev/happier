@@ -198,7 +198,8 @@ describe('stored template preparation', () => {
 
     it.each(['db.example.test', 'qa-domain.localhost', 'xn--bcher-kva.example'])('derives domain host and URL values from admitted DNS hostname %s', hostname => {
         const withDomain = DeploymentTemplateV1Schema.parse({ ...template,
-            domains: [{ key: 'console', service: 'db', containerPort: 8080, protocol: 'https', required: true, path: '/console' }],
+            domains: [{ key: 'console', service: 'db', containerPort: 8080, protocol: 'https', required: true, path: '/console',
+                healthCheck: { path: '/ready', expectStatus: 204 } }],
             variables: [...template.variables, ...(['domainHost', 'domainUrl'] as const).map(kind => ({
                 key: kind, label: kind, required: true, valueKind: 'string', secret: false,
                 valueFrom: { kind, domainKey: 'console' }, sites: [{ service: 'db', path: ['environment', kind] }],
@@ -213,9 +214,32 @@ describe('stored template preparation', () => {
 
     it.each(['x{env.X}.com', 'x{env.x}.com', 'x\".com', "x'.com", 'x`.com', 'x$.com', 'x_.com', '-x.com', 'x-.com', 'x..com', 'bücher.example', 'x.com\n'])('refuses non-DNS template hostname %s with the existing typed reason', hostname => {
         const withDomain = DeploymentTemplateV1Schema.parse({ ...template,
-            domains: [{ key: 'console', service: 'db', containerPort: 8080, protocol: 'https', required: true, path: '/console' }] });
+            domains: [{ key: 'console', service: 'db', containerPort: 8080, protocol: 'https', required: true, path: '/console',
+                healthCheck: { path: '/ready', expectStatus: 204 } }] });
         expect(() => prepareDeploymentTemplateInstantiationV1({ template: withDomain, templateRef, source,
             bindings: [binding], domainBindings: [{ templateDomainId: 'console', hostname }] }))
+            .toThrowError(expect.objectContaining({ code: 'template_needs_review' }));
+    });
+
+    it.each([false, true])('refuses undeclared Domain bindings, including mixed selections: %s', includeKnown => {
+        const withDomain = DeploymentTemplateV1Schema.parse({ ...template, domains: [{ key: 'console', service: 'db',
+            containerPort: 8080, protocol: 'https', required: false, healthCheck: { path: '/ready', expectStatus: 204 } }] });
+        const domainBindings = [
+            ...(includeKnown ? [{ templateDomainId: 'console', hostname: 'db.example.test' }] : []),
+            { templateDomainId: 'unknown', hostname: 'unused.example.test' },
+        ];
+        expect(() => prepareDeploymentTemplateInstantiationV1({ template: withDomain, templateRef, source,
+            bindings: [binding], domainBindings }))
+            .toThrowError(expect.objectContaining({ code: 'template_domain_unknown', details: { key: 'unknown' } }));
+    });
+
+    it('refuses selected TCP routes while preserving unselected optional declarations', () => {
+        const withDomain = DeploymentTemplateV1Schema.parse({ ...template, domains: [{ key: 'database', service: 'db',
+            containerPort: 5432, protocol: 'tcp', required: false, healthCheck: { path: '/ready', expectStatus: 204 } }] });
+        const input = { template: withDomain, templateRef, source, bindings: [binding] };
+        expect(prepareDeploymentTemplateInstantiationV1(input).domains).toEqual([]);
+        expect(() => prepareDeploymentTemplateInstantiationV1({ ...input,
+            domainBindings: [{ templateDomainId: 'database', hostname: 'db.example.test' }] }))
             .toThrowError(expect.objectContaining({ code: 'template_needs_review' }));
     });
 
