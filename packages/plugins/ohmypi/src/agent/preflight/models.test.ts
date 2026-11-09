@@ -35,6 +35,8 @@ describe('OhMyPi preflight model parsing', () => {
       const listingReads = bindingReads;
       expect(materializations).toBe(1);
       const runtime = await createOhMyPiAgentRuntime().sessions.open({ kind: 'create', sessionId: 'same-account', cwd: '/workspace',
+        configuration: { model: { value: 'openai/gpt-5.4', updatedAtMs: 1 }, mode: { value: null, updatedAtMs: 1 },
+          permissionIntent: { value: null, updatedAtMs: 1 }, options: {} },
         launchEnvironment: { values: { EXISTING: 'preserved' }, unset: [] } }, {
         services: { connectedAccounts }, signal,
         protocols: { acp: { async open(request: AgentSessionOpenRequest) {

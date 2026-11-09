@@ -821,8 +821,13 @@ Oh My Pi declares its native credential environment destinations from its Connec
 purposes. Catalog probes and daemon launch prerequisites consume the same qualified launch
 materializer before running `omp models --json`; neither path performs separate account
 preparation or model discovery. Direct Session and execution-run opens use that same account
-preparation. Sessions retain authority-change observation; finite runs release observation
-after native admission and retain their admitted credentials until explicit disposal.
+preparation. A fresh native Oh My Pi launch with a selected Connected Account requires an
+explicit model or an admitted Provider model. Without one, preparation refuses before credential
+materialization or ACP startup with `agent_startup_model_reconciliation_failed` and the startup
+failure reason `model_selection_required`. Resume preserves the native model, and preflight
+listing remains available without a launch model. Sessions retain authority-change observation;
+finite runs release observation after native admission and retain their admitted credentials
+until explicit disposal.
 An unavailable catalog preserves an Agent's declared freeform selection capability, allowing
 an explicit model choice without treating discovery failure as proof that selection is unsupported.
 Explicit CLI model probes, including configured ACP definitions, run on the selected Machine.

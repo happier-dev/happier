@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
   AgentExecutionRunOpenRequest,
   AgentExecutionRunRuntime,
@@ -11,8 +12,10 @@ import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from './accountPurposes.js';
 import { AGENT_DEFINITION } from '../../definition.js';
 
 type OhMyPiOpenRequest = AgentSessionOpenRequest | AgentExecutionRunOpenRequest;
+type OhMyPiAccountPreparationRequest = Pick<OhMyPiOpenRequest, 'launchEnvironment'>
+  & Partial<Pick<OhMyPiOpenRequest, 'kind' | 'configuration' | 'providerBinding'>>;
 
-type PreparedOhMyPiConnectedAccounts<Request extends Pick<OhMyPiOpenRequest, 'launchEnvironment'>> = Readonly<{
+type PreparedOhMyPiConnectedAccounts<Request extends OhMyPiAccountPreparationRequest> = Readonly<{
   request: Request;
   isInvalidated(): boolean;
   bind(session: AgentSessionRuntime): AgentSessionRuntime;
@@ -50,7 +53,7 @@ function isExpectedService(
   return actual.pluginId === expected.pluginId && actual.localId === expected.localId;
 }
 
-export async function prepareOhMyPiQualifiedAccounts<Request extends Pick<OhMyPiOpenRequest, 'launchEnvironment'>>(
+export async function prepareOhMyPiQualifiedAccounts<Request extends OhMyPiAccountPreparationRequest>(
   request: Request,
   context: Readonly<{ signal: AbortSignal; services: Readonly<{
     connectedAccounts: Pick<AgentRuntimeContext['services']['connectedAccounts'], 'getBinding' | 'materialize' | 'watch'>;
@@ -109,6 +112,16 @@ export async function prepareOhMyPiQualifiedAccounts<Request extends Pick<OhMyPi
           `Oh My Pi Connected Account purpose ${entry.declaration.purpose} resolved an unexpected service.`,
         );
       }
+    }
+
+    const selectedModel = request.configuration?.model.value?.trim();
+    // A retained native default does not establish this selected account's model.
+    if (bound.length > 0 && request.kind === 'create' && !request.providerBinding?.model
+      && (!selectedModel || selectedModel === 'default')) {
+      throw new PluginError({ code: 'agent_startup_model_reconciliation_failed', retryable: false,
+        message: 'Choose an explicit model for the selected Oh My Pi Connected Account.',
+        details: { failureCause: { code: 'agent_startup_model_reconciliation_failed',
+          phase: 'client_start', failureReason: 'model_selection_required', retryable: false } } });
     }
 
     const materializedEnvironment = await Promise.all(bound.map(async ({ declaration, binding }) => {
