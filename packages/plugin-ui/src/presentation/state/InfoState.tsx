@@ -1,4 +1,4 @@
-import { isValidElement, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, isValidElement, useContext, useRef, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
@@ -327,6 +327,13 @@ const INFO_STATE_TITLE_GAP = 6;
 const INFO_STATE_ACTION_GAP = 16;
 
 /**
+ * Set by an unsized {@link HappierInfoState} with an action: the state pads itself as one block, so its
+ * tile draws no vertical padding and the action sits one action gap under the copy, not under a padded
+ * tile (lab p5 files: Try again 16 below the reason).
+ */
+const InfoStateFramesTile = createContext(false);
+
+/**
  * The container a state sits in (pane-states lab 0). One composition, stepped by container so every
  * surface stops hand-sizing its states:
  *
@@ -517,13 +524,14 @@ export function HappierInfoTile({
   size,
 }: HappierInfoTileProps) {
   const measure = size ? HAPPIER_STATE_SIZE_METRICS[size].measurePx : INFO_STATE_MEASURE;
+  const framed = useContext(InfoStateFramesTile);
   return (
     <View
       style={{
         width: '100%',
         alignItems: 'center',
         // A sized state is placed by its container (`SurfaceStateCard`), so it draws no padding of its own.
-        paddingVertical: paddingVertical ?? (size ? 0 : INFO_STATE_VERTICAL_PADDING),
+        paddingVertical: paddingVertical ?? (size || framed ? 0 : INFO_STATE_VERTICAL_PADDING),
         paddingHorizontal: paddingHorizontal ?? INFO_STATE_HORIZONTAL_PADDING,
       }}
     >
@@ -566,6 +574,9 @@ export function HappierInfoState({
   size,
 }: HappierInfoStateProps) {
   const metrics = size ? HAPPIER_STATE_SIZE_METRICS[size] : null;
+  const hasAction = action !== null && action !== undefined;
+  // Unsized: the padding wraps copy and action together, never the copy alone.
+  const frames = hasAction && !size;
   return (
     <View
       testID={testID}
@@ -575,10 +586,10 @@ export function HappierInfoState({
       accessibilityState={busy === true ? { busy: true } : undefined}
       aria-live={accessibilityLiveRegion === 'none' ? 'off' : accessibilityLiveRegion}
       aria-busy={busy || undefined}
-      style={{ width: '100%', alignItems: 'center' }}
+      style={{ width: '100%', alignItems: 'center', paddingVertical: frames ? INFO_STATE_VERTICAL_PADDING : 0 }}
     >
-      {children}
-      {action !== null && action !== undefined ? (
+      <InfoStateFramesTile.Provider value={frames}>{children}</InfoStateFramesTile.Provider>
+      {hasAction ? (
         <View
           testID={actionTestID}
           style={{

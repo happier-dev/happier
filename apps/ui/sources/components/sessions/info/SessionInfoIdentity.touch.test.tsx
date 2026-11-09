@@ -26,7 +26,8 @@ it("reaches the touch target for the context action through the space above it, 
       sessionName="Session"
       agentId={null}
       status={{ isConnected: false, statusText: 'Stopped', statusColor: '#000', statusDotColor: '#000', isPulsing: false } as never}
-      meta={['Codex', 'machine']}
+      meta={['Codex']}
+      machine="machine"
       path={null}
       contextAction={{ id: 'open-to-resume', label: 'Open to resume', icon: 'play', loading: false, onPress: () => {} }}
       menuActions={[]}

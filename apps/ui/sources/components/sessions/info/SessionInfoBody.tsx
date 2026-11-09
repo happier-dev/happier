@@ -1281,18 +1281,19 @@ function SessionInfoContent({
         sessionName={sessionName}
         agentId={agentId}
         status={sessionStatus}
-        meta={[aiProviderTitle, currentModelName, identityMachineLabel].filter(
+        meta={[aiProviderTitle, currentModelName].filter(
           (fact): fact is string => Boolean(fact),
         )}
         titleEditor={routeTitleEditor}
+        machine={identityMachineLabel}
         path={identityPath}
-        agentMark={
-          agentId ? (
+        renderAgentMark={
+          agentId ? (sizePx) => (
             <SessionAgentCatalogIdentityIcon
               agentId={agentId}
               machineId={daemonProjectionMachineId}
               serverId={sessionServerId}
-              size={14}
+              size={sizePx}
               color={theme.colors.text.secondary}
             />
           ) : undefined

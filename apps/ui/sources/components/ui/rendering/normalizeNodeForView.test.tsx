@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 describe('normalizeNodeForView', () => {
     it('drops invalid React element types instead of passing them through to View renderers', async () => {
@@ -33,7 +33,17 @@ describe('normalizeNodeForView', () => {
         expect(normalized).toBe(node);
     });
 
-    it('wraps text-like icon components (name + size props) in Text', async () => {
+    it('does not wrap the app Icon in Text: it draws an SVG view, and a text line box would lift it off its row centre', async () => {
+        const { normalizeNodeForView } = await import('./normalizeNodeForView');
+        // The shared setup replaces Icon with a host stub; this contract is about the real component type.
+        const { Icon } = await vi.importActual<typeof import('@/components/ui/icons/Icon')>('@/components/ui/icons/Icon');
+
+        const node = React.createElement(Icon, { name: 'shield-check', size: 18 });
+
+        expect(normalizeNodeForView(node)).toBe(node);
+    });
+
+    it('passes font icon components (name + size props) through: they render their own Text', async () => {
         const { normalizeNodeForView } = await import('./normalizeNodeForView');
 
         function Ionicons(_props: any) {
@@ -42,12 +52,8 @@ describe('normalizeNodeForView', () => {
         Ionicons.displayName = 'Ionicons';
 
         const node = React.createElement(Ionicons, { name: 'flash-outline', size: 16 });
-        const normalized = normalizeNodeForView(node);
 
-        expect(normalized).not.toBe(node);
-        expect(React.isValidElement(normalized)).toBe(true);
-        const wrapper = normalized as React.ReactElement<{ children?: React.ReactNode }>;
-        expect(wrapper.props.children).toBe(node);
+        expect(normalizeNodeForView(node)).toBe(node);
     });
 
     it('keeps memoized non-text components renderable', async () => {

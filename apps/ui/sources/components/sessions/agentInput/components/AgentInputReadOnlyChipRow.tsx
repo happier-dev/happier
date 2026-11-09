@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { NATIVE_ACTION_CHIP_GAP_Y } from './agentInputChromeStyles';
+import { AGENT_INPUT_ACTION_CHIP_GAP_X, NATIVE_ACTION_CHIP_GAP_Y } from './agentInputChromeStyles';
 
 /**
  * A reading card's resolved control line. The primary and secondary groups receive already ordered
@@ -49,7 +49,7 @@ const styles = StyleSheet.create(() => ({
         flexBasis: 'auto',
         minWidth: 0,
         overflow: 'visible',
-        ...(Platform.OS === 'web' ? { columnGap: 6, rowGap: NATIVE_ACTION_CHIP_GAP_Y } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
+        ...(Platform.OS === 'web' ? { columnGap: AGENT_INPUT_ACTION_CHIP_GAP_X, rowGap: NATIVE_ACTION_CHIP_GAP_Y } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
     },
     /** On a shared line the primary group takes the rest; the secondary group sits at its end. */
     engine: {

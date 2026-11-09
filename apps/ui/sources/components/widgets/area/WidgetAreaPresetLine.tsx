@@ -1,26 +1,19 @@
 import * as React from 'react';
-import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   WidgetAreaPresetResultV1Schema,
   WidgetSurfaceReadV1Schema,
-  type WidgetAreaPresetChangeV1,
   type WidgetAreaPresetStateV1,
-  type WidgetInstanceV1,
   type WidgetAreaPresetUndoV1,
   type WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
 
-import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
-import { readWidgetDescriptor, resolveWidgetInstanceTitle } from '@/components/widgets/widgetCatalog';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -40,60 +33,16 @@ async function runPresetAction(
   });
 }
 
-/** The line names this many changes; the rest are counted ("and made 2 more changes"). */
-const NAMED_CHANGES = 2;
-
-/** The widgets a change's item is named by: itself, or a group's children. */
-function changeInstances(change: WidgetAreaPresetChangeV1): readonly WidgetInstanceV1[] {
-  if (change.kind === 'renamed') return [];
-  return change.item.kind === 'widget' ? [change.item.instance] : change.item.children.map(child => child.instance);
-}
-
 /**
- * What the edit changed, in words (lab wgsaved R: "you moved Limits up and removed Active days"),
- * from the layout owner's own comparison (`preset.changes`). Widgets are named as their cards are:
- * the copy's own name, else the widget it is; a group by its title, else its widgets.
- */
-function usePresetChangeSummary(changes: readonly WidgetAreaPresetChangeV1[], surface: WidgetSurfaceRefV1): string | null {
-  const runtime = useAppShellPluginUiProjectionCurrentness();
-  const localize = usePluginLocalizedTextResolver({ projection: runtime.pluginUiProjection });
-  const named = React.useMemo(() => changes.slice(0, NAMED_CHANGES), [changes]);
-  const instances = React.useMemo(() => named.flatMap(changeInstances), [named]);
-  const installed = React.useMemo(() => instances.flatMap(instance => {
-    const candidate = readWidgetDescriptor(runtime.pluginUiProjection, instance.definition, instance.displayName ? undefined : localize);
-    return candidate ? [candidate] : [];
-  }), [instances, runtime.pluginUiProjection, localize]);
-  const descriptors = useWidgetInstanceDescriptors(surface, instances, installed);
-  return React.useMemo(() => {
-    const title = (instance: WidgetInstanceV1) => resolveWidgetInstanceTitle(instance, descriptors[instances.indexOf(instance)]);
-    const phrases = named.map(change => {
-      if (change.kind === 'renamed') return t('widgetFrame.presetRenamed');
-      const item = change.item.kind === 'widget' ? title(change.item.instance)
-        : change.item.title ?? change.item.children.map(child => title(child.instance)).join(' · ');
-      return change.kind === 'moved' ? t(change.direction === 'up' ? 'widgetFrame.presetMovedUp' : 'widgetFrame.presetMovedDown', { item })
-        : t(change.kind === 'added' ? 'widgetFrame.presetAdded' : change.kind === 'removed' ? 'widgetFrame.presetRemoved' : 'widgetFrame.presetChanged', { item });
-    });
-    return phrases[0] ? t('widgetFrame.presetChangeList', { first: phrases[0], second: phrases[1] ?? null, more: changes.length - phrases.length }) : null;
-  }, [changes.length, descriptors, instances, named]);
-}
-
-/**
- * An edited preset's one line (lab wgsaved R): "Overview is yours now: you moved Limits up and removed
- * Active days. The preset is kept." with Reset to preset at its trailing edge. The canonical Action
- * either awaits approval or applies the recoverable reset. Only its applied result offers Undo,
- * which restores exactly the layout it replaced.
+ * An edited preset's one quiet line (phone lab p5 "Usage", D23): "You changed this view." with a Reset
+ * text button at its trailing edge. The canonical Action either awaits approval or applies the
+ * recoverable reset. Only its applied result offers Undo, which restores exactly the layout it replaced.
  */
 export function WidgetAreaPresetLine(
   props: Readonly<{
     preset: WidgetAreaPresetStateV1;
     surface: WidgetSurfaceRefV1;
     testID: string;
-    /**
-     * `line` (default, lab wgsaved R): the line stands alone above its widgets and Reset holds its trailing
-     * edge. `underHeader`: the line is the description under an area header whose own controls (Organize, +)
-     * hold that edge, so Reset follows the sentence instead of stacking under them.
-     */
-    placement?: 'line' | 'underHeader';
     /** Core pages supply their captured preset resolver and Account lifetime. */
     presetActions?: Readonly<{
       resetPreset(target?: WidgetSurfaceRefV1): Promise<ActionExecuteResult>;
@@ -103,8 +52,6 @@ export function WidgetAreaPresetLine(
 ) {
   const [busy, setBusy] = React.useState(false);
   const { preset, surface } = props;
-  const { theme } = useUnistyles();
-  const summary = usePresetChangeSummary(preset.changes, surface);
   const reset = React.useCallback(async () => {
     setBusy(true);
     const failure = () => publishPresentationNotice({ key: `widget-area-preset:${preset.id}`, severity: 'error', message: t('widgetFrame.presetResetFailed') });
@@ -154,18 +101,14 @@ export function WidgetAreaPresetLine(
   }, [preset.id, preset.name, props.presetActions, surface]);
   return (
     <View testID={props.testID} style={styles.line}>
-      <View style={[styles.lead, props.placement === 'underHeader' ? styles.leadUnderHeader : null]}>
-        <Icon name="arrow-arc-left" size={ICON_SIZE.sm} color={theme.colors.text.tertiary} />
-        <Text style={styles.text} testID={`${props.testID}.text`}>
-          <Text style={styles.name}>{preset.name}</Text>
-          {t('widgetFrame.presetEditedTail', { changes: summary })}
-        </Text>
-      </View>
-      <RoundButton
+      <Text style={styles.text} testID={`${props.testID}.text`}>
+        {t('widgetFrame.presetChangedView')}
+      </Text>
+      <TextLinkButton
         testID={`${props.testID}.reset`}
-        size="small"
-        display="secondary"
-        title={t('widgetFrame.presetReset')}
+        size="meta"
+        label={t('common.reset')}
+        accessibilityLabel={t('widgetFrame.presetReset')}
         disabled={busy}
         onPress={() => {
           void reset();
@@ -175,45 +118,23 @@ export function WidgetAreaPresetLine(
   );
 }
 
-/** Reset is taller than the sentence; the line gives that slack back above it, so the sentence sits under its heading. */
-const PRESET_LINE_BUTTON_SLACK_PX = (HAPPIER_PAGE_METRICS.smallControlHeightPx - happierPageTextMetrics('meta').lineHeight) / 2;
-
 const styles = StyleSheet.create((theme) => ({
-  // The line is its area's description: close under the heading, then a section's header gap before the widgets
-  // (owner 11-08: the space sat between the heading and the line, with none between the line and the widgets).
+  // The line is its area's description: one meta line close under the heading, then a section's header gap
+  // before the widgets (owner 11-08). Reset is words on the same line, so nothing is taller than the sentence.
   line: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: theme.space.s10,
-    marginTop: -PRESET_LINE_BUTTON_SLACK_PX,
+    columnGap: theme.space.s10,
     marginBottom: HAPPIER_PAGE_METRICS.sectionHeaderGapPx,
   },
-  // The sentence (with its glyph) takes the row; Reset stays at the trailing edge and drops under it only on a phone.
-  lead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s10,
-    flexGrow: 1,
-    flexShrink: 1,
-    flexBasis: 200,
-    minWidth: 0,
-  },
-  // Under an area header the sentence keeps its own width, so Reset reads as the sentence's action;
-  // where it does not fit, Reset drops under it and the glyph stays beside the sentence.
-  leadUnderHeader: {
-    flexGrow: 0,
-    flexBasis: 'auto',
-  },
+  // The sentence takes the row; Reset holds the trailing edge.
   text: {
     ...Typography.default(),
     ...happierPageTextMetrics('meta'),
-    color: theme.colors.text.tertiary,
+    color: theme.colors.text.secondary,
+    flexGrow: 1,
     flexShrink: 1,
     minWidth: 0,
-  },
-  name: {
-    ...Typography.default('medium'),
-    color: theme.colors.text.secondary,
   },
 }));

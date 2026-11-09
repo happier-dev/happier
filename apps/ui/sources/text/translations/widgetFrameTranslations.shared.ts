@@ -92,16 +92,8 @@ export type WidgetFrameTranslation = Readonly<{
     addsAtWidth: (params: Readonly<{ width: string }>) => string;
     /** Presets (A7): an edited preset's tab marker, its one line, Reset and Undo. */
     presetEdited: string;
-    /** After the preset's name (drawn strong): "… is yours now: you moved Limits up. The preset is kept." */
-    presetEditedTail: (params: Readonly<{ changes: string | null }>) => string;
-    /** Up to two named changes, then how many more. */
-    presetChangeList: (params: Readonly<{ first: string; second: string | null; more: number }>) => string;
-    presetMovedUp: (params: Readonly<{ item: string }>) => string;
-    presetMovedDown: (params: Readonly<{ item: string }>) => string;
-    presetAdded: (params: Readonly<{ item: string }>) => string;
-    presetRemoved: (params: Readonly<{ item: string }>) => string;
-    presetChanged: (params: Readonly<{ item: string }>) => string;
-    presetRenamed: string;
+    /** An edited preset's line: the view no longer matches its preset (Reset follows it). */
+    presetChangedView: string;
     /** A saved group's provenance in Add: "Your group · saved from Home on Oct 8 · 3 widgets". */
     groupProvenance: (params: Readonly<{ origin: string | null; date: string | null; count: number }>) => string;
     /** What adding a saved group does: "Adds Release check with its 3 widgets, following happier". */
@@ -189,14 +181,7 @@ export const widgetFrameTranslationsEnglish = { en: {
         groupWidgetCount: ({ count }) => count === 1 ? 'Group · 1 widget' : `Group · ${count} widgets`,
         addsAtWidth: ({ width }) => `Adds it at ${width} width.`,
         presetEdited: "Edited",
-        presetEditedTail: ({ changes }) => changes ? ` is yours now: you ${changes}. The preset is kept.` : ' is yours now. The preset is kept.',
-        presetChangeList: ({ first, second, more }) => more > 0 ? `${first}, ${second} and made ${more} more ${more === 1 ? 'change' : 'changes'}` : second ? `${first} and ${second}` : first,
-        presetMovedUp: ({ item }) => `moved ${item} up`,
-        presetMovedDown: ({ item }) => `moved ${item} down`,
-        presetAdded: ({ item }) => `added ${item}`,
-        presetRemoved: ({ item }) => `removed ${item}`,
-        presetChanged: ({ item }) => `changed ${item}`,
-        presetRenamed: "renamed it",
+        presetChangedView: "You changed this view.",
         groupProvenance: ({ origin, date, count }) => ['Your group', origin && date ? `saved from ${origin} on ${date}` : date ? `saved on ${date}` : origin ? `saved from ${origin}` : null, count === 1 ? '1 widget' : `${count} widgets`].filter(Boolean).join(' · '),
         groupAddsFollowing: ({ name, count, value }) => `Adds ${name} with its ${count === 1 ? 'widget' : `${count} widgets`}${value ? `, following ${value}` : ''}`,
         groupInputAskedOnce: ({ count }) => count === 1 ? 'Asked once. Its widget follows it.' : `Asked once. The ${count} widgets follow it.`,

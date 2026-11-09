@@ -35,6 +35,7 @@ export type AddFlowsTranslation = Readonly<{
     pathSshSubtitle: string;
     pathAnotherTitle: string;
     pathAnotherSubtitle: string;
+    pathAnotherLead: string;
     machinePoolPrompt: string;
     thisComputerCommandLead: (params: Readonly<{ home: string; }>) => string;
     thisComputerTaskLead: (params: Readonly<{ machine: string; home: string; }>) => string;
@@ -129,6 +130,7 @@ export const addFlowsTranslationsEnglish = { en: {
         pathSshSubtitle: 'A dev box, VM or cloud machine',
         pathAnotherTitle: 'Another machine',
         pathAnotherSubtitle: 'Open a Home link on that machine',
+        pathAnotherLead: 'Run agents on another computer.',
         machinePoolPrompt: 'Want sessions to fall back between machines?',
         thisComputerCommandLead: ({ home }) => `Run this in a terminal on this machine. It installs Happier and joins ${home}; this page notices as soon as it’s ready.`,
         thisComputerTaskLead: ({ machine, home }) => `${machine} runs agents for ${home}. Happier installs a small background service that starts with the machine.`,

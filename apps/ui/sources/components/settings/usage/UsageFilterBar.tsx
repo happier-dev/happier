@@ -219,10 +219,11 @@ export function UsageFilterBar(
     return (
       <View testID={props.testID} style={styles.phone}>
         {period}
-        {/* One Filters chip, then Tokens/Cost and the cost basis: the row wraps rather than hiding the
-            basis select past the screen edge (a scroller clipped it mid-word at 390). */}
+        {/* One Filters chip on the start edge, Tokens/Cost on the end edge of the same line (phone lab p5 "Usage");
+            the cost basis follows and wraps rather than hiding past the screen edge (a scroller clipped it at 390). */}
         <View style={styles.phoneChips}>
           {chips}
+          <View style={styles.phoneGap} />
           {trailing}
         </View>
       </View>
@@ -319,4 +320,5 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     gap: theme.space.s6,
   },
+  phoneGap: { flexGrow: 1 },
 }));

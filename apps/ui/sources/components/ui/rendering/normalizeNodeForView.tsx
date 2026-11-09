@@ -15,18 +15,6 @@ function normalizeChildrenForView(children: React.ReactNode): React.ReactNode {
     return React.Children.map(children, (child) => normalizeNodeForView(child));
 }
 
-function isTextLikeIconElement(node: React.ReactElement): boolean {
-    if (typeof node.type === 'string') return false;
-
-    const props = (node.props ?? {}) as Record<string, unknown>;
-    const hasIconLikeProps =
-        typeof props.name === 'string'
-        && (typeof props.size === 'number' || typeof props.size === 'string')
-        && !('children' in props && props.children != null);
-
-    return hasIconLikeProps;
-}
-
 export function normalizeNodeForView(node: React.ReactNode): React.ReactNode {
     if (node == null || typeof node === 'boolean') return null;
     if (typeof node === 'string' || typeof node === 'number') return wrapPrimitiveForView(node);
@@ -37,13 +25,9 @@ export function normalizeNodeForView(node: React.ReactNode): React.ReactNode {
     if (React.isValidElement(node) && !isRenderableElementType(node.type)) {
         return null;
     }
-    if (React.isValidElement(node) && isTextLikeIconElement(node)) {
-        return (
-            <Text useDefaultTypography={false}>
-                {node}
-            </Text>
-        );
-    }
+    // Only bare strings and numbers need a Text. Icons pass through as they are: the app Icon draws an SVG view and
+    // a font icon renders its own Text, while a Text wrapper would set either on a line box, a pixel or two above
+    // the centre of the row it sits in (composer chips, menu rows).
     if (React.isValidElement(node) && 'children' in ((node.props ?? {}) as Record<string, unknown>)) {
         const rawChildren = (node.props as { children?: React.ReactNode }).children;
         // Preserve a SINGLE child as a single node. `React.Children.map` always

@@ -22,6 +22,8 @@ export type SessionViewConnectionStatus = Readonly<{
     pendingQueueAction?: SessionViewPendingQueueAction;
     /** An inactive Session can resume even when there is no queued input. */
     inactiveAction?: 'resume';
+    /** The Account is signed out of this Session's Home: the line's one way forward is to sign in again. */
+    accountAction?: 'sign_in';
 }>;
 
 export type SessionViewPendingQueueAction = 'resume' | 'retry' | 'process_when_online' | 'keep_queued'
@@ -55,6 +57,11 @@ export type SessionViewProviderBindingLine = Readonly<{
 
 export function resolveSessionViewConnectionStatus(input: Readonly<{
     connectedServicesRestartState: SessionConnectedServicesAuthSwitchRestartState;
+    /**
+     * This Session's Home no longer accepts the Account (`resolveSessionAuthSurfaceState`). Nothing
+     * else on the line can work until the person signs in again, so it outranks every other cause.
+     */
+    accountSignedOut?: Readonly<{ text: string; detail: string; color: string }> | null;
     restartingText: string;
     switchFailedText: string;
     inactiveStatusText: string | null;
@@ -86,6 +93,11 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
     /** A new Session's first message is still starting and its row says so ("Starting session…"). */
     launchStartingShown?: boolean;
 }>): SessionViewConnectionStatus | null {
+    const signedOut = input.accountSignedOut ?? null;
+    if (signedOut) {
+        return { text: signedOut.text, detail: signedOut.detail, color: signedOut.color, dotColor: signedOut.color,
+            isPulsing: false, accountAction: 'sign_in' };
+    }
     const guard = input.guard?.state ?? null;
     // A restart or a failed account switch is the more urgent fact; otherwise the guard's word leads.
     const restartActive = input.connectedServicesRestartState?.status === 'restarting'

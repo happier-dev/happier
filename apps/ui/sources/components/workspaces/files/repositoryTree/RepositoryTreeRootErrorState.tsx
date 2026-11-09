@@ -16,7 +16,7 @@ export function RepositoryTreeRootErrorState(props: Readonly<{
     const announcedMachine = useAnnouncedCheckoutMachine();
     const reachability = useCheckoutReachability(props.machineScope ?? announcedMachine);
     if (props.kind === 'unavailable' && reachability.unreachable) {
-        return <CheckoutUnreachableState reachability={reachability} testID="repository-tree-unreachable" />;
+        return <CheckoutUnreachableState reachability={reachability} returns={t('projects.checkouts.filesReturn')} testID="repository-tree-unreachable" />;
     }
     const reason = props.kind === 'unavailable'
         ? t('files.pane.workspaceUnavailableReason')

@@ -296,7 +296,7 @@ import { useSessionViewBootstrap } from "@/components/sessions/shell/view/useSes
 import { type SessionPresentationIntentApplier } from "@/components/sessions/companion/presentation/SessionCompanionPresentationBridge";
 import { ComposerAuxiliaryFrame } from "@/components/sessions/shell/view/ComposerAuxiliaryFrame";
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from "@/components/sessions/agentInput/composerContentInset";
-import { WarningActionBanner, type WarningActionBannerProps } from "@/components/sessions/shell/view/WarningActionBanner";
+import { WarningActionBanner } from "@/components/sessions/shell/view/WarningActionBanner";
 import { RowStatusLine } from '@/components/ui/status/RowStatusLine';
 import { useComposerBannerCollapse } from "@/components/sessions/composerBanners/ComposerBannerCollapseProvider";
 import { buildCollapsedComposerBannerBadge, buildComposerBannerHideAction } from "@/components/sessions/composerBanners/composerBannerCollapse";
@@ -477,22 +477,21 @@ function readUsageLimitRecoveryDiagnosticProfileActionRoute(
     );
 }
 
-export function SessionAuthRecoveryBanner({ message, secondaryActions }: Readonly<{
-    message: string;
-    secondaryActions?: WarningActionBannerProps['secondaryActions'];
-}>) {
+/**
+ * A signed-out Account where no composer shows (the composer's status line says it otherwise). It says
+ * what happened in the person's words, never the transport's "Authentication required".
+ */
+export function SessionAuthRecoveryBanner() {
     const router = useDestinationRouter();
 
     return (
         <WarningActionBanner
             testID="session-auth-sync-error"
             actionTestID="session-auth-sync-error-restore"
-            title={t('connect.restoreAccount')}
-            body={message}
-            actionLabel={t('connect.restoreAccount')}
-            actionAccessibilityLabel={t('connect.restoreAccount')}
+            title={t('session.accountSignedOut.status')}
+            body={t('session.accountSignedOut.detail')}
+            actionLabel={t('session.accountSignedOut.action')}
             onActionPress={() => router.push('/restore')}
-            secondaryActions={secondaryActions}
         />
     );
 }
@@ -1448,7 +1447,6 @@ export function useSessionComposerController({
     // account-level "remember" preference decides between session-scoped and device-persisted state.
     const usageLimitRecoveryBanner = useComposerBannerCollapse('usageLimitRecovery');
     const staleSessionRunnerBanner = useComposerBannerCollapse('staleSessionRunner');
-    const authRecoveryBanner = useComposerBannerCollapse('authRecovery');
     const externalTranscriptSnapshotBanner = useComposerBannerCollapse('externalTranscriptSnapshot');
     const agentTransitionOutcomeBanner = useComposerBannerCollapse('agentTransitionOutcome');
     // The last armed-switch outcome that still has something to say.
@@ -5352,6 +5350,12 @@ export function useSessionComposerController({
             warningKey: surfaceFocused && hasWriteAccess && guardMachineId && guardComposerState?.kind === 'warning'
                 ? JSON.stringify([sessionAccountScopeKey, sessionId, guardMachineId, guardComposerState.countdownTo]) : null });
         const connectionStatus = React.useMemo(() => resolveSessionViewConnectionStatus({
+            // The composer's status line is the one place a signed-out Account is said in the composer.
+            accountSignedOut: authSurfaceState ? {
+                text: t('session.accountSignedOut.status'),
+                detail: t('session.accountSignedOut.detail'),
+                color: theme.colors.state.attention.textForeground,
+            } : null,
             connectedServicesRestartState,
             restartingText: t('connectedServices.authSwitch.status.restarting'),
             switchFailedText: t('connectedServices.authSwitch.switchFailed'),
@@ -5379,6 +5383,7 @@ export function useSessionComposerController({
             startFailureNoticeShown: resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true }) !== null,
             launchStartingShown,
         }), [
+            authSurfaceState,
             session.active,
             session.lastRuntimeIssue,
             visibleUsageLimitRecoveryPresentation,
@@ -5525,7 +5530,9 @@ export function useSessionComposerController({
         // action closure on every host render would re-render all of it.
         const agentInputConnectionStatus = React.useMemo(() => (
             connectionStatus
-                ? connectionStatus.guardAction === 'keep_running' && guardMachineId
+                ? connectionStatus.accountAction === 'sign_in'
+                    ? { ...connectionStatus, action: { label: t('session.accountSignedOut.action'), onPress: () => router.push('/restore') } }
+                : connectionStatus.guardAction === 'keep_running' && guardMachineId
                     ? { ...connectionStatus, action: { label: t('machineGuard.session.keepRunning'), onPress: keepGuardedSessionRunning } }
                     : connectionStatus.providerBindingAction && providerBindingBanner
                         ? { ...connectionStatus, action: { label: providerBindingBanner.actionLabel, onPress: handleProviderBindingAction } }
@@ -5543,7 +5550,7 @@ export function useSessionComposerController({
                                 } }
                                 : askHappierConnectionStatus ?? connectionStatus
                 : undefined
-        ), [askHappierConnectionStatus, connectionStatus, guardMachineId, handlePendingQueueAction, handleProviderBindingAction, handleResumeSession, keepGuardedSessionRunning, providerBindingBanner]);
+        ), [askHappierConnectionStatus, connectionStatus, guardMachineId, handlePendingQueueAction, handleProviderBindingAction, handleResumeSession, keepGuardedSessionRunning, providerBindingBanner, router]);
         // D15: a route or model picked while the session runs is armed for the next message, exactly
         // like an Agent switch — the send control names it and the send applies it before dispatch.
         // The arm IS the session's pending model selection; its explicit cancel is the un-arm Action below.
@@ -5631,21 +5638,6 @@ export function useSessionComposerController({
             router, handleManagedWakeRecovery, t]);
         const hasConnectedServicesAuthChip = Boolean(sessionConnectedServicesAuthSwitch.connectedServicesAuthChip);
         const agentInputStatusBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => {
-            const authRecoveryBadge = authSurfaceState
-                ? buildCollapsedComposerBannerBadge({
-                    collapsed: authRecoveryBanner.collapsed,
-                    statusLabel: t('connect.restoreAccount'),
-                    expandHint: t('session.composerBanners.showBannerAction'),
-                    badge: {
-                        key: 'session-auth-recovery',
-                        testID: 'session.authRecovery.badge',
-                        label: t('connect.restoreAccount'),
-                        tone: 'warning',
-                        icon: (tint) => <Icon name="key" size={14} color={tint} />,
-                        onPress: authRecoveryBanner.toggle,
-                    },
-                })
-                : null;
             const agentTransitionOutcomeBadge = armedContinuationNotice
                 ? buildCollapsedComposerBannerBadge({
                     collapsed: agentTransitionOutcomeBanner.collapsed,
@@ -5705,7 +5697,6 @@ export function useSessionComposerController({
                     onPress: openSessionModelPicker,
                 } satisfies AgentInputStatusBadge]
                 : []),
-            ...(authRecoveryBadge ? [authRecoveryBadge] : []),
             ...(managedWakeStatusBadge ? [managedWakeStatusBadge] : []),
             ...(agentTransitionOutcomeBadge ? [agentTransitionOutcomeBadge] : []),
             ...(externalTranscriptSnapshotBadge ? [externalTranscriptSnapshotBadge] : []),
@@ -5727,9 +5718,6 @@ export function useSessionComposerController({
             agentTransitionOutcomeBanner.collapsed,
             agentTransitionOutcomeBanner.toggle,
             armedContinuationNotice,
-            authRecoveryBanner.collapsed,
-            authRecoveryBanner.toggle,
-            authSurfaceState,
             cancelPendingMessageEdit,
             draftConflictBanner.statusBadge,
             draftSyncStatusBadge,
@@ -5889,18 +5877,6 @@ export function useSessionComposerController({
             {currentModelAskFailure ? (
                 <ComposerAuxiliaryFrame>
                     <RowStatusLine testID="session-model-ask-failure" tone="bad" text={currentModelAskFailure.message} />
-                </ComposerAuxiliaryFrame>
-            ) : null}
-            {authSurfaceState && !authRecoveryBanner.collapsed ? (
-                <ComposerAuxiliaryFrame>
-                    <SessionAuthRecoveryBanner
-                        message={authSurfaceState.message}
-                        secondaryActions={[buildComposerBannerHideAction({
-                            bannerTestID: 'session-auth-sync-error',
-                            accessibilityLabel: t('session.composerBanners.hideBannerAction'),
-                            onPress: authRecoveryBanner.toggle,
-                        })]}
-                    />
                 </ComposerAuxiliaryFrame>
             ) : null}
             {temporaryComputerRecovery.status === 'failed' ? (

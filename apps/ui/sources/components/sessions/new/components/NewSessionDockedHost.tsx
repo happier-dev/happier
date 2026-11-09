@@ -342,6 +342,7 @@ const styles = StyleSheet.create((theme) => ({
     layer: { zIndex: SCREEN_OVERLAY_Z_INDEX },
     hidden: { display: 'none' },
     desktopSeat: { alignSelf: 'flex-start', alignItems: 'center' },
-    phone: { width: '100%', paddingHorizontal: theme.space.s12 },
+    // The docked card stands on the composer's one edge, like the Session composer it becomes (boxes on 16).
+    phone: { width: '100%', paddingHorizontal: COMPOSER_CONTENT_HORIZONTAL_INSET },
     pillSeat: { position: 'absolute', alignItems: 'center' },
 }));

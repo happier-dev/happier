@@ -557,15 +557,19 @@ function MachineAddPane(props: Readonly<{
             );
         }
         case 'anotherComputer':
+            // The pairing panel's step and scan sections own the page edge, between the lead and the terminal fallback.
             return (
+                <>
                 <PaneSection onPage={onPage}>
-                    <MachineAddPaneHeader title={t('addFlows.pathAnotherTitle')} lead={t('homeSetup.pairingComputerBody', { home: flow.homeName })} />
-                    <HomePairingPanel
-                        purpose="computer"
-                        layout="section"
-                        testIDPrefix={`${testID}.pairing`}
-                        targetProfileId={flow.serverId}
-                    />
+                    <MachineAddPaneHeader title={t('addFlows.pathAnotherTitle')} lead={t('addFlows.pathAnotherLead')} />
+                </PaneSection>
+                <HomePairingPanel
+                    purpose="computer"
+                    layout="section"
+                    testIDPrefix={`${testID}.pairing`}
+                    targetProfileId={flow.serverId}
+                />
+                <PaneSection onPage={onPage}>
                     <View style={styles.actions}>
                         <RoundButton
                             testID={`${testID}.terminal`}
@@ -584,6 +588,7 @@ function MachineAddPane(props: Readonly<{
                     ) : null}
                     {watching}
                 </PaneSection>
+                </>
             );
     }
 }

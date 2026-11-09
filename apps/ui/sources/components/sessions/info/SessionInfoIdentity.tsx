@@ -8,10 +8,12 @@ import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderTextEditor } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { readSessionTurnStartedAtMs } from '@/sync/domains/session/awareness/useSessionAwareness';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -36,9 +38,11 @@ type MenuAction = Readonly<{
 }>;
 
 /**
- * Who this Session is, at the top of Info. In the panel, the Session header right above already
- * names it, so the body opens on its live line (status, then agent · machine · folder) and the one
- * contextual action; the route shows the full identity — mark, title and the same lines.
+ * Who this Session is, at the top of Info, in two lines: the live one (status · Agent · model) and
+ * where it runs (machine · folder, in mono). In the panel, the Session header right above already
+ * names it, so the body opens on those lines with the one contextual action beside the status. The
+ * route shows the full identity through the page header: the Agent's mark in the header's mark slot,
+ * the title, the same two lines, then the action under them (phone lab p5 "Session Info", D15).
  */
 export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
   props: Readonly<{
@@ -47,10 +51,13 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
     sessionName: string;
     agentId: string | null;
     status: SessionStatus;
+    /** What runs it, after the status: Agent, model. */
     meta: readonly string[];
+    /** Where it runs: the machine, then the folder. */
+    machine: string | null;
     path: string | null;
-    /** The Agent's own mark, leading the meta line (no tile behind it). */
-    agentMark?: React.ReactNode;
+    /** The Agent's own mark at the given glyph size (no tile behind it): the route header's mark. */
+    renderAgentMark?: (sizePx: number) => React.ReactNode;
     contextAction: SessionInfoContextAction | null;
     menuActions: readonly MenuAction[];
     /** The route's in-place rename of the title. */
@@ -67,9 +74,9 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
       label={props.contextAction.label}
       icon={<Icon name={props.contextAction.icon} size={12} color={theme.colors.text.primary} />}
       onPress={props.contextAction.onPress}
-      // The meta line sits right under the button (nothing is free below it); the free space is above: the
-      // pane header band's lower air, or the route header's gap to the title.
-      hitReach={{ top: props.presentation === 'route' ? theme.space.s4 : theme.space.s12, bottom: 0 }}
+      // In the pane the place line sits right under the button (nothing is free below it); the free space is
+      // above, the pane header band's lower air. On the route it closes the header: the section gap is below.
+      hitReach={props.presentation === 'route' ? { top: 0, bottom: theme.space.s12 } : { top: theme.space.s12, bottom: 0 }}
       busy={props.contextAction.loading}
       disabled={props.contextAction.loading}
     />
@@ -96,23 +103,17 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
           <SessionElapsedClock sinceMs={turnStartedAtMs} testID="session-info-status-elapsed" style={styles.statusElapsed} />
         </>
       ) : null}
+      {props.meta.length > 0 ? (
+        <Text testID="session-info-facts" style={[styles.statusElapsed, styles.fact]} numberOfLines={1}>
+          {`· ${props.meta.join(' · ')}`}
+        </Text>
+      ) : null}
     </View>
   );
-  const metaLine =
-    props.meta.length > 0 || props.path ? (
-      <View style={styles.metaRow}>
-      {props.agentMark ? <View style={styles.metaMark}>{props.agentMark}</View> : null}
-      <Text testID="session-info-meta" style={[styles.meta, styles.metaText]}>
-        {props.meta.join(' · ')}
-        {props.path ? (
-          <>
-            {props.meta.length > 0 ? ' · ' : ''}
-            <Text style={[styles.meta, styles.mono]}>{props.path}</Text>
-          </>
-        ) : null}
-      </Text>
-      </View>
-    ) : null;
+  const place = [props.machine, props.path].filter((part): part is string => Boolean(part));
+  const placeLine = place.length > 0 ? (
+    <Text testID="session-info-meta" style={[styles.meta, styles.mono]}>{place.join(' · ')}</Text>
+  ) : null;
 
   if (props.presentation === 'route') {
     return (
@@ -126,22 +127,26 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
         }}
         title={props.sessionName}
         titleEditor={props.titleEditor}
+        // The mark and the menu hang from the title's first line, however many lines the name takes.
+        actionsLayout="hang"
         leading={
-          <SessionAvatar
-            session={props.session}
-            serverId={props.session.serverId}
-            size={48}
-            monochrome={!props.status.isConnected}
-            flavor={props.agentId}
-          />
+          <PageHeaderMarkSlot testID="session-info-mark">
+            {props.renderAgentMark?.(HAPPIER_PAGE_METRICS.pageHeaderMarkGlyphPx) ?? (
+              <SessionAvatar
+                session={props.session}
+                serverId={props.session.serverId}
+                size={HAPPIER_PAGE_METRICS.pageHeaderMarkSlotPx}
+                monochrome={!props.status.isConnected}
+                flavor={props.agentId}
+              />
+            )}
+          </PageHeaderMarkSlot>
         }
         details={
           <View style={styles.routeDetails}>
-            <View style={styles.statusRow}>
-              {statusLine}
-              {action}
-            </View>
-            {metaLine}
+            {statusLine}
+            {placeLine}
+            {action ? <View style={styles.routeAction}>{action}</View> : null}
           </View>
         }
         actions={
@@ -162,7 +167,7 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
         {statusLine}
         {action}
       </View>
-      {metaLine}
+      {placeLine}
     </ItemGroup>
   );
 });
@@ -174,9 +179,14 @@ const styles = StyleSheet.create((theme) => ({
   identityGroup: {
     paddingBottom: theme.space.s4,
   },
+  // The header already puts its line gap above the details; the lines keep that same gap between them.
   routeDetails: {
-    gap: theme.space.s4,
-    marginTop: theme.space.s4,
+    gap: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx,
+  },
+  // The action closes the identity: its own beat under the place line, on the title's edge.
+  routeAction: {
+    flexDirection: 'row',
+    marginTop: theme.space.s8,
   },
   statusRow: {
     flexDirection: 'row',
@@ -189,7 +199,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: theme.space.s8,
+    gap: theme.space.s6,
   },
   statusText: {
     ...Typography.variant('body', 'medium'),
@@ -200,16 +210,9 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.tabular(),
     color: theme.colors.text.secondary,
   },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: theme.space.s6,
-  },
-  metaMark: {
-    paddingTop: theme.space.s2,
-  },
-  metaText: {
-    flex: 1,
+  // A long model name gives way before the status does.
+  fact: {
+    flexShrink: 1,
     minWidth: 0,
   },
   meta: {

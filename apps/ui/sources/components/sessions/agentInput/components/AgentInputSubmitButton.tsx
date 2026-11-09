@@ -352,12 +352,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
             {(foreground: string) => dictationActive && showDictation ? (
                 <Icon name="stop-circle" size={20} color={foreground} />
             ) : props.hasSendableContent ? (
-                <Icon
-                    name="arrow-up"
-                    size={16}
-                    color={foreground}
-                    style={{ marginTop: Platform.OS === 'web' ? 2 : 0 }}
-                />
+                <Icon name="arrow-up" size={16} color={foreground} />
             ) : showDictation ? (
                 <Image
                     source={require('@/assets/images/icon-voice-white.png')}
@@ -367,12 +362,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
             ) : showStopWhenEmpty ? (
                 <Icon name="stop" size={16} weight="fill" color={foreground} />
             ) : (
-                <Icon
-                    name="arrow-up"
-                    size={16}
-                    color={foreground}
-                    style={{ marginTop: Platform.OS === 'web' ? 2 : 0 }}
-                />
+                <Icon name="arrow-up" size={16} color={foreground} />
             )}
         </PrimaryCircleIconButton>
         </Shaker>

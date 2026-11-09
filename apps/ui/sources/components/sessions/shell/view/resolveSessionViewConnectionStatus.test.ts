@@ -20,6 +20,17 @@ const baseInput = {
 } as const;
 
 describe('resolveSessionViewConnectionStatus', () => {
+    it('says a signed-out Account before any other cause, with Sign in as the one way forward', () => {
+        const line = resolveSessionViewConnectionStatus({
+            ...baseInput,
+            accountSignedOut: { text: 'signed out', detail: 'sign in again', color: 'attention' },
+            providerBinding: { text: 'binding changed', action: 'restart', color: 'attention' },
+            pendingQueue: { line: { text: 'queued', action: 'resume', color: 'q' }, countText: '1 queued' },
+        });
+        expect(line).toEqual({ text: 'signed out', detail: 'sign in again', color: 'attention', dotColor: 'attention',
+            isPulsing: false, accountAction: 'sign_in' });
+    });
+
     it.each([
         { state: 'person stopped', active: false, reachable: true, canWrite: true, resumable: true, expected: 'resume' },
         { state: 'active', active: true, reachable: true, canWrite: true, resumable: true, expected: undefined },

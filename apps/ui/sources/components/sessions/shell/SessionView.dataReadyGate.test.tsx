@@ -63,6 +63,13 @@ vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
             ? { ...state, inputs: { mergedProviderProjectionById: {}, mergedBackendProjectionById: {}, connectedAccountProjection: null, ...state.inputs } }
             : state;
     },
+    // Inert chrome reads the same fixture through the cache owner's summary.
+    useDaemonMergedProjectionSummary: () => {
+        const state = daemonMergedProjectionState.value as { inputs: Record<string, unknown> | null; phase: string };
+        return state.inputs
+            ? { inputs: { mergedProviderProjectionById: {}, mergedBackendProjectionById: {}, agentDeclarationsById: null, ...state.inputs }, current: state.phase === 'ready' }
+            : { inputs: null, current: false };
+    },
 }));
 vi.mock('@/components/plugins/actions/pluginContributedActionComposerChips', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/components/plugins/actions/pluginContributedActionComposerChips')>(),
@@ -1801,7 +1808,7 @@ describe('SessionView (data ready gating)', () => {
         expect(canonicalStorage.getState().settings.mobileWorkspaceExperienceV1).toBe('classic');
     });
 
-    it('surfaces auth sync errors as a restore-account action instead of generic retry', async () => {
+    it('says an Account sign-out on the composer status line, with Sign in, instead of a banner and a chip', async () => {
         syncErrorState = {
             message: 'Authentication required',
             retryable: false,
@@ -1820,14 +1827,18 @@ describe('SessionView (data ready gating)', () => {
             </AppPaneProvider>,
         );
 
-        expect(screen.findByTestId('session-auth-sync-error')).toBeTruthy();
-        expect(screen.findByTestId('session-auth-sync-error-restore')).toBeTruthy();
-        expect(screen.findByTestId('session-auth-sync-error-retry')).toBeNull();
+        // One message: the composer's status line says it; no composer banner, no collapsed chip, no raw error.
+        const composer = agentInputPropsSpy.mock.calls.at(-1)?.[0] as {
+            connectionStatus?: { text: string; action?: { label: string; onPress: () => void } };
+            statusBadges?: ReadonlyArray<{ key: string }>;
+        };
+        expect(composer.connectionStatus?.text).toBe('session.accountSignedOut.status');
+        expect(composer.connectionStatus?.action?.label).toBe('session.accountSignedOut.action');
+        expect(composer.statusBadges?.map((badge) => badge.key) ?? []).not.toContain('session-auth-recovery');
+        expect(screen.findByTestId('session-auth-sync-error')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('Authentication required');
 
-        await pressTestInstanceAsync(
-            screen.findByTestId('session-auth-sync-error-restore'),
-            'session auth sync error restore action',
-        );
+        await act(async () => composer.connectionStatus?.action?.onPress());
 
         expect(routerPushSpy).toHaveBeenCalledWith('/restore');
     });
@@ -1853,7 +1864,7 @@ describe('SessionView (data ready gating)', () => {
         expect(screen.findByTestId('session-auth-sync-error')).toBeNull();
     });
 
-    it('surfaces endpoint auth_failed as a restore-account action even when syncError is clear', async () => {
+    it('says an endpoint auth_failed on the composer status line even when syncError is clear', async () => {
         endpointConnectivityStatus = 'auth_failed';
         const { SessionView } = await sessionViewModulePromise;
 
@@ -1864,8 +1875,10 @@ describe('SessionView (data ready gating)', () => {
         );
 
         expect(screen.findByTestId('session-composer-input')).toBeTruthy();
-        expect(screen.findByTestId('session-auth-sync-error')).toBeTruthy();
-        expect(screen.findByTestId('session-auth-sync-error-restore')).toBeTruthy();
+        expect(screen.findByTestId('session-auth-sync-error')).toBeNull();
+        const composer = agentInputPropsSpy.mock.calls.at(-1)?.[0] as { connectionStatus?: { text: string; action?: unknown } };
+        expect(composer.connectionStatus?.text).toBe('session.accountSignedOut.status');
+        expect(composer.connectionStatus?.action).toBeTruthy();
     });
 
     it('shows the auth recovery surface instead of the deleted shell when auth fails and the session is missing', async () => {

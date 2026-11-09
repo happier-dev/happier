@@ -225,7 +225,7 @@ import {
     AGENT_INPUT_FIELD_PADDING_Y,
     AGENT_INPUT_PANEL_PADDING_BOTTOM,
     AGENT_INPUT_PANEL_PADDING_TOP,
-    NATIVE_ACTION_CHIP_GAP_X,
+    AGENT_INPUT_ACTION_CHIP_GAP_X,
     NATIVE_ACTION_CHIP_GAP_Y,
     resolveAgentInputActionChipTextStyle,
     resolveAgentInputPanelBackedEdgeStyle,
@@ -580,7 +580,7 @@ interface AgentInputProps {
         color: string;
         dotColor: string;
         isPulsing?: boolean;
-        /** An unavailable launch target is repaired through the existing machine picker. */
+        /** The line names an unavailable launch target; the Machine chip beside it is the one way to change it. */
         recovery?: 'machine';
         /** The one trailing action the line offers (the guard's Keep running). */
         action?: SessionInstrumentStripLineAction;
@@ -1190,7 +1190,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     actionButtonsLeft: {
         flexDirection: 'row',
-        ...(Platform.OS === 'web' ? { columnGap: theme.space.s6, rowGap: NATIVE_ACTION_CHIP_GAP_Y } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
+        ...(Platform.OS === 'web' ? { columnGap: AGENT_INPUT_ACTION_CHIP_GAP_X, rowGap: NATIVE_ACTION_CHIP_GAP_Y } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
         flex: 1,
         minWidth: 0,
         flexWrap: 'wrap',
@@ -1207,12 +1207,12 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonsLeftScrollInline: {
         flexDirection: 'row',
         alignItems: 'center',
-        ...(Platform.OS === 'web' ? { columnGap: theme.space.s6 } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
+        ...(Platform.OS === 'web' ? { columnGap: AGENT_INPUT_ACTION_CHIP_GAP_X } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
     },
     actionButtonsLeftScrollContent: {
         flexDirection: 'row',
         alignItems: 'center',
-        ...(Platform.OS === 'web' ? { columnGap: theme.space.s6 } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
+        ...(Platform.OS === 'web' ? { columnGap: AGENT_INPUT_ACTION_CHIP_GAP_X } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
         paddingRight: ACTION_BAR_SCROLL_CONTENT_PADDING_RIGHT,
     },
     actionButtonsFadeLeft: {
@@ -1230,9 +1230,6 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         bottom: 0,
         width: 24,
         zIndex: 2,
-    },
-    actionButtonsLeftNarrow: {
-        columnGap: theme.space.s4,
     },
     actionButtonsLeftNoFlex: {
         flex: 0,
@@ -3385,14 +3382,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         }
     }, [hasVariableContentBeforeInput]);
     const hasMachine = Boolean(props.onMachineClick || props.machinePopover);
-    const instrumentStripConnectionStatus = React.useMemo(() => {
-        if (!props.connectionStatus) return null;
-        if (props.connectionStatus.recovery !== 'machine' || !handleMachinePress) return props.connectionStatus;
-        return {
-            ...props.connectionStatus,
-            action: { label: t('newSession.selectMachineTitle'), onPress: handleMachinePress },
-        };
-    }, [props.connectionStatus, handleMachinePress]);
     const hasPath = Boolean(props.onPathClick || props.pathPopover);
     const folderChipState = React.useMemo(
         () => resolveAgentInputFolderChipState(props.currentPath, props.folderChipState),
@@ -3848,14 +3837,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         && isMobileLayoutWidth(screenWidth)
         && actionBarShouldScroll;
 
-    // Each rail's controls take half of its real gaps (`actionButtonsLeft*` and the native chip margin):
-    // a phone's narrow setup rail packs its chips closer; the machine · folder · resume rail keeps `s6`.
-    const chipRailColumnGap = Platform.OS === 'web' ? theme.space.s6 : NATIVE_ACTION_CHIP_GAP_X;
-    const upperChipRailColumnGap = Platform.OS === 'web' && !actionBarShouldScroll && screenWidth < 420
-        ? theme.space.s4
-        : chipRailColumnGap;
-    const upperChipRowReach = React.useMemo(() => resolveAgentInputChipRailHitReach(upperChipRailColumnGap), [upperChipRailColumnGap]);
-    const lowerChipRowReach = React.useMemo(() => resolveAgentInputChipRailHitReach(chipRailColumnGap), [chipRailColumnGap]);
+    // Each rail's controls take half of the one chip gap (`actionButtonsLeft*` and the native chip margin).
+    const chipRowReach = React.useMemo(() => resolveAgentInputChipRailHitReach(AGENT_INPUT_ACTION_CHIP_GAP_X), []);
 
     const handlePermissionSelect = React.useCallback((mode: PermissionMode) => {
         hapticsLight();
@@ -4206,11 +4189,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 fadeLeftStyle={styles.actionButtonsFadeLeft}
                                 fadeRightStyle={styles.actionButtonsFadeRight}
                             >
-                                <AgentInputChipRowReach reach={upperChipRowReach}>{renderedActionControlNodes as any}</AgentInputChipRowReach>
+                                <AgentInputChipRowReach reach={chipRowReach}>{renderedActionControlNodes as any}</AgentInputChipRowReach>
                             </AgentInputScrollableChipRow>
                         ) : (
-                            <View style={[styles.actionButtonsLeft, screenWidth < 420 ? styles.actionButtonsLeftNarrow : null]}>
-                                <AgentInputChipRowReach reach={upperChipRowReach}>{renderedActionControlNodes as any}</AgentInputChipRowReach>
+                            <View style={styles.actionButtonsLeft}>
+                                <AgentInputChipRowReach reach={chipRowReach}>{renderedActionControlNodes as any}</AgentInputChipRowReach>
                                 {showSecondaryControlsRow ? null : railTrailingCluster}
                             </View>
                         )}
@@ -4227,7 +4210,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     fadeLeftStyle={styles.actionButtonsFadeLeft}
                                     fadeRightStyle={styles.actionButtonsFadeRight}
                                 >
-                                    <AgentInputChipRowReach reach={lowerChipRowReach}><PathAndResumeRow
+                                    <AgentInputChipRowReach reach={chipRowReach}><PathAndResumeRow
                                         styles={{
                                             pathRow: styles.pathRow,
                                             actionButtonsLeft: styles.actionButtonsLeftScrollInline,
@@ -4239,7 +4222,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 </AgentInputScrollableChipRow>
                             </View>
                         ) : (
-                            <AgentInputChipRowReach key="row2" reach={lowerChipRowReach}><PathAndResumeRow
+                            <AgentInputChipRowReach key="row2" reach={chipRowReach}><PathAndResumeRow
                                 styles={{
                                     pathRow: styles.pathRow,
                                     actionButtonsLeft: styles.actionButtonsLeft,
@@ -4334,7 +4317,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     metadata={props.metadata ?? null}
                     sessionActive={props.sessionActive}
                     currentRunnerProcessIdentity={props.currentRunnerProcessIdentity}
-                    connectionStatus={instrumentStripConnectionStatus}
+                    connectionStatus={props.connectionStatus ?? null}
                     permission={props.showStatusPermissionMode === false || hasPermissionControl ? null : instrumentStripPermission}
                     quota={props.instrumentQuota ?? null}
                     statusBadges={props.statusBadges}

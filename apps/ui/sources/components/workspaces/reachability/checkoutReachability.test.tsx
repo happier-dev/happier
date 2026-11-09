@@ -1,7 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+
+// The sync runtime is created at app start; its machine refresh is the server request behind Try again.
+const refreshMachinesThrottled = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('@/sync/sync', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/sync/sync')>()),
+    sync: { refreshMachinesThrottled },
+}));
 
 const home = createHomeGovernanceHarness();
 const serverId = 'srv_checkout_reachability';
@@ -9,6 +16,7 @@ installHomeGovernanceBoundaries(home);
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { CheckoutUnreachableState, useCheckoutReachability } = await import('./checkoutReachability');
 const { t } = await import('@/text');
+const { formatLastSeen } = await import('@/utils/sessions/sessionUtils');
 
 beforeEach(async () => {
     await home.reset();
@@ -36,6 +44,25 @@ describe('checkout reachability', () => {
         expect(section.getTextContent()).toBe('');
         expect(section.findHostByTestId('section')?.props.accessibilityLabel).toBe(waiting);
         await section.unmount();
+    });
+    it('an unannounced offline checkout is the shared out-of-reach state: when it was seen, what returns, and Try again', async () => {
+        const lastSeenAt = Date.now() - 3 * 60 * 60 * 1000;
+        const reachability = { unreachable: true, machineName: 'leeroy-mbp', lastSeenAt, announced: false,
+            runtime: { online: false, status: 'offline' as const, label: 'Offline · last seen 3 hours ago', nextAction: 'retry' as const, showStatus: true } };
+        const screen = await renderScreen(<CheckoutUnreachableState reachability={reachability}
+            returns={t('projects.checkouts.filesReturn')} testID="files" />);
+        try {
+            const text = screen.getTextContent();
+            expect(text).toContain(t('projects.checkouts.outOfReach', { machine: 'leeroy-mbp' }));
+            expect(text).toContain(t('projects.checkouts.lastSeen', { when: formatLastSeen(lastSeenAt) }));
+            expect(text).toContain(t('projects.checkouts.filesReturn'));
+            // One message: the bare presence label is not the headline.
+            expect(text).not.toContain('Offline · last seen');
+            await screen.pressByTestIdAsync('files-action');
+            await waitForHomeGovernance(() => expect(refreshMachinesThrottled).toHaveBeenCalledWith({ staleMs: 0, force: true }));
+        } finally {
+            await screen.unmount();
+        }
     });
     it('names the Machine in its sentences only once its name is known', async () => {
         // A Machine whose details are still loading has a placeholder title, never a name for a sentence

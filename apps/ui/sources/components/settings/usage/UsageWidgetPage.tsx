@@ -9,7 +9,7 @@ import {
   flattenWidgetLayoutWidgetsV1,
   readBuiltinWidgetDescriptorV1,
 } from '@happier-dev/protocol/widgets';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, HAPPIER_PAGE_TEXT } from '@happier-dev/plugin-ui/presentation';
 import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -21,6 +21,8 @@ import {
   type PageHeaderMetaFact,
 } from '@/components/ui/layout/PageHeader';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { SurfaceFreshnessLine, SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { WidgetArea } from '@/components/widgets/area/WidgetArea';
 import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
@@ -391,6 +393,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const selected = tabs.find((tab) => tab.id === selectedLayoutId) ?? null;
   // Drawn on first paint from the view list's local edited fact, so the line never arrives late and pushes the widgets.
   const presetLine = resolveUsagePresetLine(ready ? { preset: ready.preset ?? null, surface: ready.surface } : null, selected, props.port.surface);
+  const phone = useDeviceType() === 'phone';
   const viewName = selected?.name ?? null;
   // The area's items take every area prop; an unchanged view keeps the same dashboard copy.
   const dashboard = React.useMemo(() => ({
@@ -439,8 +442,9 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
       {/* The page's reads wait on the Home: it says why once, here, and the views and bodies keep their room. */}
       <HomeReachabilityGate variant="line">{null}</HomeReachabilityGate>
-      {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. */}
-      {session ? null : <WidgetAreaLayoutBar
+      {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone
+          shows the selected view without the chooser and its + (D23): arranging dashboards is desktop work. */}
+      {session || phone ? null : <WidgetAreaLayoutBar
         layouts={tabViews}
         selectedId={selectedLayoutId}
         onSelect={bar.onSelect}
@@ -452,12 +456,14 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
       />}
       {filterBar}
       {presetLine ? (
-        <WidgetAreaPresetLine
-          preset={presetLine.preset}
-          surface={presetLine.surface}
-          presetActions={binding}
-          testID="usage-area.preset"
-        />
+        <View style={styles.textLine}>
+          <WidgetAreaPresetLine
+            preset={presetLine.preset}
+            surface={presetLine.surface}
+            presetActions={binding}
+            testID="usage-area.preset"
+          />
+        </View>
       ) : null}
       <UsageDrillProvider value={drill}>
       <WidgetArea
@@ -488,7 +494,8 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
       failedQuiet: isUsagePageFailureOnlyWork(slices),
       newerServer: describeUsagePageNewerServerSources(slices),
       partial: describeUsagePagePartialSources(slices),
-      observedAt: latest === null ? null : formatUsageObservedAt(latest),
+      // The displayed minute, not the raw clock: a refresh within the same minute changes nothing on screen.
+      observedAtMs: latest === null ? null : Math.floor(latest / 60_000) * 60_000,
       machines: accounting?.breakdowns?.machine?.length ?? null,
       agents: accounting?.breakdowns?.agent?.length ?? null,
       costBasisPending: !accounting && slices.every(slice => readUsageCoverageGaps(slice, ['accounting'])
@@ -505,7 +512,53 @@ function sameUsagePageFacts(left: ReturnType<typeof readUsagePageFacts>, right: 
   return sameFallback && sameStrictJsonValue(left.facts, right.facts);
 }
 
-/** Title, purpose and the one quiet line of facts the page is about: as of, machines, agents. */
+/**
+ * The notice under the page's purpose, when the page has something to say about its reading (D23,
+ * phone lab p5 "Usage"): one freshness line, never loose facts. A failure leads (what failed, when,
+ * its one Retry); then saved views that could not be read; then Sessions not read yet; then partial,
+ * newer-Home or in-flight reads. Only the most pressing one is said.
+ */
+type UsagePageNotice = Readonly<{
+  testID: string;
+  reason: string;
+  tone: 'neutral' | 'warning';
+  busy?: boolean;
+  action?: Readonly<{ label: string; onPress: () => void; testID: string }>;
+}>;
+
+function resolveUsagePageNotice(
+  facts: ReturnType<typeof readUsagePageFacts>['facts'],
+  retry: (() => void) | null,
+  history: UsagePageHistoryFact | null | undefined,
+  layouts: Readonly<{ retry: () => void }> | null | undefined,
+): UsagePageNotice | null {
+  const { pending, failed, failedQuiet, newerServer, partial } = facts;
+  if (failed) {
+    return { testID: 'usage-page.header.failed', reason: failed, tone: failedQuiet ? 'neutral' : 'warning',
+      // The one Retry, which also rereads the views and Sessions that failed: bodies with nothing to draw only
+      // say they were not read (`UsageBodyReadFailed`).
+      ...(retry ? { action: { label: t('common.retry'), onPress: retry, testID: 'usage-page.header.retry' } } : {}) };
+  }
+  if (layouts) {
+    return { testID: 'usage-page.header.viewsFailed', reason: t('usage.board.page.viewsReadFailed'), tone: 'warning',
+      action: { label: t('common.retry'), onPress: layouts.retry, testID: 'usage-page.header.viewsRetry' } };
+  }
+  // Sessions not read yet are why the shown activity is partial: their count and Read now say it once.
+  if (history) {
+    const onPress = history.onPress;
+    return { testID: 'usage-page.header.history', reason: history.text, tone: history.failed ? 'warning' : 'neutral',
+      ...(history.label && onPress ? { action: { label: history.label, onPress: () => onPress(), testID: 'usage-page.header.historyAction' } } : {}) };
+  }
+  if (newerServer) return { testID: 'usage-page.header.newerServer', reason: newerServer, tone: 'neutral' };
+  if (partial) return { testID: 'usage-page.header.partial', reason: partial, tone: 'neutral' };
+  if (pending) return { testID: 'usage-page.header.reading', reason: pending, tone: 'neutral', busy: true };
+  return null;
+}
+
+/**
+ * Title, purpose, then either the one notice about the page's reading or, while all is well, the one
+ * quiet line of facts the page is about: as of, machines, agents.
+ */
 function UsagePageHeader(
   props: Readonly<{
     facts: ReturnType<typeof readUsagePageFacts>['facts'];
@@ -520,59 +573,35 @@ function UsagePageHeader(
 ) {
   const { retry, history, layouts } = props;
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
-  const facts = React.useMemo((): PageHeaderMetaFact[] => {
-    // Shared read progress, failure and partial coverage are said once for the page.
-    const { pending, failed, failedQuiet, newerServer, partial, observedAt, machines, agents } = props.facts;
-    const reading = [
-      ...(failed ? [{ key: 'failed', ...(failedQuiet ? {} : { icon: 'warning' as const }), text: failed, testID: 'usage-page.header.failed' }] : []),
-      // The one Retry for it, which also rereads the views and Sessions that failed: bodies with nothing to draw only
-      // say they were not read (`UsageBodyReadFailed`).
-      ...(failed && retry ? [{ key: 'retry', text: t('common.retry'), onPress: retry,
-        accessibilityLabel: t('usage.board.page.retryRead'), testID: 'usage-page.header.retry' }] : []),
-      // Only the saved views failed: the same one fact and Retry, for them.
-      ...(!failed && layouts ? [{ key: 'viewsFailed', icon: 'warning' as const, text: t('usage.board.page.viewsReadFailed'), testID: 'usage-page.header.viewsFailed' },
-        { key: 'viewsRetry', text: t('common.retry'), onPress: layouts.retry,
-          accessibilityLabel: `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`, testID: 'usage-page.header.viewsRetry' }] : []),
-      ...(newerServer ? [{ key: 'newerServer', text: newerServer, testID: 'usage-page.header.newerServer' }] : []),
-      // Sessions not read yet are why the shown activity is partial: their count and Read now say it once.
-      ...(history ? [{ key: 'history', text: history.text, testID: 'usage-page.header.history' },
-        ...(history.label && history.onPress ? [{ key: 'historyAction', text: history.label, onPress: history.onPress,
-          accessibilityLabel: history.accessibilityLabel, testID: 'usage-page.header.historyAction' }] : [])]
-        : partial ? [{ key: 'partial', text: partial, testID: 'usage-page.header.partial' }] : []),
-      // What is still being read is moot while a failure is said: the failure and its Retry stand alone.
-      ...(pending && !failed ? [{ key: 'reading', text: pending }] : []),
-    ];
-    return [
-      ...(observedAt !== null
-        ? [
-            {
-              key: 'asOf',
-              icon: 'clock' as const,
-              text: t('usage.board.page.asOf', {
-                time: observedAt,
-              }),
-            },
-          ]
-        : []),
-      ...reading,
-      ...(machines
-        ? [
-            {
-              key: 'machines',
-              text: t('usage.board.page.machinesCount', { count: machines }),
-            },
-          ]
-        : []),
-      ...(agents
-        ? [
-            {
-              key: 'agents',
-              text: t('usage.board.page.agentsCount', { count: agents }),
-            },
-          ]
-        : []),
-    ];
+  const { observedAtMs, machines, agents } = props.facts;
+  // Unchanged page facts keep the same notice element, so the header does not redraw for a body-only change.
+  const notice = React.useMemo(() => {
+    const resolved = resolveUsagePageNotice(props.facts, retry, history, layouts);
+    // A plain line under the purpose, on the title's edge: the page header is not a surface to band. It is drawn as
+    // tall as the facts line it replaces, its Retry right after the sentence, so no view's header is taller (R139).
+    return resolved ? (
+      <SurfaceFreshnessOnSheetProvider>
+        <View style={styles.headerLine}>
+        <SurfaceFreshnessLine
+          presentation="inline"
+          testID={resolved.testID}
+          asOf={props.facts.observedAtMs}
+          reason={resolved.reason}
+          tone={resolved.tone}
+          {...(resolved.busy ? { busy: true } : {})}
+          {...(resolved.action ? { action: resolved.action } : {})}
+        />
+        </View>
+      </SurfaceFreshnessOnSheetProvider>
+    ) : null;
   }, [props.facts, retry, history, layouts]);
+  const facts = React.useMemo((): PageHeaderMetaFact[] => [
+    ...(observedAtMs !== null
+      ? [{ key: 'asOf', icon: 'clock' as const, text: t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }) }]
+      : []),
+    ...(machines ? [{ key: 'machines', text: t('usage.board.page.machinesCount', { count: machines }) }] : []),
+    ...(agents ? [{ key: 'agents', text: t('usage.board.page.agentsCount', { count: agents }) }] : []),
+  ], [observedAtMs, machines, agents]);
   // The header insets its own text to the page column; the page's views, filters and cards share that
   // edge, so the header bleeds back by the same step instead of indenting twice (lab d2top, QA-V F23).
   return (
@@ -580,7 +609,8 @@ function UsagePageHeader(
       <PageHeader
         title={props.sessionId ? sessionTitle ?? t('usage.sessionUsage') : t('usage.board.page.title')}
         description={t(props.sessionId ? 'usage.board.page.sessionSubtitle' : 'usage.board.page.subtitle')}
-        meta={facts}
+        details={notice ?? undefined}
+        meta={notice ? undefined : facts}
         alwaysShowTitle
         // This view already sits in the page's wide column: a second, narrower column would inset the title from the cards.
         columnWidth="pane"
@@ -593,12 +623,16 @@ function UsagePageHeader(
 
 const styles = StyleSheet.create((theme) => ({
   screen: { flex: 1 },
+  // The notice holds the facts line's height (the page meta step), so switching it in never moves the page.
+  headerLine: { minHeight: HAPPIER_PAGE_TEXT.meta.lineHeight, justifyContent: 'center' },
   content: { paddingBottom: theme.space.s32 },
   column: {
     alignSelf: 'center',
     width: '100%',
-    paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
+    // Boxes (period, filters, cards) start on the sheet line; text keeps the page's text line (phone lab "Two lines").
+    paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx,
     gap: 14,
   },
-  headerBleed: { marginHorizontal: -HAPPIER_PAGE_METRICS.pageTextInsetPx },
+  headerBleed: { marginHorizontal: -HAPPIER_PAGE_METRICS.sheetInsetPx },
+  textLine: { marginHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx - HAPPIER_PAGE_METRICS.sheetInsetPx },
 }));

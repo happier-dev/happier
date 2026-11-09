@@ -13,8 +13,11 @@ type Theme = UnistylesThemes[keyof UnistylesThemes];
  * paints these, and settings previews render the same chips inside the same panel, so the two
  * cannot drift apart.
  */
-/** Native chips state the rail's column gap as their own trailing margin. */
-export const NATIVE_ACTION_CHIP_GAP_X = 6;
+/**
+ * The one gap between neighbouring chips on every rail and platform (phone lab D20: chips 4 apart). Web rails
+ * state it as `columnGap`; native chips state it as their own trailing margin.
+ */
+export const AGENT_INPUT_ACTION_CHIP_GAP_X = 4;
 /** The gap between wrapped chip lines: native rows state it as margins, web rows as `rowGap`; the rails' hit areas split this one value. */
 export const NATIVE_ACTION_CHIP_GAP_Y = 1;
 export const AGENT_INPUT_PANEL_PADDING_TOP = 2;
@@ -36,8 +39,11 @@ export const AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX = { leading: 0, trailing: 0, t
  */
 export const AGENT_INPUT_EXPANSION_TOGGLE_HIT_REACH = { bottom: 4 } as const;
 export const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
-/** The field's own breathing room above and below its text: the step between the typed line and the chip rail. */
-export const AGENT_INPUT_FIELD_PADDING_Y = Platform.OS === 'web' ? 10 : 8;
+/**
+ * The field's own breathing room above and below its text: the step between the typed line and the chip rail.
+ * At rest the card reads 10 above the field, a one-line field, 6 to the chips (phone lab D13: card 88 tall).
+ */
+export const AGENT_INPUT_FIELD_PADDING_Y = 5;
 
 /**
  * The composer's one edge (calm-shell C1), the same for live, read-only, document and preview composers and
@@ -89,7 +95,7 @@ export const AGENT_INPUT_ACTION_CHIP_STYLE = {
     justifyContent: 'center' as const,
     height: 32,
     gap: 6,
-    ...(Platform.OS === 'web' ? {} : { marginRight: NATIVE_ACTION_CHIP_GAP_X, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
+    ...(Platform.OS === 'web' ? {} : { marginRight: AGENT_INPUT_ACTION_CHIP_GAP_X, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
 };
 
 /** A chip while pressed: the standard pressed dip. */

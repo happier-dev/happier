@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { describeMachinePresenceSummary, type MachineRuntimePresence } from '@/utils/sessions/machinePresenceLine';
+import { formatLastSeen } from '@/utils/sessions/sessionUtils';
 
 /** The machine a checkout lives on: reachability is a fact of the machine, not of the folder. */
 export type CheckoutMachineScope = Readonly<{
@@ -151,6 +152,8 @@ export function CheckoutUnreachableState(
     size?: SurfaceStateSize;
     /** One section among siblings: the line would repeat under each of them, so it stays wordless. */
     silent?: boolean;
+    /** What this surface shows again once the machine answers ("Your files show up here when it's back."). */
+    returns?: string;
     testID?: string;
   }>,
 ) {
@@ -172,14 +175,30 @@ export function CheckoutUnreachableState(
     }
     return <AnnouncedCheckoutWait machineName={reachability.machineName} testID={testID} />;
   }
+  // A machine that can be asked again is "out of reach": named in the title, when it was last seen and
+  // what comes back in the reason, Try again beneath (lab p5 files). A managed machine's own state
+  // (stopped, starting) is its title as it stands.
+  const outOfReach = reachability.runtime.nextAction === 'retry';
+  const reason = outOfReach
+    ? [
+        reachability.lastSeenAt
+          ? t('projects.checkouts.lastSeen', { when: formatLastSeen(reachability.lastSeenAt) })
+          : null,
+        props.returns ?? null,
+      ].filter(Boolean).join(' ') || undefined
+    : props.returns;
   return (
     <SurfaceStateCard
       testID={props.testID ?? 'checkout-unreachable'}
       kind="unavailable"
       size={props.size ?? (widget ? 'line' : undefined)}
       iconName="wifi-slash"
-      title={reachability.runtime.label}
-      action={reachability.runtime.nextAction === 'retry' ? { label: t('common.retry'), onPress: retryMachineReachability } : undefined}
+      scene="homeOffline"
+      title={outOfReach
+        ? t('projects.checkouts.outOfReach', { machine: reachability.machineName })
+        : reachability.runtime.label}
+      reason={reason}
+      action={outOfReach ? { label: t('surfaceState.tryAgain'), onPress: retryMachineReachability } : undefined}
     />
   );
 }

@@ -50,18 +50,15 @@ describe('AgentInput armed continuation controls', () => {
         await screen.unmount();
     });
 
-    it('opens the existing machine picker from an unavailable target recovery action', async () => {
-        const onMachineClick = vi.fn();
+    it('states an unavailable Machine without a second Select machine beside it; the Machine chip repairs it', async () => {
         const screen = await renderScreen(<AgentInput
             value="" placeholder="" onChangeText={() => {}} onSend={() => {}}
             autocompleteKinds={[]} autocompleteSuggestions={async () => []}
-            onMachineClick={onMachineClick}
+            onMachineClick={vi.fn()}
             connectionStatus={{ text: 'Selected machine unavailable', color: 'rose', dotColor: 'rose', recovery: 'machine' }}
         />);
-        const action = screen.findByTestId('agent-input-connection-recovery');
-        expect(action).not.toBeNull();
-        await screen.pressByTestIdAsync('agent-input-connection-recovery');
-        expect(onMachineClick).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('agent-input-connection-status-text')).not.toBeNull();
+        expect(screen.findByTestId('agent-input-connection-recovery')).toBeNull();
         await screen.unmount();
     });
 

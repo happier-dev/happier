@@ -2333,7 +2333,6 @@ describe('/session/[id]/info', () => {
             '@happier-dev/protocol/sessions/metadata/runtimeDescriptorV1'
         );
         const { AgentNativeResumeIdentityV1Schema } = await import('@happier-dev/protocol/agents/nativeResumeIdentityV1');
-        const { Avatar } = await import('@/components/ui/avatar/Avatar');
         mockSession = {
             id: 'session-1234567890abcdef',
             active: false,
@@ -2357,8 +2356,9 @@ describe('/session/[id]/info', () => {
         await screen.pressByTestIdAsync('session-info-about-more');
         const resumeIdentity = screen.findAllByType(Item).find(node => node.props.title === 'sessionInfo.opencodeSessionId');
         expect(resumeIdentity?.props.copy).toBe('runtime-session-1234567890');
-        const avatar = screen.findByType(Avatar);
-        expect(avatar.props.flavor).toBe('opencode');
+        // The route header's mark is the inferred Agent's own mark (D15), not a generic avatar.
+        const { SessionAgentCatalogIdentityIcon } = await import('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon');
+        expect(screen.findAllByType(SessionAgentCatalogIdentityIcon).map(mark => mark.props.agentId)).toEqual(['opencode']);
     });
 
     it('routes View Machine to the reachable machine target when session metadata is stale after handoff', async () => {

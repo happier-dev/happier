@@ -7,7 +7,6 @@
 export const SESSION_COMPOSER_BANNER_KINDS = [
     'usageLimitRecovery',
     'staleSessionRunner',
-    'authRecovery',
     'externalTranscriptSnapshot',
     'localControl',
     'directControlTakeover',
