@@ -49,8 +49,11 @@ import { createAgentIsolationSessionContext } from '@/daemon/agentIsolation/agen
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
-import { createMergedContributionRegistry, createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveSelectedBuiltInContributions } from '@/plugins/projection/registry/selected';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { loadEnabledBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { projectBuiltInAgents } from '@/plugins/projection/registry/builtIn/agents';
+import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '@/plugins/projection/registry/sources/generatedBundledPlugins';
 import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
 import {
   resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn,
@@ -554,10 +557,25 @@ it.each([
 
 beforeAll(async () => {
   const agentIds = ['claude', 'codex', 'gemini', 'opencode', 'pi', 'antigravity'] as const;
-  const contributes = agentIds.reduce((registry, localId) => createMergedContributionRegistry(
-    resolveSelectedBuiltInContributions({ agentIdentity: { pluginId: `happier.agent.${localId}`, localId } }),
-    registry,
-  ), createResolvedContributionRegistry({}));
+  const pluginIds = agentIds.map(localId => `happier.agent.${localId}`);
+  const bundled = loadEnabledBundledPluginLocatorResult({ pluginIds });
+  const projected = projectLoadedPluginContributes({
+    loadResult: {
+      loadedPlugins: bundled.loadedPlugins,
+      diagnosticsByPluginId: Object.fromEntries(bundled.pluginFailures.map(failure => [failure.pluginId, [failure.diagnostic]])),
+    },
+    provenance: 'first_party',
+    admittedGraph: bundled.admittedGraph,
+  });
+  const contributes = createResolvedContributionRegistry({
+    ...projected,
+    // These scenarios materialize already-resolved launches; dependency installation is outside this fixture.
+    managedDependencies: [],
+    agents: projectBuiltInAgents({
+      manifestAgents: projected.agents ?? [],
+      registrationBindings: BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS,
+    }),
+  });
   runtimeFixture = await createAdmittedPluginRuntimeFixture({
     controller: pluginReloadController,
     runtimeOptions: {
@@ -572,7 +590,7 @@ beforeAll(async () => {
           writeRecord: async () => { throw new Error('Materialization must not write Account preferences'); },
         }),
       },
-      pluginIds: agentIds.map(localId => `happier.agent.${localId}`),
+      pluginIds,
     },
   });
 });

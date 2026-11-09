@@ -6,7 +6,7 @@ import { PluginAccountSettingsValuesV1Schema } from '@happier-dev/protocol/plugi
 import packageJson from '../../../../package.json';
 import type { AgentLaunchMaterializationTarget } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import { AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH, type AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, realpath, rm } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
@@ -627,98 +627,140 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       };
 
       const materializeNativeHome = async () => {
-        const nativeHomeFiles: Record<string, Uint8Array> = Object.create(null);
-        const producedPurposeKeys = new Set(launchEnvironment.producedPurposeKeys);
-        for (const scope of projectionOnly
-          ? []
-          : snapshot?.fileMaterializationPurposes ?? []) {
-          if (!snapshot?.bindings.some((binding) => (
-            qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(scope.purpose)
-          ))) continue;
-          if (!connectedAccountsOwner) throw new Error('Connected Account launch authority is unavailable');
-          const expectedAccount = expectedAccountsByPurposeKey.get(qualifiedPurposeKey(scope.purpose));
-          if (!expectedAccount) {
-            const error = new Error('Connected Account native-home binding is unavailable');
-            logger.infoFile('[CONNECTED ACCOUNT] Native-home binding rejected', {
-              phase: 'expected_account', agentId: params.agentId,
-              purposeKey: qualifiedPurposeKey(scope.purpose),
-              sessionId: params.purposeBindingSessionId,
-              materializationKey: params.materializationKey, error,
-            });
-            throw error;
+        const nativePurposes = (projectionOnly ? [] : snapshot?.fileMaterializationPurposes ?? [])
+          .filter(scope => snapshot?.bindings.some(binding =>
+            qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(scope.purpose)));
+        if (nativePurposes.length === 0 && !params.nativeHomeOnly && !params.legacyV021 && !projectionOnly) return;
+        const existingHome = await lstat(nativeRoot).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+          throw error;
+        });
+        const previousCredentials = existingHome ? await readConnectedServiceNativeHomeCredentialFiles({
+          targetRoot: nativeRoot,
+          declaredSecretEntries: stateSharingDescriptor.authIsolation.secretEntries,
+        }) : Object.freeze({});
+        const restoreCredentials = async () => {
+          if (durableNativeHome && !existingHome) {
+            await createBestEffortCleanupDirectory(nativeRoot, undefined, { failureMode: 'reject' })();
+            return;
           }
-          const materialization = await observeConnectedServiceMaterializationPhase({
-            agentId: params.agentId, materializationKey: params.materializationKey,
-            service: expectedAccount.service,
-          }, 'native_home_credentials', async () => materializeAccount({
-            purpose: scope.purpose,
-            serviceRefs: scope.serviceRefs,
-            ...(params.exactPurposeBindingSubjectId
-              ? { exactPurposeBindingSubjectId: params.exactPurposeBindingSubjectId }
-              : {}),
-            ...(params.purposeBindingSessionId
-              ? { sessionId: params.purposeBindingSessionId }
-              : {}),
-            expectedAccount,
-            existingFiles: await readConnectedServiceNativeHomeCredentialFiles({
-              targetRoot: nativeRoot,
-              declaredSecretEntries: stateSharingDescriptor.authIsolation.secretEntries,
-            }),
-            request: Object.freeze({
-              kind: 'files' as const,
-              fileIds: Object.freeze([
-                ...stateSharingDescriptor.authIsolation.secretEntries,
-              ]),
-            }),
-            signal: signalController.signal,
-          }));
-          signalController.signal.throwIfAborted();
-          if (materialization.kind !== 'files') {
-            throw new Error(
-              'Connected Account native-home credential returned the wrong materialization kind',
-            );
+          const preparedFiles = await readConnectedServiceNativeHomeCredentialFiles({
+            targetRoot: nativeRoot,
+            declaredSecretEntries: stateSharingDescriptor.authIsolation.secretEntries,
+          });
+          for (const fileId of Object.keys(preparedFiles)) {
+            if (!Object.hasOwn(previousCredentials, fileId)) await rm(join(nativeRoot, fileId));
           }
-          if (!Object.entries(materialization.files).some(([fileId, contents]) =>
-            stateSharingDescriptor.authIsolation.secretEntries.includes(fileId) && contents.byteLength > 0)) {
-            continue;
-          }
-          producedPurposeKeys.add(qualifiedPurposeKey(scope.purpose));
-          for (const [fileId, contents] of Object.entries(materialization.files)) {
-            if (Object.prototype.hasOwnProperty.call(nativeHomeFiles, fileId)) {
+          await materializeConnectedServiceNativeHomeCredentials({
+            targetRoot: nativeRoot,
+            declaredSecretEntries: stateSharingDescriptor.authIsolation.secretEntries,
+            files: previousCredentials,
+          });
+        };
+        const previousEnvironment = { ...env };
+        const previousDiagnosticsLength = diagnostics.length;
+        const previousObservationBinding = materializedStateObservationBinding;
+        try {
+          // Credential producers merge against this invocation's copied configuration.
+          const applyNativeHome = await prepareNativeHome();
+          await writeArtifacts(applyNativeHome);
+          const nativeHomeFiles: Record<string, Uint8Array> = Object.create(null);
+          const producedPurposeKeys = new Set(launchEnvironment.producedPurposeKeys);
+          for (const scope of nativePurposes) {
+            if (!connectedAccountsOwner) throw new Error('Connected Account launch authority is unavailable');
+            const expectedAccount = expectedAccountsByPurposeKey.get(qualifiedPurposeKey(scope.purpose));
+            if (!expectedAccount) {
+              const error = new Error('Connected Account native-home binding is unavailable');
+              logger.infoFile('[CONNECTED ACCOUNT] Native-home binding rejected', {
+                phase: 'expected_account', agentId: params.agentId,
+                purposeKey: qualifiedPurposeKey(scope.purpose),
+                sessionId: params.purposeBindingSessionId,
+                materializationKey: params.materializationKey, error,
+              });
+              throw error;
+            }
+            const materialization = await observeConnectedServiceMaterializationPhase({
+              agentId: params.agentId, materializationKey: params.materializationKey,
+              service: expectedAccount.service,
+            }, 'native_home_credentials', async () => materializeAccount({
+              purpose: scope.purpose,
+              serviceRefs: scope.serviceRefs,
+              ...(params.exactPurposeBindingSubjectId
+                ? { exactPurposeBindingSubjectId: params.exactPurposeBindingSubjectId }
+                : {}),
+              ...(params.purposeBindingSessionId
+                ? { sessionId: params.purposeBindingSessionId }
+                : {}),
+              expectedAccount,
+              existingFiles: await readConnectedServiceNativeHomeCredentialFiles({
+                targetRoot: nativeRoot,
+                declaredSecretEntries: stateSharingDescriptor.authIsolation.secretEntries,
+              }),
+              request: Object.freeze({
+                kind: 'files' as const,
+                fileIds: Object.freeze([
+                  ...stateSharingDescriptor.authIsolation.secretEntries,
+                ]),
+              }),
+              signal: signalController.signal,
+            }));
+            signalController.signal.throwIfAborted();
+            if (materialization.kind !== 'files') {
               throw new Error(
-                `Connected Account native-home credential '${fileId}' has multiple owners`,
+                'Connected Account native-home credential returned the wrong materialization kind',
               );
             }
-            nativeHomeFiles[fileId] = contents;
+            if (!Object.entries(materialization.files).some(([fileId, contents]) =>
+              stateSharingDescriptor.authIsolation.secretEntries.includes(fileId) && contents.byteLength > 0)) {
+              continue;
+            }
+            producedPurposeKeys.add(qualifiedPurposeKey(scope.purpose));
+            for (const [fileId, contents] of Object.entries(materialization.files)) {
+              if (Object.prototype.hasOwnProperty.call(nativeHomeFiles, fileId)) {
+                throw new Error(
+                  `Connected Account native-home credential '${fileId}' has multiple owners`,
+                );
+              }
+              nativeHomeFiles[fileId] = contents;
+            }
           }
-        }
-        if (snapshot && !projectionOnly) assertQualifiedConnectedAccountLaunchUsesProduced({
-          snapshot, producedPurposeKeys, includeNativeHomeUses: true,
-        });
-        if (Object.keys(nativeHomeFiles).length === 0 && !params.nativeHomeOnly
-          && !params.legacyV021 && !projectionOnly) return;
-
-        targetMaterializedRoot = nativeRoot;
-        // Prepare only when this invocation actually needs a private native home.
-        const applyNativeHome = await prepareNativeHome();
-        await writeArtifacts(applyNativeHome);
-        await observeConnectedServiceMaterializationPhase(params, 'native_home_credential_write', () => writeArtifacts(() => materializeConnectedServiceNativeHomeCredentials({
-          targetRoot: nativeRoot,
-          declaredSecretEntries:
-            stateSharingDescriptor.authIsolation.secretEntries,
-          files: Object.freeze(nativeHomeFiles),
-        })));
-        if (params.agentLaunchTarget) {
-          const agentNativeHome = join(params.agentLaunchTarget.runtimeHome, AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH);
-          Object.assign(agentEnvironment, rewriteEnvRoot(env, nativeRoot, agentNativeHome), {
-            [nativeHome.environmentKey]: agentNativeHome,
+          if (snapshot && !projectionOnly) assertQualifiedConnectedAccountLaunchUsesProduced({
+            snapshot, producedPurposeKeys, includeNativeHomeUses: true,
           });
-          // File-environment values keep their selected Agent paths when native
-          // environment projection adds its separately owned home.
-          Object.assign(agentEnvironment, launchEnvironment.agentLaunchMaterials?.environment);
-          agentSelectedMaterials.push(...Object.entries(nativeHomeFiles).map(([fileId, contents]) => Object.freeze({
-            relativePath: `${AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH}/${fileId}`, contentBase64: Buffer.from(contents).toString('base64'),
+          if (Object.keys(nativeHomeFiles).length === 0 && !params.nativeHomeOnly
+            && !params.legacyV021 && !projectionOnly) {
+            await restoreCredentials();
+            for (const key of Object.keys(env)) delete env[key];
+            Object.assign(env, previousEnvironment);
+            diagnostics.length = previousDiagnosticsLength;
+            materializedStateObservationBinding = previousObservationBinding;
+            return;
+          }
+
+          targetMaterializedRoot = nativeRoot;
+          await observeConnectedServiceMaterializationPhase(params, 'native_home_credential_write', () => writeArtifacts(() => materializeConnectedServiceNativeHomeCredentials({
+            targetRoot: nativeRoot,
+            declaredSecretEntries:
+              stateSharingDescriptor.authIsolation.secretEntries,
+            files: Object.freeze(nativeHomeFiles),
           })));
+          if (params.agentLaunchTarget) {
+            const agentNativeHome = join(params.agentLaunchTarget.runtimeHome, AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH);
+            Object.assign(agentEnvironment, rewriteEnvRoot(env, nativeRoot, agentNativeHome), {
+              [nativeHome.environmentKey]: agentNativeHome,
+            });
+            // File-environment values keep their selected Agent paths when native
+            // environment projection adds its separately owned home.
+            Object.assign(agentEnvironment, launchEnvironment.agentLaunchMaterials?.environment);
+            agentSelectedMaterials.push(...Object.entries(nativeHomeFiles).map(([fileId, contents]) => Object.freeze({
+              relativePath: `${AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH}/${fileId}`, contentBase64: Buffer.from(contents).toString('base64'),
+            })));
+          }
+        } catch (error) {
+          try { await restoreCredentials(); } catch (cleanupError) {
+            throw new AggregateError([error, cleanupError], 'Connected Account native-home materialization and cleanup failed');
+          }
+          throw error;
         }
       };
       if (durableNativeHome) {
