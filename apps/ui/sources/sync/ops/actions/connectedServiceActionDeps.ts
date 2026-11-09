@@ -175,10 +175,6 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                     const { setConnectedAcknowledgementInContext } = await import('@/sync/api/account/apiConnectedMetadataCatalog');
                     await setConnectedAcknowledgementInContext(account, input, signal);
                 },
-                setConnectedDisclosure: async input => {
-                    const { setConnectedDisclosureInContext } = await import('@/sync/api/account/apiConnectedMetadataCatalog');
-                    await setConnectedDisclosureInContext(account, input);
-                },
                 prepareConnectedMetadataCleanup: async ({ subject }) => {
                     const { prepareConnectedMetadataCleanupInContext } = await import('@/sync/api/account/apiConnectedMetadataCatalog');
                     preparedMetadataCleanup = await prepareConnectedMetadataCleanupInContext(account, subject, signal);
@@ -222,12 +218,13 @@ export function createUiConnectedServiceAction(account: LazyActionAccountContext
                             return settings.usagePacingTargetsV1;
                         },
                         readEnteredMonthlyPrice: async () => {
-                            const [{ readConnectedMetadataCatalogInContext }, { readConnectedSubscriptionMonthlyPriceV1 }] = await Promise.all([
+                            const [{ readConnectedMetadataCatalogInContext }, { readConnectedSubscriptionMonthlyPriceV1 }, { isConnectedPresentationCatalogUsableV1 }] = await Promise.all([
                                 import('@/sync/api/account/apiConnectedMetadataCatalog'), import('@happier-dev/protocol/connect/connectedAccountPresentationRowsV1'),
+                                import('@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1'),
                             ]);
                             const catalog = await readConnectedMetadataCatalogInContext(account, signal, undefined, false);
                             assertCurrent();
-                            return catalog.presentation.status === 'ready' ? readConnectedSubscriptionMonthlyPriceV1(catalog.presentation, input.source.ref) : undefined;
+                            return isConnectedPresentationCatalogUsableV1(catalog.presentation) ? readConnectedSubscriptionMonthlyPriceV1(catalog.presentation, input.source.ref) : undefined;
                         },
                         ...(signal ? { signal } : {}),
                     });

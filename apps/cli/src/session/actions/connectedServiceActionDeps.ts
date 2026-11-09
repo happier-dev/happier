@@ -1,14 +1,14 @@
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/connect/recoveryCreditConsumeIdempotencyKey';
 import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema, ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, ConnectedAccountAuthenticationCommandRequestSchema, ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonControlResponseSchema, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountControlCommandRequestSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
-import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
-import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import type { CredentialedConnectedAccountAuthenticationHost } from '@/plugins/runtime/connectedAccounts/authenticationHost';
 import type { AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
+import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
@@ -20,9 +20,8 @@ import type { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/c
 import type { resolveConnectedServicesServerApiTimeoutMs } from '@/api/client/connectedServicesServerApiTimeout';
 import type { classifyActionTransportFailure } from '@/api/client/classifyServerEndpointError';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { admitCliConnectedAccountPurposeDefaultTarget } from './purposeDefaultAdmission';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { admitCliConnectedAccountPurposeDefaultTarget } from './purposeDefaultAdmission';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { captureSavedSecretReferencesForOperation } from "@/settings/secrets/savedSecretCatalogRead";
 import type { promoteSavedSecretsWithConnectedAccountCatalog } from "@/settings/secrets/hydrateSavedSecretCatalog";
@@ -31,13 +30,10 @@ import type { readActiveConnectedAccountCatalog } from '@/settings/connectedAcco
 import type { commitActiveConnectedAccountCatalog, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
-import type { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
-
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
-
-import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
-
 import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountRefSchema, QualifiedConnectedAccountCredentialErrorV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
+import type { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 
 export function createCliConnectedServiceAction(params: Readonly<{
   credentials: StoredCredentials;
@@ -206,6 +202,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
                 record: SavedSecretSchema.parse({ id, name: `Connected Account ${fieldId}`.slice(0, 100), kind: 'other',
                   encryptedValue: { _isSecretValue: true, value }, createdAt: timestamp, updatedAt: timestamp }) })),
               connectedAccountCatalog: { expectedRevision: write.expectedRevision, record: write.record },
+              selectedSecrets: Object.values(write.selectedSecrets ?? {}),
               authorizeRequest: request => params.resolveHeaders(context, 'secrets.shared.promote', request) });
             if (result.status === 'applied') return { status: 'applied' };
             if (result.status === 'conflict') return { status: 'conflict' };
@@ -391,7 +388,8 @@ export function createCliConnectedServiceAction(params: Readonly<{
                 serverHttpBaseUrl: base, isCredentialCurrent: async () => operationContext.isCurrent() }).readAdmittedCatalog();
               await assertReadCurrent();
               const { readConnectedSubscriptionMonthlyPriceV1 } = await import('@happier-dev/protocol/connect/connectedAccountPresentationRowsV1');
-              return catalog.presentation.status === 'ready' ? readConnectedSubscriptionMonthlyPriceV1(catalog.presentation, input.source.ref) : undefined;
+              const { isConnectedPresentationCatalogUsableV1 } = await import('@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1');
+              return isConnectedPresentationCatalogUsableV1(catalog.presentation) ? readConnectedSubscriptionMonthlyPriceV1(catalog.presentation, input.source.ref) : undefined;
             },
             authorizeRequest, authorizePendingReadRequest: authorizeRequest,
             assertCurrent: assertReadCurrent, ...(signal ? { signal } : {}),
@@ -436,6 +434,8 @@ export function createCliConnectedServiceAction(params: Readonly<{
           || command.operation === 'readConfiguration') await assertReadCurrent();
         return response;
       },
+      listPendingAuthenticationAttempts: async ({ machineId, service }) => host.controlCommand!(machineId,
+        { operation: 'listPendingAttempts', service }),
       };
       const readOnlyCatalog = actionId === 'connectedServices.accounts.list' || actionId === 'connectedServices.catalog.list';
       if (readOnlyCatalog) await assertReadCurrent();

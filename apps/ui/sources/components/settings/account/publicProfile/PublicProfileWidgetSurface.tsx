@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HappierPublicProfileWidget } from '@happier-dev/plugin-ui/components';
+import { HappierPublicProfileWidget, HappierPublicProfileDataProvider } from '@happier-dev/plugin-ui/components';
 import { type HappierPublicProfileLabels, type HappierPublicProfileOwner, type HappierPublicProfileUsageHost } from '@happier-dev/plugin-ui/presentation';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, type PublicProfileSnapshotV1 } from '@happier-dev/protocol/account/publicProfile';
-import { projectPublicProfilePreview } from '@happier-dev/protocol/account/projectPublicProfile';
+import { createPublicProfileProjector, type PublicProfileDataProjection, type projectPublicProfilePreview } from '@happier-dev/protocol/account/projectPublicProfile';
 import { PublicProfilePreviewResultV1Schema } from '@happier-dev/protocol/account/publicProfileIntents';
 import { resolveWidgetPublicSnapshotPresentationV1, type WidgetInstanceV1, type WidgetSizeV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
@@ -16,7 +16,7 @@ import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { t } from '@/text';
 import { publicProfilePageLabels, usePublicProfileUsageHost } from './publicProfilePresentation';
 import { usePublicProfileOwnerRead } from './usePublicProfileOwnerRead';
-import { DEFAULT_PUBLIC_PROFILE_QUERY } from './publicProfileDraft';
+import { DEFAULT_PUBLIC_PROFILE_QUERY, publicProfileRecordPeriod } from './publicProfileDraft';
 
 type PreviewSource = Omit<Parameters<typeof projectPublicProfilePreview>[0], 'layout'>;
 /**
@@ -25,10 +25,32 @@ type PreviewSource = Omit<Parameters<typeof projectPublicProfilePreview>[0], 'la
  */
 export type PublicProfileWidgetPreview =
   | Readonly<{ kind: 'ready'; source: PreviewSource; labels: HappierPublicProfileLabels; usage?: HappierPublicProfileUsageHost;
+      /** The editor already owns the policy projection; standalone setup admits its source here. */
+      projection?: PublicProfileDataProjection;
       /** Edit on the owner's page: the same in-place hidden presentation the page itself draws for its owner. */
       owner?: HappierPublicProfileOwner }>
   | Readonly<{ kind: 'unavailable'; reason: string }>;
-export const PublicProfileWidgetPreviewContext = React.createContext<PublicProfileWidgetPreview | null>(null);
+const PublicProfileWidgetPreviewContext = React.createContext<PublicProfileWidgetPreview | null>(null);
+
+export function PublicProfileWidgetPreviewProvider(props: Readonly<{ value: PublicProfileWidgetPreview | null; children: React.ReactNode }>) {
+  return props.value?.kind === 'ready' ? <ReadyPublicProfileWidgetPreview value={props.value}>{props.children}</ReadyPublicProfileWidgetPreview>
+    : <PublicProfileWidgetPreviewContext.Provider value={props.value}>{props.children}</PublicProfileWidgetPreviewContext.Provider>;
+}
+
+function ReadyPublicProfileWidgetPreview(props: Readonly<{
+  value: Extract<PublicProfileWidgetPreview, { kind: 'ready' }>; children: React.ReactNode;
+}>) {
+  const { source } = props.value;
+  const projector = React.useMemo(() => props.value.projection ? null : createPublicProfileProjector(source.snapshot),
+    [source.snapshot, props.value.projection]);
+  const projection = React.useMemo(() => props.value.projection ?? projector?.project(source) ?? null,
+    [props.value.projection, projector, source.context, source.policy, source.metadata]);
+  const view = React.useMemo(() => projection ? { ...projection.view, layout: { v: 1 as const, items: [] } } : null, [projection]);
+  if (!projection || !view) return <PublicProfileWidgetPreviewContext.Provider value={null}>{props.children}</PublicProfileWidgetPreviewContext.Provider>;
+  return <PublicProfileWidgetPreviewContext.Provider value={{ ...props.value, projection }}>
+    <HappierPublicProfileDataProvider view={view} usage={props.value.usage}>{props.children}</HappierPublicProfileDataProvider>
+  </PublicProfileWidgetPreviewContext.Provider>;
+}
 
 /** A whole area/group shares its existing preview owner; standalone setup reads it once. */
 export function PublicProfileWidgetPreviewBoundary(props: Readonly<{ scope: WidgetSurfaceRefV1; children: React.ReactNode }>) {
@@ -78,9 +100,9 @@ export function PublicProfileWidgetPreviewRead(props: Readonly<{
     kind: 'ready' as const,
     source: { context: read.context, snapshot, policy: record?.policy ?? DEFAULT_PUBLIC_PROFILE_POLICY_V1,
       metadata: record?.metadata ?? {}, appearance: { atmosphere: { source: 'none' as const }, theme: 'auto' as const } },
-    labels: publicProfilePageLabels(read.context, snapshot, null), usage,
+    labels: publicProfilePageLabels(read.context, snapshot, null, publicProfileRecordPeriod(record)), usage,
   } : { kind: 'unavailable', reason: failed ?? t('publicIdentity.editor.preparing') }, [read, snapshot, record, usage, failed]);
-  return <PublicProfileWidgetPreviewContext.Provider value={preview}>{props.children}</PublicProfileWidgetPreviewContext.Provider>;
+  return <PublicProfileWidgetPreviewProvider value={preview}>{props.children}</PublicProfileWidgetPreviewProvider>;
 }
 
 /** Public-area mounts can draw only an admitted inert template/shared body, never the private renderer. */
@@ -93,13 +115,13 @@ export function PublicProfileWidgetSurface(props: Readonly<{
   const preview = shared;
   const presentation = props.descriptor && resolveWidgetPublicSnapshotPresentationV1(props.instance, props.descriptor);
   const size = props.size ?? props.descriptor?.sizeDeclaration.defaultSize;
-  const view = preview && presentation && size ? projectPublicProfilePreview({ ...preview.source,
-    layout: { v: 1, items: [{ kind: 'widget', id: props.instance.id, size, frameStyle: 'plain', presentation }] },
-  }) : null;
+  const view = preview?.projection && presentation && size ? { ...preview.projection.view,
+    layout: preview.projection.projectLayout({ v: 1, items: [{ kind: 'widget', id: props.instance.id, size, frameStyle: 'plain', presentation }] }),
+  } : null;
   if (!view || !preview) return <SurfaceStateCard testID={props.testID} kind="unavailable" title={t('publicIdentity.page.blockUnavailable')} />;
   return <CorePluginUiPresentationScope><HappierPublicProfileWidget view={view} widgetId={props.instance.id}
     labels={preview.labels} usage={preview.usage} testID={props.testID}
-    {...(preview.owner?.hiddenBlockIds.has(props.instance.id) ? { owner: preview.owner } : {})} /></CorePluginUiPresentationScope>;
+    {...(preview.owner ? { owner: preview.owner } : {})} /></CorePluginUiPresentationScope>;
 }
 
 const styles = StyleSheet.create((theme) => ({

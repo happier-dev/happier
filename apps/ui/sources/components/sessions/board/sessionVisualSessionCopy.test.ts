@@ -36,17 +36,6 @@ describe('copySessionVisualToSession', () => {
         }, { serverId: 'home-a', defaultSessionId: 'session-b', surface: 'ui' });
     });
 
-    it('refuses a copy into its own Session before dispatch: the same Session pins instead', async () => {
-        const execute = vi.fn();
-        await expect(copySessionVisualToSession({
-            serverId: 'home-a',
-            source: { sessionId: 'session-a', itemId: 'chart', revision: sourceRevision },
-            destinationSessionId: 'session-a',
-            execute,
-        })).resolves.toEqual({ status: 'refused', error: { error: 'session_board_invalid' } });
-        expect(execute).not.toHaveBeenCalled();
-    });
-
     it('reports a copy waiting for approval and a changed source without claiming it was copied', async () => {
         const approval = { kind: 'approval_request_created' as const, artifactId: 'approval-copy-1', actionId: 'session.board.item.upsert' };
         const pending = await copySessionVisualToSession({

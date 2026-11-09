@@ -1,3 +1,4 @@
+import type { UsageCoachSuppressionStateV1 } from './coachActions.js';
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { selectLatestUsageMcpBindingWindows } from './usageMcpBindingUsage.js';
 import { resolveUsageCostBasis, createUsageModelCostEstimator } from '../usageCost.js';
@@ -7,12 +8,12 @@ import { UsageRequestAttributionSchema } from '../usageAnalyticsContracts.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { selectUsageWorkPermissions } from '../usageWorkIntervals.js';
 import { summarizeUsageExecutionSources } from '../usageSourceSummary.js';
-import { UsageCoachPreferencesV1Schema, type UsageCoachPreferencesV1 } from '../../account/settings/usageCoachPreferencesV1.js';
+import { UsageCoachPreferencesV1Schema } from '../../account/settings/usageCoachPreferencesV1.js';
 import { USAGE_COACH_DETECTOR_IDS, USAGE_COACH_REQUIRED_EVIDENCE, type UsageCoachCapability, type UsageCoachEvaluation,
     type UsageCoachEvaluationInput, type UsageCoachConceptEvaluation, type UsageCoachDetectorId, type UsageCoachFinding,
     type UsageCoachAdmittedRemedy, type UsageCoachNativeCacheFact } from './coachFinding.js';
 
-export function applyUsageCoachPreferences(evaluation: UsageCoachEvaluation, preferences: Pick<UsageCoachPreferencesV1, 'suppressions'>,
+export function applyUsageCoachPreferences(evaluation: UsageCoachEvaluation, preferences: Pick<UsageCoachSuppressionStateV1, 'suppressions'>,
     nowMs: number): UsageCoachEvaluation {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new RangeError('Invalid usage preference observation time');
     const suppressions = new Map(preferences.suppressions.map(row => [row.evidenceKey, row]));

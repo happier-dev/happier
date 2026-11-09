@@ -22,7 +22,7 @@ export { HappierRequesterDisclosureContent, type HappierRequesterDisclosureModel
   type HappierRequesterDisclosureHost, type HappierRequesterDisclosureContentProps } from './RequesterDisclosureContent.js';
 export * from './UsageCharts.js';
 export type { PublicUsageOriginalLabels, PublicUsageMetricId } from '../presentation/account/PublicProfileUsage.js';
-export { HappierPublicProfile, HappierPublicProfileWidget, type HappierPublicProfileLabels, type HappierPublicProfileProps,
+export { HappierPublicProfile, HappierPublicProfileWidget, HappierPublicProfileDataProvider, type HappierPublicProfileLabels, type HappierPublicProfileProps,
   type HappierPublicProfileUsageHost, type HappierPublicProfileUsageLabels } from './PublicProfile.js';
 export { projectPublicUsageChartModels, projectPublicUsageRecords, type PublicUsageChartModels,
   type PublicUsageRecordKind } from '../data/publicUsageChartModels.js';

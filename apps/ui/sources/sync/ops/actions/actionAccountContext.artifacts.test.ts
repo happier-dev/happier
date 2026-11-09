@@ -611,7 +611,7 @@ describe('scoped Account workflow Artifact operations', () => {
             approvalWaivedSurfaces: { 'usage.coach.apply': ['ui'], 'usage.coach.undo': ['ui'], 'usage.coach.dismiss': ['ui'],
                 'usage.coach.snooze': ['ui'], 'settings.set': ['ui'] } });
         if (scenario === 'coach' || scenario === 'coachPreferences') raw.usageCoachPreferencesV1 = {
-            v: 1, digestCadence: 'weekly', suppressions: [{ kind: 'dismissed', evidenceKey: 'another-finding' }],
+            v: 1, disabledChecks: [], modelSuggestion: 'suggest_with_estimates',
         };
         let version = 4;
         let race = true;
@@ -710,11 +710,11 @@ describe('scoped Account workflow Artifact operations', () => {
             }
             if (scenario === 'preferences') {
                 expect(await action({ actionId: 'settings.get', input: { anchor: 'usage.coachPreferences', includeVersion: true } }))
-                    .toEqual({ anchor: 'usage.coachPreferences', value: { v: 1, suppressions: [], disabledChecks: [], modelSuggestion: 'suggest_with_estimates' }, settingsVersion: 4 });
+                    .toEqual({ anchor: 'usage.coachPreferences', value: { v: 1, disabledChecks: [], modelSuggestion: 'suggest_with_estimates' }, settingsVersion: 4 });
                 const value = { v: 1, disabledChecks: ['mcp_overhead'], modelSuggestion: 'complete_only' };
                 race = false;
                 expect(await action({ actionId: 'settings.set', input: { anchor: 'usage.coachPreferences', value, expectedSettingsVersion: 4 } }))
-                    .toEqual({ anchor: 'usage.coachPreferences', value: { ...value, suppressions: [] }, settingsVersion: 5 });
+                    .toEqual({ anchor: 'usage.coachPreferences', value, settingsVersion: 5 });
                 expect(raw).toEqual({ futureSibling: { retained: true }, usageCoachPreferencesV1: value });
                 expect(await action({ actionId: 'settings.set', input: { anchor: 'usage.coachPreferences',
                     value: { ...value, disabledChecks: [] }, expectedSettingsVersion: 4 } }))
@@ -801,7 +801,7 @@ describe('scoped Account workflow Artifact operations', () => {
                 .toMatchObject({ ok: false, errorCode: 'account_settings_mutation_conflict' });
             expect(raw).toEqual({ futureSibling: { retained: 'winner' }, showLineNumbers: false });
             expect.soft(await action({ actionId: 'settings.get', input: { anchor: 'usage.coachPreferences', includeVersion: true } }))
-                .toEqual({ anchor: 'usage.coachPreferences', value: { v: 1, suppressions: [], disabledChecks: [], modelSuggestion: 'suggest_with_estimates' }, settingsVersion: 10 });
+                .toEqual({ anchor: 'usage.coachPreferences', value: { v: 1, disabledChecks: [], modelSuggestion: 'suggest_with_estimates' }, settingsVersion: 10 });
                 return;
             }
             await action({ actionId: 'settings.set', input: { anchor: 'sourceControl.showLineNumbersInDiffs', value: true } });
@@ -837,7 +837,7 @@ describe('scoped Account workflow Artifact operations', () => {
                 await suppressions.edit({ evidenceKey: otherSuppression.evidenceKey, dismissed: true });
                 // Suppression state belongs to KV, independently of the Settings projection.
                 storage.setState({ settings: { ...storage.getState().settings, usageCoachPreferencesV1: {
-                    ...storage.getState().settings.usageCoachPreferencesV1, suppressions: [],
+                    ...storage.getState().settings.usageCoachPreferencesV1,
                 } } });
                 const updated = await executor.execute('settings.set', { anchor: 'usage.coachPreferences',
                     value: { v: 1, disabledChecks: [], modelSuggestion: 'off' } }, context);

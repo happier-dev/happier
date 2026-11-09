@@ -668,7 +668,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     expect(raw.usageCoachPreferencesV1).toEqual({ v: 1, disabledChecks: ['outside_usage'], modelSuggestion: 'off' });
     expect((await read()).coach!.evaluations.find(row => row.detectorId === 'outside_usage')?.status).toBe('disabled');
     expect((await read()).coach!.findings).toEqual([]);
-    expect(await executor.execute('settings.set', { anchor: 'usage.coachPreferences', value: { v: 1, suppressions: [], disabledChecks: [], modelSuggestion: 'off' },
+    expect(await executor.execute('settings.set', { anchor: 'usage.coachPreferences', value: { v: 1, disabledChecks: [], modelSuggestion: 'off' },
       expectedSettingsVersion: 1 }, { surface: 'cli', serverId: 'home', authority: 'present_user' }))
       .toMatchObject({ ok: false, errorCode: 'account_settings_conflict' });
     expect((await read()).coach!.findings).toEqual([]);

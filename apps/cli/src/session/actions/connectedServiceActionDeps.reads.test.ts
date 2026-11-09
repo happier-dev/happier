@@ -94,7 +94,7 @@ it.each(['current', 'retired', 'old-server'] as const)('lists saved Account summ
   expect(requests).toEqual(['/v1/account/profile']);
 });
 
-it('reads a cold quota subscription with its exact-account catalog price without borrowing daemon settings', async () => {
+it.each(['ready', 'partial'] as const)('reads a cold quota subscription with its exact-account %s catalog price without borrowing daemon settings', async catalogStatus => {
   const credentials = { token: 'cold-price-reader', encryption: null };
   const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' } };
   const recordKey = { providerId: 'test', accountSubjectId: 'subject', subjectKind: 'account' as const, quotaScope: 'account' as const };
@@ -110,6 +110,7 @@ it('reads a cold quota subscription with its exact-account catalog price without
     if (path.endsWith('/record')) return { status: 200, data: { content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: 100, staleAfterMs: 1000, status: 'ok' }, sources: [source] } };
     if (path.endsWith('/presentation')) return { status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, entries: [
       { v: 1, subject: { kind: 'account', account: source.ref }, label: '', subscriptionMonthlyPrice: price },
+      ...(catalogStatus === 'partial' ? [{ v: 1, label: 123 }] : []),
     ] } } } };
     if (path.endsWith('/acknowledgements')) return { status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, entries: [] } } } };
     if (path === '/v2/pending/reset-starts/read') return { status: 200, data: { entries: [] } };

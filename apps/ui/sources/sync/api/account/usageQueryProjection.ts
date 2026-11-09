@@ -6,6 +6,7 @@ import { resolveUsagePageAggregation, resolveUsageQuotaPageAggregation, resolveU
 import { projectUsageAnalyticsSummary } from '@happier-dev/protocol/usage/usageCost';
 import { admitUsageCoachRemedies, applyUsageCoachPreferences } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
 import { readConnectedSubscriptionMonthlyPriceV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import { isConnectedPresentationCatalogUsableV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1';
 import { projectProviderAccountUsageEnteredPriceV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
@@ -132,7 +133,7 @@ type UsageQueryProjectionInput = Readonly<{
 /** Overlay only the current entered-price fact; allowance/history admission is unchanged. */
 export function projectUsageEnteredPrices(quota: OpenedQuotaRead, scope: ServerAccountScope): OpenedQuotaRead {
     const presentation = getConnectedMetadataCatalog(scope).presentation;
-    if ((presentation.status !== 'ready' && presentation.status !== 'partial') || !quota.value) return quota;
+    if (!isConnectedPresentationCatalogUsableV1(presentation) || !quota.value) return quota;
     const value = quota.value.map(read => {
         const current = read.current;
         if (!current || read.source.bindingKind !== 'account') return read;
@@ -170,8 +171,7 @@ export function projectUsageQueryBatch(input: UsageQueryProjectionInput): UsageQ
     const accountSettings: ProjectionSettings = {
         usageModelPriceOverridesV1: retainSetting(openedSettings.usageModelPriceOverridesV1, state.settings?.usageModelPriceOverridesV1),
         usageNightHoursV1: retainSetting(openedSettings.usageNightHoursV1, state.settings?.usageNightHoursV1),
-        usageCoachPreferencesV1: retainSetting({ ...openedSettings.usageCoachPreferencesV1,
-            suppressions: input.coachSuppressions?.suppressions ?? [] }, state.settings?.usageCoachPreferencesV1),
+        usageCoachPreferencesV1: retainSetting(openedSettings.usageCoachPreferencesV1, state.settings?.usageCoachPreferencesV1),
     };
     state.settings = accountSettings;
     // Accounting reductions belong to the admitted A response, not each quota/selection publication.

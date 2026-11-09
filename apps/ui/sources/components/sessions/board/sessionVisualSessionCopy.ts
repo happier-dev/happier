@@ -21,10 +21,6 @@ export async function copySessionVisualToSession(
     execute?: Parameters<typeof copySessionBoardItemIntoSession>[0]['execute'];
   }>,
 ): Promise<SessionBoardActionOutcome<SessionBoardMutationResult>> {
-  // The same Session shows the same item again through Pin; a copy there would be a second record.
-  if (input.destinationSessionId === input.source.sessionId) {
-    return { status: 'refused', error: { error: 'session_board_invalid' } };
-  }
   return await copySessionBoardItemIntoSession(
     {
       serverId: input.serverId,

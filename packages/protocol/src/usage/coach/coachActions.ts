@@ -5,7 +5,13 @@ import { SettingsDeclarationMutationReversalV1Schema, SettingsDeclarationValueV1
 import { SessionModelMutationReversalV1Schema } from '../../sessions/control/modelTransitionV1.js';
 import { McpRulesSetItemResultV1Schema } from '../../actions/specs/capabilityRules.js';
 import { UsageCoachRemedySchema } from './coachRemedy.js';
-import { UsageCoachSuppressionV1Schema } from '../../account/settings/usageCoachPreferencesV1.js';
+
+const evidenceKey = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
+/** Evidence-scoped interaction state owned by the Coach KV record. */
+export const UsageCoachSuppressionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('dismissed'), evidenceKey }),
+    z.strictObject({ kind: z.literal('snoozed'), evidenceKey, untilMs: z.number().check(z.int(), z.nonnegative(), z.int()) }),
+]));
 
 export const USAGE_COACH_SUPPRESSIONS_KV_KEY = 'workspace:usage-coach:suppressions';
 export const UsageCoachSuppressionStateV1Schema = lazyZodSchema(() => z.strictObject({
