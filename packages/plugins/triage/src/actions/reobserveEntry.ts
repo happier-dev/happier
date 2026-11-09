@@ -171,6 +171,7 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
       const { entryRef, ...observation } = result.observation;
       return { kind: 'observed', entryRef, observation: toTriageWireObservation(observation),
         ...(result.taskFields === undefined ? {} : { taskFields: result.taskFields }),
+        ...(result.taskFieldChoices === undefined ? {} : { taskFieldChoices: result.taskFieldChoices }),
         ...(result.detailData === undefined ? {} : { detailData: result.detailData }) };
     }
     return result.kind === 'unavailable'

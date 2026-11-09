@@ -7,11 +7,61 @@ import { CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import { createTriageReobserveEntryActionHandler, reobserveTriageEntry } from './reobserveEntry.js';
-import { TriageReobserveEntryResultV1Schema } from './reobserveEntryProtocol.js';
+import { TriageReobserveEntryInputV1Schema, TriageReobserveEntryResultV1Schema } from './reobserveEntryProtocol.js';
+import { reobserveTriagePostMutationRow, type TriageExactEntryReadV1 } from '../ui/detail/postMutationReobservation.js';
 
 const fixture = createTriageSourceV1Fixture();
 
 describe('reobserveTriageEntry', () => {
+  it.each([undefined, {}, { assigneeIds: [] }, {
+    assigneeIds: Array.from({ length: 250 }, (_, i) => ({ id: `person-${i}`, label: `Person ${i}` })),
+    labelIds: Array.from({ length: 250 }, (_, i) => ({ id: `label-${i}`, label: `Label ${i}` })),
+  }])('preserves the source directory through the Action producer and opened-detail reader (case %#)', async (taskFieldChoices) => {
+    const { collections, control } = createTestkitCorpusCollections();
+    const source = fixture.detailInput.observation.entryRef.source;
+    control.sourceInstances.seed(toCorpusStoredValue({
+      instanceTag: `a${'0'.repeat(42)}`,
+      sourceQualifiedId: `${source.pluginId}/${source.localId}`,
+      lifecycle: CORPUS_SOURCE_INSTANCE_LIFECYCLE.active,
+      configuredAtMs: 1,
+      configured: fixture.configuredInstance,
+    }));
+    // Only host storage, contribution delivery and source dispatch are boundaries.
+    // The real Action handler and UI protocol reader must carry the directory together.
+    const executeGet = vi.fn(async (_operation: unknown, input: TriageGetInputV1) => {
+      expect(input.includeTaskFieldChoices).toBe(true);
+      return { ...fixture.getResult, ...(taskFieldChoices === undefined ? {} : { taskFieldChoices }) };
+    });
+    const context = { surface: 'cli', services: {
+      storage: { account: { collection: (definition: { id: string }) => definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID
+        ? collections.sourceInstances : collections.userMarks } },
+      targetedContributions: { observeForSelf: () => ({
+        readCurrent: async () => ({ contributions: [{
+          contributor: { pluginId: source.pluginId, contributionId: source.localId },
+          descriptor: fixture.descriptor, operations: { get: {} },
+        }] }), dispose: () => {},
+      }) },
+      actions: { executeAdmittedTargetedOperation: executeGet },
+    } } as unknown as PluginInvocationContext;
+    const onExactRead = vi.fn<(read: TriageExactEntryReadV1) => void>();
+    const row = await reobserveTriagePostMutationRow({
+      executeAction: async (_action, input) => createTriageReobserveEntryActionHandler()(
+        TriageReobserveEntryInputV1Schema.parse(input), context),
+    }, { entryRef: fixture.detailInput.observation.entryRef }, [], fixture.configuredInstance.instance.sourceInstanceId,
+    { includeTaskFieldChoices: true, onExactRead });
+    expect(row).not.toBeNull();
+    expect(executeGet).toHaveBeenCalledTimes(1);
+    expect(onExactRead).toHaveBeenCalledTimes(1);
+    const read = onExactRead.mock.calls[0]![0];
+    if (taskFieldChoices === undefined) expect(read).not.toHaveProperty('taskFieldChoices');
+    else expect(read.taskFieldChoices).toEqual(taskFieldChoices);
+    if (taskFieldChoices?.assigneeIds?.length === 250) {
+      expect(read.taskFieldChoices?.assigneeIds).toHaveLength(250);
+      expect(read.taskFieldChoices?.labelIds).toHaveLength(250);
+    }
+    expect(row).not.toHaveProperty('taskFieldChoices');
+  });
+
   it.each(['host', 'otherPlugin', 'exactRow', 'wrongId', 'retiredRow', 'wrongSource', 'missingRow'] as const)('publishes an authoritative source reread through the strict Action result contract for %s', async (reader) => {
     const { collections, control } = createTestkitCorpusCollections();
     const source = fixture.detailInput.observation.entryRef.source;
