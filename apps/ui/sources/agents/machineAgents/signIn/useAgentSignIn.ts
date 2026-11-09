@@ -36,7 +36,10 @@ function getEntry(key: string): Entry {
 function currentTarget(entry: Entry): BoundTarget | null {
   return [...entry.targets].find((target) => target.lifetime.isCurrent()) ?? null;
 }
-function publish(entry: Entry, patch: Partial<MachineAgentSignInSession>) {
+function publish(entry: Entry, patch: Partial<MachineAgentSignInSession>, accountLabel = entry.accountLabel) {
+  if (entry.accountLabel === accountLabel && Object.entries(patch).every(([key, value]) =>
+    entry.state[key as keyof MachineAgentSignInSession] === value)) return;
+  entry.accountLabel = accountLabel;
   entry.state = { ...entry.state, ...patch };
   for (const listener of entry.listeners) listener();
 }
@@ -64,15 +67,15 @@ function checkAgain(entry: Entry, requestedTarget?: BoundTarget, signal?: AbortS
     try {
       const result = await checkAgentSignInRpc({ ...target, signal: abort.signal }, target.agentId);
       if (abort.signal.aborted || !target.lifetime.isCurrent()) return null;
-      entry.accountLabel = result.accountLabel ?? null;
+      const accountLabel = result.accountLabel ?? null;
       if (result.status === 'signedIn') {
         const wasSignedIn = entry.state.phase === 'signedIn';
-        publish(entry, { phase: 'signedIn', failure: null }); stopPolling(entry);
+        publish(entry, { phase: 'signedIn', failure: null }, accountLabel); stopPolling(entry);
         if (!wasSignedIn) fireAndForget(refreshMachineAgents({ serverId: target.serverId,
           machineId: target.machineId, accountLifetime: target.lifetime, force: true }), { tag: 'AgentSignIn.refreshInventory' });
       } else if (entry.state.terminalKey && !entry.terminalExited) {
-        publish(entry, { phase: 'waiting', failure: null });
-      }
+        publish(entry, { phase: 'waiting', failure: null }, accountLabel);
+      } else publish(entry, {}, accountLabel);
       return result;
     } catch (error) {
       if (!abort.signal.aborted && target.lifetime.isCurrent()) {
@@ -97,9 +100,9 @@ async function start(entry: Entry, requestedTarget?: BoundTarget, signal?: Abort
   const abortFromSignal = () => abort.abort();
   signal?.addEventListener('abort', abortFromSignal, { once: true });
   if (signal?.aborted) abort.abort();
-  entry.terminalExited = false; entry.accountLabel = null;
+  entry.terminalExited = false;
   publish(entry, { phase: 'opening', terminalKey: machineAgentSignInTerminalKey(target.machineId, target.agentId),
-    authUrl: null, startedAtMs: Date.now(), failure: null });
+    authUrl: null, startedAtMs: Date.now(), failure: null }, null);
   const opening = (async () => {
     try {
       const result = await startAgentSignInRpc({ ...target, signal: abort.signal }, { agentId: target.agentId, method: 'native' }, (terminalId) => {
@@ -132,7 +135,7 @@ async function cancel(entry: Entry, requestedTarget?: BoundTarget, acquiredTermi
   }
   entry.openAbort?.abort(); stopPolling(entry);
   const key = entry.state.terminalKey;
-  publish(entry, IDLE); entry.accountLabel = null; entry.terminalExited = false;
+  publish(entry, IDLE, null); entry.terminalExited = false;
   try {
     await entry.opening;
     const terminalId = entry.terminalId ?? acquiredTerminalId;

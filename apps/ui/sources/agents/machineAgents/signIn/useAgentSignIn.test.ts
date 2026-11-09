@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import * as React from 'react';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -8,6 +9,11 @@ import { createServerScopedMachineRpcBoundaryMock } from '@/dev/testkit/mocks/se
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn(), confirm: vi.fn(), signedIn: false, cursor: 0 }));
+// Instrument React's subscription entry point; every call still uses the real hook.
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>();
+  return { ...actual, useSyncExternalStore: vi.fn(actual.useSyncExternalStore) };
+});
 vi.mock('@/modal', async () => {
   const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
   return createModalModuleMock({ spies: { confirm: boundary.confirm } }).module;
@@ -26,6 +32,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
   createServerScopedMachineRpcBoundaryMock(boundary.rpc));
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
+const actualReact = await vi.importActual<typeof import('react')>('react');
 const { useAgentSignIn, executeAgentSignInLifecycle } = await import('./useAgentSignIn');
 const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
 let serverId: string;
@@ -36,7 +43,96 @@ describe('shared Agent sign-in', () => {
     boundary.confirm.mockReset(); boundary.confirm.mockResolvedValue(true);
     serverId = await home.addHome({ name: 'Sign-in', serverUrl: 'https://fixture.invalid', accountId: 'fixture-account' });
   });
-  afterEach(() => { standardCleanup(); vi.useRealTimers(); boundary.rpc.mockReset(); });
+  afterEach(() => {
+    standardCleanup(); vi.useRealTimers(); boundary.rpc.mockReset(); vi.restoreAllMocks();
+    vi.mocked(React.useSyncExternalStore).mockImplementation(actualReact.useSyncExternalStore);
+  });
+  it('publishes no notifications for thirty equal waiting polls and publishes a real sign-in change', async () => {
+    vi.useFakeTimers();
+    let signedIn = false;
+    let accountLabel: string | null = null;
+    let statusReads = 0;
+    boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'daemon.agents.signIn.prepare') return { method: 'native', launch: { kind: 'agent_login', agentId: 'codex' } };
+      if (method === 'daemon.terminal.ensure') return { ok: true, terminalId: 'equal-polls-login', reused: false };
+      if (method === 'daemon.agents.signIn.status') {
+        statusReads++;
+        return { status: signedIn ? 'signedIn' : 'signedOut', accountLabel,
+          checkedAt: Date.now(), nativeLogin: 'login_terminal', connectedServices: [] };
+      }
+      throw new Error(`Unexpected fixture RPC ${method}`);
+    });
+    let notifications = 0;
+    type Subscribe = (listener: () => void) => () => void;
+    const observedSubscriptions = new WeakMap<Subscribe, Subscribe>();
+    // Observe the real sign-in subscription without replacing its store or snapshot logic.
+    vi.mocked(React.useSyncExternalStore).mockImplementation(function observeSignInSubscriptions<T>(
+      subscribe: (listener: () => void) => () => void,
+      getSnapshot: () => T,
+      getServerSnapshot?: () => T,
+    ): T {
+      const snapshot = getSnapshot();
+      const signInSnapshot = typeof snapshot === 'object' && snapshot !== null && 'terminalKey' in snapshot && 'phase' in snapshot;
+      let observedSubscribe = observedSubscriptions.get(subscribe);
+      if (signInSnapshot && !observedSubscribe) {
+        observedSubscribe = (listener) => subscribe(() => { notifications++; listener(); });
+        observedSubscriptions.set(subscribe, observedSubscribe);
+      }
+      return actualReact.useSyncExternalStore(observedSubscribe ?? subscribe, getSnapshot, getServerSnapshot);
+    });
+    const presenter = await renderHook(() => useAgentSignIn({ serverId, machineId: 'equal-polls', agentId: 'codex' }));
+    await act(async () => { await presenter.getCurrent().start(); });
+    const waiting = presenter.getCurrent().state;
+    expect(notifications).toBeGreaterThan(0);
+    notifications = 0;
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(statusReads).toBe(30);
+    expect(notifications).toBe(0);
+    expect(presenter.getCurrent().state).toBe(waiting);
+    accountLabel = 'Work account';
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(notifications).toBe(1);
+    expect(presenter.getCurrent().accountLabel).toBe('Work account');
+    await act(async () => { presenter.getCurrent().reportTerminalUrl({ kind: 'auth', url: 'https://provider.example/first' }); });
+    expect(notifications).toBe(2);
+    expect(presenter.getCurrent().authUrl).toBe('https://provider.example/first');
+    await act(async () => { presenter.getCurrent().reportTerminalUrl({ kind: 'auth', url: 'https://provider.example/first' }); });
+    expect(notifications).toBe(2);
+    await act(async () => { presenter.getCurrent().reportTerminalUrl({ kind: 'auth', url: 'https://provider.example/second' }); });
+    expect(notifications).toBe(3);
+    expect(presenter.getCurrent().authUrl).toBe('https://provider.example/second');
+    signedIn = true;
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(notifications).toBe(4);
+    expect(presenter.getCurrent().state.phase).toBe('signedIn');
+    await act(async () => { presenter.getCurrent().reportTerminalFailure('terminal_stream_unavailable'); });
+    expect(notifications).toBe(5);
+    expect(presenter.getCurrent().failure).toBe('terminal_stream_unavailable');
+    await act(async () => { presenter.getCurrent().reportTerminalFailure('terminal_stream_closed'); });
+    expect(notifications).toBe(6);
+    expect(presenter.getCurrent().failure).toBe('terminal_stream_closed');
+    await presenter.unmount();
+  });
+  it('requires verified sign-in after a terminal exits and keeps the terminal available to restart', async () => {
+    vi.useFakeTimers();
+    boundary.rpc.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'daemon.agents.signIn.prepare') return { method: 'native', launch: { kind: 'agent_login', agentId: 'codex' } };
+      if (method === 'daemon.terminal.ensure') return { ok: true, terminalId: 'unverified-login', reused: false };
+      if (method === 'daemon.agents.signIn.status') return { status: 'signedOut', accountLabel: null,
+        checkedAt: Date.now(), nativeLogin: 'login_terminal', connectedServices: [] };
+      throw new Error(`Unexpected fixture RPC ${method}`);
+    });
+    const presenter = await renderHook(() => useAgentSignIn({ serverId, machineId: 'unverified-login', agentId: 'codex' }));
+    await act(async () => { await presenter.getCurrent().start(); });
+    await act(async () => { await presenter.getCurrent().reportTerminalExit('unverified-login'); });
+    expect(presenter.getCurrent()).toMatchObject({ phase: 'failed', failure: 'agent_login_not_confirmed', terminalId: 'unverified-login' });
+    await act(async () => { presenter.getCurrent().reportTerminalFailure('terminal_stream_unavailable'); });
+    expect(presenter.getCurrent()).toMatchObject({ phase: 'failed', failure: 'terminal_stream_unavailable', terminalId: 'unverified-login' });
+    const statusReads = boundary.rpc.mock.calls.filter(([request]) => request.method === 'daemon.agents.signIn.status').length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(boundary.rpc.mock.calls.filter(([request]) => request.method === 'daemon.agents.signIn.status')).toHaveLength(statusReads);
+    await presenter.unmount();
+  });
   it('uses the daemon terminal on web, shares auth URLs across presenters and keeps state across remounts', async () => {
     vi.useFakeTimers(); boundary.signedIn = false; boundary.cursor = 0;
     boundary.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: { cursor?: number } }) => {
