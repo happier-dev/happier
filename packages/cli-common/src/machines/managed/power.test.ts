@@ -182,11 +182,9 @@ describe('shared admitted native power', () => {
     });
     it('keeps the admitted native observation owner advancing without another power call', async () => {
         const roles: string[] = [];
-        const published: string[] = [];
         let waits = 0;
         const value = await executeManagedMachinePowerIntent({ machine,
             waitForObservation: async () => { waits++; },
-            onObservation: async observation => { published.push(observation.power ?? 'unknown'); },
             invoke: async (role): Promise<JsonValue> => {
                 roles.push(role);
                 return role === 'power' ? { kind: 'confirmed' } : { observedAt: waits + 1, availability: 'present',
@@ -194,7 +192,6 @@ describe('shared admitted native power', () => {
             } });
         expect(value.observation?.power).toBe('running');
         expect(roles).toEqual(['inspect', 'power', 'inspect', 'inspect']);
-        expect(published).toEqual(['stopped']);
         expect(waits).toBe(1);
     });
 });

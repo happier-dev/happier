@@ -13,7 +13,6 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
     io?: ManagedNativeInvocationIO;
     guestStartup?: Readonly<{ channel: 'stable' | 'preview' | 'dev'; transport: MachineProvisionerContributionV1['bootstrapTransport'] }>;
     waitForObservation?(): Promise<unknown>;
-    onObservation?(observation: ProviderObservationV1): Promise<void>;
 }>): Promise<Readonly<{ result: ReturnType<typeof MachineProvisionerPowerResultV1Schema.parse>; observation?: ProviderObservationV1;
     guestStartupError?: ManagedMachineControllerError }>> {
     const { machine, invoke, io } = input;
@@ -63,7 +62,6 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
         try { observation = ProviderObservationV1Schema.parse(await invoke('inspect', { resource: machine.resource.value })); }
         catch { break; /* The acknowledged effect survives an unavailable observation. */ }
         if (input.waitForObservation && observation.availability === 'unavailable' && observation.reason === 'transport') {
-            await input.onObservation?.(observation);
             await input.waitForObservation();
             continue;
         }
@@ -72,7 +70,6 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
             || observation.availability !== 'present' || observation.storage === 'lost' || observation.power === 'running') {
             return await complete(observation);
         }
-        await input.onObservation?.(observation);
         await input.waitForObservation();
     }
     return { result };

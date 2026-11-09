@@ -36,6 +36,9 @@ describe('managed lifecycle presentation', () => {
         launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build guest', choices: {} },
         controller: { machineId: 'controller', installationId: 'installation' },
         allocation: absent ? 'confirmed-absent' : 'may-exist', creationState: 'active',
+        // An ended machine retains the resource it once bound; ce0e3072ad distinguishes a never-created request.
+        resource: absent ? { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' },
+          schemaVersion: 1, value: { instance: 'acquisition-details' } } : undefined,
         desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
         observation: scenario === 'no-observation' ? undefined : {
           observedAt: scenario === 'older-observation' ? 15 : scenario === 'same-time-observation' ? 20 : 30,
@@ -60,7 +63,9 @@ describe('managed lifecycle presentation', () => {
         expect(screen.findByTestId('managed-machine.installation-error')).toBeNull();
         return;
       }
-      await screen.pressByTestIdAsync('managed-machine.installation-error-details-toggle');
+      // Failed operations use the shared AttentionBanner; newer native observations use SurfaceStateCard.
+      await screen.pressByTestIdAsync(currentObservation ? 'managed-machine.installation-error-details-toggle'
+        : 'managed-machine.installation-error.details');
       const text = screen.getTextContent();
       if (currentObservation) {
         expect(text).toContain(reason);
@@ -266,11 +271,13 @@ describe('created machine resource rows (UIR5)', () => {
     expect(screen.findByTestId('managed-machine.installation-error')).not.toBeNull();
     expect(screen.getTextContent()).not.toContain(reason);
     expect(screen.getTextContent()).not.toContain('guest installation failed');
-    await screen.pressByTestIdAsync('managed-machine.installation-error-details-toggle');
+    await screen.pressByTestIdAsync('managed-machine.installation-error.details');
     expect(screen.getTextContent()).toContain(reason);
     if (reason === 'bootstrap.native_command_failed') {
       expect(screen.getTextContent()).toContain('run · exit 1 · guest installation failed');
     }
+    await screen.update(<ManagedCreationProgress machine={machine} operation={operation} handlers={{ checkNow: vi.fn() }} checking />);
+    expect(screen.findByTestId('managed-machine.installation-check')?.props.accessibilityState?.busy).toBe(true);
   });
 
   it('keeps native identity out of a healthy created machine and names the row after the machine', async () => {
@@ -290,10 +297,21 @@ describe('created machine resource rows (UIR5)', () => {
     expect(testIds(screen, 'managed-machine.observation')).toHaveLength(1);
     expect(testIds(screen, 'managed-machine.observation-check')).toHaveLength(0);
     expect(testIds(screen, 'managed-machine.progress:checkNow')).toHaveLength(1);
-    const healthy = await renderScreen(<ManagedCreationProgress machine={await boundMachine({
+    expect(screen.findByTestId('managed-machine.progress:checkNow')?.props.accessibilityState?.busy).toBe(false);
+    await screen.update(<ManagedCreationProgress machine={machine} handlers={{ checkNow }} checking />);
+    expect(screen.findByTestId('managed-machine.progress:checkNow')?.props.accessibilityState?.busy).toBe(true);
+    await screen.update(<ManagedCreationProgress machine={machine} handlers={{ checkNow }} checking={false} />);
+    expect(screen.findByTestId('managed-machine.progress:checkNow')?.props.accessibilityState?.busy).toBe(false);
+    // ACCEPT-1109 (2864e7dd3f): a healthy joined machine has no standalone freshness card.
+    // Before enrollment the resource still needs Check now on its own state row.
+    const healthy = await renderScreen(<ManagedCreationProgress machine={await boundMachine({ enrolledMachineId: undefined,
       observation: { observedAt: 5, availability: 'present', power: 'running', storage: 'retained' } })}
       handlers={{ checkNow }} />);
-    expect(testIds(healthy, 'managed-machine.observation-check')).toHaveLength(1);
+    expect(testIds(healthy, 'managed-machine.observation')).toHaveLength(1);
+    expect(testIds(healthy, 'managed-machine.observation-check')).toHaveLength(0);
+    expect(testIds(healthy, 'managed-machine.progress:checkNow')).toHaveLength(1);
+    await healthy.pressByTestIdAsync('managed-machine.progress:checkNow');
+    expect(checkNow).toHaveBeenCalledOnce();
   });
 
   it('adds no freshness card when a healthy joined machine has nothing to date or check', async () => {
@@ -312,6 +330,10 @@ describe('created machine resource rows (UIR5)', () => {
     const screen = await renderScreen(<ManagedCreationProgress machine={machine} handlers={{ start }} />);
     expect(testIds(screen, 'managed-machine.progress:start')).toHaveLength(1);
     expect(testIds(screen, 'managed-machine.observation')).toHaveLength(1);
+    await screen.update(<ManagedCreationProgress machine={machine} handlers={{ start }} starting />);
+    expect(screen.findByTestId('managed-machine.progress:start')?.props.accessibilityState?.busy).toBe(true);
+    await screen.update(<ManagedCreationProgress machine={machine} handlers={{ start }} starting={false} />);
+    expect(screen.findByTestId('managed-machine.progress:start')?.props.accessibilityState?.busy).toBe(false);
     await screen.pressByTestIdAsync('managed-machine.progress:start');
     expect(start).toHaveBeenCalledTimes(1);
     const { t } = await import('@/text');

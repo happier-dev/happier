@@ -56,10 +56,7 @@ export async function executeUiManagedAccountControl(params: Readonly<{
         }
         const power = await executeManagedMachinePowerIntent({ machine, invoke: native.invoke,
             guestStartup: { channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), transport: admitted.provisioner.bootstrapTransport },
-            io: { signal: params.signal }, waitForObservation: wait,
-            onObservation: async observation => {
-                machine = await client.home.row('report-intent', { ...correlation, result: { kind: 'confirmed' }, observation }, null);
-            } });
+            io: { signal: params.signal }, waitForObservation: wait });
         machine = await client.home.row('report-intent', { ...correlation, result: power.result, observation: power.observation }, null);
         if (power.guestStartupError) return failure(power.guestStartupError.code);
         if (power.result.kind !== 'confirmed' || !power.observation) {

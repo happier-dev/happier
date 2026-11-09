@@ -31,7 +31,7 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => { if (database) await database.close(); });
 
-it('archives the admitted shared creator source through Home policy admission and native Delete', async () => {
+it.each([false, true])('archives the admitted shared creator source through Home policy admission, reopened=%s', async reopened => {
     const creator = await db.account.create({ data: { encryptionMode: 'plain' } });
     const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
     const homeId = await getOrCreateServerIdentityId();
@@ -136,6 +136,16 @@ it('archives the admitted shared creator source through Home policy admission an
         expect(archived.admittedInput).toMatchObject({ creationScopeRetention: { endedAt: expect.any(Number) } });
         const machine = projectManagedMachine(archived);
         expect(machine).toMatchObject({ desired: 'stop', retention: { kind: 'unused', afterMs: 0, effect: 'delete' } });
+        if (reopened) {
+            await inTx(tx => transitionSessionArchiveStateInTx({ tx, sessionId: sourceId, wasArchived: true, archivedAt: null }));
+            const current = projectManagedMachine(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }));
+            await expect(driver.executePolicy(current, { kind: 'retention' }, { requestId: randomUUID(),
+                context: { operationAcceptance: { operationId: randomUUID(), accept() {} }, operationOwnerUpdate: { update() {} } } }))
+                .rejects.toMatchObject({ code: 'intent_changed' });
+            expect(effects).toEqual([]);
+            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).allocation).toBe('bound');
+            return;
+        }
         await expect(driver.executePolicy(machine, { kind: 'retention' }, { requestId: randomUUID(),
             context: { operationAcceptance: { operationId: randomUUID(), accept() {} }, operationOwnerUpdate: { update() {} } } }))
             .resolves.toMatchObject({ kind: 'accepted', managedId: row.id });

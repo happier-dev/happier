@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { projectManagedMachine } from './managedRows';
+import { projectManagedMachine, readManagedAdmissionState } from './managedRows';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { transitionSessionArchiveStateInTx } from '@/app/session/archive/transitionSessionArchiveStateInTx';
 import { bindManagedCreationScopeRetentionInTx, validateManagedCreationBirthInTx } from './managedCreationBirth';
 import { cancelWorkflowRun } from '@/app/workflows/workflowRunService';
+import { reportManagedIntent } from './managedMutations';
 
 describe('creation scope retention at the real archive owner', () => {
     let harness: LightSqliteHarness;
@@ -104,5 +105,49 @@ describe('creation scope retention at the real archive owner', () => {
             creationScopeRetention: { ...scope, endedAt: archivedAt.getTime() },
         });
         expect(await db.automation.count({ where: { accountId: creator.id } })).toBe(0);
+    });
+
+    it.each(['stop', 'delete'] as const)('reopening cancels the source-ended %s policy and preserves submitted native settlement', async effect => {
+        const creator = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const sourceId = randomUUID();
+        const scope = { effect, source: { kind: 'session' as const, sessionId: sourceId } };
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: creator.id,
+            admittedActionRequestId: randomUUID(), admittedInput: { enrollmentAccountId: creator.id, creationScopeRetention: scope },
+            launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'bound', creationState: 'active', desired: 'start', intentRevision: 1,
+            resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } });
+        await db.session.create({ data: { id: sourceId, accountId: creator.id, managedCreationId: row.id,
+            tag: sourceId, metadata: '{}', encryptionMode: 'plain' } });
+        const transition = (wasArchived: boolean, archivedAt: Date | null) => inTx(tx =>
+            transitionSessionArchiveStateInTx({ tx, sessionId: sourceId, wasArchived, archivedAt }));
+        await transition(false, new Date());
+        const archived = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+        expect(projectManagedMachine(archived).retention).toEqual({ kind: 'unused', afterMs: 0, effect });
+        await transition(true, null);
+        const reopened = projectManagedMachine(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }));
+        expect(reopened).toMatchObject({ retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+            creationScopeRetention: scope, intentRevision: archived.intentRevision + 1 });
+        expect(reopened.creationScopeRetention).not.toHaveProperty('endedAt');
+
+        await transition(false, new Date());
+        const submittedFrom = await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
+        const currentness = { homeId, managedId: row.id, expectedIntentRevision: submittedFrom.intentRevision,
+            requestId: randomUUID() };
+        const submitted = { ...currentness, intent: effect };
+        await db.managedMachine.update({ where: { id: row.id }, data: { desired: effect,
+            admittedInput: { ...readManagedAdmissionState(submittedFrom.admittedInput), submittedEffect: submitted } } });
+        await transition(true, null);
+        const pending = projectManagedMachine(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }));
+        expect(pending.submittedNativeEffect).toEqual({ intentRevision: submitted.expectedIntentRevision,
+            requestId: submitted.requestId, intent: effect });
+        expect(pending.creationScopeRetention).not.toHaveProperty('endedAt');
+        const observation = effect === 'delete'
+            ? { availability: 'absent' as const, storage: 'lost' as const, observedAt: Date.now() }
+            : { availability: 'present' as const, power: 'stopped' as const, storage: 'retained' as const, observedAt: Date.now() };
+        const settled = await reportManagedIntent({ ...currentness, result: { kind: 'confirmed' }, observation });
+        expect(settled.machine.submittedNativeEffect).toBeUndefined();
+        expect(settled.machine.retention).toEqual({ kind: 'until-delete' });
+        expect(settled.machine.allocation).toBe(effect === 'delete' ? 'confirmed-absent' : 'bound');
     });
 });

@@ -37,9 +37,11 @@ export async function transitionSessionArchiveStateInTx(params: Readonly<{
     await applySessionArchiveTransitionToManagerInTx(params.tx, {
         sessionId: params.sessionId, wasArchived: params.wasArchived, isArchived: params.archivedAt !== null,
     });
-    if (!params.wasArchived && params.archivedAt !== null) {
+    if (params.wasArchived !== (params.archivedAt !== null)) {
         await applyManagedCreationScopeEndInTx(params.tx, { managedId: session.managedCreationId, accountId: session.accountId,
-            source: { kind: 'session', sessionId: session.id }, endedAt: params.archivedAt.getTime() });
+            source: { kind: 'session', sessionId: session.id }, endedAt: params.archivedAt?.getTime() ?? null });
+    }
+    if (!params.wasArchived && params.archivedAt !== null) {
         await publishSessionProviderBrokerConsumersChangedInTx(params.tx, params.sessionId);
         await admitSessionLifecycleAutomationRunsTx({
             tx: params.tx,

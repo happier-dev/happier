@@ -38,20 +38,23 @@ export async function bindManagedCreationScopeRetentionInTx(tx: Tx, row: StoredM
     await invalidateManagedMachineInTx(tx, row);
 }
 
-/** Session/Run owners emit their end; Home's retained policy alone selects its native effect. */
+/** Session/Run owners emit or withdraw their end; submitted native effects retain their settlement owner. */
 export async function applyManagedCreationScopeEndInTx(tx: Tx, input: Readonly<{
-    managedId: string | null; accountId: string; source: ManagedMachineBirthSourceV1; endedAt: number;
+    managedId: string | null; accountId: string; source: ManagedMachineBirthSourceV1; endedAt: number | null;
 }>): Promise<void> {
     if (!input.managedId) return;
     const row = await tx.managedMachine.findUnique({ where: { id: input.managedId } });
     if (!row || row.creationState !== 'active' || row.archivedAt !== null) return;
     const admission = readManagedAdmissionState(row.admittedInput);
     const scope = admission.creationScopeRetention;
-    if (!scope || scope.endedAt !== undefined || admission.enrollmentAccountId !== input.accountId
+    if (!scope || (input.endedAt === null ? scope.endedAt === undefined : scope.endedAt !== undefined)
+        || admission.enrollmentAccountId !== input.accountId
         || !sameManagedInput(scope.source, input.source)) return;
+    const { endedAt: _previousEnd, ...retainedScope } = scope;
     await tx.managedMachine.update({ where: { id: row.id }, data: {
         intentRevision: { increment: 1 },
-        admittedInput: { ...admission, creationScopeRetention: { ...scope, endedAt: input.endedAt } },
+        admittedInput: { ...admission, creationScopeRetention: { ...retainedScope,
+            ...(input.endedAt === null ? {} : { endedAt: input.endedAt }) } },
     } });
     await invalidateManagedMachineInTx(tx, row);
 }
