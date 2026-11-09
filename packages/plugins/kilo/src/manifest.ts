@@ -8,7 +8,7 @@ import { createKiloAgentRuntime } from './agent/runtime/factory.js';
 import { KILO_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { kiloExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { KILO_PROVIDER_BINDING_ADAPTER_V1, KILO_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
-import { KILO_CODEX_PURPOSE } from './agent/runtime/connectedAccounts.js';
+import { KILO_CODEX_PURPOSE, prepareKiloConnectedAccount } from './agent/runtime/connectedAccounts.js';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 
 const {
@@ -135,6 +135,10 @@ export const KILO_PLUGIN = definePlugin({
       },
       providerBinding: KILO_PROVIDER_BINDING_ADAPTER_V1,
       preflightSessionControls: {
+        prepareLaunchEnvironment: async ({ environment }) => {
+          const prepared = await prepareKiloConnectedAccount({ launchEnvironment: { values: environment, unset: [] } });
+          return { environment: { ...environment, ...prepared.env }, dispose() {} };
+        },
         catalogs: { kind: 'acp', command: KILO_ACP_COMMAND },
         models: {
           command: {

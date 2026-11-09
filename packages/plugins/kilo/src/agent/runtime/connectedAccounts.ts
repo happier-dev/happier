@@ -30,8 +30,7 @@ export default async () => ({ auth: { provider: 'openai', methods: [], loader: a
       headers.delete('authorization');
       headers.delete('chatgpt-account-id');
       headers.delete('x-api-key');
-      headers.set('authorization', 'Bearer ' + lease.accessToken);
-      for (const [name, value] of Object.entries(lease.requiredHeaders || {})) headers.set(name, value);
+      for (const [name, value] of Object.entries(lease.headers)) headers.set(name, value);
       const response = await fetch('https://chatgpt.com/backend-api/codex/responses', { ...init, headers, redirect: 'manual' });
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel();
@@ -55,19 +54,23 @@ export default async () => ({ auth: { provider: 'openai', methods: [], loader: a
 `;
 }
 
-export async function prepareKiloConnectedAccount(request: Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'providerBinding'>): Promise<Readonly<{
+export async function prepareKiloConnectedAccount(request: Pick<AgentSessionOpenRequest, 'launchEnvironment' | 'providerBinding'> & Partial<Pick<AgentSessionOpenRequest, 'configuration'>>): Promise<Readonly<{
   env: Readonly<Record<string, string>>;
   models?: AgentAcpModelControls;
 }>> {
   const capabilityPath = request.launchEnvironment?.values[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV];
   if (!capabilityPath) return { env: {} };
   if (request.providerBinding) throw new PluginError({ code: 'plugin_kilo_subscription_provider_conflict', message: 'Select either a Connected ChatGPT account or a Provider connection for Kilo.' });
-  const path = join(dirname(capabilityPath), 'kilo-request-auth.mjs');
-  await writeAtomicTextFileIfChanged({ path, contents: requestAuthPluginSource(), mode: 0o600 });
+  if (!request.configuration?.model.value?.trim() || request.configuration.model.selectionSource !== 'explicit') {
+    throw new PluginError({ code: 'model_selection_required', message: 'Choose an explicit model for the Kilo ChatGPT Connected Account.' });
+  }
   const resolveModel = (modelId: string) => {
     if (!modelId.startsWith('openai/')) throw new PluginError({ code: 'plugin_kilo_subscription_model_unsupported', message: 'Select an OpenAI model supported by the Kilo ChatGPT subscription catalog.' });
     return { modelId };
   };
+  resolveModel(request.configuration.model.value);
+  const path = join(dirname(capabilityPath), 'kilo-request-auth.mjs');
+  await writeAtomicTextFileIfChanged({ path, contents: requestAuthPluginSource(), mode: 0o600 });
   return {
     env: {
       KILO_AUTH_CONTENT: JSON.stringify({ openai: { type: 'oauth', access: MARKER, refresh: '', expires: 0 } }),
