@@ -31,7 +31,11 @@ export const WorkflowTriggerSummaryInputV1Schema = lazyZodSchema(() => {
     triggerId: zMini.optional(AutomationTriggerIdSchema),
   };
   return z.discriminatedUnion('kind', [
-    zMini.extend(zMini.pick(AutomationScheduleTriggerProjectionSchema, { kind: true, schedule: true }), historyIdentity),
+    zMini.extend(zMini.pick(AutomationScheduleTriggerProjectionSchema, { kind: true, schedule: true }), {
+      ...historyIdentity,
+      /** Exact enabled occurrence from the scheduler; older summaries omit it. */
+      nextRunAt: zMini.optional(AutomationScheduleTriggerProjectionSchema.shape.nextRunAt),
+    }),
     zMini.extend(zMini.pick(AutomationPluginEventTriggerProjectionSchema, { kind: true, eventRef: true }), historyIdentity),
     zMini.extend(zMini.pick(AutomationSessionLifecycleTriggerProjectionSchema, { kind: true, events: true }), historyIdentity),
     zMini.extend(zMini.pick(AutomationRunLifecycleTriggerSchema, { kind: true, condition: true }), historyIdentity),
@@ -59,14 +63,16 @@ export function summarizeWorkflowTriggerRowsV1(rows: readonly Readonly<{
     for (const trigger of row.triggers) {
       const historyIdentity = { automationId: row.id, triggerId: trigger.id };
       switch (trigger.kind) {
-        case 'schedule': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, schedule: trigger.schedule }); break;
+        case 'schedule': {
+          const nextRunAt = row.enabled && trigger.enabled ? trigger.nextRunAt : null;
+          summary.triggers.push({ ...historyIdentity, kind: trigger.kind, schedule: trigger.schedule, nextRunAt });
+          if (nextRunAt !== null) summary.nextRunAt = summary.nextRunAt === null ? nextRunAt : Math.min(summary.nextRunAt, nextRunAt);
+          break;
+        }
         case 'pluginEvent': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, eventRef: trigger.eventRef }); break;
         case 'sessionLifecycle': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, events: trigger.events }); break;
         case 'runLifecycle': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, condition: trigger.condition }); break;
         case 'prComment': case 'ciFailed': summary.triggers.push({ ...historyIdentity, kind: trigger.kind }); break;
-      }
-      if (trigger.kind === 'schedule' && row.enabled && trigger.enabled && trigger.nextRunAt !== null) {
-        summary.nextRunAt = summary.nextRunAt === null ? trigger.nextRunAt : Math.min(summary.nextRunAt, trigger.nextRunAt);
       }
     }
     result.set(row.workflowDefinitionId, summary);

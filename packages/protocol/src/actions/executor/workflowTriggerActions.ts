@@ -288,9 +288,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     }
     return source;
   };
-  const assertTarget = async (target: TriggerTargetV1) => (await resolveTarget(target)).definition;
   const assertTargetAccess = async (target: TriggerTargetV1, context: WorkflowTriggerContextV1) => {
-    await assertTarget(target);
+    const resolved = await resolveTarget(target);
     const source = target.kind === 'workflow' ? parseWorkflowDefinitionRefV1(target.ref) : null;
     const resolveTeamIds = deps.resolveWorkflowTeamIds;
     if (source?.kind === 'artifact' && !resolveTeamIds) refuse('target_unavailable');
@@ -298,9 +297,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     const visibility = resolveWorkflowRunVisibleTeamV1(teamIds, context.visibleTeamId);
     if (!visibility.ok) refuse(visibility.code);
     if (source?.kind === 'artifact') context.visibleTeamId = visibility.visibleTeamId;
+    return resolved;
   };
   const assertWrite = async (target: TriggerTargetV1, context: WorkflowTriggerContextV1, targetProject: WorkflowProjectTargetV1, caller?: Caller, sessionId?: string, creatingSession = false, runNow = false, admittedSession?: AdmittedSessionWrite) => {
-    await assertTargetAccess(target, context);
+    const source = await assertTargetAccess(target, context);
     const managed = readManagedMachineTriggerAction(target);
     if (managed) {
       if (!deps.resolveManagedMachine) refuse('target_unavailable');
@@ -313,7 +313,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     if (isWorkflowTriggerAgentCallerV1(caller)) {
       const policy = SessionAgentSpawnPolicyV1StrictSchema.safeParse(caller?.sessionAgentSpawnPolicyV1);
       if (!caller || !policy.success || !deps.resolveMaterializer) refuse('target_unavailable');
-      const definition = target.kind === 'inline' ? target.definition : await resolveDefinition(target.ref);
+      const definition = source.definition;
       const materializer = await deps.resolveMaterializer(targetProject, caller);
       const materialization = { definition, ...materializer,
         effects: { ...materializer.effects, admitSessionAuthority: async (target: Parameters<NonNullable<typeof materializer.effects.admitSessionAuthority>>[0]) => {
@@ -363,6 +363,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         if (!admitted.ok) refuse(admitted.refusal.code, admitted.refusal);
       }
     }
+    return source;
   };
   const triggerContext = (input: Partial<Omit<WorkflowTriggerContextV1, 'workspace' | 'inlineDefinition'>>, target: TriggerTargetV1,
     targetProject: WorkflowProjectTargetV1, caller?: Caller) => {
@@ -383,7 +384,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     return z.record(z.string(), StrictJsonValueSchema).parse(projectNativeJsonValueForTransport(input));
   };
   const prepareActionConsent = async (input: Readonly<{
-    context: WorkflowTriggerContextV1; target: TriggerTargetV1; project: WorkflowProjectTargetV1;
+    context: WorkflowTriggerContextV1; definition: WorkflowDefinitionV1; project: WorkflowProjectTargetV1;
     triggerId: string; enabled: boolean; mode?: 'automatic' | 'ask'; initialDeployment?: boolean;
     parent: Readonly<{ actionId: 'workflow.trigger.add' | 'workflow.trigger.update'; input: WorkflowApprovedOperationV1['parent']['input'] }>;
     caller?: Caller;
@@ -398,7 +399,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       return;
     }
     const steps = await readWorkflowTriggerConsentSteps({
-      definition: await assertTarget(input.target), context: input.context, project: input.project,
+      definition: input.definition, context: input.context, project: input.project,
       triggerId: input.triggerId, resolveWorkflow: resolveDefinition,
     });
     let mode: 'automatic' | 'ask' | undefined = input.mode;
@@ -420,8 +421,30 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       ...(deps.nativeAccount ? { nativeAccount: deps.nativeAccount } : {}) });
     input.context.actionApprovals = [...retained, { triggerId: AutomationTriggerIdSchema.parse(input.triggerId), operation }];
   };
+  type PreparedTriggerProjection = Readonly<{
+    fields: Pick<WorkflowTriggerSetV1, 'health' | 'target' | 'context' | 'destinations' | 'sourceSavedBy' | 'sourceSavedAt' | 'legacy'>;
+    definition?: WorkflowDefinitionV1;
+    children?: ReadonlyMap<string, WorkflowDefinitionV1>;
+  }>;
+  const prepareTriggerProjection = async (value: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1 }>,
+    scopeSessionId: string | null | undefined,
+    source: Awaited<ReturnType<typeof resolveTarget>>): Promise<PreparedTriggerProjection> => {
+    const definition = source.definition;
+    const children = new Map<string, WorkflowDefinitionV1>();
+    const destinations = await resolveWorkflowDestinationsV1({ definition, inputs: value.context.inputs,
+      originSessionId: scopeSessionId ?? undefined }, async ref => {
+        const child = await resolveDefinition(ref);
+        children.set(ref, child);
+        return child;
+      });
+    return { definition, children, fields: {
+      ...(source.savedBy ? { sourceSavedBy: { kind: source.savedBy.kind, accountId: source.savedBy.accountId } } : {}),
+      ...(source.savedAt === undefined ? {} : { sourceSavedAt: source.savedAt }),
+      health: 'available', target: value.target, context: value.context, destinations,
+    } };
+  };
   const projectedDefinition = async (row: AutomationDefinitionDetail, reviewed?: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1;
-    project?: WorkflowProjectTargetV1 }>): Promise<Readonly<{ set: WorkflowTriggerSetV1; definition?: WorkflowDefinitionV1;
+    project?: WorkflowProjectTargetV1 }>, prepared?: PreparedTriggerProjection): Promise<Readonly<{ set: WorkflowTriggerSetV1; definition?: WorkflowDefinitionV1;
       children?: ReadonlyMap<string, WorkflowDefinitionV1> }>> => {
     const triggers: WorkflowTriggerSetV1['triggers'] = [];
     for (const trigger of row.triggers) {
@@ -455,6 +478,15 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       revision: row.templateVersion, enabled: row.enabled, triggers, scopeSessionId: row.scopeSessionId ?? null,
       ...(row.templateCiphertext !== undefined && !row.observationOnly ? { legacy: { editable: false as const, reason: 'created_in_0_2' as const } } : {}) };
     if (row.observationOnly) return { set: { ...base, observationOnly: row.observationOnly, health: 'available' } };
+    if (prepared) {
+      const context = prepared.fields.context;
+      return { definition: prepared.definition, children: prepared.children, set: { ...base, ...prepared.fields,
+        ...(context ? { ...(row.assignments.length === 1 ? { project: project(row, context) } : {}),
+          placements: row.assignments.filter(assignment => assignment.enabled).map(({ machineId }) => ({
+          machineId, directory: context.workspace.directory,
+        })) } : {}),
+      } };
+    }
     try {
       if (base.legacy && !reviewed && await deps.requiresLegacyReview?.(row)) {
         return { set: { ...base, health: 'source_unavailable', legacy: { ...base.legacy, lockedReason: 'review_required' } } };
@@ -462,20 +494,12 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const value = reviewed ?? await opened(row, true);
       const targetProject = reviewed?.project ?? (row.assignments.length !== 1 ? undefined : project(row, value.context));
       // Retained templates are readable even when their settings cannot become a current Workflow.
-      const source = await resolveTarget(value.target, !base.legacy);
-      const definition = source.definition;
-      const children = new Map<string, WorkflowDefinitionV1>();
-      const destinations = await resolveWorkflowDestinationsV1({ definition, inputs: value.context.inputs,
-        originSessionId: row.scopeSessionId ?? undefined }, async ref => {
-          const child = await resolveDefinition(ref);
-          children.set(ref, child);
-          return child;
-        });
-      return { definition, children, set: { ...base, triggers, ...(reviewed && base.legacy ? { legacy: { ...base.legacy, lockedReason: 'review_required' as const } } : {}),
-        ...(source.savedBy ? { sourceSavedBy: { kind: source.savedBy.kind, accountId: source.savedBy.accountId } } : {}),
-        ...(source.savedAt === undefined ? {} : { sourceSavedAt: source.savedAt }),
+      const prepared = await prepareTriggerProjection(value, row.scopeSessionId, await resolveTarget(value.target, !base.legacy));
+      return { definition: prepared.definition, children: prepared.children, set: { ...base, ...prepared.fields,
+        ...(targetProject ? { project: targetProject } : {}),
+        ...(reviewed && base.legacy ? { legacy: { ...base.legacy, lockedReason: 'review_required' as const } } : {}),
         placements: row.assignments.filter((assignment) => assignment.enabled).map(({ machineId }) => ({ machineId, directory: value.context.workspace.directory })),
-        health: 'available', target: value.target, context: value.context, destinations, ...(targetProject ? { project: targetProject } : {}) } };
+      } };
     } catch (error) {
       const code = error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined;
       const lockedReason = code === 'session_key_required' || code === 'encryption_material_unavailable' ? 'session_key_required' as const
@@ -489,16 +513,16 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     }
   };
   const projection = async (row: AutomationDefinitionDetail, reviewed?: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1;
-    project?: WorkflowProjectTargetV1 }>) => (await projectedDefinition(row, reviewed)).set;
+    project?: WorkflowProjectTargetV1 }>, prepared?: PreparedTriggerProjection) => (await projectedDefinition(row, reviewed, prepared)).set;
   const eventDefinition = async (row: AutomationDefinitionDetail, triggerId: string) => {
     const trigger = row.triggers.find(item => item.id === triggerId);
     if (!trigger || trigger.kind !== 'pluginEvent' || !deps.openPluginEventTrigger) refuse('source_unavailable');
     return { triggerId: trigger.id, definition: await deps.openPluginEventTrigger(row, trigger) };
   };
-  const writeResult = async (row: AutomationDefinitionDetail, triggerId?: ReturnType<typeof AutomationTriggerIdSchema.parse>, includeEventDefinition = false): Promise<WorkflowTriggerWriteResult> => {
+  const writeResult = async (row: AutomationDefinitionDetail, triggerId?: ReturnType<typeof AutomationTriggerIdSchema.parse>, includeEventDefinition = false, prepared?: PreparedTriggerProjection): Promise<WorkflowTriggerWriteResult> => {
     const trigger = triggerId ? row.triggers.find((item) => item.id === triggerId) : undefined;
     try {
-      return { set: await projection(row), ...(triggerId ? { triggerId } : {}), ...(trigger ? { triggerRevision: trigger.revision } : {}),
+      return { set: await projection(row, undefined, prepared), ...(triggerId ? { triggerId } : {}), ...(trigger ? { triggerRevision: trigger.revision } : {}),
         ...(includeEventDefinition && triggerId ? { triggerDefinition: await eventDefinition(row, triggerId) } : {}) };
     } catch (cause) {
       // The Automation write already returned. A failed private projection is
@@ -700,18 +724,19 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           ...(mergedContext.deploymentTriggers ?? []), { triggerId, ...input.deployment },
         ];
         if (scope?.onComplete !== undefined) mergedContext.onComplete = scope.onComplete;
-        await assertWrite(target, mergedContext, input.project, caller, scope?.sessionId, false, false, scope);
-        await prepareActionConsent({ context: mergedContext, target, project: input.project, triggerId,
+        const admittedSource = await assertWrite(target, mergedContext, input.project, caller, scope?.sessionId, false, false, scope);
+        await prepareActionConsent({ context: mergedContext, definition: admittedSource.definition, project: input.project, triggerId,
           enabled: input.trigger.enabled, mode: input.actionApproval,
           initialDeployment: input.trigger.kind === 'pluginEvent' && input.deployment !== undefined,
           parent: { actionId: 'workflow.trigger.add', input: approvalInput(input) }, caller });
+        const prepared = await prepareTriggerProjection({ target, context: mergedContext }, scope?.sessionId, admittedSource);
         const committed = await reconcile(row, mergedContext, target, input.project, {
           triggers: [...retainedTriggers(row), { kind: 'new', triggerId, trigger: input.trigger }], removedTriggers: [],
         }, row.enabled, false, current.storedContext, caller?.signal);
-        return writeResult(committed, triggerId);
+        return writeResult(committed, triggerId, false, prepared);
       }
       if (input.deployment !== undefined) context.deploymentTriggers = [{ triggerId, ...input.deployment }];
-      await assertWrite(target, context, input.project, caller, scope?.sessionId, false, false, scope);
+      const admittedSource = await assertWrite(target, context, input.project, caller, scope?.sessionId, false, false, scope);
       // A one-shot notification is an intent to observe this source once. A
       // repeated registration rejoins the Automation owner instead of creating
       // another notification. Repeating/ordinary authored triggers retain add
@@ -736,7 +761,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
               || (source.condition === 'terminal' && sourceTerminal && item.remainingOccurrences === 0 && item.status.state === 'finished'))
             && item.condition === source.condition
             && createCanonicalJsonSigningInput(item.source) === createCanonicalJsonSigningInput(source.source));
-          if (registered) return writeResult(candidate, registered.id);
+          if (registered) {
+            const prepared = await prepareTriggerProjection({ target, context }, undefined, admittedSource);
+            return writeResult(candidate, registered.id, false, prepared);
+          }
         }
       }
       if (scope && input.trigger.kind === 'sessionLifecycle' && input.trigger.enabled
@@ -760,24 +788,26 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
             // Session placement is authorized by resolveSession, not by a stale
             // assignment retained with the notification. Move the same intent
             // through reconciliation; never create a second firing trigger.
+            const prepared = await prepareTriggerProjection({ target, context }, scope?.sessionId, admittedSource);
             const committed = candidate.assignments.length === 1 && candidate.assignments[0]?.machineId === machineId
               ? candidate
               : await reconcile(candidate, context, target, input.project,
                 { triggers: retainedTriggers(candidate), removedTriggers: [] }, candidate.enabled, false, current.storedContext, caller?.signal);
-            return writeResult(committed, registered.id);
+            return writeResult(committed, registered.id, false, prepared);
           }
         }
       }
       const automationId = deps.newId('automation');
-      await prepareActionConsent({ context, target, project: input.project, triggerId, enabled: input.trigger.enabled,
+      await prepareActionConsent({ context, definition: admittedSource.definition, project: input.project, triggerId, enabled: input.trigger.enabled,
         mode: input.actionApproval, initialDeployment: input.trigger.kind === 'pluginEvent' && input.deployment !== undefined,
         parent: { actionId: 'workflow.trigger.add', input: approvalInput(input) }, caller });
+      const prepared = await prepareTriggerProjection({ target, context }, scope?.sessionId, admittedSource);
       const executionRecipe = await deps.sealContext({ automationId, templateVersion: 1, context });
       const row = await deps.automations.create({ automationId, name: WORKFLOW_TRIGGER_SET_STORAGE_NAME, description: null, enabled: true,
         workflowDefinitionId: target.kind === 'workflow' ? target.ref : null, scopeSessionId: scope?.sessionId ?? null,
         executionRecipe,
         assignments: [{ machineId, enabled: true }], triggers: [{ triggerId, trigger: input.trigger }] }, undefined, caller?.signal);
-      return writeResult(row, triggerId);
+      return writeResult(row, triggerId, false, prepared);
     },
     update: async (raw: WorkflowTriggerUpdateRequestV1, caller?: Caller, scope?: AdmittedSessionWrite) => {
       const input = WorkflowTriggerUpdateRequestV1Schema.parse(raw);
@@ -843,14 +873,15 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         && !current.context.actionApprovals?.some(approval => input.triggerId === undefined
           || approval.triggerId === input.triggerId || disabledSiblings.has(approval.triggerId))
         && Object.keys(input.patch).every((key) => key === 'enabled' || key === 'trigger')) {
-        await assertTargetAccess(current.target, { ...current.context });
+        const admittedSource = await assertTargetAccess(current.target, { ...current.context });
+        const prepared = await prepareTriggerProjection(current, row.scopeSessionId, admittedSource);
         // The Automation owner advances the outer revision while retaining
         // the private recipe and complete placement census verbatim.
         return writeResult(await deps.automations.reconcile(row.id, {
           expectedTemplateVersion: row.templateVersion, name: row.name, description: row.description, enabled: setEnabled,
           assignments: row.assignments.map(({ machineId, enabled, priority }) => ({ machineId, enabled, priority })),
           triggers, removedTriggers: [],
-        }, row, undefined, caller?.signal), input.triggerId);
+        }, row, undefined, caller?.signal), input.triggerId, false, prepared);
       }
       const target = nextTarget ?? current.target;
       if (!scope && current.target.kind === 'workflow' && nextTarget && (nextTarget.kind !== 'workflow' || nextTarget.ref !== current.target.ref)) refuseInput('workflow_trigger_target_mismatch');
@@ -883,30 +914,38 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         ...(deployment === null ? [] : [{ triggerId: input.triggerId, ...deployment }]),
       ];
       if (target.kind === 'inline' && context.visibleTeamId !== undefined) refuseInput('inline_trigger_team_not_allowed');
-      await assertWrite(target, context, targetProject, caller, scope?.sessionId, false, false, scope);
-      if (input.triggerId !== undefined) await prepareActionConsent({ context, target, project: targetProject,
+      const admittedSource = await assertWrite(target, context, targetProject, caller, scope?.sessionId, false, false, scope);
+      if (input.triggerId !== undefined) await prepareActionConsent({ context, definition: admittedSource.definition, project: targetProject,
         triggerId: input.triggerId, enabled: setEnabled && (enabled ?? row.triggers.find(item => item.id === input.triggerId)?.enabled ?? false),
         initialDeployment: deployment != null && !current.context.deploymentTriggers?.some(item => item.triggerId === input.triggerId)
           && (trigger?.kind ?? row.triggers.find(item => item.id === input.triggerId)?.kind) === 'pluginEvent',
         mode: actionApproval, parent: { actionId: 'workflow.trigger.update', input: approvalInput(input) }, caller });
       else if (!setEnabled) delete context.actionApprovals;
+      const prepared = await prepareTriggerProjection({ target, context }, row.scopeSessionId, admittedSource);
       return writeResult(await reconcile(row, context, target, targetProject, { triggers, removedTriggers: [] },
         setEnabled, nextProject === undefined || (reviewedProject !== undefined
-          && createCanonicalJsonSigningInput(reviewedProject) === createCanonicalJsonSigningInput(targetProject)), current.storedContext, caller?.signal), input.triggerId);
+          && createCanonicalJsonSigningInput(reviewedProject) === createCanonicalJsonSigningInput(targetProject)), current.storedContext, caller?.signal), input.triggerId, false, prepared);
     },
     remove: async (raw: WorkflowTriggerRemoveRequestV1 & { triggerId: string }, sessionId?: string, caller?: Caller) => {
       const input = WorkflowTriggerRemoveRequestV1Schema.parse(raw);
       const row = await read(input.automationId, sessionId);
       const trigger = row.triggers.find((item) => item.id === input.triggerId);
       if (!trigger) return writeResult(row, input.triggerId);
-      // Removing a missing-source trigger needs no private source or materializer.
+      // A missing source still projects as unavailable and never prevents removal.
+      // Finish optional source reads before the effect, so its accepted receipt needs no reread.
+      const projected = await projectedDefinition(row);
+      const prepared: PreparedTriggerProjection = { fields: {
+        health: projected.set.health, target: projected.set.target, context: projected.set.context,
+        destinations: projected.set.destinations, sourceSavedBy: projected.set.sourceSavedBy, sourceSavedAt: projected.set.sourceSavedAt,
+        legacy: projected.set.legacy,
+      }, definition: projected.definition, children: projected.children };
       const committed = await deps.automations.reconcile(row.id, {
         expectedTemplateVersion: row.templateVersion, name: row.name, description: row.description, enabled: row.enabled,
         assignments: row.assignments.map(({ machineId, enabled, priority }) => ({ machineId, enabled, priority })),
         triggers: retainedTriggers(row).filter((item) => item.triggerId !== input.triggerId),
         removedTriggers: [{ triggerId: trigger.id, expectedRevision: trigger.revision }],
       }, row, undefined, caller?.signal);
-      return writeResult(committed, input.triggerId);
+      return writeResult(committed, input.triggerId, false, prepared);
     },
     removeForWorkflow: (workflow: string, signal?: AbortSignal) => removeWorkflowTriggersForDefinition(deps.automations, workflow, signal),
   };

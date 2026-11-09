@@ -223,6 +223,23 @@ afterEach(async () => {
 });
 
 describe('workflow trigger editing lifetime', () => {
+    it.each(['add', 'update'] as const)('acknowledges an accepted %s even when subsequent Workflow reads fail', async operation => {
+        if (operation === 'update') seed(set);
+        const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'save-ack', projectTarget }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        await act(async () => hook.getCurrent().setDraft(editWorkflowTriggerDraft(hook.getCurrent().draft,
+            operation === 'add' ? { kind: 'add', clientId: 'accepted-trigger', trigger }
+                : { kind: 'update', triggerId: AutomationTriggerIdSchema.parse('t1'), enabled: false })));
+        beforeWrite = async () => {
+            home.answer(serverId, `GET /v1/artifacts/${definitionId}`, { status: 503, body: { error: 'unavailable' } });
+        };
+        await act(async () => expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'));
+        expect(hook.getCurrent().dirty).toBe(false);
+        expect(hook.getCurrent().captureSnapshot().rows).toMatchObject([{ enabled: operation === 'add' }]);
+        expect(rows[0]?.triggers).toMatchObject([{ enabled: operation === 'add' }]);
+        await act(async () => expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'));
+        expect(writes).toHaveLength(1);
+    });
     it('does not reopen private trigger definitions for unrelated planned Home arrivals', async () => {
         seed(set);
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');

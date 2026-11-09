@@ -7,7 +7,7 @@ import { MemoryCollection } from './testkit/memoryCollection.js';
 import { createCurrentConversationConnectionFixture } from './testkit/currentConnectionFixture.js';
 import { ConversationBindingV1Schema, ConversationDeliveryAttentionResultV1Schema, ConversationDeliveryReadResultV1Schema, ConversationNormalizedIngressV1Schema,
   CONVERSATION_OBSERVATION_TRANSPORT_KINDS_V1, CONVERSATION_OBSERVATION_ADDRESSING_EVIDENCE_V1,
-  CONVERSATION_MESSAGE_CONTENT_PROVENANCE_V1 } from '@happier-dev/channels-protocol/v1';
+  CONVERSATION_MESSAGE_CONTENT_PROVENANCE_V1, ConversationConnectionListResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
 import { createConversationOutwardDeliveryCollectionStore } from './outwardDelivery.js';
 import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
@@ -115,6 +115,8 @@ describe('registered Channels Account read Actions', () => {
       expect(JSON.stringify(result)).not.toMatch(/providerSetupInput|providerConfig|routingIdentityKey/);
       const reconnect = getActionSpec('connectedServices.authentication.beginReconnect');
       expect(reconnect.id).toBe('connectedServices.authentication.beginReconnect');
+      const recovery = ConversationConnectionListResultV1Schema.parse(result).connections[0]?.recommendedRecovery;
+      expect(reconnect.inputSchema.safeParse(recovery?.input).success).toBe(true);
     } finally { await kit.dispose(); }
   });
   it.each<Readonly<{ name: string; payload: Readonly<Record<string, JsonValue>>; action: string; input: JsonValue }>>([
@@ -129,16 +131,18 @@ describe('registered Channels Account read Actions', () => {
     try {
       const current = connection('connection-1');
       await state.put({ ...current, payload: { ...current.payload, ...payload } }, { expectedRevision: 1 });
-      const result = await kit.invokeAction('connection/list-v1', {}, { surface: 'agent' });
+      const result = ConversationConnectionListResultV1Schema.parse(await kit.invokeAction('connection/list-v1', {}, { surface: 'agent' }));
       expect(result).toMatchObject({ connections: [{ recommendedRecovery: {
         action: { pluginId: 'happier.channels', localId: action }, input,
       } }] });
       const declaration = PLUGIN_MANIFEST.contributes?.actions?.find(row => row.id === action);
       expect(declaration?.surfaces).toEqual(expect.arrayContaining(['ui', 'agent', 'mcp']));
       if (!declaration?.inputSchema) throw new Error('Recovery Action must declare its input contract');
-      expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(declaration.inputSchema), input)).toBe(true);
+      const recovery = result.connections[0]?.recommendedRecovery;
+      if (!recovery) throw new Error('Connection must recommend recovery');
+      expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(declaration.inputSchema), recovery.input)).toBe(true);
       if (action === 'connection/update-v1' || action === 'connection/poll-retry-v1') {
-        expect(await kit.invokeAction(action, input, { surface: 'agent' })).toMatchObject({
+        expect(await kit.invokeAction(action, recovery.input, { surface: 'agent' })).toMatchObject({
           kind: action === 'connection/update-v1' ? 'updated' : 'retryScheduled',
         });
       }

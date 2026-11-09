@@ -54,7 +54,8 @@ describe('Team workflow schedule summaries', () => {
             expect(response.statusCode, response.body).toBe(200);
             const page = AutomationDefinitionListResponseSchema.parse(response.json());
             expect(page).toMatchObject({ automations: [], sharedWorkflowSummaries: [{ workflowDefinitionId: artifact.id,
-                nextRunAt: nextRunAt.getTime(), triggers: [{ kind: 'schedule', automationId: shared.id, triggerId: sharedTrigger.id }] }] });
+                nextRunAt: nextRunAt.getTime(), triggers: [{ kind: 'schedule', automationId: shared.id,
+                    triggerId: sharedTrigger.id, nextRunAt: nextRunAt.getTime() }] }] });
             const serialized = JSON.stringify(page);
             expect(serialized).not.toContain('/private-owner-workspace');
             expect(serialized).not.toContain('Private trigger name');
@@ -88,7 +89,8 @@ describe('Team workflow schedule summaries', () => {
                 visibleTeamId: team.id, triggerEvidence: null,
             }) } });
             expect((await query(viewer.id)).json().sharedWorkflowSummaries).toMatchObject([
-                { workflowDefinitionId: artifact.id, nextRunAt: nextRunAt.getTime() },
+                { workflowDefinitionId: artifact.id, nextRunAt: nextRunAt.getTime(),
+                    triggers: [{ triggerId: sharedTrigger.id, nextRunAt: nextRunAt.getTime() }] },
             ]);
             await inTx(tx => markAutomationChangedTx(tx, { accountId: owner.id, automationId: shared.id }));
             expect(await db.accountChange.count({ where: { accountId: viewer.id, kind: 'artifact', entityId: artifact.id } })).toBe(1);
@@ -107,7 +109,8 @@ describe('Team workflow schedule summaries', () => {
             const advancedWake = await db.accountChange.findFirstOrThrow({ where: { accountId: viewer.id, kind: 'artifact', entityId: artifact.id } });
             expect(advancedWake.cursor).toBeGreaterThan(priorWake.cursor);
             expect((await query(viewer.id)).json().sharedWorkflowSummaries).toMatchObject([
-                { workflowDefinitionId: artifact.id, nextRunAt: nextRunAt.getTime() + 60_000 },
+                { workflowDefinitionId: artifact.id, nextRunAt: nextRunAt.getTime() + 60_000,
+                    triggers: [{ triggerId: sharedTrigger.id, nextRunAt: nextRunAt.getTime() + 60_000 }] },
             ]);
             await db.teamMembership.update({ where: { id: member.id }, data: { status: 'suspended' } });
             expect((await query(viewer.id)).json().sharedWorkflowSummaries ?? []).toEqual([]);

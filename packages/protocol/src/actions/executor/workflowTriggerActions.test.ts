@@ -69,9 +69,10 @@ function fixture(savedDefinition = definition) {
     body: JSON.stringify({ kind: 'workflow-definition.v1', definition: savedDefinition }), revision: { headerVersion: 1, bodyVersion: 1 } };
   const artifacts = new Map([[workflow, artifact]]);
   let definitionReads = 0;
+  let sourceReadFailure: Error | null = null;
   // Artifact reads/writes are the external persistent boundary; resolution and validation stay real.
   const artifactStore: WorkflowDefinitionArtifactOperations = {
-    read: async (id) => { definitionReads++; return artifacts.get(id) ?? null; },
+    read: async (id) => { definitionReads++; if (sourceReadFailure) throw sourceReadFailure; return artifacts.get(id) ?? null; },
     list: async () => ({ items: [] }),
     create: async () => { throw new Error('Unexpected fixture Artifact write'); },
     update: async () => { throw new Error('Unexpected fixture Artifact write'); },
@@ -198,6 +199,7 @@ function fixture(savedDefinition = definition) {
     },
   };
   return { rows, deps, definitions, actions: createWorkflowTriggerActions(deps), definitionReads: () => definitionReads,
+    failSourceReads: () => { sourceReadFailure = Object.assign(new Error('Artifact read timed out'), { code: 'ECONNABORTED' }); },
     loseSource: () => { artifacts.delete(workflow); },
     saveSourceAs: (savedBy: ArtifactSavedByV1 | undefined, savedAt: number) => {
       artifact.revision = { headerVersion: artifact.revision.headerVersion + 1, bodyVersion: artifact.revision.bodyVersion + 1 };
@@ -1288,18 +1290,31 @@ describe('workflow trigger Automation composition', () => {
       { surface: 'ui', authority: 'present_user', actionsSettings: manualPolicy })).toMatchObject({ ok: false, errorCode: 'workflow_outcome_unresolved' });
     expect(submitted).toBe(1);
   });
-  it('keeps a committed trigger write uncertain when its private receipt projection fails through the Action front door', async () => {
+  it.each(['new', 'existing', 'update'] as const)('acknowledges a committed trigger write without reading its Workflow again: %s', async operation => {
     const f = fixture();
+    const existing = operation === 'new' ? null : await f.actions.add({ workflow, project, trigger });
+    let sourceReadsAtCommit = -1;
+    const accepted = (row: AutomationDefinitionDetail) => {
+      sourceReadsAtCommit = f.definitionReads();
+      f.failSourceReads();
+      return row;
+    };
     const triggers = createWorkflowTriggerActions({ ...f.deps,
-      resolveSession: async () => ({ project, nativeGoalOwner: false }),
-      openContext: async () => { throw Object.assign(new Error('Receipt read timed out'), { code: 'ECONNABORTED' }); },
+      automations: { ...f.deps.automations,
+        create: async (...args) => accepted(await f.deps.automations.create(...args)),
+        reconcile: async (...args) => accepted(await f.deps.automations.reconcile(...args)),
+      },
     });
-    const result = await f.executor(triggers).execute('session.trigger.add', {
-      sessionId: 'session-one', target: { kind: 'inline', definition }, trigger,
-    }, { surface: 'ui', authority: 'present_user' });
-    expect(result).toMatchObject({ ok: false, errorCode: 'workflow_outcome_unresolved' });
+    const executor = f.executor(triggers);
+    const caller = { surface: 'ui', authority: 'present_user' } as const;
+    const result = operation === 'update' && existing
+      ? await executor.execute('workflow.trigger.update', { automationId: existing.set.automationId, triggerId: existing.triggerId,
+          expectedRevision: existing.set.revision, patch: { enabled: false } }, caller)
+      : await executor.execute('workflow.trigger.add', { workflow, project, trigger }, caller);
+    expect(result).toMatchObject({ ok: true, result: { set: { health: 'available', target: { kind: 'workflow', ref: workflow }, project } } });
     expect(f.rows.size).toBe(1);
-    expect([...f.rows.values()][0]?.triggers).toHaveLength(1);
+    expect([...f.rows.values()][0]?.triggers).toHaveLength(operation === 'existing' ? 2 : 1);
+    expect(f.definitionReads()).toBe(sourceReadsAtCommit);
   });
   it('keeps a committed Session trigger uncertain when Channel attachment fails', async () => {
     const f = fixture();
@@ -1315,11 +1330,17 @@ describe('workflow trigger Automation composition', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'workflow_outcome_unresolved' });
     expect(f.rows.size).toBe(1);
   });
-  it('keeps approved removal unresolved after a lost private receipt without replaying the committed removal', async () => {
+  it('acknowledges approved removal from the committed row without replaying it when later source reads fail', async () => {
     const f = fixture();
-    const added = await f.actions.add({ project, trigger, target: { kind: 'inline', definition } });
-    const actions = createWorkflowTriggerActions({ ...f.deps, openContext: async () => {
-      throw Object.assign(new Error('Currentness read timed out'), { code: 'ECONNABORTED' });
+    const added = await f.actions.add({ project, trigger, workflow });
+    let removals = 0;
+    const actions = createWorkflowTriggerActions({ ...f.deps, automations: { ...f.deps.automations,
+      reconcile: async (...args) => {
+        removals++;
+        const row = await f.deps.automations.reconcile(...args);
+        f.failSourceReads();
+        return row;
+      },
     } });
     let approval: ApprovalRequest | null = null;
     const executor = f.executor(actions, {
@@ -1333,14 +1354,11 @@ describe('workflow trigger Automation composition', () => {
     expect(await executor.execute('workflow.trigger.remove', { automationId: added.set.automationId, triggerId: added.triggerId }, context))
       .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(await executor.execute('approval.request.decide', { artifactId: 'lost-removal-receipt', decision: 'approve' },
-      { ...context, surface: 'ui' })).toMatchObject({ ok: true, result: { status: 'failed',
-        execution: { ok: false, effectAttempted: true, errorCode: 'workflow_outcome_unresolved' } } });
-    expect(ApprovalRequestV2Schema.parse(approval)).toMatchObject({ status: 'failed', execution: {
-      ok: false, effectAttempted: true, errorCode: 'workflow_outcome_unresolved',
-    } });
+      { ...context, surface: 'ui' })).toMatchObject({ ok: true, result: { status: 'executed',
+        execution: { ok: true, result: { set: { triggers: [] } } } } });
+    expect(ApprovalRequestV2Schema.parse(approval)).toMatchObject({ status: 'executed', execution: { ok: true } });
     expect(f.rows.get(added.set.automationId)?.triggers).toEqual([]);
-    // A fresh authorized read can establish the effect; it does not retroactively prove receipt delivery.
-    expect((await f.actions.list({ scope: 'account_inline' })).sets[0]?.triggers).toEqual([]);
+    expect(removals).toBe(1);
   });
   it('preserves the manual occurrence owner authentication refusal through the Action front door', async () => {
     const f = fixture();
@@ -1825,9 +1843,10 @@ describe('workflow trigger Automation composition', () => {
     currentTurnDepth = 50;
     // A fresh executor retains the Session proposal's provenance. The person's
     // Account-owned replay is a new human invocation despite the exhausted Session.
-    expect(await createExecutor().execute('approval.request.decide', {
+    const replay = await createExecutor().execute('approval.request.decide', {
       artifactId: 'session-agent-approval', decision: 'approve',
-    }, { surface: 'ui', authority: 'present_user', serverId: 'home-one' })).toMatchObject({ ok: true });
+    }, { surface: 'ui', authority: 'present_user', serverId: 'home-one' });
+    expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true });
     expect(rows.size).toBe(2);
     expect(storedRequest).toMatchObject({ status: 'executed', execution: { ok: true }, executionOriginV1: {
       surface: 'agent', caller: { kind: 'session', sessionId: 'session-one', starterDepth: 0, turnDepth: 0 },
@@ -2100,9 +2119,10 @@ describe('workflow trigger Automation composition', () => {
     expect(await executor.execute('approval.request.decide', { artifactId: 'review-target-approval', decision: 'approve' }, caller))
       .toMatchObject({ ok: false });
     expect(f.rows.size).toBe(0);
-    expect(await executor.execute('approval.request.decide', { artifactId: 'review-target-approval', decision: 'approve' }, {
+    const replay = await executor.execute('approval.request.decide', { artifactId: 'review-target-approval', decision: 'approve' }, {
       surface: 'ui', authority: 'present_user', serverId: 'home', actionCaller: { kind: 'host' },
-    })).toMatchObject({ ok: true });
+    });
+    expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true });
     expect([...f.rows.values()]).toMatchObject([{ executionRecipe: { v: 2,
       workflow: { t: 'plain', v: { inputs: { reviewSession: address } } },
     } }]);

@@ -72,7 +72,7 @@ it('accepts a retained conflict snapshot without reviving its attention latch', 
 
 it('preserves the canonical recovery Action through the shared UI row parsers and rejects malformed recommendations', () => {
   const recommendedRecovery = { action: { pluginId: 'happier.channels', localId: 'connection/retest-v1' },
-    input: { connectionId: 'connection-1', expectedRevision: 1, authorityEpoch: 1 }, reason: 'providerPermissionMissing' };
+    input: { connectionId: 'connection-1' }, reason: 'providerPermissionMissing' };
   expect(parseConnection({ ...connection(), recommendedRecovery })?.recommendedRecovery).toEqual(recommendedRecovery);
   expect(parseConnection({ ...connection(), recommendedRecovery: { ...recommendedRecovery, action: { ...recommendedRecovery.action, rawCredential: 'forbidden' } } })).toBeUndefined();
   const binding = { bindingId: 'binding-1', revision: 1, connectionId: 'connection-1', endpoint: { audience: 'direct' },

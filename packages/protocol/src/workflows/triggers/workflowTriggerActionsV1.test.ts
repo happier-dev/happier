@@ -2,10 +2,35 @@ import { describe, expect, it } from 'vitest';
 import { WorkflowActionIdV1Schema } from '../../actions/actionIds.js';
 import { WorkflowActionInputSchemasV1 } from '../actionsV1.js';
 import { WorkflowActionFailureV1Schema } from '../workflowProgressV1.js';
-import { SessionTriggerListResultV1Schema, WorkflowTriggerRemoveResultV1Schema } from './workflowTriggerActionsV1.js';
+import { SessionTriggerListResultV1Schema, WorkflowTriggerRemoveResultV1Schema, WorkflowTriggerSummaryV1Schema, summarizeWorkflowTriggerRowsV1 } from './workflowTriggerActionsV1.js';
+import { AutomationTriggerListItemSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationDeleteResponseSchema } from '../../automations/automationApiV3.js';
 
 describe('workflow trigger Action boundary', () => {
+  it('projects exact enabled schedule occurrences while retaining the workflow-wide minimum', () => {
+    const schedule = (id: string, enabled: boolean, nextRunAt: number | null) => AutomationTriggerListItemSchema.parse({
+      id, kind: 'schedule', enabled, nextRunAt, revision: 1, createdAt: 1, updatedAt: 1,
+      schedule: { kind: 'interval', scheduleExpr: null, everyMs: 60_000, timezone: null },
+    });
+    const summaries = summarizeWorkflowTriggerRowsV1([
+      { id: 'enabled-set', workflowDefinitionId: 'builtin:keep-going', enabled: true, triggers: [
+        schedule('earlier', true, 100), schedule('later', true, 200), schedule('disabled', false, 50),
+        schedule('unscheduled', true, null),
+        AutomationTriggerListItemSchema.parse({ id: 'event', kind: 'prComment', sourceSessionId: 'session-one',
+          revision: 1, enabled: true, createdAt: 1, updatedAt: 1 }),
+      ] },
+      { id: 'disabled-set', workflowDefinitionId: 'builtin:keep-going', enabled: false,
+        triggers: [schedule('disabled-set-schedule', true, 25)] },
+    ]);
+    const summary = WorkflowTriggerSummaryV1Schema.parse(summaries.get('builtin:keep-going'));
+    expect(summary.nextRunAt).toBe(100);
+    expect(summary.triggers.map(trigger => ({ triggerId: trigger.triggerId,
+      nextRunAt: 'nextRunAt' in trigger ? trigger.nextRunAt : undefined }))).toEqual([
+      { triggerId: 'earlier', nextRunAt: 100 }, { triggerId: 'later', nextRunAt: 200 },
+      { triggerId: 'disabled', nextRunAt: null }, { triggerId: 'unscheduled', nextRunAt: null },
+      { triggerId: 'event', nextRunAt: undefined }, { triggerId: 'disabled-set-schedule', nextRunAt: null },
+    ]);
+  });
   it('preserves authoritative removed revisions and accepts identity-only older deletion receipts', () => {
     const deleted = { automationId: 'deleted-set', deleted: true };
     expect(WorkflowTriggerRemoveResultV1Schema.parse({ ...deleted, removedRevision: 11 }))
