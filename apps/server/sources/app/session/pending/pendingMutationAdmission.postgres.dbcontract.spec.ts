@@ -20,6 +20,7 @@ const mutations = {
     update: (input: Input) => updatePendingMessage({ ...input, content }),
     delete: deletePendingMessage,
     block: (input: Input) => blockPendingDelivery({ ...input, reason: 'session_input_target_unavailable' }),
+    blockOwner: (input: Input) => blockPendingDelivery({ ...input, authentication: undefined, reason: 'session_input_target_unavailable' }),
     sendAsNew: sendPendingDeliveryAsNew,
     handled: markPendingDeliveryHandled,
     dismiss: dismissPendingDelivery,
@@ -40,14 +41,18 @@ async function observeAdmission<T>(actorAccountId: string, run: () => Promise<T>
     let interleaved = false;
     const accessKeys = Object.keys(buildSessionAccessProjectionSelect(actorAccountId));
     const originalTransaction = db.$transaction;
-    const originalFind = db.session.findUnique;
+    const originalSession = db.session;
+    const originalFind = originalSession.findUnique;
     const observeFind = (args: Parameters<typeof originalFind>[0], held: boolean) => {
         if (args.select && accessKeys.every(key => Object.hasOwn(args.select!, key))) accessReads.push(held);
     };
-    const spy = vi.spyOn(db.session, 'findUnique').mockImplementation(args => {
-        observeFind(args, false);
-        return originalFind.call(db.session, args);
-    });
+    Reflect.set(db, 'session', new Proxy(originalSession, { get(model, method, receiver) {
+        if (method !== 'findUnique') return Reflect.get(model, method, receiver);
+        return (args: Parameters<typeof originalFind>[0]) => {
+            observeFind(args, false);
+            return model.findUnique(args);
+        };
+    } }));
     db.$transaction = new Proxy(originalTransaction, { apply(target, receiver, args: unknown[]) {
         const operation = args[0];
         if (typeof operation !== 'function') return Reflect.apply(target, receiver, args);
@@ -76,17 +81,22 @@ async function observeAdmission<T>(actorAccountId: string, run: () => Promise<T>
         }, ...args.slice(1)]);
     } });
     try { return { result: await run(), accessReads, lockQueries, interleaved }; }
-    finally { db.$transaction = originalTransaction; spy.mockRestore(); }
+    finally { db.$transaction = originalTransaction; Reflect.set(db, 'session', originalSession); }
 }
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Pending and public-share admission once (real PostgreSQL)', () => {
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL)
             throw new Error('Use the disposable PostgreSQL DB-contract harness');
+        vi.stubEnv('HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY', 'optional');
+        vi.stubEnv('HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_ARTIFACTS_AT_REST', 'none');
+        vi.stubEnv('HAPPIER_PUBLIC_SERVER_URL', 'https://home.example.test');
+        vi.stubEnv('HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN', 'preview.example.test');
+        vi.stubEnv('HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER', '1');
         initDbPostgres();
         await db.$connect();
     });
-    afterAll(async () => { await db.$disconnect(); });
+    afterAll(async () => { await db.$disconnect(); vi.unstubAllEnvs(); });
 
     async function fixture(operation: Mutation) {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -104,6 +114,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('P
         if (operation === 'shareDelete') await db.publicSessionShare.create({ data: { sessionId: session.id,
             createdByUserId: owner.id, tokenHash: new Uint8Array(32) } });
         return { owner, other, session, localId, async cleanup() {
+            await db.sessionMessage.deleteMany({ where: { sessionId: session.id } });
             await db.session.delete({ where: { id: session.id } });
             await db.account.deleteMany({ where: { id: { in: [owner.id, other.id] } } });
         } };

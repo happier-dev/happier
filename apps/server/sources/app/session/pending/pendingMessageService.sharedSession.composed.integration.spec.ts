@@ -963,7 +963,7 @@ describe("pendingMessageService (shared sessions)", () => {
     });
 
     it.each(["edit", "action", "reorder", "discard", "restore", "delete", "handled", "dismiss", "sendAsNew"] as const)(
-        "rechecks a collaborator revoked before the %s transaction without mutating pending",
+        "finishes an admitted collaborator %s mutation after withdrawal and refuses the next request",
         async (operation) => {
             const owner = await createAccount("revocation-owner");
             const collaborator = await createAccount("revocation-editor");
@@ -971,30 +971,45 @@ describe("pendingMessageService (shared sessions)", () => {
             const share = await shareSession({ sessionId: session.id, ownerId: owner.id, participantId: collaborator.id, accessLevel: "edit" });
             const request = { actorUserId: collaborator.id, sessionId: session.id, localId: "existing" };
             await enqueuePendingMessage({ ...request, ciphertext: "cipher-existing", messageRole: "user" });
-            const before = await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } });
+            if (operation === "restore") {
+                expect(await discardPendingMessage({ ...request, actorUserId: owner.id })).toMatchObject({ ok: true });
+            } else if (operation === "handled" || operation === "dismiss" || operation === "sendAsNew") {
+                await db.sessionPendingMessage.update({
+                    where: { sessionId_localId: { sessionId: session.id, localId: request.localId } },
+                    data: { deliveryState: "blocked", deliveryBlockedReason: "delivery_outcome_uncertain" },
+                });
+                await inTx((tx) => reconcileSessionPendingQueueStateInTx(tx, session.id));
+            }
+            const operations = {
+                edit: () => updatePendingMessage({ ...request, ciphertext: "changed" }),
+                action: () => updatePendingRequestedAction({ ...request, requestedAction: { v: 1, kind: "send_now" } }),
+                reorder: () => reorderPendingMessages({ ...request, orderedLocalIds: [request.localId] }),
+                discard: () => discardPendingMessage(request),
+                restore: () => restorePendingMessage(request),
+                delete: () => deletePendingMessage(request),
+                handled: () => markPendingDeliveryHandled(request),
+                dismiss: () => dismissPendingDelivery(request),
+                sendAsNew: () => sendPendingDeliveryAsNew(request),
+            };
             const originalTransaction = db.$transaction;
+            let withdrawn = false;
             // Interpose only at real database acquisition; the callback still runs in a real transaction.
             db.$transaction = (async (...args: Parameters<typeof db.$transaction>) => {
-                await db.sessionShare.delete({ where: { id: share.id } });
+                if (!withdrawn) {
+                    withdrawn = true;
+                    await db.sessionShare.delete({ where: { id: share.id } });
+                }
                 return originalTransaction.apply(db, args);
             }) as typeof db.$transaction;
             try {
-                const operations = {
-                    edit: () => updatePendingMessage({ ...request, ciphertext: "changed" }),
-                    action: () => updatePendingRequestedAction({ ...request, requestedAction: { v: 1, kind: "send_now" } }),
-                    reorder: () => reorderPendingMessages({ ...request, orderedLocalIds: [request.localId] }),
-                    discard: () => discardPendingMessage(request),
-                    restore: () => restorePendingMessage(request),
-                    delete: () => deletePendingMessage(request),
-                    handled: () => markPendingDeliveryHandled(request),
-                    dismiss: () => dismissPendingDelivery(request),
-                    sendAsNew: () => sendPendingDeliveryAsNew(request),
-                };
-                expect(await operations[operation]()).toMatchObject({ ok: false, error: "session-not-found" });
+                expect(await operations[operation]()).toMatchObject({ ok: true });
+                expect(withdrawn).toBe(true);
             } finally {
                 db.$transaction = originalTransaction;
             }
-            expect(await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } })).toEqual(before);
+            const admittedState = await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } });
+            expect(await operations[operation]()).toMatchObject({ ok: false, error: "session-not-found" });
+            expect(await db.sessionPendingMessage.findMany({ where: { sessionId: session.id } })).toEqual(admittedState);
         },
     );
 

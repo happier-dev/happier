@@ -1,5 +1,6 @@
 import { db } from "@/storage/db";
-import { assertSessionCapabilityInTx, resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
+import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
+import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { eventRouter, buildPublicShareCreatedUpdate, buildPublicShareUpdatedUpdate, buildPublicShareDeletedUpdate, } from "@/app/events/eventRouter";
 import { createHash, timingSafeEqual, randomUUID } from "crypto";
@@ -59,9 +60,6 @@ export async function deleteSessionPublicShare(input: Pick<SessionPublicShareWri
     }
     const result = await inTx(async (tx) => {
         await acquireSessionAccountCursorLocksInTx(tx, [sessionId], [userId]);
-        const authority = await assertSessionCapabilityInTx({ tx, accountId: userId, sessionId, capability: "managePublicLink", authentication });
-        if (!authority.ok)
-            return { type: "forbidden" as const };
         const existing = await tx.publicSessionShare.findUnique({
             where: { sessionId }
         });
@@ -89,7 +87,7 @@ export async function deleteSessionPublicShare(input: Pick<SessionPublicShareWri
 export type SessionPublicShareWrite = Readonly<{
     userId: string;
     sessionId: string;
-    authentication: Parameters<typeof assertSessionCapabilityInTx>[0]["authentication"];
+    authentication: SessionAccessAuthentication;
     lookupId?: string;
     keyDerivation?: "fragment_v1";
     encryptedDataKey?: string;
@@ -115,9 +113,6 @@ export async function writeSessionPublicShare(input: SessionPublicShareWrite) {
     }
     const result = await inTx(async (tx) => {
         await acquireSessionAccountCursorLocksInTx(tx, [sessionId], [userId]);
-        const authority = await assertSessionCapabilityInTx({ tx, accountId: userId, sessionId, capability: "managePublicLink", authentication });
-        if (!authority.ok)
-            return { type: "forbidden" as const };
         const session = await tx.session.findUnique({
             where: { id: sessionId },
             select: {

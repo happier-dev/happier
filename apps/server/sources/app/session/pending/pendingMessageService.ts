@@ -12,7 +12,6 @@ import { reconcileSessionPendingQueueStateInTx } from "@/app/session/pending/rec
 import { applyPendingSessionStateChange } from "@/app/session/pending/applyPendingSessionStateChange";
 import { mapPendingMessageRow, projectPendingDeliveryRecovery } from "@/app/session/pending/mapPendingMessageRow";
 import {
-    assertSessionCapabilityInTx,
     assertSessionOwnerInTx,
     resolveStructuralSessionAccess,
     resolveSessionAccessForOperation,
@@ -2792,13 +2791,14 @@ export async function updatePendingRequestedAction(params: Readonly<{
         || !expectedActionResult?.success || expectedActionResult.data.kind !== "reset_start")) {
         return { ok: false, error: "invalid-params" };
     }
-    if (!params.automaticResetReleaseTarget) {
-        const accessDecision = await resolveSessionAccessForOperation(db, {
-            accountId: actorUserId,
-            sessionId,
-            authentication: params.authentication,
-            capability: "submitAgentInput",
-        });
+    const resolveAccess = () => resolveSessionAccessForOperation(db, {
+        accountId: actorUserId,
+        sessionId,
+        authentication: params.authentication,
+        capability: "submitAgentInput",
+    });
+    const accessDecision = params.automaticResetReleaseTarget ? undefined : await resolveAccess();
+    if (accessDecision) {
         if (accessDecision.status !== "allowed") return { ok: false, error: projectPendingSessionAccessError(accessDecision.status) };
         if (!accessDecision.access.capabilities.submitAgentInput) return { ok: false, error: "forbidden" };
     }
@@ -2870,15 +2870,15 @@ export async function updatePendingRequestedAction(params: Readonly<{
         };
         const nextUpdatedAt = new Date(Math.max(Date.now(), existing.updatedAt.getTime() + 1));
 
+        // Automatic release still uses Account access only to decide activation;
+        // its exact installed-Machine authority is checked below. Keep failures
+        // in the existing catch while resolving before publication locks.
+        const activationAccess = accessDecision ?? await resolveAccess();
         return await inTx(async (tx) => pendingPublicationResult<UpdatePendingRequestedActionResult>(async () => {
             const controllerAccountIds = await readPendingActivationControllerAccountIdsInTx(
                 tx, readStoredSessionInputAdmissionReceipt(existing.inputAdmissionReceipt)?.admittedTarget?.machineId,
             );
             await acquireSessionAccountCursorLocksInTx(tx, [sessionId], controllerAccountIds);
-            const access = await assertSessionCapabilityInTx({ tx, accountId: actorUserId, sessionId, capability: "submitAgentInput", authentication: params.authentication });
-            if (!params.automaticResetReleaseTarget && !access.ok) {
-                return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
-            }
             if (requestedActionResult.data.kind === "reset_start" || params.automaticResetReleaseTarget) {
                 const target = await readCurrentPendingResetStartTargetInTx(tx, sessionId, existing,
                     params.automaticResetReleaseTarget ? undefined : actorUserId);
@@ -2900,7 +2900,7 @@ export async function updatePendingRequestedAction(params: Readonly<{
                 if (retained !== 1) {
                     return { ok: false, error: "action-conflict" } as const;
                 }
-                const shouldArmActivation = access.ok && targetExecutionRunId === null && shouldArmPendingActivationAuthorization({
+                const shouldArmActivation = activationAccess.status === "allowed" && targetExecutionRunId === null && shouldArmPendingActivationAuthorization({
                     requestedAction: requestedActionResult.data,
                     resumeWhenAvailable: params.resumeWhenAvailable,
                 });
@@ -2911,7 +2911,7 @@ export async function updatePendingRequestedAction(params: Readonly<{
                             tx,
                             sessionId,
                             requestId: localId,
-                            currentAccess: access.access,
+                            currentAccess: activationAccess.access,
                             ...(params.resumeWhenAvailable === true ? { resumeWhenAvailable: true as const } : {}),
                         })
                         : undefined;
@@ -2956,7 +2956,7 @@ export async function updatePendingRequestedAction(params: Readonly<{
             if (updatedCount !== 1) {
                 return { ok: false, error: "action-conflict" } as const;
             }
-            const shouldArmActivation = access.ok && targetExecutionRunId === null && shouldArmPendingActivationAuthorization({
+            const shouldArmActivation = activationAccess.status === "allowed" && targetExecutionRunId === null && shouldArmPendingActivationAuthorization({
                 requestedAction: requestedActionResult.data,
                 resumeWhenAvailable: params.resumeWhenAvailable,
             });
@@ -2965,7 +2965,7 @@ export async function updatePendingRequestedAction(params: Readonly<{
                     tx,
                     sessionId,
                     requestId: localId,
-                    currentAccess: access.access,
+                    currentAccess: activationAccess.access,
                     ...(params.resumeWhenAvailable === true ? { resumeWhenAvailable: true as const } : {}),
                 })
                 : undefined;
@@ -3093,8 +3093,6 @@ export async function updatePendingMessage(params: {
     try {
         return await inTx(async (tx) => pendingPublicationResult<UpdatePendingMessageResult>(async () => {
             await acquireSessionAccountCursorLocksInTx(tx, [sessionId]);
-            const access = await assertSessionCapabilityInTx({ tx, accountId: actorUserId, sessionId, capability: "submitAgentInput", authentication: params.authentication });
-            if (!access.ok) return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
                 select: {
@@ -3211,7 +3209,7 @@ export async function updatePendingMessage(params: {
                             : { usageTimingV1: getActivePrismaRuntime().DbNull }),
                     messageRole,
                     requestEqualityEvidenceV1: getActivePrismaRuntime().DbNull,
-                    inputAdmissionReceipt: buildSessionInputAdmissionReceipt({ issuer: "authenticatedAccount", access: access.access,
+                    inputAdmissionReceipt: buildSessionInputAdmissionReceipt({ issuer: "authenticatedAccount", access: accessDecision.access,
                         admittedTarget: retainedReceipt?.admittedTarget,
                         callerInputConstraints: params.authentication.callerInputConstraints ?? params.authentication.apiTokenGrant }),
                     ...(replacementLocalId
@@ -3282,8 +3280,6 @@ export async function deletePendingMessage(params: {
     try {
         return await inTx(async (tx) => pendingPublicationResult<DeletePendingMessageResult>(async () => {
             await acquireSessionAccountCursorLocksInTx(tx, [sessionId]);
-            const access = await assertSessionCapabilityInTx({ tx, accountId: actorUserId, sessionId, capability: "submitAgentInput", authentication: params.authentication });
-            if (!access.ok) return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
             const alreadyDelivered = params.withdraw === true
                 ? await tx.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } }, select: { id: true, deliveryResolution: true } })
                 : null;
@@ -4114,19 +4110,6 @@ export async function blockPendingDelivery(params: {
         return await inTx(async (tx) => pendingPublicationResult<BlockPendingDeliveryResult>(async () => {
             await acquireSessionAccountCursorLocksInTx(tx, [sessionId]);
             const result: PendingPublicationFields<BlockPendingDeliveryResult> = await (async () => {
-                if (params.authentication && !admittedPublisher) {
-                    const access = await assertSessionCapabilityInTx({
-                        tx,
-                        accountId: actorUserId,
-                        sessionId,
-                        capability: "editSessionRecords",
-                        authentication: params.authentication,
-                    });
-                    if (!access.ok) return { ok: false, error: "session-not-found" } as const;
-                } else if (!admittedPublisher
-                    && !(await assertSessionOwnerInTx({ tx, accountId: actorUserId, sessionId })).ok) {
-                    return { ok: false, error: "session-not-found" } as const;
-                }
                 if (targetExecutionRunId !== null && (!admittedPublisher
                     || !await hasExactCurrentPublisherAuthorityInTx(tx,
                         admittedPublisher, actorUserId, sessionId, undefined, { admittedWork: true }))) {
@@ -4309,8 +4292,6 @@ export async function sendPendingDeliveryAsNew(params: {
 
     try {
         return await inPendingQueuePositionTx(sessionId, async (tx) => pendingPublicationResult<SendPendingDeliveryAsNewResult>(async () => {
-            const access = await assertSessionCapabilityInTx({ tx, accountId: actorUserId, sessionId, capability: "submitAgentInput", authentication: params.authentication });
-            if (!access.ok) return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
             const existing = await tx.sessionPendingMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId }, targetExecutionRunId },
                 select: {
@@ -4455,8 +4436,6 @@ export async function markPendingDeliveryHandled(params: {
     try {
         return await rejoinPendingDeliveryResolutionRace(() => inTx(async (tx) => pendingPublicationResult<MarkPendingDeliveryHandledResult>(async () => {
             await acquireSessionAccountCursorLocksInTx(tx, [sessionId]);
-            const access = await assertSessionCapabilityInTx({ tx, accountId: actorUserId, sessionId, capability: "submitAgentInput", authentication: params.authentication });
-            if (!access.ok) return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
             const existing = await tx.sessionPendingMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId }, targetExecutionRunId: null },
                 select: {
@@ -4525,8 +4504,6 @@ export async function dismissPendingDelivery(params: {
     try {
         return await rejoinPendingDeliveryResolutionRace(() => inTx(async (tx) => pendingPublicationResult<DismissPendingDeliveryResult>(async () => {
             await acquireSessionAccountCursorLocksInTx(tx, [sessionId]);
-            const access = await assertSessionCapabilityInTx({ tx, accountId: actorUserId, sessionId, capability: "submitAgentInput", authentication: params.authentication });
-            if (!access.ok) return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
             const existing = await tx.sessionPendingMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId }, targetExecutionRunId },
                 select: { status: true, deliveryState: true, deliveryBlockedReason: true, discardedReason: true },
@@ -4604,8 +4581,6 @@ export async function discardPendingMessage(params: {
     try {
         return await inTx(async (tx) => pendingPublicationResult<DiscardPendingMessageResult>(async () => {
             await acquireSessionAccountCursorLocksInTx(tx, [sessionId]);
-            const access = await assertSessionCapabilityInTx({ tx, accountId: actorUserId, sessionId, capability: "submitAgentInput", authentication: params.authentication });
-            if (!access.ok) return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
             const existing = await tx.sessionPendingMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId }, targetExecutionRunId },
                 select: { status: true, deliveryState: true, deliveryBlockedReason: true, discardedReason: true },
@@ -4690,8 +4665,6 @@ export async function restorePendingMessage(params: {
 
     try {
         return await inPendingQueuePositionTx(sessionId, async (tx) => pendingPublicationResult<RestorePendingMessageResult>(async () => {
-            const access = await assertSessionCapabilityInTx({ tx, accountId: actorUserId, sessionId, capability: "submitAgentInput", authentication: params.authentication });
-            if (!access.ok) return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
             const existing = await tx.sessionPendingMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId }, targetExecutionRunId },
                 select: { status: true, deliveryState: true, deliveryBlockedReason: true, discardedReason: true, replyProgress: true },
@@ -4771,8 +4744,6 @@ export async function reorderPendingMessages(params: {
     try {
         return await inTx(async (tx) => pendingPublicationResult<ReorderPendingMessagesResult>(async () => {
             await acquireSessionAccountCursorLocksInTx(tx, [sessionId]);
-            const access = await assertSessionCapabilityInTx({ tx, accountId: actorUserId, sessionId, capability: "submitAgentInput", authentication: params.authentication });
-            if (!access.ok) return { ok: false, error: projectPendingSessionAccessError(access.reason) } as const;
             const queued = await tx.sessionPendingMessage.findMany({
                 where: { sessionId, targetExecutionRunId, status: "queued" },
                 select: { localId: true, deliveryState: true, deliveryBlockedReason: true, position: true },
