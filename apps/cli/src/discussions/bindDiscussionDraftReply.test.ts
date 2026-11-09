@@ -12,8 +12,9 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequ
   ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { signMachineInstallationProof, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema } from '@happier-dev/protocol/auth/apiTokenGrant';
 
-const http = vi.hoisted(() => ({ request: vi.fn(), get: vi.fn(), post: vi.fn() }));
+const http = vi.hoisted(() => ({ defaults: {}, request: vi.fn(), get: vi.fn(), post: vi.fn() }));
 // Only authenticated Home HTTP is replaced. Participant decoding and the
 // Discussion Action dependency retain their production implementations.
 vi.mock('axios', () => ({ default: http }));
@@ -112,9 +113,9 @@ it.each(['draft', 'informational'] as const)('normalizes the verified daemon Ses
   { sessionId: 'participant', isCurrent: async () => true });
   expect(signedPreparation).toHaveBeenCalledTimes(1);
   expect(http.post).toHaveBeenCalledTimes(1);
-  // The informational case must reach the downstream signed roster HTTP read,
-  // not fail earlier because the fixture omitted installation signing material.
-  if (informational) expect(http.request).toHaveBeenCalledTimes(2);
+  // The daemon captured policy before signing; the downstream host preserves
+  // those exact operands and performs no second policy preparation.
+  expect(http.request).toHaveBeenCalledTimes(1);
   expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
 });
 
@@ -179,7 +180,7 @@ it('holds an addressed publication when its persisted policy read is unavailable
     .toMatchObject({ failure: { ok: false, errorCode: 'discussion_content_unavailable' } });
 });
 
-it.each(['drafts_for_approval', 'watches_and_speaks_up'] as const)('preserves signed operands and admits their current policy (%s)', async answerPolicy => {
+it.each(['drafts_for_approval', 'watches_and_speaks_up'] as const)('preserves already admitted signed operands without another policy read (%s)', async answerPolicy => {
   http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
     participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy, createdAt: 1 }] } });
   const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(53));
@@ -195,31 +196,40 @@ it.each(['drafts_for_approval', 'watches_and_speaks_up'] as const)('preserves si
         ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'tool-request', target: { kind: 'machine', machineId: 'machine' }, input })) },
   }) };
   const result = await bindDiscussionDraftReply({ actionId: 'discussion.post', input, context: invocation, serverId: 'home', discussionAction: signedRoster });
-  expect(result).toMatchObject(answerPolicy === 'drafts_for_approval'
-    ? { failure: { ok: false, errorCode: 'discussion_content_unavailable' } }
-    : { actionId: 'discussion.post', input, context: invocation });
-  if (answerPolicy !== 'drafts_for_approval') expect(result).not.toHaveProperty('failure');
+  expect(result).toEqual({ actionId: 'discussion.post', input, context: invocation });
+  expect(http.request).not.toHaveBeenCalled();
 });
 
-it.each(['execute', 'prepare'] as const)('captures the canonical explicit reply through the production CLI %s entry', async method => {
+it.each([
+  { method: 'execute', caller: 'session' }, { method: 'prepare', caller: 'session' },
+  { method: 'execute', caller: 'agent_default_session' },
+  { method: 'execute', caller: 'session_reply_enabled' },
+] as const)('captures the canonical explicit reply through the production CLI $method entry ($caller)', async ({ method, caller }) => {
   const { createCliActionExecutor } = await import('@/session/actions/createCliActionExecutor');
   const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
   const settings = accountSettingsParse({});
+  const artifacts = new Map<string, Readonly<Record<string, unknown>>>();
   http.get.mockImplementation(async (url: string) => {
     const path = new URL(url).pathname;
     if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 1,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
     if (path === '/v1/artifacts') return { status: 200, data: [] };
-    if (path.startsWith('/v1/artifacts/')) return { status: 404, data: { error: 'Artifact not found' } };
+    if (path.startsWith('/v1/artifacts/')) {
+      const artifact = artifacts.get(decodeURIComponent(path.split('/').at(-1)!));
+      return artifact ? { status: 200, data: artifact } : { status: 404, data: { error: 'Artifact not found' } };
+    }
     throw new Error(`Unexpected approval HTTP read: ${path}`);
   });
   const captured: unknown[] = [];
-  http.post.mockImplementation(async (url: string, body: { id: string; body: string }) => {
+  http.post.mockImplementation(async (url: string, body: Record<string, unknown> & { id: string; body: string }) => {
     if (new URL(url).pathname !== '/v1/artifacts') throw new Error('Unexpected approval HTTP write');
     const content = decodePlainArtifactStoredContent(body.body);
     if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') throw new Error('Invalid private approval carrier');
     captured.push(JSON.parse(content.body));
+    const { idScope: _idScope, ...stored } = body;
+    artifacts.set(body.id, { ...stored, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
     return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
   });
   const publisher = vi.fn();
@@ -227,10 +237,13 @@ it.each(['execute', 'prepare'] as const)('captures the canonical explicit reply 
     serverId: 'home', serverIdentityId: homeIdentityId, serverHttpBaseUrl: 'https://draft-reply.test', pluginActionExecutionOwner: 'current_process',
     resolveServerFeaturesSnapshot: () => features, postAgentDiscussionMessage: publisher,
     actionsSettingsProvider: { getAccountSettings: () => settings, getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+      ...(caller === 'session_reply_enabled' ? { actions: { 'discussion.post': { enabled: false }, 'discussion.reply': { enabled: true } } } : {}),
       approvalWaivedSurfaces: { 'discussion.post': ['agent'], 'discussion.reply': ['agent'] } }) },
   });
   const result = await runWithServerHttpBaseUrl('https://draft-reply.test', () => executor[method]('discussion.post', input,
-    { ...context, defaultSessionMachineId: 'machine', serverIdentityId: homeIdentityId }));
+    { ...context, ...(caller === 'agent_default_session' ? { actionCaller: { kind: 'host' as const } } : {}),
+      defaultSessionMachineId: 'machine', serverIdentityId: homeIdentityId }));
+  expect(http.request.mock.calls.filter(([request]) => new URL(request.url).pathname.endsWith('/participants'))).toHaveLength(1);
   expect(result, JSON.stringify({ result, reads: http.get.mock.calls.map(([url]) => url),
     writes: http.post.mock.calls.map(([url]) => url) })).toMatchObject(method === 'prepare' ? { kind: 'settled', result: { ok: true } } : { ok: true });
   expect(captured).toHaveLength(1);
@@ -240,6 +253,51 @@ it.each(['execute', 'prepare'] as const)('captures the canonical explicit reply 
     replyTarget: { kind: 'message', messageId: 'question' } }, executionOriginV1: { actionId: 'discussion.reply', requestId: localId,
     sessionId: 'participant', sessionInputSource: source,
     discussionReplyReturn: { serverId: homeIdentityId, requestLocalId: 'input', acceptedTurnId: 'turn' } } });
+  expect(publisher).not.toHaveBeenCalled();
+  http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
+    participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy: 'reads_only', createdAt: 1 }] } });
+  expect(await executor.execute('discussion.post', input, { ...context,
+    ...(caller === 'agent_default_session' ? { actionCaller: { kind: 'host' as const } } : {}),
+    defaultSessionMachineId: 'machine' })).toMatchObject({ ok: false,
+      errorCode: caller === 'session_reply_enabled' ? 'action_disabled' : 'discussion_answer_policy_denied' });
+  expect(http.request.mock.calls.filter(([request]) => new URL(request.url).pathname.endsWith('/participants'))).toHaveLength(2);
+  expect(captured).toHaveLength(1);
+  expect(publisher).not.toHaveBeenCalled();
+});
+
+it('denies a reads-only agent default Session before any approval or publication', async () => {
+  const { createCliActionExecutor } = await import('@/session/actions/createCliActionExecutor');
+  const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+  http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
+    participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy: 'reads_only', createdAt: 1 }] } });
+  const publisher = vi.fn();
+  const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: 'participant', mode: 'plain', ctx: null,
+    serverId: 'home', serverIdentityId: homeIdentityId, serverHttpBaseUrl: 'https://draft-reply.test', pluginActionExecutionOwner: 'current_process',
+    resolveServerFeaturesSnapshot: () => features, postAgentDiscussionMessage: publisher,
+    actionsSettingsProvider: { getAccountSettings: () => accountSettingsParse({}),
+      getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'discussion.post': ['agent'] } }) } });
+  expect(await executor.execute('discussion.post', input, { ...context, actionCaller: { kind: 'host' },
+    defaultSessionMachineId: 'machine' })).toMatchObject({ ok: false, errorCode: 'discussion_answer_policy_denied' });
+  expect(http.request.mock.calls.filter(([request]) => new URL(request.url).pathname.endsWith('/participants'))).toHaveLength(1);
+  expect(http.post).not.toHaveBeenCalled();
+  expect(publisher).not.toHaveBeenCalled();
+});
+
+it('does not borrow the daemon credential for unsigned restricted publication preparation', async () => {
+  const { createCliActionExecutor } = await import('@/session/actions/createCliActionExecutor');
+  const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+  const publisher = vi.fn();
+  const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: 'participant', mode: 'plain', ctx: null,
+    serverId: 'home', serverIdentityId: homeIdentityId, serverHttpBaseUrl: 'https://draft-reply.test', pluginActionExecutionOwner: 'current_process',
+    resolveServerFeaturesSnapshot: () => features, postAgentDiscussionMessage: publisher,
+    actionsSettingsProvider: { getAccountSettings: () => accountSettingsParse({}),
+      getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } });
+  expect(await executor.execute('discussion.post', input, { ...context, defaultSessionMachineId: 'machine',
+    externalActionCredential: { accountId: 'owner', principalId: 'principal', credentialId: 'credential',
+      grant: ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['discussion.post'] } }) } }))
+    .toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+  expect(http.request).not.toHaveBeenCalled();
+  expect(http.post).not.toHaveBeenCalled();
   expect(publisher).not.toHaveBeenCalled();
 });
 

@@ -9,10 +9,10 @@ import { defineProtocolArray } from '@happier-dev/protocol/plugins/actions/proto
 import { PluginUiSurfaceBindingV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/surfaceRegistry';
 import { selectPluginUiWidgetEntriesV1 } from '@happier-dev/protocol/plugins/contributions/ui/widgetInventory';
 import { PluginUiWidgetHomeV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/v2';
-import { BUILTIN_WIDGET_DESCRIPTORS_V1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
+import { BUILTIN_WIDGET_DESCRIPTORS_V1, isSameWidgetDefinitionV1, readBuiltinWidgetDescriptorV1, readUsageBreakdownsInstanceTitleV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
 import { WidgetConnectedAccountPurposeBindingV1Schema } from '@happier-dev/protocol/widgets/widgetConnectedAccountPurposeBindingV1';
 import { WidgetSizeDeclarationV1Schema } from '@happier-dev/protocol/widgets/widgetPresentationV1';
-import type { WidgetCatalogSourceEntryV1 } from '@happier-dev/protocol/widgets';
+import type { WidgetCatalogSourceEntryV1, WidgetInstanceV1, WidgetDefinitionArtifactPortV1, WidgetCandidateIdentityV1 } from '@happier-dev/protocol/widgets';
 import { WidgetPublicSnapshotPresentationV1Schema } from '@happier-dev/protocol/widgets/widgetPublicSnapshotV1';
 
 const display = z.looseObject({ title: z.optional(z.string().check(z.trim(), z.minLength(1))), developerFallback: z.optional(z.string().check(z.trim(), z.minLength(1))) });
@@ -65,7 +65,36 @@ export function readCliWidgetCatalogProjectionV1(projection: PluginProjectionV2)
 
 export function cliWidgetCatalogEntryV1(candidate: ReturnType<typeof readCliWidgetCatalogProjectionV1>[number], instanceCount: number): WidgetCatalogSourceEntryV1 {
     return { definition: widgetCandidateDefinitionV1(candidate), title: candidate.title,
+        target: candidate.target,
         sizeDeclaration: candidate.sizeDeclaration, fields: [...candidate.fields],
         ...('publicPresentation' in candidate && candidate.publicPresentation ? { publicPresentation: candidate.publicPresentation } : {}),
         ...(candidate.inputSchema ? { inputSchema: candidate.inputSchema } : {}), availability: candidate.availability, instanceCount };
+}
+
+/** The Project writer supplies unnamed instances; unavailable metadata never becomes a persisted fallback. */
+export async function readCliWidgetInstanceTitlesV1(input: Readonly<{
+    instances: readonly WidgetInstanceV1[];
+    readSummaries: WidgetDefinitionArtifactPortV1['summaries'];
+    readCandidates(signal?: AbortSignal, requiredPluginId?: string): Promise<readonly (WidgetCandidateIdentityV1 & Readonly<{ title: string }>)[]>;
+    signal?: AbortSignal;
+}>): Promise<ReadonlyMap<string, string>> {
+    const artifactIds = [...new Set(input.instances.flatMap(instance => instance.definition.kind === 'artifact' ? [instance.definition.artifactId] : []))];
+    const pluginIds = [...new Set(input.instances.flatMap(instance => instance.definition.kind === 'installed' ? [instance.definition.surface.pluginId] : []))];
+    const [summaries, projections] = await Promise.all([
+        artifactIds.length ? input.readSummaries(artifactIds, input.signal) : [],
+        Promise.all(pluginIds.map(pluginId => input.readCandidates(input.signal, pluginId))),
+    ]);
+    input.signal?.throwIfAborted();
+    const names = new Map(summaries.map(summary => [summary.artifactId, summary.name]));
+    const candidates = projections.flat();
+    const titles = new Map<string, string>();
+    for (const instance of input.instances) {
+        const definition = instance.definition;
+        const title = definition.kind === 'artifact' ? names.get(definition.artifactId)
+            : definition.kind === 'inline' ? definition.definition.name
+                : definition.kind === 'builtin' ? (readUsageBreakdownsInstanceTitleV1(instance) ?? readBuiltinWidgetDescriptorV1(definition))?.title
+                    : candidates.find(candidate => isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), definition))?.title;
+        if (title !== undefined) titles.set(instance.id, title);
+    }
+    return titles;
 }

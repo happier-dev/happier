@@ -2,8 +2,6 @@ import axios from '@/api/client/credentialAxios';
 import { type AxiosResponse } from 'axios';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
-import { decodeTemplateBirthExecutionAuthorizationV1, TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { classifyHomeDomainHttpMutationFailureV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import type { AccountEncryptionCurrentnessResponse, SessionInitialAccessDraftV1, SessionManagerV1, SessionOrganizationPlacementV1, SessionTeamCredentialBindingIntentListV1, V2SessionByIdResponse } from '@happier-dev/protocol';
 
@@ -29,10 +27,8 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
   token: string;
   body: unknown;
   creationAuthorizationToken?: string;
-  /** Host-only signer for the exact birth body under its admitted Action child. */
-  authorizeRequest?: (body: unknown) => Readonly<Record<string, string>>;
-  /** Return the Home's exact committed-birth proof before any initial input is admitted. */
-  onCreationAuthorization?: (authorization: ExternalActionExecutionAuthorizationV1) => void;
+  /** Host-only signer for the exact birth request under the admitted Action. */
+  authorizeRequest?: (request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>>;
   signal?: AbortSignal;
   validateStatus?: (status: number) => boolean;
 }>): Promise<AxiosResponse<T>> {
@@ -45,7 +41,8 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
     headers: {
       ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
       ...(params.creationAuthorizationToken ? { [SESSION_CREATION_AUTHORIZATION_HEADER_V1]: params.creationAuthorizationToken } : {}),
-      ...(params.authorizeRequest ? params.authorizeRequest(params.body) : { Authorization: `Bearer ${params.token}` }),
+      ...(params.authorizeRequest ? params.authorizeRequest({ method: 'POST', path: '/v1/sessions', body: params.body })
+        : { Authorization: `Bearer ${params.token}` }),
       'Content-Type': 'application/json',
     },
     // An admitted creation operation owns its lifetime through native open.
@@ -71,14 +68,6 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
   // Cancellation cannot undo a remote commit, but it cannot report success to
   // an invocation that has already retired either.
   params.signal?.throwIfAborted();
-  if (response.status === 200 && params.onCreationAuthorization) {
-    const value = response.headers?.[TEMPLATE_BIRTH_EXECUTION_AUTHORIZATION_HEADER_V1];
-    if (value !== undefined) {
-      const authorization = typeof value === 'string' ? decodeTemplateBirthExecutionAuthorizationV1(value) : null;
-      if (!authorization) throw new Error('Unexpected /v1/sessions birth authorization shape');
-      params.onCreationAuthorization(authorization);
-    }
-  }
   return response;
 }
 
@@ -97,11 +86,6 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
   teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
   creationAuthorizationToken?: string;
   authorizeRequest?: Parameters<typeof postSessionCreationRequest>[0]['authorizeRequest'];
-  templateRequesterAuthorization?: Readonly<{
-    authorization: ExternalActionExecutionAuthorizationV1;
-    originalActionEnvelope: ExternalActionRequestEnvelope;
-  }>;
-  onCreationAuthorization?: Parameters<typeof postSessionCreationRequest>[0]['onCreationAuthorization'];
   prepareCreationAuthorizationProof?: import('@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1').SessionCreationAuthorizationV1['prepareRequestProof'];
   accountEncryptionCurrentness?: AccountEncryptionCurrentnessResponse;
   signal?: AbortSignal;
@@ -183,7 +167,6 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
     throw new Error('Session creation commit precondition failed');
   }
   const body = {
-    ...(params.templateRequesterAuthorization ? { templateRequesterAuthorization: params.templateRequesterAuthorization } : {}),
     ...pickSessionCreateOriginFields(params),
     ...(params.manager !== undefined ? { manager: params.manager } : {}),
     tag: params.tag,
@@ -203,7 +186,6 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
     body: { ...body, ...(creationAuthorizationProof ? { creationAuthorizationProof } : {}) },
     ...(params.creationAuthorizationToken ? { creationAuthorizationToken: params.creationAuthorizationToken } : {}),
     ...(params.authorizeRequest ? { authorizeRequest: params.authorizeRequest } : {}),
-    ...(params.onCreationAuthorization ? { onCreationAuthorization: params.onCreationAuthorization } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     validateStatus: () => true,
   });
@@ -271,3 +253,4 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
       : {}),
   };
 }
+

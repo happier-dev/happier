@@ -11,6 +11,79 @@ import { projectSessionMessageReplyOutcome, readSessionMessageReplyCapability, r
 
 afterEach(() => vi.restoreAllMocks());
 
+it('settles a refused Discussion publication once without replacing its native outcome', async () => {
+  const discussion = { discussionId: 'discussion', messageId: 'question', throughSeq: 2, participantSessionId: 'participant' };
+  let progress: SessionMessageReplyProgressV1 = { v: 1, mode: 'return', disposition: 'return_pending',
+    acceptedTurnId: 'turn', discussion, outcome: { kind: 'pass' } };
+  vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: url.includes('/session-message-replies/pending')
+    ? { v: 1, entries: progress.disposition === 'return_pending' ? [{ requestSessionId: 'participant', requestLocalId: 'original', progress }] : [], nextAfter: null }
+    : { v: 1, status: 'available', progress } }));
+  const settlements: unknown[] = [];
+  vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
+    settlements.push(body);
+    progress = { ...progress, disposition: 'released', returnPublication: { kind: 'failed',
+      failure: { code: 'action_disabled', phase: 'action_admission', retryable: false } } };
+    return { status: 200, data: { v: 1, ok: true, progress } };
+  });
+  let publications = 0;
+  const input = { machineId: 'machine', serverId: 'home', credentials: { token: 'token', encryption: null },
+    signal: new AbortController().signal, isCurrent: async () => true,
+    machineAdmissionTransport: async () => { throw new Error('unexpected Session return'); },
+    markReturned: async () => { throw new Error('unexpected Session ACK'); },
+    publishDiscussionReply: async () => { publications++; return { v: 1 as const, ok: false as const,
+      error: 'discussion_post_denied' as const, failure: { code: 'action_disabled' as const, phase: 'action_admission' as const, retryable: false } }; } };
+  await recoverSessionMessageRepliesForMachine(input);
+  await recoverSessionMessageRepliesForMachine(input);
+  expect(publications).toBe(1);
+  expect(settlements).toEqual([{ kind: 'discussion_publication', discussionId: 'discussion', messageId: 'question', acceptedTurnId: 'turn',
+    publication: { kind: 'failed', failure: { code: 'action_disabled', phase: 'action_admission', retryable: false } } }]);
+  expect(progress.outcome).toEqual({ kind: 'pass' });
+});
+
+it('retains private approval custody and does not republish it for repeated recovery hints', async () => {
+  const discussion = { discussionId: 'discussion', messageId: 'question', throughSeq: 2, participantSessionId: 'participant' };
+  const progress = { v: 1, mode: 'return', disposition: 'return_pending', acceptedTurnId: 'turn', discussion,
+    outcome: { kind: 'pass' }, returnPublication: { kind: 'approval_pending', artifactId: 'approval' } };
+  vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: url.includes('/session-message-replies/pending')
+    ? { v: 1, entries: [{ requestSessionId: 'participant', requestLocalId: 'original', progress }], nextAfter: null }
+    : { v: 1, status: 'available', progress } }));
+  let publications = 0;
+  const input = { machineId: 'machine', serverId: 'home', credentials: { token: 'token', encryption: null },
+    signal: new AbortController().signal, isCurrent: async () => true,
+    machineAdmissionTransport: async () => { throw new Error('unexpected Session return'); },
+    markReturned: async () => { throw new Error('unexpected Session ACK'); },
+    publishDiscussionReply: async () => { publications++; return { v: 1 as const, ok: false as const, error: 'discussion_post_denied' as const }; } };
+  await recoverSessionMessageRepliesForMachine(input);
+  await recoverSessionMessageRepliesForMachine(input);
+  expect(publications).toBe(0);
+});
+
+it('retries a retained transient return only when the transport state advances', async () => {
+  const discussion = { discussionId: 'discussion', messageId: 'question', throughSeq: 2, participantSessionId: 'participant' };
+  let progress: SessionMessageReplyProgressV1 = { v: 1, mode: 'return', disposition: 'return_pending', acceptedTurnId: 'turn', discussion, outcome: { kind: 'pass' } };
+  const failure = { code: 'discussions_unavailable' as const, phase: 'session_transport' as const, retryable: true };
+  vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: url.includes('/session-message-replies/pending')
+    ? { v: 1, entries: [{ requestSessionId: 'participant', requestLocalId: 'original', progress }], nextAfter: null }
+    : { v: 1, status: 'available', progress } }));
+  vi.spyOn(axios, 'post').mockImplementation(async () => {
+    progress = { ...progress, returnPublication: { kind: 'failed', failure } };
+    return { status: 200, data: { v: 1, ok: true, progress } };
+  });
+  let publications = 0;
+  const input = { machineId: 'machine', serverId: 'home', credentials: { token: 'token', encryption: null },
+    signal: new AbortController().signal, isCurrent: async () => true,
+    machineAdmissionTransport: async () => { throw new Error('unexpected Session return'); },
+    markReturned: async () => { throw new Error('unexpected Session ACK'); },
+    publishDiscussionReply: async () => { publications++; return { v: 1 as const, ok: false as const,
+      error: 'discussions_unavailable' as const, failure }; } };
+  await recoverSessionMessageRepliesForMachine(input);
+  await recoverSessionMessageRepliesForMachine(input);
+  expect(publications).toBe(1);
+  expect(progress.disposition).toBe('return_pending');
+  await recoverSessionMessageRepliesForMachine({ ...input, retryFailedPublications: true });
+  expect(publications).toBe(2);
+});
+
 it('holds a missing scoped capability authorization without falling back to the Account bearer', async () => {
   const read = vi.spyOn(axios, 'get');
   expect(await readSessionMessageReplyCapability({ credentials: { token: 'account-token' }, sessionId: 'target',
@@ -31,7 +104,6 @@ it('recovers a human-origin return through the original reply owner without a so
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     if (url.includes('/session-message-replies/pending')) return { status: 200, data: { v: 1,
       entries: [{ requestSessionId, requestLocalId: 'human-ask', progress }], nextAfter: null } };
-    if (url.endsWith('/by-local-id/human-ask/reply')) return { status: 200, data: { v: 1, status: 'available', progress } };
     if (url.endsWith('/delivery-mutes')) return { status: 200, data: { scopes: [] } };
     if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
       mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
@@ -57,6 +129,7 @@ it('recovers a human-origin return through the original reply owner without a so
     }) }) },
   })]);
   expect(returned).toEqual([{ requestSessionId, requestLocalId: 'human-ask', returnedInputLocalId: localId }]);
+  expect(vi.mocked(axios.get).mock.calls.filter(([url]) => url.endsWith('/by-local-id/human-ask/reply'))).toHaveLength(0);
 });
 
 it.each(['pass', 'failed', 'cancelled', 'terminal_no_result'] as const)('returns a Discussion %s through its resource publisher without sending to the causal Session', async kind => {
@@ -69,10 +142,11 @@ it.each(['pass', 'failed', 'cancelled', 'terminal_no_result'] as const)('returns
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     if (url.includes('/session-message-replies/pending')) return { status: 200, data: { v: 1,
       entries: [{ requestSessionId, requestLocalId: 'original', progress }], nextAfter: null } };
-    if (url.endsWith('/by-local-id/original/reply')) return { status: 200, data: { v: 1, status: 'available', progress } };
     throw new Error(`unexpected_discussion_return_read:${url}`);
   });
   const { recoverSessionMessageRepliesForMachine } = await import('./sessionMessageReply');
+  vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { v: 1, ok: true, progress: { ...progress,
+    disposition: 'released' } } });
   const input = { machineId: 'machine', serverId: 'home', credentials: { token: 'token', encryption: null },
     signal: new AbortController().signal, isCurrent: async () => true,
     machineAdmissionTransport: async () => { throw new Error('A Discussion return must not enter a Session'); },
@@ -174,6 +248,7 @@ it.each([
   { mode: 'continue', active: false },
 ] as const)('returns a $mode question answer with an active=$active asker through receiver admission', async ({ mode, active }) => {
   const sessionId = 'c' + 'a'.repeat(24);
+  let observedActive = active;
   const sent: Array<SessionPendingEnqueueByMachineRequestV1 | SessionPendingExecutionRunEnqueueByMachineRequestV2> = [];
   vi.spyOn(axios, 'get').mockImplementation(async (url) => {
     if (url.endsWith('/delivery-mutes')) return { status: 200, data: { scopes: [] } };
@@ -182,7 +257,7 @@ it.each([
       recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
     } };
     if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
-      id: sessionId, encryptionMode: 'plain', active, latestTurnStatus: 'in_progress',
+      id: sessionId, encryptionMode: 'plain', active: observedActive, latestTurnStatus: 'in_progress',
       pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
       metadata: JSON.stringify({ machineId: 'machine-a', path: '/repo', claudeSessionId: 'native-1',
         runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } }),
@@ -192,7 +267,10 @@ it.each([
   const { deliverSessionMessageReply } = await import('./sessionMessageReply');
   const actionRequestAttributionV1 = { requestRef: 'bob-input', requester: { serverId: 'home', accountId: 'bob' },
     persona: { serverId: 'home', sessionId: 'release-bot' }, origin: null };
-  const machineResumeTransport = vi.fn(async () => ({ type: 'success' as const, sessionId }));
+  const machineResumeTransport = vi.fn(async () => {
+    observedActive = true;
+    return { type: 'success' as const, sessionId };
+  });
   const deliver = () => deliverSessionMessageReply({
     credentials: { token: 'token', encryption: null }, sessionId,
     requestSessionId: sessionId, requestLocalId: 'question-1',
@@ -237,9 +315,7 @@ it('recovers the original pending return after a lost receipt without a second a
     actionRequestAttributionV1: originalCause });
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     if (url.includes('/session-message-replies/pending')) return { status: 200, data: { v: 1,
-      entries: [{ requestSessionId, requestLocalId: 'original-ask', progress: { ...progress(),
-        actionRequestAttributionV1: { ...originalCause, requester: { serverId: 'home', accountId: 'carol' } } } }], nextAfter: null } };
-    if (url.endsWith('/by-local-id/original-ask/reply')) return { status: 200, data: { v: 1, status: 'available', progress: progress() } };
+      entries: [{ requestSessionId, requestLocalId: 'original-ask', progress: progress() }], nextAfter: null } };
     if (url.endsWith('/delivery-mutes')) return { status: 200, data: { scopes: [] } };
     if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
       mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -274,7 +350,7 @@ it('recovers the original pending return after a lost receipt without a second a
   expect(admittedCauses).toEqual([originalCause, originalCause]);
 });
 
-it('rereads native return custody and stops before admission after Machine credentials retire', async () => {
+it('uses admitted native return custody and stops before admission after local Machine activity retires', async () => {
   const requestSessionId = 'c' + 'f'.repeat(24);
   const sourceSessionId = 'c' + '1'.repeat(24);
   const returnRecipient = { kind: 'execution_run', runId: 'run-source' } as const;
@@ -286,8 +362,7 @@ it('rereads native return custody and stops before admission after Machine crede
   const marked: string[] = [];
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     if (url.includes('/session-message-replies/pending')) return { status: 200, data: { v: 1,
-      entries: [{ requestSessionId, requestLocalId: 'ask', progress }], nextAfter: null } };
-    if (url.endsWith('/by-local-id/ask/reply')) return { status: 200, data: { v: 1, status: 'available', progress, returnRecipient } };
+      entries: [{ requestSessionId, requestLocalId: 'ask', progress, returnRecipient }], nextAfter: null } };
     if (url.endsWith('/delivery-mutes')) return { status: 200, data: { scopes: [] } };
     if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
       mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
@@ -318,15 +393,11 @@ it('rereads native return custody and stops before admission after Machine crede
   expect(marked).toHaveLength(1);
 });
 
-it.each(['none', 'unavailable'] as const)('does not disclose a stale inventory outcome when original custody is %s', async status => {
-  const requestSessionId = 'c' + '4'.repeat(24);
+it('does not read content or publish when the next admitted inventory has no eligible originals', async () => {
   const effects = vi.fn();
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     if (url.includes('/session-message-replies/pending')) return { status: 200, data: { v: 1,
-      entries: [{ requestSessionId, requestLocalId: 'revoked', progress: { v: 1, mode: 'return', disposition: 'return_pending',
-        acceptedTurnId: 'turn', sourceSession: { sourceSessionId: 'source', sourceTurnId: 'source-turn', via: 'action' },
-        outcome: { kind: 'answer', result: { sessionId: requestSessionId, messageId: 'private' } } } }], nextAfter: null } };
-    if (url.endsWith('/by-local-id/revoked/reply')) return { status: 200, data: { v: 1, status } };
+      entries: [], nextAfter: null } };
     throw new Error('Unexpected content read after original custody became unavailable');
   });
   const { recoverSessionMessageRepliesForMachine } = await import('./sessionMessageReply');
@@ -349,7 +420,6 @@ it('rechecks installed custody before waking an inactive requester after Pending
   vi.spyOn(axios, 'get').mockImplementation(async url => {
     if (url.includes('/session-message-replies/pending')) return { status: 200, data: { v: 1,
       entries: [{ requestSessionId, requestLocalId: 'ask', progress }], nextAfter: null } };
-    if (url.endsWith('/by-local-id/ask/reply')) return { status: 200, data: { v: 1, status: 'available', progress } };
     if (url.endsWith('/delivery-mutes')) return { status: 200, data: { scopes: [] } };
     if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
       mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };

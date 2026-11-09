@@ -56,6 +56,11 @@ describe('CLI inactive goal transport', () => {
         });
         await expect(actionDeps.sessionGoalSet!({ sessionId, status: 'complete' }))
             .resolves.toMatchObject({ workState: { items: [expect.objectContaining({ status: 'complete' })] } });
+        for (const mutation of [{ status: 'blocked' as const }, { objective: 'Resolve the blocker', status: 'blocked' as const }]) {
+            await expect(actionDeps.sessionGoalSet!({ sessionId, ...mutation, resumeInactiveWithInitialGoal: false }))
+                .resolves.toMatchObject({ workState: { items: [expect.objectContaining({ status: mutation.status,
+                    ...('objective' in mutation ? { title: mutation.objective } : {}) })] } });
+        }
     });
 
     it('refuses an authenticated daemon wake without its Goal owner and still checks caller authority', async () => {

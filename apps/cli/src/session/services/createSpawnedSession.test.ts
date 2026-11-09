@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
-import axios from 'axios';
+import axios, { AxiosError, AxiosHeaders } from 'axios';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -16,6 +16,7 @@ import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotFor
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { artifactKindListResponse } from '@/testkit/http/artifactHome';
 import { configuration } from '@/configuration';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
@@ -30,7 +31,6 @@ const sendSessionMessage = vi.hoisted(() => vi.fn());
 const callMachineRpc = vi.hoisted(() => vi.fn());
 const requestSessionStop = vi.hoisted(() => vi.fn());
 const archiveSessionOnceInactive = vi.hoisted(() => vi.fn());
-const archiveSessionByIdBestEffort = vi.hoisted(() => vi.fn());
 const fetchAccountEncryptionCurrentness = vi.hoisted(() => vi.fn());
 const updateSessionMetadataWithRetry = vi.hoisted(() => vi.fn());
 const loggerWarn = vi.hoisted(() => vi.fn());
@@ -80,7 +80,6 @@ vi.mock('@/utils/logger', () => ({
 vi.mock('./sendSessionMessage', () => ({ sendSessionMessage }));
 vi.mock('./requestSessionStop', () => ({ requestSessionStop }));
 vi.mock('./archiveSessionOnceInactive', () => ({ archiveSessionOnceInactive }));
-vi.mock('./setSessionArchivedState', () => ({ archiveSessionByIdBestEffort }));
 
 import { createSpawnedSession, type CreateSpawnedSessionParams } from './createSpawnedSession';
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol';
@@ -138,6 +137,17 @@ function createLaunchedSessionProjection(sessionId: string, options: SpawnSessio
   });
 }
 
+function mockAbsentInitialInputAtHttpBoundary() {
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    if (String(url).endsWith('/pending')) return { status: 200, data: { pending: [] } };
+    if (String(url).includes('/messages/by-local-id/')) {
+      throw new AxiosError('Not found', 'ERR_BAD_REQUEST', undefined, undefined,
+        { status: 404, data: { error: 'Message not found' }, statusText: 'Not found', headers: {}, config: { headers: new AxiosHeaders() } });
+    }
+    throw new Error(`Unexpected initial input read ${url}`);
+  });
+}
+
 describe('createSpawnedSession settlement', () => {
   const credentials: Credentials = {
     token: 'token',
@@ -150,6 +160,7 @@ describe('createSpawnedSession settlement', () => {
   };
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     vi.useRealTimers();
   });
@@ -165,7 +176,6 @@ describe('createSpawnedSession settlement', () => {
     callMachineRpc.mockReset();
     requestSessionStop.mockReset();
     archiveSessionOnceInactive.mockReset();
-    archiveSessionByIdBestEffort.mockReset();
     fetchAccountEncryptionCurrentness.mockReset();
     updateSessionMetadataWithRetry.mockReset();
     loggerWarn.mockReset();
@@ -173,7 +183,6 @@ describe('createSpawnedSession settlement', () => {
     validateStoredAuthTokenAgainstActiveServer.mockResolvedValue({ state: 'valid' });
     requestSessionStop.mockResolvedValue({ ok: true, sessionId: 'session-abandoned', stopped: true });
     archiveSessionOnceInactive.mockResolvedValue({ archivedAt: 123 });
-    archiveSessionByIdBestEffort.mockResolvedValue(undefined);
     fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1 });
     lookupSessionsByTags.mockResolvedValue({ state: 'available', tags: [], sessions: [] });
   });
@@ -236,7 +245,7 @@ describe('createSpawnedSession settlement', () => {
       if (String(url).includes('/v1/machines/')) return { status: 200, data: { machine: { id: 'machine-1', revokedAt: null,
         replacedByMachineId: null, operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1, 2] } } } } };
       if (new URL(String(url)).pathname === '/v1/artifacts' && new URL(String(url)).searchParams.has('kinds')) {
-        return { status: 200, data: { items: [], hasUnclassified: false } };
+        return { status: 200, data: artifactKindListResponse([]) };
       }
       if (new URL(String(url)).pathname === '/v1/artifacts') return { status: 200, data: artifactHeaders };
       throw new Error(`Unexpected inheritance read: ${url}`);
@@ -478,6 +487,7 @@ describe('createSpawnedSession settlement', () => {
       ),
     });
 
+    mockAbsentInitialInputAtHttpBoundary();
     const buildInitialInputHandoff = vi.fn((localId: string) => ({
       ...buildSessionSpawnInitialInputAdmissionForLocalIdV1({
         actionCaller: { kind: 'host' as const },
@@ -549,6 +559,7 @@ describe('createSpawnedSession settlement', () => {
       machineAdmissionTransport,
     }));
     expect(fetchSessionById).toHaveBeenCalledWith({
+      reason: 'session-control',
       token: 'token',
       sessionId: 'session-created',
       signal: cancellation.signal,
@@ -950,6 +961,7 @@ describe('createSpawnedSession settlement', () => {
       callerSurface: 'cli',
       localId: 'fixture-existing',
     });
+    mockAbsentInitialInputAtHttpBoundary();
 
     const result = await createSpawnedSession({
       credentials,
@@ -1187,6 +1199,7 @@ describe('createSpawnedSession settlement', () => {
       localId: 'fixture-message-transport-failed',
     });
     sendSessionMessage.mockRejectedValue(new Error('Session Message transport acknowledgement failed'));
+    mockAbsentInitialInputAtHttpBoundary();
 
     await expect(createSpawnedSession({
       credentials,
@@ -1662,6 +1675,24 @@ describe('createSpawnedSession settlement', () => {
       code: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT,
       details: { agentId: 'codex', spawnNonce: 'agent-setup-nonce' },
     });
+  });
+
+  it('names a folder that vanished after target preparation instead of a generic spawn failure', async () => {
+    callMachineRpc.mockImplementation(async ({ method }) => method === RPC_METHODS.SPAWN_HAPPY_SESSION
+      ? { type: 'requestToApproveDirectoryCreation', directory: '/repo' }
+      : { status: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'unused' });
+
+    const failure = await createSpawnedSession({
+      credentials, directory: '/repo', machineId: 'machine-exact',
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      spawnNonce: 'vanished-folder-nonce',
+    }).then(() => null, (error: unknown) => error);
+    expect(failure).toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING });
+    // The public creation projector keeps that cause for the UI instead of `conflict`.
+    const { projectSessionSpawnFailure } = await import('@/session/creation/projectSessionSpawnFailure');
+    expect(projectSessionSpawnFailure({ errorCode: (failure as { code: string }).code,
+      errorMessage: (failure as Error).message })).toMatchObject({ type: 'error', code: 'spawn_failed',
+      launchError: { code: SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING } });
   });
 
   it('keeps a known direct Session successful when server visibility is still unavailable', async () => {
@@ -2233,7 +2264,6 @@ describe('createSpawnedSession settlement', () => {
     });
     expect(requestSessionStop).toHaveBeenCalledOnce();
     expect(cleanupOrder).toEqual(['stop', 'archive']);
-    expect(archiveSessionByIdBestEffort).not.toHaveBeenCalled();
   });
 
   it('resumes a caller-owned ambiguous predecessor nonce without a second spawn', async () => {

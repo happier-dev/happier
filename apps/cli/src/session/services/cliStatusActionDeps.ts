@@ -57,6 +57,7 @@ export function createCliSessionStatusActionDeps(
       };
       if (!await sessionHome(serverId) || !await sessionHome(context?.serverId)) return executionRunActionFailure('server_scope_mismatch');
       const credentials = params.credentials;
+      const effectActionId = context?.externalActionExecutionAuthorization?.binding.actionId ?? 'session.status.get';
       // Only the existing admitted host authority may use the ordinary Account
       // transport. Preserve signed/custom credentials and automation ceilings;
       // a different read token must never borrow the content credential to write.
@@ -82,7 +83,7 @@ export function createCliSessionStatusActionDeps(
               || params.savedSecretOperationContext.serverHttpBaseUrl.replace(/\/+$/, '')
                 !== (params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl()).replace(/\/+$/, ''))) return undefined;
             const authority: ProjectAccountRowsInput = context?.externalActionExecutionAuthorization
-              ? projectRowsAuthority(context, 'session.status.get', operationSignal)
+              ? projectRowsAuthority(context, effectActionId, operationSignal)
               : { credentials, serverId: projectHomeId, ...(operationSignal ? { signal: operationSignal } : {}),
                 sessionCustody: { serverId: projectHomeId, accountId: accountId!,
                   serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
@@ -112,7 +113,7 @@ export function createCliSessionStatusActionDeps(
         ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
         ...(params.serverHttpBaseUrl ? { serverHttpBaseUrl: params.serverHttpBaseUrl } : {}),
         resolveAuthorizationHeaders: ordinaryAccountRead ? undefined
-          : request => resolveServerRequestHeaders(context, 'session.status.get', request),
+          : request => resolveServerRequestHeaders(context, effectActionId, request),
         ...(context?.externalActionExecutionAuthorization ? { authorization: context.externalActionExecutionAuthorization } : {}),
         // A credential-only external root has no requester Machine projection. Never use host custody instead.
         ...(!context?.externalActionCredential || context.externalActionExecutionAuthorization ? {
@@ -126,7 +127,7 @@ export function createCliSessionStatusActionDeps(
               ...(operationSignal ? { signal: operationSignal } : {}),
             }));
             const authorizeRequest = (request: Readonly<{ method: string; path: string; body?: unknown }>) =>
-              resolveServerRequestHeaders(currentContext, 'session.status.get', request);
+              resolveServerRequestHeaders(currentContext, effectActionId, request);
             const [{ createCliConnectedAccountCatalogStore }, { fetchAccountProfile }] = await Promise.all([import("@/settings/connectedAccounts/connectedAccountCatalogStore"), import("@/api/accountProfile")]);
             const store = teamSelection ? null : createCliConnectedAccountCatalogStore({ credentials, operationContext: params.savedSecretOperationContext,
               authorizeRequest, ...(operationSignal ? { signal: operationSignal } : {}) });

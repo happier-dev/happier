@@ -10,7 +10,7 @@ const registryMocks = vi.hoisted(() => ({
   isRuntimeRegistryCurrent: vi.fn(() => true),
 }));
 
-vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
+vi.mock('@/plugins/projection/registry/builtIn/snapshot', () => ({
   getResolvedContributionRegistry: registryMocks.getResolvedContributionRegistry,
 }));
 

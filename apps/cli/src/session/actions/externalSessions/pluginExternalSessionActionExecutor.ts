@@ -12,7 +12,6 @@ import type { StoredCredentials } from '@/persistence';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { configuration } from '@/configuration';
 import {
-  isExternalSessionOperationTerminalReceiptExpired,
   readExternalSessionOperationStoredEntry,
   resolveExternalSessionOperationAccountScope,
   resolveExternalSessionPluginOperationPreflightAdmission,
@@ -23,6 +22,7 @@ import {
 import type {
   ExternalSessionPluginMaterializeStart,
 } from './materializeStartAction';
+import { executeBackgroundFollowTransport } from './backgroundFollowTransport';
 
 type PluginExternalSessionActionArgs = Parameters<
   NonNullable<ActionExecutorDeps['externalSessionAction']>
@@ -34,7 +34,6 @@ export type PluginExternalSessionMaterializeStart =
 type PluginExternalSessionActionExecutorOptions = Readonly<{
   materializeStart?: PluginExternalSessionMaterializeStart;
   activeServerDir?: string;
-  nowMs?: () => number;
 }>;
 
 function readSessionId(input: unknown): string | null {
@@ -54,8 +53,7 @@ function readSessionId(input: unknown): string | null {
 // projection and never arrive here; `SessionsService.external` owns the
 // author-facing dynamic follow surface.
 function isViewerAction(actionId: PluginExternalSessionActionArgs['actionId']): boolean {
-  return actionId === 'sessions.external.status.get'
-    || actionId === 'sessions.external.backgroundFollow.set';
+  return actionId === 'sessions.external.status.get';
 }
 
 function operationStatusFailure(
@@ -71,6 +69,11 @@ export async function executePluginExternalSessionAction(args: Readonly<
   const sessionId = readSessionId(args.input);
   if (!sessionId) {
     return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+  }
+  if (args.actionId === 'sessions.external.backgroundFollow.set') {
+    return await executeBackgroundFollowTransport({ credentials: args.credentials, input: args.input,
+      context: { surface: 'plugin', actionCaller: { kind: 'plugin', pluginId: args.pluginId } },
+      ...(args.signal ? { signal: args.signal } : {}) });
   }
   if (args.actionId === 'sessions.external.materialize.start') {
     const parsed = ExternalSessionMaterializeActionInputV1Schema.safeParse(args.input);
@@ -104,7 +107,7 @@ export async function executePluginExternalSessionAction(args: Readonly<
     // Session/account ownership — the durable owner must never become an
     // idempotency oracle for a caller that cannot read the Session's owner
     // metadata; (2) consult the durable author-intent owner so an already
-    // committed record or unexpired receipt replays, and changed intent
+    // committed record or retained receipt replays, and changed intent
     // conflicts, without reading the mutable current link; (3) only a true
     // miss parses/resolves the current external link before Start.
     const ownership = await authenticateOwnedExternalSessionRecord({
@@ -142,7 +145,6 @@ export async function executePluginExternalSessionAction(args: Readonly<
       accountScope,
       durableIdempotencyKey,
       authorIntent,
-      nowMs: (options.nowMs ?? Date.now)(),
     });
     if (preflight.kind === 'conflict') {
       return {
@@ -276,21 +278,8 @@ export async function executePluginExternalSessionAction(args: Readonly<
     }
     if (stored.kind === 'terminal_receipt') {
       const { receipt } = stored;
-      let expired: boolean;
-      try {
-        expired = isExternalSessionOperationTerminalReceiptExpired(
-          receipt,
-          (options.nowMs ?? Date.now)(),
-        );
-      } catch {
-        return operationStatusFailure(
-          'internal_error',
-          'External session operation status could not be read.',
-        );
-      }
       if (
-        expired
-        || receipt.reference.sessionId !== parsed.data.sessionId
+        receipt.reference.sessionId !== parsed.data.sessionId
         || receipt.reference.operationId !== parsed.data.operationId
       ) {
         return operationStatusFailure(

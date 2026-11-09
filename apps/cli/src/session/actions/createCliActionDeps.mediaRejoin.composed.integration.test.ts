@@ -48,7 +48,7 @@ describe('host media Action retry through HTTP and SQLite input custody', () => 
     const transcript = createSessionClientTranscriptApi({
       token: 'fixture', sessionId: session.id, outboundShapeLogger: { log: () => undefined },
       getSocket: () => ({ connected: false, emit: () => undefined }),
-      getLatestTurnSnapshot: () => null, getActiveLocalTurnProgressAt: () => null,
+      getLatestTurnSnapshot: () => null,
       getSessionConnectionSupervisor: () => null, getMetadataSnapshot: () => null,
       updateAgentState: async () => undefined, updateMetadata: async () => undefined,
       enqueueCommittedTranscriptMessage: async () => ({ persisted: true, delivered: false }),

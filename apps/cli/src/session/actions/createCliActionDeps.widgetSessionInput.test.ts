@@ -9,8 +9,57 @@ import { isWidgetAdmissionUndecidableHereV1 } from '@happier-dev/protocol/widget
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { createCliActionDeps } from './createCliActionDeps';
 import { createCounterWidgetFixture } from './widgetApproval.testkit';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it('reads the exact public declaration without saved layout or Artifact inventory reads and rejects a retired capture', async () => {
+  const fixture = createCounterWidgetFixture();
+  const publicPresentation = { kind: 'declarative' as const, document: { version: 1 as const,
+    root: { kind: 'text' as const, text: 'Reviewed public template' } } };
+  const projection = PluginProjectionV2Schema.parse({ ...fixture.projection,
+    familiesById: { ...fixture.projection.familiesById, pluginUi: { family: 'pluginUi', entriesById: {
+      counter: { ...fixture.projection.familiesById.pluginUi!.entriesById.counter, publicPresentation,
+        availability: { state: 'disabled', reason: 'offline', diagnostics: [] } },
+    } } } });
+  const token = `header.${Buffer.from(JSON.stringify({ sub: 'viewer' })).toString('base64url')}.signature`;
+  const contentReads: string[] = [];
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+    if (path === '/v2/account/settings') return { status: 200, data: AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 1 }) };
+    if (path.startsWith('/v1/artifacts') || path.includes('/system-records')) contentReads.push(path);
+    throw new Error(`Unexpected declaration HTTP read: ${path}`);
+  });
+  let current = true;
+  let retireDuringRead = false;
+  const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain', ctx: null,
+    serverId: 'local-profile', serverIdentityId: 'srv_public_template', serverHttpBaseUrl: 'https://public-template.test',
+    isCredentialCurrent: () => current,
+    machineActionDirectTargetTransport: { machineId: 'widget-machine', invoke: async () => {
+      if (retireDuringRead) current = false;
+      return { protocolVersion: 1, projection };
+    } } });
+  const surface = { serverId: 'srv_public_template', accountId: 'viewer',
+    owner: { kind: 'corePage' as const, pageId: 'public-profile', area: 'main' } };
+  const request = { surface, definition: fixture.definition, context: { surface: 'cli' as const, authority: 'present_user' as const } };
+  const read = () => deps.widgetCatalog!.readInstalledDescriptor!(request);
+  expect(await read()).toMatchObject({ title: 'Directory count', publicPresentation, availability: 'unavailable',
+    sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'filter' }] } });
+  expect(contentReads).toEqual([]);
+  expect(await deps.widgetCatalog!.readInstalledDescriptor!({ ...request,
+    surface: { ...surface, owner: { kind: 'home' } } })).toMatchObject({ title: 'Directory count', availability: 'unavailable' });
+  await expect(createActionExecutor(deps).execute('action.options.resolve', {
+    consumer: { kind: 'widget', surface: { ...surface, owner: { kind: 'home' } }, definition: fixture.definition }, fieldPath: 'filter',
+  }, { surface: 'cli', authority: 'present_user', serverId: surface.serverId }))
+    .resolves.toMatchObject({ ok: false, errorCode: 'input_type_consumer_unavailable' });
+  expect(contentReads).toEqual([]);
+  expect(await deps.widgetCatalog!.readInstalledDescriptor!({ ...request,
+    surface: { ...surface, accountId: 'another-account' } })).toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });
+  retireDuringRead = true;
+  expect(await read()).toMatchObject({ ok: false, errorCode: 'widget_scope_unavailable' });
+});
 
 /**
  * A Session picked from the `sessions` options source must be admitted by the same Home decision that

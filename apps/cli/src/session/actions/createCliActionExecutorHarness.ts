@@ -1,4 +1,4 @@
-import { StoredApprovalRequestSchema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2, type StoredApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
@@ -304,7 +304,7 @@ export function createCliActionExecutorHarness(
   const originalApprovalsUpdate = rawDeps.approvalsUpdate;
   const originalApprovalsCreate = rawDeps.approvalsCreate;
   const signedApprovalStoreForRequest = (request: ApprovalCreateArgs['request'] | ApprovalUpdateArgs['request']) => {
-    const origin = request.v === 2 ? request.executionOriginV1 : null;
+    const origin = request.v === 2 && !isHistoricalPublishApprovalRequestV2(request) ? request.executionOriginV1 : null;
     const authorization = origin?.externalActionExecutionAuthorization;
     const binding = authorization?.binding;
     const patBinding = binding && 'credentialId' in binding ? binding : null;
@@ -446,7 +446,7 @@ export function createCliActionExecutorHarness(
       }) : null;
       const getApproval = authorizedStore?.approvalsGet ?? deps.approvalsGet;
       if (!getApproval) return failure('approval_context_unavailable');
-      let observedRequest: ApprovalRequestV2 | undefined;
+      let observedRequest: StoredApprovalRequestV2 | undefined;
       const current = async () => !args.signal.aborted
         && (!args.isCurrent || await args.isCurrent()) && !args.signal.aborted;
       const observe = async (): Promise<ActionExecuteResult> => {

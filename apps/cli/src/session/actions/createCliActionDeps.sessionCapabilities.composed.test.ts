@@ -206,7 +206,7 @@ describe('Session capabilities composed Account and Machine seam', () => {
         expect(unavailableStatus).not.toHaveProperty('result.acceptedWorkspace');
         acceptedCheckoutReadable = true;
         const preview = await executor.execute('sessions.spawn.capabilities.preview', { machineId, agentId: 'codex' }, context);
-        expect(preview, JSON.stringify(failures.map(error => error instanceof Error ? error.message : error))).toMatchObject({ ok: true, result: { ok: true,
+        expect(preview, JSON.stringify({ preview, rpcResponses, failures: failures.map(error => error instanceof Error ? error.message : error) })).toMatchObject({ ok: true, result: { ok: true,
           mcp: { items: [{ id: 'mcp-linear', selected: false, reason: 'rule_off' }] } } });
         if (!preview.ok) throw new Error(preview.error);
         SpawnCapabilitiesPreviewSuccessV1Schema.parse(preview.result);
@@ -237,7 +237,7 @@ describe('Session capabilities composed Account and Machine seam', () => {
         }
         catalog.bindings = defaultBindings; catalogRevision++;
         await runWithServerHttpBaseUrl(base, () => refreshActiveMcpServerCatalog({ credentials }));
-        const transport = await resolveSessionTransportContext({ credentials, idOrPrefix: sessionId });
+        const transport = await resolveSessionTransportContext({ reason: 'session-action', credentials, idOrPrefix: sessionId });
         expect(transport).toMatchObject({ ok: true });
         if (!transport.ok) throw new Error(`Canonical fixture read failed: ${transport.code}`);
         const opened = tryDecryptSessionOwnerMetadataView({ credentials, accountEncryptionMode: transport.accountEncryptionCurrentness.mode,

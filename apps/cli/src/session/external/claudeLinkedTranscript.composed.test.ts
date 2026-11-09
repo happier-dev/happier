@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { ExternalSessionLinkEnsureResponseSchema, ExternalSessionsCandidatesListResponseSchema, ExternalSessionTranscriptPageResponseSchema, ExternalSessionTranscriptReadAfterResponseSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
 import { readInitialTranscriptSourceWindow } from '@happier-dev/agents';
 import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 import { parseStableSessionMessageRouteId } from '@happier-dev/session-core/messages';
@@ -68,6 +69,9 @@ const serverPath = '../../../../ui/sources/sync/domains/server/serverRuntime';
 const linkPath = '../../../../ui/sources/sync/domains/session/external/readExternalSessionLink';
 const sourcePath = '../../../../ui/sources/components/sessions/transcript/source/readOnlySessionTranscriptSource';
 const findPath = '../../../../ui/sources/components/sessions/transcript/find/useTranscriptFind';
+const normalizationPath = '../../../../ui/sources/sync/runtime/external/normalizeExternalSessionTranscriptMessages';
+const findSeedPath = '../../../../ui/sources/components/appShell/panes/fileFindSeedHandoff';
+const matcherPath = '../../../../../packages/plugin-ui/src/presentation/find/matchFindText';
 const { sync } = await import(syncPath) as typeof import('../../../../ui/sources/sync/syncEngine');
 const { storage } = await import(statePath) as typeof import('../../../../ui/sources/sync/domains/state/storage');
 const { createSessionFixture } = await import(fixturesPath) as typeof import('../../../../ui/sources/dev/testkit/fixtures/sessionFixtures');
@@ -75,12 +79,15 @@ const { getActiveServerSnapshot } = await import(serverPath) as typeof import('.
 const { readExternalSessionLink } = await import(linkPath) as typeof import('../../../../ui/sources/sync/domains/session/external/readExternalSessionLink');
 const { createReadOnlySessionTranscriptSource } = await import(sourcePath) as typeof import('../../../../ui/sources/components/sessions/transcript/source/readOnlySessionTranscriptSource');
 const { createTranscriptFindModel } = await import(findPath) as typeof import('../../../../ui/sources/components/sessions/transcript/find/useTranscriptFind');
+const { normalizeExternalSessionTranscriptMessages } = await import(normalizationPath) as typeof import('../../../../ui/sources/sync/runtime/external/normalizeExternalSessionTranscriptMessages');
+const { resolveChatFindSeed } = await import(findSeedPath) as typeof import('../../../../ui/sources/components/appShell/panes/fileFindSeedHandoff');
+const { matchFindText } = await import(matcherPath) as typeof import('../../../../../packages/plugin-ui/src/presentation/find/matchFindText');
+const { pluginReloadController } = await import('@/plugins/runtime/reload/singleton');
+const { createAdmittedPluginRuntimeFixture } = await import('@/plugins/testkit/admittedRuntime');
 
 it('keeps a linked native Claude transcript readable, pageable and searchable across an unknown record', async () => {
     const root = await mkdtemp(join(tmpdir(), 'claude-linked-transcript-'));
     const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
-    const { pluginReloadController } = await import('@/plugins/runtime/reload/singleton');
-    const { createAdmittedPluginRuntimeFixture } = await import('@/plugins/testkit/admittedRuntime');
     let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
     let registration: ReturnType<typeof registerMachineExternalSessionsRpcHandlers> | undefined;
     try {
@@ -240,16 +247,19 @@ it('keeps a linked native Claude transcript readable, pageable and searchable ac
         }
         expect(pageCount).toBeGreaterThanOrEqual(3);
         expect(JSON.stringify(published)).toContain('older fixture needle');
-        const normalizationPath = '../../../../ui/sources/sync/runtime/external/normalizeExternalSessionTranscriptMessages';
-        const findSeedPath = '../../../../ui/sources/components/appShell/panes/fileFindSeedHandoff';
-        // Runtime imports retain each package's compiler ownership while this
-        // composed check exercises the actual receiving UI owners.
-        const { normalizeExternalSessionTranscriptMessages } = await import(normalizationPath) as {
-            normalizeExternalSessionTranscriptMessages(items: typeof page.items, identity: { agentId: string; remoteSessionId: string }): NormalizedMessage[];
-        };
-        const { resolveChatFindSeed } = await import(findSeedPath) as {
-            resolveChatFindSeed(seed: { query: string; target: { kind: 'native-message'; agentId: string; remoteSessionId: string; sourceItemId: string } }): { query: string; options: { matchCase: boolean; regex: boolean }; target: { kind: string; routeMessageId?: string } };
-        };
+        // The media projection retains image-result correlation without a second
+        // unsupported-image row; empty signed thinking is also withheld. Check
+        // every visible source identity across page boundaries.
+        expect(published.map(item => item.localId)).toEqual([
+            ...Array.from({ length: 405 }, (_, index) => `claude-jsonl:main:user:history-${index}`)
+                .flatMap((localId, index) => index !== 12 ? [localId] : [localId,
+                    'claude-jsonl:main:assistant:image-read:tool_use:0',
+                    'claude-jsonl:main:user:image-result:tool_result:0',
+                ]),
+            'claude-jsonl:main:user:prompt',
+            null,
+            'claude-jsonl:main:assistant:answer',
+        ]);
         const seed = resolveChatFindSeed({ query: 'fixture answer needle', target: { kind: 'native-message', agentId: 'claude', remoteSessionId: candidate.remoteSessionId, sourceItemId: candidate.match!.sourceItemId } });
         expect(seed).toMatchObject({ query: 'fixture answer needle', options: { matchCase: false, regex: false } });
         expect(seed.target.kind).toBe('route-message-id');
@@ -258,15 +268,13 @@ it('keeps a linked native Claude transcript readable, pageable and searchable ac
         expect(targetRef?.kind).toBe('server');
         if (targetRef?.kind !== 'server') throw new Error('Expected a stable imported message reference');
         const normalized = normalizeExternalSessionTranscriptMessages(published, { agentId: 'claude', remoteSessionId: candidate.remoteSessionId });
-        expect(normalized).toHaveLength(411);
+        expect(normalized.map(item => item.id)).toEqual(published.map(item =>
+            makeExternalSessionHistoricalImportLocalId({ agentId: 'claude',
+                remoteSessionId: candidate.remoteSessionId, directItemId: item.id })));
         expect(JSON.stringify(normalized).includes('A'.repeat(628_392))).toBe(false);
         expect(JSON.stringify(normalized)).not.toContain('unknown private payload');
         expect(normalized.filter(item => JSON.stringify(item).includes('Agent emitted an unsupported content block.'))).toHaveLength(1);
         expect(JSON.stringify(normalized.find(item => item.id === targetRef.value))).toContain('fixture answer needle');
-        const matcherPath = '../../../../../packages/plugin-ui/src/presentation/find/matchFindText';
-        const { matchFindText } = await import(matcherPath) as {
-            matchFindText(text: string, query: string, options: { matchCase: boolean; regex: boolean }): { ranges: [number, number][] } | { invalidPattern: true };
-        };
         const findText = (item: NormalizedMessage) => item.role === 'user' ? item.content.text
             : item.role === 'agent' ? item.content.flatMap(part => part.type === 'text' ? [part.text] : []).join('\n') : '';
         const targetMessage = normalized.find(item => item.id === targetRef.value);

@@ -55,11 +55,11 @@ describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
       policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
       members: [{ profileId: 'primary', priority: 1, createdAtMs: 1, enabled: true },
         { profileId: 'backup', priority: 2, createdAtMs: 2, enabled: true }],
-      memberStatesByProfileId: new Map([['backup', { quotaSnapshot: { capturedAtMs: 1000, effectiveRemainingPercent: 99 } }]]),
+      memberStatesByProfileId: new Map([['backup', { quotaSnapshot: { capturedAtMs: 1000, staleAfterMs: 60_000, effectiveRemainingPercent: 99 } }]]),
     };
     // Persistence and native application are the boundaries; policy and recovery remain real.
     const coordinator = new ConnectedServiceAuthGroupSwitchCoordinator({
-      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 1000, quotaFreshnessMs: 60_000,
+      leases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(), nowMs: () => 1000,
       loadState: async () => state,
       commitSwitch: async ({ toProfileId, expectedGeneration }) => {
         expect(state.generation).toBe(expectedGeneration);

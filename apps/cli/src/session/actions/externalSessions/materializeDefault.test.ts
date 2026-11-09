@@ -1838,12 +1838,12 @@ describe('default external session materialize capture', () => {
     ['plain-many', 20, 'plain'],
     ['e2ee-keyed', 1, 'e2ee'],
   ] as const)(
-    'bounds current-link reads per replay phase and group for %s',
+    'finishes admitted %s replay after ambient credentials disappear without re-admission',
     async (caseLabel, itemCount, encryptionMode) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), `happier-materialize-bounded-currentness-${itemCount}-`));
     roots.push(activeServerDir);
-    readCredentialsMock.mockImplementation(async () => ({
-      token: 'token',
+    const admittedCredentials = {
+      token: `header.${Buffer.from(JSON.stringify({ sub: 'materialize-account' })).toString('base64url')}.signature`,
       encryption: encryptionMode === 'plain'
         ? null
         : {
@@ -1851,7 +1851,9 @@ describe('default external session materialize capture', () => {
           publicKey: new Uint8Array([1, 2]),
           machineKey: new Uint8Array([3, 4]),
         },
-    }));
+    };
+    let credentialsAvailable = true;
+    readCredentialsMock.mockImplementation(async () => credentialsAvailable ? admittedCredentials : null);
     const linked = {
       rawSession: {
         currentStorageState: 'machine_only',
@@ -1940,6 +1942,7 @@ describe('default external session materialize capture', () => {
       if (command.kind === 'begin') {
         linkReadsAtImportBegin = loadLinkedExternalSessionMock.mock.calls.length;
         credentialReadsAtImportBegin = readCredentialsMock.mock.calls.length;
+        credentialsAvailable = false;
         return {
           v: 1,
           kind: 'ready',
@@ -2014,8 +2017,8 @@ describe('default external session materialize capture', () => {
 
     expect(result).toMatchObject({ ok: true, progress: { status: 'completed' } });
     expect(linkReadsAtImportBegin).toBeGreaterThanOrEqual(0);
-    expect(linkReadsAtFirstBatch - linkReadsAtImportBegin).toBe(3);
-    expect(credentialReadsAtFirstBatch - credentialReadsAtImportBegin).toBe(4);
+    expect(linkReadsAtFirstBatch - linkReadsAtImportBegin).toBe(0);
+    expect(credentialReadsAtFirstBatch - credentialReadsAtImportBegin).toBe(0);
     },
   );
 
@@ -2357,7 +2360,7 @@ describe('default external session materialize capture', () => {
       'history:newest',
       'history:appended',
     ]);
-    expect(validateSource).toHaveBeenCalledTimes(2);
+    expect(validateSource).toHaveBeenCalledTimes(1);
     expect(stageItemMock).toHaveBeenCalledWith(expect.objectContaining({
       sourceReadRoots: transcriptMediaReadRoots,
     }));
@@ -2569,31 +2572,37 @@ describe('default external session materialize capture', () => {
       let serverPriorStableStorage: ExternalSessionPriorStableStorageV1 =
         machineOnlyPriorStableStorage;
       loadLinkedExternalSessionMock.mockResolvedValue({ ok: true, session: linked });
-      const pageTranscript = vi.fn(async () => ({
-        items: [{ id: 'initial' }],
-        nextCursor: null,
-        tailCursor: 'tail-1',
-        hasMore: false,
-        truncated: false,
-      }));
       let exposeSourceOutcome = true;
+      let occurrenceRetirement = new AbortController();
+      const pageTranscript = vi.fn(async () => {
+        // A completed page stays usable. The next native call owns the typed
+        // refusal when its exact Agent occurrence has actually disappeared.
+        if (outcome === 'source_unavailable' && exposeSourceOutcome) occurrenceRetirement.abort();
+        return {
+          items: [{ id: 'initial' }],
+          nextCursor: null,
+          tailCursor: 'tail-1',
+          hasMore: false,
+          truncated: false,
+        };
+      });
       const readAfterTranscript = vi.fn(async () => (
         exposeSourceOutcome
           ? { outcome }
           : { outcome: 'already_current' as const }
       ));
-      resolveSurfaceMock.mockResolvedValue({
+      resolveSurfaceMock.mockImplementation(async () => ({
         sourceCustody: { kind: 'development', registeredRootId: 'contribution-1' },
         occurrenceId: 'plugin-occurrence-1',
         resource: {
           pluginOccurrenceId: 'contribution-1',
-          retirementSignal: new AbortController().signal,
+          retirementSignal: occurrenceRetirement.signal,
         },
         providerOps: {
           pageTranscript,
           readAfterTranscript,
         },
-      });
+      }));
       prepareItemMock.mockImplementation(async ({ item }: { item: { id: string } }) => ({
         localId: `history:${item.id}`,
         sidechainId: null,
@@ -2678,6 +2687,7 @@ describe('default external session materialize capture', () => {
         .toEqual([]);
 
       exposeSourceOutcome = false;
+      occurrenceRetirement = new AbortController();
       serverPriorStableStorage = {
         state: 'snapshot_complete',
         publication: {

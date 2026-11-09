@@ -1,9 +1,9 @@
 import type { StoredCredentials } from '@/persistence';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { SessionForkVisualCopyV1Schema, SessionForkVisualOriginV1Schema, type SessionForkVisualCopyV1 } from '@happier-dev/protocol/sessions/board';
+import { SessionForkVisualCopyV1Schema, SessionForkVisualOriginV1Schema, resolveForkedTranscriptSessionBoardItemReferenceV1, resolvePublishedTranscriptSessionBoardItemReferenceV1, type SessionForkVisualCopyV1 } from '@happier-dev/protocol/sessions/board';
 import { SessionSurfaceItemV1StoredSchema } from '@happier-dev/protocol/sessions/board/item';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
-import { getSessionTranscriptSurfaceItemReferenceSourceKeyV1, type SessionTranscriptSurfaceItemReferenceMemberV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { getSessionTranscriptSurfaceItemReferenceSourceKeyV1, readSessionTranscriptSurfaceItemReferencesV1, type SessionTranscriptSurfaceItemReferenceMemberV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { applyReducedMessages, createRawMessageNormalizationSequenceState, createReducer, normalizeRawMessageInSequence, reducer, type OrderedTranscript } from '@happier-dev/session-core';
 import { configuration } from '@/configuration';
@@ -39,7 +39,7 @@ type SeedParams = Readonly<{
     accountEncryptionMode?: 'plain' | 'e2ee';
 }>;
 
-type VisualRow = { id: string; seq: number; raw: Record<string, unknown> };
+type VisualRow = { id: string; seq: number; raw: Record<string, unknown>; surfaceItemReference: unknown };
 type VisualCandidate = { message: ToolCallMessage; rows: readonly VisualRow[]; segment: ForkTranscriptSegment;
     crypto: SessionStoredContentCryptoContext };
 
@@ -77,7 +77,8 @@ async function readSegmentVisualCandidates(params: SeedParams, segment: ForkTran
                             const toolId = block.type === 'tool-call' ? block.id : block.type === 'tool-result' ? block.tool_use_id : null;
                             if (!toolId) continue;
                             const rows = rowsByToolId.get(toolId) ?? [];
-                            if (!rows.some(value => value.id === row.id)) rows.push({ id: row.id, seq: row.seq, raw });
+                            if (!rows.some(value => value.id === row.id)) rows.push({ id: row.id, seq: row.seq, raw,
+                                surfaceItemReference: row.surfaceItemReference });
                             rowsByToolId.set(toolId, rows);
                         }
                     }
@@ -109,7 +110,7 @@ export async function seedForkVisualCopies(params: SeedParams): Promise<readonly
     if (!sourceRaw || !childRaw) return copies;
     const childCrypto = resolveExactSessionOrCredentialCryptoContext(params, params.childSessionId, childRaw);
     if (!childCrypto) return copies;
-    const accountEncryptionMode = params.accountEncryptionMode ?? (await fetchAccountEncryptionCurrentness({ token: params.credentials.token })).mode;
+    const accountEncryptionMode = params.accountEncryptionMode ?? (await fetchAccountEncryptionCurrentness({ credentials: params.credentials, token: params.credentials.token })).mode;
     const { segments, acquisitionError } = await fetchForkTranscriptSegments({ credentials: params.credentials, accountEncryptionMode,
         startingSessionId: params.sourceSessionId, startingRawSession: sourceRaw, startingMetadata: params.sourceMetadata,
         upToSeqInclusive: params.cutoffSeqInclusive });
@@ -124,25 +125,50 @@ export async function seedForkVisualCopies(params: SeedParams): Promise<readonly
     // cannot authorize this Home's transport to read a different Home's records.
     const resolveServerScopeId = (id: string) => homeIdentityId && (id === activeServerId || id === homeIdentityId) ? homeIdentityId : null;
     const copiedByOrigin = new Map<string, { entry: SessionForkVisualCopyV1; revision: string | null }>();
+    const attemptedSources = new Set<string>();
     const lineageIndexBySessionId = new Map(segments.map((segment, index) => [segment.sessionId, index]));
     const importRows = new Map<string, { lineageIndex: number; sourceSeq: number;
         referencesBySource: Map<string, { originKey: string; reference: Pick<SessionTranscriptSurfaceItemReferenceMemberV1,
-            'sourceAddress' | 'sourceItemId' | 'sourceItemRevision'> }>;
-        item: { id: string; content: ReturnType<typeof sealSessionStoredContent> } }>();
+            'sourceAddress' | 'sourceItemId' | 'sourceItemRevision' | 'approvalRequestArtifactId'> }>;
+        item: { id: string; raw: Record<string, unknown> } }>();
     for (const { message, rows, segment, crypto: sourceCrypto } of candidates) {
         const originMeta = createStoredReadSchema(SessionForkVisualOriginV1Schema).safeParse(message.meta?.forkVisualOriginV1);
         const originAddress = originMeta.success
             ? { serverId: originMeta.data.serverId, sessionId: originMeta.data.sessionId }
             : { serverId: configuration.activeServerId, sessionId: segment.sessionId };
-        const acknowledgedReference = await resolveTranscriptVisualReference({ toolName: message.tool.name, state: message.tool.state,
+        let acknowledgedReference = await resolveTranscriptVisualReference({ toolName: message.tool.name, state: message.tool.state,
             input: message.tool.input, result: message.tool.result, address: originAddress });
+        let approvalRequestArtifactId: string | undefined;
+        if (!acknowledgedReference) {
+            for (const row of rows) {
+                for (const publishedReference of readSessionTranscriptSurfaceItemReferencesV1(row.surfaceItemReference) ?? []) {
+                    const settled = resolvePublishedTranscriptSessionBoardItemReferenceV1({
+                        toolName: message.tool.name, state: message.tool.state, input: message.tool.input, result: message.tool.result,
+                        publishedReference, publishedSessionId: segment.sessionId, resolveServerScopeId,
+                    });
+                    if (!settled) continue;
+                    acknowledgedReference = settled;
+                    if ('approvalRequestArtifactId' in publishedReference) approvalRequestArtifactId = publishedReference.approvalRequestArtifactId;
+                    break;
+                }
+                if (acknowledgedReference) break;
+            }
+        }
+        if (!acknowledgedReference && originMeta.success) {
+            acknowledgedReference = resolveForkedTranscriptSessionBoardItemReferenceV1({
+                toolName: message.tool.name, state: message.tool.state, input: message.tool.input, result: message.tool.result,
+                origin: originMeta.data, publishedSessionId: segment.sessionId,
+            });
+            approvalRequestArtifactId = acknowledgedReference?.approvalRequestArtifactId;
+        }
         if (!acknowledgedReference || !areServerProfileIdentifiersEquivalent(acknowledgedReference.address.serverId,
             activeServerId, resolveServerScopeId)) continue;
         // One proven Home identity owns copy identity and imported provenance,
         // even when old and current acknowledgements use different profile labels.
         const reference = { ...acknowledgedReference, address: { ...acknowledgedReference.address,
             serverId: homeIdentityId ?? acknowledgedReference.address.serverId } };
-        const sourceReference = { sourceAddress: reference.address, sourceItemId: reference.itemId, sourceItemRevision: reference.itemRevision };
+        const sourceReference = { sourceAddress: reference.address, sourceItemId: reference.itemId, sourceItemRevision: reference.itemRevision,
+            ...(approvalRequestArtifactId ? { approvalRequestArtifactId } : {}) };
         const sourceReferenceKey = getSessionTranscriptSurfaceItemReferenceSourceKeyV1(sourceReference);
         const origin = { originServerId: reference.address.serverId, originSessionId: reference.address.sessionId, originItemId: reference.itemId };
         const key = JSON.stringify(origin);
@@ -161,27 +187,31 @@ export async function seedForkVisualCopies(params: SeedParams): Promise<readonly
                         && value.data.originSessionId === origin.originSessionId && value.data.originItemId === origin.originItemId) : undefined;
                 const sourceItemId = sourceCopy?.success && sourceCopy.data.status === 'copied' ? sourceCopy.data.itemId
                     : reference.address.sessionId === segment.sessionId ? reference.itemId : null;
-                const address = { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: itemId } as const;
-                const existing = await readSessionSystemRecordV1({ token: params.credentials.token, sessionId: params.childSessionId, address });
-                if (existing) {
-                    const item = SessionSurfaceItemV1StoredSchema.parse(openSessionSystemRecord(childCrypto, existing).content);
-                    if (item.destination !== 'transcript') throw new Error('Fork visual destination mismatch');
-                    entry = { ...origin, status: 'copied', itemId };
-                    revision = existing.revision;
-                } else if (sourceItemId) {
-                    const stored = await readSessionSystemRecordV1({ token: params.credentials.token, sessionId: segment.sessionId,
-                        address: { ...address, localId: sourceItemId } });
-                    if (!stored) throw new Error('Fork visual source unavailable');
-                    const sourceItem = SessionSurfaceItemV1StoredSchema.parse(openSessionSystemRecord(sourceCrypto, stored).content);
-                    const item = { ...sourceItem, destination: 'transcript' as const,
-                        ...(sourceItem.source.kind === 'widget' ? { source: { ...sourceItem.source, instance: { ...sourceItem.source.instance, id: itemId } } } : {}) };
-                    const result = await mutation!({ actionId: 'session.board.item.upsert', context: {}, input: {
-                        sessionId: params.childSessionId, itemId, expectedItemRevision: null, destination: 'transcript', item,
-                    } });
-                    const ack = record(record(result)?.result);
-                    if (ack?.itemId !== itemId || typeof ack.itemRevision !== 'string') throw new Error('Fork visual copy was not acknowledged');
-                    entry = { ...origin, status: 'copied', itemId };
-                    revision = ack.itemRevision;
+                const attemptKey = JSON.stringify([key, segment.sessionId, sourceItemId]);
+                if (!attemptedSources.has(attemptKey)) {
+                    attemptedSources.add(attemptKey);
+                    const address = { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: itemId } as const;
+                    const existing = await readSessionSystemRecordV1({ token: params.credentials.token, sessionId: params.childSessionId, address });
+                    if (existing) {
+                        const item = SessionSurfaceItemV1StoredSchema.parse(openSessionSystemRecord(childCrypto, existing).content);
+                        if (item.destination !== 'transcript') throw new Error('Fork visual destination mismatch');
+                        entry = { ...origin, status: 'copied', itemId };
+                        revision = existing.revision;
+                    } else if (sourceItemId) {
+                        const stored = await readSessionSystemRecordV1({ token: params.credentials.token, sessionId: segment.sessionId,
+                            address: { ...address, localId: sourceItemId } });
+                        if (!stored) throw new Error('Fork visual source unavailable');
+                        const sourceItem = SessionSurfaceItemV1StoredSchema.parse(openSessionSystemRecord(sourceCrypto, stored).content);
+                        const item = { ...sourceItem, destination: 'transcript' as const,
+                            ...(sourceItem.source.kind === 'widget' ? { source: { ...sourceItem.source, instance: { ...sourceItem.source.instance, id: itemId } } } : {}) };
+                        const result = await mutation!({ actionId: 'session.board.item.upsert', context: {}, input: {
+                            sessionId: params.childSessionId, itemId, expectedItemRevision: null, destination: 'transcript', item,
+                        } });
+                        const ack = record(record(result)?.result);
+                        if (ack?.itemId !== itemId || typeof ack.itemRevision !== 'string') throw new Error('Fork visual copy was not acknowledged');
+                        entry = { ...origin, status: 'copied', itemId };
+                        revision = ack.itemRevision;
+                    }
                 }
             } catch (error) {
                 logger.debug('[fork] Visual not copied', { childSessionId: params.childSessionId, ...origin, error });
@@ -211,9 +241,7 @@ export async function seedForkVisualCopies(params: SeedParams): Promise<readonly
                 ?? lineageIndexBySessionId.get(segment.sessionId)!;
             importRows.set(id, { lineageIndex, sourceSeq: forkVisualOriginV1.sourceSeq,
                 referencesBySource: new Map([[sourceReferenceKey, { originKey: key, reference: sourceReference }]]),
-                item: { id, content: sealSessionStoredContent({ ...childCrypto, idempotencyKey: id,
-                payload: StrictJsonValueSchema.parse({ ...row.raw, meta: { ...record(row.raw.meta), forkVisualOriginV1 } }) }),
-            } });
+                item: { id, raw: { ...row.raw, meta: { ...record(row.raw.meta), forkVisualOriginV1 } } } });
         }
     }
     try {
@@ -224,7 +252,18 @@ export async function seedForkVisualCopies(params: SeedParams): Promise<readonly
                 return settled.entry.status === 'copied' && settled.revision ? [{ v: 1 as const,
                     itemId: settled.entry.itemId, itemRevision: settled.revision, ...reference }] : [];
             });
-            return { ...row.item, ...(references.length > 0 ? { surfaceItemReference: { v: 1 as const, references } } : {}) };
+            const settledApprovalReferences = [...row.referencesBySource.values()].flatMap(({ reference }) =>
+                reference.approvalRequestArtifactId && reference.sourceItemRevision ? [{
+                    approvalRequestArtifactId: reference.approvalRequestArtifactId,
+                    sourceItemId: reference.sourceItemId, sourceItemRevision: reference.sourceItemRevision,
+                }] : []);
+            const meta = record(row.item.raw.meta);
+            const raw = settledApprovalReferences.length ? { ...row.item.raw, meta: { ...meta,
+                forkVisualOriginV1: { ...record(meta?.forkVisualOriginV1), settledApprovalReferences } } } : row.item.raw;
+            // Gather every tool result's lineage, then seal its one unchanged native body once.
+            return { id: row.item.id, content: sealSessionStoredContent({ ...childCrypto, idempotencyKey: row.item.id,
+                payload: StrictJsonValueSchema.parse(raw) }),
+                ...(references.length > 0 ? { surfaceItemReference: { v: 1 as const, references } } : {}) };
         });
         await importHistoricalSessionTranscript({ token: params.credentials.token, sessionId: params.childSessionId, items });
     } catch (error) {
@@ -245,7 +284,7 @@ export async function seedForkVisualsBestEffort(params: Readonly<{
     try {
         const [childRaw, currentness] = await Promise.all([
             fetchSessionById({ reason: 'session-replay', token: params.credentials.token, sessionId: params.childSessionId }),
-            fetchAccountEncryptionCurrentness({ token: params.credentials.token }),
+            fetchAccountEncryptionCurrentness({ credentials: params.credentials, token: params.credentials.token }),
         ]);
         if (!childRaw) return;
         const metadata = tryDecryptSessionOwnerMetadataView({ credentials: params.credentials, rawSession: childRaw, accountEncryptionMode: currentness.mode });

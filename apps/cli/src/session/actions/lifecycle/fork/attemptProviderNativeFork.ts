@@ -149,6 +149,7 @@ export async function attemptProviderNativeFork(params: Readonly<{
             await updateSessionMetadataWithRetry({
                 token: params.credentials.token,
                 credentials: params.credentials,
+                currentness: { signal: params.signal },
                 sessionId: childSessionId,
                 rawSession: childRaw,
                 updater: (metadata) => ({
@@ -174,7 +175,6 @@ export async function attemptProviderNativeFork(params: Readonly<{
                         agentHint,
                     },
                 }),
-                maxAttempts: 6,
             });
         } catch (error) {
             await cleanupForkChildBestEffort({

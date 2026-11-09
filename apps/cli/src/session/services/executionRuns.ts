@@ -4,7 +4,7 @@ import { FeatureAxisSchema, FeatureBlockerCodeSchema } from '@happier-dev/protoc
 import { isFeatureId } from '@happier-dev/protocol/features/catalog';
 import type { ExecutionRunListRequest, ExecutionRunPublicState, ExecutionRunStartFailureDetailsV1, ExecutionRunStartRunCreation, ExecutionRunTerminalStatus as ProtocolExecutionRunTerminalStatus, ExecutionRunWaitLoopResult, ExecutionRunWaitCondition, ExecutionRunGetResponse, FeatureAxis, FeatureBlockerCode, FeatureId } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { configuration } from '@/configuration';
 import { listExecutionRunMarkers, reconcileRetainedExecutionRunRecords } from '@/daemon/executionRunRegistry';
@@ -93,27 +93,37 @@ type ExecutionRunFallbackExhaustedCode =
     | 'execution_run_protocol_unsupported'
     | 'execution_run_target_unavailable';
 
-function classifyExecutionRunRpcFallback(error: unknown): ExecutionRunFallbackExhaustedCode | null {
-    const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+function classifyExecutionRunFailure(code: string | undefined, message: string): ExecutionRunFallbackExhaustedCode | null {
+    if (code === RPC_ERROR_CODES.METHOD_NOT_FOUND) return 'execution_run_protocol_unsupported';
     if (
-        isRpcMethodNotAvailableError(error)
-        || isRpcMethodNotFoundError(error)
-        || errorMessage === 'Method not found'
-        || errorMessage === 'RPC method not available'
+        code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+        || code === RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE
+        || code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE
+        || code === 'target_unavailable'
+        || code === 'execution_run_target_unavailable'
     ) {
-        return 'execution_run_protocol_unsupported';
+        return 'execution_run_target_unavailable';
     }
-
-    const normalizedMessage = errorMessage.toLowerCase();
+    // An explicit producer refusal takes precedence over legacy error prose.
+    if (code) return null;
+    if (message === 'Method not found') return 'execution_run_protocol_unsupported';
+    const normalizedMessage = message.toLowerCase();
     if (
-        normalizedMessage.includes('connect_error')
+        message === 'RPC method not available'
+        || normalizedMessage.includes('connect_error')
         || normalizedMessage.includes('socket connect timeout')
         || normalizedMessage.includes('rpc call timeout')
     ) {
         return 'execution_run_target_unavailable';
     }
-
     return null;
+}
+
+function classifyExecutionRunRpcFallback(error: unknown): ExecutionRunFallbackExhaustedCode | null {
+    return classifyExecutionRunFailure(
+        readRpcErrorCode(error),
+        error instanceof Error ? error.message : String(error ?? ''),
+    );
 }
 
 function isFallbackSafeExecutionRunRpcError(error: unknown): boolean {
@@ -123,16 +133,10 @@ function isFallbackSafeExecutionRunRpcError(error: unknown): boolean {
 function classifyExecutionRunServiceFallback(
     result: Readonly<{ code: string; message?: string }>,
 ): ExecutionRunFallbackExhaustedCode | null {
-    if (
-        result.code === 'RPC_METHOD_NOT_AVAILABLE'
-        || result.code === 'RPC_METHOD_NOT_FOUND'
-        || result.message === 'RPC method not available'
-        || result.message === 'Method not found'
-    ) {
-        return 'execution_run_protocol_unsupported';
-    }
-
-    return null;
+    return classifyExecutionRunFailure(
+        result.code === 'execution_run_failed' ? undefined : result.code,
+        result.message ?? '',
+    );
 }
 
 function isFallbackSafeExecutionRunServiceError(result: Readonly<{ code: string; message?: string }>): boolean {
@@ -161,10 +165,11 @@ function executionRunControlUnavailable(): ExecutionRunServiceResult<unknown> {
 
 function executionRunStartUnavailable(
     runCreation: ExecutionRunStartRunCreation,
+    code: ExecutionRunFallbackExhaustedCode | 'execution_run_not_allowed' = 'execution_run_not_allowed',
 ): ExecutionRunServiceResult<unknown> {
     return {
         ok: false,
-        code: 'execution_run_not_allowed',
+        code,
         message: 'Execution run start unavailable',
         details: withExecutionRunStartFailureDetails(undefined, runCreation),
     };
@@ -521,12 +526,14 @@ async function callExecutionRunControlRpc(
         if (result.ok || !isFallbackSafeExecutionRunServiceError(result)) {
             return result;
         }
-        return await fallbackForUnavailableExecutionRunControl(params);
+        const code = classifyExecutionRunServiceFallback(result);
+        return code ? toExecutionRunFallbackExhaustedError(result.message, code)
+            : await fallbackForUnavailableExecutionRunControl(params);
     } catch (error) {
         if (!isFallbackSafeExecutionRunRpcError(error)) {
             throw error;
         }
-        return await fallbackForUnavailableExecutionRunControl(params);
+        return toExecutionRunFallbackExhaustedError(error, classifyExecutionRunRpcFallback(error)!);
     }
 }
 
@@ -542,9 +549,11 @@ export async function startExecutionRun(
             executionRunStart: true,
             transportTimeoutMs: null,
         });
-        return result.ok || !isFallbackSafeExecutionRunServiceError(result)
-            ? result
-            : executionRunStartUnavailable(readExecutionRunStartRunCreation(result.details));
+        if (result.ok || !isFallbackSafeExecutionRunServiceError(result)) return result;
+        return executionRunStartUnavailable(
+            readExecutionRunStartRunCreation(result.details),
+            classifyExecutionRunServiceFallback(result) ?? 'execution_run_not_allowed',
+        );
     } catch (error) {
         const runCreation = readRpcRequestDisposition(error) === 'notSent'
             ? 'noRunCreated'
@@ -581,7 +590,7 @@ export async function startExecutionRun(
                 details: withExecutionRunStartFailureDetails(undefined, runCreation),
             });
         }
-        return executionRunStartUnavailable(runCreation);
+        return executionRunStartUnavailable(runCreation, classifyExecutionRunRpcFallback(error) ?? 'execution_run_not_allowed');
     }
 }
 
@@ -985,10 +994,12 @@ export async function waitForExecutionRun(
             // RPC admission/Action failures are transport envelopes, not wait
             // observations. Preserve their canonical service error just as the
             // other execution-run reads do; only successes use the strict wait schema.
+            const fallbackCode = classifyExecutionRunServiceFallback(normalized);
+            const failure = fallbackCode ? { ...normalized, code: fallbackCode } : normalized;
             if (!('machineId' in observedParams) && !params.condition && !params.onSnapshot && isFallbackSafeExecutionRunServiceError(normalized)) {
-                return await readExecutionRunWaitCompatibilitySnapshot(observedParams) ?? normalized;
+                return await readExecutionRunWaitCompatibilitySnapshot(observedParams) ?? failure;
             }
-            return normalized;
+            return failure;
         }
         return {
             ok: false,

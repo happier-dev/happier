@@ -7,12 +7,13 @@ import { createCliRemoteHostActionExecuteV1 } from './createCliRemoteHostActionD
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 export function createCliConnectionsActionDeps(
-  params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'personalSavedSecretActionExecute' | 'projectModelsForAccount' | 'providerPreparedSavedSecret' | 'savedSecretOperationContext' | 'serverHttpBaseUrl'>,
-  { callMachineAction, connectedServiceAction, projectHomeId, registryActionExecute }: Readonly<{
+  params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'personalSavedSecretActionExecute' | 'projectModelsForAccount' | 'readProviderForAccount' | 'providerPreparedSavedSecret' | 'savedSecretOperationContext' | 'serverHttpBaseUrl'>,
+  { callMachineAction, connectedServiceAction, projectHomeId, registryActionExecute, resolveAuthorizationHeaders }: Readonly<{
     callMachineAction: CliMachineActionCall;
     connectedServiceAction: ActionExecutorDeps['connectedServiceAction'];
     projectHomeId: string;
     registryActionExecute: NonNullable<ActionExecutorDeps['registryActionExecute']>;
+    resolveAuthorizationHeaders?: Parameters<typeof createCliMcpServerActionExecuteV1>[0]['resolveAuthorizationHeaders'];
   }>,
 ): Pick<ActionExecutorDeps, 'profileActionExecute' | 'mcpServerAction' | 'providerActionExecute' | 'remoteHostActionExecute'> {
   return {
@@ -30,6 +31,7 @@ export function createCliConnectionsActionDeps(
       connectedServiceAction,
       registryActionExecute,
       personalSavedSecretActionExecute: params.personalSavedSecretActionExecute,
+      resolveAuthorizationHeaders,
     }) : undefined,
     providerActionExecute: params.credentials ? createCliProviderActionExecuteV1({
       credentials: params.credentials, serverId: projectHomeId,
@@ -37,6 +39,7 @@ export function createCliConnectionsActionDeps(
       ...(params.savedSecretOperationContext ? { operationContext: params.savedSecretOperationContext } : {}),
       ...(params.providerPreparedSavedSecret ? { preparedSavedSecret: params.providerPreparedSavedSecret } : {}),
       ...(params.projectModelsForAccount ? { projectModelsForAccount: params.projectModelsForAccount } : {}),
+      ...(params.readProviderForAccount ? { readProviderForAccount: params.readProviderForAccount } : {}),
       ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
       callMachineAction,
     }) : undefined,

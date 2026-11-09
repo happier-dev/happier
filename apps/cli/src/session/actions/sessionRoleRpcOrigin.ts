@@ -12,7 +12,7 @@ function originUnavailable() {
 }
 
 /** Home has verified the assigned executor's signature before this receiving path.
- * Its Session witness is produced only after source currentness at that executor;
+ * Its Session witness binds the admitted Run and captured start baseline;
  * a receiving process's plugin slots cannot establish the source's authority.
  */
 export function hasReceivedWorkflowSessionRoleAuthority(params: Readonly<{
@@ -47,6 +47,7 @@ export function resolveSessionRoleRpcOrigin(context: ActionExecutorContext): Ses
     v: 1, caller: context.actionCaller,
     callerPermissionMode: permissionMode,
     causalPermissionAuthority: context.causalPermissionAuthority ?? null,
+    ...(context.actionRequestAttributionV1 ? { actionRequestAttributionV1: context.actionRequestAttributionV1 } : {}),
     sourceTurnId: source && 'sourceTurnId' in source ? source.sourceTurnId : undefined,
     ...('sourceInputId' in source ? { sourceInputId: source.sourceInputId } : {}),
     requestId: context.actionRequestId,

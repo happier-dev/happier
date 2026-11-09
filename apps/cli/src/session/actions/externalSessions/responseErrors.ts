@@ -8,9 +8,6 @@ import type { ExternalSessionTakeoverErrorCodeV1, ExternalSessionTakeoverResultV
 
 import { logger } from '@/ui/logger';
 import {
-    ExternalSessionViewerLeaseCapacityExceededError,
-} from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
-import {
     isExternalSessionFollowFailureError,
     type ExternalSessionFollowFailureKind,
 } from '@/session/external/externalSessionFollowFailure';
@@ -225,12 +222,6 @@ export function mapExternalSessionCorridorFailureToExternalSessionsError(
     }
     const providerFailure = mapExternalSessionProviderFailureToExternalSessionsError(error);
     if (providerFailure) return providerFailure;
-    if (error instanceof ExternalSessionViewerLeaseCapacityExceededError) {
-        return externalSessionsError(
-            'agent_unavailable',
-            'external_session_viewer_capacity_exceeded',
-        );
-    }
     if (isExternalSessionFollowFailureError(error)) {
         const response = EXTERNAL_SESSION_FOLLOW_FAILURE_RESPONSES[error.kind];
         return {

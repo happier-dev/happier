@@ -63,6 +63,7 @@ type MutableCandidate = {
     updatedAtMs: number;
     linkData: { projectId: string };
     title?: string;
+    cwd?: string;
 };
 
 function candidateFixture(
@@ -1643,6 +1644,18 @@ describe('External Sessions candidate query owner', () => {
             hydrateCandidate,
         });
 
+        // A retained title-only index is valid. A refreshed source's newly
+        // available cwd must invalidate its old content through the existing
+        // anchor/corpus owner, without interpreting the Agent's private state.
+        const previous = await readUntilPublished(() => query());
+        expect(previous.result.candidates[1]?.cwd).toBeUndefined();
+        corpus.forEach((candidate, index) => {
+            if (index % 2 === 0) candidate.cwd = `/repo/session-${index}`;
+        });
+        // A head refresh may publish retained rows before the next root request
+        // validates the rest of the corpus and rebuilds its changed content.
+        await query();
+        hydrateCandidate.mockClear();
         const published = await readUntilPublished(() => query());
         // session-11 .. session-08, newest first: two chunk-titled, two identifier-only.
         expect(published.result.candidates.map((candidate) => candidate.title)).toEqual([
@@ -1651,6 +1664,7 @@ describe('External Sessions candidate query owner', () => {
             'hydrated:session-09',
             'chunk:session-08',
         ]);
+        expect(published.result.candidates[1]?.cwd).toBe('/repo/session-10');
         expect(hydrateCandidate).toHaveBeenCalledTimes(2);
         expect(hydrateCandidate.mock.calls.map(([candidate]) => candidate.remoteSessionId)).toEqual([
             'session-11',
@@ -1672,6 +1686,7 @@ describe('External Sessions candidate query owner', () => {
             remoteSessionId: 'session-06',
             updatedAtMs: 6,
             title: 'chunk:session-06',
+            cwd: '/repo/session-6',
             linkData: { projectId: 'project-a' },
             candidateKey: expect.stringMatching(/^[a-f0-9]{64}$/),
         });
@@ -2429,7 +2444,7 @@ describe('External Sessions candidate query owner', () => {
             );
         }
         const hiddenTranscriptPath = join(hiddenProjectDir, 'hidden-session.jsonl');
-        await writeFile(hiddenTranscriptPath, '{}\n', 'utf8');
+        await writeFile(hiddenTranscriptPath, `${JSON.stringify({ type: 'progress', cwd: '/repo/native-hidden' })}\n`, 'utf8');
         await utimes(
             hiddenTranscriptPath,
             initialMtimeSeconds,
@@ -2492,6 +2507,7 @@ describe('External Sessions candidate query owner', () => {
         expect(refreshed.sourceInvalidCount).toBe(0);
         expect(refreshed.result.candidates[0]).toMatchObject({
             remoteSessionId: 'hidden-session',
+            cwd: '/repo/native-hidden',
             updatedAtMs: (initialMtimeSeconds + 10_000) * 1_000,
             linkData: { projectId: 'z-hidden' },
         });

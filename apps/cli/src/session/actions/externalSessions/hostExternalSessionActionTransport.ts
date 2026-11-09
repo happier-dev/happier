@@ -4,6 +4,7 @@ import type { StoredCredentials } from '@/persistence';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { executeBackgroundFollowTransport } from './backgroundFollowTransport';
 
 /** Domain continuation after the canonical executor's policy/approval admission, never an MCP bypass. */
 export function createHostExternalSessionActionTransport(params: Readonly<{
@@ -20,6 +21,10 @@ export function createHostExternalSessionActionTransport(params: Readonly<{
     }
     if (context.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId)) {
       return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
+    }
+    if (actionId === 'sessions.external.backgroundFollow.set') {
+      return await executeBackgroundFollowTransport({ credentials: params.credentials, input, context,
+        serverHttpBaseUrl: params.serverHttpBaseUrl, ...(signal ? { signal } : {}) });
     }
     const spec = getActionSpec(actionId);
     const semantic = spec.inputSchema.parse(input);

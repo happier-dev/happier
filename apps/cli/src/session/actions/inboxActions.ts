@@ -1,5 +1,6 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { AppShellActionOutputSchemas, projectInboxReadItemV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
+import { AppShellActionOutputSchemas, projectInboxReadItemV1, readNoticeInboxAccountIdV1,
+  dismissAccountNoticeArtifactV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { inboxNoticeFocusKeyV1, normalizeAccountNoticeArtifactV1, projectAccountNoticeInboxItemV1,
   projectOpenUsageNoticeHeaderV1, readOwnedNoticeArtifactV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { clientActionUnavailable } from '@happier-dev/protocol/actions/clientDispatchV1';
@@ -8,10 +9,25 @@ import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 /** Finite headless source adapter over the incumbent private Artifact reader, never an Inbox store. */
 export function createCliInboxReadAction(params: Readonly<{
-  store: Pick<ReturnType<typeof createAccountArtifactStore>, 'list' | 'readBodies'>;
+  store: Pick<ReturnType<typeof createAccountArtifactStore>, 'list' | 'readBodies' | 'read' | 'update'>;
   accountId: string; serverId: string; isCurrent?: () => boolean | Promise<boolean>;
 }>): NonNullable<ActionExecutorDeps['appShellAction']> {
-  return async ({ actionId, context }) => {
+  return async ({ actionId, input, context }) => {
+    if (actionId === 'inbox.notice.dismiss') {
+      const accountId = readNoticeInboxAccountIdV1(context);
+      if (accountId !== params.accountId) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
+      const assertCurrent = async () => {
+        context.signal?.throwIfAborted();
+        if ((context.serverId && context.serverId !== params.serverId && !await isServerProfileHomeIdentity(params.serverId, context.serverId))
+          || params.isCurrent && !await params.isCurrent()) throw Object.assign(new Error('credential_scope_retired'), { code: 'credential_scope_retired' });
+      };
+      return dismissAccountNoticeArtifactV1(input, { accountId, assertCurrent,
+        read: artifactId => params.store.read(artifactId, { signal: context.signal, includeSharedAudience: false, ownerOnly: true }),
+        write: async request => {
+          await assertCurrent();
+          return params.store.update({ ...request, signal: context.signal, beforeWrite: assertCurrent });
+        } });
+    }
     if (actionId !== 'inbox.get') return clientActionUnavailable(actionId);
     const current = async () => {
       context.signal?.throwIfAborted();

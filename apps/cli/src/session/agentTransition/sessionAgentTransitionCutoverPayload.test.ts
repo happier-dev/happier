@@ -8,13 +8,36 @@ import {
   readSessionAgentTransitionDividerV1,
 } from '@happier-dev/protocol';
 
-import { buildSessionAgentTransitionDividerPayload } from './sessionAgentTransitionCutoverPayload';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { buildSessionAgentTransitionDividerPayload, sealSessionAgentTransitionCurrentView } from './sessionAgentTransitionCutoverPayload';
+
+describe('sealSessionAgentTransitionCurrentView', () => {
+  it('publishes target relation timing and the authored empty state during legacy cutover', async () => {
+    const result = await sealSessionAgentTransitionCurrentView({
+      credentials: { token: 'token', encryption: null },
+      accountEncryptionCurrentness: createAccountEncryptionCurrentnessFixture(),
+      rawSession: createSessionRecordFixture({ id: 'session', encryptionMode: 'plain',
+        metadata: JSON.stringify({ path: '/private', host: 'host' }),
+        agentState: JSON.stringify({ requests: { old: { tool: 'Read', turnId: 'old-turn', createdAt: 10 } } }),
+      }),
+      mode: 'plain', ctx: null,
+      projectTargetView: metadata => ({ ...metadata, forkV1: { v: 1,
+        parentSessionId: 'private-parent', parentCutoffSeqInclusive: 0, strategy: 'native', createdAtMs: 200 } }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected legacy target sealing');
+    expect(result.currentView.kind).toBe('legacy_v0');
+    expect(Reflect.get(result.currentView, 'usageTimingV1')).toEqual({ v: 1,
+      metadata: { v: 1, minMs: 200, maxMs: 200 }, agentState: { v: 1, minMs: null, maxMs: null } });
+  });
+});
 
 describe('buildSessionAgentTransitionDividerPayload', () => {
   const build = (
     sourceCutoffSeqInclusive = 29_979,
     returningAgentLastSeenSeqInclusive: number | null = null,
   ) => buildSessionAgentTransitionDividerPayload({
+    sessionId: 'session',
     mode: 'plain',
     ctx: null,
     submittedLocalId: 'local-1',
@@ -28,6 +51,17 @@ describe('buildSessionAgentTransitionDividerPayload', () => {
     expect(build().localId).toBe(buildSessionAgentTransitionDividerLocalId('local-1'));
   });
 
+  it('publishes divider timing from the same authored record before encryption', () => {
+    const payload = buildSessionAgentTransitionDividerPayload({
+      sessionId: 'session', mode: 'e2ee',
+      ctx: { encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy' },
+      submittedLocalId: 'local-1', fromAgentId: 'claude', toAgentId: 'codex',
+      sourceCutoffSeqInclusive: 29_979, returningAgentLastSeenSeqInclusive: null,
+    });
+    expect(payload.content.t).toBe('encrypted');
+    expect(Reflect.get(payload, 'usageTimingV1')).toEqual({ v: 1, minMs: null, maxMs: null });
+  });
+
   it('is byte-identical across rebuilds, which is what makes a retry idempotent', () => {
     expect(JSON.stringify(build())).toEqual(JSON.stringify(build()));
   });
@@ -36,6 +70,7 @@ describe('buildSessionAgentTransitionDividerPayload', () => {
     'seals an E2EE divider byte-identically for a retry while changing bytes for a changed boundary (%s)',
     (encryptionVariant) => {
       const params = {
+        sessionId: 'session',
         mode: 'e2ee' as const,
         ctx: {
           encryptionKey: new Uint8Array(32).fill(7),

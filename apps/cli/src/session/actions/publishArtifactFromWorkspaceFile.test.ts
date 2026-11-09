@@ -4,15 +4,16 @@ import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ArtifactBlobWriteV1Schema, decodePlainArtifactStoredContent, decodeBase64, openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import axios from 'axios';
+import { ArtifactBlobReferenceV1Schema, ArtifactBlobWriteV1Schema, decodePlainArtifactStoredContent, decodeBase64, openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { ARTIFACT_HTML_BUNDLE_MIME_V1, ArtifactHtmlBundleV1Schema } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { decryptWithDataKey } from '@/api/encryption';
+import { openResourceBinaryContent } from '@/api/encryption/resourceBinaryContent';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { publishArtifactFromWorkspaceFile, readArtifactWorkspaceFile } from './publishArtifactFromWorkspaceFile';
 
-const http = vi.hoisted(() => ({ post: vi.fn(), get: vi.fn() }));
-vi.mock('axios', () => ({ default: http }));
+const http = { post: vi.fn(), get: vi.fn() };
 
 describe('explicit Artifact publication from the caller workspace', () => {
   let root: string;
@@ -24,6 +25,9 @@ describe('explicit Artifact publication from the caller workspace', () => {
     ? decryptWithDataKey(decodeBase64(String(value)), openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(String(envelope)), recipientSecretKeyOrSeed: secret })!)
     : decodePlainArtifactStoredContent(String(value));
   beforeEach(async () => {
+    // Replace HTTP effects while retaining the real client's redirect configuration.
+    vi.spyOn(axios, 'post').mockImplementation(http.post);
+    vi.spyOn(axios, 'get').mockImplementation(http.get);
     root = await mkdtemp(join(tmpdir(), 'artifact-publication-'));
     await mkdir(join(root, 'workspace'));
     http.post.mockReset();
@@ -31,7 +35,7 @@ describe('explicit Artifact publication from the caller workspace', () => {
     http.post.mockImplementation(async (_url: string, wire: Record<string, unknown> | Buffer) => ({ status: 200,
       data: { id: readCarrierMutation(wire).id, headerVersion: 1, bodyVersion: 1 } }));
   });
-  afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+  afterEach(async () => { vi.restoreAllMocks(); await rm(root, { recursive: true, force: true }); });
 
   it.each(['text/html', 'application/vnd.happier.html-bundle+json'])('publishes %s as exact html kind and preserves all source bytes', async (mime) => {
     const text = mime === 'text/html' ? '<h1>HTML</h1>' : JSON.stringify({ v: 1, entrypoint: 'pages/index.html', files: {
@@ -65,7 +69,7 @@ describe('explicit Artifact publication from the caller workspace', () => {
     }
   });
 
-  it('acquires a declared folder entrypoint with exact JS, CSS, image, font and resource bytes and publishes the same bundle', async () => {
+  it.each(['plain', 'e2ee'] as const)('publishes a declared HTML folder on %s Accounts with exact JS, CSS, image, font and resource bytes', async mode => {
     const directory = join(root, 'workspace', 'site');
     await mkdir(join(directory, 'pages'), { recursive: true });
     await mkdir(join(directory, 'assets'));
@@ -87,14 +91,20 @@ describe('explicit Artifact publication from the caller workspace', () => {
     expect(acquired.path).toBe('site');
     http.get.mockImplementation(async (url: string) => ({ status: 200,
       data: { url: `https://isolated.example/a/${url.split('/').at(-2)}` } }));
-    const result = await publishArtifactFromWorkspaceFile({ store: store(), caller,
-      input: { path: 'site', entrypoint: 'pages/index.html', title: 'Experiment', requestedCapabilities: { network: 'none' } } });
+    const result = await publishArtifactFromWorkspaceFile({ store: store(mode), caller,
+      input: { path: 'site', entrypoint: 'pages/index.html', title: 'Experiment', mime: 'text/html', kind: 'html', requestedCapabilities: { network: 'none' } } });
     expect(result).toEqual({ artifactId: expect.any(String), revision: { headerVersion: 1, bodyVersion: 1 } });
     const payload = readCarrierMutation(http.post.mock.calls[0]?.[1]);
-    expect(decodePlainArtifactStoredContent(String(payload.header))).toMatchObject({ title: 'Experiment', kind: 'html', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 });
+    const envelope = mode === 'e2ee' ? payload.dataEncryptionKey : undefined;
+    expect(open(payload.header, envelope)).toMatchObject({ title: 'Experiment', kind: 'html', mime: ARTIFACT_HTML_BUNDLE_MIME_V1 });
     const blob = ArtifactBlobWriteV1Schema.parse(payload.blob);
-    if (!blob.content || blob.content.t !== 'plain') throw new Error('Expected plaintext publication blob');
-    expect(ArtifactHtmlBundleV1Schema.parse(JSON.parse(Buffer.from(blob.content.v, 'base64').toString('utf8')))).toEqual({ ...expected, requestedCapabilities: { network: 'none' } });
+    const openedBody: unknown = open(payload.body, envelope);
+    if (!openedBody || typeof openedBody !== 'object' || !('body' in openedBody)) throw new Error('Expected publication body');
+    const reference = ArtifactBlobReferenceV1Schema.parse(openedBody.body);
+    const dataKey = mode === 'e2ee'
+      ? openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(String(envelope)), recipientSecretKeyOrSeed: secret }) : null;
+    const publishedBytes = await openResourceBinaryContent({ mode, dataKey }, reference, blob.content);
+    expect(ArtifactHtmlBundleV1Schema.parse(JSON.parse(Buffer.from(publishedBytes).toString('utf8')))).toEqual({ ...expected, requestedCapabilities: { network: 'none' } });
   });
 
   it('returns the canonical one-file bundle when acquiring HTML without creating an Artifact', async () => {

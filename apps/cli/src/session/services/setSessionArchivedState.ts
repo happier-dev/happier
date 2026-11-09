@@ -8,28 +8,18 @@ import { runTracedExternalActionStage } from '@/daemon/externalActions/externalA
 
 export { setSessionArchivedStateById } from './sessionArchivedStateById';
 
-export async function archiveSessionByIdBestEffort(params: Readonly<{ token: string; sessionId: string }>): Promise<void> {
-  try {
-    await setSessionArchivedStateById({
-      token: params.token,
-      sessionId: params.sessionId,
-      archived: true,
-    });
-  } catch {
-    // Best-effort only.
-  }
-}
-
 export async function setSessionArchivedState(params: Readonly<{
   credentials: StoredCredentials;
-  idOrPrefix: string;
   archived: boolean;
   originRunId?: string;
   signal?: AbortSignal;
   externalAction?: Parameters<typeof requestSessionStop>[0]['externalAction'];
   resolveAuthorizationHeaders?: Parameters<typeof requestSessionStop>[0]['resolveAuthorizationHeaders'];
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
-}>): Promise<
+} & (
+  | { sessionId: string; idOrPrefix?: never }
+  | { idOrPrefix: string; sessionId?: never }
+)>): Promise<
   | Readonly<{ ok: true; sessionId: string; archivedAt: number | null }>
   | Extract<Awaited<ReturnType<typeof requestSessionStop>>, { ok: false }>
 > {
@@ -37,7 +27,10 @@ export async function setSessionArchivedState(params: Readonly<{
   const signal = params.signal ?? params.externalAction?.context.signal;
   signal?.throwIfAborted();
   const rootRequestId = params.externalAction?.context.actionRequestId;
-  const resolved = await runTracedExternalActionStage(actionId, rootRequestId, 'session_archive.resolve_session', () => resolveSessionIdOrPrefix({
+  // Action admission has already resolved exact members. Only selector callers
+  // expand prefixes; archive authorization and active-session Stop remain below.
+  const resolved = params.sessionId !== undefined ? { ok: true as const, sessionId: params.sessionId }
+    : await runTracedExternalActionStage(actionId, rootRequestId, 'session_archive.resolve_session', () => resolveSessionIdOrPrefix({
     reason: 'session-control',
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
@@ -73,7 +66,10 @@ export async function setSessionArchivedState(params: Readonly<{
       idOrPrefix: resolved.sessionId,
       stopIntent: 'lifecycle_control',
       ...(signal ? { signal } : {}),
-      ...(params.externalAction ? { externalAction: { ...params.externalAction, effectActionId: 'session.stop' } } : {}),
+      ...(params.externalAction ? { externalAction: { ...params.externalAction, effectActionId: 'session.stop',
+        context: { ...params.externalAction.context,
+          ...(params.externalAction.context.externalActionExecutionAuthorization?.binding.actionId === 'session.sections.archive'
+            ? { externalActionTarget: { kind: 'session' as const, sessionId: resolved.sessionId } } : {}) } } } : {}),
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     });
     if (!stopResult.ok) {

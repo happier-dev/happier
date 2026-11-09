@@ -90,7 +90,9 @@ export async function getSessionEvents(params: Readonly<{
     ? clampInt(params.limit, { min: 1, max: 50, fallback: 20 })
     : clampInt(params.limit, { min: 1, max: 200, fallback: 50 });
   const maxTextChars = clampInt(params.maxTextChars, { min: 0, max: 4000, fallback: 1000 });
-  const maxPayloadChars = clampInt(params.maxPayloadChars, { min: 1, max: 32768, fallback: 8192 });
+  const maxPayloadChars = params.maxPayloadChars === undefined
+    ? null
+    : clampInt(params.maxPayloadChars, { min: 1, max: 32768, fallback: 8192 });
 
   try {
     const page = await fetchTranscriptSemanticPage({

@@ -135,6 +135,7 @@ export type ExternalSessionProviderOps = Readonly<{
     projection?: 'terminal';
     source: ExternalSessionsSource;
     remoteSessionId: string;
+    sourceItemId?: string;
     direction: 'older' | 'newer';
     cursor?: string;
     maxBytes: number;

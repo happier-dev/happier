@@ -1,6 +1,7 @@
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { ComposerAttachmentInputV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
-import type { ComposerAttachmentInputV1, ComposerAttachmentDraftV1, PluginSessionInputAttachmentV1 } from '@happier-dev/protocol';
+import type { ActionPluginCaller, ComposerAttachmentInputV1, ComposerAttachmentDraftV1, PluginSessionInputAttachmentV1 } from '@happier-dev/protocol';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { admitSessionStructuredInputV1 } from '@/session/services/admitSessionStructuredInputV1';
 import {
@@ -22,27 +23,46 @@ export type PluginSessionInputAttachmentAdmissionV1 =
 /**
  * Builds the canonical draft envelope for a plugin-authored Session input.
  *
- * This pure half is also used by the daemon's pending-first-input handoff:
+ * This declaration-only half is also used by the daemon's pending-first-input handoff:
  * that handoff must be serializable before the child knows its Session id,
- * while the child's existing input transformer still owns declaration lookup,
- * prepareForSend and final admission once the real Session is mounted.
+ * while the child's existing input transformer still owns value admission,
+ * prepareForSend and final admission once the real Session is mounted. Caller
+ * provenance is host-private and never comes from the authored attachments.
  */
 export function buildPluginSessionInputAttachmentDraftsV1(params: Readonly<{
-  pluginId: string;
+  caller: ActionPluginCaller;
+  attachments: Pick<ComposerAttachmentSendPreparationRegistryV1, 'isDeclared'> | null;
   messageLocalId: string;
   authored: readonly PluginSessionInputAttachmentV1[];
 }>): readonly ComposerAttachmentDraftV1[] {
-  return params.authored.map((authored, index) => ({
-    v: 1,
-    instanceId: `${params.messageLocalId}#${index}`,
-    attachment: { pluginId: params.pluginId, localId: authored.attachmentLocalId },
-    key: authored.value.key,
-    value: authored.value.value,
-    presentation: {
-      ...authored.value.presentation,
-      typeLabel: authored.value.presentation.label,
-    },
-  }));
+  if (!params.attachments) {
+    throw new PluginError({ code: 'session_input_target_unavailable', message: 'Attachment declarations are unavailable' });
+  }
+  const declarations = params.attachments;
+  const initiatingCaller = params.caller.initiatingCaller;
+  return params.authored.map((authored, index) => {
+    const ownAttachment = { pluginId: params.caller.pluginId, localId: authored.attachmentLocalId };
+    const delegatedAttachment = initiatingCaller?.kind === 'plugin'
+      ? { pluginId: initiatingCaller.pluginId, localId: authored.attachmentLocalId }
+      : null;
+    const attachment = declarations.isDeclared(ownAttachment)
+      ? ownAttachment
+      : delegatedAttachment && declarations.isDeclared(delegatedAttachment) ? delegatedAttachment : null;
+    if (!attachment) {
+      throw new PluginError({ code: 'session_input_invalid', message: 'Attachment is not declared by the sender or its immediate plugin caller' });
+    }
+    return {
+      v: 1,
+      instanceId: `${params.messageLocalId}#${index}`,
+      attachment,
+      key: authored.value.key,
+      value: authored.value.value,
+      presentation: {
+        ...authored.value.presentation,
+        typeLabel: authored.value.presentation.label,
+      },
+    };
+  });
 }
 
 /**
@@ -50,8 +70,9 @@ export function buildPluginSessionInputAttachmentDraftsV1(params: Readonly<{
  * the one canonical structured-input envelope a Message may carry.
  *
  * The plugin authors only the half the Composer's `attachment.add` authors —
- * its own attachment's local id, key, value and presentation. This host owner
- * qualifies the calling plugin's id, derives an instance identity from the
+ * an attachment's local id, key, value and presentation. This host owner
+ * qualifies the declaring plugin through the host-stamped caller (own-first,
+ * then the immediate initiating plugin only), derives an instance identity from the
  * durable input identity, then runs the incumbent lifecycle: draft admission
  * against the declaration, `prepareForSend`, prepared admission and finally
  * `admitSessionStructuredInputV1`. Dispatch later resolves the same attachment
@@ -60,7 +81,7 @@ export function buildPluginSessionInputAttachmentDraftsV1(params: Readonly<{
  */
 export async function admitPluginSessionInputAttachmentsV1(params: Readonly<{
   attachments: ComposerAttachmentSendPreparationRegistryV1 | null;
-  pluginId: string;
+  caller: ActionPluginCaller;
   sessionId: string;
   messageLocalId: string;
   text: string;
@@ -70,8 +91,8 @@ export async function admitPluginSessionInputAttachmentsV1(params: Readonly<{
   if (!params.attachments) {
     return { status: 'rejected', code: 'session_input_target_unavailable' };
   }
-  const drafts = buildPluginSessionInputAttachmentDraftsV1(params);
   try {
+    const drafts = buildPluginSessionInputAttachmentDraftsV1(params);
     const prepared = await prepareComposerAttachmentDraftsForSendV1({
       attachments: params.attachments,
       sessionId: params.sessionId,

@@ -9,6 +9,10 @@ import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionR
 import { SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/spawnSession';
 import type { BackendTargetRefV2Input, LlmTaskRunnerConfigV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
+import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import {
     createStableSpawnNonce,
     normalizeSpawnNonce,
@@ -32,6 +36,7 @@ export type ContinueSessionWithReplayParams = Readonly<{
     permissionMode?: string;
     permissionModeUpdatedAt?: number;
     modelSelection?: SessionModelSelectionV1;
+    approvalProfileId?: string | null;
     spawnNonce?: string;
     replay: ContinueWithReplayReplayParams;
 }>;
@@ -91,6 +96,26 @@ export async function continueSessionWithReplay(
             errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
             errorMessage: 'Not authenticated',
         };
+    }
+
+    let approvalProfileId = params.approvalProfileId;
+    if (approvalProfileId === undefined) {
+        try {
+            const [sourceSession, currentness] = await Promise.all([
+                fetchSessionByIdCompat({ reason: 'session-replay', token: credentials.token, sessionId: replay.previousSessionId }),
+                fetchAccountEncryptionCurrentness({ credentials, token: credentials.token }),
+            ]);
+            const metadata = sourceSession && tryDecryptSessionOwnerMetadataView({
+                credentials, rawSession: sourceSession, accountEncryptionMode: currentness.mode,
+            });
+            if (!metadata) return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Unable to read source session metadata' };
+            approvalProfileId = readSessionStateFieldFromMetadata(metadata, 'intent.approvalProfileId') ?? null;
+        } catch (error) {
+            if (isAuthenticationError(error)) throw error;
+            return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                errorMessage: error instanceof Error ? error.message : 'Failed to load source session' };
+        }
     }
 
     const replayStrategy =
@@ -163,6 +188,7 @@ export async function continueSessionWithReplay(
             directory,
             backendTarget: resolvedBackend.backendTargetV2,
             spawnNonce: replaySpawnNonce,
+            approvalProfileId,
             ...(typeof approvedNewDirectoryCreation === 'boolean' ? { approvedNewDirectoryCreation } : {}),
             ...(normalizedPermissionMode ? { permissionMode: normalizedPermissionMode } : {}),
             ...(typeof normalizedPermissionModeUpdatedAt === 'number'

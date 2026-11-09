@@ -27,6 +27,18 @@ function intent(issueFingerprint: string, overrides: Record<string, unknown> = {
 }
 
 describe('mergeUsageLimitRecoveryFieldIntoMetadata', () => {
+    it('applies a current pending transition to an untimed hold while retaining concurrent cancellation and rearm', () => {
+        const base = { [key]: intent('same') };
+        const candidate = { [key]: intent('same', { nextCheckAtMs: null, lastProbeError: 'session_unavailable',
+            selectedAuth: { kind: 'profile', serviceId: 'happier.agent.codex/openai-codex', profileId: 'current-profile' } }) };
+        expect(mergeUsageLimitRecoveryFieldIntoMetadata({ latestMetadata: { ...base }, baseMetadata: base,
+            candidateMetadata: candidate })[key]).toEqual(candidate[key]);
+        for (const newer of [intent('same', { status: 'cancelled', nextCheckAtMs: null }), intent('same', { armedAtMs: 200 })]) {
+            expect(mergeUsageLimitRecoveryFieldIntoMetadata({ latestMetadata: { [key]: newer }, baseMetadata: base,
+                candidateMetadata: candidate })[key]).toEqual(newer);
+        }
+    });
+
     it('recomputes a stale write against the latest terminal field', () => {
         const merged = mergeUsageLimitRecoveryFieldIntoMetadata({
             latestMetadata: { untouched: true, [key]: intent('same', { status: 'exhausted', attemptCount: 3 }) },
@@ -40,11 +52,10 @@ describe('mergeUsageLimitRecoveryFieldIntoMetadata', () => {
         });
     });
 
-    it('retains the current runtime attempt when a distinct equal-epoch cancellation arrives', () => {
+    it('retains the current runtime attempt when an unbased distinct equal-epoch cancellation arrives', () => {
         const current = intent('same', { runtimeAuthRecoveryAttemptId: 'runtime-b' });
         const merged = mergeUsageLimitRecoveryFieldIntoMetadata({
             latestMetadata: { [key]: current },
-            baseMetadata: { [key]: current },
             candidateMetadata: { [key]: intent('same', {
                 status: 'cancelled',
                 attemptCount: 2,

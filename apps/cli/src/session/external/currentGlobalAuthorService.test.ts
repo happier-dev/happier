@@ -394,6 +394,66 @@ describe('current-global External Sessions author binding', () => {
     expect(iList).toHaveBeenCalledOnce();
   });
 
+  it.each(['activation', 'leaf'] as const)('admits public read authority once before held %s and preserves the completed result', async (phase) => {
+    const entered = deferred();
+    const activation = deferred();
+    const page = Object.freeze({ items: Object.freeze([]), nextCursor: null });
+    const result = deferred<typeof page>();
+    const list = vi.fn(async () => {
+      if (phase === 'leaf') entered.resolve();
+      return await result.promise;
+    });
+    const owner = createCurrentOwner(createAuthorService(list));
+    let access: CurrentGlobalExternalSessionsPublicAccess = { status: 'available', scopes: [{ access: ['read'] }] };
+    const readCurrentPublicAccess = vi.fn(() => access);
+    const activateConfiguredSources = vi.fn(async () => {
+      if (phase === 'activation') {
+        entered.resolve();
+        await activation.promise;
+      }
+    });
+    const binding = createCurrentGlobalExternalSessionsAuthorBinding({
+      pluginId: 'acme.sessions', signal: new AbortController().signal,
+      isOccurrenceCurrent: () => true, resolveCurrent: () => owner,
+      activateConfiguredSources, readCurrentPublicAccess,
+    });
+    const pending = binding.list({ agentId: 'codex' });
+    const observed = pending.then(value => ({ value }), (error: unknown) => ({ error }));
+    await entered.promise;
+    access = { status: 'denied' };
+    activation.resolve();
+    result.resolve(page);
+    expect(await observed).toEqual({ value: page });
+    expect(readCurrentPublicAccess).toHaveBeenCalledOnce();
+    await expect(binding.list({ agentId: 'codex' })).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
+    expect(readCurrentPublicAccess).toHaveBeenCalledTimes(2);
+    expect(list).toHaveBeenCalledOnce();
+    expect(activateConfiguredSources).toHaveBeenCalledOnce();
+  });
+
+  it('closes a just-opened stream when public read access was withdrawn during opening', async () => {
+    const entered = deferred();
+    const opened = deferred<Awaited<ReturnType<HostExternalSessionsAuthorService['followTranscript']>>>();
+    const dispose = vi.fn(async () => undefined);
+    const service = {
+      ...createAuthorService(vi.fn(async () => ({ items: [], nextCursor: null }))),
+      followTranscript: vi.fn(async () => { entered.resolve(); return await opened.promise; }),
+    } satisfies HostExternalSessionsAuthorService;
+    const owner = createCurrentOwner(service);
+    let access: CurrentGlobalExternalSessionsPublicAccess = { status: 'available', scopes: [{ access: ['read'] }] };
+    const binding = createCurrentGlobalExternalSessionsAuthorBinding({
+      pluginId: 'acme.sessions', signal: new AbortController().signal,
+      isOccurrenceCurrent: () => true, resolveCurrent: () => owner,
+      activateConfiguredSources: async () => {}, readCurrentPublicAccess: () => access,
+    });
+    const pending = binding.followTranscript(externalSessionRef, {}, vi.fn());
+    await entered.promise;
+    access = { status: 'denied' };
+    opened.resolve({ status: 'following', startingCursor: 'cursor-1', subscription: { dispose } });
+    await expect(pending).resolves.toEqual({ status: 'unavailable', code: 'plugin_service_unavailable' });
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
   it('maps read operations to Session read and attach/takeover to Session control on the public surface', async () => {
     const page = Object.freeze({ items: Object.freeze([]), nextCursor: null });
     const list = vi.fn(async () => page);
@@ -1082,10 +1142,16 @@ describe('current-global External Sessions takeover source resolution', () => {
     }
   });
 
-  it('selects the exact public ref source before canonical link and durable Start', async () => {
+  it('keeps the admitted Account and source owner through link, retirement, and durable Start', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-current-global-takeover-'));
     try {
       const events: string[] = [];
+      const tokenFor = (sub: string) => `header.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`;
+      const credentialsA = { token: tokenFor('takeover-account-a'), encryption: null };
+      const credentialsB = { token: tokenFor('takeover-account-b'), encryption: null };
+      let selectedCredentials = credentialsA;
+      let sourceOwnerAvailable = true;
+      const readCredentials = vi.fn(async () => selectedCredentials);
       const selectedSource = Object.freeze({ kind: 'codexSecondary' });
       const resolveLinkIdentity = vi.fn(async (input: Readonly<{
         source: Readonly<{ kind: string }>;
@@ -1118,6 +1184,8 @@ describe('current-global External Sessions takeover source resolution', () => {
         source: Readonly<{ kind: string }>;
       }>) => {
         events.push(`link:${input.source.kind}`);
+        selectedCredentials = credentialsB;
+        sourceOwnerAvailable = false;
         return { sessionId: 'linked-session-1' };
       });
       mocks.loadLinkedExternalSession.mockResolvedValue({
@@ -1162,7 +1230,7 @@ describe('current-global External Sessions takeover source resolution', () => {
         resolveCatalogEntry: async () => null,
         agents: [multiSourceConfiguredAgent],
         activeServerDir,
-        readCredentials: async () => ({ token: 'token', encryption: null }),
+        readCredentials,
         resolveMachineId: () => 'machine-1',
         resolveAgentRuntime: () => Object.freeze({
           occurrenceId: 'occurrence-1',
@@ -1179,7 +1247,7 @@ describe('current-global External Sessions takeover source resolution', () => {
           activeServerDir,
           pluginId: 'synthetic.non-bundled',
           startDurableTakeover: startPluginTakeover,
-          resolveSourceOps: () => service.takeoverSourceOps,
+          resolveSourceOps: () => sourceOwnerAvailable ? service.takeoverSourceOps : null,
         }),
       });
       const listed = await author.list();
@@ -1192,6 +1260,7 @@ describe('current-global External Sessions takeover source resolution', () => {
         (candidate) => candidate.title === 'codexSecondary',
       );
       if (!selected) throw new Error('expected exact secondary-source candidate');
+      readCredentials.mockClear();
 
       await expect(author.takeover(selected.ref, {
         targetStorageMode: 'persisted',
@@ -1221,13 +1290,25 @@ describe('current-global External Sessions takeover source resolution', () => {
         expect.anything(),
       );
       expect(events).toEqual(['link:codexSecondary', 'start']);
+      expect(readCredentials).toHaveBeenCalledOnce();
+      expect(mocks.ensureExternalSessionLink).toHaveBeenCalledWith(
+        expect.objectContaining({ credentials: credentialsA }),
+        expect.anything(),
+      );
+      expect(mocks.loadLinkedExternalSession).toHaveBeenCalledWith(
+        expect.objectContaining({ credentials: credentialsA }),
+        expect.anything(),
+      );
       expect(startPluginTakeover).toHaveBeenCalledWith(
         expect.objectContaining({
           request: expect.objectContaining({
             targetDirectory: '/local/selected/workspace',
           }),
         }),
-        expect.anything(),
+        expect.objectContaining({
+          accountScope: expect.objectContaining({ accountSubject: 'takeover-account-a' }),
+          sourceAdmission: expect.objectContaining({ credentials: credentialsA }),
+        }),
       );
       service.dispose();
     } finally {
@@ -1354,7 +1435,7 @@ describe('current-global External Sessions takeover durability without sources',
 });
 
 describe('current-global External Sessions follow lifecycle', () => {
-  it('settles explicit disposal acknowledgement before retiring its bound host-operation port', async () => {
+  it('retains physical cleanup custody while explicit close fences event delivery', async () => {
     mocks.ensureExternalSessionLink.mockResolvedValue({
       sessionId: 'linked-session-1',
     });
@@ -1383,7 +1464,7 @@ describe('current-global External Sessions follow lifecycle', () => {
           subscription: Object.freeze({
             dispose: async () => {
               physicalDisposeAttempts += 1;
-              await terminate('disposed');
+              terminated = true;
               if (physicalDisposeAttempts <= 2) {
                 throw new Error('physical follow disposal rejected');
               }
@@ -1453,11 +1534,7 @@ describe('current-global External Sessions follow lifecycle', () => {
     await expect(result.subscription.dispose()).resolves.toBeUndefined();
 
     expect(physicalDisposeAttempts).toBe(3);
-    expect(listener).toHaveBeenCalledWith({
-      kind: 'terminated',
-      reason: 'disposed',
-      cursor: 'cursor-1',
-    });
+    expect(listener).not.toHaveBeenCalled();
     expect(listener).not.toHaveBeenCalledWith(expect.objectContaining({
       reason: 'retired',
     }));

@@ -141,7 +141,6 @@ export async function attemptAcpLatestFork(params: Readonly<{
                             },
                         },
                     }),
-                    maxAttempts: 6,
                 });
             } catch (error) {
                 await cleanupForkChildBestEffort({

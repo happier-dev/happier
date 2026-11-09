@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { accountSettingsParse, BUILT_IN_ROLES_V1, readSessionRoleIdV1, createActionExecutor } from '@happier-dev/protocol';
+import { accountSettingsParse, BUILT_IN_ROLES_V1, readSessionRoleIdV1, createActionExecutor, buildBackendTargetKeyV2 } from '@happier-dev/protocol';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, readAccountRoleOverridesFromSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
@@ -73,7 +73,7 @@ describe('role Action effects', () => {
       callerPermissionMode: 'default', settings: accountSettingsParse({}), roles: {},
       appliedChildSelection: { status: 'applied', backendTarget, modelId: 'fixture-model', connectedServices: null },
     });
-    if (!agentStartContext) throw new Error('Missing admitted fixture Session');
+    if (!agentStartContext || 'ok' in agentStartContext) throw new Error('Missing admitted fixture Session');
     const context = { surface: 'agent' as const, authority: 'account_automation' as const,
       callerPermissionMode: 'default', workspaceWrites: 'allow' as const, agentStartContext };
     const observedCosts: typeof costs[] = [];
@@ -272,7 +272,7 @@ describe('role Action effects', () => {
       machineId: 'machine', directory: '/repo', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       metadata: null, starterDepth: 0, turnDepth: 0, callerPermissionMode: 'default', settings: null, roles: {},
       runCaller: { runId: 'workflow-run', runDepth: 4, runOriginSessionId: 'origin' } });
-    if (!startContext) throw new Error('Expected host-produced Run caller');
+    if (!startContext || 'ok' in startContext) throw new Error('Expected host-produced Run caller');
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), roleActionExecute,
       isActionApprovalRequired: () => false });
     const context = { surface: 'agent' as const, authority: 'account_automation' as const,
@@ -500,6 +500,8 @@ describe('role Action effects', () => {
     let child: Metadata = { ...createTestMetadata(), work: { sessionRolesV1: { roleId: 'builder', overrides: {}, sessionRoles: {}, notes: 'Child notes' } } };
     const writes: string[] = [];
     const execute = createRoleActionExecutor({ sessionId: 'lead', accountId: 'account-1',
+      readRoleSnapshotInputs: async () => ({ defaultEngine: { agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }) },
+        availableAgentTargetKeys: [buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })] }),
       readSessionMetadata: () => ({ work: { sessionRolesV1: { overrides: { builder: { roleId: 'builder', instructionsOverride: 'Lead instruction' } },
         sessionRoles: {}, notes: 'Lead notes' }, promptStack: [{ id: 'lead-context', ref: { kind: 'doc', artifactId: 'memory' }, enabled: true, placement: 'system_append' }] } }),
       listReportSessions: async () => [{ sessionId: 'child', ownerAccountId: 'account-1' }, { sessionId: 'foreign', ownerAccountId: 'account-2' }],
@@ -515,6 +517,52 @@ describe('role Action effects', () => {
     expect(child.work).toMatchObject({ sessionRolesV1: { roleId: 'builder', inheritedFrom: 'lead', notes: 'Lead notes',
       sessionRoles: { builder: { name: 'Builder', instructions: 'Lead instruction' } } } });
     expect(child.work).not.toHaveProperty('promptStack');
+  });
+
+  it.each([false, true])('applies the lead birth engine baseline after a notes edit (Use defaults: %s)', async useDefaults => {
+    const backendTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } as const;
+    const leadKey = buildBackendTargetKeyV2(backendTarget);
+    const childKey = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
+    const pluginRoleId = 'plugin:external/specialist';
+    const sources = createRoleSourceReaderV1({ readPluginRoles: () => [{ pluginId: 'external', localId: 'specialist',
+      role: { ...BUILT_IN_ROLES_V1.builder, name: 'Specialist' } }] });
+    const inventory = await sources();
+    let lead = createTestMetadata({ modelSelectionIntentV1: { v: 1,
+      selection: { agentTargetKey: leadKey, providerConnectionId: null, modelId: 'lead-model' }, updatedAt: 1 },
+      work: { sessionRolesV1: { roleId: 'builder', overrides: {
+        reviewer: { roleId: 'reviewer', engine: { agentTargetKey: childKey, modelId: 'explicit-model' } },
+      }, sessionRoles: {}, notes: '' } } });
+    let child = createTestMetadata({ flavor: 'claude' });
+    const availableAgentTargetKeys = [leadKey, childKey];
+    const execute = createRoleActionExecutor({ sessionId: 'lead', accountId: 'account-1', readSessionMetadata: () => lead,
+      readRoleSources: sources,
+      readRoleSnapshotInputs: async () => ({ defaultEngine: { agentTargetKey: leadKey, modelId: 'lead-model' }, availableAgentTargetKeys }),
+      stageSessionStateMutation: async mutation => { lead = applyRegisteredSessionStateFieldMutationToMetadata(lead, mutation); },
+      listReportSessions: async () => [{ sessionId: 'child', ownerAccountId: 'account-1' }],
+      writeReportSessionRoles: async (sessionId, configuration) => {
+        child = applyRegisteredSessionStateFieldMutationToMetadata(child, { v: 1, sessionId, mutationId: 'copy', fieldId: 'intent.sessionRoles',
+          deliveryClass: 'durable_required', op: { kind: 'set', value: configuration }, source: 'runtime', observedAt: 1 });
+      },
+    });
+    const context = { surface: 'ui', authority: 'present_user' } as const;
+    if (useDefaults) await execute({ actionId: 'session.roles.override.clear', input: { sessionId: 'lead', roleId: 'reviewer' }, context });
+    await execute({ actionId: 'session.notes.set', input: { sessionId: 'lead', notes: 'Updated lead notes' }, context });
+    const birth = resolveCliAgentStartContextV1({ sessionId: 'lead', metadata: lead, backendTarget,
+      appliedChildSelection: { status: 'applied', backendTarget, modelId: 'lead-model', connectedServices: null },
+      machineId: 'machine', directory: '/repo', starterDepth: 0, turnDepth: 0, callerPermissionMode: 'default',
+      settings: accountSettingsParse({}), roleSourceInventory: inventory,
+      accountRoleOverrides: { status: 'ready', overrides: {} }, availableAgentTargetKeys });
+    if (!birth || 'ok' in birth) throw new Error('Expected admitted birth context');
+    expect(birth.roles.builder.engine).toEqual({ agentTargetKey: leadKey, modelId: 'lead-model' });
+    expect(await execute({ actionId: 'session.roles.apply_to_reports', input: { sessionId: 'lead' }, context }))
+      .toEqual({ updatedSessionIds: ['child'] });
+    const inherited = SessionRolesV1Schema.parse(child.work?.sessionRolesV1);
+    expect(inherited.notes).toBe('Updated lead notes');
+    expect(inherited.sessionRoles).toEqual(birth?.roles);
+    expect(inherited.sessionRoles[pluginRoleId]?.engine).toEqual({ agentTargetKey: leadKey, modelId: 'lead-model' });
+    expect(inherited.sessionRoles.second_opinion.engine).toEqual({ agentTargetKey: childKey });
+    expect(inherited.sessionRoles.reviewer.engine).toEqual(useDefaults
+      ? { agentTargetKey: leadKey, modelId: 'lead-model' } : { agentTargetKey: childKey, modelId: 'explicit-model' });
   });
   it('persists current-role changes through the outbox and preserves unrelated session data at replay', async () => {
     const queued: RegisteredSessionStateFieldMutationV1[] = [];

@@ -323,7 +323,7 @@ describe('listExecutionRuns', () => {
         // there are no runs.
         expect(result).toEqual({
             ok: false,
-            code: 'execution_run_protocol_unsupported',
+            code: 'execution_run_target_unavailable',
             message: 'RPC method not available',
         });
     });
@@ -404,7 +404,7 @@ describe('listExecutionRuns', () => {
         // there are no runs.
         expect(result).toEqual({
             ok: false,
-            code: 'execution_run_protocol_unsupported',
+            code: 'execution_run_target_unavailable',
             message: 'RPC method not available',
         });
     });
@@ -576,7 +576,7 @@ describe('listExecutionRuns', () => {
         });
     });
 
-    it('reports protocol unsupported when the rpc method is unavailable and bounded recovery finds no runs', async () => {
+    it('reports target unavailable when the rpc method is unavailable and bounded recovery finds no runs', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
         readRawSessionHistoryRows.mockResolvedValueOnce([]);
@@ -591,7 +591,7 @@ describe('listExecutionRuns', () => {
 
         expect(result).toEqual({
             ok: false,
-            code: 'execution_run_protocol_unsupported',
+            code: 'execution_run_target_unavailable',
             message: 'RPC method not available',
         });
     });
@@ -1197,7 +1197,7 @@ describe('startExecutionRun', () => {
             request: {},
         })).resolves.toEqual({
             ok: false,
-            code: 'execution_run_not_allowed',
+            code: 'execution_run_target_unavailable',
             message: 'Execution run start unavailable',
             details: { executionRunStart: { v: 1, runCreation } },
         });
@@ -1462,7 +1462,7 @@ describe('getExecutionRun', () => {
         });
     });
 
-    it('reports protocol unsupported when the get rpc method is unavailable and bounded recovery finds no run', async () => {
+    it('reports target unavailable when the get rpc method is unavailable and bounded recovery finds no run', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
         readRawSessionHistoryRows.mockResolvedValueOnce([]);
@@ -1477,7 +1477,7 @@ describe('getExecutionRun', () => {
 
         expect(result).toEqual({
             ok: false,
-            code: 'execution_run_protocol_unsupported',
+            code: 'execution_run_target_unavailable',
             message: 'RPC method not available',
         });
     });
@@ -1490,7 +1490,7 @@ describe('execution run control fallback', () => {
         readRawSessionHistoryRows.mockReset();
     });
 
-    it('returns not found when stop rpc is unavailable and no fallback run exists', async () => {
+    it('preserves target unavailability without inferring Run absence from local history', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
         readRawSessionHistoryRows.mockResolvedValueOnce([]);
@@ -1505,9 +1505,11 @@ describe('execution run control fallback', () => {
 
         expect(result).toEqual({
             ok: false,
-            code: 'execution_run_not_found',
-            message: 'Execution run not found',
+            code: 'execution_run_target_unavailable',
+            message: 'RPC method not available',
         });
+        expect(listExecutionRunMarkers).not.toHaveBeenCalled();
+        expect(readRawSessionHistoryRows).not.toHaveBeenCalled();
     });
 
     it('rejects released attached send before any RPC or history lookup', async () => {

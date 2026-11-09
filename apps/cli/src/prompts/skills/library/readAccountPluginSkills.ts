@@ -2,7 +2,9 @@ import type { ReadOnlySkillV1 } from '@happier-dev/protocol/prompts/library/skil
 import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { StoredCredentials } from '@/persistence';
 import axios from '@/api/client/credentialAxios';
-import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+  type PluginAvailabilityMaterializationsReadActionInputV1 } from '@happier-dev/protocol/plugins/availability/actions';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contributionIdentity';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectedSkillEntryV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { getPluginMachineExecutionOriginRef, resolvePluginContentSuppliesV1,
@@ -38,7 +40,11 @@ export async function readAccountPluginSkills(input: AccountPluginSkillRead): Pr
   const unavailable = (): never => { throw Object.assign(new Error('Plugin skill content unavailable'), { code: 'skill_content_unavailable' }); };
   await assertCurrent();
   const serverHttpBaseUrl = input.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
-  const response = await axios.post<unknown>(`${serverHttpBaseUrl}${PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']}`, {}, {
+  // An addressed read needs only its plugins' materializations, never the whole Account inventory.
+  const addressedPluginIds = input.skillIds ? [...new Set(input.skillIds.filter(isPluginSkillIdV1)
+    .flatMap(id => parseQualifiedPluginContributionKey(id.slice('plugin:'.length))?.pluginId ?? []))] : undefined;
+  const readInput: PluginAvailabilityMaterializationsReadActionInputV1 = addressedPluginIds ? { pluginIds: addressedPluginIds } : {};
+  const response = await axios.post<unknown>(`${serverHttpBaseUrl}${PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']}`, readInput, {
     headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${input.credentials.token}` },
     timeout: 0, ...(input.signal ? { signal: input.signal } : {}),
   }).catch(() => { input.signal?.throwIfAborted(); return unavailable(); });
@@ -65,8 +71,11 @@ export async function readAccountPluginSkills(input: AccountPluginSkillRead): Pr
     version: string; contentKey: string; available: boolean }>;
   const supplies = new Map<string, Supply[]>();
   if (expected.size) {
+    // Source selection reads identity, access and presence of the supplying Machines only;
+    // their private metadata and the rest of the Account fleet are not inputs here.
     const machines = await listCurrentAccountMachines({ token: input.credentials.token, credentials: input.credentials,
-      serverHttpBaseUrl, ...(input.signal ? { signal: input.signal } : {}) }).catch(() => { input.signal?.throwIfAborted(); return unavailable(); });
+      serverHttpBaseUrl, projection: 'hostFacts', machineIds: [...expected.keys()],
+      ...(input.signal ? { signal: input.signal } : {}) }).catch(() => { input.signal?.throwIfAborted(); return unavailable(); });
     await assertCurrent();
     await Promise.all([...expected].map(async ([machineId, sources]) => {
       const machine = machines.find(candidate => candidate.id === machineId);

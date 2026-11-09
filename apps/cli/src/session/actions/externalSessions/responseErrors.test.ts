@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    ExternalSessionViewerLeaseCapacityExceededError,
-} from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
-import {
     ExternalSessionFollowFailureError,
 } from '@/session/external/externalSessionFollowFailure';
 import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';
@@ -371,13 +368,6 @@ describe('External Sessions structural error diagnostics', () => {
             errorCode: 'agent_unavailable',
             error: 'external_session_source_changed',
             retryable: true,
-        });
-        expect(mapExternalSessionCorridorFailureToExternalSessionsError(
-            new ExternalSessionViewerLeaseCapacityExceededError(),
-        )).toEqual({
-            ok: false,
-            errorCode: 'agent_unavailable',
-            error: 'external_session_viewer_capacity_exceeded',
         });
         expect(mapExternalSessionCorridorFailureToExternalSessionsError(
             new ExternalSessionProviderFailureError({

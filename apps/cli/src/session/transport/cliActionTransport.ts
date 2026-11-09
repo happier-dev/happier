@@ -9,6 +9,7 @@ import type { SessionBridgeLifecycleHookEventIdV1, ActionExecutorContext } from 
 import { RoleActionRefusalV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { getPreferredHostName } from '@/daemon/machine/metadata';
 import type { readSettings } from '@/persistence';
 import { createCliBoundSessionMetadataReader } from '../actions/resolveCliActionCallerSession';
@@ -44,6 +45,8 @@ export type CliSessionActionTransport = Readonly<{
     localId: string;
     effectActionId: 'execution.run.start' | 'session.open' | 'session.user_action.answer';
     context?: ActionExecutorContext;
+    /** Admitted invocation authority when the caller has no Session-Resume context to lend. */
+    executionAuthority?: ActionExecutorContext['authority'];
     signal?: AbortSignal;
     waitForReady?: boolean;
     approvedNewDirectoryCreation?: boolean;
@@ -63,9 +66,8 @@ export type CliSessionActionTransport = Readonly<{
 }>;
 export function createCliSessionActionTransport(
   params: CliActionDepsParams,
-  { callMachineAction, isWorkflowAuthorizationCurrent, normalizeStringValue, readCurrentSessionMetadata, readServerFeaturesSnapshot, resolveCurrentSessionValue, resolveServerRequestHeaders, withProjectHome }: Readonly<{
+  { callMachineAction, normalizeStringValue, readCurrentSessionMetadata, readServerFeaturesSnapshot, resolveCurrentSessionValue, resolveServerRequestHeaders, withProjectHome }: Readonly<{
     callMachineAction: CliMachineActionCall;
-    isWorkflowAuthorizationCurrent: (context: ActionExecutorContext) => Promise<boolean>;
     normalizeStringValue: (value: unknown) => string | null;
     readCurrentSessionMetadata: ReturnType<typeof createCliBoundSessionMetadataReader>;
     readServerFeaturesSnapshot: () => Promise<CliServerFeaturesSnapshot | undefined>;
@@ -141,7 +143,14 @@ export function createCliSessionActionTransport(
         caller.context.externalActionExecutionAuthorization?.binding.actionId ?? caller.actionId, request) } : {}),
       ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}),
     });
-    const resolved = await (caller ? withProjectHome(read) : read());
+    let resolved: Awaited<ReturnType<typeof read>>;
+    try {
+      resolved = await (caller ? withProjectHome(read) : read());
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (!isAuthenticationError(error)) throw error;
+      return { ok: false, code: 'not_authenticated' };
+    }
     if (!resolved.ok) {
       return {
         ok: false,
@@ -160,6 +169,8 @@ export function createCliSessionActionTransport(
     localId: string;
     effectActionId: 'execution.run.start' | 'session.open' | 'session.user_action.answer';
     context?: ActionExecutorContext;
+    /** Admitted invocation authority when the caller has no Session-Resume context to lend. */
+    executionAuthority?: ActionExecutorContext['authority'];
     signal?: AbortSignal;
     waitForReady?: boolean;
     approvedNewDirectoryCreation?: boolean;
@@ -207,7 +218,7 @@ export function createCliSessionActionTransport(
       metadata,
       // Answering may wake its lost host, never clear a person's explicit Stop.
       ...(input.effectActionId === 'session.user_action.answer' ? { executionAuthority: 'account_automation' as const }
-        : input.context?.authority ? { executionAuthority: input.context.authority } : {}),
+        : (input.executionAuthority ?? input.context?.authority) ? { executionAuthority: input.executionAuthority ?? input.context?.authority } : {}),
       ...(input.effectActionId !== 'session.user_action.answer' && input.context ? { actionContext: input.context } : {}),
       ...(resumeControls ? { incomingOptions: resumeControls,
         ...(input.resumeRequest?.initialGoal ? { initialGoal: input.resumeRequest.initialGoal } : {}),
@@ -287,12 +298,11 @@ export function createCliSessionActionTransport(
       }
       const authorization = await prepareInstalledWorkflowActionAuthorization({
         credentials: params.credentials, context, input,
-        actionId: method === SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET ? 'session.roles.apply_to_reports' : method,
+        actionId: method,
         target: { kind: 'session', sessionId: transport.sessionId }, machineId: caller.baseline.machineId,
         serverId: params.serverId ?? configuration.activeServerId, serverIdentityId: params.serverIdentityId,
         serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
         installationId: params.externalActionMachineInstallationId, privateKey: params.externalActionMachineRequestPrivateKey,
-        isCurrent: async () => await isWorkflowAuthorizationCurrent(context),
       });
       if (!authorization) throw new RoleActionRefusalV1('run_access_denied');
       const { resolveSessionRpcContent } = await import("@/session/transport/rpc/sessionRpc");

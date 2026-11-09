@@ -94,7 +94,7 @@ describe('Agent transition service effect transports', () => {
     const localId = 'continued-input';
     const cause = { requestRef: 'original-question', requester: { serverId: 'home', accountId: 'person' },
       persona: { serverId: 'home', sessionId: 'source-session' }, origin: null };
-    const divider = buildSessionAgentTransitionDividerPayload({ submittedLocalId: localId,
+    const divider = buildSessionAgentTransitionDividerPayload({ sessionId, submittedLocalId: localId,
       fromAgentId: 'claude', toAgentId: 'codex', sourceCutoffSeqInclusive: 1,
       returningAgentLastSeenSeqInclusive: null, mode: 'plain', ctx: null });
     const originalGet = vi.mocked(axios.get).getMockImplementation()!;
@@ -135,7 +135,7 @@ describe('Agent transition service effect transports', () => {
   const invoke = (phase: 'fence' | 'stop' | 'activate', proof: NonNullable<Parameters<typeof callSessionRpc>[0]['externalAction']> = externalAction) => {
     if (phase === 'fence') return callSessionProviderInputAdmission({ credentials, sessionId,
       action: 'enforce', serviceId: 'session.agentTransition', groupId: 'transition-request', externalAction: proof });
-    if (phase === 'stop') return requestSessionStop({ credentials, idOrPrefix: sessionId, externalAction: proof });
+    if (phase === 'stop') return requestSessionStop({ credentials, idOrPrefix: sessionId, stopIntent: 'lifecycle_control', externalAction: proof });
     return requestInactiveSessionResume({ credentials, sessionId, requestId: 'transition-request', rawSession, metadata,
       executionAuthority: 'account_automation', externalAction: proof });
   };
@@ -221,7 +221,7 @@ describe('Agent transition service effect transports', () => {
     const get = vi.mocked(axios.get);
     const ordinaryGet = get.getMockImplementation()!;
     get.mockImplementation(async (url, config) => new URL(String(url)).pathname.endsWith('/messages')
-      ? { status: 200, data: { messages: [] } } : ordinaryGet(url, config));
+      ? { status: 200, data: { messages: [], hasMore: false } } : ordinaryGet(url, config));
     await expect(waitForSessionIdle({ credentials, idOrPrefix: sessionId, timeoutMs: 1000,
       resolveAuthorizationHeaders })).resolves.toMatchObject({ ok: true, idle: true });
     const paths = get.mock.calls.map(([url]) => new URL(String(url)).pathname);
@@ -242,7 +242,7 @@ describe('Agent transition service effect transports', () => {
     const get = vi.mocked(axios.get);
     const ordinaryGet = get.getMockImplementation()!;
     get.mockImplementation(async (url, config) => new URL(String(url)).pathname.endsWith('/messages')
-      ? { status: 200, data: { messages: [] } } : ordinaryGet(url, config));
+      ? { status: 200, data: { messages: [], hasMore: false } } : ordinaryGet(url, config));
     await expect(detectLatestSessionTurnActivity({ token: credentials.token, sessionId, encryptionMode: 'plain',
       encryptionKey: null, encryptionVariant: null, afterSeqExclusive: 7, resolveAuthorizationHeaders,
     })).resolves.toMatchObject({ turnInFlight: false });

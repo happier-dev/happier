@@ -2,14 +2,51 @@ import { createServer, type ServerResponse } from 'node:http';
 import { setImmediate } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
-import { V2SessionByIdResponseSchema, V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { V2SessionByIdResponseSchema, SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createSessionListResponseFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
+import { createDaemonSessionMutationCustody } from '@/daemon/connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 
 const sessionId = 'c123456789012345678901234';
 
 describe('fresh Session transport HTTP resolution', () => {
+  it('does not turn a missing exact daemon mutation target into tag or inventory scans', async () => {
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? '');
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === '/v1/account/encryption/currentness') {
+        response.end(JSON.stringify(AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
+          updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null })));
+      } else if (request.url === '/v2/sessions/lookup-by-tags') {
+        response.end(JSON.stringify(SessionLookupByTagsResponseV2Schema.parse({ sessions: [] })));
+      } else if (request.url === '/v2/sessions?limit=200' || request.url === '/v2/sessions/archived?limit=200') {
+        response.end(JSON.stringify({ sessions: [], nextCursor: null, hasNext: false }));
+      } else {
+        response.writeHead(404).end('{}');
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Loopback HTTP address unavailable');
+    const custody = createDaemonSessionMutationCustody({ credentials: { token: 'transport-fixture', encryption: null } });
+    try {
+      await expect(runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => custody.stageTranscriptEvent({
+        sessionId, eventId: 'retained-presentation', data: { type: 'goal-changed' },
+      }))).rejects.toMatchObject({ code: 'session_unavailable' });
+      expect(requests.sort()).toEqual(['/v1/account/encryption/currentness', `/v2/sessions/${sessionId}`].sort());
+      requests.length = 0;
+      await expect(runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => custody.bindRecoveredJournals([sessionId])))
+        .resolves.toEqual({ boundSessionIds: [], retainedSessionIds: [sessionId] });
+      expect(requests.sort()).toEqual(['/v1/account/encryption/currentness', `/v2/sessions/${sessionId}`].sort());
+    } finally {
+      await custody.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
   it.each([
     { failure: '503', code: 'server_unreachable' },
     { failure: 'reset', code: 'server_unreachable' },
@@ -108,7 +145,7 @@ describe('fresh Session transport HTTP resolution', () => {
     }
   });
 
-  it('still opens legacy tag metadata under the same fresh Account mode', async () => {
+  it('opens retained legacy tag metadata through the current index under the same fresh Account mode', async () => {
     let witnessResponse: ServerResponse | undefined;
     let tagLookupRequested = false;
     const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain',
@@ -119,14 +156,9 @@ describe('fresh Session transport HTTP resolution', () => {
         witnessResponse = response;
       } else if (request.url === '/v2/sessions/lookup-by-tags') {
         tagLookupRequested = true;
-        response.writeHead(404).end(JSON.stringify({ statusCode: 404, error: 'Not Found',
-          message: 'Route POST:/v2/sessions/lookup-by-tags not found' }));
+        response.end(JSON.stringify(SessionLookupByTagsResponseV2Schema.parse({ sessions: [session] })));
       } else if (request.url === `/v2/sessions/${sessionId}`) {
         response.end(JSON.stringify(V2SessionByIdResponseSchema.parse({ session })));
-      } else if (request.url?.startsWith('/v2/sessions?')) {
-        response.end(JSON.stringify(V2SessionListResponseSchema.parse(createSessionListResponseFixture([session]))));
-      } else if (request.url?.startsWith('/v2/sessions/archived?')) {
-        response.end(JSON.stringify(V2SessionListResponseSchema.parse(createSessionListResponseFixture([]))));
       } else {
         response.writeHead(404).end('{}');
       }

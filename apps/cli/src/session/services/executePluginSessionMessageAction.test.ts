@@ -19,9 +19,11 @@ const DEVELOPMENT_SOURCE_CUSTODY = Object.freeze({
 });
 
 describe('executePluginSessionMessageAction', () => {
-  it('admits a semantic teammate shutdown through the real CLI Action and protected machine input owner', async () => {
+  it.each(['command', 'forgeEvidence'] as const)('admits %s through the real CLI Action and protected machine input owner', async kind => {
     const command = { kind: 'agent_team_member_delete' as const, teamId: 'reviewers', memberId: 'worker-1', memberLabel: 'Reviewer' };
     const text = 'Shutdown teammate Reviewer · reviewers';
+    const forgeEvidence = { v: 1 as const, items: [{ source: { kind: 'pullRequest' as const, label: 'acme/repo#42' },
+      author: { kind: 'person' as const, label: 'Ada' }, text: 'Preserve this exact evidence outside the unrelated prompt.' }] };
     const sessionId = 'session-command-current';
     const pluginId = 'acme.agent';
     const contributionLocalId = 'manage-teammates';
@@ -67,7 +69,8 @@ describe('executePluginSessionMessageAction', () => {
         sourceCustody: DEVELOPMENT_SOURCE_CUSTODY,
         resolveCallerMaterialization: () => materialization,
         sessionId,
-        request: { kind: 'sessionSubagentCommand', command, idempotencyKey },
+        request: kind === 'command' ? { kind: 'sessionSubagentCommand', command, idempotencyKey }
+          : { kind: 'userText', text, idempotencyKey, forgeEvidence },
         signal,
       });
       expect(receipt).toEqual({ status: 'accepted', localId });
@@ -75,11 +78,12 @@ describe('executePluginSessionMessageAction', () => {
         sessionId,
         targetMachineId: 'machine-1',
         localId,
-        requestedAction: { v: 1, kind: 'send_now' },
+        requestedAction: { v: 1, kind: kind === 'command' ? 'send_now' : 'steer_if_active' },
         content: { t: 'plain', v: expect.objectContaining({
           role: 'user', content: { type: 'text', text },
           meta: expect.objectContaining({
-            happier: { kind: 'subagent_command.v1', payload: command }, displayText: text,
+            ...(kind === 'command' ? { happier: { kind: 'subagent_command.v1', payload: command }, displayText: text }
+              : { forgeEvidence }),
             happierProvenanceV1: { v: 1, kind: 'pluginSession', pluginId, contributionLocalId, surface: 'unspecified' },
             happierInputRequestV1: { v: 1, producer: 'pluginSession', caller: { kind: 'plugin', pluginId, contributionLocalId }, permission: {} },
           }),

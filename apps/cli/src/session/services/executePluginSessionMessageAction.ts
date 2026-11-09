@@ -1,7 +1,7 @@
 import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { PluginSessionInputRequestV1Schema, SessionInputAdmissionResultV1Schema, derivePluginSessionInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import type { ActionExecuteResult, ActionExecutorContext, PluginMachineMaterializationRefV1, PluginSourceCustodyV1, SessionInputAdmissionResultV1 } from '@happier-dev/protocol';
+import type { ActionCaller, ActionExecuteResult, ActionExecutorContext, PluginMachineMaterializationRefV1, PluginSourceCustodyV1, SessionInputAdmissionResultV1 } from '@happier-dev/protocol';
 
 import { resolvePluginActionCaller } from '@/plugins/runtime/invocation/services/actionCaller';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -21,6 +21,8 @@ export async function executePluginSessionMessageAction(params: Readonly<{
   occurrenceId: string;
   /** Exact durable source custody; never accepted from plugin input. */
   sourceCustody: PluginSourceCustodyV1;
+  /** Existing immediate invocation provenance from the host service seed, never SDK input. */
+  initiatingActionCaller?: ActionCaller;
   /**
    * The runtime-owned registry callback is read at dispatch time. A plugin
    * session handle must never recreate this authority from its plugin id.
@@ -43,6 +45,7 @@ export async function executePluginSessionMessageAction(params: Readonly<{
     contribution: { id: contributionLocalId.data },
     occurrenceId: params.occurrenceId,
     sourceCustody: params.sourceCustody,
+    ...(params.initiatingActionCaller ? { initiatingActionCaller: params.initiatingActionCaller } : {}),
     ...(params.resolveCallerMaterialization
       ? { resolveCurrentPluginMaterializationRef: params.resolveCallerMaterialization }
       : {}),
@@ -80,6 +83,7 @@ export async function executePluginSessionMessageAction(params: Readonly<{
               ...(request.data.recipient ? { recipient: request.data.recipient } : {}),
               ...(request.data.source ? { source: request.data.source } : {}),
               ...(request.data.attachments ? { attachments: request.data.attachments } : {}),
+              ...(request.data.forgeEvidence ? { forgeEvidence: request.data.forgeEvidence } : {}),
               ...(request.data.toolAnswerDelivery ? { toolAnswerDelivery: request.data.toolAnswerDelivery } : {}),
             },
       {

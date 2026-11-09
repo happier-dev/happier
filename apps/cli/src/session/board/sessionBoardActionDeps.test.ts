@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import fastify from 'fastify';
 import axios from 'axios';
 import {
@@ -65,8 +66,27 @@ import { createCliActionExecutorHarness } from '@/session/actions/createCliActio
 import { createRegistryInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
+import { configuration } from '@/configuration';
+import { writeSettings, SUPPORTED_SCHEMA_VERSION } from '@/persistence';
+import { findCompiledActionCliCommand } from '@/cli/actions/compiledCommands';
+import { composeActionCliInput, parseActionCliCommandInput } from '@/cli/actions/parseCommandInput';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { createScopedRuntimeActionSettingsProvider } from '@/settings/scopedRuntimeActionSettingsProvider';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
+import { registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 
 const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
+const allowedVisualPolicy = { actionsSettingsV1: { v: 1,
+  approvalWaivedSurfaces: { 'session.board.item.upsert': ['agent'] },
+} };
 const item = { v: 1, destination: 'board', title: 'Note', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
   source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Hello' } } },
 } as const;
@@ -85,6 +105,8 @@ describe('CLI Board Action family', () => {
   let app = fastify();
   let restore = () => {};
   let verifySessionRequest: ((request: Readonly<{ headers?: unknown; query?: unknown }>) => void) | undefined;
+  let verifyAccountRequest: ((request: Readonly<{ headers: Record<string, unknown>; url: string; method: string }>) => void) | undefined;
+  let accountSettingsBody: Readonly<Record<string, unknown>> = {};
   beforeEach(() => {
     app = fastify();
     rawSession.encryptionMode = 'plain';
@@ -103,12 +125,86 @@ describe('CLI Board Action family', () => {
       capabilities: {},
     })));
     verifySessionRequest = undefined;
+    verifyAccountRequest = undefined;
+    accountSettingsBody = {};
+    app.get('/v1/account/encryption/currentness', async request => {
+      verifyAccountRequest?.(request);
+      return createAccountEncryptionCurrentnessFixture();
+    });
+    app.get('/v1/account/encryption', async request => {
+      verifyAccountRequest?.(request);
+      return AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 });
+    });
+    app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: accountSettingsBody }, version: 1 }));
     app.get('/v2/sessions/session-one', async (request) => {
       verifySessionRequest?.(request);
       return { session: rawSession };
     });
   });
   afterEach(async () => { restore(); vi.restoreAllMocks(); await app.close(); });
+  it('refuses invalid library copy identities before approval and executes an approved UUID copy through the Artifact HTTP contract', async () => {
+    const resetContext = () => { resetInMemoryAccountSettingsContextForTests(); resetServerFeaturesClientForTests(); };
+    resetContext();
+    onTestFinished(resetContext);
+    const account = { serverId: 'srv_savecopy_test', accountId: 'account' };
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: account.accountId,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' },
+    })).toString('base64url')}.signature`, encryption: null, credentialProvenance: 'stored_session' as const };
+    // The shared HTTP boundary uses the server's canonical create grammar.
+    registerPlainArtifactRoutes(app, account.accountId);
+    let creates = 0;
+    app.addHook('onRequest', async request => { if (request.method === 'POST' && request.url === '/v1/artifacts') creates++; });
+    app.get('/v1/account/profile', async () => ({ id: account.accountId }));
+    vi.mocked(globalThis.fetch).mockImplementation(async () => Response.json(FeaturesResponseSchema.parse({
+      features: { sessions: { enabled: true, board: { enabled: true } } },
+      capabilities: { serverIdentity: { serverIdentityId: account.serverId } },
+    })));
+    app.get('/v2/sessions/session-one/system-records/record', async request => ({
+      record: (request.query as Record<string, string>).kind === 'layout.v1' ? null : {
+        id: 'source-row', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'source' },
+        revision, content: { t: 'plain', v: item }, createdAt: '2026-10-30T00:00:00.000Z', updatedAt: '2026-10-30T00:00:00.000Z',
+      },
+    }));
+    await runWithServerHttpBaseUrl('http://board.test', async () => {
+      const artifacts = createCredentialedAccountArtifactStore(credentials);
+      const approvals = createCliApprovalsArtifactStore({ credentials, serverId: account.serverId,
+        serverHttpBaseUrl: 'http://board.test' });
+      const deps: ActionExecutorDeps = { ...createUnavailableActionTransportDeps(), ...approvals,
+        ...createSessionBoardActionDeps({ credentials, serverId: account.serverId, serverHttpBaseUrl: 'http://board.test' }),
+        widgetAccountScope: () => account,
+      };
+      Object.assign(deps, createCliWidgetDefinitionActionDepsV1({ accountId: account.accountId,
+        transport: artifacts, getDeps: () => deps, readCandidates: async () => [] }));
+      const executor = createActionExecutor(deps);
+      const context = { surface: 'agent', authority: 'account_automation', serverId: account.serverId, serverIdentityId: account.serverId,
+        runtimeAccountId: account.accountId, defaultSessionId: 'session-one', defaultSessionMachineId: 'machine',
+        actionCaller: { kind: 'session', sessionId: 'session-one', starterDepth: 0, turnDepth: 0 },
+        actionRequestId: randomUUID() } as const;
+      const input = { account, session: { serverId: account.serverId, sessionId: 'session-one' }, itemId: 'source',
+        artifactId: 'qa-vis-legs-1030-chart-definition' };
+      expect(await executor.execute('widgets.definition.saveFromSession', input, context))
+        .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      expect(creates).toBe(0);
+      const artifactId = randomUUID();
+      const created = await executor.execute('widgets.definition.saveFromSession', { ...input, artifactId }, context);
+      expect(created).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      if (!created.ok) throw new Error('Expected a Save approval');
+      const approval = ActionApprovalRequestCreatedResultSchema.parse(created.result);
+      expect(await artifacts.read(artifactId)).toBeNull();
+      const decidingExecutor = createCliActionExecutorFromCredentials({ credentials, serverId: account.serverId,
+        serverIdentityId: account.serverId, serverApiUrl: 'http://board.test', readCredentials: async () => credentials });
+      const decided = await decidingExecutor.execute('approval.request.decide', { artifactId: approval.artifactId, decision: 'approve' }, {
+        surface: 'cli', authority: 'present_user', serverId: account.serverId, runtimeAccountId: account.accountId,
+        actionCaller: { kind: 'host' },
+      });
+      expect(decided, JSON.stringify(decided))
+        .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+      expect(await deps.widgetDefinitionArtifacts!.get(artifactId)).toMatchObject({ id: artifactId,
+        body: { kind: 'declarative', document: item.source.document }, provenance: { source: { kind: 'session', itemId: 'source' } } });
+      expect(await approvals.approvalsGet({ artifactId: approval.artifactId }))
+        .toMatchObject({ status: 'executed', execution: { ok: true } });
+    });
+  });
   it('reads the strict scalar projection without crypto, item bodies or layout', async () => {
     rawSession.encryptionMode = 'e2ee';
     let reads = 0;
@@ -178,8 +274,6 @@ describe('CLI Board Action family', () => {
     app.get(`/v2/sessions/${selectedSessionId}`, async (_request, reply) => revoked === 'selected'
       ? reply.code(403).send({ error: 'forbidden' })
       : { session: { ...rawSession, id: selectedSessionId, metadata: JSON.stringify({ machineId: 'machine-one' }) } });
-    app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
-      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
     app.get('/v1/artifacts', async () => []);
     app.get(`/v2/sessions/${sessionId}/system-records/record`, async () => ({ record: null }));
     app.get(`/v2/sessions/${sessionId}/system-records`, async () => ({ records: [], hasNext: false, nextCursor: null }));
@@ -242,8 +336,6 @@ describe('CLI Board Action family', () => {
     const serverIdentityId = 'srv_board_identity';
     const sessionId = 'c000000000000000000000052';
     app.get(`/v2/sessions/${sessionId}`, async () => ({ session: { ...rawSession, id: sessionId } }));
-    app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
-      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
     app.get(`/v2/sessions/${sessionId}/system-records/record`, async () => ({ record: null }));
     app.get(`/v2/sessions/${sessionId}/system-records`, async () => ({ records: [], hasNext: false, nextCursor: null }));
     const deps = createCliActionDeps({ credentials: { token: 'token', encryption: null }, token: 'token',
@@ -259,6 +351,7 @@ describe('CLI Board Action family', () => {
     'retains the admitted agent %s root through composed Board reads', async actionId => {
       const serverIdentityId = 'srv_board_identity';
       const accountId = 'owner';
+      const sessionId = 'c000000000000000000000052';
       const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
       const signingKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(32));
       const target = { kind: 'machine' as const, machineId: 'machine-one' };
@@ -278,14 +371,12 @@ describe('CLI Board Action family', () => {
             signature: String(request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) });
         if (!valid) return reply.code(401).send({ error: 'not_authenticated' });
       });
-      app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
-        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
-      // A kind-filtered Artifact page is an envelope that also reports unclassified rows.
-      app.get('/v1/artifacts', async () => ({ items: [], hasUnclassified: false }));
-      app.get('/v2/sessions', async () => ({ sessions: [rawSession], hasNext: false, nextCursor: null }));
+      app.get('/v1/artifacts', async request => artifactListResponse(request.url, []));
+      app.get(`/v2/sessions/${sessionId}`, async () => ({ session: { ...rawSession, id: sessionId } }));
+      app.get('/v2/sessions', async () => ({ sessions: [{ ...rawSession, id: sessionId }], hasNext: false, nextCursor: null }));
       app.get('/v2/sessions/archived', async () => ({ sessions: [], hasNext: false, nextCursor: null }));
-      app.get('/v2/sessions/session-one/system-records/record', async () => ({ record: null }));
-      app.get('/v2/sessions/session-one/system-records', async () => ({ records: [], hasNext: false, nextCursor: null }));
+      app.get(`/v2/sessions/${sessionId}/system-records/record`, async () => ({ record: null }));
+      app.get(`/v2/sessions/${sessionId}/system-records`, async () => ({ records: [], hasNext: false, nextCursor: null }));
       const { executor } = createCliActionExecutorHarness({ credentials: { token, encryption: null }, token,
         sessionId: 'cli-global', mode: 'plain', ctx: null, serverId: 'local-profile', serverIdentityId,
         serverHttpBaseUrl: 'http://board.test', externalActionMachineInstallationId: 'installation-one',
@@ -297,13 +388,13 @@ describe('CLI Board Action family', () => {
         execute: (id, input, context) => executor.execute(id, input, { ...context,
           externalActionExecutionAuthorization: authorization, externalActionTarget: target }),
       } });
-      const surface = { serverId: serverIdentityId, accountId, owner: { kind: 'sessionBoard' as const, sessionId: 'session-one' } };
+      const surface = { serverId: serverIdentityId, accountId, owner: { kind: 'sessionBoard' as const, sessionId } };
       const result = await bridge.executeActionByToolName('action_execute', {
         actionId, input: { surface },
-      }, 'session-one');
+      }, sessionId);
       expect(result, JSON.stringify({ result, signedPaths })).toMatchObject({ ok: true });
-      expect(signedPaths).toContain('/v2/sessions/session-one?accessProjectionVersion=1');
-      expect(signedPaths.some(path => path.startsWith('/v2/sessions/session-one/system-records'))).toBe(true);
+      expect(signedPaths).toContain(`/v2/sessions/${sessionId}?accessProjectionVersion=1`);
+      expect(signedPaths.some(path => path.startsWith(`/v2/sessions/${sessionId}/system-records`))).toBe(true);
     });
   it('admits the portable Home through the widget Board port while retaining exact HTTP routing', async () => {
     const serverIdentityId = 'srv_board_identity';
@@ -332,6 +423,7 @@ describe('CLI Board Action family', () => {
     expect(writes).toHaveLength(1);
   });
   it.each([200, 500] as const)('preserves the HTTP %s visual outcome through the real Account-backed Session MCP factory', async status => {
+    accountSettingsBody = allowedVisualPolicy;
     app.get('/v2/sessions/runtime-session', async () => ({ session: { ...rawSession, id: 'runtime-session' } }));
     app.get('/v2/sessions/runtime-session/system-records/record', async () => ({ record: null }));
     const writes: unknown[] = [];
@@ -355,7 +447,7 @@ describe('CLI Board Action family', () => {
         kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default',
       } }),
       getStoredContentEncryptionContext: () => ({ mode: 'plain' }),
-    }, { authorityScope: 'account', credentials: { token: `fixture.${Buffer.from(JSON.stringify({
+    }, { authorityScope: 'account', accountSettings: accountSettingsParse(accountSettingsBody), credentials: { token: `fixture.${Buffer.from(JSON.stringify({
       sub: 'account', provenance: { v: 1, kind: 'account', authority: 'present_user' },
     })).toString('base64url')}.signature`, encryption: null } });
     const client = new Client({ name: 'runtime-agent', version: '1' });
@@ -384,7 +476,7 @@ describe('CLI Board Action family', () => {
     app.get('/v2/sessions/session-one/system-records/record', async request => ({
       record: committed && (request.query as { kind?: string }).kind === 'item.v1' ? {
         id: 'visual-row', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'visual' },
-        content: committed.itemContent, revision, creator: { kind: 'session', sessionId: 'session-one' },
+        content: committed.itemContent, revision,
         createdAt: '2026-10-12T00:00:00.000Z', updatedAt: '2026-10-12T00:00:00.000Z',
       } : null,
     }));
@@ -462,16 +554,8 @@ describe('CLI Board Action family', () => {
       .find(candidate => candidate.actionId === 'session.board.item.upsert');
     const example = tool?.examples as { mcp?: { argsExample?: string } } | undefined;
     expect(example?.mcp?.argsExample).toBeTypeOf('string');
-    const prompt = buildHappierToolsPromptAppendix({ sessionId: 'session-one', directory: '/workspace' });
-    const command = [...prompt.matchAll(/`([^`\n]+)`/g)]
-      .map(match => parseTrustedHappierToolsShellBridgeCommand(match[1]!))
-      .find(value => value?.kind === 'call' && value.tool === tool!.name);
-    expect(command).toMatchObject({ kind: 'call', tool: tool!.name, sessionId: 'session-one' });
-    if (command?.kind !== 'call' || !command.argsJson) throw new Error('Missing executable visual command');
-    const input = JSON.parse(command.argsJson);
-    expect(input).toEqual({ ...JSON.parse(example!.mcp!.argsExample!), sessionId: 'session-one' });
-    expect(input.item.source.document.root).toMatchObject({ kind: 'chart', style: 'bar',
-      x: { path: ['day'], type: 'string' }, series: { path: ['channel'], type: 'string' }, value: { path: ['orders'], type: 'number' } });
+    const input = { ...JSON.parse(example!.mcp!.argsExample!), sessionId: 'session-one' };
+    expect((tool!.inputSchema as z.ZodMiniType).safeParse(input).success).toBe(true);
     app.get('/v2/sessions/session-one/system-records/record', async () => ({ record: null }));
     let committed: unknown;
     app.put('/v2/sessions/session-one/board', async request => {
@@ -483,6 +567,7 @@ describe('CLI Board Action family', () => {
         serverId: 'home-a', serverHttpBaseUrl: 'http://board.test' }) });
     const tools = createActionToolExecutorBridge({ surface: 'agent', executor: {
       execute: (id, value, context) => executor.execute(id, value, { ...context, serverId: 'home-a',
+        actionsSettings: normalizeActionsSettingsV1(allowedVisualPolicy.actionsSettingsV1),
         actionCaller: { kind: 'session', sessionId: 'session-one', starterDepth: 0, turnDepth: 0 } }),
     } });
     const result = await tools.executeActionByToolName(tool!.name, input, 'session-one');
@@ -497,6 +582,7 @@ describe('CLI Board Action family', () => {
     });
   });
   it('shows the guided Daily usage widget through the projected agent tool and saves its native definition', async () => {
+    accountSettingsBody = allowedVisualPolicy;
     const tool = listBuiltInHappierTools({ surface: 'agent', actionsSettings: null, isActionEnabled: () => true })
       .find(candidate => candidate.actionId === 'session.board.item.upsert');
     expect(tool).toBeDefined();
@@ -534,7 +620,7 @@ describe('CLI Board Action family', () => {
       getActiveTurnPermissionWitness: () => ({ turnId: 'turn', causalPermissionAuthority: {
         kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default',
       } }), getStoredContentEncryptionContext: () => ({ mode: 'plain' }),
-    }, { authorityScope: 'account', credentials: { token: `fixture.${Buffer.from(JSON.stringify({
+    }, { authorityScope: 'account', accountSettings: accountSettingsParse(accountSettingsBody), credentials: { token: `fixture.${Buffer.from(JSON.stringify({
       sub: 'account', provenance: { v: 1, kind: 'account', authority: 'present_user' },
     })).toString('base64url')}.signature`, encryption: null } });
     const client = new Client({ name: 'usage-agent', version: '1' });
@@ -585,11 +671,11 @@ describe('CLI Board Action family', () => {
     } });
     const saved = await saveTools.executeActionByToolName('action_execute', {
       actionId: 'widgets.definition.saveFromSession', input: { account: { serverId: 'home-a', accountId: 'account' },
-        session: { serverId: 'home-a', sessionId: 'session-one' }, itemId: 'daily-usage', artifactId: 'saved-daily-usage' },
+        session: { serverId: 'home-a', sessionId: 'session-one' }, itemId: 'daily-usage', artifactId: '1b9f9a7d-adcf-4415-82fb-b68b62e731b2' },
     }, 'session-one');
-    expect(saved, JSON.stringify(saved)).toMatchObject({ ok: true, result: { definition: { id: 'saved-daily-usage',
+    expect(saved, JSON.stringify(saved)).toMatchObject({ ok: true, result: { definition: { id: '1b9f9a7d-adcf-4415-82fb-b68b62e731b2',
       body: { kind: 'builtin', id: 'usage_daily' } }, suggestedBindings: input.item.source.instance.bindings } });
-    expect(artifacts.get('saved-daily-usage')?.body).toBeDefined();
+    expect(artifacts.get('1b9f9a7d-adcf-4415-82fb-b68b62e731b2')?.body).toBeDefined();
   });
   it('refuses a copy source outside the external credential Session grant before reading it', async () => {
     let sourceReads = 0;
@@ -751,10 +837,8 @@ describe('CLI Board Action family', () => {
     expect(decided).toMatchObject({ ok: true });
     expect(committed, JSON.stringify(decided)).toBeDefined();
     expect(committed).toMatchObject({ itemContent: { t: 'plain', v: { source: sourceItem.source, destination: 'transcript' } } });
-    const reviewedVisual = { networkSetting: null, recordRevision: null, creator: { kind: 'unknown' },
-      previousCapabilitiesDigest: null, previousExecutableFingerprint: null, copySource: input.copySource };
     expect(await executor.execute('session.board.item.upsert', { sessionId: 'session-one', itemId: 'forged',
-      expectedItemRevision: null, item: sourceItem, reviewedVisual }, ctx)).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+      expectedItemRevision: null, item: sourceItem, copySource: input.copySource }, ctx)).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
   });
   it('acquires workspace HTML before approval preparation and keeps the acquired bytes for the later mutation', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'happier-visual-preparation-'));
@@ -821,30 +905,129 @@ describe('CLI Board Action family', () => {
     expect(mutation).toEqual({ operation: 'upsert_item', itemId: 'visual', expectedItemRevision: null, destination: 'transcript',
       itemContent: { t: 'plain', v: { ...item, destination: 'transcript' } } });
   });
-  it('publishes a confined workspace folder through the Session Action without creating an Artifact', async () => {
+  it.each([
+    { surface: 'agent', networkPolicy: 'allowed' }, { surface: 'session-agent', networkPolicy: 'allowed' },
+    { surface: 'cli', networkPolicy: 'allowed' }, { surface: 'admitted-cli', networkPolicy: 'allowed' },
+    { surface: 'agent', networkPolicy: 'off' },
+  ] as const)('publishes a confined workspace folder through the composed $surface Session Action with $networkPolicy network policy without creating an Artifact', async ({ surface, networkPolicy }) => {
+    accountSettingsBody = { ...allowedVisualPolicy, agentHtmlNetworkPolicy: networkPolicy };
     const directory = await mkdtemp(join(tmpdir(), 'happier-session-html-'));
     try {
+      const sessionId = 'c111111111111111111111111';
+      const metadata = createTestMetadata({ path: directory, machineId: 'machine-one' });
+      await writeSettings({ schemaVersion: SUPPORTED_SCHEMA_VERSION, onboardingCompleted: true,
+        machineIdByServerId: { [configuration.activeServerId]: 'machine-one' } });
+      const token = surface === 'session-agent' ? 'runner-session-token' : `fixture.${Buffer.from(JSON.stringify({ sub: 'account',
+        provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+      const credentials = { token, encryption: null };
+      const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
+      const target = { kind: 'machine' as const, machineId: 'machine-one' };
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'folder-authority', binding: {
+        accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+        serverIdentityId: 'srv_folder_home', machineId: target.machineId, custodianAccountId: 'account', installationId: 'folder-installation',
+        actionId: 'session.board.item.upsert', requestId: 'folder-request', target, requestEnvelopeDigest: 'a'.repeat(43),
+      } });
+      const verifyAuthorization = (request: Readonly<{ headers: Record<string, unknown>; url: string; method: string; body?: unknown }>) => {
+        if (surface !== 'admitted-cli') { expect(request.headers.authorization).toBe(`Bearer ${token}`); return; }
+        expect(request.headers.authorization).toBeUndefined();
+        expect(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(authorization.token);
+        expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+          effectActionId: 'session.board.item.upsert', target, installationId: 'folder-installation', requestId: 'folder-request',
+          method: request.method, path: request.url, body: request.body, publicKey: keys.publicKey,
+          signature: String(request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
+      };
       await mkdir(join(directory, 'site'));
       await writeFile(join(directory, 'site', 'index.html'), '<script src="main.js"></script>');
       await writeFile(join(directory, 'site', 'main.js'), 'document.body.dataset.loaded="yes"');
-      app.get('/v2/sessions/session-one/system-records/record', async () => ({ record: null }));
+      app.get(`/v2/sessions/${sessionId}`, async request => { verifyAuthorization(request);
+        return { session: { ...rawSession, id: sessionId, metadata: JSON.stringify(metadata) } }; });
+      verifyAccountRequest = verifyAuthorization;
+      app.get(`/v2/sessions/${sessionId}/system-records/record`, async request => { verifyAuthorization(request); return { record: null }; });
       const writes: unknown[] = [];
-      app.put('/v2/sessions/session-one/board', async (request) => {
+      app.put(`/v2/sessions/${sessionId}/board`, async (request) => {
+        verifyAuthorization(request);
         writes.push(request.body);
         return { operation: 'upsert_item', itemId: 'result', outcome: 'created', itemRevision: revision };
       });
-      const deps = createSessionBoardActionDeps({ credentials: { token: 'daemon-token', encryption: null },
-        serverId: 'home-a', serverHttpBaseUrl: 'http://board.test', resolvePublishCaller: async () => ({
-          sessionId: 'session-one', machineId: 'machine', directory,
-        }) });
-      const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
-      const result = await executor.execute('session.board.item.upsert', { sessionId: 'session-one', itemId: 'result',
+      const input = { sessionId, itemId: 'result',
         expectedItemRevision: null, destination: 'transcript', item: { ...item, source: { kind: 'hostedHtml',
-          publicationSource: { path: 'site', entrypoint: 'index.html' } } } }, {
-        surface: 'cli', authority: 'present_user', serverId: 'home-a', defaultSessionId: 'session-one',
-        presentUserConfirmation: { actionId: 'session.board.item.upsert' },
-      });
-      expect(result).toMatchObject({ ok: true, result: { itemDestination: 'transcript', result: { outcome: 'created' } } });
+          publicationSource: { path: 'site', entrypoint: 'index.html' }, requestedCapabilities: { network: networkPolicy === 'off' ? 'open' : 'none' } } } };
+      if (surface === 'agent' || surface === 'session-agent') {
+        const runtime = createHappierMcpServer({ sessionId,
+          getServerBinding: () => ({ serverId: 'home-a', serverUrl: 'http://board.test' }),
+          getServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({
+            features: { sessions: { enabled: true, board: { enabled: true } }, sharing: { session: { enabled: true } } }, capabilities: {},
+          }) }),
+          rpcHandlerManager: new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' }),
+          updateMetadata() {}, getMetadataSnapshot: () => metadata, getWorkDepth: () => 0, getHostTurnWorkDepth: () => 0,
+          getActiveTurnPermissionWitness: () => ({ turnId: 'turn', causalPermissionAuthority: {
+            kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default',
+          } }), getStoredContentEncryptionContext: () => ({ mode: 'plain' }),
+        }, surface === 'session-agent' ? { authorityScope: 'session', credentials: null, sessionCredentials: credentials,
+          actionsSettingsProvider: createScopedRuntimeActionSettingsProvider(normalizeActionsSettingsV1(allowedVisualPolicy.actionsSettingsV1)) }
+          : { authorityScope: 'account', credentials, accountSettings: accountSettingsParse(accountSettingsBody) });
+        const client = new Client({ name: 'folder-agent', version: '1' });
+        const [agentTransport, hostTransport] = InMemoryTransport.createLinkedPair();
+        try {
+          await runtime.mcp.connect(hostTransport); await client.connect(agentTransport);
+          const result = await client.callTool({ name: 'session_board_item_upsert', arguments: input }, CallToolResultSchema);
+          expect(result.isError, JSON.stringify(result)).not.toBe(true);
+          expect(result.structuredContent).toMatchObject({ itemDestination: 'transcript', result: { outcome: 'created' } });
+          if (networkPolicy === 'off') expect(result.structuredContent).toMatchObject({
+            effectiveNetwork: { network: 'none', networkOrigins: [] }, notices: [{ code: 'agent_html_network_off' }],
+          });
+          const retargeted = await client.callTool({ name: 'session_board_item_upsert', arguments: {
+            ...input, sessionId: 'c222222222222222222222222',
+          } }, CallToolResultSchema);
+          expect(retargeted.isError).toBe(true);
+          expect(writes).toHaveLength(1);
+        } finally { await client.close(); await runtime.mcp.close(); }
+      } else {
+        const { executor } = createCliActionExecutorHarness({ credentials, token, sessionId: 'cli-global', mode: 'plain', ctx: null,
+          serverId: 'home-a', serverHttpBaseUrl: 'http://board.test',
+          ...(surface === 'admitted-cli' ? { serverIdentityId: 'srv_folder_home', externalActionMachineRequestPrivateKey: keys.secretKey,
+            externalActionMachineInstallationId: 'folder-installation' } : {}),
+        });
+        const context = { surface: 'cli' as const, authority: 'present_user' as const, serverId: 'home-a',
+          presentUserConfirmation: { actionId: 'session.board.item.upsert' as const },
+          ...(surface === 'admitted-cli' ? { externalActionExecutionAuthorization: authorization, externalActionTarget: target } : {}),
+        };
+        const command = findCompiledActionCliCommand(['session', 'board', 'item', 'set']);
+        if (!command) throw new Error('Missing public Session visual command');
+        const bindItem = (value: unknown) => {
+          const parsed = parseActionCliCommandInput(command, [...command.path, sessionId, input.itemId,
+            '--destination', 'transcript', '--item-json', JSON.stringify(value)]);
+          if (!parsed.ok) throw new Error(parsed.message);
+          return composeActionCliInput({ parsed, canonicalSchema: command.spec.inputSchema,
+            wholeInputSchema: command.wholeInputSchema, callerSchema: command.callerSchema,
+            bindInput: command.spec.cli?.bindInput,
+            context: { actionId: command.actionId, invocationId: 'folder-cli', commandPath: command.path } });
+        };
+        const inlineItem = { ...input.item, source: { kind: 'hostedHtml', source: {
+          v: 1, entrypoint: 'index.html', files: { 'index.html': {
+            mime: 'text/html', contentBase64: Buffer.from('<p>Inline HTML</p>').toString('base64'),
+          } },
+        } } };
+        expect(bindItem(inlineItem)).toMatchObject({ ok: true, input: { expectedItemRevision: null, item: inlineItem } });
+        const bound = bindItem(input.item);
+        expect(bound).toMatchObject({ ok: true, input });
+        if (!bound.ok) throw new Error(bound.message);
+        const result = await executor.execute(command.actionId, bound.input, {
+          ...context,
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { itemDestination: 'transcript', result: { outcome: 'created' } } });
+        const escaped = { ...input, item: { ...input.item, source: { ...input.item.source,
+          publicationSource: { path: '../site', entrypoint: 'index.html' } } } };
+        expect(await executor.execute('session.board.item.upsert', escaped, context)).toMatchObject({ ok: false });
+        metadata.machineId = 'foreign-machine';
+        expect(await executor.execute('session.board.item.upsert', input, context))
+          .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+        metadata.machineId = 'machine-one';
+        rawSession.effectiveAccess = { v: 1, level: 'view', sources: [{ kind: 'direct', shareId: 'view-only' }],
+          capabilities: projectSessionAccessCapabilitiesV1({ owner: false, grants: [{ accessLevel: 'view', canApprovePermissions: false }] }) };
+        expect(await executor.execute('session.board.item.upsert', input, context)).toMatchObject({ ok: false });
+        expect(writes).toHaveLength(1);
+      }
       expect(writes).toEqual([expect.objectContaining({ itemContent: { t: 'plain', v: {
         ...item, destination: 'transcript', source: { kind: 'hostedHtml', source: { v: 1, entrypoint: 'index.html', files: {
           'index.html': { mime: 'text/html', contentBase64: Buffer.from('<script src="main.js"></script>').toString('base64') },
@@ -1021,6 +1204,8 @@ describe('CLI Board Action family', () => {
     await expect(read()).resolves.toMatchObject({
       ok: false, errorCode: 'feature_disabled', details: { operation: 'session.board.get' },
     });
+    recordReply = { status: 200, body: { malformed: 'private record payload' } };
+    await expect(read()).resolves.toEqual({ ok: false, errorCode: 'invalid_response', error: 'invalid_response' });
     // A read that never reached the Home is `offline`, the same disposition the mutation path uses.
     const refused = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
     const get = vi.spyOn(axios, 'get').mockRejectedValue(refused);
@@ -1028,6 +1213,8 @@ describe('CLI Board Action family', () => {
     // Cancellation stays distinct from being offline.
     get.mockRejectedValue(Object.assign(new Error('canceled'), { code: 'ERR_CANCELED' }));
     await expect(read()).resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
+    get.mockRejectedValue(new Error('private unexpected transport diagnostics'));
+    await expect(read()).resolves.toEqual({ ok: false, errorCode: 'server_error', error: 'server_error' });
     get.mockRestore();
     expect(puts).toBe(0);
   });
@@ -1270,7 +1457,7 @@ describe('CLI Board Action family', () => {
     });
   });
   it('returns bounded inventory and exact requested bodies through the same host reader', async () => {
-    const record = { id: 'item-row', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'note' }, creator: { kind: 'session', sessionId: 'session-one' }, content: { t: 'plain', v: item }, revision,
+    const record = { id: 'item-row', address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'note' }, content: { t: 'plain', v: item }, revision,
       createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z' };
     app.get('/v2/sessions/session-one/system-records/record', async (request) => ({ record: (request.query as { kind?: string }).kind === 'layout.v1' ? null : record }));
     app.get('/v2/sessions/session-one/system-records', async () => ({ records: [record, record], nextCursor: 'page-two', hasNext: true }));
@@ -1279,7 +1466,7 @@ describe('CLI Board Action family', () => {
       layout: null, items: [{ itemId: 'note', title: 'Note', sourceKind: 'declarative', revision }], incomplete: true, page: { cursor: 'page-two', hasNext: true },
     });
     await expect(deps.sessionBoardAction!({ actionId: 'session.board.get', context: {}, input: { sessionId: 'session-one', itemIds: ['note', 'note'] } })).resolves.toMatchObject({
-      items: [{ itemId: 'note', creator: { kind: 'session', sessionId: 'session-one' }, item }], incomplete: false,
+      items: [{ itemId: 'note', item }], incomplete: false,
     });
   });
   it.each(['session.board.layout.update', 'session.board.item.remove'] as const)('uses complete layout operands for %s without inventory replacement', async (actionId) => {
@@ -1484,18 +1671,17 @@ describe('CLI Board Action family', () => {
           sessionId: 'session-one',
           requestBody: writes[0],
           mutationRequest: JSON.parse(writes[0]!),
-          intent: { ...input, destination: 'board', reviewedVisual: {
-            recordRevision: null, creator: { kind: 'unknown' }, previousExecutableFingerprint: null,
-            previousCapabilitiesDigest: null, networkSetting: null,
-          } },
+          intent: { ...input, destination: 'board' },
         },
       },
     });
   });
   it('preserves typed non-2xx failures and classifies malformed 2xx as outcome unknown', async () => {
     app.get('/v2/sessions/session-one/system-records/record', async () => ({ record: null }));
-    let responseKind: 'conflict' | 'malformed_success' | 'malformed_failure' | 'feature_disabled' = 'conflict';
+    let responseKind: 'conflict' | 'malformed_success' | 'malformed_failure' | 'feature_disabled' | 'transport_failure' = 'conflict';
+    let transportFailure: Readonly<{ status: number; body: unknown }> = { status: 401, body: {} };
     app.put('/v2/sessions/session-one/board', async (_request, reply) => {
+      if (responseKind === 'transport_failure') return reply.code(transportFailure.status).send(transportFailure.body);
       if (responseKind === 'feature_disabled') return reply.code(404).send({ error: 'not_found' });
       if (responseKind === 'malformed_success') return reply.code(200).send({ definitely: 'not-a-board-result' });
       if (responseKind === 'malformed_failure') return reply.code(500).send({ definitely: 'not-a-board-error' });
@@ -1544,6 +1730,17 @@ describe('CLI Board Action family', () => {
       error: 'feature_disabled',
       details: { operation: 'session.board.layout.update' },
     });
+    responseKind = 'transport_failure';
+    for (const [status, body, errorCode] of [
+      [401, { error: 'private authentication diagnostics' }, 'not_authenticated'],
+      [403, { error: 'private authorization diagnostics' }, 'forbidden'],
+      [404, { error: 'Not found', code: 'plugin_session_not_found' }, 'not_found'],
+      [503, { error: 'Unavailable', code: 'plugin_session_records_unavailable' }, 'protocol_unavailable'],
+      [400, { error: 'Invalid request', code: 'plugin_session_record_invalid_request' }, 'malformed'],
+    ] as const) {
+      transportFailure = { status, body };
+      await expect(deps.sessionBoardAction!(args)).resolves.toEqual({ ok: false, errorCode, error: errorCode });
+    }
   });
   it('preserves the current revision when the local Board read detects a conflict', async () => {
     let writes = 0;
@@ -1613,7 +1810,6 @@ describe('CLI Board Action family', () => {
     type StoredRecordFixture = Readonly<{
       id: string;
       address: Readonly<{ owner: 'host'; namespace: 'surface'; kind: 'item.v1' | 'layout.v1'; localId: string }>;
-      creator?: Readonly<{ kind: 'session'; sessionId: string }>;
       content: unknown;
       revision: string;
       createdAt: string;
@@ -1627,7 +1823,6 @@ describe('CLI Board Action family', () => {
     ): StoredRecordFixture => ({
       id: `${kind}:${localId}`,
       address: { owner: 'host', namespace: 'surface', kind, localId },
-      ...(kind === 'item.v1' ? { creator: { kind: 'session' as const, sessionId: 'session-one' } } : {}),
       content,
       revision,
       createdAt: timestamp,
@@ -1657,11 +1852,7 @@ describe('CLI Board Action family', () => {
       mutations.push(mutation);
       if (mutation.operation === 'upsert_item' && mutation.itemId && mutation.itemContent) {
         const outcome = itemRecords.has(mutation.itemId) ? 'updated' : 'created';
-        const previous = itemRecords.get(mutation.itemId);
-        itemRecords.set(mutation.itemId, {
-          ...makeRecord('item.v1', mutation.itemId, mutation.itemContent),
-          ...(previous?.creator ? { creator: previous.creator } : {}),
-        });
+        itemRecords.set(mutation.itemId, makeRecord('item.v1', mutation.itemId, mutation.itemContent));
         if (mutation.placement) layoutRecord = makeRecord('layout.v1', 'layout', mutation.placement.layoutContent);
         return { operation: 'upsert_item', itemId: mutation.itemId, outcome, itemRevision: revision, ...(mutation.placement ? { layoutRevision: revision } : {}) };
       }
@@ -1698,15 +1889,18 @@ describe('CLI Board Action family', () => {
     const agentTools = createActionToolExecutorBridge({
       surface: 'agent',
       executor: {
-        execute: (actionId, input, context) => executor.execute(actionId, input, {
-          ...context,
-          serverId: 'home-a',
-          actionCaller: { kind: 'session', sessionId: 'session-one', starterDepth: 0, turnDepth: 0 },
-          // Organization/removal are already-confirmed host invocations here;
-          // upserts still exercise the Session own-created admission exception.
-          ...(actionId === 'session.board.layout.update' || actionId === 'session.board.item.remove'
-            ? { bypassApprovals: true } : {}),
-        }),
+        execute: (actionId, input, context) => {
+          expect(context.defaultSessionId).toBe('session-one');
+          return executor.execute(actionId, input, {
+            ...context,
+            serverId: 'home-a',
+            actionCaller: { kind: 'session', sessionId: 'session-one', starterDepth: 0, turnDepth: 0 },
+            // Removal is already confirmed here; authoring and organization
+            // exercise the own-Session per-Action defaults without a waiver.
+            ...(actionId === 'session.board.item.remove'
+              ? { bypassApprovals: true } : {}),
+          });
+        },
       },
     });
     const executeBoardAction = async (actionId: string, input: unknown) => await agentTools.executeActionByToolName(
@@ -1730,11 +1924,12 @@ describe('CLI Board Action family', () => {
     })).resolves.toMatchObject({ ok: false });
     expect(mutations).toHaveLength(mutationCountBeforeSpoof);
 
-    await expect(executeBoardAction('session.board.item.upsert', {
+    const ownSessionCreate = await executeBoardAction('session.board.item.upsert', {
       itemId: 'release-checklist', expectedItemRevision: null,
       item: note('Release checklist', 'Draft'),
       placement: { tabId: 'overview', tabTitle: 'Overview', width: 'wide' },
-    })).resolves.toMatchObject({ ok: true });
+    });
+    expect(ownSessionCreate, JSON.stringify(ownSessionCreate)).toMatchObject({ ok: true });
     await expect(executeBoardAction('session.board.item.upsert', {
       itemId: 'temporary-note', expectedItemRevision: null,
       item: note('Temporary note', 'Remove me'),

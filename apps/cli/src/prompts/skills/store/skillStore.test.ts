@@ -70,6 +70,10 @@ describe('daemon skill store', () => {
         await ensure();
         expect(copies.mock.calls).toHaveLength(0);
         // Report the real metadata-read cost; only materialization counts are gated.
+        console.info('[skill-store reuse cost]', JSON.stringify({ mode, skills: items.length,
+            declaredEntries: items.reduce((sum, item) => sum + item.files.length, 0),
+            lstat: metadataReads.mock.calls.length, readdir: directoryReads.mock.calls.length,
+            deliveredPathLstat: metadataReads.mock.calls.filter(([path]) => String(path).startsWith(result.skillsRoot + '/')).length }));
         copies.mockClear();
         items[0] = withSupport(items[0]!.name, 'Changed guide');
         await ensure();

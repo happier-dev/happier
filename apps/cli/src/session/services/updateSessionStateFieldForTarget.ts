@@ -3,7 +3,7 @@ import {
   createSessionStateSyncEngine,
   type SessionStateFieldWriteValue,
 } from '@happier-dev/agents';
-import type { SessionStateCapabilitiesV1, SessionStateFieldId } from '@happier-dev/protocol';
+import type { SessionStateCapabilitiesV1, SessionStateFieldId, SessionStateFieldValue } from '@happier-dev/protocol';
 import {
   assertSessionMetadataMutationCurrentness,
   type SessionMetadataMutationCurrentness,
@@ -20,6 +20,7 @@ const CLI_SESSION_STATE_METADATA_CAPABILITIES: SessionStateCapabilitiesV1 = {
     providerSessionId: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
   intent: {
+    approvalProfileId: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     model: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     permissionMode: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     acpSessionMode: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
@@ -86,8 +87,9 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
   fieldId: F;
   value: SessionStateFieldWriteValue<F>;
   metadataReason: string;
+  expectedMetadataRevision?: number;
+  expectedValue?: SessionStateFieldValue<F> | null;
   currentness?: SessionMetadataMutationCurrentness;
-  maxAttempts?: number;
 }>): Promise<UpdateSessionMetadataForTargetResult> {
   assertSessionMetadataMutationCurrentness(params.currentness);
   let targetResult: UpdateSessionMetadataForTargetResult | null = null;
@@ -100,7 +102,7 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
     capabilities: CLI_SESSION_STATE_METADATA_CAPABILITIES,
     facet: null,
     metadataPort: {
-      update: async (sessionId, updater, opts) => {
+      update: async (sessionId, updater) => {
         try {
           assertSessionMetadataMutationCurrentness(params.currentness);
           const result = await updateSessionMetadataForTarget({
@@ -109,9 +111,8 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
               ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
               : {}),
             idOrPrefix: sessionId,
-            updater,
+            updater: (metadata, context) => updater(metadata, context?.metadataRevision),
             currentness: params.currentness,
-            ...(typeof opts.maxAttempts === 'number' ? { maxAttempts: opts.maxAttempts } : {}),
           });
           targetResult = result;
           if (result.ok) {
@@ -152,7 +153,8 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
     value: params.value,
     reason: 'user-mutation',
     metadataReason: params.metadataReason,
-    ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
+    expectedMetadataRevision: params.expectedMetadataRevision,
+    expectedValue: params.expectedValue,
     mirrorToProvider: false,
   });
 

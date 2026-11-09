@@ -1,8 +1,7 @@
 import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY, readSessionUsageLimitRecoveryForIssue } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
-import type { ConnectedAccountServiceKey, SessionRuntimeIssueV1, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import type { SessionRuntimeIssueV1, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 
-import { deriveUsageLimitRecoveryTiming } from './deriveUsageLimitRecoveryTiming';
-import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { buildRecoveryIntentFromUsageLimitIssue } from './buildUsageLimitRecoveryIntent';
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from './usageLimitRecoverySelectedAuth';
 import { readLatestUsageLimitFailureIssue } from './readLatestUsageLimitFailureIssue';
 import type {
@@ -11,8 +10,6 @@ import type {
   SessionUsageLimitRecoveryControlAdapterParams,
   SessionUsageLimitRecoveryReadinessProbeResult,
 } from './sessionUsageLimitRecoveryControlTypes';
-
-export const DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS = 600_000;
 
 type MetadataRecord = Record<string, unknown>;
 
@@ -28,16 +25,6 @@ export const USAGE_LIMIT_RECOVERY_SUPERSEDED_BY_TURN_COMPLETION_ERROR =
 
 function stableError(errorCode: string): Readonly<{ ok: false; errorCode: string; error: string }> {
   return { ok: false, errorCode, error: errorCode };
-}
-
-function readNonNegativeIntegerFromEnv(
-  env: NodeJS.ProcessEnv,
-  key: string | undefined,
-  defaultValue: number,
-): number {
-  const raw = key && typeof env[key] === 'string' ? env[key]?.trim() : '';
-  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : defaultValue;
 }
 
 function isPendingRecoveryIntentStatus(status: SessionUsageLimitRecoveryV1['status']): boolean {
@@ -87,97 +74,14 @@ function readLatestUsageLimitIssue(input: Readonly<{
   return issue;
 }
 
-function resolveFallbackNextCheckAtMs(params: Readonly<{
-  intent: Pick<SessionUsageLimitRecoveryV1, 'armedAtMs'>;
-  issue: SessionRuntimeIssueV1 | null;
-  fallbackBackoffMs: number;
-  nowMs: number;
-}>): number {
-  const anchorMs = Number.isInteger(params.intent.armedAtMs) && params.intent.armedAtMs >= 0
-    ? params.intent.armedAtMs
-    : params.issue?.occurredAt ?? params.nowMs;
-  return anchorMs + params.fallbackBackoffMs;
-}
-
-function resolveIntentNextCheckAtMs(params: Readonly<{
-  intent: SessionUsageLimitRecoveryV1;
-  issue: SessionRuntimeIssueV1 | null;
-  fallbackBackoffMs: number;
-  nowMs: number;
-}>): number {
-  if (typeof params.intent.nextCheckAtMs === 'number' && Number.isFinite(params.intent.nextCheckAtMs)) {
-    return params.intent.nextCheckAtMs;
-  }
-
-  const usageLimit = params.issue?.usageLimit;
-  if (usageLimit) {
-    const timing = deriveUsageLimitRecoveryTiming({
-      occurredAtMs: params.issue.occurredAt,
-      resetAtMs: usageLimit.resetAtMs,
-      retryAfterMs: usageLimit.retryAfterMs,
-    });
-    if (timing.nextCheckAtMs !== null) return timing.nextCheckAtMs;
-  }
-
-  return resolveFallbackNextCheckAtMs(params);
-}
-
-function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
-  issue: SessionRuntimeIssueV1;
-  providerId: string;
-  defaultNativeServiceId?: ConnectedAccountServiceKey | null;
-  connectedServices?: unknown;
-  fallbackBackoffMs: number;
-  maxAttempts: number;
-  nowMs: number;
-}>): SessionUsageLimitRecoveryV1 {
-  const usageLimit = params.issue.usageLimit;
-  const timing = usageLimit
-    ? deriveUsageLimitRecoveryTiming({
-      occurredAtMs: params.issue.occurredAt,
-      resetAtMs: usageLimit.resetAtMs,
-      retryAfterMs: usageLimit.retryAfterMs,
-    })
-    : { resetAtMs: null, nextCheckAtMs: null };
-  const intent: SessionUsageLimitRecoveryV1 = {
-    v: 1,
-    status: 'waiting',
-    resumePromptMode: 'standard',
-    issueFingerprint: buildUsageLimitIssueFingerprint(params.issue, params.providerId),
-    armedAtMs: params.issue.occurredAt,
-    resetAtMs: timing.resetAtMs,
-    nextCheckAtMs: timing.nextCheckAtMs,
-    attemptCount: 0,
-    maxAttempts: params.maxAttempts,
-    lastProbeError: null,
-    selectedAuth: resolveUsageLimitRecoverySelectedAuthFromIssue({
-      issue: params.issue,
-      defaultNativeServiceId: params.defaultNativeServiceId,
-      connectedServices: params.connectedServices ?? null,
-    }) ?? { kind: 'native' },
-  };
-
-  return {
-    ...intent,
-    nextCheckAtMs: intent.nextCheckAtMs ?? resolveFallbackNextCheckAtMs({
-      intent,
-      issue: params.issue,
-      fallbackBackoffMs: params.fallbackBackoffMs,
-      nowMs: params.nowMs,
-    }),
-  };
-}
-
 function buildNextIntent(params: Readonly<{
   intent: SessionUsageLimitRecoveryV1;
-  issue: SessionRuntimeIssueV1 | null;
-  fallbackBackoffMs: number;
   nowMs: number;
 }>): Readonly<{
   adapterStatus: 'ready' | 'waiting';
   intent: SessionUsageLimitRecoveryV1;
 }> {
-  const nextCheckAtMs = resolveIntentNextCheckAtMs(params);
+  const nextCheckAtMs = params.intent.nextCheckAtMs;
   const baseIntent: SessionUsageLimitRecoveryV1 = {
     ...params.intent,
     nextCheckAtMs,
@@ -194,7 +98,7 @@ function buildNextIntent(params: Readonly<{
     };
   }
 
-  if (params.nowMs >= nextCheckAtMs) {
+  if (nextCheckAtMs !== null && params.nowMs >= nextCheckAtMs) {
     return {
       adapterStatus: 'ready',
       intent: {
@@ -218,13 +122,11 @@ function buildNextIntent(params: Readonly<{
 
 export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: SessionUsageLimitRecoveryBackoffPolicy & Readonly<{
   nowMs?: () => number;
-  processEnv?: NodeJS.ProcessEnv;
   readinessProbe?: (
     params: SessionUsageLimitRecoveryControlAdapterParams,
   ) => Promise<SessionUsageLimitRecoveryReadinessProbeResult>;
 }>): SessionUsageLimitRecoveryControlAdapter {
   const nowMs = options.nowMs ?? (() => Date.now());
-  const processEnv = options.processEnv ?? process.env;
 
   return {
     checkNow: async (params): Promise<BackoffUsageLimitRecoveryControlResult> => {
@@ -253,26 +155,14 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Se
           },
         };
       }
-      const fallbackBackoffMs = readNonNegativeIntegerFromEnv(
-        processEnv,
-        options.fallbackBackoffEnvKey,
-        options.defaultFallbackBackoffMs ?? DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
-      );
       const intent = persistedIntent && persistedIntent.status !== 'cancelled'
         ? persistedIntent
         : latestIssue
-          ? buildRecoveryIntentFromLatestUsageLimitIssue({
+          ? buildRecoveryIntentFromUsageLimitIssue({
             issue: latestIssue,
             providerId: options.providerId,
             defaultNativeServiceId: options.defaultNativeServiceId ?? null,
             connectedServices: params.metadata.connectedServices ?? null,
-            fallbackBackoffMs,
-            maxAttempts: readNonNegativeIntegerFromEnv(
-              processEnv,
-              options.maxAttemptsEnvKey,
-              options.defaultMaxAttempts ?? 3,
-            ),
-            nowMs: now,
           })
           : null;
       if (!intent) {
@@ -281,11 +171,10 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Se
 
       let next = buildNextIntent({
         intent,
-        issue: latestIssue,
-        fallbackBackoffMs,
         nowMs: now,
       });
-      if (next.adapterStatus === 'ready' && options.readinessProbe) {
+      if (next.intent.status !== 'exhausted' && options.readinessProbe
+        && (next.adapterStatus === 'ready' || next.intent.nextCheckAtMs === null)) {
         let probe: SessionUsageLimitRecoveryReadinessProbeResult;
         try {
           probe = await options.readinessProbe(params);
@@ -295,7 +184,9 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Se
             errorCode: 'usage_limit_recovery_readiness_probe_failed',
           };
         }
-        if (probe.status !== 'ready') {
+        if (probe.status === 'ready') {
+          next = { adapterStatus: 'ready', intent: { ...next.intent, status: 'paused', nextCheckAtMs: null, lastProbeError: null } };
+        } else {
           const requestedRetryAfterMs = probe.status === 'waiting'
             ? probe.retryAfterMs
             : undefined;
@@ -303,13 +194,13 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Se
             && Number.isFinite(requestedRetryAfterMs)
             && requestedRetryAfterMs >= 0
             ? Math.trunc(requestedRetryAfterMs)
-            : fallbackBackoffMs;
+            : null;
           next = {
             adapterStatus: 'waiting',
             intent: {
               ...next.intent,
               status: 'waiting',
-              nextCheckAtMs: now + retryAfterMs,
+              nextCheckAtMs: retryAfterMs === null ? null : now + retryAfterMs,
               lastProbeError: probe.status === 'unavailable'
                 ? probe.errorCode
                 : null,

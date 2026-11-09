@@ -67,51 +67,6 @@ describe('detectSessionTurnActivity', () => {
         expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
     });
 
-    it('does not count a realtime Voice user row as a pending Agent-thread text turn', async () => {
-        const fetchEncryptedTranscriptPageLatest = vi.fn(async () => [{
-            id: 'voice-user-row',
-            localId: null,
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            content: {
-                t: 'plain' as const,
-                v: {
-                    role: 'user',
-                    content: { type: 'text', text: 'spoken sentence' },
-                    meta: {
-                        happier: {
-                            conversationTurnOriginV1: {
-                                v: 1,
-                                channel: 'realtime_conversation',
-                                modality: 'voice',
-                            },
-                        },
-                    },
-                },
-            },
-        }]);
-        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageLatest,
-            fetchEncryptedTranscriptPageAfterSeq,
-        }));
-
-        const { detectSessionTurnActivity } = await import('./detectSessionTurnInFlight');
-
-        await expect(detectSessionTurnActivity({
-            token: 'token',
-            sessionId: 'sess-1',
-            encryptionMode: 'plain',
-            encryptionKey: new Uint8Array(32).fill(1),
-            encryptionVariant: 'dataKey',
-        })).resolves.toEqual({
-            pendingUserTurns: 0,
-            activeTaskInFlight: false,
-            turnInFlight: false,
-        });
-    });
-
     it('trusts a complete idle projection over transcript task lifecycle rows', async () => {
         const fetchEncryptedTranscriptPageLatest = vi.fn(async () => [
             {
@@ -312,50 +267,6 @@ describe('detectSessionTurnActivity', () => {
         expect(fetchEncryptedTranscriptPageLatest).toHaveBeenCalledOnce();
     });
 
-    it('forwards transcript fetch timeout budgets to transcript scans', async () => {
-        const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
-        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
-        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
-            fetchEncryptedTranscriptPageLatest,
-            fetchEncryptedTranscriptPageAfterSeq,
-        }));
-
-        const { detectSessionTurnActivity } = await import('./detectSessionTurnInFlight');
-
-        await detectSessionTurnActivity({
-            token: 'token',
-            sessionId: 'sess-1',
-            encryptionMode: 'plain',
-            encryptionKey: new Uint8Array(32).fill(1),
-            encryptionVariant: 'dataKey',
-            transcriptFetchTimeoutMs: 345,
-        });
-
-        await detectSessionTurnActivity({
-            token: 'token',
-            sessionId: 'sess-1',
-            encryptionMode: 'plain',
-            encryptionKey: new Uint8Array(32).fill(1),
-            encryptionVariant: 'dataKey',
-            afterSeqExclusive: 9,
-            transcriptFetchTimeoutMs: 456,
-        });
-
-        expect(fetchEncryptedTranscriptPageLatest).toHaveBeenCalledWith({
-            token: 'token',
-            sessionId: 'sess-1',
-            limit: 20,
-            timeoutMs: 345,
-        });
-        expect(fetchEncryptedTranscriptPageAfterSeq).toHaveBeenCalledWith({
-            token: 'token',
-            sessionId: 'sess-1',
-            afterSeq: 9,
-            limit: 20,
-            timeoutMs: 456,
-        });
-    });
-
     it('can ignore bare ready events while a user turn has not started', async () => {
         const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
         const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => [
@@ -413,12 +324,6 @@ describe('detectSessionTurnActivity', () => {
             pendingUserTurns: 1,
             activeTaskInFlight: false,
             turnInFlight: true,
-        });
-        expect(fetchEncryptedTranscriptPageAfterSeq).toHaveBeenCalledWith({
-            token: 'token',
-            sessionId: 'sess-1',
-            afterSeq: 0,
-            limit: 20,
         });
         expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
     });

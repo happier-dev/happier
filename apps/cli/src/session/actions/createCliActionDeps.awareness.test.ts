@@ -2,10 +2,16 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 import axios from 'axios';
+import nacl from 'tweetnacl';
 import {
   FeaturesResponseSchema,
   SessionAwarenessProjectionV1Schema,
   projectLegacySessionAccessCapabilitiesV1,
+  SessionMetadataTuplePatchV1Schema,
+  SessionDisplayProjectionV1Schema,
+  openSessionSharedDisplayEnvelopeV1Sync,
+  openSessionOwnerDisplayEnvelopeV1,
+  API_TOKEN_FULL_GRANT_V1,
   type ActionExecutorContext,
 } from '@happier-dev/protocol';
 import {
@@ -14,7 +20,18 @@ import {
   createSessionRecordFixture,
 } from '@/testkit/backends/sessionFixtures';
 import { createCliActionDeps } from './createCliActionDeps';
-vi.mock('axios', () => ({ default: { get: vi.fn(), isAxiosError: () => false } }));
+import { createCliActionExecutor } from './createCliActionExecutor';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+  EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import { sealMemorySystemRecordPayload, MEMORY_SYSTEM_RECORD_KINDS, buildMemorySynopsisSystemRecordLocalId } from '@/session/systemRecords/memory/memorySystemRecords';
+vi.mock('axios', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('axios')>();
+  // Keep Axios configuration real beneath the credential-scoped HTTP boundary.
+  return { ...actual, default: { ...actual.default, get: vi.fn(), patch: vi.fn(), isAxiosError: () => false } };
+});
 const { socketBoundary } = vi.hoisted(() => ({ socketBoundary: { socket: null as EventEmitter | null } }));
 // Socket transport and HTTP are system boundaries; awareness, observation and predicates stay real.
 vi.mock('@/api/session/sockets', () => ({
@@ -24,6 +41,11 @@ vi.mock('@/api/session/sockets', () => ({
   },
 }));
 const credentials = { token: 'test-token', encryption: null } as const;
+// The credential-reader boundary supplies this existing marker. The actual
+// executor, not a caller-supplied authority claim, derives terminal authority.
+const terminalCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'status-account', tokenEpoch: 4,
+  provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`,
+  encryption: null, credentialProvenance: 'stored_session' } as const;
 const sessionId = 'c123456789012345678901234';
 /** No external-Action authorization: these reads carry the daemon credential. */
 const context: ActionExecutorContext = {};
@@ -40,6 +62,193 @@ function collaborationFeatures() {
 describe('CLI activity compatibility awareness', () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => { vi.useRealTimers(); socketBoundary.socket = null; });
+  it.each(['synopsis', 'synopsis_e2ee', 'worker', 'empty', 'unavailable', 'mode_mismatch'] as const)('reads the %s Recap through the composed Action and existing HTTP readers', async (scenario) => {
+    const encrypted = scenario === 'synopsis_e2ee' || scenario === 'mode_mismatch';
+    const secret = new Uint8Array(32).fill(7);
+    const recapCredentials = encrypted ? { token: credentials.token, encryption: { type: 'legacy' as const, secret } } : credentials;
+    const crypto = encrypted ? { mode: 'e2ee' as const, ctx: { encryptionKey: secret, encryptionVariant: 'legacy' as const } }
+      : { mode: 'plain' as const, ctx: null };
+    const fields = buildSessionMetadataEnvelopeFields({ credentials: recapCredentials, accountEncryptionMode: encrypted ? 'e2ee' : 'plain',
+      ...(encrypted ? { storedContentMode: 'e2ee' as const, encryptionKey: secret, encryptionVariant: 'legacy' as const }
+        : { storedContentMode: 'plain' as const }),
+      metadata: { path: '/repo', host: 'host', work: { memoryEnabled: true } }, agentState: {} });
+    const row = createSessionRecordFixture({ id: sessionId, share: null, encryptionMode: crypto.mode, metadataLayoutVersion: 1,
+      metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata, agentState: fields.agentState });
+    const synopsis = { v: 1 as const, seqTo: 10, updatedAtMs: 20, synopsis: 'Memory result' };
+    const content = sealMemorySystemRecordPayload({ mode: scenario === 'mode_mismatch' ? 'plain' : crypto.mode,
+      ...(crypto.mode === 'e2ee' ? { ctx: crypto.ctx } : {}), kind: MEMORY_SYSTEM_RECORD_KINDS.synopsis, payload: synopsis });
+    const record = { id: 'synopsis', revision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+      address: { owner: 'host', namespace: 'memory', kind: MEMORY_SYSTEM_RECORD_KINDS.synopsis,
+        localId: buildMemorySynopsisSystemRecordLocalId(synopsis) }, content,
+      createdAt: '2026-10-28T00:00:00.000Z', updatedAt: '2026-10-28T00:00:00.000Z' };
+    const requests: string[] = [];
+    vi.mocked(axios.get).mockImplementation(async (url) => {
+      const target = new URL(String(url));
+      requests.push(target.pathname);
+      if (target.pathname.endsWith('/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: encrypted ? 'e2ee' : 'plain' }) };
+      if (target.pathname === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: row } };
+      if (target.pathname.endsWith('/system-records')) {
+        expect(target.searchParams.get('owner')).toBe('host');
+        expect(target.searchParams.get('namespace')).toBe('memory');
+        expect(target.searchParams.get('kind')).toBe(MEMORY_SYSTEM_RECORD_KINDS.synopsis);
+        if (scenario === 'unavailable') return { status: 403, data: { code: 'plugin_session_record_forbidden' } };
+        return { status: 200, data: { records: scenario.startsWith('synopsis') || scenario === 'mode_mismatch' ? [record] : [], hasNext: false, nextCursor: null } };
+      }
+      if (target.pathname.endsWith('/messages')) return { status: 200, data: { messages: scenario === 'worker' ? [{
+        id: 'delivered', seq: 12, localId: 'worker-update', createdAt: 30, updatedAt: 30,
+        content: { t: 'plain', v: { role: 'agent', content: { type: 'event', id: 'delivered-update', data: { type: 'worker-update', update: {
+          v: 1, workerKind: 'session', workerId: sessionId, ownerState: 'settled', wake: 'finished',
+          headline: 'Worker finished', result: 'Delivered body', canInspect: true,
+        } } } } },
+      }] : [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null } };
+      throw new Error(`Unexpected Recap request: ${target.pathname}`);
+    });
+    const owner = createCliActionExecutor({ token: recapCredentials.token, credentials: recapCredentials, sessionId: 'cli-global', ...crypto });
+    const result = await owner.execute('session.activity.get', { sessionId, view: 'recap' }, { surface: 'cli', bypassApprovals: true });
+    const expected = scenario.startsWith('synopsis') ? { status: 'ready', recap: { source: 'synopsis', text: 'Memory result', atMs: 20 } }
+      : scenario === 'worker' ? { status: 'ready', recap: { source: 'worker_update', body: 'Delivered body', workerSessionId: sessionId, atMs: 30 } }
+      : { status: scenario === 'mode_mismatch' ? 'unavailable' : scenario, recap: null };
+    expect(result).toMatchObject({ ok: true, result: { view: 'recap', sessionId, ...expected } });
+    if (scenario.startsWith('synopsis') || scenario === 'unavailable' || scenario === 'mode_mismatch') expect(requests.filter(path => path.endsWith('/messages'))).toHaveLength(0);
+  });
+  it('backfills display through the ordinary Account status Action using its captured Home and token', async () => {
+    const credentials = terminalCredentials;
+    const home = 'https://status-home.example';
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
+      metadata: { path: '/retained/workspace', host: 'retained-host', summary: { text: 'Retained status', updatedAt: 1 } }, agentState: {} });
+    let row = createSessionRecordFixture({ id: sessionId, share: null, encryptionMode: 'plain', metadataLayoutVersion: 1,
+      metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata, agentState: fields.agentState,
+      metadataVersion: 7, agentStateVersion: 4 });
+    vi.mocked(axios.get).mockImplementation(async (url, options) => {
+      expect(new URL(String(url)).origin).toBe(home);
+      expect(options?.headers).toMatchObject({ Authorization: `Bearer ${credentials.token}` });
+      if (String(url).endsWith('/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: row } };
+      throw new Error(`Unexpected status request: ${url}`);
+    });
+    vi.mocked(axios.patch).mockImplementation(async (url, body, options) => {
+      expect(String(url)).toBe(`${home}/v2/sessions/${sessionId}`);
+      expect(options?.headers).toMatchObject({ Authorization: `Bearer ${credentials.token}` });
+      const patch = SessionMetadataTuplePatchV1Schema.parse(body);
+      if (patch.mode !== 'owner' || !patch.displayProjectionV1) throw new Error('Expected complete same-tuple owner display maintenance');
+      expect(patch).toMatchObject({ sharedMetadata: { ciphertext: fields.sharedMetadata.ciphertext, expectedVersion: 7 },
+        ownerMetadata: fields.ownerMetadata, agentState: { ciphertext: fields.agentState, expectedVersion: 4 } });
+      row = createSessionRecordFixture({ ...row, metadataVersion: 8, displayProjectionV1: patch.displayProjectionV1 });
+      return { status: 200, data: { success: true, metadataLayoutVersion: 1, sharedMetadata: { version: 8 }, agentState: { version: 4 } } };
+    });
+    const owner = createCliActionExecutor({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
+      serverId: 'status-home', serverHttpBaseUrl: home });
+    await expect(owner.execute('session.status.get', { sessionId, live: false }, { surface: 'cli' }))
+      .resolves.toMatchObject({ ok: true, result: { ok: true, session: { id: sessionId, title: 'Retained status' } } });
+    expect(axios.patch).toHaveBeenCalledTimes(1);
+    expect(axios.get).toHaveBeenCalledTimes(2);
+    const display = SessionDisplayProjectionV1Schema.parse(row.displayProjectionV1);
+    expect(openSessionSharedDisplayEnvelopeV1Sync({ sessionMode: 'plain', envelope: display.shared }))
+      .toMatchObject({ ok: true, display: { summaryText: 'Retained status' } });
+    expect(openSessionOwnerDisplayEnvelopeV1({ accountMode: 'plain', envelope: display.owner }))
+      .toMatchObject({ ok: true, display: { path: '/retained/workspace' } });
+    await expect(owner.execute('session.status.get', { sessionId, live: false }, { surface: 'cli' })).resolves.toMatchObject({ ok: true });
+    expect(axios.patch).toHaveBeenCalledTimes(1);
+    expect(axios.get).toHaveBeenCalledTimes(4);
+  });
+  function fullOwnerStatusRow() {
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
+      metadata: { path: '/retained/workspace', host: 'host', summary: { text: 'Full status fallback', updatedAt: 1 } }, agentState: {} });
+    return createSessionRecordFixture({ id: sessionId, share: null, encryptionMode: 'plain', metadataLayoutVersion: 1,
+      metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata, agentState: fields.agentState,
+      metadataVersion: 7, agentStateVersion: 4 });
+  }
+  it('keeps signed status on requester HTTP authority without display maintenance', async () => {
+    const home = 'https://status-home.example';
+    const target = { kind: 'session' as const, sessionId };
+    const actionId = 'session.status.get';
+    const envelope = { v: 1 as const, requestId: 'signed-status-read', target, input: { sessionId, live: false } };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'requester-proof', binding: {
+      accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+      serverIdentityId: 'srv_status_home', custodianAccountId: 'host-owner', machineId: 'reader-machine', installationId: 'installation',
+      actionId, requestId: envelope.requestId, target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
+    const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
+    const row = fullOwnerStatusRow();
+    vi.mocked(axios.get).mockImplementation(async (url, options) => {
+      const path = new URL(String(url)).pathname;
+      expect(new URL(String(url)).origin).toBe(home);
+      expect(options?.headers).not.toHaveProperty('Authorization');
+      expect(options?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(authorization.token);
+      expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId: actionId,
+        target, installationId: 'installation', requestId: envelope.requestId, method: 'GET', path,
+        publicKey: keys.publicKey, signature: String(options?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: row } };
+      throw new Error(`Unexpected signed status request: ${url}`);
+    });
+    const owner = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
+      serverId: 'status-home', serverIdentityId: 'srv_status_home', serverHttpBaseUrl: home,
+      externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation' });
+    await expect(owner.sessionStatusGet!({ sessionId, live: false, context: { surface: 'api',
+      externalActionExecutionAuthorization: authorization, externalActionTarget: target } }))
+      .resolves.toMatchObject({ ok: true, session: { title: 'Full status fallback' } });
+    expect(axios.patch).not.toHaveBeenCalled();
+    expect(axios.get).toHaveBeenCalledTimes(2);
+  });
+  it('refuses an external credential without its admitted proof before borrowing host authority', async () => {
+    const owner = deps();
+    await expect(owner.sessionStatusGet!({ sessionId, live: false, context: { surface: 'api',
+      externalActionCredential: { accountId: 'requester', principalId: 'principal', credentialId: 'credential', grant: API_TOKEN_FULL_GRANT_V1 } } }))
+      .rejects.toThrow('authorization unavailable');
+    expect(axios.get).not.toHaveBeenCalled();
+    expect(axios.patch).not.toHaveBeenCalled();
+  });
+  it('preserves a distinct status transport token without borrowing the content credentials for maintenance', async () => {
+    const row = fullOwnerStatusRow();
+    vi.mocked(axios.get).mockImplementation(async (url, options) => {
+      expect(options?.headers).toMatchObject({ Authorization: 'Bearer read-transport-token' });
+      if (String(url).endsWith('/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: row } };
+      throw new Error(`Unexpected scoped status request: ${url}`);
+    });
+    const owner = createCliActionDeps({ token: 'read-transport-token', credentials, sessionId, mode: 'plain', ctx: null });
+    await expect(owner.sessionStatusGet!({ sessionId, live: false, context: { surface: 'cli', authority: 'present_user' } }))
+      .resolves.toMatchObject({ ok: true });
+    expect(axios.patch).not.toHaveBeenCalled();
+  });
+  it('retains the Account automation authority ceiling instead of treating it as an ordinary owner read', async () => {
+    const row = fullOwnerStatusRow();
+    vi.mocked(axios.get).mockImplementation(async (url, options) => {
+      expect(options?.headers).toMatchObject({ Authorization: `Bearer ${credentials.token}`,
+        [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' });
+      if (String(url).endsWith('/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: row } };
+      throw new Error(`Unexpected automation status request: ${url}`);
+    });
+    await expect(deps().sessionStatusGet!({ sessionId, live: false, context: { authority: 'account_automation' } }))
+      .resolves.toMatchObject({ ok: true });
+    expect(axios.patch).not.toHaveBeenCalled();
+  });
+  it('keeps a raw factory status read without admitted invocation context read-only', async () => {
+    const row = fullOwnerStatusRow();
+    vi.mocked(axios.get).mockImplementation(async url => {
+      if (String(url).endsWith('/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: row } };
+      throw new Error(`Unexpected raw status request: ${url}`);
+    });
+    await expect(deps().sessionStatusGet!({ sessionId, live: false })).resolves.toMatchObject({ ok: true });
+    expect(axios.patch).not.toHaveBeenCalled();
+  });
+  it('preserves full status when its same admitted Account token cannot write', async () => {
+    const row = fullOwnerStatusRow();
+    vi.mocked(axios.get).mockImplementation(async url => {
+      if (String(url).endsWith('/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: row } };
+      throw new Error(`Unexpected scoped status request: ${url}`);
+    });
+    vi.mocked(axios.patch).mockResolvedValue({ status: 403, data: { error: 'Insufficient Account token scope' } });
+    const owner = createCliActionExecutor({ token: terminalCredentials.token, credentials: terminalCredentials,
+      sessionId: 'cli-global', mode: 'plain', ctx: null });
+    await expect(owner.execute('session.status.get', { sessionId, live: false }, { surface: 'cli' })).resolves.toMatchObject({ ok: true });
+    expect(axios.patch).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(axios.patch).mock.calls[0]?.[2]?.headers).toMatchObject({ Authorization: `Bearer ${terminalCredentials.token}` });
+    expect(axios.get).toHaveBeenCalledTimes(2);
+  });
   it('persists a caller-bound update without a manager and refuses foreign deliverables and workflow steps', async () => {
     const row = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadata: '{}' });
     vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { session: row } });

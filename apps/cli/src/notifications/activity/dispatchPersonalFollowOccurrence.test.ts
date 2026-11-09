@@ -7,8 +7,59 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createPersonalFollowOccurrenceDispatcher } from './dispatchPersonalFollowOccurrence';
 import { notificationCatalogFixture, notificationSettingsFixture } from './activityNotification.testkit';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { bindProcessLogger, Logger } from '@/ui/logger';
 
 describe('source personal Follow dispatch', () => {
+  it.each(['completed', 'failed'] as const)('delivers a no-native %s Turn once through personal acceptance', async status => {
+    const home = 'https://personal-turn-owner.test';
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.fixture`, encryption: null };
+    const settings = notificationSettingsFixture({});
+    const snapshot = { source: 'network' as const, settings, rawSettings: {}, ...notificationCatalogFixture(settings),
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      scopeKey: runWithServerHttpBaseUrl(home, () => resolveAccountSettingsScopeKey(credentials)) };
+    const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, snapshot,
+      serverHttpBaseUrl: home, isCurrent: async () => true });
+    const sent: unknown[] = [];
+    let accepted = false;
+    const dispatch = createPersonalFollowOccurrenceDispatcher({ operationContext, isCurrent: async () => true,
+      fetchSessionNotificationContext: async () => createSessionNotificationContextFixture('source'),
+      pluginNotifications: null, readAccountSessionDeliveryMutedScopes: async () => [],
+      expoPushSender: { sendToAllDevicesAsync: async (...args) => {
+        expect(accepted).toBe(true); sent.push(args); return true;
+      } } });
+    const input = { sourceSessionId: 'source', occurrence: { sourceSessionId: 'source', sourceTurn: { id: 'host-turn', status },
+      evidence: { v: 1 as const, ownerAccountId: 'owner', facts: { serverId: 'home', kind: 'session' as const },
+        event: { kind: status === 'completed' ? 'finished' as const : 'failed_or_stopped' as const } } },
+      policies: [{ preset: 'everything' as const }], signal: new AbortController().signal,
+      acceptDelivery: async () => { accepted = true; return true; } };
+    const directory = await mkdtemp(join(tmpdir(), 'personal-follow-info-receipt-'));
+    vi.stubEnv('HAPPIER_LOG_LEVEL', 'info');
+    const receiptLogger = new Logger({ logFilePath: join(directory, 'receipt.log'),
+      allowDangerousRemoteLogging: false, pruneCurrentProcessLogs: false });
+    const restoreLogger = bindProcessLogger(receiptLogger);
+    const readOutcomes = async () => {
+      receiptLogger.flushSync();
+      const marker = '[activityNotifications] Dispatch outcome';
+      return (await readFile(receiptLogger.logFilePath, 'utf8')).split('\n').filter(line => line.includes(marker))
+        .map(line => JSON.parse(line.slice(line.indexOf(marker) + marker.length)) as unknown);
+    };
+    try {
+      expect(await dispatch(input)).toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
+      expect(await readOutcomes()).toEqual([expect.objectContaining({ sourceSessionId: 'source', sourceTurnId: 'host-turn',
+        attemptedChannels: 1, deliveredChannels: 1, failedChannels: 0 })]);
+      expect(await dispatch({ ...input, acceptDelivery: async () => false })).toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+      // One record for each actual dispatch, not another outward effect on replay.
+      expect(await readOutcomes()).toEqual([expect.objectContaining({ deliveredChannels: 1 }),
+        expect.objectContaining({ sourceTurnId: 'host-turn', attemptedChannels: 0, deliveredChannels: 0, failedChannels: 0 })]);
+      expect(sent).toHaveLength(1);
+    } finally {
+      receiptLogger.flushSync(); restoreLogger(); vi.unstubAllEnvs();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it('composes Run source acceptance and channel dispatch without an Artifact dependency', async () => {
     const home = 'https://personal-run-owner.test';
     const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.fixture`, encryption: null };

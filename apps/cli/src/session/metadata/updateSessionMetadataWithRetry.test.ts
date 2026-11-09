@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as canonicalBase64 from '../../../../../packages/protocol/src/crypto/base64';
 
 import {
   buildSessionMetadataEnvelopeFields,
@@ -6,6 +7,13 @@ import {
 import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionDisplayProjectionV1Schema, openSessionSharedDisplayEnvelopeV1Sync,
   openSessionOwnerDisplayEnvelopeV1 } from '@happier-dev/protocol';
+import { SessionTeamCredentialBindingMetadataPatchV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
+import { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
+import { applyStartupMetadataUpdateToSession, buildModelOverride } from '@/agent/runtime/startupMetadataUpdate';
+import type { Metadata } from '@/api/types';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import {
   createPlainSessionOwnerMetadataEnvelopeV1,
   createAccountScopedCryptoMaterialSnapshotV1,
@@ -25,6 +33,7 @@ import {
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   applySessionStateUpdatesToMetadata,
+  createModelIntentMetadataCasCandidate,
   clearSessionStateFieldFromMetadata,
   writeSessionStateFieldToMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
@@ -98,6 +107,24 @@ function e2eeCurrentness(credentials: Readonly<{
 }
 
 describe('updateSessionMetadataWithRetry', () => {
+  it('admits the owner envelope once while opening a real encrypted tuple snapshot', () => {
+    const credentials = { token: 'tuple-scan-token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'e2ee',
+      storedContentMode: 'plain', metadata: { path: '/repo', host: 'host' }, agentState: null });
+    if (fields.ownerMetadata.t !== 'encrypted') throw new Error('Expected encrypted owner fixture');
+    const ciphertext = fields.ownerMetadata.c;
+    const scan = vi.spyOn(canonicalBase64, 'readCanonicalPaddedBase64DecodedLength');
+    try {
+      const snapshot = readSessionMetadataTupleWriterSnapshot({ credentials,
+        accountEncryptionCurrentness: e2eeCurrentness(credentials), rawSession: {
+          metadataLayoutVersion: 1, encryptionMode: 'plain', metadataVersion: 1, agentStateVersion: 0,
+          metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata, agentState: null,
+        } });
+      expect(snapshot.value.metadata).toMatchObject({ path: '/repo', host: 'host' });
+      // Observe structural admission without replacing the genuine crypto decoder.
+      expect(scan.mock.calls.filter(([value]) => value === ciphertext)).toHaveLength(1);
+    } finally { scan.mockRestore(); }
+  });
   it.each([
     { sessionMode: 'plain' as const, accountMode: 'e2ee' as const },
     { sessionMode: 'e2ee' as const, accountMode: 'plain' as const },
@@ -211,7 +238,7 @@ describe('updateSessionMetadataWithRetry', () => {
       sharedMetadata: { version: 5 }, agentState: { version: 8 } });
     const result = await updateSessionMetadataWithRetry({ token: credentials.token, credentials, sessionId: rawSession.id,
       accountEncryptionCurrentness: plainCurrentness, rawSession,
-      updater: metadata => writeSessionStateFieldToMetadata(metadata, 'display.bot', { kind: 'bot' }), maxAttempts: 1 });
+      updater: metadata => writeSessionStateFieldToMetadata(metadata, 'display.bot', { kind: 'bot' }) });
     expect(result.metadata).toMatchObject({ bot: { kind: 'bot' }, summary: { text: 'Keep', updatedAt: 1 },
       work: { viewPreferences: { showToolCalls: false } } });
     const patch: unknown = patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0].patch;
@@ -289,6 +316,50 @@ describe('updateSessionMetadataWithRetry', () => {
         newUserActionRequiredOccurrences: [{ requestId: 'local', sourceTurnId: 'turn-local', requestKind: 'user_action',
           occurredAt: 250, followEvent: { kind: 'needs_you', type: 'decision' } }] },
     ]);
+  });
+
+  it.each(['agentState', 'metadata'] as const)('publishes %s edit summaries only with the ordinary CAS after preserving legacy values', async kind => {
+    const credentials = { token: 'token-1', encryption: null };
+    const metadata = { path: '/repo', host: 'owner' };
+    const agentState = { requests: {} };
+    const rawSession = { metadataLayoutVersion: 0, metadata: JSON.stringify(metadata), metadataVersion: 2,
+      ownerMetadata: null, agentState: JSON.stringify(agentState), agentStateVersion: 4,
+      encryptionMode: 'plain' as const, dataEncryptionKey: null };
+    const initialSnapshot = readSessionMetadataTupleWriterSnapshot({ credentials,
+      accountEncryptionCurrentness: plainCurrentness, rawSession });
+    const editFailure = new Error('ordinary edit transport unavailable');
+    const mutation = kind === 'agentState'
+      ? { kind: 'agentState' as const, update: () => ({ requests: {
+          local: { tool: 'AskUserQuestion', kind: 'user_action' as const, arguments: {}, createdAt: 250, turnId: 'turn-local' },
+        } }) }
+      : { kind: 'metadata' as const, update: (current: Metadata) => ({ ...current,
+          actionConfirmationsV1: { v: 1 as const, requests: {}, completedRequests: {} },
+        }) };
+    const run = () => updateSessionMetadataEnvelopeTupleWithRetry({ token: credentials.token,
+      sessionId: 'legacy-summary', mode: 'plain', ctx: null,
+      authority: { kind: 'owner', credentials, accountEncryptionCurrentness: plainCurrentness },
+      initialSnapshot, mutation });
+    patchSessionMetadataEnvelopeTupleMock
+      .mockResolvedValueOnce({ success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: 3 }, agentState: { version: 5 } })
+      .mockRejectedValueOnce(editFailure);
+    await expect(run()).rejects.toBe(editFailure);
+    const migration = patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0].patch;
+    expect(migration).toMatchObject({ mode: 'owner_migration',
+      target: { agentState: { ciphertext: JSON.stringify(agentState) } } });
+    expect(migration).not.toHaveProperty('activitySummaryV1');
+    expect(migration).not.toHaveProperty('sharedActionConfirmationSummaryV1');
+    patchSessionMetadataEnvelopeTupleMock.mockReset();
+    patchSessionMetadataEnvelopeTupleMock
+      .mockResolvedValueOnce({ success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: 3 }, agentState: { version: 5 } })
+      .mockResolvedValueOnce({ success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: 4 }, agentState: { version: kind === 'agentState' ? 6 : 5 } });
+    await run();
+    expect(patchSessionMetadataEnvelopeTupleMock.mock.calls[1]?.[0].patch).toMatchObject(kind === 'agentState'
+      ? { mode: 'owner', activitySummaryV1: { pendingPermissionRequestCount: 0,
+          pendingUserActionRequestCount: 1, pendingRequestNewestCreatedAt: 250 } }
+      : { mode: 'owner', sharedActionConfirmationSummaryV1: { pendingPermissionRequestCount: 0 } });
   });
 
   it('exposes layout-1 owner state through the canonical discriminated tuple value', () => {
@@ -499,10 +570,15 @@ describe('updateSessionMetadataWithRetry', () => {
       host: 'owner',
       summary: { text: 'Before', updatedAt: 1 },
     };
-    patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({
+    patchSessionMetadataEnvelopeTupleMock.mockResolvedValueOnce({
       success: true,
       metadataLayoutVersion: 1,
       sharedMetadata: { version: 5 },
+      agentState: { version: 8 },
+    }).mockResolvedValueOnce({
+      success: true,
+      metadataLayoutVersion: 1,
+      sharedMetadata: { version: 6 },
       agentState: { version: 8 },
     });
 
@@ -525,11 +601,10 @@ describe('updateSessionMetadataWithRetry', () => {
         ...current,
         summary: { text: 'After', updatedAt: 2 },
       }),
-      maxAttempts: 1,
     });
 
     expect(result).toMatchObject({
-      version: 5,
+      version: 6,
       metadata: {
         ...sourceMetadata,
         summary: { text: 'After', updatedAt: 2 },
@@ -548,6 +623,11 @@ describe('updateSessionMetadataWithRetry', () => {
             ciphertext: JSON.stringify(sourceMetadata),
           },
         }),
+      }),
+    });
+    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenLastCalledWith({
+      token: 'token-1', sessionId: 'sess_layout0_ordinary', patch: expect.objectContaining({
+        mode: 'owner', sharedMetadata: { expectedVersion: 5, ciphertext: expect.stringContaining('After') },
       }),
     });
     expect(patchSessionMetadataMock).not.toHaveBeenCalled();
@@ -616,7 +696,6 @@ describe('updateSessionMetadataWithRetry', () => {
         ...current,
         summary: { text: 'Unrelated update', updatedAt: 3 },
       }),
-      maxAttempts: 1,
     });
 
     expect(result.metadata.sessionModelsV1).toMatchObject({
@@ -678,7 +757,6 @@ describe('updateSessionMetadataWithRetry', () => {
         ...current,
         summary: { text: 'After', updatedAt: 2 },
       }),
-      maxAttempts: 3,
     })).rejects.toMatchObject({
       code: 'metadata_privacy_upgrade_required',
       retryable: false,
@@ -730,6 +808,103 @@ describe('updateSessionMetadataWithRetry', () => {
     expect(patchSessionMetadataMock).not.toHaveBeenCalled();
     expect(patchSessionMetadataEnvelopeTupleMock).not.toHaveBeenCalled();
     expect(fetchSessionByIdCompatMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { newerOrdinaryChoice: false, includesTeam: true, capturedAt: 10 },
+    { newerOrdinaryChoice: true, includesTeam: true, capturedAt: 10 },
+    { newerOrdinaryChoice: false, includesTeam: false, capturedAt: 10 },
+    { newerOrdinaryChoice: false, includesTeam: true, capturedAt: 0 },
+    { newerOrdinaryChoice: true, includesTeam: true, capturedAt: 0 },
+    { newerOrdinaryChoice: false, includesTeam: false, capturedAt: 0 },
+  ])('retains committed Team source when startup carries its model projection (newer timestamp: $newerOrdinaryChoice, Team supplied: $includesTeam, capture: $capturedAt)', async ({ newerOrdinaryChoice, includesTeam, capturedAt }) => {
+    const credentials = { token: 'token-1', encryption: null };
+    const teamIntent = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: capturedAt, ref: {
+      source: 'team_resource', resourceId: 'resource-1', teamId: 'team-1',
+      expectedResourceRevision: 7, deliveryMode: 'brokered',
+      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'same-model',
+    } });
+    const acceptedTeamCredentialBinding = sessionModelSelectionV2TeamBindingIntent(teamIntent);
+    const modelSelection = { v: 1 as const, updatedAt: teamIntent.updatedAt, ref: {
+      agentTargetKey: teamIntent.ref.agentTargetKey, providerConnectionId: null, modelId: teamIntent.ref.modelId,
+    } };
+    const metadata = createTestMetadata(buildCommittedLaunchMetadata({ directory: '/repo', options: {
+      directory: '/repo', modelSelection, teamCredentialBindings: [includesTeam ? acceptedTeamCredentialBinding
+        : { v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-1', expectedResourceRevision: 7, deliveryMode: 'brokered' }],
+    } }));
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+      metadata, agentState: null, storedContentMode: 'plain' });
+    const rawSession = { metadataLayoutVersion: 1, metadata: fields.sharedMetadata.ciphertext, metadataVersion: 3,
+      ownerMetadata: fields.ownerMetadata, agentState: fields.agentState, agentStateVersion: 7,
+      encryptionMode: 'plain' as const, dataEncryptionKey: null, acceptedTeamCredentialBinding };
+    patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({ success: true, metadataLayoutVersion: 1,
+      sharedMetadata: { version: 4 }, agentState: { version: 8 } });
+    let publishedMetadata: Metadata | undefined;
+    await applyStartupMetadataUpdateToSession({
+      session: { updateMetadata: async updater => {
+        publishedMetadata = createTestMetadata((await updateSessionMetadataWithRetry({ token: credentials.token, credentials,
+          sessionId: 'sess_team_birth', rawSession, accountEncryptionCurrentness: plainCurrentness,
+          updater: (current, context) => updater(createTestMetadata(current), context) })).metadata);
+      } },
+      next: createTestMetadata({ flavor: 'codex', hostPid: 42 }), nowMs: 20, permissionModeOverride: null,
+      modelOverride: buildModelOverride({ modelSelection: { ...modelSelection,
+        updatedAt: newerOrdinaryChoice ? capturedAt + 1 : modelSelection.updatedAt } }), mode: 'attach',
+      capturedTeamCredentialBinding: acceptedTeamCredentialBinding,
+    });
+    expect(publishedMetadata).toBeDefined();
+    const patch = patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0].patch;
+    expect(patch).not.toHaveProperty('teamCredentialBindings');
+    expect(readSessionModelSelectionV2FromMetadata(publishedMetadata)).toEqual(teamIntent);
+    expect(publishedMetadata).not.toHaveProperty('modelSelectionIntentV1');
+  });
+
+  it.each(['cleared', 'replaced', 'revision_changed'] as const)('keeps captured Team identity current when the binding is %s during tuple CAS', async kind => {
+    const credentials = { token: 'token-1', encryption: null };
+    const binding = { v: 1 as const, slot: { kind: 'provider_model' as const }, teamId: 'team-1',
+      resourceId: 'resource-1', expectedResourceRevision: 7, deliveryMode: 'brokered' as const };
+    const modelSelection = { v: 1 as const, updatedAt: 10, ref: {
+      agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'same-model',
+    } };
+    const { teamId: _teamId, ...launchBinding } = binding;
+    const metadata = createTestMetadata(buildCommittedLaunchMetadata({ directory: '/repo', options: {
+      directory: '/repo', modelSelection, teamCredentialBindings: [launchBinding],
+    } }));
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+      metadata, agentState: null, storedContentMode: 'plain' });
+    const rawSession = { metadataLayoutVersion: 1, metadata: fields.sharedMetadata.ciphertext, metadataVersion: 3,
+      ownerMetadata: fields.ownerMetadata, agentState: fields.agentState, agentStateVersion: 7,
+      encryptionMode: 'plain' as const, dataEncryptionKey: null, acceptedTeamCredentialBinding: binding };
+    patchSessionMetadataEnvelopeTupleMock.mockResolvedValueOnce({ success: false, error: 'session_metadata_version_conflict',
+      metadataLayoutVersion: 1, sharedMetadata: { version: 4 }, agentState: { version: 8 } })
+      .mockResolvedValueOnce({ success: true, metadataLayoutVersion: 1, sharedMetadata: { version: 5 }, agentState: { version: 9 } });
+    fetchSessionByIdCompatMock.mockResolvedValue({ ...rawSession, metadataVersion: 4, agentStateVersion: 8,
+      acceptedTeamCredentialBinding: kind === 'cleared' ? null : kind === 'replaced'
+        ? { ...binding, resourceId: 'resource-2' } : { ...binding, expectedResourceRevision: 8 } });
+    fetchAccountEncryptionCurrentnessMock.mockResolvedValue(plainCurrentness);
+    let publishedMetadata: Metadata | undefined;
+    await applyStartupMetadataUpdateToSession({
+      session: { updateMetadata: async updater => {
+        publishedMetadata = createTestMetadata((await updateSessionMetadataWithRetry({ token: credentials.token, credentials,
+          sessionId: 'sess_team_cas', rawSession, accountEncryptionCurrentness: plainCurrentness,
+          updater: (current, context) => updater(createTestMetadata(current), context) })).metadata);
+      } }, next: createTestMetadata({ flavor: 'codex', hostPid: 42 }), nowMs: 20, permissionModeOverride: null,
+      modelOverride: buildModelOverride({ modelSelection }), capturedTeamCredentialBinding: binding, mode: 'attach',
+    });
+    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(2);
+    // The first attempt is a valid birth normalization; only the current binding
+    // distinguishes the retry, since the legacy model tuple is still identical.
+    expect(patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0].patch.ownerMetadata).toMatchObject({ t: 'plain', v: {
+      runtime: { modelSelectionIntentV2: { ref: { source: 'team_resource', resourceId: 'resource-1' } } },
+    } });
+    if (kind === 'revision_changed') {
+      expect(readSessionModelSelectionV2FromMetadata(publishedMetadata)).toMatchObject({ updatedAt: 10,
+        ref: { source: 'team_resource', resourceId: 'resource-1', expectedResourceRevision: 8 } });
+      expect(publishedMetadata).not.toHaveProperty('modelSelectionIntentV1');
+    } else {
+      expect(publishedMetadata?.modelSelectionIntentV1).toEqual({ v: 1, updatedAt: 10, selection: modelSelection.ref });
+      expect(publishedMetadata).not.toHaveProperty('modelSelectionIntentV2');
+    }
+    expect(patchSessionMetadataEnvelopeTupleMock.mock.calls[1]?.[0].patch).not.toHaveProperty('teamCredentialBindings');
   });
 
   it.each([
@@ -800,10 +975,15 @@ describe('updateSessionMetadataWithRetry', () => {
       ...cryptoContext,
       payload: sourceAgentState,
     });
-    patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({
+    patchSessionMetadataEnvelopeTupleMock.mockResolvedValueOnce({
       success: true,
       metadataLayoutVersion: 1,
       sharedMetadata: { version: 5 },
+      agentState: { version: 8 },
+    }).mockResolvedValueOnce({
+      success: true,
+      metadataLayoutVersion: 1,
+      sharedMetadata: { version: 6 },
       agentState: { version: 8 },
     });
 
@@ -826,16 +1006,15 @@ describe('updateSessionMetadataWithRetry', () => {
         ...current,
         summary: { text: 'After', updatedAt: 2 },
       }),
-      maxAttempts: 1,
     });
 
     expect(result).toMatchObject({
-      version: 5,
+      version: 6,
       metadata: {
         summary: { text: 'After', updatedAt: 2 },
       },
     });
-    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(1);
+    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(2);
     const request =
       patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0];
     const snapshot = createAccountScopedCryptoMaterialSnapshotV1({
@@ -901,7 +1080,6 @@ describe('updateSessionMetadataWithRetry', () => {
         dataEncryptionKey: null,
       },
       updater: (current) => ({ ...current, path: '/private/after' }),
-      maxAttempts: 1,
     })).rejects.toMatchObject({
       code: 'metadata_privacy_upgrade_required',
       retryable: false,
@@ -945,6 +1123,12 @@ describe('updateSessionMetadataWithRetry', () => {
         metadataLayoutVersion: 1,
         sharedMetadata: { version: 6 },
         agentState: { version: 8 },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        metadataLayoutVersion: 1,
+        sharedMetadata: { version: 7 },
+        agentState: { version: 8 },
       });
     fetchSessionByIdCompatMock.mockResolvedValue({
       metadataLayoutVersion: 0,
@@ -979,18 +1163,17 @@ describe('updateSessionMetadataWithRetry', () => {
         ...current,
         summary: { text: 'After', updatedAt: 3 },
       }),
-      maxAttempts: 2,
     });
 
     expect(result).toMatchObject({
-      version: 6,
+      version: 7,
       metadata: {
         ...concurrentMetadata,
         summary: { text: 'After', updatedAt: 3 },
       },
     });
-    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(2);
-    expect(patchSessionMetadataEnvelopeTupleMock.mock.calls.map(
+    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(3);
+    expect(patchSessionMetadataEnvelopeTupleMock.mock.calls.filter(([request]) => request.patch.mode === 'owner_migration').map(
       ([request]) => request.patch.source.metadata.version,
     )).toEqual([4, 5]);
     expect(fetchSessionByIdCompatMock).toHaveBeenCalledOnce();
@@ -1057,7 +1240,6 @@ describe('updateSessionMetadataWithRetry', () => {
         path: '/private/after',
         summary: { text: 'After', updatedAt: 2 },
       }),
-      maxAttempts: 1,
     });
 
     expect(result).toEqual({
@@ -1151,7 +1333,6 @@ describe('updateSessionMetadataWithRetry', () => {
         ...metadata,
         path: '/private/after',
       }),
-      maxAttempts: 1,
     })).rejects.toMatchObject({
       code: 'metadata_privacy_upgrade_required',
       retryable: false,
@@ -1207,7 +1388,6 @@ describe('updateSessionMetadataWithRetry', () => {
         ...metadata,
         path: '/private/after',
       }),
-      maxAttempts: 3,
     })).rejects.toMatchObject({
       code: 'session_active',
       retryable: false,
@@ -1224,6 +1404,66 @@ describe('updateSessionMetadataWithRetry', () => {
     });
     expect(fetchSessionByIdCompatMock).not.toHaveBeenCalled();
     expect(patchSessionMetadataMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { publisher: false, hasTeamIntent: true, changeModel: true }, { publisher: true, hasTeamIntent: true, changeModel: true },
+    { publisher: false, hasTeamIntent: false, changeModel: true }, { publisher: true, hasTeamIntent: false, changeModel: true },
+    { publisher: false, hasTeamIntent: false, changeModel: false },
+    { publisher: false, hasTeamIntent: 'native', changeModel: true },
+  ])('contracts the Team model witness only for ordinary model-intent changes (publisher: $publisher, V2 intent: $hasTeamIntent, change: $changeModel)', async ({ publisher, hasTeamIntent, changeModel }) => {
+    const credentials = { token: 'token-1', encryption: null };
+    const teamIntent = { v: 2, updatedAt: 10, ref: {
+      source: 'team_resource', resourceId: 'resource-1', teamId: 'team-1',
+      expectedResourceRevision: 7, deliveryMode: 'brokered',
+      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'same-model',
+    } };
+    const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'same-model' } as const;
+    const acceptedTeamCredentialBinding = hasTeamIntent === 'native' ? null
+      : sessionModelSelectionV2TeamBindingIntent(SessionModelSelectionV2Schema.parse(teamIntent));
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+      metadata: { flavor: 'codex', ...(hasTeamIntent ? { modelSelectionIntentV2: hasTeamIntent === 'native'
+        ? SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 10,
+            ref: { source: 'native', agentTargetKey: selection.agentTargetKey, modelId: selection.modelId } }) : teamIntent }
+        : { modelSelectionIntentV1: { v: 1, updatedAt: 10, selection } }) }, agentState: null, storedContentMode: 'plain' });
+    patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({ success: true, metadataLayoutVersion: 1,
+      sharedMetadata: { version: 4 }, agentState: { version: 8 } });
+    const candidate = createModelIntentMetadataCasCandidate({ nowMs: () => 20, selection });
+    const update = changeModel ? candidate.update : (metadata: Metadata) => ({ ...metadata, path: '/unrelated-change' });
+    const rawSession = { metadataLayoutVersion: 1, metadata: fields.sharedMetadata.ciphertext, metadataVersion: 3,
+        ownerMetadata: fields.ownerMetadata, agentState: fields.agentState, agentStateVersion: 7,
+        encryptionMode: 'plain' as const, dataEncryptionKey: null, acceptedTeamCredentialBinding };
+    const publisherPrecondition = { machineId: 'machine-1', committedFenceMs: 1234, publisherGeneration: '7' };
+    const tupleInput = { token: credentials.token,
+      sessionId: 'sess_team_native', mode: 'plain', ctx: null,
+      authority: { kind: 'owner' as const, credentials, accountEncryptionCurrentness: plainCurrentness },
+      initialSnapshot: readSessionMetadataTupleWriterSnapshot({ credentials,
+        accountEncryptionCurrentness: plainCurrentness, rawSession }),
+      ...(publisher ? { publisherPrecondition } : { sessionExpectation: { kind: 'inactive_model_intent' as const } }),
+      mutation: { kind: 'metadata' as const, update }, acceptedTeamCredentialBinding,
+    } as const;
+    const resultMetadata = publisher
+      ? (await updateSessionMetadataEnvelopeTupleWithRetry(tupleInput)).value.metadata
+      : (await updateSessionMetadataWithRetry({ token: credentials.token, credentials,
+          sessionId: 'sess_team_native', rawSession, accountEncryptionCurrentness: plainCurrentness,
+          sessionExpectation: { kind: 'inactive_model_intent' }, updater: metadata => update(createTestMetadata(metadata)) })).metadata;
+    expect(resultMetadata).not.toHaveProperty('modelSelectionIntentV2');
+    expect(patchSessionMetadataEnvelopeTupleMock).toHaveBeenCalledTimes(1);
+    if (!changeModel || hasTeamIntent === 'native') {
+      const patch = patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0].patch;
+      expect(patch).toMatchObject({ mode: 'owner_inactive_model_intent' });
+      expect(patch).not.toHaveProperty('teamCredentialBindings');
+      expect(resultMetadata.modelSelectionIntentV1).toMatchObject({ updatedAt: changeModel ? 20 : 10 });
+      return;
+    }
+    expect(patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0].patch).toMatchObject({
+      mode: 'owner_team_credential_binding', operation: 'session.model.set',
+      ...(publisher ? { publisherPrecondition } : { sessionExpectation: { kind: 'inactive_model_intent' } }),
+      teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: null }],
+    });
+    expect(() => SessionTeamCredentialBindingMetadataPatchV1Schema.parse(
+      patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0].patch,
+    )).not.toThrow();
   });
 
   it('atomically carries a Team model binding through the inactive model CAS', async () => {
@@ -1334,7 +1574,6 @@ describe('updateSessionMetadataWithRetry', () => {
         deliveryMode: 'brokered',
       }],
       updater: (metadata) => ({ ...metadata, path: '/private/after' }),
-      maxAttempts: 3,
     })).rejects.toMatchObject({
       code: 'session_team_credential_binding_rejected',
       reason: 'resource_changed',
@@ -1475,7 +1714,6 @@ describe('updateSessionMetadataWithRetry', () => {
         path: '/private/requested',
         summary: { text: 'Requested', updatedAt: 3 },
       }),
-      maxAttempts: 2,
     });
 
     expect(fetchSessionByIdCompatMock).toHaveBeenCalledTimes(1);
@@ -1592,7 +1830,6 @@ describe('updateSessionMetadataWithRetry', () => {
         dataEncryptionKey: null,
       },
       updater: params.updater,
-      maxAttempts: 2,
       currentness: {
         ...(params.signal ? { signal: params.signal } : {}),
         assertCurrent: params.assertCurrent,
@@ -1752,7 +1989,6 @@ describe('updateSessionMetadataWithRetry', () => {
         ...metadata,
         path: '/private/requested',
       }),
-      maxAttempts: 3,
     });
 
     expect(fetchSessionByIdCompatMock).toHaveBeenCalledTimes(2);
@@ -1843,7 +2079,6 @@ describe('updateSessionMetadataWithRetry', () => {
         dataEncryptionKey: null,
       },
       updater: (metadata) => ({ ...metadata, path: '/private/after' }),
-      maxAttempts: 2,
     })).resolves.toMatchObject({
       version: 2,
       metadata: {

@@ -99,6 +99,62 @@ function createTemporaryThrottleIssue() {
 }
 
 describe('sessionUsageLimitRecoveryControlRouter', () => {
+  it('answers repeated local timed checks without provider probes or a local rate limit', async () => {
+    const issue = createUsageLimitIssue();
+    const providerProbe = vi.fn(async () => ({ ok: true, status: 'waiting' }));
+    const params = {
+      token: 'token', credentials: createCredentials(), sessionId: 'sess_local_timing',
+      rawSession: createRawSession({ id: 'sess_local_timing', latestTurnStatus: 'failed', lastRuntimeIssue: issue }),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: {
+        v: 1, status: 'waiting', resumePromptMode: 'off',
+        issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:1700000060000',
+        armedAtMs: issue.occurredAt, resetAtMs: issue.usageLimit.resetAtMs,
+        nextCheckAtMs: issue.usageLimit.resetAtMs, attemptCount: 0, maxAttempts: 3,
+        lastProbeError: null, selectedAuth: { kind: 'native' },
+      } }),
+      currentMachineId: 'machine-local', ctx: null, mode: 'plain' as const,
+      stageUsageLimitRecoveryMutation, request: { sessionId: 'sess_local_timing' },
+      callLiveSessionRpc: async () => undefined,
+      resolveAdapter: async () => ({ checkNow: providerProbe }),
+    };
+    await expect(routeSessionUsageLimitRecoveryCheckNow(params)).resolves.toMatchObject({ ok: true, status: 'ready' });
+    await expect(routeSessionUsageLimitRecoveryCheckNow(params)).resolves.toMatchObject({ ok: true, status: 'ready' });
+    expect(providerProbe).not.toHaveBeenCalled();
+  });
+
+  it.each(['enable', 'cancel'] as const)('keeps an uncertain live %s effect with its live owner', async operation => {
+    const issue = createUsageLimitIssue();
+    const intent = {
+      v: 1, status: 'waiting', resumePromptMode: 'standard',
+      issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:1700000060000',
+      armedAtMs: issue.occurredAt, resetAtMs: issue.usageLimit.resetAtMs,
+      nextCheckAtMs: issue.usageLimit.resetAtMs, attemptCount: 0, maxAttempts: 3,
+      lastProbeError: null, selectedAuth: { kind: 'native' },
+    } as const;
+    let liveEffects = 0;
+    const params = {
+      token: 'token', credentials: createCredentials(), sessionId: 'sess_live_uncertain',
+      rawSession: createRawSession({ id: 'sess_live_uncertain', active: true,
+        latestTurnStatus: 'failed', lastRuntimeIssue: issue }),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: intent }),
+      currentMachineId: 'machine-local', ctx: null, mode: 'plain' as const,
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_live_uncertain', issueFingerprint: intent.issueFingerprint,
+        armedAtMs: intent.armedAtMs },
+      // The live transport loses its response after the runtime commits the effect.
+      callLiveSessionRpc: async () => {
+        liveEffects++;
+        return { ok: false, errorCode: 'session_rpc_failed' };
+      },
+    };
+    const result = operation === 'enable'
+      ? await routeSessionUsageLimitRecoveryWaitResumeEnable(params)
+      : await routeSessionUsageLimitRecoveryWaitResumeCancel(params);
+    expect(result).toMatchObject({ ok: false, errorCode: 'session_rpc_failed' });
+    expect(liveEffects).toBe(1);
+    expect(stageUsageLimitRecoveryMutation).not.toHaveBeenCalled();
+  });
+
   it('checks the current issue through its real adapter instead of an unrelated old runtime attempt', async () => {
     const result = await routeSessionUsageLimitRecoveryCheckNow({
       token: 'token', credentials: createCredentials(), sessionId: 'sess_issue_after_old_attempt',
@@ -113,8 +169,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local', ctx: null, mode: 'plain', stageUsageLimitRecoveryMutation,
       callLiveSessionRpc: async () => undefined,
       resolveAdapter: async () => createBackoffSessionUsageLimitRecoveryControlAdapter({
-        providerId: 'codex', fallbackBackoffEnvKey: 'HAPPIER_TEST_FALLBACK_BACKOFF_MS',
-        maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS', nowMs: () => 1_700_000_120_000, processEnv: {},
+        providerId: 'codex', nowMs: () => 1_700_000_120_000,
       }),
     });
     expect(result).toMatchObject({ ok: true, status: 'waiting' });
@@ -1088,7 +1143,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     }));
   });
 
-  it('rate-limits repeated inactive check-now probes before calling the provider adapter again', async () => {
+  it('lets the provider owner answer each explicit inactive check-now request', async () => {
     const checkNow = vi.fn(async () => ({ ok: true, status: 'ready' }));
     const resolveAdapter = vi.fn(async () => ({ checkNow }));
     const params = {
@@ -1112,14 +1167,12 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       sessionId: 'sess_rate_limited',
     });
     await expect(routeSessionUsageLimitRecoveryCheckNow(params)).resolves.toEqual({
-      ok: false,
-      status: 'rate_limited',
+      ok: true,
+      status: 'ready',
       sessionId: 'sess_rate_limited',
-      errorCode: 'probe_rate_limited',
-      retryAfterMs: expect.any(Number),
     });
 
-    expect(checkNow).toHaveBeenCalledTimes(1);
+    expect(checkNow).toHaveBeenCalledTimes(2);
   });
 
   it('keeps active wait-resume enable on live session RPC when supported', async () => {

@@ -1,7 +1,7 @@
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
-import { readSessionWorkspaceWritesV1, resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { readSessionWorkspaceWritesV1, resolveRoleSelectionV1, resolveRolesSnapshotV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import type { RoleEngineV1, ResolvedRolesSnapshotV1, SessionRolePromptContextV1, V2SessionByIdResponse } from '@happier-dev/protocol';
 import type { RoleSelectionRefusalV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
@@ -33,6 +33,11 @@ export function createSessionRoleContext(params: Readonly<{
   prepareAccountRoleOverrides?: (signal?: AbortSignal) => Promise<void>;
   readOperationContext?: () => SavedSecretOperationContextV1 | undefined;
   readDefaultEngine?: () => RoleEngineV1;
+  /** Existing Session-admitted Agent registry; selection policy stays with inventory. */
+  readAgentCatalogSnapshot?: typeof import('@/agent/catalog/snapshot').readAgentCatalogSnapshot;
+  /** Read from the same admitted native-selection owner as child execution. */
+  readAppliedChildSelection?: () => import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection
+    | Promise<import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection>;
 }>) {
   let roleSourceInventory: Awaited<ReturnType<RoleSourceReader>> | undefined;
   let resolvedRoles: Readonly<{ status: 'ready' | 'partial'; roles: ResolvedRolesSnapshotV1; selectedRefusal?: RoleSelectionRefusalV1 }> = { status: 'partial', roles: {} };
@@ -52,9 +57,12 @@ export function createSessionRoleContext(params: Readonly<{
   const readAccountOverrides = (signal?: AbortSignal) => readPreparedAccountRoleOverrides({
     read: params.readAccountRoleOverrides, prepare: signal => prepare(signal, true),
   }, signal);
-  const resolveCurrentRoles = async (signal?: AbortSignal, complete = true) => {
+  const resolveCurrentRoles = async (signal?: AbortSignal, complete = true, roleIds?: readonly string[], snapshotInputs?: Readonly<{
+    defaultEngine: RoleEngineV1; availableAgentTargetKeys: readonly string[];
+  }>) => {
+    if (complete && !snapshotInputs) throw Object.assign(new Error('role_target_unavailable'), { code: 'role_target_unavailable' });
     await prepare(signal, complete);
-    const source = await params.readRoleSources(signal).catch((error: unknown) => {
+    const source = await params.readRoleSources(signal, roleIds === undefined ? undefined : { roleIds }).catch((error: unknown) => {
       signal?.throwIfAborted();
       throw classifyHomeReadPreparationError(error);
     });
@@ -66,9 +74,10 @@ export function createSessionRoleContext(params: Readonly<{
     });
     roleSourceInventory = source;
     const sessionRoles = readSessionRolesV1(params.readMetadata()) ?? undefined;
-    const roles: ResolvedRolesSnapshotV1 = {};
+    const roles: ResolvedRolesSnapshotV1 = complete && snapshotInputs
+      ? resolveRolesSnapshotV1({ roleSourceInventory: source, settingsOverrides: overrides.overrides, sessionRoles, ...snapshotInputs }) : {};
     let selectedRefusal: RoleSelectionRefusalV1 | undefined;
-    for (const roleId of new Set([...Object.keys(BUILT_IN_ROLES_V1), ...source.entries.map(entry => entry.roleId),
+    if (!complete) for (const roleId of roleIds ?? new Set([...Object.keys(BUILT_IN_ROLES_V1), ...source.entries.map(entry => entry.roleId),
       ...(sessionRoles?.roleId ? [sessionRoles.roleId] : []),
       ...Object.keys(sessionRoles?.sessionRoles ?? {}), ...Object.keys(sessionRoles?.overrides ?? {})])) {
       const resolved = resolveRoleSelectionV1({ roleId, roleSourceInventory: source, sessionRoles,
@@ -78,11 +87,13 @@ export function createSessionRoleContext(params: Readonly<{
       if (resolved.ok) roles[roleId] = resolved.selection;
       else if (roleId === sessionRoles?.roleId) selectedRefusal = resolved.refusal;
     }
-    resolvedRoles = { status: source.status, roles, ...(selectedRefusal ? { selectedRefusal } : {}) };
+    // A ready selected read proves its own Roles, never a complete child snapshot.
+    resolvedRoles = { status: complete ? source.status : 'partial', roles, ...(selectedRefusal ? { selectedRefusal } : {}) };
     return resolvedRoles;
   };
-  const resolveRoles = async (signal?: AbortSignal): Promise<ResolvedRolesSnapshotV1> => (await resolveCurrentRoles(signal)).roles;
-  const resolvePromptContext = async (signal?: AbortSignal, _options?: Readonly<{ modality?: 'coding' | 'voice' }>): Promise<SessionRolePromptContextV1 | null> => {
+  const resolveRoles = async (inputs: Readonly<{ defaultEngine: RoleEngineV1; availableAgentTargetKeys: readonly string[] }>,
+    signal?: AbortSignal): Promise<ResolvedRolesSnapshotV1> => (await resolveCurrentRoles(signal, true, undefined, inputs)).roles;
+  const resolvePromptContext = async (signal?: AbortSignal, options?: Readonly<{ modality?: 'coding' | 'voice' }>): Promise<SessionRolePromptContextV1 | null> => {
     const organization = await params.readOrganization(signal);
     signal?.throwIfAborted();
     const before = params.readMetadata();
@@ -101,7 +112,10 @@ export function createSessionRoleContext(params: Readonly<{
         if (resolved.ok) roles[roleId] = resolved.selection;
       }
     } else {
-      const current = await resolveCurrentRoles(signal, false);
+      let current = await resolveCurrentRoles(signal, false, [beforeRoles.roleId]);
+      if (current.roles[beforeRoles.roleId]?.canDelegateToOtherRoles === true) {
+        current = await resolveCurrentRoles(signal, false);
+      }
       roles = current.roles;
       selectedRefusal = current.selectedRefusal;
     }
@@ -109,6 +123,9 @@ export function createSessionRoleContext(params: Readonly<{
     const sessionRoles = readSessionRolesV1(metadata);
     const role = sessionRoles?.roleId ? roles[sessionRoles.roleId] : undefined;
     if (sessionRoles?.roleId && !role) {
+      // A selection changed while its exact source was being read. Prepare the
+      // current selection through this same owner rather than refusing it as missing.
+      if (sessionRoles.roleId !== beforeRoles?.roleId) return resolvePromptContext(signal, options);
       const code = selectedRefusal?.code ?? 'role_target_unavailable';
       throw Object.assign(new Error(code), { code });
     }
@@ -125,6 +142,8 @@ export function createSessionRoleContext(params: Readonly<{
     resolvePromptContext, resolveRoles, prepare, readAccountOverrides,
     readRoleSources: params.readRoleSources,
     readOperationContext: params.readOperationContext,
+    readAppliedChildSelection: params.readAppliedChildSelection,
+    readAgentCatalogSnapshot: params.readAgentCatalogSnapshot,
     readResolvedRoles: () => {
       if (resolvedRoles.status !== 'ready' || params.readAccountRoleOverrides().status !== 'ready') {
         throw Object.assign(new Error('role_source_incomplete'), { code: 'role_source_incomplete' });

@@ -9,6 +9,7 @@ import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/pro
 import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { RoleActionRefusalV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { resolveActionAgentStartContextV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { configuration } from '@/configuration';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -25,14 +26,15 @@ import type { readSessionPreparationFailureDiagnostic } from '@/agent/runtime/se
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { readCliSessionEngineBaselineV1 } from '../resolveCliAgentStartContextV1';
+import { hasReceivedWorkflowSessionRoleAuthority } from '../sessionRoleRpcOrigin';
 export function createCliRolesActionDeps(
-  params: Pick<CliActionDepsParams, 'credentials' | 'getCurrentResolvedRoles' | 'getCurrentSessionMetadata' | 'getCurrentSessionBackendTarget' | 'getCurrentAppliedChildSelection' | 'getCurrentWorkspaceWrites' | 'prepareWorkspaceWritesPolicy' | 'readPluginRoles' | 'savedSecretOperationContext' | 'serverHttpBaseUrl' | 'sessionActionRpcTransport' | 'sessionId' | 'stageSessionStateMutation'>,
-  { artifactCallerContext, callSessionActionRpc, isWorkflowAuthorizationCurrent, prepareAccountRoleOverrides, readRawRoleSettings, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession, resolveAgentStartContext, resolveServerRequestHeaders, resolveTransportForSession, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore, sessionList, readAccountRoleOverrides }: Readonly<{
+  params: Pick<CliActionDepsParams, 'token' | 'credentials' | 'getCurrentResolvedRoles' | 'getCurrentSessionMetadata' | 'getCurrentSessionBackendTarget' | 'getCurrentAppliedChildSelection' | 'getSessionRoleContext' | 'getCurrentWorkspaceWrites' | 'prepareWorkspaceWritesPolicy' | 'readPluginRoles' | 'savedSecretOperationContext' | 'serverHttpBaseUrl' | 'sessionActionRpcTransport' | 'sessionId' | 'stageSessionStateMutation'>,
+  { artifactCallerContext, callSessionActionRpc, prepareAccountRoleOverrides, readRawRoleSettings, mutateRawAccountSettings, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession, resolveAgentStartContext, resolveServerRequestHeaders, resolveTransportForSession, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore, sessionList, sessionRead, readAccountRoleOverrides }: Readonly<{
     artifactCallerContext: (context: ActionExecutorContext) => ActionExecutorContext;
     callSessionActionRpc: (transport: ResolvedSessionTransport, method: string, input: unknown, context: ActionExecutorContext) => Promise<unknown>;
-    isWorkflowAuthorizationCurrent: (context: ActionExecutorContext) => Promise<boolean>;
     prepareAccountRoleOverrides: (signal?: AbortSignal) => Promise<void>;
     readRawRoleSettings: ((options?: Readonly<{ requireCurrentNetwork: boolean }>) => Promise<Readonly<Record<string, unknown>>>) | undefined;
+    mutateRawAccountSettings: Parameters<typeof createRoleActionExecutor>[0]['mutateRawAccountSettings'];
     readReadyAccountRoleOverrides: (signal?: AbortSignal) => ReturnType<typeof readPreparedAccountRoleOverrides>;
     readRoleSources: RoleSourceReader;
     resolveActionCallerSession: (context: ActionExecutorContext) => ReturnType<typeof resolveCliActionCallerSession>;
@@ -47,6 +49,7 @@ export function createCliRolesActionDeps(
     roleAccountScopeKey: ReturnType<typeof resolveAccountSettingsScopeKeyForToken>;
     roleArtifactStore: ReturnType<typeof createCredentialedAccountArtifactStore> | undefined;
     sessionList: ActionExecutorDeps['sessionList'];
+    sessionRead?: ActionExecutorDeps['sessionRead'];
     readAccountRoleOverrides: () => ReturnType<typeof readAccountRoleOverridesFromSnapshot>;
   }>,
   readEffectiveDeps: () => ActionExecutorDeps,
@@ -71,14 +74,22 @@ export function createCliRolesActionDeps(
           throw Object.assign(new Error('role_rpc_origin_unavailable'), { code: 'role_rpc_origin_unavailable' });
         }
         await prepareAccountRoleOverrides(request.context.signal);
-        if (!await isWorkflowAuthorizationCurrent(request.context)) {
-          throw new RoleActionRefusalV1('run_access_denied');
+        if (request.context.actionCaller?.kind === 'workflowRun'
+          && request.context.externalActionExecutionAuthorization?.binding.workflowActionOrigin) {
+          const accountId = readAccountIdFromToken(params.token);
+          if (!accountId || !hasReceivedWorkflowSessionRoleAuthority({ context: request.context, accountId, sessionId: params.sessionId })) {
+            throw new RoleActionRefusalV1('run_access_denied');
+          }
         }
         let execute = createHost(params.sessionId, params.getCurrentSessionMetadata);
         if (request.context.actionCaller?.kind === 'session' && request.context.authority !== 'present_user') {
           const caller = await resolveActionCallerSession(request.context);
           if (!caller?.metadata) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
-          const roleSources = await readRoleSources(request.context.signal);
+          const sessionRoles = readSessionRolesV1(caller.metadata);
+          const roleId = sessionRoles?.roleId;
+          const roleSources = await readRoleSources(request.context.signal, {
+            roleIds: roleId && !sessionRoles?.sessionRoles[roleId] ? [roleId] : [],
+          });
           const overridesRead = await readReadyAccountRoleOverrides(request.context.signal);
           if (overridesRead.status !== 'ready') throw Object.assign(new Error('account_role_overrides_unavailable'), {
             code: 'account_role_overrides_unavailable', reason: overridesRead.reason,
@@ -90,11 +101,9 @@ export function createCliRolesActionDeps(
           request = { ...request, context: { ...request.context,
             workspaceWrites: currentWrites === 'deny' || request.context.workspaceWrites === 'deny' ? 'deny' : currentWrites } };
         }
-        // The source daemon owns the authenticated origin. Expand report copies
-        // there through the same role owner, rather than asking a target Session
-        // to impersonate the caller's Machine on a second forwarding hop.
+        // Session callers can expand from their exact admitted lead baseline.
         if (request.actionId === 'session.roles.apply_to_reports'
-          && (request.context.actionCaller?.kind === 'session' || request.context.actionCaller?.kind === 'workflowRun')
+          && request.context.actionCaller?.kind === 'session'
           && request.context.authority !== 'present_user') {
           const input = RoleActionInputSchemasV1['session.roles.apply_to_reports'].parse(request.input);
           const target = await resolveTransportForSession(input.sessionId, request.context.signal);
@@ -133,11 +142,26 @@ export function createCliRolesActionDeps(
       readSessionMetadata,
       readRoleSnapshotInputs: async (metadata, context) => {
         const bound = sessionId === params.sessionId;
-        const backendTarget = (bound ? params.getCurrentSessionBackendTarget?.() : undefined)
-          ?? resolveBackendTargetFromSessionMetadata(metadata);
-        if (!backendTarget) throw new RoleActionRefusalV1('target_unavailable');
-        const appliedChildSelection = bound ? await params.getCurrentAppliedChildSelection?.() : undefined;
-        const { defaultEngine } = readCliSessionEngineBaselineV1({ backendTarget, appliedChildSelection });
+        // The global source daemon has no native model owner. Only the exact
+        // lead's host-admitted start facts can supply its effective baseline;
+        // metadata contains intent and is never evidence that it was applied.
+        const admitted = context.agentStartContext;
+        const baseline = admitted?.caller.kind === 'session' && admitted.caller.sessionId === sessionId
+          ? admitted.baseline.configuration : undefined;
+        const readAppliedSelection = bound ? params.getCurrentAppliedChildSelection
+          ?? params.getSessionRoleContext?.().readAppliedChildSelection : undefined;
+        const target = readAppliedSelection
+          ? params.getCurrentSessionBackendTarget?.() ?? resolveBackendTargetFromSessionMetadata(metadata)
+          : baseline?.agentTarget;
+        if (!target) throw new RoleActionRefusalV1('target_unavailable');
+        const modelSelection = baseline?.modelSelection && ('ref' in baseline.modelSelection
+          ? baseline.modelSelection.ref : baseline.modelSelection);
+        const appliedChildSelection = readAppliedSelection ? await readAppliedSelection() : baseline ? {
+          status: 'applied' as const, modelId: modelSelection?.modelId ?? null,
+          ...(modelSelection ? { modelSelection } : {}),
+        } : undefined;
+        if (appliedChildSelection?.status !== 'applied') throw new RoleActionRefusalV1('target_unavailable');
+        const { defaultEngine } = readCliSessionEngineBaselineV1({ backendTarget: target, appliedChildSelection });
         const inventory = await readEffectiveDeps().agentsBackendsList({ includeDisabled: false });
         context.signal?.throwIfAborted();
         return { defaultEngine, availableAgentTargetKeys: inventory.items.filter(item => item.enabled).map(item => item.targetKey) };
@@ -145,12 +169,9 @@ export function createCliRolesActionDeps(
       stageSessionStateMutation: params.stageSessionStateMutation,
       beforeSessionMutation: async (context, targetSessionId) => {
         if (context.actionCaller?.kind !== 'workflowRun') return;
-        if (!await isWorkflowAuthorizationCurrent(context)) {
-          throw new RoleActionRefusalV1('run_access_denied');
-        }
-        const current = await resolveActionAgentStartContextV1({ resolveAgentStartContext, sessionList }, context, targetSessionId);
+        const current = await resolveActionAgentStartContextV1({ resolveAgentStartContext, sessionList, sessionRead }, context, targetSessionId);
         const admission = admitActionAgentStartV1(context, { kind: 'session_target', targetSessionId }, current);
-        if (!admission.ok) throw new RoleActionRefusalV1(admission.error.errorCode);
+        if (!admission.ok) throw new RoleActionRefusalV1(admission.error.errorCode, admission.error.details);
       },
       readRoleSources,
       readPluginRoles: params.readPluginRoles,
@@ -228,6 +249,7 @@ export function createCliRolesActionDeps(
           }
         },
         readRawAccountSettings: readRawRoleSettings,
+        mutateRawAccountSettings,
         mutateAccountRoleOverrides: async (mutation, context) => {
           const { createCliPromptLibraryStore } = await import("@/settings/prompts/promptLibraryStore");
           await createCliPromptLibraryStore({ credentials: params.credentials!, signal: context.signal,

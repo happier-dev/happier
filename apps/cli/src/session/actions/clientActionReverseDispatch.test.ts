@@ -635,7 +635,8 @@ describe('client Action reverse delivery', () => {
 
   it('delivers a direct Home continuation to the App that owns its opaque current-context command', async () => {
     const input = { operation: 'refresh' as const, commandId: 'current-ui:home:refresh' };
-    const expectedMethod = `${RPC_METHODS.UI_ACTION_EXECUTE}.current-context.command.${encodeURIComponent(JSON.stringify(input.commandId))}`;
+    // The answering App's command owner decides whether the opaque id is current.
+    const expectedMethod = `${RPC_METHODS.UI_ACTION_EXECUTE}.current-context.read`;
     const client: ClientActionMachineRpc = {
       hasConnectedClientRpcHandler: method => method === expectedMethod,
       callConnectedClientRpc: async (method, payload, options) => {

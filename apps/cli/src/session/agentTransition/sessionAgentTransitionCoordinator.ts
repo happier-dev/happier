@@ -175,6 +175,8 @@ export type SessionAgentTransitionParams = Readonly<{
   credentialInputConstraints?: CallerInputConstraintsV1;
   /** Same admitted invocation and installed signer retained through every material effect. */
   externalAction?: Parameters<typeof callSessionRpc>[0]['externalAction'];
+  /** Admitted invocation authority for reopening the target Session. */
+  executionAuthority?: Parameters<typeof requestInactiveSessionResume>[0]['executionAuthority'];
   /** Required for protected E2EE input admission; absent means plain-only. */
   machineAdmissionTransport?: Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport'];
   strictIdleTimeoutMs?: number;
@@ -633,7 +635,8 @@ async function activateTargetAndAdmitInput(params: Readonly<{
       rawSession: targetSession.rawSession,
       metadata: targetMetadata,
       ...(params.externalAction ? { externalAction: params.externalAction,
-        executionAuthority: params.externalAction.context.authority } : {}),
+        executionAuthority: params.externalAction.context.authority }
+        : params.executionAuthority ? { executionAuthority: params.executionAuthority } : {}),
     }).catch(() => null);
     if (!resumed?.ok) {
       const failure = resumed?.errorDetail ? projectSessionSpawnFailure({

@@ -168,6 +168,8 @@ export async function requestInactiveSessionResume(params: Readonly<{
   approvedNewDirectoryCreation?: boolean;
   initialGoal?: SessionInitialGoalRequestV1;
   executionAuthority?: ActionExecutorContext['authority'];
+  /** An explicit message send resumes a stopped Session; automatic wake never sets this. */
+  crossesStopHold?: boolean;
   /** Existing admitted Action context; the native Session owner retains launch custody. */
   actionContext?: ActionExecutorContext;
   externalAction?: Parameters<typeof callMachineRpc>[0]['externalAction'];
@@ -191,7 +193,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
   if (resumeIntent === 'authority_unavailable') {
     return { ok: false, code: 'authority_unavailable', message: 'Session Stop authority is unreadable' };
   }
-  if (resumeIntent === 'held_by_person') {
+  if (resumeIntent === 'held_by_person' && params.crossesStopHold !== true) {
     return { ok: false, code: 'held_by_person', message: 'Session is held after explicit Stop' };
   }
   const rawSessionId = readNonEmptyString(params.rawSession.id);
@@ -222,7 +224,8 @@ export async function requestInactiveSessionResume(params: Readonly<{
     };
   }
 
-  const executionAuthorization = resumeIntent === 'person' ? SpawnSessionExecutionAuthorizationSchema.parse({
+  const executionAuthorization = resumeIntent === 'person' || (resumeIntent === 'held_by_person' && params.crossesStopHold === true)
+    ? SpawnSessionExecutionAuthorizationSchema.parse({
     provenance: 'user_request',
     requestId,
   }) : undefined;

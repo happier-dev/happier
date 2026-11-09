@@ -10,7 +10,7 @@ import {
     resolveExternalSessionTagLookupCandidates,
 } from '@/api/session/external/linking/externalSessionTagLookupCandidates';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
-import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { annotateExternalSessionCandidates } from './candidateAnnotations';
 import { resolveExternalSessionCandidateIdentityKey } from './candidateQuery';
 
@@ -144,7 +144,6 @@ describe('annotateExternalSessionCandidates', () => {
                 resolveSourceKey: resolveExternalSessionsSourceKey,
             },
         }, {
-            fetchPage: fetchSessionsPageMock,
             decryptMetadata: tryDecryptSessionOwnerMetadataView,
             getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
             lookupByTags: lookupSessionsByTagsMock,
@@ -192,7 +191,6 @@ describe('annotateExternalSessionCandidates', () => {
                 resolveSourceKey: resolveExternalSessionsSourceKey,
             },
         }, {
-            fetchPage: fetchSessionsPageMock,
             decryptMetadata: () => null,
             getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
             lookupByTags: lookupSessionsByTagsMock,
@@ -251,7 +249,6 @@ describe('annotateExternalSessionCandidates', () => {
             },
             signal: abortController.signal,
         }, {
-            fetchPage: fetchSessionsPageMock,
             decryptMetadata: tryDecryptSessionOwnerMetadataView,
             getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
             lookupByTags: lookupSessionsByTagsMock,
@@ -267,7 +264,7 @@ describe('annotateExternalSessionCandidates', () => {
         expect(lookupSessionsByTagsMock).toHaveBeenCalledTimes(1);
     });
 
-    it('stops the bounded compatibility scan and retains found candidates as incomplete when cancelled mid-scan', async () => {
+    it('does not scan Account documents when the indexed annotation operation is unavailable', async () => {
         fetchSessionsPageMock.mockReset();
         lookupSessionsByTagsMock.mockReset();
         lookupSessionsByTagsMock.mockImplementation(indexedTagRouteUnavailable);
@@ -283,14 +280,12 @@ describe('annotateExternalSessionCandidates', () => {
             agentId: 'codex',
             source: { kind: 'codexHome', home: 'user' },
             candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }],
-            maxPages: 10,
             sourceKeyOwner: {
                 sourceKey: 'codexHome:user:::',
                 resolveSourceKey: resolveExternalSessionsSourceKey,
             },
             signal: abortController.signal,
         }, {
-            fetchPage: fetchSessionsPageMock,
             decryptMetadata: tryDecryptSessionOwnerMetadataView,
             getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
             lookupByTags: lookupSessionsByTagsMock,
@@ -299,7 +294,7 @@ describe('annotateExternalSessionCandidates', () => {
             annotationsIncomplete: true,
         });
 
-        expect(fetchSessionsPageMock).toHaveBeenCalledTimes(1);
+        expect(fetchSessionsPageMock).not.toHaveBeenCalled();
     });
 
     it('projects live links, released conversion tombstones, and publication time from canonical session owners', async () => {
@@ -351,10 +346,12 @@ describe('annotateExternalSessionCandidates', () => {
                 resolveSourceKey: resolveExternalSessionsSourceKey,
             },
         }, {
-            fetchPage,
-            decryptMetadata: ({ rawSession }) => rawSession.metadata as Record<string, unknown>,
+            decryptMetadata: tryDecryptSessionOwnerMetadataView,
             getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
-            lookupByTags: indexedTagRouteUnavailable,
+            lookupByTags: async ({ tags }) => ({ state: 'available', tags, sessions: (await fetchPage()).sessions.map(
+                (row: Readonly<{ id: string; metadata: Record<string, unknown>; materializedThroughSourceAt?: number }>) =>
+                    createSessionRecordFixture({ ...row, encryptionMode: 'plain', metadata: JSON.stringify(row.metadata) }),
+            ) }),
         });
 
         expect(result).toEqual({
@@ -375,43 +372,6 @@ describe('annotateExternalSessionCandidates', () => {
         });
     });
 
-    it('marks candidate annotations incomplete when the bounded active or archived scan stops early', async () => {
-        const fetchPage = vi.fn(async ({ cursor }: { cursor?: string }) => ({
-            sessions: [],
-            hasNext: true,
-            nextCursor: cursor ? `${cursor}-next` : 'next',
-        }));
-
-        const result = await annotateExternalSessionCandidates({
-            credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
-            machineId: 'machine-1',
-            agentId: 'codex',
-            source: { kind: 'codexHome', home: 'user' },
-            candidates: [
-                { remoteSessionId: 'remote-1', updatedAtMs: 1 },
-                { remoteSessionId: 'remote-2', updatedAtMs: 2 },
-            ],
-            maxPages: 2,
-            sourceKeyOwner: {
-                sourceKey: 'codexHome:user:::',
-                resolveSourceKey: resolveExternalSessionsSourceKey,
-            },
-        }, {
-            fetchPage,
-            decryptMetadata: () => null,
-            getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
-            lookupByTags: indexedTagRouteUnavailable,
-        });
-
-        expect(fetchPage).toHaveBeenCalledTimes(4);
-        expect(result).toMatchObject({
-            annotationsIncomplete: true,
-            candidates: [
-                { remoteSessionId: 'remote-1' },
-                { remoteSessionId: 'remote-2' },
-            ],
-        });
-    });
 
     it('annotates only the project-qualified candidate when native ids collide', async () => {
         const fetchPage = vi.fn()
@@ -468,10 +428,12 @@ describe('annotateExternalSessionCandidates', () => {
                 resolveSourceKey: resolveExternalSessionsSourceKey,
             },
         }, {
-            fetchPage,
-            decryptMetadata: ({ rawSession }) => rawSession.metadata as Record<string, unknown>,
+            decryptMetadata: tryDecryptSessionOwnerMetadataView,
             getAccountEncryptionCurrentness: getPlainAccountEncryptionCurrentness,
-            lookupByTags: indexedTagRouteUnavailable,
+            lookupByTags: async ({ tags }) => ({ state: 'available', tags, sessions: (await fetchPage()).sessions.map(
+                (row: Readonly<{ id: string; metadata: Record<string, unknown>; materializedThroughSourceAt?: number }>) =>
+                    createSessionRecordFixture({ ...row, encryptionMode: 'plain', metadata: JSON.stringify(row.metadata) }),
+            ) }),
         });
 
         expect(result).toEqual({

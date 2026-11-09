@@ -66,6 +66,8 @@ function resolveLiveStatusWaitMs(): number {
 export async function getSessionStatus(params: Readonly<{
   credentials: StoredCredentials;
   idOrPrefix: string;
+  /** Host-admitted routing tuple; fresh status reads cannot select a different Session. */
+  expectedSessionAddress?: Parameters<typeof resolveSessionTransportContext>[0]['expectedSessionAddress'];
   live: boolean;
   readiness?: boolean;
   includeAcceptedWorkspace?: boolean;
@@ -85,6 +87,7 @@ export async function getSessionStatus(params: Readonly<{
     reason: 'session-query',
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
+    ...(params.expectedSessionAddress ? { expectedSessionAddress: params.expectedSessionAddress } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
     ...(params.serverFeaturesSnapshot ? { serverFeaturesSnapshot: params.serverFeaturesSnapshot } : {}),

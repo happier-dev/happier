@@ -3,12 +3,13 @@ import { createServer, type Server } from 'node:http';
 
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 
 const token = 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43);
 const credentials = { token, encryption: null, credentialProvenance: 'api_token' as const };
 const sourceRef = { id: 'source-ref', serverId: 'source-home', machineId: 'source-coordinator', rootPath: '/source', createdAtMs: 1 };
 const selectedTarget = { machineId: 'new-worker' };
-const input = { workspace: { serverId: 'source-home', refId: sourceRef.id }, serviceName: 'worker', requestId: 'move',
+const input = { workspace: { serverId: 'source-home', refId: sourceRef.id }, sourceMachineId: sourceRef.machineId, serviceName: 'worker', requestId: 'move',
   currentTarget: { kind: 'managed_service', managedServiceId: 'native-instance', machineId: 'old-worker' },
   destination: { kind: 'workers', destination: { kind: 'machine', machineId: 'new-worker' } },
   desiredPlacement: { workspace: { serverId: 'source-home', refId: sourceRef.id }, serviceName: 'worker', expectedRevision: 'absent',
@@ -19,6 +20,7 @@ afterEach(async () => { for (const server of servers.splice(0)) await new Promis
 
 async function network(refs = [sourceRef]) {
   const actions: unknown[] = [];
+  const projectReads: unknown[] = [];
   const server = createServer(async (request, response) => {
     let raw = '';
     for await (const chunk of request) raw += String(chunk);
@@ -30,30 +32,49 @@ async function network(refs = [sourceRef]) {
     if (request.url === '/v1/machines') {
       response.end(JSON.stringify([{ id: 'other-default-machine', active: true, revokedAt: null, replacedByMachineId: null, kind: 'persistent' }])); return;
     }
-    if (request.url?.endsWith('/list')) {
-      response.end(JSON.stringify({ status: 'listed', coverage: 'complete', rows: refs.map(ref => {
-        const key = { kind: 'workspace-ref', serverId: ref.serverId, id: ref.id };
-        return { key, revision: 0, content: { t: 'plain', v: { key, value: ref } } };
-      }) })); return;
+    if (request.url?.startsWith('/v1/account/project-rows/')) {
+      projectReads.push(body);
+      response.end(JSON.stringify(projectAccountRowsReadHttpResponse([
+        ...refs.map(ref => createPlainProjectAccountRefRow(ref)),
+        ...Array.from({ length: 1024 }, (_, index) => {
+          const key = { kind: 'project-organization', serverId: sourceRef.serverId, projectKey: `unrelated-${index}` };
+          return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+        }),
+      ], request.url, body).data)); return;
     }
     const envelope = body && typeof body === 'object' ? body as Readonly<Record<string, unknown>> : {};
     // Action identity belongs to the real HTTP route, not the strict request body.
     const actionId = request.url?.includes('localServices.actions.stopManaged')
-      ? 'localServices.actions.stopManaged' : 'projects.service.relocate';
+      ? 'localServices.actions.stopManaged' : request.url?.includes('deployments.prepare') ? 'deployments.prepare' : 'projects.service.relocate';
     actions.push({ actionId, ...envelope });
     response.end(JSON.stringify({ v: 1, actionId, requestId: envelope.requestId,
       execution: { ok: true, result: actionId === 'localServices.actions.stopManaged'
         ? { v: 1, requestId: 'exact-native-stop', action: 'stop_managed', status: 'denied', reasonCode: 'unknown_managed_service', auditEvents: [] }
-        : { status: 'unchanged', currentTarget: input.currentTarget } } }));
+        : actionId === 'deployments.prepare' ? { kind: 'handedOff', sessionRef: { serverId: sourceRef.serverId, sessionId: 'prepared-session' } }
+          : { status: 'unchanged', currentTarget: input.currentTarget } } }));
   });
   servers.push(server);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Missing network fixture address');
-  return { endpoint: `http://127.0.0.1:${address.port}`, actions };
+  return { endpoint: `http://127.0.0.1:${address.port}`, actions, projectReads };
 }
 
 describe('CLI relocation source routing', () => {
+  it('routes path-free Prepare through the accepted workspace using the real API-token SDK transport', async () => {
+    const boundary = await network();
+    const prepare = { projectSourceId: 'source', sourceRevision: 1,
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'prepare/app' },
+      baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId: sourceRef.serverId, id: sourceRef.id },
+      target: { environmentId: 'staging', targetLinkId: 'staging-target', expectedTargetLinkRevision: 2 } };
+    const executor = createCliActionExecutorFromCredentials({ credentials, serverId: sourceRef.serverId, serverApiUrl: boundary.endpoint });
+    const result = await executor.execute('deployments.prepare', prepare, { surface: 'mcp' });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'handedOff' } });
+    expect(boundary.actions).toEqual([expect.objectContaining({ actionId: 'deployments.prepare',
+      target: { kind: 'machine', machineId: sourceRef.machineId }, input: prepare })]);
+    expect(boundary.projectReads).toEqual([{ key: prepare.workspace }]);
+  });
+
   const nativeStop = { requestId: 'exact-native-stop', action: 'stop_managed' as const, force: false,
     target: { kind: 'managed_service' as const, machineId: 'old-worker', managedServiceId: 'observed-native-instance' } };
   const confirmedStop = { ...nativeStop, confirmationNonce: createLocalServiceActionConfirmationNonceV1(nativeStop) };
@@ -91,6 +112,7 @@ describe('CLI relocation source routing', () => {
     const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'source-home', serverApiUrl: boundary.endpoint });
     await expect(executor.execute('projects.service.relocate', input, { surface })).resolves.toMatchObject({ ok: true });
     expect(boundary.actions).toEqual([expect.objectContaining({ target: { kind: 'machine', machineId: 'source-coordinator' } })]);
+    expect(boundary.projectReads).toEqual([{ key: { kind: 'workspace-ref', serverId: sourceRef.serverId, id: sourceRef.id } }]);
   });
   it('resolves portable SOURCE rows with the stable Home identity while routing through the local profile', async () => {
     const boundary = await network([{ ...sourceRef, serverId: 'srv_source_home' }]);

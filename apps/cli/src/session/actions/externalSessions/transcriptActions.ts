@@ -21,8 +21,6 @@ import {
     logExternalSessionTranscriptPageFailure,
 } from './responseErrors';
 import { resolveExternalSessionTranscriptRefreshCurrentness } from '@/api/session/external/secureRefresh/resolveExternalSessionTranscriptRefreshBinding';
-import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import { readStoredCredentials } from '@/persistence';
 import type { ExternalSessionTranscriptReadAfter } from '@/session/external/providerOps';
 
 function logReadAfterDiscontinuity(result: ExternalSessionTranscriptReadAfter, cursor: string): void {
@@ -86,6 +84,7 @@ export async function executeExternalSessionTranscriptPageAction(
         const res = await providerOps.pageTranscript({
             source,
             remoteSessionId,
+            ...(parsed.data.sourceItemId === undefined ? {} : { sourceItemId: parsed.data.sourceItemId }),
             direction,
             cursor,
             maxBytes,
@@ -152,25 +151,12 @@ export async function executeExternalSessionTranscriptReadAfterAction(
                 result: { outcome: 'source_replaced' },
             });
         }
-        const credentials = await readStoredCredentials().catch(() => null);
-        const loaded = credentials
-            ? await loadLinkedExternalSession({
-                credentials,
-                sessionId: request.binding.sessionId,
-                machineId: request.binding.machineId,
-            }).catch(() => null)
-            : null;
-        if (!loaded?.ok) {
-            return ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
-                v: 1,
-                binding: request.binding,
-                result: { outcome: 'source_unavailable' },
-            });
-        }
+        // Bounded reads retain the admitted source and response binding.
+        const linked = current.linked;
         try {
             const resolvedSurface = await resolveOccurrenceBoundExternalSessionFollowSurface(
-                loaded.session.agentId,
-                loaded.session.linkGeneration,
+                linked.agentId,
+                linked.linkGeneration,
             );
             const providerOps = resolvedSurface.providerOps;
             if (
@@ -194,43 +180,13 @@ export async function executeExternalSessionTranscriptReadAfterAction(
                 });
             }
             const res = await providerOps.readAfterTranscript({
-                source: loaded.session.source,
-                remoteSessionId: loaded.session.remoteSessionId,
+                source: linked.source,
+                remoteSessionId: linked.remoteSessionId,
                 cursor: request.cursor,
                 maxBytes: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxSerializedBytes,
                 maxItems: EXTERNAL_SESSIONS_INVOCATION_POLICY.readAfterTranscript.maxItems,
             });
             logReadAfterDiscontinuity(res, request.cursor);
-            const currentAfterRead = await resolveExternalSessionTranscriptRefreshCurrentness({
-                sessionId: request.binding.sessionId,
-                cursor: request.cursor,
-                ...(context?.deviceLocalSecretStorage
-                    ? {
-                        deviceLocalSecretStorage:
-                            context.deviceLocalSecretStorage,
-                    }
-                    : {}),
-            }).catch(() => null);
-            if (!currentAfterRead) {
-                return ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
-                    v: 1,
-                    binding: request.binding,
-                    result: { outcome: 'source_unavailable' },
-                });
-            }
-            if (
-                currentAfterRead.occurrenceId !== resolvedSurface.occurrenceId
-                || !externalSessionTranscriptRefreshBindingsEqualV1(
-                    request.binding,
-                    currentAfterRead.binding,
-                )
-            ) {
-                return ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
-                    v: 1,
-                    binding: request.binding,
-                    result: { outcome: 'source_replaced' },
-                });
-            }
             if (res.outcome === 'advanced' && res.nextCursor === request.cursor) {
                 return ExternalSessionTranscriptRefreshReadAfterResponseV1Schema.parse({
                     v: 1,

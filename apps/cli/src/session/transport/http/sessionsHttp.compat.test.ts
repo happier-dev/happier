@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
 import { z } from 'zod';
-import { sealSessionStoredContent } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveExistingSessionAttachContext } from '@/daemon/sessionEncryption/resolveExistingSessionAttachContext';
+import { logger } from '@/ui/logger';
 import {
   projectLegacySessionAccessCapabilitiesV1,
   SessionStoredMessageContentSchema,
 } from '@happier-dev/protocol';
+import { sealSessionStoredContent } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   createSessionListResponseFixture,
   createSessionRecordFixture,
@@ -21,6 +23,35 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
+  it('keeps bounded structural refusal facts through the real attach reader and warning', async () => {
+    const privateValue = 'private-provider-text';
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      if (String(url).endsWith('/v1/account/encryption/currentness')) {
+        return { status: 200, data: { mode: 'plain', version: 1,
+          signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      }
+      return { status: 200, data: { session: { ...createSessionRecordFixture({ id: 's1' }),
+        id: undefined, metadata: privateValue, rollbackEligibleTurnStarts: Array(200).fill(privateValue) } } };
+    });
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const result = await resolveExistingSessionAttachContext({
+      token: String(1), sessionId: 's1', credentials: null,
+    });
+    const sessionDetailValidation = {
+      schema: 'v2_session_detail',
+      issues: [
+        { path: ['session', 'id'], code: 'invalid_type' },
+        { path: ['session', 'rollbackEligibleTurnStarts'], code: 'invalid_type' },
+      ],
+    };
+    expect(result).toMatchObject({ ok: false, reason: 'fetchFailed', diagnostic: {
+      errorCode: 'session_detail_invalid_response', sessionDetailValidation,
+    } });
+    expect(warn).toHaveBeenCalledWith('[DAEMON RUN] Existing Session attach read failed',
+      expect.objectContaining({ sessionDetailValidation }));
+    expect(JSON.stringify([result, warn.mock.calls])).not.toContain(privateValue);
+  });
+
   it('accepts additive detail fields but still rejects a missing required id', async () => {
     const session = createSessionRecordFixture({ id: 's1' });
     vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200,
@@ -192,7 +223,7 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     });
   });
 
-  it('labels unclassified compat session-detail reads with a legacy proof purpose', async () => {
+  it('keeps the legacy proof label only when the caller explicitly names that proof', async () => {
     const getSpy = vi.spyOn(axios, 'get');
     getSpy.mockResolvedValueOnce({
       status: 200,
@@ -206,6 +237,24 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     expect(getSpy.mock.calls[0]?.[1]?.headers).toMatchObject({
       'X-Happier-Request-Purpose': 'session-detail:legacy-compat-proof',
     });
+  });
+
+  it('preserves one in-flight read when formerly unclassified callers receive distinct labels', async () => {
+    let release!: (response: Awaited<ReturnType<typeof axios.get>>) => void;
+    const getSpy = vi.spyOn(axios, 'get').mockReturnValue(new Promise(resolve => { release = resolve; }));
+    const memory = fetchSessionById({ token: 'shared-label-token', sessionId: 's1', reason: 'memory-change' });
+    const follow = fetchSessionById({ token: 'shared-label-token', sessionId: 's1', reason: 'follow-occurrence' });
+    const connect = fetchSessionById({ token: 'shared-label-token', sessionId: 's1', reason: 'connect' });
+    const reconnect = fetchSessionById({ token: 'shared-label-token', sessionId: 's1', reason: 'reconnect' });
+    expect(getSpy).toHaveBeenCalledTimes(3);
+    expect(getSpy.mock.calls[0]?.[1]?.headers).toMatchObject({
+      'X-Happier-Request-Purpose': 'session-detail:memory-change',
+    });
+    release({ status: 200, data: { session: createSessionRecordFixture({
+      id: 's1', metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: 'dek',
+    }) } } as Awaited<ReturnType<typeof axios.get>>);
+    await expect(Promise.all([memory, follow, connect, reconnect])).resolves.toHaveLength(4);
+    expect(getSpy).toHaveBeenCalledTimes(3);
   });
 
 });

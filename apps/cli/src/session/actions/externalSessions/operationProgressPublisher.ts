@@ -6,6 +6,7 @@ import { EXTERNAL_SESSION_OPERATION_METADATA_KEY, EXTERNAL_SESSION_OPERATION_PRE
 import { ExternalSessionOperationReferenceV1Schema } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 import type { ExternalSessionCanonicalOwnerEvidenceV1, ExternalSessionOperationProgressV1, ExternalSessionOperationRecordV1, ExternalSessionOperationSharedPresentationV1, SessionMetadata } from '@happier-dev/protocol';
 import { readStoredCredentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import {
   readSessionMetadataTupleWriterSnapshot,
   updateSessionMetadataWithRetry,
@@ -14,23 +15,25 @@ import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import {
   acknowledgeExternalSessionOperationProgressProjection,
   compactExternalSessionOperationRecordToTerminalReceipt,
-  deleteExpiredExternalSessionOperationTerminalReceipt,
   isExternalSessionOperationSettledForTerminalCleanup,
   listExternalSessionOperationRecords,
   mutateExternalSessionOperationRecordAtRevision,
-  pruneExpiredExternalSessionOperationTerminalReceipts,
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
+  resolveExternalSessionOperationAccountScope,
+  resolveExternalSessionOperationRecordsDirectory,
   resolveExternalSessionOperationTerminalReceiptCompactionEligibility,
   withExternalSessionOperationSessionAdmissionLock,
   type ExternalSessionOperationPriorTerminalReceiptEvidence,
+  type ExternalSessionOperationAccountScope,
 } from './operationRecordStore';
 import { logExternalSessionsInternalError } from './responseErrors';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
-import { resolveConnectedServicesServerApiTimeoutMs } from '@/api/client/connectedServicesServerApiTimeout';
-import { configuration } from '@/configuration';
 
-const EXTERNAL_SESSION_OPERATION_PROJECTION_METADATA_MAX_ATTEMPTS = 6;
+type ExternalSessionOperationPublicationContext = Readonly<{
+  credentials?: StoredCredentials;
+  accountScope?: ExternalSessionOperationAccountScope;
+}>;
 
 type ExternalSessionOperationStagingDisposition =
   | 'not_applicable'
@@ -122,34 +125,6 @@ async function compactTerminalExternalSessionOperation(
     expectedRevision: record.revision,
     stagingDisposition,
   });
-}
-
-export function resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs(
-  input: Readonly<{
-    sessionControlTimeoutMs?: number;
-    connectedServicesTimeoutMs?: number;
-  }> = {},
-): number {
-  const sessionControlTimeoutMs = input.sessionControlTimeoutMs
-    ?? configuration.sessionControlHttpTimeoutMs;
-  const connectedServicesTimeoutMs =
-    input.connectedServicesTimeoutMs
-    ?? resolveConnectedServicesServerApiTimeoutMs();
-  // One repair barrier can converge an admitted revision-zero successor and
-  // then its repaired current revision. Each pass can perform one presentation
-  // read, one publisher snapshot read, the tuple owner's six retry attempts,
-  // one authoritative conflict refresh, and three Account-currentness reads.
-  // Treat parallel reads as sequential here and retain a minute for local CAS,
-  // retry delays, publication receipt acknowledgement, and scheduling jitter.
-  const sessionControlRequestsPerPass =
-    3 + EXTERNAL_SESSION_OPERATION_PROJECTION_METADATA_MAX_ATTEMPTS;
-  const calculated = 2 * (
-    (sessionControlRequestsPerPass * sessionControlTimeoutMs)
-    + (3 * connectedServicesTimeoutMs)
-  ) + 60_000;
-  return Number.isSafeInteger(calculated)
-    ? calculated
-    : Number.MAX_SAFE_INTEGER;
 }
 
 function isPassivelyResumableInterruptedOperation(
@@ -311,12 +286,12 @@ type ExternalSessionOperationProgressConvergenceDependencies = Readonly<{
     allowDifferentTerminalReplacement?: boolean;
     expectedDifferentTerminalPresentation?:
       ExternalSessionOperationSharedPresentationV1;
-  }>): Promise<ExternalSessionOperationRecordV1 | void>;
+  } & ExternalSessionOperationPublicationContext>): Promise<ExternalSessionOperationRecordV1 | void>;
   acknowledge?:
     typeof acknowledgeExternalSessionOperationProgressProjection;
   allowSettledTerminalPredecessorReplacement?: boolean;
   sessionAdmissionLockHeld?: boolean;
-}>;
+} & ExternalSessionOperationPublicationContext>;
 
 async function isSettledTerminalPredecessorSelection(input: Readonly<{
   activeServerDir: string;
@@ -363,13 +338,24 @@ export async function convergeExternalSessionOperationProgressProjection(
   record: ExternalSessionOperationRecordV1,
   dependencies: ExternalSessionOperationProgressConvergenceDependencies = {},
 ): Promise<'already_acknowledged' | 'acknowledged' | 'published'> {
+  const credentials = dependencies.credentials ?? await readStoredCredentials();
+  const accountScope = dependencies.accountScope ?? (credentials
+    ? resolveExternalSessionOperationAccountScope(activeServerDir, credentials.token)
+    : null) ?? undefined;
+  const recordsDirectory = accountScope
+    ? await resolveExternalSessionOperationRecordsDirectory(activeServerDir, record.operationId, accountScope)
+    : activeServerDir;
+  const publicationContext = {
+    ...(credentials ? { credentials } : {}),
+    ...(accountScope ? { accountScope } : {}),
+  };
   const readPresentation = dependencies.readPresentation
     ?? readExternalSessionOperationSharedPresentation;
   const publish = dependencies.publish
     ?? publishExternalSessionOperationProgress;
   const acknowledge = dependencies.acknowledge
     ?? acknowledgeExternalSessionOperationProgressProjection;
-  const readResult = await readPresentation(record.request.sessionId);
+  const readResult = await readPresentation(record.request.sessionId, publicationContext);
   if (readResult.kind === 'gone') {
     throw new Error('external_session_operation_publish_session_not_found');
   }
@@ -396,23 +382,13 @@ export async function convergeExternalSessionOperationProgressProjection(
     }
     if (remote.revision >= record.revision) {
       await acknowledge({
-        activeServerDir,
+        activeServerDir: recordsDirectory,
         operationId: record.operationId,
         projectedRevision: record.revision,
       });
-      if (remote.revision === record.revision) {
-        await pruneExpiredExternalSessionOperationTerminalReceipts({
-          activeServerDir,
-          nowMs: Date.now(),
-          sessionIds: [record.request.sessionId],
-          readSelectedPresentation: readPresentation,
-          sessionAdmissionLockHeld:
-            dependencies.sessionAdmissionLockHeld,
-        });
-      }
       if (isSettledRecordWithoutPrivateStaging(record)) {
         await compactTerminalExternalSessionOperation(
-          activeServerDir,
+          recordsDirectory,
           record,
           'not_applicable',
         );
@@ -426,7 +402,7 @@ export async function convergeExternalSessionOperationProgressProjection(
     if (
       dependencies.allowSettledTerminalPredecessorReplacement === true
       && await isSettledTerminalPredecessorSelection({
-        activeServerDir,
+        activeServerDir: recordsDirectory,
         selectedRecord: record,
         remote,
       })
@@ -440,6 +416,7 @@ export async function convergeExternalSessionOperationProgressProjection(
   }
   const published = await publish({
     activeServerDir,
+    ...publicationContext,
     sessionId: record.request.sessionId,
     progress: projectExternalSessionOperationProgressV1(record),
     ...(settledTerminalPredecessor
@@ -457,21 +434,14 @@ export async function convergeExternalSessionOperationProgressProjection(
     || published.progressProjection.acknowledgedRevision < record.revision
   ) {
     await acknowledge({
-      activeServerDir,
+      activeServerDir: recordsDirectory,
       operationId: record.operationId,
       projectedRevision: record.revision,
     });
   }
-  await pruneExpiredExternalSessionOperationTerminalReceipts({
-    activeServerDir,
-    nowMs: Date.now(),
-    sessionIds: [record.request.sessionId],
-    readSelectedPresentation: readPresentation,
-    sessionAdmissionLockHeld: dependencies.sessionAdmissionLockHeld,
-  });
   if (isSettledRecordWithoutPrivateStaging(record)) {
     await compactTerminalExternalSessionOperation(
-      activeServerDir,
+      recordsDirectory,
       record,
       'not_applicable',
     );
@@ -506,7 +476,7 @@ export async function settlePriorTerminalExternalSessionOperationProgressProject
 }
 
 export async function repairExternalSessionOperationProgressProjections(
-  activeServerDir: string,
+  activeServerRoot: string,
   dependencies: Readonly<{
     listRecords?: typeof listExternalSessionOperationRecords;
     readPresentation?:
@@ -534,10 +504,22 @@ export async function repairExternalSessionOperationProgressProjections(
     >;
     cleanupTerminalStaging?(
       operationId: string,
+      accountScope?: ExternalSessionOperationAccountScope,
     ): Promise<'cleaned' | 'missing' | 'not_ready' | 'not_terminal'>;
     nowMs?: () => number;
   }>,
 ): Promise<number> {
+  const credentials = await readStoredCredentials();
+  const accountScope = credentials
+    ? resolveExternalSessionOperationAccountScope(activeServerRoot, credentials.token)
+    : null;
+  const activeServerDir = accountScope
+    ? await resolveExternalSessionOperationRecordsDirectory(activeServerRoot, 'inventory', accountScope)
+    : activeServerRoot;
+  const publicationContext = {
+    ...(credentials ? { credentials } : {}),
+    ...(accountScope ? { accountScope } : {}),
+  };
   const records = await (
     dependencies.listRecords ?? listExternalSessionOperationRecords
   )(activeServerDir);
@@ -592,26 +574,11 @@ export async function repairExternalSessionOperationProgressProjections(
             operationClaimId: terminalRecord.bindings.operationClaimId,
           },
           async () => {
-            if (
-              isCompactableSettledRecord(terminalRecord)
-              && terminalRecord.progressProjection.acknowledgedRevision
-                === terminalRecord.revision
-            ) {
-              // Publication owns first-ACK predecessor deletion before
-              // compaction. Repeat the same bounded convergence step on boot
-              // so a crash after the ACK cannot strand the selected expired
-              // predecessor once this full successor becomes a receipt.
-              await pruneExpiredExternalSessionOperationTerminalReceipts({
-                activeServerDir,
-                nowMs: nowMs(),
-                sessionIds: [terminalRecord.request.sessionId],
-                readSelectedPresentation: readPresentation,
-              });
-            }
             const stagingDisposition = stagingIsStructurallyAbsent
               ? 'not_applicable' as const
               : await dependencies.cleanupTerminalStaging!(
                 terminalRecord.operationId,
+                accountScope ?? undefined,
               );
             await compactTerminalExternalSessionOperation(
               activeServerDir,
@@ -650,6 +617,7 @@ export async function repairExternalSessionOperationProgressProjections(
       const repairMode = resolvePassiveRepairMode(record);
       const presentation = await readPresentation(
         selectedRecord.request.sessionId,
+        publicationContext,
       );
       if (presentation.kind === 'malformed') {
         throw new Error('external_session_operation_projection_malformed');
@@ -707,6 +675,7 @@ export async function repairExternalSessionOperationProgressProjections(
               selectedRecord,
               {
                 ...dependencies,
+                ...publicationContext,
                 allowSettledTerminalPredecessorReplacement: true,
               },
             );
@@ -858,7 +827,7 @@ export async function repairExternalSessionOperationProgressProjections(
           await convergeExternalSessionOperationProgressProjection(
             activeServerDir,
             record,
-            dependencies,
+            { ...dependencies, ...publicationContext },
           );
           const stagingDisposition =
             stagingDispositionByOperationId.get(record.operationId)
@@ -1077,9 +1046,9 @@ export async function assertExternalSessionOperationProgressCanBeSelected(
     priorTerminalRecords?: readonly ExternalSessionOperationRecordV1[];
     priorTerminalReceiptEvidence?:
       readonly ExternalSessionOperationPriorTerminalReceiptEvidence[];
-  }>,
+  } & ExternalSessionOperationPublicationContext>,
 ): Promise<ExternalSessionOperationSharedPresentationV1 | undefined> {
-  const credentials = await readStoredCredentials();
+  const credentials = input.credentials ?? await readStoredCredentials();
   if (!credentials) throw new Error('external_session_operation_publish_unauthenticated');
   const [rawSession, accountEncryptionCurrentness] = await Promise.all([
     fetchSessionById({
@@ -1087,7 +1056,7 @@ export async function assertExternalSessionOperationProgressCanBeSelected(
       token: credentials.token,
       sessionId: input.sessionId,
     }),
-    fetchAccountEncryptionCurrentness({ token: credentials.token }),
+    fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token }),
   ]);
   if (!rawSession) throw new Error('external_session_operation_publish_session_not_found');
   const snapshot = readSessionMetadataTupleWriterSnapshot({
@@ -1201,6 +1170,7 @@ export async function assertExternalSessionOperationProgressCanBeSelected(
 
 export async function readExternalSessionOperationSharedPresentation(
   sessionId: string,
+  context: ExternalSessionOperationPublicationContext = {},
 ): Promise<
   | Readonly<{ kind: 'gone' }>
   | Readonly<{ kind: 'absent' }>
@@ -1210,7 +1180,7 @@ export async function readExternalSessionOperationSharedPresentation(
   }>
   | Readonly<{ kind: 'malformed' }>
 > {
-  const credentials = await readStoredCredentials();
+  const credentials = context.credentials ?? await readStoredCredentials();
   if (!credentials) {
     throw new Error('external_session_operation_publish_unauthenticated');
   }
@@ -1220,7 +1190,7 @@ export async function readExternalSessionOperationSharedPresentation(
       token: credentials.token,
       sessionId,
     }),
-    fetchAccountEncryptionCurrentness({ token: credentials.token }),
+    fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token }),
   ]);
   if (!rawSession) return { kind: 'gone' };
   const snapshot = readSessionMetadataTupleWriterSnapshot({
@@ -1259,20 +1229,28 @@ export async function publishExternalSessionOperationProgress(input: Readonly<{
   expectedDifferentTerminalPresentation?:
     ExternalSessionOperationSharedPresentationV1;
   sessionAdmissionLockHeld?: boolean;
-}>): Promise<ExternalSessionOperationRecordV1> {
+} & ExternalSessionOperationPublicationContext>): Promise<ExternalSessionOperationRecordV1> {
+  const credentials = input.credentials ?? await readStoredCredentials();
+  if (!credentials) throw new Error('external_session_operation_publish_unauthenticated');
+  const accountScope = input.accountScope
+    ?? resolveExternalSessionOperationAccountScope(input.activeServerDir, credentials.token)
+    ?? undefined;
+  const recordsDirectory = await resolveExternalSessionOperationRecordsDirectory(
+    input.activeServerDir,
+    input.progress.operationId,
+    accountScope,
+  );
   const publishUnderAdmissionLock = async () => {
     let selectedProgress = input.progress;
     let allowDifferentTerminalReplacement =
       input.allowDifferentTerminalReplacement;
     let privateRecordChangedDuringPublish = false;
-    const credentials = await readStoredCredentials();
-    if (!credentials) throw new Error('external_session_operation_publish_unauthenticated');
     const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({
-      token: credentials.token,
+      credentials: credentials, token: credentials.token,
     });
     while (true) {
       const current = await readExternalSessionOperationRecord(
-        input.activeServerDir,
+        recordsDirectory,
         selectedProgress.operationId,
       );
       if (
@@ -1298,8 +1276,6 @@ export async function publishExternalSessionOperationProgress(input: Readonly<{
         sessionId: input.sessionId,
         rawSession,
         accountEncryptionCurrentness,
-        maxAttempts:
-          EXTERNAL_SESSION_OPERATION_PROJECTION_METADATA_MAX_ATTEMPTS,
         // The tuple owner may migrate a layout-0 source to layout 1 in this
         // mutation. Supply the complete owner view and let that owner split
         // the private operation from its shared presentation.
@@ -1315,7 +1291,7 @@ export async function publishExternalSessionOperationProgress(input: Readonly<{
           ),
       });
       const latest = await readExternalSessionOperationRecord(
-        input.activeServerDir,
+        recordsDirectory,
         selectedProgress.operationId,
       );
       if (!latest || latest.request.sessionId !== input.sessionId) {
@@ -1338,25 +1314,13 @@ export async function publishExternalSessionOperationProgress(input: Readonly<{
       }
       const acknowledged =
         await acknowledgeExternalSessionOperationProgressProjection({
-          activeServerDir: input.activeServerDir,
+          activeServerDir: recordsDirectory,
           operationId: selectedProgress.operationId,
           projectedRevision: selectedProgress.revision,
         });
-      if (input.expectedDifferentTerminalPresentation) {
-        await deleteExpiredExternalSessionOperationTerminalReceipt({
-          activeServerDir: input.activeServerDir,
-          sessionId: input.sessionId,
-          operationId:
-            input.expectedDifferentTerminalPresentation.operationId,
-          expectedPresentation:
-            input.expectedDifferentTerminalPresentation,
-          nowMs: Date.now(),
-          sessionAdmissionLockHeld: true,
-        });
-      }
       if (isSettledRecordWithoutPrivateStaging(acknowledged)) {
         await compactTerminalExternalSessionOperation(
-          input.activeServerDir,
+          recordsDirectory,
           acknowledged,
           'not_applicable',
         );
@@ -1368,7 +1332,7 @@ export async function publishExternalSessionOperationProgress(input: Readonly<{
     return await publishUnderAdmissionLock();
   }
   return await withExternalSessionOperationSessionAdmissionLock(
-    input.activeServerDir,
+    recordsDirectory,
     input.sessionId,
     publishUnderAdmissionLock,
   );

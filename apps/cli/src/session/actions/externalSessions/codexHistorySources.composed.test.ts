@@ -18,6 +18,11 @@ const fixture = vi.hoisted(() => ({ activeServerDir: '', nativeUnavailable: fals
 vi.mock('node:fs/promises', async (original) => {
     const actual = await original<typeof import('node:fs/promises')>();
     return { ...actual, stat: async (...args: Parameters<typeof actual.stat>) => {
+        // The native JSON-RPC process fixture has a matching control socket;
+        // discovery still runs through the real proxy-admission owner.
+        if (String(args[0]).endsWith(join('app-server-control', 'app-server-control.sock')) && !fixture.nativeUnavailable) {
+            return actual.stat(tmpdir());
+        }
         const result = await actual.stat(...args);
         if (typeof args[0] === 'string' && args[0].endsWith('.jsonl')) fixture.nowMs += fixture.statCostMs;
         return result;

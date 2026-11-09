@@ -51,7 +51,16 @@ describe('fork visual seed', () => {
         vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
             features: { sessions: { enabled: true, board: { enabled: false } }, sharing: { session: { enabled: true } } }, capabilities: {},
         })));
-        app.get('/v2/sessions/:id', async request => ({ session: rawSession((request.params as { id: string }).id) }));
+        const detailReads = new Set<string>();
+        app.get('/v2/sessions/:id', async request => {
+            const id = (request.params as { id: string }).id;
+            // Board Actions may read the same child later with their own label.
+            if (id === 'child' && !detailReads.has(id)) {
+                expect(request.headers['x-happier-request-purpose']).toBe('session-detail:session-replay');
+            }
+            detailReads.add(id);
+            return { session: rawSession(id) };
+        });
     });
     afterEach(async () => { restore(); vi.restoreAllMocks(); await app.close(); });
 
@@ -147,14 +156,27 @@ describe('fork visual seed', () => {
         }
     });
 
-    it('copies only completed admitted references through the real transcript mutation and keeps independent successes on failure', async () => {
+    it.each(['allowed', 'approved Ask'] as const)('copies only completed admitted %s references through the real transcript mutation and keeps independent successes on failure', async approval => {
         app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
             signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
             recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } }));
         const childRecords = new Map<string, unknown>();
         let parentContentAvailable = true;
+        const visualRows = (itemId: string, startSeq: number, settled = true) => toolRows(itemId, startSeq).map((row, index) =>
+            approval === 'allowed' || index === 0 ? row : { ...row,
+                content: { ...row.content, v: { ...row.content.v, content: { ...row.content.v.content,
+                    data: { ...row.content.v.content.data, output: { kind: 'approval_request_created',
+                        artifactId: `approval-${itemId}`, actionId: 'session.board.item.upsert' } },
+                } } },
+                ...(settled ? { surfaceItemReference: { v: 1, references: [{ v: 1, itemId, itemRevision: revision,
+                    sourceAddress: { serverId: configuration.activeServerId, sessionId: 'parent' },
+                    sourceItemId: itemId, sourceItemRevision: revision,
+                    approvalRequestArtifactId: `approval-${itemId}` }] } } : {}),
+            });
+        let messages = [...visualRows('good', 1), ...visualRows('missing', 3),
+            ...toolRows('board-only', 5, 'board'), ...visualRows('late', 7)];
         app.get('/v1/sessions/parent/messages', async () => ({ messages: [
-            ...toolRows('good', 1), ...toolRows('missing', 3), ...toolRows('board-only', 5, 'board'), ...toolRows('late', 7),
+            ...messages,
         ], hasMore: false }));
         app.get('/v2/sessions/:id/system-records/record', async request => {
             const { id } = request.params as { id: string };
@@ -201,6 +223,19 @@ describe('fork visual seed', () => {
         const recovered = await seedForkVisualCopies({ credentials, sourceSessionId: 'parent', cutoffSeqInclusive: 7, childSessionId: 'child' });
         expect(recovered).toEqual(copies);
         expect(writes).toHaveLength(2);
+        if (approval === 'approved Ask') {
+            // Pending and denied receipts never acquire a settled Session publication.
+            messages = visualRows('not-approved', 1, false);
+            expect(await seedForkVisualCopies({ credentials, sourceSessionId: 'parent', cutoffSeqInclusive: 2, childSessionId: 'child' })).toEqual([]);
+            expect(writes).toHaveLength(2);
+            messages = visualRows('wrong-receipt', 1).map(row => ({ ...row,
+                surfaceItemReference: { v: 1, references: [{ v: 1, itemId: 'wrong-receipt', itemRevision: revision,
+                    sourceAddress: { serverId: configuration.activeServerId, sessionId: 'parent' },
+                    sourceItemId: 'wrong-receipt', sourceItemRevision: revision, approvalRequestArtifactId: 'other-approval' }] },
+            }));
+            expect(await seedForkVisualCopies({ credentials, sourceSessionId: 'parent', cutoffSeqInclusive: 2, childSessionId: 'child' })).toEqual([]);
+            expect(writes).toHaveLength(2);
+        }
     });
     it('seeds the admitted ancestor visual when the source is an older fork without child-owned imports', async () => {
         app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1,
@@ -260,6 +295,43 @@ describe('fork visual seed', () => {
         expect(copies).toEqual([{ originServerId: configuration.activeServerId, originSessionId: 'parent',
             originItemId: 'source-visual', status: 'copied', itemId: expect.any(String) }]);
         expect(importedRows).toHaveLength(2);
+    });
+    it('attempts an identical unavailable source once per invocation and retries on a fresh invocation', async () => {
+        const repeats = [1, 3, 5].flatMap(start => toolRows('missing', start).map(row => ({
+            ...row, id: `${row.id}-${start}`, content: { ...row.content, v: { ...row.content.v,
+                content: { ...row.content.v.content, data: { ...row.content.v.content.data, callId: `missing-${start}` } },
+            } },
+        })));
+        app.get('/v1/sessions/parent/messages', async () => ({ messages: repeats, hasMore: false }));
+        const reads: string[] = [];
+        let available = false;
+        app.get('/v2/sessions/:id/system-records/record', async request => {
+            const { id } = request.params as { id: string };
+            const { localId } = request.query as { localId: string };
+            reads.push(id);
+            return { record: id === 'parent' && available ? { id: 'source-record',
+                address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId }, content: { t: 'plain', v: item },
+                revision, createdAt: '2026-10-10T00:00:00.000Z', updatedAt: '2026-10-10T00:00:00.000Z' } : null };
+        });
+        const imported: unknown[] = [];
+        app.post('/v2/sessions/child/transcript/import', async request => {
+            const body = request.body as { items: unknown[] }; imported.push(...body.items);
+            return { imported: body.items.length, cursor: body.items.length };
+        });
+        app.post('/v3/sessions/child/transcript/import', async request => {
+            const body = request.body as { items: unknown[] }; imported.push(...body.items);
+            return { imported: body.items.length, cursor: body.items.length };
+        });
+        app.put('/v2/sessions/child/board', async request => ({ operation: 'upsert_item',
+            itemId: (request.body as { itemId: string }).itemId, itemRevision: revision, outcome: 'created' }));
+        const params = { credentials, accountEncryptionMode: 'plain' as const, sourceSessionId: 'parent', cutoffSeqInclusive: 6, childSessionId: 'child' };
+        expect(await seedForkVisualCopies(params)).toMatchObject([{ status: 'not_copied' }]);
+        expect(imported).toHaveLength(6);
+        expect(reads).toEqual(['child', 'parent']);
+        available = true;
+        expect(await seedForkVisualCopies(params)).toMatchObject([{ status: 'copied' }]);
+        expect(reads.filter(id => id === 'parent')).toHaveLength(2);
+        expect(imported).toHaveLength(12);
     });
     it('copies an authorized available ancestor when the previous fork settled that reference as not copied', async () => {
         const ancestorRows = toolRows('ancestor', 1, 'transcript', 'grandparent');
@@ -391,10 +463,13 @@ describe('fork visual seed', () => {
             ]));
         }
     });
-    it.each([false, true])('publishes each independent copied visual in one native Claude row without splitting its body (second unavailable: %s)', async secondUnavailable => {
-        const calls = ['first', 'second'].map(itemId => ({ type: 'tool_use', id: itemId, name: 'session_board_item_upsert',
-            input: { sessionId: 'parent', itemId, expectedItemRevision: null, destination: 'transcript', item } }));
-        const results = ['first', 'second'].map(itemId => ({ type: 'tool_result', tool_use_id: itemId, content: JSON.stringify({
+    it.each([{ secondUnavailable: false, approved: false }, { secondUnavailable: true, approved: false },
+        { secondUnavailable: false, approved: true }])('keeps native multi-result bodies and receipt correspondence (unavailable=$secondUnavailable, Ask=$approved)', async ({ secondUnavailable, approved }) => {
+        const callIds = ['first', 'second'];
+        const calls = callIds.map(callId => ({ type: 'tool_use', id: callId, name: 'session_board_item_upsert',
+            input: { sessionId: 'parent', itemId: approved ? 'shared' : callId, expectedItemRevision: null, destination: 'transcript', item } }));
+        const results = callIds.map(itemId => ({ type: 'tool_result', tool_use_id: itemId, content: JSON.stringify(approved
+            ? { kind: 'approval_request_created', artifactId: `approval-${itemId}`, actionId: 'session.board.item.upsert' } : {
             v: 1, serverId: configuration.activeServerId, sessionId: 'parent', itemDestination: 'transcript', destination: null,
             result: { operation: 'upsert_item', itemId, itemRevision: revision, outcome: 'created' },
         }) }));
@@ -406,7 +481,12 @@ describe('fork visual seed', () => {
                 type: 'output', data: { type: 'user', uuid: 'native-result', message: { role: 'user', content: results } },
             } } } },
         ];
-        app.get('/v1/sessions/parent/messages', async () => ({ messages: rows, hasMore: false }));
+        const settledApprovalReferences = callIds.map(callId => ({ approvalRequestArtifactId: `approval-${callId}`,
+            sourceItemId: 'shared', sourceItemRevision: revision }));
+        app.get('/v1/sessions/parent/messages', async () => ({ messages: rows.map((row, index) => approved && index === 1
+            ? { ...row, surfaceItemReference: { v: 1, references: settledApprovalReferences.map(reference => ({ v: 1,
+                itemId: 'shared', itemRevision: revision, sourceAddress: { serverId: configuration.activeServerId, sessionId: 'parent' }, ...reference })) } }
+            : row), hasMore: false }));
         app.get('/v2/sessions/:id/system-records/record', async request => {
             const { id } = request.params as { id: string };
             const { localId } = request.query as { localId: string };
@@ -422,18 +502,22 @@ describe('fork visual seed', () => {
         });
         const copies = await seedForkVisualCopies({ credentials, accountEncryptionMode: 'plain', sourceSessionId: 'parent',
             cutoffSeqInclusive: 2, childSessionId: 'child', sourceMetadata: { path: '', host: '' } });
-        expect(copies).toHaveLength(2);
-        expect(copies.map(copy => copy.status)).toEqual(secondUnavailable ? ['copied', 'not_copied'] : ['copied', 'copied']);
+        expect(copies).toHaveLength(approved ? 1 : 2);
+        expect(copies.map(copy => copy.status)).toEqual(approved ? ['copied'] : secondUnavailable ? ['copied', 'not_copied'] : ['copied', 'copied']);
         const references = copies.flatMap(copy => {
             if (copy.status !== 'copied') return [];
-            return [{ v: 1, itemId: copy.itemId, itemRevision: revision,
+            const reference = { v: 1, itemId: copy.itemId, itemRevision: revision,
                 sourceAddress: { serverId: configuration.activeServerId, sessionId: 'parent' },
-                sourceItemId: copy.originItemId, sourceItemRevision: revision }];
+                sourceItemId: copy.originItemId, sourceItemRevision: revision };
+            return approved ? settledApprovalReferences.map(origin => ({ ...reference, ...origin })) : [reference];
         });
         expect(importedRows).toEqual(rows.map(row => expect.objectContaining({
             content: { t: 'plain', v: expect.objectContaining({ content: row.content.v.content }) },
             surfaceItemReference: { v: 1, references },
         })));
+        if (approved) expect(importedRows).toEqual(rows.map(() => expect.objectContaining({ content: { t: 'plain', v: expect.objectContaining({
+            meta: { forkVisualOriginV1: expect.objectContaining({ settledApprovalReferences }) },
+        }) } })));
     });
     it('never rejects a committed fork when visual acquisition is unavailable', async () => {
         app.get('/v1/account/encryption/currentness', async (_request, reply) => reply.code(503).send({ error: 'offline' }));

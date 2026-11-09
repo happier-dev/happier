@@ -1,7 +1,8 @@
-import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import { ACCOUNT_SETTING_DEFINITIONS, accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ActionPolicyInputSchemas, isActionPolicyActionId, type ActionPolicySetResult } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { readActionAudiencePolicy, applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { listApprovalProfilesV1 } from '@happier-dev/protocol/actions';
 import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1, readPortableDomainSettingBindingV1,
   parseBuiltInAccountSettingValueV1, readBuiltInAccountSettingValueV1, buildBuiltInAccountSettingMutationV1,
   hasBuiltInAccountSettingBindingV1, resolveBuiltInAccountSettingResetValueV1,
@@ -39,7 +40,8 @@ import { MachineOfflineAlertSettingKeySchema, MachineOfflineAlertSettingChangeSc
 
 const refuse = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
 class RejectedSettingMutation extends Error {
-  constructor(readonly errorCode: 'invalid_setting_value' | 'credential_scope_retired' | 'setting_value_unavailable' = 'invalid_setting_value') {
+  constructor(readonly errorCode: 'invalid_setting_value' | 'credential_scope_retired' | 'setting_value_unavailable'
+    | 'settings_too_large' | 'account_settings_invalid' = 'invalid_setting_value') {
     super(errorCode);
   }
 }
@@ -76,7 +78,10 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
         const { bootstrapAccountSettingsContext } = await import("@/settings/accountSettings/bootstrapAccountSettingsContext");
         const current = await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking', refresh: 'force', signal: context.signal });
         if (current.source === 'none' || !current.rawSettings) return refuse('account_settings_content_unavailable');
-        return readActionAudiencePolicy(accountSettingsParse(current.rawSettings).actionsSettingsV1, requested.actionId, requested.audience);
+        const settings = accountSettingsParse(current.rawSettings).actionsSettingsV1;
+        if ('profiles' in requested) return { profiles: [...listApprovalProfilesV1(settings)] };
+        return readActionAudiencePolicy(settings, requested.actionId, requested.audience,
+          'scope' in requested ? requested.scope : undefined);
       }
       const requested = actionId === 'actions.policy.set' ? ActionPolicyInputSchemas[actionId].parse(input)
         : { ...ActionPolicyInputSchemas[actionId].parse(input), mode: 'default' as const };
@@ -89,9 +94,16 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
             if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw new RejectedSettingMutation('credential_scope_retired');
             const mutation = applyActionPolicyMutation(normalizeActionsSettingsV1(raw.actionsSettingsV1), requested);
             applied = mutation.result;
-            return AccountSettingMutationV1Schema.parse({ operations: [{ op: 'set', key: 'actionsSettingsV1', value: mutation.settings }] });
+            const admitted = AccountSettingMutationV1Schema.safeParse({ operations: [{ op: 'set', key: 'actionsSettingsV1', value: mutation.settings }] });
+            if (!admitted.success) {
+              const value = ACCOUNT_SETTING_DEFINITIONS.actionsSettingsV1.parseMutationValue(mutation.settings);
+              throw new RejectedSettingMutation(!value.success && value.reason === 'tooLarge'
+                ? 'settings_too_large' : 'account_settings_invalid');
+            }
+            return admitted.data;
           },
         });
+        if (result.status === 'invalid' && result.reason === 'tooLarge') return refuse('settings_too_large');
         if (result.status !== 'applied' && result.status !== 'unchanged' && result.status !== 'satisfied') return refuse(`account_settings_${result.status}`);
         return applied ?? refuse('account_settings_content_unavailable');
       } catch (error) {
@@ -297,7 +309,7 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
         const settings = projectAccount(raw);
         const delta = preparedAccount?.status === 'prepared' ? preparedAccount.mutate(settings)
           : catalogBinding ? preparedCatalogMutation ? preparedCatalogMutation(settings)
-          : catalogBinding.mutate(settings, value.value) : buildBuiltInAccountSettingMutationV1(declaration, settings, value.value);
+          : catalogBinding.mutate(settings, value.value) : buildBuiltInAccountSettingMutationV1(declaration, raw, value.value);
         if (!delta) throw new RejectedSettingMutation('setting_value_unavailable');
         const [{ getActiveAccountSettingsSnapshot }, { resolveAccountSettingsScopeKey }, { readProviderSettingsForCli }] = await Promise.all([import("@/settings/accountSettings/activeAccountSettingsSnapshot"), import("@/settings/accountSettings/accountSettingsScopeKey"), import("@/providers/settings/read")]);
         const snapshot = getActiveAccountSettingsSnapshot();

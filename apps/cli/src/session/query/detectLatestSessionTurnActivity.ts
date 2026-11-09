@@ -1,9 +1,11 @@
 import {
     detectSessionTurnActivity,
     detectSessionTurnActivityFromProjection,
+    SessionTurnActivityUnavailableError,
     type SessionTurnActivity,
 } from '@/session/query/detectSessionTurnInFlight';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { resolveTranscriptFetchTimeoutMs, withTranscriptReadDeadline } from '@/session/replay/fetchEncryptedTranscriptMessages';
 
 export async function detectLatestSessionTurnActivity(params: Readonly<{
     token: string;
@@ -16,39 +18,53 @@ export async function detectLatestSessionTurnActivity(params: Readonly<{
     resolveAuthorizationHeaders?: Parameters<typeof fetchSessionById>[0]['resolveAuthorizationHeaders'];
     signal?: AbortSignal;
 }>): Promise<SessionTurnActivity> {
-    let projectedActivity: SessionTurnActivity | null = null;
+    const timeoutMs = resolveTranscriptFetchTimeoutMs(params.transcriptFetchTimeoutMs);
+    const deadlineAtMs = Date.now() + timeoutMs;
     try {
-        const refreshedSession = await fetchSessionById({
-      reason: 'session-query',
-            token: params.token,
-            sessionId: params.sessionId,
-            ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-            ...(params.signal ? { signal: params.signal } : {}),
+        return await withTranscriptReadDeadline({ deadlineAtMs, signal: params.signal }, async (signal) => {
+            let projectedActivity: SessionTurnActivity | null = null;
+            let refreshedSession: Awaited<ReturnType<typeof fetchSessionById>> = null;
+            try {
+                refreshedSession = await fetchSessionById({
+                    reason: 'session-query',
+                    token: params.token,
+                    sessionId: params.sessionId,
+                    ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
+                    signal,
+                });
+                signal.throwIfAborted();
+                projectedActivity = detectSessionTurnActivityFromProjection(refreshedSession);
+                if (projectedActivity) {
+                    return projectedActivity;
+                }
+            } catch (error) {
+                if (signal.aborted) throw new SessionTurnActivityUnavailableError(error);
+                // Fall back to legacy transcript activity detection below.
+            }
+
+            const transcriptActivity = await detectSessionTurnActivity({
+                token: params.token,
+                sessionId: params.sessionId,
+                ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
+                signal,
+                sessionProjection: refreshedSession,
+                deadlineAtMs,
+                encryptionMode: params.encryptionMode,
+                encryptionKey: params.encryptionKey,
+                encryptionVariant: params.encryptionVariant,
+                ...(typeof params.afterSeqExclusive === 'number' ? { afterSeqExclusive: params.afterSeqExclusive } : {}),
+                ...(typeof params.transcriptFetchTimeoutMs === 'number'
+                    ? { transcriptFetchTimeoutMs: params.transcriptFetchTimeoutMs }
+                    : {}),
+            });
+            if (transcriptActivity.turnInFlight) {
+                return transcriptActivity;
+            }
+
+            return projectedActivity ?? transcriptActivity;
         });
-        projectedActivity = detectSessionTurnActivityFromProjection(refreshedSession);
-        if (projectedActivity) {
-            return projectedActivity;
-        }
-    } catch {
-        // Fall back to legacy transcript activity detection below.
+    } catch (error) {
+        if (error instanceof SessionTurnActivityUnavailableError) throw error;
+        throw new SessionTurnActivityUnavailableError(error);
     }
-
-    const transcriptActivity = await detectSessionTurnActivity({
-        token: params.token,
-        sessionId: params.sessionId,
-        ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-        ...(params.signal ? { signal: params.signal } : {}),
-        encryptionMode: params.encryptionMode,
-        encryptionKey: params.encryptionKey,
-        encryptionVariant: params.encryptionVariant,
-        ...(typeof params.afterSeqExclusive === 'number' ? { afterSeqExclusive: params.afterSeqExclusive } : {}),
-        ...(typeof params.transcriptFetchTimeoutMs === 'number'
-            ? { transcriptFetchTimeoutMs: params.transcriptFetchTimeoutMs }
-            : {}),
-    });
-    if (transcriptActivity.turnInFlight) {
-        return transcriptActivity;
-    }
-
-    return projectedActivity ?? transcriptActivity;
 }

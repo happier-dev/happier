@@ -98,6 +98,13 @@ describe('decryptStoredSessionPayload (plaintext)', () => {
       .toThrow('Session stored content encryption mode mismatch');
   });
 
+  it('refuses a Home-reported plain Session row that carries an E2EE data-key envelope', () => {
+    // Persisted Session mode never transitions; the envelope proves this Session was created E2EE.
+    expect(() => resolveSessionStoredContentEncryptionMode({ encryptionMode: 'plain', dataEncryptionKey: 'c2Vzc2lvbi1lbnZlbG9wZQ==' }))
+      .toThrow(expect.objectContaining({ code: 'account_mode_downgrade_unverified', canTryAgain: false }));
+    expect(resolveSessionStoredContentEncryptionMode({ encryptionMode: 'plain', dataEncryptionKey: null })).toBe('plain');
+  });
+
   it('parses JSON when mode is plain', () => {
     const res = decryptStoredSessionPayload({
       mode: 'plain',

@@ -3,6 +3,7 @@ import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { SessionPermissionRespondRpcParamsV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { buildConnectedServiceCredentialRefreshSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
@@ -187,7 +188,8 @@ import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema } from '@
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedPurposeCatalogV1Schema, emptyConnectedAccountCatalogRecordV1, type ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
-import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { configuration } from '@/configuration';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { readStoredCredentials, writeCredentialsTokenOnly } from '@/persistence';
@@ -951,6 +953,54 @@ describe('createCliActionExecutor', () => {
     expect(requestDaemonPluginActionExecution).not.toHaveBeenCalled();
   });
 
+  it('retains a signed Account Voice host confirmation at its exact installed receiver', async () => {
+    // The Axios proxy's redirect policy reads defaults before crossing the mocked HTTP boundary.
+    const mockedAxios = axios as unknown as { defaults?: Readonly<Record<string, unknown>> };
+    mockedAxios.defaults = {};
+    onTestFinished(() => { delete mockedAxios.defaults; });
+    const target = { kind: 'machine', machineId: 'machine-1' } as const;
+    const accountId = 'recipient-account';
+    const input = { homeId: 'home-identity', machineId: target.machineId,
+      targets: [{ homeId: 'home-identity', machineId: target.machineId,
+        sources: [{ kind: 'direct' as const, setup: {} }], desiredRevision: 1, recipePlans: [] }] };
+    const requestId = 'voice-review';
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 1,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+    const privateKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).secretKey;
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-account-root', binding: {
+      serverIdentityId: 'home-identity', accountId, custodianAccountId: accountId,
+      authentication: { kind: 'account', tokenEpoch: 1 }, machineId: target.machineId,
+      installationId: 'installation-1', actionId: 'machines.setup.apply', requestId,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input }),
+      target, accountEncryptionMode: 'plain',
+    } });
+    mockAxiosPost.mockResolvedValue({ status: 200, data: { ok: true } });
+    callMachineRpc.mockImplementation(async (call: MachineRpcCall) => {
+      if (call.method !== RPC_METHODS.MACHINE_SETUP_PLAN) throw new Error(`Unexpected machine RPC: ${call.method}`);
+      return { desiredRevision: 1, sources: [{ kind: 'direct', setup: {} }], exclusions: [], support: [] };
+    });
+    const readAccount = mockAxiosGet.getMockImplementation();
+    mockAxiosGet.mockImplementation(async (url: string, config: unknown) => new URL(url).pathname === '/v1/machines/machine-1'
+      ? { status: 200, data: { machine: { id: target.machineId, active: true, revokedAt: null,
+        replacedByMachineId: null, kind: 'persistent', installationId: 'installation-1' } } }
+      : readAccount?.(url, config));
+    const executor = createCliActionExecutor({ token, credentials: { token, credentialProvenance: 'stored_session', encryption: null },
+      sessionId: 'sess-1', mode: 'plain', ctx: null, pluginActionExecutionOwner: 'current_process',
+      machineId: target.machineId, serverId: 'profile', serverHttpBaseUrl: 'https://home-policy.test',
+      serverIdentityId: 'home-identity', externalActionMachineRequestPrivateKey: privateKey,
+      externalActionMachineInstallationId: 'installation-1' });
+    const context = {
+      surface: 'voice', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'profile', serverIdentityId: 'home-identity', runtimeAccountId: accountId,
+      actionRequestId: requestId, defaultSessionMachineId: target.machineId,
+      externalActionTarget: target, externalActionExecutionAuthorization: authorization,
+      presentUserConfirmation: { actionId: 'machines.setup.apply', requestId, accountId,
+        serverId: 'home-identity', target, inputDigest: computeActionInputApprovalDigestV1('machines.setup.apply', input) },
+    } as const;
+    const prepared = await executor.prepare('machines.setup.apply', input, context);
+    expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'ready' });
+  });
+
   it('includes plugin-contributed ACP backends in execution backend options', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-action-plugin-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-cli-action-plugin-root-'));
@@ -1473,7 +1523,7 @@ describe('createCliActionExecutor', () => {
         ],
       },
     });
-    expect(fetchSessionById).toHaveBeenCalledWith({ token: 'token', sessionId: 'sess-2-aaaaaaaaaaaa' });
+    expect(fetchSessionById).toHaveBeenCalledWith({ reason: 'session-action', token: 'token', sessionId: 'sess-2-aaaaaaaaaaaa' });
   });
 
   it('rejects actions disabled on the CLI surface by action settings', async () => {
@@ -2002,7 +2052,7 @@ describe('createCliActionExecutor', () => {
       directoryCreationRequired: false,
       checkout: {
         kind: 'git_worktree', finalDirectory: '/repo/.dev/worktree/uncertain',
-        baseRef: null, branchMode: 'new', created: true,
+        baseRef: 'main', branchMode: 'new', created: true, branchName: 'feature/actual',
       },
     });
     spawnMachineSession.mockImplementation(async () => {
@@ -2012,12 +2062,14 @@ describe('createCliActionExecutor', () => {
 
     await expect(createPlainExecutor().execute('session.spawn_new', createSessionSpawnInput({
       checkoutCreationDraft: {
-        kind: 'git_worktree', displayName: 'uncertain', baseRef: null, branchMode: 'new',
+        kind: 'git_worktree', displayName: 'uncertain', baseRef: 'main', branchMode: 'new',
       },
     }), {
       surface: 'cli', defaultSessionId: 'sess-1', signal: controller.signal,
     })).resolves.toEqual({ ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' } });
-    expect(latestSessionSpawnRequest).toMatchObject({ directory: '/repo/.dev/worktree/uncertain' });
+    expect(latestSessionSpawnRequest).toMatchObject({ directory: '/repo/.dev/worktree/uncertain',
+      sessionCreationCorrespondence: { recipe: { checkout: { baseRef: 'main', branchName: 'feature/actual' } } },
+    });
     expect(callMachineRpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.SCM_WORKTREE_REMOVE)).toEqual([]);
   });
 

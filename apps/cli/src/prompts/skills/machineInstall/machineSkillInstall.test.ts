@@ -1,8 +1,9 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computePromptBundleDigestV1 } from '@happier-dev/protocol/prompts/library/promptLibraryDigests';
+import * as promptLibraryDigests from '@happier-dev/protocol/prompts/library/promptLibraryDigests';
 import { PromptExternalLinkEntryV1Schema, type PromptExternalLinkEntryV1 } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
 
 import { buildPromptBundleBodyFromDirectory } from '@/prompts/assets/shared/promptBundleDirectory';
@@ -15,7 +16,7 @@ const agents = [
   { agentId: 'opencode', nativeRoots: { user: [['.config', 'opencode', 'skills'], ['.claude', 'skills'], ['.agents', 'skills']] } },
 ] satisfies readonly MachineSkillInstallAgent[];
 const scratch: string[] = [];
-afterEach(() => { for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true }); });
 function fixture() {
   const homeDirectory = mkdtempSync(join(tmpdir(), 'happier-machine-skill-'));
   scratch.push(homeDirectory);
@@ -45,7 +46,12 @@ describe('native machine skill copies', () => {
   });
   it('installs real copies, preserves executable modes, and records the actual disk digest', () => {
     const context = fixture(); const content = skill('first', 0o755);
+    // Observe real hash work: library admission already supplied this digest;
+    // the copied native bytes still need their own drift witness.
+    const hashes = vi.spyOn(promptLibraryDigests, 'computePromptBundleDigestV1');
     const result = installMachineSkill({ ...context, agents: [agents[1]], skill: content, nowMs: 1 });
+    expect(hashes.mock.calls.filter(([body]) => body === content.bundleBody)).toHaveLength(0);
+    expect(hashes).toHaveBeenCalledTimes(1);
     expect(result.results[0]?.status).toBe('installed'); const receipt = result.upsertReceipts[0]!;
     expect(PromptExternalLinkEntryV1Schema.safeParse(receipt).success).toBe(true);
     const target = join(context.homeDirectory, '.agents/skills/example');
@@ -102,7 +108,8 @@ describe('native machine skill copies', () => {
     expect(installed.results[0]?.status).toBe('installed');
     const input = { ...context, receipts: installed.upsertReceipts, nowMs: 2 };
     expect(refreshMachineSkillInstalls({ ...input, skills: [] }).results).toEqual([]);
-    const invalid = { ...skill('changed'), digest: 'sha256:wrong' };
+    const invalid = skill('changed');
+    invalid.bundleBody.entries = [];
     expect(refreshMachineSkillInstalls({ ...input, skills: [invalid] }).results[0]?.status).toBe('failed');
     expect(readFileSync(join(context.homeDirectory, '.agents/skills/example/SKILL.md'), 'utf8')).toContain('first');
   });

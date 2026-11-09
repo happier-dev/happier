@@ -226,6 +226,7 @@ export function createCliMetadataActionDeps(
         // The registered updater checks the caller's read once, then guards
         // its field across retries while preserving unrelated tuple changes.
         expectedMetadataRevision: 'expectedMetadataRevision' in write ? write.expectedMetadataRevision : undefined,
+        expectedValue: 'expectedValue' in write ? write.expectedValue : undefined,
         currentness: { signal: context.signal },
         resolveAuthorizationHeaders,
       });
@@ -235,7 +236,9 @@ export function createCliMetadataActionDeps(
       }
       return { ok: true, sessionId: res.sessionId, ...(fieldId === 'display.title' ? { title: value }
         : fieldId === 'display.statusReason' ? { reason: value }
-        : fieldId === 'display.bot' ? { bot: value } : fieldId === 'display.botFace' ? { face: value } : fieldId === 'intent.memoryEnabled' ? { enabled: value }
+        : fieldId === 'display.bot' ? { bot: value } : fieldId === 'display.botFace' ? { face: value }
+        : fieldId === 'intent.memoryEnabled' ? { enabled: value }
+        : fieldId === 'intent.approvalProfileId' ? { approvalProfileId: value }
         : fieldId === 'intent.voicePreference' ? { preference: value }
         : fieldId === 'intent.context' ? { work: res.metadata.work } : { showToolCalls: value }), version: res.version };
     },

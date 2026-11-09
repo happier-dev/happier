@@ -5,7 +5,6 @@ import { configuration } from '@/configuration';
 import { readStoredCredentials } from '@/persistence';
 import {
     getActiveAccountSettingsSnapshot,
-    resolveActiveAccountConfiguredExternalSessionSourceRevision,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import {
@@ -18,44 +17,21 @@ import { invokeBoundedExternalSessionsOperation } from './agentExternalSessionsI
 import type {
     ExternalSessionFollowTargetHostOperation,
     ExternalSessionFollowTargetHostOperationRequest,
+    ExternalSessionHostAccountContext,
 } from './hostOperationOwner';
-import type { ExternalSessionFollowProviderOps } from './providerOps';
 import type { HostExternalSessionFollowTargetResolution } from './privateContract';
-
-type FollowTargetRuntimeContext = Readonly<{
-    pluginId: string;
-    agentId: string;
-    occurrenceId: string;
-    agent: ConfiguredExternalSessionSourceAgentContribution;
-    providerOps: ExternalSessionFollowProviderOps;
-    retirementSignal: AbortSignal;
-    isCurrent(): boolean;
-}>;
 
 type FollowTargetHostOperationDependencies = Readonly<{
     readAccount(
         agent: ConfiguredExternalSessionSourceAgentContribution,
         signal: AbortSignal,
     ): Promise<ConfiguredExternalSessionSourceAccountProjection>;
-    readAccountRevision(agent: ConfiguredExternalSessionSourceAgentContribution): string;
     readAgentSettings(): unknown;
     readActiveServerId(): string | null;
 }>;
 
 function unavailable(code: string): HostExternalSessionFollowTargetResolution {
     return Object.freeze({ status: 'unavailable', code });
-}
-
-function requestIsCurrent(
-    request: ExternalSessionFollowTargetHostOperationRequest,
-    context: FollowTargetRuntimeContext,
-): boolean {
-    if (request.signal?.aborted || context.retirementSignal.aborted) return false;
-    try {
-        return request.isCurrent() === true && context.isCurrent() === true;
-    } catch {
-        return false;
-    }
 }
 
 function requestOwnerIsCurrent(
@@ -69,13 +45,15 @@ function requestOwnerIsCurrent(
     }
 }
 
-function createDefaultDependencies(): FollowTargetHostOperationDependencies {
+function createDefaultDependencies(accountContext?: ExternalSessionHostAccountContext): FollowTargetHostOperationDependencies {
     return Object.freeze({
         async readAccount(agent, signal) {
             if (!configuredExternalSessionSourcesUseConnectedProfiles([agent])) {
                 return Object.freeze({ connectedServicesV2: [] });
             }
-            const credentials = await readStoredCredentials().catch(() => null);
+            const credentials = accountContext
+                ? accountContext.credentials
+                : await readStoredCredentials().catch(() => null);
             if (!credentials || signal.aborted) {
                 throw new Error('External-session account projection unavailable');
             }
@@ -84,14 +62,8 @@ function createDefaultDependencies(): FollowTargetHostOperationDependencies {
                 signal,
             });
         },
-        readAccountRevision: (agent) =>
-            resolveActiveAccountConfiguredExternalSessionSourceRevision(
-                getActiveAccountSettingsSnapshot(),
-                agent.richDefinition?.definition.surfaces?.externalSession.sources,
-                configuration.activeServerId,
-            ),
-        readAgentSettings: () => getActiveAccountSettingsSnapshot()?.settings,
-        readActiveServerId: () => configuration.activeServerId,
+        readAgentSettings: () => accountContext ? accountContext.agentSettings : getActiveAccountSettingsSnapshot()?.settings,
+        readActiveServerId: () => accountContext ? accountContext.serverId : configuration.activeServerId,
     });
 }
 
@@ -99,9 +71,9 @@ export function createExternalSessionFollowTargetHostOperation(params: Readonly<
     machineId: string;
     dependencies?: FollowTargetHostOperationDependencies;
 }>): ExternalSessionFollowTargetHostOperation {
-    const dependencies = params.dependencies ?? createDefaultDependencies();
     return Object.freeze({
         async execute(request) {
+            const dependencies = params.dependencies ?? createDefaultDependencies(request.accountContext);
             if (
                 request.machineId !== params.machineId
                 || request.contributionId.trim().length === 0
@@ -122,106 +94,49 @@ export function createExternalSessionFollowTargetHostOperation(params: Readonly<
                 );
             }
             const signal = request.signal ?? new AbortController().signal;
-            const runtimeContext: FollowTargetRuntimeContext = Object.freeze({
-                pluginId: request.pluginId,
-                agentId: request.contributionId,
-                occurrenceId: request.occurrenceId,
-                agent: request.agentContribution,
-                providerOps: request.providerOps,
-                retirementSignal: signal,
-                isCurrent: request.isCurrent,
-            });
+            const agent = request.agentContribution;
+            const providerOps = request.providerOps;
+            const basis = Object.freeze({ accountSettingsRevision: request.accountRevision });
             const outcome = await invokeBoundedExternalSessionsOperation({
                 signal,
-                // Exact-occurrence currentness and lifecycle authority travel
-                // with the request and are checked before every context-owned
-                // await below.
-                retirementSignal: new AbortController().signal,
-                isCurrent: () => requestOwnerIsCurrent(request),
+                retirementSignal: signal,
+                isCurrent: () => !signal.aborted,
                 ...(request.admissionDeadlineAtMs === undefined
                     ? {}
                     : { deadlineAtMs: request.admissionDeadlineAtMs }),
                 operation: async (admissionSignal, deadlineAtMs) => {
-                    try {
-                        if (admissionSignal.aborted) {
-                            throw admissionSignal.reason;
-                        }
-                        if (
-                            runtimeContext.pluginId !== request.pluginId
-                            || runtimeContext.agentId !== request.contributionId
-                            || runtimeContext.occurrenceId !== request.occurrenceId
-                            || dependencies.readAccountRevision(runtimeContext.agent)
-                                !== request.accountRevision
-                            || !requestIsCurrent(request, runtimeContext)
-                        ) {
-                            return unavailable('plugin_generation_retired');
-                        }
-                        const operationSignal = AbortSignal.any([
-                            admissionSignal,
-                            runtimeContext.retirementSignal,
-                        ]);
-                        if (operationSignal.aborted) {
-                            throw operationSignal.reason;
-                        }
-                        const account = await dependencies.readAccount(
-                            runtimeContext.agent,
-                            operationSignal,
-                        );
-                        if (admissionSignal.aborted) {
-                            throw admissionSignal.reason;
-                        }
-                        if (
-                            dependencies.readAccountRevision(runtimeContext.agent)
-                                !== request.accountRevision
-                            || !requestIsCurrent(request, runtimeContext)
-                        ) {
-                            return unavailable(
-                                request.signal?.aborted
-                                    ? 'plugin_operation_aborted'
-                                    : 'plugin_generation_retired',
-                            );
-                        }
-                        const basis = Object.freeze({
-                            accountSettingsRevision: request.accountRevision,
-                        });
-                        return await resolveConfiguredExternalSessionFollowTarget({
-                            agents: [runtimeContext.agent],
-                            resolveCatalogEntry: async agentId => agentId === runtimeContext.agentId
-                                ? runtimeContext.agent.catalogEntry ?? null : null,
-                            account,
-                            agentSettings: dependencies.readAgentSettings(),
-                            activeServerId: dependencies.readActiveServerId(),
-                            activeServerDir: configuration.activeServerDir,
-                            basis,
-                            readCurrentBasis: () => Object.freeze({
-                                accountSettingsRevision:
-                                    dependencies.readAccountRevision(runtimeContext.agent),
-                            }),
-                            isCurrent: () => (
-                                dependencies.readAccountRevision(runtimeContext.agent)
-                                    === request.accountRevision
-                                && requestIsCurrent(request, runtimeContext)
-                            ),
-                            agentId: runtimeContext.agentId,
-                            remoteSessionId: request.remoteSessionId,
-                            admissionDeadlineAtMs: deadlineAtMs,
-                            resolveProviderOps: async (agentId) => (
-                                agentId === runtimeContext.agentId
-                                    ? runtimeContext.providerOps
-                                    : null
-                            ),
-                            signal: operationSignal,
-                            retirementSignal: runtimeContext.retirementSignal,
-                        });
-                    } catch {
-                        return unavailable(
-                            request.signal?.aborted
-                                ? 'plugin_operation_aborted'
-                                : !requestIsCurrent(request, runtimeContext)
-                                    ? 'plugin_generation_retired'
-                                    : 'plugin_external_follow_identity_unavailable',
-                        );
+                    if (admissionSignal.aborted) {
+                        throw admissionSignal.reason;
                     }
+                    const account = await dependencies.readAccount(
+                        agent,
+                        admissionSignal,
+                    );
+                    if (admissionSignal.aborted) {
+                        throw admissionSignal.reason;
+                    }
+                    return await resolveConfiguredExternalSessionFollowTarget({
+                        agents: [agent],
+                        resolveCatalogEntry: async agentId => agentId === request.contributionId
+                            ? agent.catalogEntry ?? null : null,
+                        account,
+                        agentSettings: dependencies.readAgentSettings(),
+                        activeServerId: dependencies.readActiveServerId(),
+                        activeServerDir: request.accountContext ? request.accountContext.activeServerDir : configuration.activeServerDir,
+                        basis,
+                        readCurrentBasis: () => basis,
+                        isCurrent: () => !admissionSignal.aborted,
+                        agentId: request.contributionId,
+                        remoteSessionId: request.remoteSessionId,
+                        admissionDeadlineAtMs: deadlineAtMs,
+                        resolveProviderOps: async (agentId) => (
+                            agentId === request.contributionId
+                                ? providerOps
+                                : null
+                        ),
+                        signal: admissionSignal,
+                        retirementSignal: signal,
+                    });
                 },
             });
             if (outcome.status === 'fulfilled') return outcome.value;
@@ -234,7 +149,11 @@ export function createExternalSessionFollowTargetHostOperation(params: Readonly<
             if (outcome.status === 'timeout') {
                 return unavailable('plugin_operation_deadline_exceeded');
             }
-            return unavailable('plugin_external_follow_identity_unavailable');
+            return Object.freeze({
+                status: 'unavailable',
+                code: 'plugin_external_follow_identity_unavailable',
+                diagnostic: Object.freeze({ reason: 'operation_failed' }),
+            });
         },
     });
 }

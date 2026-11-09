@@ -36,7 +36,7 @@ function readSpawnResult(result: unknown): Readonly<{
   sessionId?: string;
   spawnNonce?: string;
   sessionCreationOutcome?: SpawnSessionCreationOutcome;
-}> | Readonly<{ type: 'error'; errorCode: string; errorMessage: string; agentId?: string }> {
+}> | Extract<AwaitSpawnedSessionIdResult, { type: 'error' }> {
   if (!result || typeof result !== 'object') {
     return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Unrecognized spawn result envelope' };
   }
@@ -67,11 +67,13 @@ function readSpawnResult(result: unknown): Readonly<{
       ? value.error.trim()
       : 'Failed to spawn session';
   const normalizedFailure = normalizeSpawnSessionNonceResolution({
-    status: 'error', errorCode, errorMessage, agentId: value.agentId,
+    status: 'error', errorCode, errorMessage, agentId: value.agentId, errorDetail: value.errorDetail,
   });
   return { type: 'error', errorCode, errorMessage,
     ...(normalizedFailure.status === 'error' && normalizedFailure.agentId
       ? { agentId: normalizedFailure.agentId } : {}),
+    ...(normalizedFailure.status === 'error' && normalizedFailure.errorDetail
+      ? { errorDetail: normalizedFailure.errorDetail } : {}),
   };
 }
 

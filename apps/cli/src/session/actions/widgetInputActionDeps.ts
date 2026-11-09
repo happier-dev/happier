@@ -140,9 +140,13 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
                 return descriptor;
             }
             if (authored && authored.body.kind !== 'installed') {
-                const projection = await input.readResources?.(request.signal, readWidgetActionSessionTargetV1(request.ref.surface));
+                const resources = readWidgetDefinitionResourcesV1(authored);
+                // Self-contained definitions already carry their input metadata.
+                // Only Resource consumers need declarations from a Machine registry.
+                const projection = resources.length > 0
+                    ? await input.readResources?.(request.signal, readWidgetActionSessionTargetV1(request.ref.surface)) : undefined;
                 let descriptor: Descriptor = { sizeDeclaration: authored.sizeDeclaration, inputs: authored.inputs, inputSchema: authored.inputSchema, sessionInputPath: authored.sessionInputPath,
-                    connectedAccountPurposeBindings: authored.connectedAccountPurposeBindings, resources: readWidgetDefinitionResourcesV1(authored),
+                    connectedAccountPurposeBindings: authored.connectedAccountPurposeBindings, resources,
                     resourceDeclarations: projection?.resources ?? [], connectedAccountDescriptors: projection?.connectedAccountDescriptors ?? [] };
                 const targetDeclaration = readWidgetInputTargetV1(descriptor);
                 if (targetDeclaration.kind === 'invalid') return null;
@@ -151,7 +155,7 @@ export function createCliWidgetInputActionDepsV1(input: Readonly<{
                         viewerValues: (await readViewerPurpose(request, descriptor))?.values ?? {} });
                     const session = bound.status === 'ready' ? VoiceTrackedSessionAddressV1Schema.safeParse(readInputPath(bound.input, targetDeclaration.path)) : null;
                     if (session?.success && isSessionHomeAdmitted(session.data.serverId) && await input.validateSession(session.data, request.signal)) {
-                        const target = await input.readResources?.(request.signal, session.data);
+                        const target = resources.length > 0 ? await input.readResources?.(request.signal, session.data) : undefined;
                         descriptor = { ...descriptor, resourceDeclarations: target?.resources ?? [], connectedAccountDescriptors: target?.connectedAccountDescriptors ?? [] };
                     } else if (bound.status === 'ready') return null;
                 }

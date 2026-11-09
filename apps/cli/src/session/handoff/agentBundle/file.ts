@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { constants as bufferConstants } from 'node:buffer';
 import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,8 +17,6 @@ import { projectSessionHandoffAgentBundleForPredecessor } from './schema';
 const SESSION_HANDOFF_PROVIDER_BUNDLE_DIRECTORY = join(tmpdir(), 'happier-session-handoff-provider-bundles');
 const ARTIFACT_MAGIC = Buffer.from('HAPPIER_SESSION_HANDOFF_BUNDLE_V2\n', 'utf8');
 const ARTIFACT_LENGTH_BYTES = 8;
-// Only metadata is memory-resident. File contents have no corresponding in-memory limit.
-const MAX_MANIFEST_BYTES = 64 * 1024 * 1024;
 const COPY_CHUNK_BYTES = 1024 * 1024;
 const SOURCE_FILE_KIND = 'happier.handoff.file.v1';
 const ARTIFACT_ENTRY_KIND = 'happier.handoff.entry.v1';
@@ -138,7 +137,6 @@ export async function writeSessionHandoffAgentBundleArtifact(params: Readonly<{
     entries: projected.entries.map((entry) => ({ sizeBytes: entry.source.sizeBytes })),
   };
   const manifestBytes = Buffer.from(JSON.stringify(manifest), 'utf8');
-  if (manifestBytes.length > MAX_MANIFEST_BYTES) throw new Error('Session handoff bundle manifest is too large');
 
   const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
   const target = await open(temporaryPath, 'wx', 0o600);
@@ -250,9 +248,16 @@ export async function readSessionHandoffAgentBundleFile(
     }
     const lengthBytes = await readExactly(file, ARTIFACT_LENGTH_BYTES, ARTIFACT_MAGIC.length);
     const manifestLengthBig = lengthBytes.readBigUInt64BE();
-    if (manifestLengthBig > BigInt(MAX_MANIFEST_BYTES)) throw new Error('Invalid session handoff transfer payload');
-    const manifestLength = Number(manifestLengthBig);
     const manifestOffset = ARTIFACT_MAGIC.length + ARTIFACT_LENGTH_BYTES;
+    const fileSize = (await file.stat()).size;
+    // Allocate only bytes present in this artifact and representable by Node's
+    // Buffer/number APIs. A remote length header does not establish either fact.
+    if (!Number.isSafeInteger(fileSize)
+      || manifestLengthBig > BigInt(Math.max(0, fileSize - manifestOffset))
+      || manifestLengthBig > BigInt(bufferConstants.MAX_LENGTH)) {
+      throw new Error('Invalid session handoff transfer payload');
+    }
+    const manifestLength = Number(manifestLengthBig);
     let manifest: ArtifactManifest;
     try {
       const value = JSON.parse((await readExactly(file, manifestLength, manifestOffset)).toString('utf8')) as unknown;
@@ -273,10 +278,11 @@ export async function readSessionHandoffAgentBundleFile(
     const slices: Array<{ offsetBytes: number; sizeBytes: number }> = [];
     let offsetBytes = payloadOffset;
     for (const entry of manifest.entries) {
+      if (entry.sizeBytes > fileSize - offsetBytes) throw new Error('Invalid session handoff transfer payload');
       slices.push({ offsetBytes, sizeBytes: entry.sizeBytes });
       offsetBytes += entry.sizeBytes;
     }
-    if ((await file.stat()).size !== offsetBytes) throw new Error('Invalid session handoff transfer payload');
+    if (fileSize !== offsetBytes || (await file.stat()).size !== offsetBytes) throw new Error('Invalid session handoff transfer payload');
     return parseCanonicalSessionHandoffAgentBundle(materializeBundleFiles({
       value: manifest.bundle,
       filePath: agentBundleFilePath,

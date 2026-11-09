@@ -23,6 +23,13 @@ import {
 import { logger } from '@/ui/logger';
 import type { PluginSubagentsHostService } from '@/session/subagents/pluginSubagentsService';
 import type { HostExternalSessionsAuthorService } from '@/session/external/privateContract';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import type { SessionWatchEvent } from '@happier-dev/plugin-sdk/sessions';
+import type { Disposable } from '@happier-dev/plugin-sdk';
+import type { ChangeEntry } from '@happier-dev/protocol/changes';
+import * as sessionSockets from '@/api/session/sockets';
+import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 const socketBoundary = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('@/api/session/sockets', async (importOriginal) => ({
@@ -124,8 +131,8 @@ function createTestPluginSessionsInventory(
     sessionScopes: params.sessionScopes ?? Object.freeze([Object.freeze({
       access: Object.freeze(['read', 'write', 'control'] as const),
     })]),
-    readAccountEncryptionCurrentness: params.readAccountEncryptionCurrentness
-      ?? (async () => plainAccountEncryptionCurrentness),
+    readAccountEncryptionCurrentness: Object.hasOwn(params, 'readAccountEncryptionCurrentness')
+      ? params.readAccountEncryptionCurrentness : (async () => plainAccountEncryptionCurrentness),
   });
 }
 
@@ -234,7 +241,7 @@ function createInventory(params?: {
       readStoragePolicy: async () => 'optional',
       fetchPage,
       fetchById,
-      watchPollIntervalMs: 5,
+      messageWatchRetryIntervalMs: 5,
     }),
   };
 }
@@ -243,6 +250,293 @@ describe('plugin sessions inventory public service boundary', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it('parks 4 independent watches over 1,000 Sessions for 300 seconds with no inventory reads or stringify passes', async () => {
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'l2a-idle' })).toString('base64url')}.signature`;
+    const rows = Array.from({ length: 1_000 }, (_, index) => rawSession({ id: `session-${index}` }));
+    const fetchPage = vi.fn(async ({ archivedOnly, cursor, limit = 100 }: { archivedOnly?: boolean; cursor?: string; limit?: number }) => {
+      const offset = Number(cursor ?? 0);
+      const next = !archivedOnly && offset + limit < rows.length ? String(offset + limit) : null;
+      return { sessions: archivedOnly ? [] : rows.slice(offset, offset + limit), nextCursor: next, hasNext: next !== null };
+    });
+    const fetchById = vi.fn(async ({ sessionId }: { sessionId: string }) => rows.find(row => row.id === sessionId) ?? null);
+    const http = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const requestUrl = new URL(url);
+      if (requestUrl.pathname === '/v1/account/encryption/currentness') return { status: 200, data: plainAccountEncryptionCurrentness };
+      if (requestUrl.pathname === '/v2/changes') return { status: 200, data: { changes: [], nextCursor: 1 } };
+      throw new Error(`Unexpected inventory HTTP ${url}`);
+    });
+    const events: SessionWatchEvent[][] = Array.from({ length: 4 }, () => []);
+    // The daemon's incumbent transport uses real liveness time. Fake only timers
+    // installed by watches, so 300 virtual seconds cannot manufacture a lost connection.
+    const holder = acquireRequesterAccountEncryptionCurrentness({ accountId: 'l2a-idle', token,
+      serverBaseUrl: resolveServerHttpBaseUrl() });
+    const subscriptions: Disposable[] = [];
+    try {
+      await holder.read();
+      await channel.settleTransport();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      for (const output of events) subscriptions.push(createTestPluginSessionsInventory({
+        credentials: { token, encryption: null }, currentSessionId: null, isCurrent: () => true,
+        readStoragePolicy: async () => 'optional', fetchPage, fetchById,
+        readAccountEncryptionCurrentness: undefined,
+      }).watch({}, event => output.push(event)));
+      await vi.waitFor(() => expect(events.map(output => output[0]?.kind)).toEqual(Array(4).fill('snapshot')));
+      if (channel.clients.length) await channel.settleTransport();
+      fetchPage.mockClear(); http.mockClear();
+      let summaryStringifies = 0;
+      const serialize = JSON.stringify;
+      const stringify = vi.spyOn(JSON, 'stringify').mockImplementation((...args: Parameters<typeof JSON.stringify>) => {
+        if (args[0] !== null && typeof args[0] === 'object' && 'runtimeAvailability' in args[0]) summaryStringifies++;
+        stringify.mockClear();
+        return serialize(...args);
+      });
+      // Refute the polling implementation at its first tick; GREEN still proves the full five-minute contract.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect({ inventoryPages: fetchPage.mock.calls.length, httpReads: http.mock.calls.length, summaryStringifies })
+        .toEqual({ inventoryPages: 0, httpReads: 0, summaryStringifies: 0 });
+      await vi.advanceTimersByTimeAsync(299_000);
+      const cost = { inventoryPages: fetchPage.mock.calls.length,
+        currentnessReads: http.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/account/encryption/currentness').length,
+        httpReads: http.mock.calls.length, summaryStringifies };
+      vi.useRealTimers(); stringify.mockRestore();
+      expect(cost).toEqual({ inventoryPages: 0, currentnessReads: 0, httpReads: 0, summaryStringifies: 0 });
+      expect(events.map(output => output.length)).toEqual([1, 1, 1, 1]);
+      expect(channel.clients).toHaveLength(1);
+      expect(channel.clients.every(client => client.connected)).toBe(true);
+    } finally {
+      vi.useRealTimers(); subscriptions.forEach(subscription => subscription.dispose()); await holder.dispose(); await channel.close();
+    }
+  });
+
+  it('shares exact Session changes and one reconnect catch-up while preserving filters and credential retirement', async () => {
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'l2a-changes' })).toString('base64url')}.signature`;
+    let row: RawSessionRecord | null = rawSession({ id: 'changing-session' });
+    let cursor = 1;
+    let authenticated = true;
+    const changes: ChangeEntry[] = [];
+    const fetchPage = vi.fn(async ({ archivedOnly }: { archivedOnly?: boolean }) => ({
+      sessions: !archivedOnly && row ? [row] : [], nextCursor: null, hasNext: false,
+    }));
+    const fetchById = vi.fn(async () => row);
+    const feedReads: number[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const requestUrl = new URL(url);
+      if (requestUrl.pathname === '/v1/account/encryption/currentness') return { status: 200, data: plainAccountEncryptionCurrentness };
+      if (requestUrl.pathname === '/v2/changes') {
+        const after = Number(requestUrl.searchParams.get('after') ?? 0);
+        feedReads.push(after);
+        return { status: 200, data: { changes: changes.filter(change => change.cursor > after), nextCursor: cursor } };
+      }
+      throw new Error(`Unexpected inventory HTTP ${url}`);
+    });
+    const events: SessionWatchEvent[][] = Array.from({ length: 4 }, () => []);
+    const queries = [{}, { machineId: 'machine-a' }, { state: 'stopped' as const }, {}];
+    const subscriptions = events.map((output, index) => createTestPluginSessionsInventory({
+      credentials: { token, encryption: null }, currentSessionId: null, isCurrent: () => true,
+      ...(index === 1 ? { readCredentials: async () => authenticated ? { token, encryption: null } : null } : {}),
+      ...(index === 3 ? { sessionScopes: [{ access: ['read'] as const, machineIds: ['machine-b'] }] } : {}),
+      readStoragePolicy: async () => 'optional', fetchPage, fetchById,
+      readAccountEncryptionCurrentness: undefined,
+    }).watch(queries[index], event => output.push(event)));
+    const change = async () => {
+      changes.push({ kind: 'session', entityId: 'changing-session', cursor: ++cursor, changedAt: cursor });
+      await channel.hintAccountChange(cursor);
+    };
+    try {
+      await vi.waitFor(() => expect(events.map(output => output[0]?.kind)).toEqual(Array(4).fill('snapshot')));
+      await channel.settleTransport();
+      expect(channel.clients).toHaveLength(1);
+      expect(fetchPage).toHaveBeenCalledTimes(2);
+      expect(events[3][0]).toMatchObject({ kind: 'snapshot', items: [] });
+      fetchById.mockClear();
+      row = rawSession({ id: 'changing-session', active: true, updatedAt: 40 });
+      await change();
+      await vi.waitFor(() => expect(events.map(output => output.at(-1)?.kind)).toEqual(['upserted', 'upserted', 'removed', 'snapshot']));
+      expect(fetchById).toHaveBeenCalledTimes(1);
+      expect(events.map(output => output.length)).toEqual([2, 2, 2, 1]);
+      await change();
+      await vi.waitFor(() => expect(fetchById).toHaveBeenCalledTimes(2));
+      expect(events.map(output => output.length)).toEqual([2, 2, 2, 1]);
+      await channel.disconnect();
+      await vi.waitFor(() => expect(events.map(output => output.at(-1)?.kind)).toEqual(Array(4).fill('resyncRequired')));
+      row = rawSession({ id: 'changing-session', active: true, updatedAt: 60 });
+      changes.push({ kind: 'session', entityId: row.id, cursor: ++cursor, changedAt: cursor });
+      const readsBeforeReconnect = feedReads.length;
+      await channel.reconnect();
+      await vi.waitFor(() => expect(events[0].at(-1)).toMatchObject({ kind: 'upserted', item: { updatedAtMs: 60 } }));
+      expect(feedReads.length - readsBeforeReconnect).toBe(1);
+      expect(events.map(output => output.length)).toEqual([4, 4, 3, 2]);
+      authenticated = false;
+      row = rawSession({ id: 'changing-session', active: true, updatedAt: 80 });
+      await change();
+      await vi.waitFor(() => expect(events[0].at(-1)).toMatchObject({ item: { updatedAtMs: 80 } }));
+      expect(events[1].at(-1)).toMatchObject({ kind: 'resyncRequired' });
+      expect(events[1]).not.toContainEqual(expect.objectContaining({ item: expect.objectContaining({ updatedAtMs: 80 }) }));
+      row = null;
+      await change();
+      await vi.waitFor(() => expect(events[0].at(-1)).toMatchObject({ kind: 'removed', id: 'changing-session' }));
+      expect(events[0].map(event => event.revision)).toEqual(['1', '2', '3', '4', '5', '6']);
+    } finally { subscriptions.forEach(subscription => subscription.dispose()); await channel.close(); }
+  });
+
+  it('shares cursor-gap recovery and keeps other watchers alive when the first occurrence aborts during the snapshot', async () => {
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'l2a-gap' })).toString('base64url')}.signature`;
+    let row = rawSession({ id: 'gap-session' });
+    let gap = false;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const fetchPage = vi.fn(async ({ archivedOnly }: { archivedOnly?: boolean }) => {
+      await held;
+      return { sessions: archivedOnly ? [] : [row], nextCursor: null, hasNext: false };
+    });
+    let feedReads = 0;
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const requestUrl = new URL(url);
+      if (requestUrl.pathname === '/v1/account/encryption/currentness') return { status: 200, data: plainAccountEncryptionCurrentness };
+      if (requestUrl.pathname === '/v2/changes') {
+        feedReads++;
+        if (gap) { gap = false; return { status: 410, data: { error: 'cursor-gone', currentCursor: 9 } }; }
+        return { status: 200, data: { changes: [], nextCursor: 1 } };
+      }
+      throw new Error(`Unexpected inventory HTTP ${url}`);
+    });
+    const firstLifetime = new AbortController();
+    const first: SessionWatchEvent[] = [];
+    const second: SessionWatchEvent[] = [];
+    const watches = [first, second].map((events, index) => createTestPluginSessionsInventory({
+      credentials: { token, encryption: null }, currentSessionId: null, isCurrent: () => true,
+      ...(index === 0 ? { signal: firstLifetime.signal } : {}),
+      readStoragePolicy: async () => 'optional', fetchPage, fetchById: async () => row,
+    }).watch({}, event => events.push(event)));
+    try {
+      await vi.waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(1));
+      firstLifetime.abort(); release();
+      await vi.waitFor(() => expect(second[0]).toMatchObject({ kind: 'snapshot', items: [{ id: row.id }] }));
+      expect(first).toEqual([]);
+      expect(channel.clients).toHaveLength(1);
+      fetchPage.mockClear();
+      const beforeGap = feedReads;
+      row = rawSession({ id: row.id, updatedAt: 70 }); gap = true;
+      await channel.hintAccountChange(9);
+      await vi.waitFor(() => expect(second.at(-1)).toMatchObject({ kind: 'upserted', item: { updatedAtMs: 70 } }));
+      expect(feedReads - beforeGap).toBe(1);
+      expect(fetchPage).toHaveBeenCalledTimes(2);
+      expect(second.map(event => event.revision)).toEqual(['1', '2']);
+    } finally { release(); watches.forEach(watch => watch.dispose()); await channel.close(); }
+  });
+
+  it('keeps a pushed offline transition when an equal-clock Session read completes later', async () => {
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'l2a-presence' })).toString('base64url')}.signature`;
+    const row = rawSession({ id: 'presence-session', active: true, activeAt: 100 });
+    let cursor = 1;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const fetchById = vi.fn(async () => { await held; return { ...row, updatedAt: 40 }; });
+    const http = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const requestUrl = new URL(url);
+      if (requestUrl.pathname === '/v1/account/encryption/currentness') return { status: 200, data: plainAccountEncryptionCurrentness };
+      if (requestUrl.pathname === '/v2/changes') return { status: 200, data: {
+        changes: cursor > Number(requestUrl.searchParams.get('after') ?? 0) && cursor > 1
+          ? [{ cursor, kind: 'session', entityId: row.id, changedAt: cursor }] : [], nextCursor: cursor,
+      } };
+      throw new Error(`Unexpected inventory HTTP ${url}`);
+    });
+    const events: SessionWatchEvent[] = [];
+    const watch = createTestPluginSessionsInventory({ credentials: { token, encryption: null }, currentSessionId: null,
+      isCurrent: () => true, readStoragePolicy: async () => 'optional', fetchById,
+      fetchPage: async ({ archivedOnly }) => ({ sessions: archivedOnly ? [] : [row], nextCursor: null, hasNext: false }),
+    }).watch({}, event => events.push(event));
+    const activity = async (active: boolean) => {
+      for (const peer of channel.server.sockets.sockets.values()) peer.emit('ephemeral', { type: 'activity', id: row.id, active, activeAt: 100 });
+      await channel.pushProfile('l2a-presence');
+    };
+    try {
+      await vi.waitFor(() => expect(events[0]).toMatchObject({ kind: 'snapshot' }));
+      await activity(false);
+      await vi.waitFor(() => expect(events.at(-1)).toMatchObject({ kind: 'upserted', item: { state: 'stopped' } }));
+      const reads = http.mock.calls.length;
+      for (let beat = 0; beat < 20; beat++) await activity(false);
+      expect(events).toHaveLength(2);
+      expect(http).toHaveBeenCalledTimes(reads);
+      cursor = 2; await channel.hintAccountChange(cursor);
+      await vi.waitFor(() => expect(fetchById).toHaveBeenCalledTimes(1));
+      release();
+      await vi.waitFor(() => expect(events.at(-1)).toMatchObject({ kind: 'upserted', item: { updatedAtMs: 40 } }));
+      expect(events.at(-1)).toMatchObject({ item: { state: 'stopped', runtimeAvailability: { status: 'unavailable', code: 'session_runtime_inactive' } } });
+    } finally { release(); watch.dispose(); await channel.close(); }
+  });
+
+  it('fences a held disclosure after Account currentness changes and recovers through the same feed', async () => {
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const accountId = 'l2a-disclosure';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    let row = rawSession({ id: 'disclosure-session' });
+    let fact = plainAccountEncryptionCurrentness;
+    let cursor = 1;
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const fetchById = vi.fn(async () => { const captured = row; await held; return captured; });
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const requestUrl = new URL(url);
+      if (requestUrl.pathname === '/v1/account/encryption/currentness') return { status: 200, data: fact };
+      if (requestUrl.pathname === '/v2/changes') return { status: 200, data: {
+        changes: cursor > Number(requestUrl.searchParams.get('after') ?? 0) && cursor > 1
+          ? [{ cursor, kind: 'session', entityId: row.id, changedAt: cursor }] : [], nextCursor: cursor,
+      } };
+      throw new Error(`Unexpected inventory HTTP ${url}`);
+    });
+    const events: SessionWatchEvent[] = [];
+    const watch = createTestPluginSessionsInventory({ credentials: { token, encryption: null }, currentSessionId: null,
+      isCurrent: () => true, readStoragePolicy: async () => 'optional', fetchById,
+      fetchPage: async ({ archivedOnly }) => ({ sessions: archivedOnly ? [] : [row], nextCursor: null, hasNext: false }),
+    }).watch({}, event => events.push(event));
+    try {
+      await vi.waitFor(() => expect(events[0]).toMatchObject({ kind: 'snapshot' }));
+      row = rawSession({ id: row.id, updatedAt: 40 }); cursor = 2;
+      await channel.hintAccountChange(cursor);
+      await vi.waitFor(() => expect(fetchById).toHaveBeenCalledTimes(1));
+      row = rawSession({ id: row.id, updatedAt: 80 });
+      fact = { ...fact, updatedAt: 2 };
+      await channel.push(accountId, fact);
+      await vi.waitFor(() => expect(events.at(-1)).toMatchObject({ kind: 'upserted', item: { updatedAtMs: 80 } }));
+      release();
+      await channel.pushProfile(accountId);
+      expect(events).toHaveLength(2);
+      expect(events).not.toContainEqual(expect.objectContaining({ item: expect.objectContaining({ updatedAtMs: 40 }) }));
+    } finally { release(); watch.dispose(); await channel.close(); }
+  });
+
+  it('reports a terminal watch authentication failure and settles without re-polling', async () => {
+    const socket = createWatchSocket();
+    socket.connect.mockImplementation(() => {
+      socket.emit('connect_error', createAuthenticationHttpStatusError(401, 'Rejected credential'));
+    });
+    vi.spyOn(sessionSockets, 'createUserScopedSocketConnection').mockImplementation(() => {
+      // Genuine network boundary: exercise the real socket adapter and connection supervisor.
+      return { socket, transport: createSocketTransportAdapter(socket) } as unknown as ReturnType<typeof sessionSockets.createUserScopedSocketConnection>;
+    });
+    const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unauthenticated watch must not disclose inventory'));
+    const fetchPage = vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false }));
+    const events: SessionWatchEvent[] = [];
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'l2a-rejected' })).toString('base64url')}.signature`;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const watch = createTestPluginSessionsInventory({ credentials: { token, encryption: null }, currentSessionId: null,
+      isCurrent: () => true, fetchPage, fetchById: async () => null,
+    }).watch({}, event => events.push(event));
+    try {
+      await vi.waitFor(() => expect(events.map(event => event.kind)).toEqual(['resyncRequired']));
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(socket.connect).toHaveBeenCalledTimes(1);
+      expect(fetchPage).not.toHaveBeenCalled();
+      expect(http).not.toHaveBeenCalled();
+      expect(events).toHaveLength(1);
+    } finally { watch.dispose(); vi.useRealTimers(); }
   });
 
   it('projects attested-context presence only from opened protected Session facts', async () => {
@@ -523,7 +817,7 @@ describe('plugin sessions inventory public service boundary', () => {
       ),
       executeMessageAction,
       createHandleCapabilities: () => Object.freeze({ setDisplayTitle }),
-      watchPollIntervalMs: 5,
+      messageWatchRetryIntervalMs: 5,
     });
 
     await expect(inventory.list()).resolves.toMatchObject({
@@ -946,7 +1240,7 @@ describe('plugin sessions inventory public service boundary', () => {
       fetchPage: async () => ({ sessions: [], nextCursor: null, hasNext: false }),
       fetchById: async ({ sessionId }) => rawSession({ id: sessionId, active: true, agentStateVersion,
         latestTurnId: 'turn-1', latestTurnStatus: turnStatus }),
-      watchPollIntervalMs: 5,
+      messageWatchRetryIntervalMs: 5,
     });
     const ordinary = createBoundInventory('session-ordinary', () => ordinaryCurrent);
     const agent = createBoundInventory('session-agent', () => agentCurrent);
@@ -1209,40 +1503,6 @@ describe('plugin sessions inventory public service boundary', () => {
     expect(fetchPage).toHaveBeenCalledTimes(2);
   });
 
-  it('emits an initial filtered snapshot and ordered diffs, then stops at generation retirement', async () => {
-    let current = true;
-    let rows = [rawSession({ id: 'session-current', active: true })];
-    const fetchPage = vi.fn(async ({ archivedOnly }: { archivedOnly?: boolean }) => ({
-      sessions: archivedOnly ? [] : rows,
-      nextCursor: null,
-      hasNext: false,
-    }));
-    const inventory = createTestPluginSessionsInventory({
-      credentials,
-      currentSessionId: 'session-current',
-      isCurrent: () => current,
-      readStoragePolicy: async () => 'required_e2ee',
-      fetchPage,
-      fetchById: async ({ sessionId }) => rows.find((item) => item.id === sessionId) ?? null,
-      watchPollIntervalMs: 5,
-    });
-    const events: Array<{ kind: string; revision: string }> = [];
-    const subscription = inventory.watch({}, (event) => events.push(event));
-
-    await vi.waitFor(() => expect(events.map((event) => event.kind)).toEqual(['snapshot']));
-    rows = [rawSession({ id: 'session-current', active: false, updatedAt: 40 })];
-    await vi.waitFor(() => expect(events.map((event) => event.kind)).toEqual(['snapshot', 'upserted']));
-    rows = [];
-    await vi.waitFor(() => expect(events.map((event) => event.kind)).toEqual(['snapshot', 'upserted', 'removed']));
-    expect(events.map((event) => event.revision)).toEqual(['1', '2', '3']);
-
-    current = false;
-    const callsAtRetirement = fetchPage.mock.calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(fetchPage).toHaveBeenCalledTimes(callsAtRetirement);
-    subscription.dispose();
-  });
-
   it('rejects malformed or cross-query cursors instead of passing them to the server', async () => {
     const { inventory, fetchPage } = createInventory({
       pages: { first: [rawSession({ id: 'session-current' })], second: [rawSession({ id: 'session-other' })] },
@@ -1369,7 +1629,7 @@ describe('plugin sessions inventory public service boundary', () => {
     }));
   });
 
-  it('does not emit a resync event when generation retirement interrupts an in-flight poll', async () => {
+  it('does not emit a resync event when generation retirement interrupts an in-flight snapshot', async () => {
     let current = true;
     let releaseStoragePolicy!: () => void;
     const storagePolicyBlocked = new Promise<void>((resolve) => { releaseStoragePolicy = resolve; });
@@ -1383,7 +1643,7 @@ describe('plugin sessions inventory public service boundary', () => {
       },
       fetchPage: async () => ({ sessions: [], nextCursor: null, hasNext: false }),
       fetchById: async () => null,
-      watchPollIntervalMs: 5,
+      messageWatchRetryIntervalMs: 5,
     });
     const listener = vi.fn();
     const subscription = inventory.watch({}, listener);

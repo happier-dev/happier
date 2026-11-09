@@ -123,10 +123,10 @@ describe('CLI admitted spawn model catalog', () => {
     context.externalActionCredential.grant.actions.ids = ['session.spawn_new'];
     await expect(executor.execute('action.options.resolve', request, context)).resolves.toMatchObject({
       // A raw discovery grant is not opened execution authority for a native
-      // Machine probe. Provider discovery remains separately grant-admitted.
-      ok: true, result: { modelCatalog: { nativeModels: [], providerProjection: projection } },
+      // Machine probe. Do not disguise that refusal as an empty native catalog.
+      ok: false, errorCode: 'agent_inventory_probe_failed',
     });
-    expect(requests).toEqual([RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION]);
+    expect(requests).toEqual([]);
     expect(nativeRequests).toEqual([]);
   });
 });

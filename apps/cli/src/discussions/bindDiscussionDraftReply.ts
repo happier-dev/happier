@@ -1,5 +1,4 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
-import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DiscussionPostInputV1Schema, DiscussionReplyInputV1Schema } from '@happier-dev/protocol/discussions/actions';
@@ -7,6 +6,7 @@ import { DiscussionParticipantsListResponseV1Schema, type DiscussionAnswerPolicy
 import { SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 /** Bind explicit and terminal drafts before the existing approval owner captures their operands. */
 export async function bindDiscussionDraftReply(params: Readonly<{
@@ -26,7 +26,7 @@ export async function bindDiscussionDraftReply(params: Readonly<{
     errorCode: 'discussion_content_unavailable', error: 'discussion_content_unavailable' } });
   const { context } = params;
   if ((params.actionId !== 'discussion.post' && params.actionId !== 'discussion.reply')
-    || context.discussionReplyReturn || context.approvedActionReplay || context.signal?.aborted
+    || context.discussionReplyReturn || context.approvedActionReplay || context.externalActionExecutionAuthorization || context.signal?.aborted
     || context.serverId !== undefined && !areServerProfileIdentifiersEquivalent(context.serverId, params.serverId,
       id => id === params.serverId || id === params.serverIdentityId ? params.serverIdentityId : null)
     || context.surface !== 'agent' && context.actionCaller?.kind !== 'session') return unchanged;
@@ -65,12 +65,6 @@ export async function bindDiscussionDraftReply(params: Readonly<{
   const addressedReply = answerPolicy === 'when_addressed'
     && parsed.data.replyTarget?.kind === 'message' && parsed.data.replyTarget.messageId === addressing.messageId;
   if (answerPolicy !== 'drafts_for_approval' && !addressedReply) return unchanged;
-  // The verified daemon binds a real return obligation before signing. An
-  // unchanged signed when-addressed reply may instead be an informational input
-  // whose policy changed; preserve it without rewriting operands or borrowing
-  // ambient credentials. An unbound deliberate draft still fails closed.
-  if (context.externalActionExecutionAuthorization) return answerPolicy === 'drafts_for_approval'
-    ? unavailable() : unchanged;
   if (!context.serverIdentityId) return unavailable();
   if (addressedReply) {
     const credentials = params.credentials;

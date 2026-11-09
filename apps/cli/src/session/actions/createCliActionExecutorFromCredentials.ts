@@ -1225,7 +1225,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               // Settled receipts and active claims are read by the decision owner;
               // their original process may already have closed its live endpoint.
               const live = request.status === 'open' || request.status === 'approved'
-                ? await replayLiveCliApprovalOrigin({ artifactId, request, decision, context, ...(signal ? { signal } : {}) }, {
+                ? await replayLiveCliApprovalOrigin({ artifactId, request, decision, context: context ?? {}, ...(signal ? { signal } : {}) }, {
                   token: credentials.token, serverUrl: approvalServerApiUrl,
                 }) : null;
               if (live) return live;

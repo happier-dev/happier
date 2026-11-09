@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { resolveValidatedAutomationAccountEncryptionV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
-import type { WorkflowDefinitionV1, WorkflowTriggerActionsDependencies } from '@happier-dev/protocol';
+import type { WorkflowTriggerActionsDependencies } from '@happier-dev/protocol';
 
 import { createAutomationDefinition, deleteAutomationDefinition, getAutomationDefinition,
   listAutomationDefinitionDetails, listAutomationDefinitions, reconcileAutomationDefinition, runAutomationNowReceipt } from '@/api/automations';
@@ -18,20 +18,25 @@ import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 /** CLI adapts canonical Account currentness/crypto and Automation transport, not trigger semantics. */
 export function createCliWorkflowTriggerActions(params: Readonly<{
   credentials: StoredCredentials;
+  workflowRequesterCustody?: Parameters<typeof createAccountWorkflowTriggerActions>[0]['workflowRequesterCustody'];
   serverHttpBaseUrl?: string;
-  resolveWorkflow: (ref: string) => Promise<WorkflowDefinitionV1>;
+  resolveWorkflow: WorkflowTriggerActionsDependencies['resolveWorkflow'];
   resolveWorkflowTeamIds?: WorkflowTriggerActionsDependencies['resolveWorkflowTeamIds'];
   sessionList?: WorkflowTriggerActionsDependencies['sessionList'];
+  sessionRead?: WorkflowTriggerActionsDependencies['sessionRead'];
   resolveSession?: WorkflowTriggerActionsDependencies['resolveSession'];
   resolveRunTrigger?: WorkflowTriggerActionsDependencies['resolveRunTrigger'];
   resolveRunSource?: WorkflowTriggerActionsDependencies['resolveRunSource'];
   resolveMaterializer?: WorkflowTriggerActionsDependencies['resolveMaterializer'];
   pullRequests?: WorkflowTriggerActionsDependencies['pullRequests'];
+  nativeAccount?: WorkflowTriggerActionsDependencies['nativeAccount'];
+  deploymentAction?: WorkflowTriggerActionsDependencies['deploymentAction'];
 }>) {
   const onServer = <T>(operation: () => Promise<T>): Promise<T> => params.serverHttpBaseUrl
     ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, operation) : operation();
   const token = params.credentials.token;
   return createAccountWorkflowTriggerActions({
+    ...(params.workflowRequesterCustody ? { workflowRequesterCustody: params.workflowRequesterCustody } : {}),
     automations: {
       list: (input) => onServer(() => listAutomationDefinitions({ token, ...input })),
       listDetails: (input) => onServer(() => listAutomationDefinitionDetails({ token, ...input })),
@@ -65,6 +70,7 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
     randomBytes: getRandomBytes,
     newId: () => randomUUID(),
     ...(params.sessionList ? { sessionList: params.sessionList } : {}),
+    ...(params.sessionRead ? { sessionRead: params.sessionRead } : {}),
     ...(params.resolveSession ? { resolveSession: params.resolveSession } : {}),
     ...(params.resolveRunTrigger ? { resolveRunTrigger: params.resolveRunTrigger } : {}),
     ...(params.resolveRunSource ? { resolveRunSource: params.resolveRunSource } : {}),
@@ -75,6 +81,8 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
     }),
     ...(params.resolveMaterializer ? { resolveMaterializer: params.resolveMaterializer } : {}),
     ...(params.pullRequests ? { pullRequests: params.pullRequests } : {}),
+    ...(params.nativeAccount ? { nativeAccount: params.nativeAccount } : {}),
+    ...(params.deploymentAction ? { deploymentAction: params.deploymentAction } : {}),
     resolveWorkflow: (ref) => onServer(() => params.resolveWorkflow(ref)),
     resolveWorkflowTeamIds: (artifactId) => onServer(async () => {
       if (params.resolveWorkflowTeamIds) return params.resolveWorkflowTeamIds(artifactId);

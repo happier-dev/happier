@@ -4,6 +4,21 @@ import { createDaemonPluginActionExecutor, createPluginActionExecutor, type Plug
 import { createActionExecutor, type ActionCaller, type ActionExecutorDeps } from '@happier-dev/protocol';
 
 describe('createDaemonPluginActionExecutor', () => {
+  it('refuses a plugin call without a bound local owner instead of reconstructing CLI authority', async () => {
+    let transportRequests = 0;
+    const executor = createDaemonPluginActionExecutor({
+      base: { execute: async () => { throw new Error('Unexpected fallback'); } },
+      requestPluginActionExecution: async () => {
+        transportRequests++;
+        return { matched: true, result: { ok: true, result: 'executed as a CLI caller' } };
+      },
+    });
+    await expect(executor.execute('action.invoke', { action: { pluginId: 'acme.target', localId: 'read' }, input: {} }, {
+      surface: 'plugin', authority: 'account_automation', actionCaller: { kind: 'plugin', pluginId: 'acme.caller' },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'plugin_action_execution_placement_unavailable' });
+    expect(transportRequests).toBe(0);
+  });
+
   it('retains an opaque committed message reference through canonical CLI Action admission and daemon transport', async () => {
     const messageActionReference = { v: 1 as const, sessionId: 'session', messageId: 'message', observedRevision: 'revision' };
     const action = { pluginId: 'acme.source', localId: 'draft' };

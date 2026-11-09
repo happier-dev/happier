@@ -16,7 +16,7 @@ import {
   loadLinkedExternalSession,
   type LoadedLinkedExternalSession,
 } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import { readStoredCredentials, sameStoredCredentials } from '@/persistence';
+import type { StoredCredentials } from '@/persistence';
 import type { ExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
 import type {
   ExternalSessionTranscriptReadAfter,
@@ -26,12 +26,13 @@ import {
   createExternalSessionOperationPrivateStagingStore,
 } from '@/session/external/staging/operationPrivateStaging';
 import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
-import { resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import {
   createExternalSessionMaterializeActionExecutor,
   ExternalSessionMaterializeSourceInterruptionError,
   type ExternalSessionMaterializeActionExecutor,
+  type ExternalSessionMaterializeAccountAdmission,
+  type ExternalSessionMaterializeSourceAdmission,
 } from './materializeAction';
 import {
   assertExternalSessionOperationProgressCanBeSelected,
@@ -41,6 +42,7 @@ import {
 } from './operationProgressPublisher';
 import {
   readExternalSessionOperationRecord,
+  captureExternalSessionOperationAccountAdmission,
   type ExternalSessionOperationAccountScope,
 } from './operationRecordStore';
 import { resolveOccurrenceBoundExternalSessionFollowSurface } from './providerOpsResolution';
@@ -56,8 +58,6 @@ type MaterializeRequest =
     Extract<ExternalSessionOperationRecordV1['request'], { plan: 'takeover' }>
     & Readonly<{ targetStorageMode: 'persisted' }>
   );
-type MaterializeCredentials =
-  NonNullable<Awaited<ReturnType<typeof readStoredCredentials>>>;
 
 function resolveHistoricalImportWorkingDirectory(input: Readonly<{
   request: MaterializeRequest;
@@ -106,44 +106,10 @@ async function resolveMaterializeSourceReadRoots(input: Readonly<{
   return validated.transcriptMediaReadRoots ?? [];
 }
 
-
-function preparationAuthorityMatches(
-  snapshot: Readonly<{
-    credentials: MaterializeCredentials;
-    linked: LoadedLinkedExternalSession;
-  }>,
-  current: Readonly<{
-    credentials: MaterializeCredentials;
-    linked: LoadedLinkedExternalSession;
-  }>,
-): boolean {
-  const snapshotDataEncryptionKey =
-    typeof snapshot.linked.rawSession.dataEncryptionKey === 'string'
-      ? snapshot.linked.rawSession.dataEncryptionKey.trim() || null
-      : null;
-  const currentDataEncryptionKey =
-    typeof current.linked.rawSession.dataEncryptionKey === 'string'
-      ? current.linked.rawSession.dataEncryptionKey.trim() || null
-      : null;
-  return sameStoredCredentials(snapshot.credentials, current.credentials)
-    && sourceIdentity(snapshot.linked) === sourceIdentity(current.linked)
-    && snapshot.linked.sessionPath === current.linked.sessionPath
-    && resolveSessionStoredContentEncryptionMode(snapshot.linked.rawSession)
-      === resolveSessionStoredContentEncryptionMode(current.linked.rawSession)
-    && snapshotDataEncryptionKey === currentDataEncryptionKey;
-}
-
-async function loadCurrentLinked(request: MaterializeRequest): Promise<Readonly<{
-  credentials: MaterializeCredentials;
-  linked: LoadedLinkedExternalSession;
-}>> {
-  const credentials = await readStoredCredentials();
-  if (!credentials) {
-    throw new ExternalSessionMaterializeSourceInterruptionError(
-      'source_unavailable',
-      'External session credentials are unavailable.',
-    );
-  }
+async function admitMaterializeSource(
+  request: MaterializeRequest,
+  credentials: StoredCredentials,
+): Promise<ExternalSessionMaterializeSourceAdmission> {
   const loaded = await loadLinkedExternalSession({
     credentials,
     sessionId: request.sessionId,
@@ -191,8 +157,12 @@ function groupId(pageIndex: number, cursor: string | undefined): string {
   return `historical-page:${pageIndex}:${cursorKey}`;
 }
 
-function captureKey(request: MaterializeRequest): string {
+function captureKey(
+  request: Pick<MaterializeRequest, 'sessionId' | 'idempotencyKey'>,
+  accountScope?: ExternalSessionOperationAccountScope,
+): string {
   return JSON.stringify({
+    accountSubject: accountScope?.accountSubject ?? null,
     sessionId: request.sessionId,
     idempotencyKey: request.idempotencyKey,
   });
@@ -302,8 +272,7 @@ function mergeRequiredItemFailures(
   };
 }
 
-type MaterializeCaptureStart = Readonly<{
-  linked: LoadedLinkedExternalSession;
+type MaterializeCaptureStart = ExternalSessionMaterializeSourceAdmission & Readonly<{
   resolved: Awaited<ReturnType<typeof resolveOccurrenceBoundExternalSessionFollowSurface>>;
   sourceReadRoots: readonly string[];
   firstPage: ExternalSessionTranscriptPage;
@@ -399,9 +368,70 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
   });
   const captureStarts = new Map<string, MaterializeCaptureStart>();
 
+  // This is the existing active source capture, released by the executor's
+  // operation lifetime. Every bounded phase uses its admitted Account/source.
+  const captureSource = async (
+    request: MaterializeRequest,
+    admission?: ExternalSessionMaterializeSourceAdmission,
+    accountScope: ExternalSessionOperationAccountScope | undefined = admission?.accountScope ?? input.accountScope,
+  ): Promise<MaterializeCaptureStart> => {
+    const existing = captureStarts.get(captureKey(request, accountScope));
+    if (existing) return existing;
+    if (!admission) throw new Error('external_session_capture_boundary_unavailable');
+    const admitted = admission;
+    const { linked } = admitted;
+    const resolved = await resolveOccurrenceBoundExternalSessionFollowSurface(
+      linked.agentId,
+      request.source.linkGeneration,
+    );
+    if (!pluginSourceCustodyV1Equal(resolved.sourceCustody, request.source.sourceCustody)) {
+      throw new Error('external_session_source_custody_replaced');
+    }
+    if (!resolved.providerOps.pageTranscript) {
+      throw new Error('external_session_transcript_page_unavailable');
+    }
+    const sourceReadRoots = await resolveMaterializeSourceReadRoots({
+      linked,
+      providerOps: resolved.providerOps,
+    });
+    const firstPage = await readTranscriptPage(() => resolved.providerOps.pageTranscript!({
+      source: linked.source,
+      remoteSessionId: linked.remoteSessionId,
+      direction: 'older',
+      maxBytes: CAPTURE_MAX_BYTES,
+      maxItems: CAPTURE_MAX_ITEMS,
+    }));
+    if (firstPage.truncated) throw new Error('external_session_transcript_capture_truncated');
+    const capture = {
+      ...admitted,
+      resolved,
+      sourceReadRoots,
+      firstPage,
+      sourceIdentity: sourceIdentity(linked),
+      capturedTailCursor: firstPage.tailCursor,
+    };
+    captureStarts.set(captureKey(request, accountScope), capture);
+    return capture;
+  };
+
   return createExternalSessionMaterializeActionExecutor({
     activeServerDir: input.activeServerDir,
     ...(input.accountScope ? { accountScope: input.accountScope } : {}),
+    captureAccount: async (): Promise<ExternalSessionMaterializeAccountAdmission> => {
+      const admission = await captureExternalSessionOperationAccountAdmission(input.activeServerDir);
+      if (!admission) {
+        throw new ExternalSessionMaterializeSourceInterruptionError(
+          'source_unavailable',
+          'External session credentials are unavailable.',
+        );
+      }
+      return input.accountScope ? { ...admission, accountScope: input.accountScope } : admission;
+    },
+    admitSource: async (request, account) => ({
+      ...await admitMaterializeSource(request, account.credentials),
+      ...(account.accountScope ? { accountScope: account.accountScope } : {}),
+    }),
+    getSourceAdmission: (request, accountScope = input.accountScope) => captureStarts.get(captureKey(request, accountScope)),
     operationExclusion: input.operationExclusion,
     staging,
     createStagedItemPreparationPhase: async (
@@ -409,8 +439,9 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
       mode,
       persistedTakeoverWorkingDirectory,
       operationId,
+      accountScope,
     ) => {
-      const phaseSnapshot = await loadCurrentLinked(request);
+      const phaseSnapshot = await captureSource(request, undefined, accountScope);
       return Object.freeze({
         prepareStagedItem: async (value: unknown) => {
           const staged = readExternalSessionHistoricalImportStagedItem(value);
@@ -532,19 +563,6 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
             throw error;
           }
         },
-        ...(mode === 'publish'
-          ? {
-            revalidateBeforeBatchEffect: async () => {
-              const current = await loadCurrentLinked(request);
-              if (!preparationAuthorityMatches(phaseSnapshot, current)) {
-                throw new ExternalSessionMaterializeSourceInterruptionError(
-                  'source_changed',
-                  'External session link or encryption authority changed before historical publication.',
-                );
-              }
-            },
-          }
-          : {}),
       });
     },
     publishProgress: input.publishProgress ?? ((publishInput) =>
@@ -552,17 +570,21 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
         ...publishInput,
         activeServerDir: input.activeServerDir,
       })),
-    convergeProgress: async (record) => {
+    convergeProgress: async (record, admission) => {
+      const captured = admission ?? captureStarts.get(captureKey(record.request, input.accountScope));
       await convergeExternalSessionOperationProgressProjection(
         input.activeServerDir,
         record,
         {
           allowSettledTerminalPredecessorReplacement: true,
+          ...(captured ? { credentials: captured.credentials } : {}),
+          ...(captured?.accountScope ? { accountScope: captured.accountScope } : {}),
         },
       );
       const converged = await readExternalSessionOperationRecord(
         input.activeServerDir,
         record.operationId,
+        captured?.accountScope,
       );
       if (!converged) {
         throw new Error(
@@ -575,16 +597,20 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
       ?? (input.publishProgress
         ? async () => undefined
         : assertExternalSessionOperationProgressCanBeSelected),
-    settlePriorTerminalProgressProjection: async (priorTerminalRecords) => {
+    settlePriorTerminalProgressProjection: async (priorTerminalRecords, _incoming, admission) => {
       await settlePriorTerminalExternalSessionOperationProgressProjections(
         input.activeServerDir,
         priorTerminalRecords,
         {
           sessionAdmissionLockHeld: true,
+          ...(admission ? { credentials: admission.credentials } : {}),
+          ...(admission?.accountScope ? { accountScope: admission.accountScope } : {}),
           publish: async (publishInput) =>
             await publishExternalSessionOperationProgress({
               ...publishInput,
               sessionAdmissionLockHeld: true,
+              ...(admission ? { credentials: admission.credentials } : {}),
+              ...(admission?.accountScope ? { accountScope: admission.accountScope } : {}),
             }),
         },
       );
@@ -592,41 +618,8 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
     ...(input.preparePersistedTakeover
       ? { preparePersistedTakeover: input.preparePersistedTakeover }
       : {}),
-    describeSource: async (request) => {
-      const { linked } = await loadCurrentLinked(request);
-      const resolved = await resolveOccurrenceBoundExternalSessionFollowSurface(
-        linked.agentId,
-        request.source.linkGeneration,
-      );
-      if (!pluginSourceCustodyV1Equal(resolved.sourceCustody, request.source.sourceCustody)) {
-        throw new Error('external_session_source_custody_replaced');
-      }
-      if (!resolved.providerOps.pageTranscript) {
-        throw new Error('external_session_transcript_page_unavailable');
-      }
-      const sourceReadRoots = await resolveMaterializeSourceReadRoots({
-        linked,
-        providerOps: resolved.providerOps,
-      });
-      const firstPage = await readTranscriptPage(() => resolved.providerOps.pageTranscript!({
-        source: linked.source,
-        remoteSessionId: linked.remoteSessionId,
-        direction: 'older',
-        maxBytes: CAPTURE_MAX_BYTES,
-        maxItems: CAPTURE_MAX_ITEMS,
-      }));
-      if (firstPage.truncated) {
-        throw new Error('external_session_transcript_capture_truncated');
-      }
-      const identity = sourceIdentity(linked);
-      captureStarts.set(captureKey(request), {
-        linked,
-        resolved,
-        sourceReadRoots,
-        firstPage,
-        sourceIdentity: identity,
-        capturedTailCursor: firstPage.tailCursor,
-      });
+    describeSource: async (request, admission) => {
+      const { linked, firstPage, sourceIdentity: identity } = await captureSource(request, admission);
       const session = linked.rawSession as Readonly<Record<string, unknown>>;
       return {
         capturedSource: {
@@ -640,11 +633,11 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
           : 0,
       };
     },
-    releaseSourceCapture: (request) => {
-      captureStarts.delete(captureKey(request));
+    releaseSourceCapture: (request, accountScope = input.accountScope) => {
+      captureStarts.delete(captureKey(request, accountScope));
     },
-    revalidateSource: async (request, capturedSource, sourceSnapshotEvidenceRef) => {
-      const current = await loadCurrentLinked(request);
+    revalidateSource: async (request, capturedSource, sourceSnapshotEvidenceRef, accountScope) => {
+      const current = await captureSource(request, undefined, accountScope);
       const identity = sourceIdentity(current.linked);
       if (
         identity !== capturedSource.sourceIdentity
@@ -655,19 +648,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
           'External session source identity changed before explicit continuation.',
         );
       }
-      const resolved = await resolveOccurrenceBoundExternalSessionFollowSurface(
-        current.linked.agentId,
-        request.source.linkGeneration,
-      );
-      if (
-        !pluginSourceCustodyV1Equal(resolved.sourceCustody, request.source.sourceCustody)
-        || Boolean(resolved.resource.retirementSignal?.aborted)
-      ) {
-        throw new ExternalSessionMaterializeSourceInterruptionError(
-          'source_changed',
-          'External session contribution generation changed before explicit continuation.',
-        );
-      }
+      const { resolved } = current;
       if (!resolved.providerOps.pageTranscript || !resolved.providerOps.readAfterTranscript) {
         throw new ExternalSessionMaterializeSourceInterruptionError(
           'source_unavailable',
@@ -712,8 +693,9 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
     readNewestFirstPages: async function* (
       request,
       persistedTakeoverWorkingDirectory,
+      accountScope,
     ) {
-      const key = captureKey(request);
+      const key = captureKey(request, accountScope ?? input.accountScope);
       const capture = captureStarts.get(key);
       if (!capture) throw new Error('external_session_capture_boundary_unavailable');
       const { linked, resolved, sourceReadRoots } = capture;
@@ -729,205 +711,163 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
       const seenCursors = new Set<string>();
       let page = capture.firstPage;
       let pageIndex = 0;
-      try {
-        for (; pageIndex < MAX_CAPTURE_PAGES; pageIndex += 1) {
-          const current = await loadCurrentLinked(request);
-          const stillCurrent = sourceIdentity(current.linked) === capture.sourceIdentity
-            && !page.truncated
-            && page.tailCursor === capture.capturedTailCursor;
-          const prepared = await stageRequiredHistoricalItems({
-            transcriptItems: page.items,
-            workingDirectory,
-            sourceReadRoots,
+      for (; pageIndex < MAX_CAPTURE_PAGES; pageIndex += 1) {
+        const stillCurrent = !page.truncated
+          && page.tailCursor === capture.capturedTailCursor;
+        const prepared = await stageRequiredHistoricalItems({
+          transcriptItems: page.items,
+          workingDirectory,
+          sourceReadRoots,
+          sourceGeneration: request.source.sourceGeneration,
+          sourcePageIndex: pageIndex,
+        });
+        yield {
+          groupId: groupId(pageIndex, cursor),
+          items: prepared.items,
+          requiredItemFailures: prepared.requiredItemFailures,
+          sourceRead: {
+            availability: 'reachable' as const,
+            sourceIdentity: capture.sourceIdentity,
             sourceGeneration: request.source.sourceGeneration,
-            sourcePageIndex: pageIndex,
-          });
-          yield {
-            groupId: groupId(pageIndex, cursor),
-            items: prepared.items,
-            requiredItemFailures: prepared.requiredItemFailures,
-            sourceRead: {
-              availability: 'reachable' as const,
-              sourceIdentity: stillCurrent
-                ? capture.sourceIdentity
-                : sourceIdentity(current.linked),
-              sourceGeneration: request.source.sourceGeneration,
-              revision: revisionForTail(capture.sourceIdentity, capture.capturedTailCursor),
-              relationshipToCapture: stillCurrent ? 'same' as const : 'rewritten' as const,
-              eof: false,
-            },
-          };
-          if (!stillCurrent) return;
-          if (!page.hasMore) break;
-          if (!page.nextCursor || seenCursors.has(page.nextCursor)) {
-            throw new Error('external_session_transcript_cursor_cycle');
-          }
-          seenCursors.add(page.nextCursor);
-          cursor = page.nextCursor;
-          page = await readTranscriptPage(() => resolved.providerOps.pageTranscript!({
-            source: linked.source,
-            remoteSessionId: linked.remoteSessionId,
-            direction: 'older',
-            cursor,
-            maxBytes: CAPTURE_MAX_BYTES,
-            maxItems: CAPTURE_MAX_ITEMS,
-          }));
+            revision: revisionForTail(capture.sourceIdentity, capture.capturedTailCursor),
+            relationshipToCapture: stillCurrent ? 'same' as const : 'rewritten' as const,
+            eof: false,
+          },
+        };
+        if (!stillCurrent) return;
+        if (!page.hasMore) break;
+        if (!page.nextCursor || seenCursors.has(page.nextCursor)) {
+          throw new Error('external_session_transcript_cursor_cycle');
         }
-        if (pageIndex >= MAX_CAPTURE_PAGES) {
-          throw new Error('external_session_transcript_page_limit');
-        }
-
-        let catchUpCursor = capture.capturedTailCursor;
-        let catchUpIndex = 0;
-        if (catchUpCursor !== null) {
-          for (; catchUpIndex < MAX_CAPTURE_PAGES; catchUpIndex += 1) {
-            const readAfterCursor: string = catchUpCursor;
-            const current = await loadCurrentLinked(request);
-            if (sourceIdentity(current.linked) !== capture.sourceIdentity) {
-              yield {
-                groupId: `final-source-replaced:${catchUpIndex}`,
-                replayOrder: -1 - catchUpIndex,
-                items: [],
-                sourceRead: {
-                  availability: 'reachable' as const,
-                  sourceIdentity: sourceIdentity(current.linked),
-                  sourceGeneration: request.source.sourceGeneration,
-                  revision: revisionForTail(capture.sourceIdentity, catchUpCursor),
-                  relationshipToCapture: 'rewritten' as const,
-                  eof: false,
-                },
-              };
-              return;
-            }
-            let readAfter: ExternalSessionTranscriptReadAfter;
-            try {
-              readAfter = await resolved.providerOps.readAfterTranscript!({
-                source: linked.source,
-                remoteSessionId: linked.remoteSessionId,
-                cursor: readAfterCursor,
-                maxBytes: CAPTURE_MAX_BYTES,
-                maxItems: CAPTURE_MAX_ITEMS,
-              });
-            } catch {
-              throw new ExternalSessionMaterializeSourceInterruptionError(
-                'source_unavailable',
-                'External session transcript source could not be read during catch-up.',
-              );
-            }
-            const appended = requireContinuousReadAfter(readAfter, readAfterCursor);
-            const nextCursor: string | null = appended.nextCursor;
-            if (!nextCursor || nextCursor === readAfterCursor) {
-              if (appended.items.length === 0 && appended.diagnostics.length === 0) break;
-              throw new Error('external_session_transcript_catch_up_cursor_stalled');
-            }
-            const diagnosticFailures = requiredItemFailuresFromReadAfterDiagnostics({
-              diagnostics: appended.diagnostics,
-              sourceGeneration: request.source.sourceGeneration,
-              sourcePageIndex: pageIndex + catchUpIndex + 1,
-            });
-            if (appended.items.length === 0 && diagnosticFailures.total === 0) {
-              catchUpCursor = nextCursor;
-              continue;
-            }
-            const prepared = await stageRequiredHistoricalItems({
-              transcriptItems: appended.items,
-              workingDirectory,
-              sourceReadRoots,
-              sourceGeneration: request.source.sourceGeneration,
-              sourcePageIndex: pageIndex + catchUpIndex + 1,
-            });
-            yield {
-              groupId: `historical-catch-up:${catchUpIndex}:${createHash('sha256')
-                .update(readAfterCursor, 'utf8')
-                .digest('hex')
-                .slice(0, 16)}`,
-              replayOrder: -1 - catchUpIndex,
-              items: prepared.items,
-              requiredItemFailures: mergeRequiredItemFailures(
-                diagnosticFailures,
-                prepared.requiredItemFailures,
-              ),
-              sourceRead: {
-                availability: 'reachable' as const,
-                sourceIdentity: capture.sourceIdentity,
-                sourceGeneration: request.source.sourceGeneration,
-                revision: revisionForTail(capture.sourceIdentity, nextCursor),
-                relationshipToCapture: 'appended' as const,
-                eof: false,
-              },
-            };
-            catchUpCursor = nextCursor;
-          }
-          if (catchUpIndex >= MAX_CAPTURE_PAGES) {
-            throw new Error('external_session_transcript_catch_up_limit');
-          }
-        }
-
-        const finalCurrent = await loadCurrentLinked(request);
-        const finalPage = await readTranscriptPage(() => resolved.providerOps.pageTranscript!({
+        seenCursors.add(page.nextCursor);
+        cursor = page.nextCursor;
+        page = await readTranscriptPage(() => resolved.providerOps.pageTranscript!({
           source: linked.source,
           remoteSessionId: linked.remoteSessionId,
           direction: 'older',
+          cursor,
           maxBytes: CAPTURE_MAX_BYTES,
-          maxItems: 1,
+          maxItems: CAPTURE_MAX_ITEMS,
         }));
-        const finalTail = finalPage.tailCursor;
-        const finalMatches = sourceIdentity(finalCurrent.linked) === capture.sourceIdentity
-          && finalTail === catchUpCursor;
-        yield {
-          groupId: `historical-final-validation:${catchUpIndex}`,
-          replayOrder: -1 - catchUpIndex,
-          items: [],
-          sourceRead: {
-            availability: 'reachable' as const,
-            sourceIdentity: sourceIdentity(finalCurrent.linked),
-            sourceGeneration: request.source.sourceGeneration,
-            revision: revisionForTail(capture.sourceIdentity, finalTail),
-            relationshipToCapture: finalMatches
-              ? finalTail === capture.capturedTailCursor ? 'same' as const : 'appended' as const
-              : 'rewritten' as const,
-            eof: finalMatches,
-          },
-        };
-      } finally {
-        captureStarts.delete(key);
       }
+      if (pageIndex >= MAX_CAPTURE_PAGES) {
+        throw new Error('external_session_transcript_page_limit');
+      }
+
+      let catchUpCursor = capture.capturedTailCursor;
+      let catchUpIndex = 0;
+      if (catchUpCursor !== null) {
+        for (; catchUpIndex < MAX_CAPTURE_PAGES; catchUpIndex += 1) {
+          const readAfterCursor: string = catchUpCursor;
+          let readAfter: ExternalSessionTranscriptReadAfter;
+          try {
+            readAfter = await resolved.providerOps.readAfterTranscript!({
+              source: linked.source,
+              remoteSessionId: linked.remoteSessionId,
+              cursor: readAfterCursor,
+              maxBytes: CAPTURE_MAX_BYTES,
+              maxItems: CAPTURE_MAX_ITEMS,
+            });
+          } catch {
+            throw new ExternalSessionMaterializeSourceInterruptionError(
+              'source_unavailable',
+              'External session transcript source could not be read during catch-up.',
+            );
+          }
+          const appended = requireContinuousReadAfter(readAfter, readAfterCursor);
+          const nextCursor: string | null = appended.nextCursor;
+          if (!nextCursor || nextCursor === readAfterCursor) {
+            if (appended.items.length === 0 && appended.diagnostics.length === 0) break;
+            throw new Error('external_session_transcript_catch_up_cursor_stalled');
+          }
+          const diagnosticFailures = requiredItemFailuresFromReadAfterDiagnostics({
+            diagnostics: appended.diagnostics,
+            sourceGeneration: request.source.sourceGeneration,
+            sourcePageIndex: pageIndex + catchUpIndex + 1,
+          });
+          if (appended.items.length === 0 && diagnosticFailures.total === 0) {
+            catchUpCursor = nextCursor;
+            continue;
+          }
+          const prepared = await stageRequiredHistoricalItems({
+            transcriptItems: appended.items,
+            workingDirectory,
+            sourceReadRoots,
+            sourceGeneration: request.source.sourceGeneration,
+            sourcePageIndex: pageIndex + catchUpIndex + 1,
+          });
+          yield {
+            groupId: `historical-catch-up:${catchUpIndex}:${createHash('sha256')
+              .update(readAfterCursor, 'utf8')
+              .digest('hex')
+              .slice(0, 16)}`,
+            replayOrder: -1 - catchUpIndex,
+            items: prepared.items,
+            requiredItemFailures: mergeRequiredItemFailures(
+              diagnosticFailures,
+              prepared.requiredItemFailures,
+            ),
+            sourceRead: {
+              availability: 'reachable' as const,
+              sourceIdentity: capture.sourceIdentity,
+              sourceGeneration: request.source.sourceGeneration,
+              revision: revisionForTail(capture.sourceIdentity, nextCursor),
+              relationshipToCapture: 'appended' as const,
+              eof: false,
+            },
+          };
+          catchUpCursor = nextCursor;
+        }
+        if (catchUpIndex >= MAX_CAPTURE_PAGES) {
+          throw new Error('external_session_transcript_catch_up_limit');
+        }
+      }
+
+      const finalPage = await readTranscriptPage(() => resolved.providerOps.pageTranscript!({
+        source: linked.source,
+        remoteSessionId: linked.remoteSessionId,
+        direction: 'older',
+        maxBytes: CAPTURE_MAX_BYTES,
+        maxItems: 1,
+      }));
+      const finalTail = finalPage.tailCursor;
+      const finalMatches = finalTail === catchUpCursor;
+      yield {
+        groupId: `historical-final-validation:${catchUpIndex}`,
+        replayOrder: -1 - catchUpIndex,
+        items: [],
+        sourceRead: {
+          availability: 'reachable' as const,
+          sourceIdentity: capture.sourceIdentity,
+          sourceGeneration: request.source.sourceGeneration,
+          revision: revisionForTail(capture.sourceIdentity, finalTail),
+          relationshipToCapture: finalMatches
+            ? finalTail === capture.capturedTailCursor ? 'same' as const : 'appended' as const
+            : 'rewritten' as const,
+          eof: finalMatches,
+        },
+      };
     },
     readFinalCatchUpPages: async function* (
       request,
       sourceSnapshotEvidenceRef,
       persistedTakeoverWorkingDirectory,
+      accountScope,
     ) {
-      const current = await loadCurrentLinked(request);
+      const current = await captureSource(request, undefined, accountScope);
       const workingDirectory = resolveHistoricalImportWorkingDirectory({
         request,
         linked: current.linked,
         persistedTakeoverWorkingDirectory,
       });
       const identity = sourceIdentity(current.linked);
-      const resolved = await resolveOccurrenceBoundExternalSessionFollowSurface(
-        current.linked.agentId,
-        request.source.linkGeneration,
-      );
-      if (
-        !pluginSourceCustodyV1Equal(resolved.sourceCustody, request.source.sourceCustody)
-        || Boolean(resolved.resource.retirementSignal?.aborted)
-      ) {
-        throw new ExternalSessionMaterializeSourceInterruptionError(
-          'source_changed',
-          'External session contribution generation changed before finalization.',
-        );
-      }
+      const { resolved, sourceReadRoots } = current;
       if (!resolved.providerOps.pageTranscript || !resolved.providerOps.readAfterTranscript) {
         throw new ExternalSessionMaterializeSourceInterruptionError(
           'source_unavailable',
           'External session transcript source cannot be revalidated before finalization.',
         );
       }
-      const sourceReadRoots = await resolveMaterializeSourceReadRoots({
-        linked: current.linked,
-        providerOps: resolved.providerOps,
-      });
 
       if (sourceSnapshotEvidenceRef.startsWith('empty:')) {
         let cursor: string | undefined;
@@ -942,11 +882,8 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
         if (finalTail === null) return;
         const seenCursors = new Set<string>();
         for (let pageIndex = 0; pageIndex < MAX_CAPTURE_PAGES; pageIndex += 1) {
-          const stillCurrent = await loadCurrentLinked(request);
           if (
-            sourceIdentity(stillCurrent.linked) !== identity
-            || Boolean(resolved.resource.retirementSignal?.aborted)
-            || page.truncated
+            page.truncated
             || page.tailCursor !== finalTail
           ) {
             throw new ExternalSessionMaterializeSourceInterruptionError(
@@ -1006,7 +943,6 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
             );
           }
         }
-        const finalCurrent = await loadCurrentLinked(request);
         const finalPage = await readTranscriptPage(() => resolved.providerOps.pageTranscript!({
           source: current.linked.source,
           remoteSessionId: current.linked.remoteSessionId,
@@ -1015,8 +951,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
           maxItems: 1,
         }));
         if (
-          sourceIdentity(finalCurrent.linked) !== identity
-          || finalPage.tailCursor !== finalTail
+          finalPage.tailCursor !== finalTail
           || finalPage.truncated
         ) {
           throw new ExternalSessionMaterializeSourceInterruptionError(
@@ -1045,16 +980,6 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
       let cursor = sourceSnapshotEvidenceRef;
       let appendedPageCount = 0;
       for (; appendedPageCount < MAX_CAPTURE_PAGES; appendedPageCount += 1) {
-        const stillCurrent = await loadCurrentLinked(request);
-        if (
-          sourceIdentity(stillCurrent.linked) !== identity
-          || Boolean(resolved.resource.retirementSignal?.aborted)
-        ) {
-          throw new ExternalSessionMaterializeSourceInterruptionError(
-            'source_changed',
-            'External session source changed during final catch-up.',
-          );
-        }
         let readAfter: ExternalSessionTranscriptReadAfter;
         try {
           readAfter = await resolved.providerOps.readAfterTranscript({
@@ -1122,26 +1047,8 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
           'External session final catch-up exceeded its bounded page limit.',
         );
       }
-      const finalCurrent = await loadCurrentLinked(request);
-      const finalResolved = await resolveOccurrenceBoundExternalSessionFollowSurface(
-        finalCurrent.linked.agentId,
-        request.source.linkGeneration,
-      );
-      if (
-        sourceIdentity(finalCurrent.linked) !== identity
-        || !pluginSourceCustodyV1Equal(
-          finalResolved.sourceCustody,
-          request.source.sourceCustody,
-        )
-        || Boolean(finalResolved.resource.retirementSignal?.aborted)
-        || !finalResolved.providerOps.pageTranscript
-        || !finalResolved.providerOps.readAfterTranscript
-      ) {
-        throw new ExternalSessionMaterializeSourceInterruptionError(
-          'source_changed',
-          'External session source changed before finalization.',
-        );
-      }
+      const finalCurrent = current;
+      const finalResolved = resolved;
       // Cursors are opaque. A catch-up cursor and a page tail at the same position can be
       // different strings (a source may carry resume state in one), so only then does the
       // source itself decide whether the catch-up cursor is still at its end.

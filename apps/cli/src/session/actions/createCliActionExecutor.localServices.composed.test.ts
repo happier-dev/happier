@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema, REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL, type ActionExecutorContext, type ActionId } from '@happier-dev/protocol';
+import { ActionExecuteFailureSchema, FeaturesResponseSchema, REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL, type ActionExecutorContext, type ActionId } from '@happier-dev/protocol';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema,
@@ -13,30 +13,43 @@ import { createCliActionExecutorHarness } from './createCliActionExecutorHarness
 import { findCompiledActionCliCommand, listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
 import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
 import { captureConsoleText } from '@/testkit/logger/captureOutput';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { registerDaemonLocalServicePreviewSnapshotHandler } from '@/rpc/handlers/daemonLocalServicePreviewSnapshot';
+import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '@/daemon/local/services/preview/registry';
+import { createLocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
+import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import { DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/public/v1';
+import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
-const { io } = vi.hoisted(() => ({ io: vi.fn() }));
+const { io, uiPreviewRpc } = vi.hoisted(() => ({ io: vi.fn(), uiPreviewRpc: vi.fn() }));
 // Socket.IO and HTTP are the only replaced boundaries; Action policy, credential
 // selection, targeted request framing and Machine content codecs remain real.
 vi.mock('socket.io-client', () => ({ io }));
+// The UI's Machine RPC port is the network boundary. Its response below is
+// produced by the real daemon handler/serializer, not a hand-written fixture.
+vi.mock('../../../../ui/sources/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: uiPreviewRpc }));
 
 function receivingMachineBoundary(response: unknown, actionId: ActionId = 'localServices.launcher.start', askFirst = false,
-    surface: 'cli' | 'agent' | 'mcp' = 'cli') {
+    surface: 'cli' | 'agent' | 'mcp' = 'cli', respond?: (payload: unknown) => Promise<unknown>) {
     const requests: Array<unknown> = [];
-    io.mockImplementation(() => createApiSessionSocketStub({ emitWithAck(event, payload) {
+    io.mockImplementation(() => createApiSessionSocketStub({ async emitWithAck(event, payload) {
         expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
         requests.push(payload);
-        return { ok: true, result: response };
+        return { ok: true, result: respond ? await respond(payload) : response };
     } }));
     const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
         if (url === 'https://selected-home.example/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
         expect(url).toBe('https://selected-home.example/v1/machines/machine-a');
-        return { status: 200, data: { machine: { id: 'machine-a', kind: 'persistent', storageMode: 'plain',
-            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null } } };
+        return { status: 200, data: { machine: { ...ExternalActionMachineBootstrapV1Schema.parse({
+            id: 'machine-a', kind: 'persistent', active: true,
+            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null,
+        }), storageMode: 'plain' } } };
     });
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
     const approvalActions: string[] = [];
     const { executor } = createCliActionExecutorHarness({ credentials, token: credentials.token, mode: 'plain', ctx: null,
         sessionId: 'session-a', serverId: 'home-a', serverHttpBaseUrl: 'https://selected-home.example',
+        getCurrentSessionMetadata: () => ({ machineId: 'machine-a', path: '/accepted' }),
         actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(askFirst ? null : {
             v: 1, approvalWaivedSurfaces: { [actionId]: [surface] },
         }), getAccountSettings: () => null },
@@ -65,6 +78,55 @@ function receivingMachineBoundary(response: unknown, actionId: ActionId = 'local
 
 describe('credentialed CLI Local Services runtime dispatch', () => {
     afterEach(() => vi.restoreAllMocks());
+
+    it.each([
+        { actionId: 'localServices.preview.openOrCreate', input: { launchTargetId: 'registered-preview', sessionId: 'session-a' },
+            errorCode: 'preview_session_mismatch' },
+        { actionId: 'localServices.preview.revoke', input: { previewId: 'registered-preview', serviceTarget: {
+            kind: 'managed_service', machineId: 'machine-a', managedServiceId: 'wrong-instance', cwd: '/accepted',
+            declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'web' } },
+        } }, errorCode: 'preview_service_mismatch' },
+    ] as const)('preserves the real $actionId RPC refusal through the terminal Action parser', async ({ actionId, input, errorCode }) => {
+        const registry = createLocalServicePreviewRegistry();
+        const registered = registerLocalServicePreview(registry, { previewId: 'registered-preview', machineId: 'machine-a',
+            owner: { kind: 'user', id: 'owner' }, target: { scheme: 'http', host: '127.0.0.1', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Web', addressLabel: 'local fixture' }, originMode: 'host' });
+        if (!registered.ok) throw new Error(registered.reasonCode);
+        const routes = createLocalServicePreviewRoutes({ machineId: 'machine-a', accountId: 'owner', registry });
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine-a', encryptionMode: 'plain', logger() {} });
+        registerDaemonLocalServicePreviewSnapshotHandler(rpc, { localServicesPreview: routes });
+        let rawResponse: unknown;
+        // Only Socket.IO is replaced: the registered raw RPC, exception/result
+        // serializer, credentialed Action adapter and terminal output reader are real.
+        const { executor, context } = receivingMachineBoundary(null, actionId, false, 'agent', async payload => {
+            if (!payload || typeof payload !== 'object' || !('method' in payload)
+                || typeof payload.method !== 'string' || !('params' in payload)) throw new Error('Missing RPC request');
+            rawResponse = await rpc.handleRequest({ method: payload.method, params: payload.params });
+            return rawResponse;
+        });
+        expect(await executor.execute(actionId, { machineId: 'machine-a', ...input }, context))
+            .toMatchObject({ ok: false, errorCode });
+        uiPreviewRpc.mockResolvedValue(rawResponse);
+        const ui = await import('../../../../ui/sources/sync/domains/local/services/preview/machineRpc');
+        const readUiResult = async () => actionId === 'localServices.preview.openOrCreate'
+            ? await ui.openOrCreateLocalServicePreviewViaMachineRpc({
+                request: DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.parse({ machineId: 'machine-a', ...input }) })
+            : await ui.revokeLocalServicePreviewViaMachineRpc({
+                request: DaemonLocalServicePreviewRevokeRequestV1Schema.parse({ machineId: 'machine-a', ...input }) });
+        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}` });
+        const typedFailure = ActionExecuteFailureSchema.parse(rawResponse);
+        // Before this correction, the lifecycle handler threw an uncoded Error
+        // with this exact message. Keep the real RpcHandlerManager serializer as
+        // the producer of that legacy response, rather than constructing its DTO.
+        rpc.registerHandler('legacy.preview.refusal', async () => { throw new Error(typedFailure.error); });
+        const legacy = await rpc.handleRequest({ method: 'machine-a:legacy.preview.refusal', params: {} });
+        expect(legacy).toEqual({ error: typedFailure.error });
+        uiPreviewRpc.mockResolvedValue(legacy);
+        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}` });
+        uiPreviewRpc.mockRejectedValue(new Error(typedFailure.error));
+        expect(await readUiResult()).toEqual({ ok: false, reason: `refused:${errorCode}` });
+        expect(registry.previewsById.get('registered-preview')?.resource).toEqual(registered.resource);
+    });
 
     it.each(['cli', 'agent', 'mcp'] as const)('reads the scalar Services projection through %s without a full inventory fallback', async surface => {
         const result = { summary: { v: 1, state: 'ready', runningCount: 3 } };
@@ -111,10 +173,19 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
 
     it.each(['localServices.publicPreview.create', 'localServices.publicPreview.revoke'] as const)('preserves a receiving typed refusal for headless %s', async actionId => {
         const refused = { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
-        const { executor, requests, context } = receivingMachineBoundary(refused, actionId);
-        const input = { machineId: 'machine-a', sessionId: 'session-a', previewId: 'preview-a',
+        const input = { machineId: 'machine-a', previewId: 'preview-a', serviceTarget: {
+            kind: 'managed_service' as const, machineId: 'machine-a', managedServiceId: 'managed-a', cwd: '/accepted',
+            declaration: { workspaceRefId: 'workspace-a', selection: { kind: 'manifest' as const, name: 'web' } },
+        },
             ...(actionId === 'localServices.publicPreview.create' ? { mode: 'public' as const, ttlMs: 60000, confirmation: { acknowledged: true as const } } : { exposureId: 'exposure-a' }) };
-        expect(await executor.execute(actionId, input, context)).toEqual(refused);
+        const wireSchema = actionId === 'localServices.publicPreview.create'
+            ? DaemonLocalServicePublicPreviewCreateRequestV1Schema : DaemonLocalServicePublicPreviewRevokeRequestV1Schema;
+        const { executor, requests, context } = receivingMachineBoundary(refused, actionId, false, 'cli', async payload => {
+            if (!payload || typeof payload !== 'object' || !('params' in payload)) throw new Error('Missing RPC request');
+            expect(wireSchema.parse(payload.params)).toEqual(input);
+            return refused;
+        });
+        expect(await executor.execute(actionId, input, context)).toEqual({ ...refused, requestId: 'cli-service-invocation' });
         expect(requests).toEqual([expect.objectContaining({ method: `machine-a:${actionId === 'localServices.publicPreview.create'
             ? RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_CREATE : RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_REVOKE}`, params: input })]);
     });
@@ -253,7 +324,9 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
         const input = action ? LocalServiceActionRequestV1Schema.parse({ requestId: 'agent-client-effect', action,
             target: { kind: 'managed_service', managedServiceId: 'actual-instance', machineId: 'machine-a',
                 workspaceId: 'accepted', cwd: '/accepted/web' } })
-            : { machineId: 'machine-a', targetId: 'service-web', previewId: 'preview-a', exposureId: 'exposure-a' };
+            : actionId === 'localServices.publicPreview.copyUrl'
+                ? { machineId: 'machine-a', sessionId: 'session-a', previewId: 'preview-a', exposureId: 'exposure-a' }
+                : { machineId: 'machine-a', targetId: 'service-web', previewId: 'preview-a', exposureId: 'exposure-a' };
         expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
         expect(requests).toEqual([]);
         expect(get).not.toHaveBeenCalled();

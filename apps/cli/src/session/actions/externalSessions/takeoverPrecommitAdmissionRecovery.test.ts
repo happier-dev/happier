@@ -463,10 +463,7 @@ describe('external-session takeover precommit admission recovery', () => {
                   ownerId: 'takeover-composition-test',
                   request,
                   acquiredAtMs: clock(),
-                  renewedAtMs: clock(),
-                  expiresAtMs: clock() + 20_000,
                 },
-                renew: async () => true,
                 release: async () => {
                   releasedClaims.push(claimId);
                 },

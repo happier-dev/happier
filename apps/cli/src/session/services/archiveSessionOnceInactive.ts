@@ -4,8 +4,6 @@ import type { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId'
 
 import { isSessionActiveArchiveError, setSessionArchivedStateById } from './sessionArchivedStateById';
 
-const DEFAULT_ARCHIVE_TIMEOUT_MS = 10_000;
-
 export async function archiveSessionOnceInactive(params: Readonly<{
   token: string;
   sessionId: string;
@@ -15,7 +13,7 @@ export async function archiveSessionOnceInactive(params: Readonly<{
   resolveAuthorizationHeaders?: Parameters<typeof resolveSessionIdOrPrefix>[0]['resolveAuthorizationHeaders'];
 }>): Promise<Readonly<{ archivedAt: number | null }>> {
   params.signal?.throwIfAborted();
-  const deadlineMs = Date.now() + (params.timeoutMs ?? DEFAULT_ARCHIVE_TIMEOUT_MS);
+  const deadlineMs = params.timeoutMs === undefined ? null : Date.now() + params.timeoutMs;
   const events = openSessionEventSource(params);
   let inactiveRetryRevision: number | undefined;
   try {
@@ -35,7 +33,7 @@ export async function archiveSessionOnceInactive(params: Readonly<{
         if (!isSessionActiveArchiveError(error)) {
           throw error;
         }
-        if (Date.now() >= deadlineMs) {
+        if (deadlineMs !== null && Date.now() >= deadlineMs) {
           throw error;
         }
       }

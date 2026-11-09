@@ -29,8 +29,8 @@ describe('sessionControl.sessionSystemRecordsHttp', () => {
           address, content: { t: 'plain', v: canonical.content.v }, expectedRevision: null,
         } });
     await expect(open()).resolves.toEqual(canonical);
-    await expect(open()).rejects.toThrow();
-    await expect(open()).rejects.toThrow();
+    await expect(open()).rejects.toMatchObject({ code: 'plugin_session_record_invalid_response' });
+    await expect(open()).rejects.toMatchObject({ code: 'plugin_session_record_invalid_response' });
   });
 
   it('reads host V1 records at a captured Home without fabricating plugin authority', async () => {

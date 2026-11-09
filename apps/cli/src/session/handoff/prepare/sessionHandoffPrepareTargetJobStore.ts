@@ -15,7 +15,7 @@ import {
   tryAcquireSessionHandoffPrepareTargetJobLease,
 } from './sessionHandoffPrepareTargetJobLease';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
-import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
+import { resolvePrepareTargetJobPath, withPrepareTargetJobMutationLock } from './jobMutation';
 import { logger } from '@/ui/logger';
 
 const SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V1 = 1 as const;
@@ -254,6 +254,11 @@ export type SessionHandoffPrepareTargetResumeAcceptance =
 export type SessionHandoffPrepareTargetJobStore = Readonly<{
   write: (record: SessionHandoffPrepareTargetJobRecordInput) => Promise<void>;
   read: (jobId: string) => Promise<SessionHandoffPrepareTargetJobRecord | null>;
+  waitForChange: (input: Readonly<{
+    jobId: string;
+    observedStatus: SessionHandoffPrepareTargetJobRecord['status'];
+    signal: AbortSignal;
+  }>) => Promise<void>;
   findByHandoffId: (handoffId: string) => Promise<SessionHandoffPrepareTargetJobRecord | null>;
   list: (input?: Readonly<{ handoffId?: string }>) => Promise<readonly SessionHandoffPrepareTargetJobRecord[]>;
   update: (
@@ -281,27 +286,6 @@ export type SessionHandoffPrepareTargetJobStore = Readonly<{
     nowMs: number;
   }>) => Promise<SessionHandoffPrepareTargetResumeAcceptance>;
 }>;
-
-const PREPARE_TARGET_JOB_LOCK_TIMEOUT_MS = 5_000;
-const PREPARE_TARGET_JOB_LOCK_STALE_AFTER_MS = 30_000;
-
-async function withPrepareTargetJobMutationLock<T>(
-  jobPath: string,
-  mutation: () => Promise<T>,
-): Promise<T> {
-  return await withJsonOwnerFileLock({
-    lockPath: `${jobPath}.lock`,
-    timeoutMs: PREPARE_TARGET_JOB_LOCK_TIMEOUT_MS,
-    staleAfterMs: PREPARE_TARGET_JOB_LOCK_STALE_AFTER_MS,
-    errorCode: 'session_handoff_prepare_target_job_lock_timeout',
-  }, mutation);
-}
-
-function assertJobId(jobId: string): void {
-  if (!/^[A-Za-z0-9._-]+$/u.test(jobId)) {
-    throw new Error(`Invalid session handoff prepare-target job id: ${jobId}`);
-  }
-}
 
 function assertV1Identity(
   current: z.output<typeof SessionHandoffPrepareTargetJobRecordV1Schema>,
@@ -529,64 +513,62 @@ export async function recoverSessionHandoffPrepareTargetJobsAfterRestart(input: 
       jobId: job.jobId,
       ownerId: probeOwnerId,
       nowMs: input.nowMs,
-      ttlMs: 250,
     });
     if (!leaseAttempt.acquired) {
       return true;
     }
-    await releaseSessionHandoffPrepareTargetJobLease({
-      activeServerDir: input.activeServerDir,
-      jobId: job.jobId,
-      ownerId: probeOwnerId,
-    }).catch(() => undefined);
+    try {
+      if (!job.cancelRequestedAtMs) {
+        await store.hydrateInterrupted(job.jobId, input.nowMs);
+        return false;
+      }
 
-    if (!job.cancelRequestedAtMs) {
-      await store.hydrateInterrupted(job.jobId, input.nowMs);
-      return false;
-    }
+      await store.update(job.jobId, (current) => {
+        const { schemaVersion: _schemaVersion, ...rest } = current;
+        const previousProgress = rest.status.progress;
+        const nextProgress = previousProgress
+          ? {
+            ...previousProgress,
+            updatedAtMs: input.nowMs,
+            current: {
+              ...(previousProgress.current ?? {}),
+              phaseDetail: 'daemon_restart_missing_runner',
+            },
+          }
+          : previousProgress;
 
-    await store.update(job.jobId, (current) => {
-      const { schemaVersion: _schemaVersion, ...rest } = current;
-      const previousProgress = rest.status.progress;
-      const nextProgress = previousProgress
-        ? {
-          ...previousProgress,
-          updatedAtMs: input.nowMs,
-          current: {
-            ...(previousProgress.current ?? {}),
-            phaseDetail: 'daemon_restart_missing_runner',
-          },
+        const recoveryMessage = 'Daemon restarted while the handoff prepare-target job was in progress';
+
+        if (rest.cancelRequestedAtMs) {
+          return {
+            ...rest,
+            updatedAtMs: input.nowMs,
+            abortedAtMs: rest.abortedAtMs ?? input.nowMs,
+            status: {
+              ...rest.status,
+              status: 'aborted',
+              ...(nextProgress ? { progress: nextProgress } : {}),
+            },
+            lastErrorMessage: rest.lastErrorMessage ?? recoveryMessage,
+          };
         }
-        : previousProgress;
 
-      const recoveryMessage = 'Daemon restarted while the handoff prepare-target job was in progress';
-
-      if (rest.cancelRequestedAtMs) {
         return {
           ...rest,
           updatedAtMs: input.nowMs,
-          abortedAtMs: rest.abortedAtMs ?? input.nowMs,
           status: {
             ...rest.status,
-            status: 'aborted',
+            status: 'awaiting_recovery',
             ...(nextProgress ? { progress: nextProgress } : {}),
           },
           lastErrorMessage: rest.lastErrorMessage ?? recoveryMessage,
         };
-      }
-
-      return {
-        ...rest,
-        updatedAtMs: input.nowMs,
-        status: {
-          ...rest.status,
-          status: 'awaiting_recovery',
-          ...(nextProgress ? { progress: nextProgress } : {}),
-        },
-        lastErrorMessage: rest.lastErrorMessage ?? recoveryMessage,
-      };
-    });
-    return false;
+      });
+      return false;
+    } finally {
+      await releaseSessionHandoffPrepareTargetJobLease({ activeServerDir: input.activeServerDir,
+        jobId: job.jobId, ownerId: probeOwnerId, leaseId: leaseAttempt.lease.leaseId });
+    }
   }));
   return {
     deferredByLiveRunnerLease: deferredByLiveRunnerLease.some(Boolean),
@@ -719,13 +701,48 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
   activeServerDir: string;
 }>): SessionHandoffPrepareTargetJobStore {
   const jobsDirectory = join(input.activeServerDir, 'session-handoff', 'prepare-target-jobs');
+  const waitingForWrites = new Map<string, Set<(record: SessionHandoffPrepareTargetJobRecord) => void>>();
+
+  const publishRecord = async (jobPath: string, record: SessionHandoffPrepareTargetJobRecord): Promise<void> => {
+    await writeJsonAtomic(jobPath, record);
+    for (const notify of waitingForWrites.get(record.jobId) ?? []) notify(record);
+  };
 
   function resolveJobPath(jobId: string): string {
-    assertJobId(jobId);
-    return join(jobsDirectory, `${jobId}.json`);
+    return resolvePrepareTargetJobPath(input.activeServerDir, jobId);
   }
 
   return {
+    async waitForChange({ jobId, observedStatus, signal }) {
+      signal.throwIfAborted();
+      const jobPath = resolveJobPath(jobId);
+      return await new Promise<void>((resolve, reject) => {
+        const waiters = waitingForWrites.get(jobId) ?? new Set<(record: SessionHandoffPrepareTargetJobRecord) => void>();
+        let settled = false;
+        const finish = (error?: unknown) => {
+          if (settled) return;
+          settled = true;
+          waiters.delete(onWrite);
+          if (waiters.size === 0) waitingForWrites.delete(jobId);
+          signal.removeEventListener('abort', onAbort);
+          if (error === undefined) resolve();
+          else reject(error);
+        };
+        const onWrite = (record: SessionHandoffPrepareTargetJobRecord) => {
+          if (!isDeepStrictEqual(record.status, observedStatus)) finish();
+        };
+        const onAbort = () => finish(signal.reason);
+        waiters.add(onWrite);
+        waitingForWrites.set(jobId, waiters);
+        signal.addEventListener('abort', onAbort, { once: true });
+        // Subscribe before this observational read: an atomic write between the
+        // caller's snapshot and subscription must settle the same wait.
+        void readPrepareTargetJobFileUnlocked(jobPath, false).then(record => {
+          if (record) onWrite(record);
+          else finish();
+        }, finish);
+      });
+    },
     async write(record) {
       const jobPath = resolveJobPath(record.jobId);
       await withPrepareTargetJobMutationLock(jobPath, async () => {
@@ -741,7 +758,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
             updatedAtMs: Math.max(current.updatedAtMs, record.updatedAtMs),
           });
           assertV2Identity(current, next);
-          await writeJsonAtomic(jobPath, next);
+          await publishRecord(jobPath, next);
           return;
         }
         const parsed = SessionHandoffPrepareTargetJobRecordV1Schema.parse({
@@ -749,7 +766,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
           schemaVersion: SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V1,
         });
         if (current) assertV1Identity(current, parsed);
-        await writeJsonAtomic(jobPath, parsed);
+        await publishRecord(jobPath, parsed);
       });
     },
     async read(jobId) {
@@ -795,7 +812,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
             updatedAtMs: Math.max(current.updatedAtMs, nextInput.updatedAtMs),
           });
           assertV2Identity(current, next);
-          await writeJsonAtomic(jobPath, next);
+          await publishRecord(jobPath, next);
           return next;
         }
         const next = SessionHandoffPrepareTargetJobRecordV1Schema.parse({
@@ -803,7 +820,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
           schemaVersion: SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V1,
         });
         assertV1Identity(current, next);
-        await writeJsonAtomic(jobPath, next);
+        await publishRecord(jobPath, next);
         return next;
       });
     },
@@ -837,7 +854,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
           terminal: { status: 'open' },
           targetCleanup: { status: 'not_required' },
         });
-        await writeJsonAtomic(jobPath, promoted);
+        await publishRecord(jobPath, promoted);
         return promoted;
       });
     },
@@ -857,7 +874,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
           schemaVersion: SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V2,
         });
         assertPredecessorV2Transition(baseline, next);
-        await writeJsonAtomic(jobPath, next);
+        await publishRecord(jobPath, next);
         return next;
       });
     },
@@ -870,7 +887,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
         }
         if (current.schemaVersion === SESSION_HANDOFF_PREPARE_TARGET_JOB_SCHEMA_VERSION_V1) {
           const converted = toInterruptedLegacyTargetV2(current, nowMs);
-          await writeJsonAtomic(jobPath, converted);
+          await publishRecord(jobPath, converted);
           return converted;
         }
         if (current.prepareRecovery.status === 'awaiting_user_resume') {
@@ -910,7 +927,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
           },
         });
         assertV2Identity(current, next);
-        await writeJsonAtomic(jobPath, next);
+        await publishRecord(jobPath, next);
         return next;
       });
     },
@@ -990,7 +1007,7 @@ export function createSessionHandoffPrepareTargetJobStore(input: Readonly<{
           },
         });
         assertV2Identity(current, next);
-        await writeJsonAtomic(jobPath, next);
+        await publishRecord(jobPath, next);
         return {
           ok: true,
           disposition: rejoinsInterruptedAttempt ? 'replay' : 'accepted',

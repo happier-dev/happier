@@ -11,7 +11,6 @@ import { readProcessIdentityByPid } from '@/daemon/processIdentity';
 import {
     createExternalSessionOperationExclusion,
     inspectExternalSessionOperationOwnerProcess,
-    maintainExternalSessionOperationClaim,
     type ExternalSessionOperationRequest,
 } from './operationExclusion';
 
@@ -26,7 +25,7 @@ async function createOwner(ownerId: string, nowMs: () => number) {
             activeServerDir,
             ownerId,
             nowMs,
-            ttlMs: 10_000,
+
         }),
     };
 }
@@ -184,7 +183,7 @@ describe('external session operation exclusion', () => {
             activeServerDir,
             ownerId: 'daemon:two',
             nowMs: () => 2_100,
-            ttlMs: 10_000,
+
         });
         await expect(restartedOwner.acquire(takeoverRequest())).resolves.toMatchObject({
             status: 'converged',
@@ -246,7 +245,7 @@ describe('external session operation exclusion', () => {
             activeServerDir,
             ownerId: 'daemon:two',
             nowMs: () => 2_000,
-            ttlMs: 10_000,
+
         });
         await expect(rotated.acquire(takeoverRequest(), { accountSubject: 'account-b' }))
             .resolves.toMatchObject({
@@ -295,7 +294,7 @@ describe('external session operation exclusion', () => {
         const firstOwner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:first',
-            ttlMs: 10_000,
+
         });
         const first = await firstOwner.acquire(takeoverRequest());
         if (first.status !== 'acquired') throw new Error('expected first acquisition');
@@ -304,7 +303,7 @@ describe('external session operation exclusion', () => {
         const secondOwner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:second',
-            ttlMs: 10_000,
+
             watchClaimChanges,
         });
         const converged = await secondOwner.acquire(takeoverRequest());
@@ -325,13 +324,13 @@ describe('external session operation exclusion', () => {
         }
     });
 
-    it('cleans its one expiry timer, abort listener, and watcher when cancelled', async () => {
+    it('cleans its abort listener and watcher when cancelled', async () => {
         const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-external-operation-exclusion-'));
         createdDirectories.push(activeServerDir);
         const firstOwner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:first',
-            ttlMs: 10_000,
+
         });
         const first = await firstOwner.acquire(takeoverRequest());
         if (first.status !== 'acquired') throw new Error('expected first acquisition');
@@ -345,7 +344,7 @@ describe('external session operation exclusion', () => {
         const secondOwner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:second',
-            ttlMs: 10_000,
+
             watchClaimChanges: vi.fn(() => watcher) as unknown as
                 typeof import('node:fs/promises').watch,
         });
@@ -357,7 +356,6 @@ describe('external session operation exclusion', () => {
             input: Readonly<{ signal: AbortSignal }>,
         ) => Promise<unknown>;
         const controller = new AbortController();
-        const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
 
         const result = waitForRelease({ signal: controller.signal });
         await vi.waitFor(() => {
@@ -365,10 +363,8 @@ describe('external session operation exclusion', () => {
         });
         controller.abort();
         await expect(result).resolves.toEqual({ status: 'aborted' });
-        expect(clearTimeoutSpy).toHaveBeenCalled();
         expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
         expect(watcher.return).toHaveBeenCalledOnce();
-        clearTimeoutSpy.mockRestore();
         await first.claim.release();
     });
 
@@ -378,7 +374,7 @@ describe('external session operation exclusion', () => {
         const firstOwner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:first',
-            ttlMs: 10_000,
+
         });
         const first = await firstOwner.acquire(takeoverRequest());
         if (first.status !== 'acquired') throw new Error('expected first acquisition');
@@ -406,7 +402,7 @@ describe('external session operation exclusion', () => {
         const secondOwner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:second',
-            ttlMs: 10_000,
+
             watchClaimChanges: vi.fn(() => watcher) as unknown as
                 typeof import('node:fs/promises').watch,
         });
@@ -428,7 +424,7 @@ describe('external session operation exclusion', () => {
         const firstOwner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:first',
-            ttlMs: 10_000,
+
         });
         const first = await firstOwner.acquire(takeoverRequest());
         if (first.status !== 'acquired') throw new Error('expected first acquisition');
@@ -442,7 +438,7 @@ describe('external session operation exclusion', () => {
         const secondOwner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:second',
-            ttlMs: 10_000,
+
             watchClaimChanges: vi.fn(() => watcher) as unknown as
                 typeof import('node:fs/promises').watch,
         });
@@ -471,7 +467,7 @@ describe('external session operation exclusion', () => {
             ownerProcess: predecessorProcess,
             inspectOwnerProcess: async () => 'unknown',
             nowMs: () => 4_000,
-            ttlMs: 10_000,
+
         });
         const first = await predecessor.acquire(materializeRequest());
         expect(first.status).toBe('acquired');
@@ -487,7 +483,7 @@ describe('external session operation exclusion', () => {
             },
             inspectOwnerProcess,
             nowMs: () => 4_100,
-            ttlMs: 10_000,
+
         });
         const resumed = await replacement.acquire(materializeRequest());
 
@@ -520,7 +516,7 @@ describe('external session operation exclusion', () => {
                 ownerId: 'daemon:predecessor',
                 ownerProcess: predecessorProcess,
                 nowMs: () => 4_000,
-                ttlMs: 10_000,
+
             });
             await expect(predecessor.acquire(materializeRequest())).resolves.toMatchObject({
                 status: 'acquired',
@@ -536,7 +532,7 @@ describe('external session operation exclusion', () => {
                 },
                 inspectOwnerProcess,
                 nowMs: () => 4_100,
-                ttlMs: 10_000,
+
             });
 
             await expect(replacement.acquire(materializeRequest())).resolves.toMatchObject({
@@ -576,7 +572,8 @@ describe('external session operation exclusion', () => {
             'external_session_operation_repair_claim_conflict',
         );
 
-        nowMs = acquired.claim.record.expiresAtMs + 1;
+        nowMs += 60_001;
+        await acquired.claim.release();
         await expect(owner.inspectPassiveRepairClaim({
             sessionId: acquired.claim.record.request.sessionId,
             operationClaimId: acquired.claim.record.claimId,
@@ -640,7 +637,7 @@ describe('external session operation exclusion', () => {
         );
     });
 
-    it('bounds acquisition while a live passive repair keeps the claim barrier', async () => {
+    it('waits for the owning passive repair without a local acquisition cutoff', async () => {
         const activeServerDir = await mkdtemp(join(
             tmpdir(),
             'happier-operation-repair-barrier-deadline-',
@@ -649,7 +646,7 @@ describe('external session operation exclusion', () => {
         const owner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:repair-barrier-deadline',
-            claimMutationLockAcquisitionTimeoutMs: 25,
+
         });
         let signalRepairStarted!: () => void;
         const repairStarted = new Promise<void>((resolve) => {
@@ -691,13 +688,8 @@ describe('external session operation exclusion', () => {
             await acquisitionOutcome.result.claim.release();
         }
 
-        expect(settledBeforeRepairRelease).toBe(true);
-        expect(acquisitionOutcome).toMatchObject({
-            status: 'rejected',
-            error: new Error(
-                'external_session_operation_claim_lock_timeout',
-            ),
-        });
+        expect(settledBeforeRepairRelease).toBe(false);
+        expect(acquisitionOutcome).toMatchObject({ status: 'resolved', result: { status: 'acquired' } });
     });
 
     it('does not retry a barrier effect that throws the contention error code', async () => {
@@ -729,7 +721,7 @@ describe('external session operation exclusion', () => {
         const owner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:repair-barrier-cancellation',
-            claimMutationLockAcquisitionTimeoutMs: 10_000,
+
         });
         let signalRepairStarted!: () => void;
         const repairStarted = new Promise<void>((resolve) => {
@@ -800,22 +792,37 @@ describe('external session operation exclusion', () => {
         })).resolves.toBe('inactive');
     });
 
-    it('survives restart, rejects stale-owner release, and permits takeover after expiry', async () => {
+    it('keeps a live owner beyond the former expiry and reclaims only its stopped process', async () => {
         let nowMs = 5_000;
-        const { activeServerDir, owner } = await createOwner('daemon:one', () => nowMs);
+        let ownerStopped = false;
+        const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-external-operation-process-'));
+        createdDirectories.push(activeServerDir);
+        const owner = createExternalSessionOperationExclusion({
+            activeServerDir, ownerId: 'daemon:one', nowMs: () => nowMs,
+            ownerProcess: { pid: 4_242, processStartTimeMs: 190 },
+            inspectOwnerProcess: async () => 'verified_running',
+        });
         const first = await owner.acquire(handoffRequest());
         expect(first.status).toBe('acquired');
         if (first.status !== 'acquired') throw new Error('expected handoff acquisition');
+        // The prior local writer persisted wall-clock lease fields. They remain
+        // readable, but no longer override the process witness.
+        const claimDirectory = join(activeServerDir, 'external-session-operations', createHash('sha256').update('session-1', 'utf8').digest('hex'));
+        await writeFile(join(claimDirectory, 'claim.json'), JSON.stringify({ ...first.claim.record, renewedAtMs: 5_000, expiresAtMs: 65_000 }));
 
         const restartedOwner = createExternalSessionOperationExclusion({
             activeServerDir,
             ownerId: 'daemon:two',
             nowMs: () => nowMs,
-            ttlMs: 10_000,
+            ownerProcess: { pid: 4_243, processStartTimeMs: 200 },
+            inspectOwnerProcess: async () => ownerStopped ? 'verified_stopped' : 'verified_running',
         });
         await expect(restartedOwner.acquire(handoffRequest())).resolves.toMatchObject({ status: 'converged' });
 
-        nowMs = 15_001;
+        nowMs = 65_001;
+        await expect(restartedOwner.acquire(takeoverRequest())).resolves.toMatchObject({ status: 'conflict' });
+        await expect(restartedOwner.inspectPassiveRepairClaim({ sessionId: 'session-1', operationClaimId: first.claim.record.claimId })).resolves.toBe('active');
+        ownerStopped = true;
         const replacement = await restartedOwner.acquire(takeoverRequest());
         expect(replacement.status).toBe('acquired');
         await first.claim.release();
@@ -829,105 +836,4 @@ describe('external session operation exclusion', () => {
         await expect(owner.acquire(materializeRequest())).resolves.toMatchObject({ status: 'acquired' });
     });
 
-    it('renews only the exact acquired claim generation', async () => {
-        let nowMs = 20_000;
-        const { activeServerDir, owner } = await createOwner('daemon:one', () => nowMs);
-        const first = await owner.acquire(materializeRequest());
-        expect(first.status).toBe('acquired');
-        if (first.status !== 'acquired') throw new Error('expected acquisition');
-
-        nowMs = 25_000;
-        await expect(first.claim.renew()).resolves.toBe(true);
-
-        const otherOwner = createExternalSessionOperationExclusion({
-            activeServerDir,
-            ownerId: 'daemon:two',
-            nowMs: () => nowMs,
-            ttlMs: 10_000,
-        });
-        nowMs = 30_001;
-        await expect(otherOwner.acquire(takeoverRequest())).resolves.toMatchObject({ status: 'conflict' });
-
-        nowMs = 36_000;
-        const replacement = await otherOwner.acquire(takeoverRequest());
-        expect(replacement.status).toBe('acquired');
-        await expect(first.claim.renew()).resolves.toBe(false);
-    });
-
-    it.each([
-        ['lost ownership', async (): Promise<boolean> => false],
-        ['renewal error', async (): Promise<boolean> => {
-            throw new Error('claim storage unavailable');
-        }],
-    ] as const)(
-        'aborts the maintained claim with a typed loss when renewal reports %s',
-        async (_case, renew) => {
-            vi.useFakeTimers();
-            const maintenance = maintainExternalSessionOperationClaim({
-                claim: {
-                    renew: vi.fn(renew),
-                    release: vi.fn(async () => undefined),
-                    record: {
-                        schemaVersion: 2,
-                        claimId: 'claim-1',
-                        ownerId: 'owner-1',
-                        request: materializeRequest(),
-                        acquiredAtMs: 0,
-                        renewedAtMs: 0,
-                        expiresAtMs: 60_000,
-                    },
-                },
-                renewalIntervalMs: 100,
-            });
-            const guarded = maintenance.race(() =>
-                new Promise<'continued'>((resolve) => {
-                    setTimeout(() => resolve('continued'), 100);
-                }),
-            );
-            const guardedExpectation = expect(guarded).rejects.toMatchObject({
-                code: 'external_session_operation_claim_lost',
-            });
-
-            await vi.advanceTimersByTimeAsync(100);
-
-            await guardedExpectation;
-            expect(maintenance.signal.aborted).toBe(true);
-            expect(maintenance.signal.reason).toMatchObject({
-                code: 'external_session_operation_claim_lost',
-            });
-            maintenance.stop();
-        },
-    );
-
-    it('checks ownership before invoking a guarded side effect', async () => {
-        vi.useFakeTimers();
-        const effect = vi.fn(async () => 'continued' as const);
-        const maintenance = maintainExternalSessionOperationClaim({
-            claim: {
-                renew: vi.fn(async (): Promise<boolean> => false),
-                release: vi.fn(async () => undefined),
-                record: {
-                    schemaVersion: 2,
-                    claimId: 'claim-1',
-                    ownerId: 'owner-1',
-                    request: materializeRequest(),
-                    acquiredAtMs: 0,
-                    renewedAtMs: 0,
-                    expiresAtMs: 60_000,
-                },
-            },
-            renewalIntervalMs: 100,
-        });
-
-        await expect(maintenance.race(effect)).resolves.toBe('continued');
-        expect(effect).toHaveBeenCalledTimes(1);
-
-        await vi.advanceTimersByTimeAsync(100);
-
-        await expect(maintenance.race(effect)).rejects.toMatchObject({
-            code: 'external_session_operation_claim_lost',
-        });
-        expect(effect).toHaveBeenCalledTimes(1);
-        maintenance.stop();
-    });
 });

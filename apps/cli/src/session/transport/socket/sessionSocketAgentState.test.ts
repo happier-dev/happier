@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
+import type { AxiosResponse } from 'axios';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 type SocketHandler = (value: unknown) => void;
 
@@ -37,6 +39,195 @@ describe('waitForIdleViaSocket', () => {
     vi.resetModules();
     vi.clearAllMocks();
     vi.useRealTimers();
+  });
+
+  it('keeps an active Codex turn busy across assistant checkpoints until its terminal lifecycle event', async () => {
+    vi.useFakeTimers();
+    const socket = createSocketStub();
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocketConnection: () => ({ socket, transport: createSocketTransportAdapter({ ...socket, connected: false }) }),
+    }));
+
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+    const promise = waitForIdleViaSocket({
+      token: 'token',
+      sessionId: 'sess-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+      sessionEncryptionMode: 'plain',
+      timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 0, activeTaskInFlight: true, turnInFlight: true },
+      initialAgentStateCiphertextBase64: null,
+    });
+    let settled = false;
+    void promise.then(() => { settled = true; }, () => { settled = true; });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const emitMessage = (seq: number, value: unknown) => socket.emit('update', {
+      id: `u-${seq}`,
+      seq,
+      createdAt: seq,
+      body: {
+        t: 'new-message',
+        delivery: 'full',
+        sid: 'sess-1',
+        message: {
+          id: `m-${seq}`,
+          seq,
+          localId: null,
+          createdAt: seq,
+          updatedAt: seq,
+          content: { t: 'plain', v: value },
+        },
+      },
+    });
+    for (const [index, segmentState] of ['streaming', 'complete'].entries()) {
+      emitMessage(index + 1, {
+        role: 'agent',
+        content: {
+          type: 'acp',
+          provider: 'codex',
+          data: { type: 'message', message: 'Checking the next file.' },
+        },
+        meta: {
+          happierStreamSegmentV1: {
+            v: 1,
+            segmentKind: 'assistant',
+            segmentLocalId: 'segment-1',
+            segmentState,
+            startedAtMs: 1,
+            updatedAtMs: index + 1,
+          },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+    }
+
+    emitMessage(3, {
+      role: 'agent',
+      content: { type: 'acp', provider: 'codex', data: { type: 'task_complete', id: 'task-1' } },
+    });
+    await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true }));
+  });
+
+  it.each(['completed', null] as const)('retains queued input across an earlier ready with initial turn status %s', async (latestTurnStatus) => {
+    vi.useFakeTimers();
+    const socket = createSocketStub();
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocketConnection: () => ({ socket, transport: createSocketTransportAdapter({ ...socket, connected: false }) }),
+    }));
+    const { detectSessionTurnActivity, detectSessionTurnActivityFromProjection } = await import('@/session/query/detectSessionTurnInFlight');
+    const snapshot = { latestTurnStatus, pendingCount: 2, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0 };
+    const initialTurnActivity = await detectSessionTurnActivity({
+      token: 'token', sessionId: 'sess-1', encryptionMode: 'plain', encryptionKey: null, encryptionVariant: null,
+      sessionProjection: snapshot,
+    });
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+    const result = waitForIdleViaSocket({
+      token: 'token', sessionId: 'sess-1', ctx: null, sessionEncryptionMode: 'plain', timeoutMs: 1_000,
+      initialTurnActivity, initialAgentStateSummary: { pendingRequestsCount: 0 }, initialAgentStateCiphertextBase64: null,
+      preferProjectionUpdates: detectSessionTurnActivityFromProjection(snapshot) !== null,
+    });
+    let settled = false;
+    void result.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    socket.emit('update', {
+      id: 'partial-queue-retirement', seq: 1, createdAt: Date.now(),
+      body: { t: 'pending-changed', sid: 'sess-1', pendingCount: 1, pendingVersion: 1 },
+    });
+    socket.emit('update', {
+      id: 'previous-ready', seq: 2, createdAt: Date.now(),
+      body: {
+        t: 'new-message', delivery: 'full', sid: 'sess-1',
+        message: {
+          id: 'previous-ready', seq: 2, localId: null, createdAt: 2, updatedAt: 2,
+          content: { t: 'plain', v: { role: 'agent', content: { type: 'event', data: { type: 'ready' } } } },
+        },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    const project = (status: 'in_progress' | 'completed', seq: number) => socket.emit('update', {
+      id: `projection-${seq}`, seq, createdAt: Date.now(),
+      body: {
+        t: 'update-session', id: 'sess-1', latestTurnStatus: status, pendingCount: 0,
+        pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+      },
+    });
+    project('in_progress', 3);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+    project('completed', 4);
+    await expect(result).resolves.toMatchObject({ idle: true });
+  });
+
+  it.each(['idle-confirmation', 'task-started'] as const)('does not let an older reconnect query erase a newer %s observation', async (kind) => {
+    vi.useFakeTimers();
+    const socket = createSocketStub();
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocketConnection: () => ({ socket, transport: createSocketTransportAdapter({ ...socket, connected: false }) }),
+    }));
+    vi.doUnmock('@/session/transport/http/sessionsHttp');
+    const axios = (await import('axios')).default;
+    const response = (data: unknown): AxiosResponse => ({
+      status: 200, statusText: 'OK', headers: {}, config: { headers: new axios.AxiosHeaders() }, data,
+    });
+    let releaseOlderRead: (value: AxiosResponse) => void = () => undefined;
+    let messages: unknown[] = [{
+      id: 'start', seq: 1, localId: null, createdAt: 1, updatedAt: 1,
+      content: { t: 'plain', v: {
+        role: 'agent', content: { type: 'acp', agentId: 'codex', data: { type: 'task_started', id: 'task-1' } },
+      } },
+    }];
+    const httpRead = vi.spyOn(axios, 'get')
+      .mockImplementationOnce(() => new Promise<AxiosResponse>((resolve) => { releaseOlderRead = resolve; }))
+      .mockImplementation(async (url) => response(url.includes('/messages') ? { hasMore: false, messages } : { session: createSessionRecordFixture({
+        id: 'sess-1', encryptionMode: 'plain', metadata: '{}', agentState: JSON.stringify({ requests: {} }),
+        latestTurnStatus: null, pendingCount: 0, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+      }) }));
+    const { detectSessionTurnActivity } = await import('@/session/query/detectSessionTurnInFlight');
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+    const activities: unknown[] = [];
+    const result = waitForIdleViaSocket({
+      token: 'token', sessionId: 'sess-1', ctx: null, sessionEncryptionMode: 'plain', timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 0, activeTaskInFlight: false, turnInFlight: false },
+      initialAgentStateSummary: { pendingRequestsCount: 0 }, initialAgentStateCiphertextBase64: null,
+      recheckTurnActivity: async () => {
+        const activity = await detectSessionTurnActivity({
+          token: 'token', sessionId: 'sess-1', encryptionMode: 'plain', encryptionKey: null, encryptionVariant: null,
+        });
+        activities.push(activity);
+        return activity;
+      },
+    });
+    let settled = false;
+    void result.then(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    socket.emit('connect', undefined);
+    if (kind === 'task-started') {
+      socket.emit('update', {
+        id: 'task-started', seq: 1, createdAt: Date.now(),
+        body: { t: 'new-message', delivery: 'full', sid: 'sess-1', message: messages[0] },
+      });
+    }
+    await vi.advanceTimersByTimeAsync(250);
+    if (kind === 'idle-confirmation') {
+      expect(activities).toContainEqual({ pendingUserTurns: 0, activeTaskInFlight: true, turnInFlight: true });
+    }
+    releaseOlderRead(response({ hasMore: false, messages: [] }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(false);
+
+    messages = [];
+    socket.emit('update', {
+      id: 'terminal', seq: 2, createdAt: Date.now(),
+      body: {
+        t: 'update-session', id: 'sess-1', latestTurnStatus: 'completed', pendingCount: 0,
+        pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+      },
+    });
+    await expect(result).resolves.toMatchObject({ idle: true });
+    httpRead.mockRestore();
   });
 
   it('cancels a busy idle observation and retires its deadline', async () => {

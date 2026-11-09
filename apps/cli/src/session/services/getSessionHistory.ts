@@ -35,7 +35,7 @@ export async function readRawSessionHistoryRows(params: Readonly<{
     mode: 'events',
     includeRaw: true,
     includeStructuredPayload: params.includeStructuredPayload === true,
-    maxPayloadChars: 32768,
+    maxPayloadChars: null,
   });
 
   return page.items.map((item) => ({

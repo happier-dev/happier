@@ -467,12 +467,14 @@ describe('exact-machine workflow materialization effects', () => {
         throw new Error('unexpected_machine_method');
       },
     });
-    const context = await resolve({ machineId: 'run-machine', directory: '/repo', roleSelection: {
-      defaultEngine: { agentTargetKey: 'agent:native.agent/agent' },
-    } });
+    const context = await resolve({ machineId: 'run-machine', directory: '/repo', roleSelection: async () => ({
+      defaultEngine: { agentTargetKey: 'agent:native.agent/agent', modelId: 'caller-model' },
+    }) });
     // Catalog effects occur in the materializer's availability phase, after policy.
-    const secondOpinion = resolveRoleSelectionV1({ ...context.roleSelection, roleId: 'second_opinion' });
+    const ambient = await context.effects.readRoleSelection?.();
+    const secondOpinion = resolveRoleSelectionV1({ ...ambient, roleId: 'second_opinion' });
     expect(secondOpinion).toMatchObject({ ok: true, selection: { engine: { agentTargetKey: 'agent:test.agent/agent' } } });
+    if (secondOpinion.ok) expect(secondOpinion.selection.engine?.modelId).toBeUndefined();
     const leaf = { blockId: 'work', selection: { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'test.agent', localId: 'agent' } } } };
     await expect(context.effects.resolveTargetAvailability({ ...leaf, executionTarget: { kind: 'session' } }, { sessionIds: [] })).resolves.toBe(true);
     expect(await context.effects.resolveTargetAvailability({ ...leaf, executionTarget: { kind: 'detached_run' } }, { sessionIds: [] }))
@@ -549,9 +551,10 @@ describe('exact-machine workflow materialization effects', () => {
         if (failure === 'reader_aborted') throw aborted;
         return { status: 'unavailable', reason: 'cancelled' };
       });
-      await expect(host({ machineId: 'run-machine', directory: '/repo', signal: controller.signal,
+      const context = await host({ machineId: 'run-machine', directory: '/repo', signal: controller.signal,
         roleSelection: { defaultEngine: { agentTargetKey: 'agent:test.agent/agent' } },
-      })).rejects.toBe(failure === 'source_retired' ? retired : aborted);
+      });
+      await expect(context.effects.readRoleSelection?.()).rejects.toBe(failure === 'source_retired' ? retired : aborted);
     });
 
   it('fails unavailable machine observations closed at the leaf boundary', async () => {

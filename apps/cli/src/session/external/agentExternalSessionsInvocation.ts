@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 
 import { AgentExternalSessionTranscriptRawRecordSchema, ExternalSessionUserProjectionSchema } from '@happier-dev/protocol/sessions/messages/agentExternalSessionTranscriptRawRecord';
-import { ExternalSessionCandidateThreadV1Schema, ExternalSessionCandidateMatchV1Schema, ExternalSessionsContentCoverageSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { ExternalSessionCandidateThreadV1Schema, ExternalSessionCandidateMatchV1Schema, ExternalSessionsContentCoverageSchema, MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { ExternalSessionToolResultMediaReferenceV1Schema, ExternalSessionTranscriptItemIdV1Schema, ExternalSessionTerminalSourceObservationV1Schema, ExternalSessionTranscriptSourceTimestampV1Schema } from '@happier-dev/protocol/sessions/external/sourceTranscriptItemV1';
 import { SidechainIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
@@ -55,7 +55,6 @@ import {
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 const MAX_ID_CODE_UNITS = 2_000;
-const MAX_TITLE_CODE_UNITS = 10_000;
 const MAX_SEARCH_CODE_UNITS = 2_000;
 const MAX_FAILURE_MESSAGE_CODE_UNITS = 2_000;
 const MAX_READ_AFTER_BOUNDARY_CODE_UNITS = 2_000;
@@ -70,7 +69,7 @@ export const EXTERNAL_SESSIONS_INVOCATION_POLICY = Object.freeze({
     readAfterTranscript: Object.freeze({ maxItems: 200, maxSerializedBytes: 524_288 }),
     sourceKindMaxCodeUnits: MAX_EXTERNAL_SESSIONS_SOURCE_KIND_CODE_UNITS,
     idMaxCodeUnits: MAX_ID_CODE_UNITS,
-    titleMaxCodeUnits: MAX_TITLE_CODE_UNITS,
+    titleMaxCodeUnits: MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS,
     searchMaxCodeUnits: MAX_SEARCH_CODE_UNITS,
     failureMessageMaxCodeUnits: MAX_FAILURE_MESSAGE_CODE_UNITS,
     sourceMaxSerializedBytes: MAX_PLUGIN_AGENT_EXTERNAL_SESSION_LINK_DATA_BYTES,
@@ -233,17 +232,8 @@ export async function bindAgentExternalSessionsManagedEndpointRead(input: Readon
     } catch {
         return unavailable;
     }
-    if (
-        !input.isCurrent()
-        || input.retirementSignal.aborted
-        || input.signal.aborted
-    ) return unavailable;
+    if (input.signal.aborted) return unavailable;
     return Object.freeze(async (request) => {
-        if (!input.isCurrent() || input.retirementSignal.aborted) {
-            throw new Error(
-                'Agent External Sessions managed endpoint read belongs to a retired generation',
-            );
-        }
         if (input.signal.aborted) throw input.signal.reason;
         const requestHeaders = serializeManagedServiceEndpointReadRequestHeaders(
             request.headers,
@@ -254,19 +244,8 @@ export async function bindAgentExternalSessionsManagedEndpointRead(input: Readon
                 ...request,
                 headers: requestHeaders,
             });
-        if (!input.isCurrent() || input.retirementSignal.aborted) {
-            throw new Error(
-                'Agent External Sessions managed endpoint read belongs to a retired generation',
-            );
-        }
         if (input.signal.aborted) throw input.signal.reason;
         const response = await exactRead(admittedRequest);
-        if (!input.isCurrent() || input.retirementSignal.aborted) {
-            await response.body?.cancel().catch(() => undefined);
-            throw new Error(
-                'Agent External Sessions managed endpoint read belongs to a retired generation',
-            );
-        }
         if (input.signal.aborted) {
             await response.body?.cancel().catch(() => undefined);
             throw input.signal.reason;
@@ -443,7 +422,7 @@ function parseCandidate(value: unknown): AgentExternalSessionCandidate | null {
     const updatedAtMs = parseTimestamp(record.updatedAtMs);
     const title = record.title === undefined
         ? undefined
-        : parseBoundedString(record.title, MAX_TITLE_CODE_UNITS);
+        : parseBoundedString(record.title, MAX_EXTERNAL_SESSION_CANDIDATE_TITLE_CODE_UNITS);
     const createdAtMs = record.createdAtMs === undefined ? undefined : parseTimestamp(record.createdAtMs);
     const cwd = record.cwd === undefined ? undefined
         : typeof record.cwd === 'string' && record.cwd.trim() ? record.cwd : null;
@@ -1010,7 +989,8 @@ export function armExternalSessionsDeadline(
 /**
  * Runs one leaf operation inside the canonical External Sessions admission
  * boundary. The caller owns any deadline; this owner composes cancellation,
- * retirement, and timer cleanup without adding a subordinate cutoff.
+ * and timer cleanup without adding a subordinate cutoff. Source currentness is
+ * decided once at admission; an admitted finite operation keeps its codec.
  */
 export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly<{
     signal: AbortSignal;
@@ -1031,24 +1011,20 @@ export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly
     if (deadlineAtMs !== undefined && deadlineAtMs <= nowMs) return Object.freeze({ status: 'timeout' });
 
     const operationController = new AbortController();
-    let terminal: 'retired' | 'cancelled' | 'timeout' | null = null;
+    let terminal: 'cancelled' | 'timeout' | null = null;
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
         resolveTerminal = resolve;
     });
-    const finish = (reason: 'retired' | 'cancelled' | 'timeout'): void => {
+    const finish = (reason: 'cancelled' | 'timeout'): void => {
         if (terminal !== null) return;
         terminal = reason;
         operationController.abort(reason);
         resolveTerminal();
     };
-    const retire = () => finish('retired');
     const cancel = () => finish(callerCancellation());
-    params.retirementSignal.addEventListener('abort', retire, { once: true });
     params.signal.addEventListener('abort', cancel, { once: true });
-    if (!params.isCurrent() || params.retirementSignal.aborted) {
-        finish('retired');
-    } else if (params.signal.aborted) {
+    if (params.signal.aborted) {
         finish(callerCancellation());
     }
     const cancelDeadline = deadlineAtMs === undefined ? undefined : armExternalSessionsDeadline(deadlineAtMs, () => finish('timeout'));
@@ -1068,9 +1044,6 @@ export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly
             settled,
             terminalPromise.then(() => ({ status: 'terminal' as const })),
         ]);
-        if (!params.isCurrent() || params.retirementSignal.aborted || terminal === 'retired') {
-            return Object.freeze({ status: 'retired' });
-        }
         if (params.signal.aborted || terminal === 'cancelled') {
             return Object.freeze({ status: callerCancellation() });
         }
@@ -1086,7 +1059,6 @@ export async function invokeBoundedExternalSessionsOperation<T>(params: Readonly
             operationController.abort(new Error('Agent External Sessions invocation settled'));
         }
         cancelDeadline?.();
-        params.retirementSignal.removeEventListener('abort', retire);
         params.signal.removeEventListener('abort', cancel);
     }
 }
@@ -1171,15 +1143,11 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
      */
     createInvocationExec(signal: AbortSignal): Promise<ExecService>;
     createTranscriptMediaService?(signal: AbortSignal): Pick<SessionMediaService, 'publishToolResultMedia'> | null;
+
 }>): BoundedAgentExternalSessionsContribution {
     const invocationLogger: NonNullable<AgentExternalSessionsInvocation['logger']> = Object.freeze({
         debug: (message, fields) => logger.debug(message, fields),
     });
-    const terminalBeforeAdmission = (signal: AbortSignal): AgentExternalSessionsResult<never> | null => {
-        if (!params.isCurrent() || params.retirementSignal.aborted) return unavailable();
-        if (signal.aborted) return getAgentExternalSessionsInvocationFailure({ signal })?.code === 'timeout' ? timeout() : cancelled();
-        return null;
-    };
     const bindManagedEndpointRead = async (
         source: AgentExternalSessionSource,
         signal: AbortSignal,
@@ -1192,27 +1160,21 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             retirementSignal: params.retirementSignal,
             host: params.managedEndpointRead,
         });
-    const assertOperationAdmissible = (signal: AbortSignal): void => {
-        if (!params.isCurrent() || params.retirementSignal.aborted) {
-            throw new Error('Agent External Sessions invocation belongs to a retired generation');
-        }
-        if (signal.aborted) throw signal.reason;
-    };
     const bindInvocationContext = async (
         source: AgentExternalSessionSource,
         signal: AbortSignal,
         maxSerializedBytes: number | undefined,
     ) => {
         const managedEndpointRead = await bindManagedEndpointRead(source, signal);
-        assertOperationAdmissible(signal);
+        signal.throwIfAborted();
         const exec = await params.createInvocationExec(signal);
-        assertOperationAdmissible(signal);
+        signal.throwIfAborted();
         const ripgrep: AgentExternalSessionsRipgrep = Object.freeze({
             async run(request) {
                 const operationSignal = request.signal
                     ? AbortSignal.any([signal, request.signal])
                     : signal;
-                assertOperationAdmissible(operationSignal);
+                operationSignal.throwIfAborted();
                 // An empty source file set must not turn into a cwd-wide scan.
                 if (request.paths.length === 0) return { exitCode: 1, stdout: '', stderr: '' };
                 const result = await runPackagedRipgrep([...request.args], {
@@ -1222,7 +1184,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                     maxStderrBytes: maxSerializedBytes,
                     terminateOnStdoutLimit: true,
                 });
-                assertOperationAdmissible(operationSignal);
+                operationSignal.throwIfAborted();
                 return Object.freeze(result);
             },
         });
@@ -1266,15 +1228,13 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
         },
         supportsAccounting: typeof params.contribution.readAccounting === 'function',
         async readAccounting(request) {
-            const terminal = terminalBeforeAdmission(request.signal);
-            if (terminal) return terminal;
             const operation = params.contribution.readAccounting;
             if (!operation) return Object.freeze({ ok: false as const, code: 'unsupported' as const });
             const parsedSource = parseSource(request.source);
             const maxSerializedBytes = request.maxSerializedBytes === undefined ? undefined : readMaxSerializedBytes(request.maxSerializedBytes);
             // Accounting cursors are durable source frontiers, rather than the
-            // generation-qualified transcript pagination cursors. Retirement
-            // fences the call; restarting the daemon preserves this frontier.
+            // generation-qualified transcript pagination cursors. Currentness
+            // gates admission; restarting the daemon preserves this frontier.
             if (!parsedSource || maxSerializedBytes === null || (request.cursor !== undefined && (typeof request.cursor !== 'string' || request.cursor.length === 0))) return invalidRequest();
             const changes = request.changedNativeSessionIds === undefined ? undefined
                 : AgentExternalSessionAccountingChangedNativeSessionIdsSchema.safeParse(request.changedNativeSessionIds);
@@ -1300,8 +1260,6 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             });
         },
         async resolveSource(request) {
-            const terminal = terminalBeforeAdmission(request.signal);
-            if (terminal) return terminal;
             const parsedSource = parseSource(request.source);
             const maxSerializedBytes = request.maxSerializedBytes === undefined ? undefined : readMaxSerializedBytes(request.maxSerializedBytes);
             if (!parsedSource || maxSerializedBytes === null
@@ -1330,8 +1288,6 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             });
         },
         async listCandidates(request) {
-            const terminal = terminalBeforeAdmission(request.signal);
-            if (terminal) return terminal;
             const parsedSource = parseSource(request.source);
             const maxItems = readMaxItems(request.maxItems);
             const maxSerializedBytes = readMaxSerializedBytes(request.maxSerializedBytes);
@@ -1393,8 +1349,6 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                                 readCandidateIndexState: (candidate) => {
                                     if (
                                         signal.aborted
-                                        || params.retirementSignal.aborted
-                                        || !params.isCurrent()
                                     ) return undefined;
                                     return request.readCandidateIndexState?.(candidate);
                                 },
@@ -1410,8 +1364,6 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
         },
         supportsCandidateHydration,
         async hydrateCandidates(request) {
-            const terminal = terminalBeforeAdmission(request.signal);
-            if (terminal) return terminal;
             if (!supportsCandidateHydration || !hydrateCandidates) {
                 return Object.freeze({ ok: false as const, code: 'unsupported' as const });
             }
@@ -1446,8 +1398,6 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             });
         },
         async resolveLinkIdentity(request) {
-            const terminal = terminalBeforeAdmission(request.signal);
-            if (terminal) return terminal;
             const parsedSource = parseSource(request.source);
             const remoteSessionId = parseBoundedString(request.remoteSessionId, MAX_ID_CODE_UNITS);
             const linkData = request.linkData === undefined ? undefined : parseLinkData(request.linkData);
@@ -1478,8 +1428,6 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             });
         },
         async resolveLinkedIdentity(request) {
-            const terminal = terminalBeforeAdmission(request.signal);
-            if (terminal) return terminal;
             const parsedSource = parseSource(request.source);
             const remoteSessionId = parseBoundedString(request.remoteSessionId, MAX_ID_CODE_UNITS);
             const linkData = parseLinkData(request.linkData);
@@ -1510,11 +1458,10 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             });
         },
         async pageTranscript(request) {
-            const terminal = terminalBeforeAdmission(request.signal);
-            if (terminal) return terminal;
             if (request.projection !== undefined && request.projection !== 'terminal') return invalidRequest();
             const parsedSource = parseSource(request.source);
             const remoteSessionId = parseBoundedString(request.remoteSessionId, MAX_ID_CODE_UNITS);
+            const sourceItemId = request.sourceItemId === undefined ? undefined : parseTranscriptItemId(request.sourceItemId);
             const maxItems = readMaxItems(request.maxItems);
             const maxSerializedBytes = readMaxSerializedBytes(request.maxSerializedBytes);
             const scope = parsedSource && remoteSessionId && maxSerializedBytes !== null
@@ -1526,6 +1473,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             if (
                 !parsedSource
                 || !remoteSessionId
+                || sourceItemId === null
                 || maxItems === null
                 || maxSerializedBytes === null
                 || (request.direction !== 'older' && request.direction !== 'newer')
@@ -1552,6 +1500,7 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
                         ...(request.observation ? { observation: request.observation } : {}),
                         source: parsedSource,
                         remoteSessionId,
+                        ...(sourceItemId === undefined ? {} : { sourceItemId }),
                         direction: request.direction,
                         signal,
                         deadlineAtMs,
@@ -1565,8 +1514,6 @@ export function createBoundedAgentExternalSessionsContribution(params: Readonly<
             });
         },
         async readAfterTranscript(request) {
-            const terminal = terminalBeforeAdmission(request.signal);
-            if (terminal) return terminal;
             if (request.projection !== undefined && request.projection !== 'terminal') return invalidRequest();
             const parsedSource = parseSource(request.source);
             const remoteSessionId = parseBoundedString(request.remoteSessionId, MAX_ID_CODE_UNITS);

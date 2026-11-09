@@ -31,6 +31,8 @@ it.each([
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, inventoryFailure: 'machine_target_not_current' },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, inventoryFailure: 'machine_agent_inventory_unavailable' },
   { role: 'use', installed: false, outdated: false, acquireAllowed: false, refusal: 'agent_cli_missing' },
+  { role: 'manage', installed: false, outdated: false, acquireAllowed: true, refusal: null, actionFailure: 'acquire' },
+  { role: 'manage', installed: false, outdated: false, acquireAllowed: true, refusal: null, actionFailure: 'status' },
   { role: 'use', installed: true, outdated: true, acquireAllowed: false, refusal: null },
   { role: 'manage', installed: false, outdated: false, acquireAllowed: true, refusal: null },
   { role: 'manage', installed: true, outdated: true, acquireAllowed: true, refusal: null },
@@ -50,6 +52,7 @@ it.each([
   const metadataProbeForbidden = 'metadataProbeForbidden' in testCase && testCase.metadataProbeForbidden;
   const capabilityUnknown = 'capabilityUnknown' in testCase && testCase.capabilityUnknown;
   const inventoryFailure = 'inventoryFailure' in testCase ? testCase.inventoryFailure : null;
+  const actionFailure = 'actionFailure' in testCase ? testCase.actionFailure : null;
   let hostExecutablePath: string | undefined;
   let metadataProbeLog: string | undefined;
   if (hostPath) {
@@ -97,6 +100,10 @@ it.each([
     const method = raw.method.slice(raw.method.indexOf(':') + 1);
     if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START || method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) {
       acquisitionRequests.push(method);
+    }
+    if (actionFailure === 'acquire' && method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START
+      || actionFailure === 'status' && method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) {
+      return { ok: false, errorCode: 'machine_target_not_current', error: 'child_not_derived' };
     }
     // Socket.IO is the genuine Home boundary. Real Home Use/Manage admission
     // is independently exercised in sessionAgentReadiness.sqlite.integration.spec.ts;
@@ -222,6 +229,12 @@ it.each([
     expect(result).toMatchObject({ ok: false, errorCode: inventoryFailure });
     expect(events).toEqual(['inventory']);
     expect(acquisitionRequests).toEqual([]);
+  } else if (actionFailure || !acquireAllowed && !installed) {
+    expect(result).toMatchObject({ ok: false,
+      errorCode: actionFailure ? 'machine_target_not_current' : RPC_ERROR_CODES.FORBIDDEN });
+    expect(events).not.toContain('birth');
+    expect(events).not.toContain('spawn');
+    expect(acquisitionRequests).toHaveLength(actionFailure === 'status' ? 2 : 1);
   } else if (refusal) {
     expect(result).toMatchObject({ ok: true, result: { type: 'error', code: refusal, agentId: 'codex', retryable: false } });
     expect(events).toEqual(terminalFailed ? ['inventory', outdated ? 'update' : 'install', 'terminal'] : ['inventory']);

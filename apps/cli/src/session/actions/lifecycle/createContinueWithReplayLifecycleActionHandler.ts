@@ -56,6 +56,7 @@ export function createContinueWithReplayLifecycleActionHandler(params: Readonly<
                 permissionMode: parsed.data.permissionMode,
                 permissionModeUpdatedAt: parsed.data.permissionModeUpdatedAt,
                 modelSelection: parsed.data.modelSelection,
+                approvalProfileId: parsed.data.approvalProfileId,
                 spawnNonce: normalizeSpawnNonce(parsedData.spawnNonce),
                 replay: parsed.data.replay,
             },

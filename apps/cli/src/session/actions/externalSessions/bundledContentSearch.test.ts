@@ -13,6 +13,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerMachineExternalSessionsRpcHandlers } from '@/api/machine/rpcHandlers.externalSessions';
 
 const fixture = vi.hoisted(() => ({ activeServerDir: '', slowPath: '', nowMs: 0,
+    slowReads: [] as Array<{ startedAtMs: number; completedAtMs: number }>,
     duringOpen: null as ((path: unknown) => Promise<void>) | null,
     cancelDuringAnnotation: null as (() => void) | null, annotationSignalAborted: false }));
 vi.mock('@/configuration', async (importOriginal) => {
@@ -28,10 +29,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         if (args[0] === fixture.slowPath) {
             const read = handle.read.bind(handle);
             handle.read = (async (...readArgs: Parameters<typeof read>) => {
+                const startedAtMs = fixture.nowMs;
                 const result = await read(...readArgs);
                 // Slow source throughput: small anchor windows do not cost a
                 // whole transcript chunk. Descriptor reuse keeps this rate.
                 fixture.nowMs += Math.ceil(3_000 * result.bytesRead / (64 * 1024));
+                fixture.slowReads.push({ startedAtMs, completedAtMs: fixture.nowMs });
                 return result;
             }) as typeof handle.read;
         }
@@ -98,7 +101,7 @@ describe('bundled conversation content search', () => {
             const { loadBundledPluginLocatorResult } = await import('@/plugins/projection/registry/builtIn/locators');
             const { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } = await import('@/plugins/projection/registry/sources/generatedBundledPluginManifests');
             const { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } = await import('@/plugins/projection/registry/sources/generatedBundledPlugins');
-            const { projectLoadedPluginContributes } = await import('@/plugins/projection/registry/resolvePluginContributions');
+            const { projectLoadedPluginContributes } = await import('@/plugins/projection/registry/fullProjection');
             const { projectBuiltInAgents } = await import('@/plugins/projection/registry/builtIn/agents');
             const projected = projectLoadedPluginContributes({ provenance: 'first_party', loadResult: {
                 loadedPlugins: loadBundledPluginLocatorResult(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.map(locator =>
@@ -203,8 +206,8 @@ describe('bundled conversation content search', () => {
             fixture.slowPath = join(configDir, 'projects', 'a-slow', 'large.jsonl');
             fixture.nowMs = Date.now();
             const clock = vi.spyOn(Date, 'now').mockImplementation(() => fixture.nowMs);
-            // A dropped receiving deadline must fail on response time even
-            // if another native budget still yields a partial page.
+            // A dropped receiving deadline must fail on native read admission
+            // even if another native budget still yields a partial page.
             const receivingBudgetMs = 10_000;
             const input = {
                 machineId: 'fixture-machine', agentId: 'claude', source: { kind: 'claudeConfig' },
@@ -221,13 +224,19 @@ describe('bundled conversation content search', () => {
                 message: { role: 'user', content: 'bundled body-only needle' } }) + '\n');
             await utimes(olderPath, new Date('2025-01-01'), new Date('2025-01-01'));
             const firstDeadlineAtMs = fixture.nowMs + receivingBudgetMs;
+            fixture.slowReads = [];
             const first = ExternalSessionsCandidatesListResponseSchema.parse(await rpc.handleRequest({
                 method: 'fixture-machine:daemon.externalSessions.candidates.list', params: input, timeoutMs: null,
             }));
             expect(first).toMatchObject({ ok: true, contentCoverage: 'partial', candidates: [
                 { remoteSessionId: 'session', match: { messageIndex: 1 } },
             ], nextCursor: expect.any(String) });
-            expect(fixture.nowMs).toBeLessThan(firstDeadlineAtMs);
+            // NI27 removed duration prediction: a native read admitted before
+            // the cooperative deadline can finish after it. The receiving budget
+            // must still prevent any subsequent read, preserving hits and cursor.
+            expect(fixture.slowReads.length).toBeGreaterThan(0);
+            expect(fixture.slowReads.every(read => read.startedAtMs < firstDeadlineAtMs)).toBe(true);
+            expect(fixture.slowReads.at(-1)!.completedAtMs).toBeGreaterThanOrEqual(firstDeadlineAtMs);
             if (!first.ok) throw new Error('Expected a partial search page');
             // Visited/unrelated appends cannot reset the main frontier. An
             // unvisited file crossing it is reached once in the final T1 pass.

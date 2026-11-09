@@ -25,6 +25,9 @@ import { createLocalTestMetadata, createTestMetadata } from '@/testkit/backends/
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { createCapabilitiesService } from '@/capabilities/service';
+import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
+import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
 
 const {
   callMachineRpc,
@@ -42,7 +45,8 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
   callSessionRpc,
 }));
 
-vi.mock('@/session/transport/rpc/machineRpc', () => ({
+vi.mock('@/session/transport/rpc/machineRpc', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>(),
   callMachineRpc,
   callExactMachineRpc: callMachineRpc,
   readMachineRpcRequestDisposition,
@@ -60,6 +64,15 @@ import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtim
 import { createCliActionDeps, type MachineActionDirectTargetTransport } from './createCliActionDeps';
 
 const executionMaterialization = createPluginActionCallerMaterializationFixture('acme.execution');
+
+function runProtocolDescribeResponse(overrides?: Readonly<{ version?: number; features?: Readonly<Record<string, boolean>> }> | null) {
+  const response = createCapabilitiesService({ capabilities: [executionRunsCapability],
+    checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+    buildContext: async () => { throw new Error('Protocol description must not discover native capabilities'); } }).describe();
+  if (overrides === undefined) return response;
+  return { ...response, capabilities: response.capabilities.map(descriptor => ({ ...descriptor,
+    protocol: overrides === null ? undefined : descriptor.protocol && { ...descriptor.protocol, ...overrides } })) };
+}
 
 function serveSessionRecord(row: Readonly<{ id: string; active: boolean; machineId?: string; path?: string; local?: boolean }>) {
   fetchSessionById.mockImplementation(async () => createSessionRecordFixture({
@@ -110,6 +123,68 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
 describe('detached exact Run output observation transport', () => {
+  it('reads V2 support from safe describe without effectful detection and preserves caller authority', async () => {
+    const service = createCapabilitiesService({ capabilities: [executionRunsCapability],
+      checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
+      buildContext: async () => { throw new Error('Discovery is unavailable'); } });
+    const invoke = vi.fn<MachineActionDirectTargetTransport['invoke']>(async method => {
+      if (method !== RPC_METHODS.CAPABILITIES_DESCRIBE) throw new Error('Effectful capability detection is unavailable');
+      return service.describe();
+    });
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke } });
+    await expect(deps.executionRunCheckProtocolV2?.(null, {
+      detachedScope: true, startAndWait: false, exactInputResults: false,
+      runScopedAgentBindings: false, secretReferenceOverlay: false,
+    }, { exactMachineId: 'machine-1', authority: 'account_automation' })).resolves.toEqual({
+      ok: true, exactMachineId: 'machine-1',
+    });
+    expect(invoke).toHaveBeenCalledWith(RPC_METHODS.CAPABILITIES_DESCRIBE, {},
+      expect.objectContaining({ localActionContext: expect.objectContaining({ authority: 'account_automation' }) }));
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['disabled', { version: 2, available: false, features: { detachedScope: true } }],
+    ['malformed', { version: 2, available: true, features: { detachedScope: 'true' } }],
+  ] as const)('keeps %s Run describe facts unsupported without falling back to discovery', async (_name, protocol) => {
+    const methods: string[] = [];
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async method => {
+        methods.push(method);
+        // Released .17 and current ../0.2 describe this capability without a V2 fact.
+        return { protocolVersion: 1, capabilities: [{ id: 'tool.executionRuns', kind: 'tool', protocol }], checklists: {} };
+      } } });
+    await expect(deps.executionRunCheckProtocolV2?.(null, {
+      detachedScope: true, startAndWait: false, exactInputResults: false,
+      runScopedAgentBindings: false, secretReferenceOverlay: false,
+    }, { exactMachineId: 'machine-1', authority: 'account_automation' })).resolves.toMatchObject({
+      ok: false, errorCode: 'execution_run_protocol_unsupported',
+    });
+    expect(methods).toEqual([RPC_METHODS.CAPABILITIES_DESCRIBE]);
+  });
+
+  it.each(['installed', 'remote'] as const)('preserves a received %s Run refusal without treating it as a lost acknowledgement', async route => {
+    const invoke = vi.fn<MachineActionDirectTargetTransport['invoke']>();
+    const targetMachineId = route === 'installed' ? 'machine-1' : 'machine-2';
+    const boundary = route === 'installed' ? invoke : callMachineRpc;
+    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke } });
+    for (const [reply, rpcErrorCode] of [
+      [{ error: 'Policy unavailable', errorCode: 'policy_unavailable' }, 'policy_unavailable'],
+      [{ error: 'Unknown error' }, 'action_failed'],
+    ] as const) {
+      boundary.mockResolvedValueOnce(reply);
+      await expect(deps.executionRunList(null, {}, { targetMachineId }))
+        .rejects.toMatchObject({ rpcErrorCode, message: reply.error });
+    }
+    boundary.mockRejectedValueOnce(new Error('Connection lost'));
+    expect(await deps.executionRunList(null, {}, { targetMachineId }))
+      .toMatchObject({ ok: false, code: 'execution_run_target_unavailable' });
+  });
   it('preserves the current causal ceiling on a direct retained Run send without start depth', async () => {
     const invoke = vi.fn<MachineActionDirectTargetTransport['invoke']>(async () => ({ ok: true }));
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
@@ -369,6 +444,29 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { authority: 'account_automation' as const, spawns: 0 },
+    { authority: 'present_user' as const, spawns: 1 },
+  ])('Run start into a stopped Session forwards $authority to the Resume owner ($spawns spawns)', async ({ authority, spawns }) => {
+    const stop = { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 100 } as const;
+    fetchSessionById.mockImplementation(async () => createSessionRecordFixture({
+      id: 'session-1', active: false, machineId: 'machine-1', encryptionMode: 'plain',
+      metadata: JSON.stringify({ ...await createTestMetadata({ machineId: 'machine-1', path: '/repo' }),
+        runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} }, claudeSessionId: 'native-1', sessionExplicitStopV1: stop }),
+    }));
+    // The launch itself is outside this contract: admission and its authority are what must hold.
+    callMachineRpc.mockResolvedValue({ type: 'error', errorCode: 'spawn_failed', errorMessage: 'launch refused' });
+    const credentials = { token: 'token', encryption: null };
+    const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', mode: 'plain', ctx: null });
+    const result = await deps.executionRunStart('session-1', { instructions: 'Summarize' }, { authority });
+    expect(result).toMatchObject({ ok: false, code: 'execution_run_target_unavailable',
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
+    const launches = callMachineRpc.mock.calls.map(call => call[0]).filter(call => call.method.includes('spawn-happy-session'));
+    expect(launches).toHaveLength(spawns);
+    if (spawns) expect(launches[0].request.executionAuthorization).toMatchObject({ provenance: 'user_request' });
+    expect(callSessionRpc).not.toHaveBeenCalled();
+  });
+
   it('carries admitted depth and write ceiling in the exact-daemon private context, not Run input', async () => {
     const invoke = vi.fn(async () => ({ runId: 'run-1' }));
     const credentials = { token: 'token', encryption: null };
@@ -393,18 +491,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     };
     const workflowObservationSink = { commit: vi.fn(async () => undefined) };
     const invoke = vi.fn(async (method: string) => {
-      if (method === RPC_METHODS.CAPABILITIES_DETECT) return {
-        protocolVersion: 2,
-        results: {
-          'tool.executionRuns': {
-            ok: true,
-            data: {
-              protocolVersion: 2,
-              features: { detachedScope: true, startAndWait: true, exactInputResults: true, runScopedAgentBindings: true },
-            },
-          },
-        },
-      };
+      if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) return runProtocolDescribeResponse({ version: 2, features: { detachedScope: true, startAndWait: true, exactInputResults: true, runScopedAgentBindings: true } });
       if (method === SESSION_RPC_METHODS.EXECUTION_RUN_START) return {
         runId: 'run-1', callId: 'call-1', sidechainId: 'call-1',
       };
@@ -813,17 +900,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
       const rpc = transport === 'installed' ? directInvoke : callMachineRpc;
       rpc
-        .mockResolvedValueOnce({
-          results: {
-            'tool.executionRuns': {
-              ok: true,
-              data: {
-                protocolVersion: 2,
-                features: { detachedScope: true },
-              },
-            },
-          },
-        })
+        .mockResolvedValueOnce(runProtocolDescribeResponse({ version: 2, features: { detachedScope: true } }))
         .mockResolvedValueOnce({ ok: true });
 
       await expect(service.execute('execution.run.send', {
@@ -842,8 +919,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       expect(requests).toEqual([
         {
           machineId: 'machine-1',
-          method: RPC_METHODS.CAPABILITIES_DETECT,
-          request: { requests: [{ id: 'tool.executionRuns' }] },
+          method: RPC_METHODS.CAPABILITIES_DESCRIBE,
+          request: {},
         },
         {
           machineId: 'machine-1',
@@ -875,17 +952,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
       const rpc = transport === 'installed' ? directInvoke : callMachineRpc;
       rpc
-        .mockResolvedValueOnce({
-          results: {
-            'tool.executionRuns': {
-              ok: true,
-              data: {
-                protocolVersion: 2,
-                features: { detachedScope: true },
-              },
-            },
-          },
-        })
+        .mockResolvedValueOnce(runProtocolDescribeResponse({ version: 2, features: { detachedScope: true } }))
         .mockResolvedValueOnce({ ok: true });
 
       await expect(service.execute('execution.run.stream.cancel', {
@@ -920,17 +987,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
       const rpc = transport === 'installed' ? directInvoke : callMachineRpc;
       rpc
-        .mockResolvedValueOnce({
-          results: {
-            'tool.executionRuns': {
-              ok: true,
-              data: {
-                protocolVersion: 2,
-                features: { detachedScope: true },
-              },
-            },
-          },
-        })
+        .mockResolvedValueOnce(runProtocolDescribeResponse({ version: 2, features: { detachedScope: true } }))
         .mockResolvedValueOnce({ ok: true });
 
       await expect(service.execute('execution.run.stop', {
@@ -964,17 +1021,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
       const rpc = transport === 'installed' ? directInvoke : callMachineRpc;
       rpc
-        .mockResolvedValueOnce({
-          results: {
-            'tool.executionRuns': {
-              ok: true,
-              data: {
-                protocolVersion: 2,
-                features: { detachedScope: true },
-              },
-            },
-          },
-        })
+        .mockResolvedValueOnce(runProtocolDescribeResponse({ version: 2, features: { detachedScope: true } }))
         .mockResolvedValueOnce({
           ok: false,
           errorCode: 'execution_run_not_allowed',
@@ -994,7 +1041,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
         ? directInvoke.mock.calls.map(([method]) => method)
         : callMachineRpc.mock.calls.map(([request]) => request.method);
       expect(methods).toEqual([
-        RPC_METHODS.CAPABILITIES_DETECT,
+        RPC_METHODS.CAPABILITIES_DESCRIBE,
         SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
       ]);
       expect(callSessionRpc).not.toHaveBeenCalled();
@@ -1009,17 +1056,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
       const rpc = transport === 'installed' ? directInvoke : callMachineRpc;
       rpc
-        .mockResolvedValueOnce({
-          results: {
-            'tool.executionRuns': {
-              ok: true,
-              data: {
-                protocolVersion: 2,
-                features: { detachedScope: true },
-              },
-            },
-          },
-        })
+        .mockResolvedValueOnce(runProtocolDescribeResponse({ version: 2, features: { detachedScope: true } }))
         .mockRejectedValueOnce(sendError);
       readMachineRpcRequestDisposition.mockImplementation((error) => (
         error === sendError ? disposition : null
@@ -1136,22 +1173,11 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
-    callMachineRpc.mockResolvedValueOnce({
-      protocolVersion: 2,
-      results: {
-        'tool.executionRuns': {
-          ok: true,
-          data: {
-            protocolVersion: 2,
-            features: {
+    callMachineRpc.mockResolvedValueOnce(runProtocolDescribeResponse({ version: 2, features: {
               detachedScope: true,
               startAndWait: true,
               secretReferenceOverlay: false,
-            },
-          },
-        },
-      },
-    });
+            } }));
     const deps = createCliActionDeps({
       token: credentials.token,
       credentials,
@@ -1204,8 +1230,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
       credentials: expect.objectContaining({ token: 'token' }),
       machineId: 'machine-1',
-      method: RPC_METHODS.CAPABILITIES_DETECT,
-      request: { requests: [{ id: 'tool.executionRuns' }] },
+      method: RPC_METHODS.CAPABILITIES_DESCRIBE,
+      request: {},
     }));
     expect(executionRunStart).not.toHaveBeenCalled();
     expect(callSessionRpc).not.toHaveBeenCalled();
@@ -1220,24 +1246,13 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     serveSessionRecord(rawSession);
     callMachineRpc.mockImplementationOnce(async () => {
       rawSession.machineId = 'machine-replaced';
-      return {
-        protocolVersion: 2,
-        results: {
-          'tool.executionRuns': {
-            ok: true,
-            data: {
-              protocolVersion: 2,
-              features: {
+      return runProtocolDescribeResponse({ version: 2, features: {
                 detachedScope: true,
                 startAndWait: true,
                 exactInputResults: true,
                 runScopedAgentBindings: true,
                 secretReferenceOverlay: true,
-              },
-            },
-          },
-        },
-      };
+              } });
     });
     const deps = createCliActionDeps({
       token: credentials.token,
@@ -1290,7 +1305,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     expect(callMachineRpc).toHaveBeenCalledTimes(1);
     expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
       machineId: 'machine-capable',
-      method: RPC_METHODS.CAPABILITIES_DETECT,
+      method: RPC_METHODS.CAPABILITIES_DESCRIBE,
     }));
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
@@ -1301,9 +1316,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     callMachineRpc.mockImplementationOnce(async () => {
       if (boundary === 'session') fetchSessionById.mockRejectedValueOnce(new Error('HTTP 500'));
       else vi.mocked(axios.get).mockRejectedValueOnce(new Error('HTTP 500'));
-      return { results: { 'tool.executionRuns': { ok: true, data: {
-        protocolVersion: 2, features: { detachedScope: true, startAndWait: true, secretReferenceOverlay: true },
-      } } } };
+      return runProtocolDescribeResponse({ version: 2, features: { detachedScope: true, startAndWait: true, secretReferenceOverlay: true } });
     });
     const executor = createActionExecutor({
       ...createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null }),
@@ -1315,7 +1328,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       runClass: 'bounded', ioMode: 'request_response',
       secretReferenceOverlay: { v: 1, bindings: { API_KEY: { ref: 'happier:shared-secret:v1:resource-1', revision: 2 } } },
     }, { surface: 'rpc', defaultSessionId: 'session-1' });
-    expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.CAPABILITIES_DETECT }));
+    expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.CAPABILITIES_DESCRIBE }));
     expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_target_unavailable',
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
     expect(callSessionRpc).not.toHaveBeenCalled();
@@ -1371,16 +1384,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
-    callMachineRpc.mockResolvedValue({
-      protocolVersion: 1,
-      results: {
-        'tool.executionRuns': {
-          ok: true,
-          checkedAt: 1,
-          data: { available: true, intents: [], backends: {} },
-        },
-      },
-    });
+    callMachineRpc.mockResolvedValue(runProtocolDescribeResponse(null));
     const deps = createCliActionDeps({
       token: credentials.token,
       credentials,
@@ -1414,8 +1418,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
       credentials: expect.objectContaining({ token: 'token' }),
       machineId: 'machine-1',
-      method: RPC_METHODS.CAPABILITIES_DETECT,
-      request: { requests: [{ id: 'tool.executionRuns' }] },
+      method: RPC_METHODS.CAPABILITIES_DESCRIBE,
+      request: {},
     }));
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
@@ -1456,7 +1460,10 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ok: false,
       errorCode: 'execution_run_protocol_unsupported',
       error: 'execution_run_protocol_unsupported',
-      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+      details: {
+        executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+        executionRunPreflight: { phase: 'capabilities.describe', cause: { code: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE } },
+      },
     });
 
     expect(callMachineRpc).toHaveBeenCalledTimes(1);
@@ -1469,18 +1476,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     serveSessionRecord({ id: 'session-1', active: true, machineId: 'machine-1' });
-    callMachineRpc.mockResolvedValueOnce({
-      protocolVersion: 2,
-      results: {
-        'tool.executionRuns': {
-          ok: true,
-          data: {
-            protocolVersion: 1,
-            features: { detachedScope: true },
-          },
-        },
-      },
-    });
+    callMachineRpc.mockResolvedValueOnce(runProtocolDescribeResponse({ version: 1, features: { detachedScope: true } }));
     const deps = createCliActionDeps({
       token: credentials.token,
       credentials,
@@ -1512,26 +1508,6 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
 
     expect(callMachineRpc).toHaveBeenCalledTimes(1);
     expect(callSessionRpc).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['ACP_CATALOG_UNAVAILABLE', 'execution_run_target_unavailable'],
-    ['unknown-capability', 'execution_run_protocol_unsupported'],
-  ] as const)('classifies the capability observation %s without inventing protocol support', async (code, errorCode) => {
-    const deps = createCliActionDeps({
-      token: 'token', credentials: { token: 'token', encryption: null },
-      sessionId: 'cli-global', mode: 'plain', ctx: null,
-      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async () => ({
-        protocolVersion: 1,
-        results: { 'tool.executionRuns': { ok: false, checkedAt: 1,
-          error: { code, message: 'Capability unavailable' } } },
-      }) },
-    });
-    await expect(deps.executionRunCheckProtocolV2?.(null, {
-      detachedScope: true, startAndWait: false, exactInputResults: false, runScopedAgentBindings: false, secretReferenceOverlay: false,
-    }, { exactMachineId: 'machine-1' })).resolves.toMatchObject({
-      ok: false, errorCode,
-    });
   });
 
   it('classifies a failed V2 capability probe as target-unavailable before start dispatch', async () => {
@@ -1567,13 +1543,16 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       ok: false,
       errorCode: 'execution_run_target_unavailable',
       error: 'execution_run_target_unavailable',
-      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+      details: {
+        executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+        executionRunPreflight: { phase: 'capabilities.describe', cause: { code: null } },
+      },
     });
 
     expect(callMachineRpc).toHaveBeenCalledTimes(1);
     expect(callMachineRpc.mock.calls[0]?.[0]).toMatchObject({
       machineId: 'machine-1',
-      method: RPC_METHODS.CAPABILITIES_DETECT,
+      method: RPC_METHODS.CAPABILITIES_DESCRIBE,
     });
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
@@ -1610,7 +1589,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     await expect(invocation).rejects.toMatchObject({ code: 'plugin_action_aborted' });
     expect(capabilitySignal?.aborted).toBe(true);
     expect(callMachineRpc.mock.calls.map(([request]) => request.method)).toEqual([
-      RPC_METHODS.CAPABILITIES_DETECT,
+      RPC_METHODS.CAPABILITIES_DESCRIBE,
     ]);
     expect(callSessionRpc).not.toHaveBeenCalled();
   });
@@ -1622,18 +1601,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
     callMachineRpc.mockImplementation(async ({ method }: Readonly<{ method: string }>) => {
-      if (method === RPC_METHODS.CAPABILITIES_DETECT) {
-        return {
-          results: {
-            'tool.executionRuns': {
-              ok: true,
-              data: {
-                protocolVersion: 2,
-                features: { detachedScope: true, startAndWait: true },
-              },
-            },
-          },
-        };
+      if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) {
+        return runProtocolDescribeResponse({ version: 2, features: { detachedScope: true, startAndWait: true } });
       }
       if (method === SESSION_RPC_METHODS.EXECUTION_RUN_START) {
         return { runId: 'run-detached', callId: 'call-detached', sidechainId: 'call-detached' };
@@ -1685,7 +1654,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     });
 
     expect(callMachineRpc.mock.calls.map(([request]) => request.method)).toEqual([
-      RPC_METHODS.CAPABILITIES_DETECT,
+      RPC_METHODS.CAPABILITIES_DESCRIBE,
       SESSION_RPC_METHODS.EXECUTION_RUN_START,
       SESSION_RPC_METHODS.EXECUTION_RUN_WAIT,
     ]);
@@ -1699,18 +1668,8 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     };
     serveSessionRecord({ id: 'origin-session', active: true, machineId: 'machine-origin' });
     callMachineRpc.mockImplementation(async ({ method }: Readonly<{ method: string }>) => {
-      if (method === RPC_METHODS.CAPABILITIES_DETECT) {
-        return {
-          results: {
-            'tool.executionRuns': {
-              ok: true,
-              data: {
-                protocolVersion: 2,
-                features: { detachedScope: true, startAndWait: true },
-              },
-            },
-          },
-        };
+      if (method === RPC_METHODS.CAPABILITIES_DESCRIBE) {
+        return runProtocolDescribeResponse({ version: 2, features: { detachedScope: true, startAndWait: true } });
       }
       if (method === SESSION_RPC_METHODS.EXECUTION_RUN_START) {
         return { runId: 'run-detached', callId: 'call-detached', sidechainId: 'call-detached' };
@@ -1749,7 +1708,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
       machineId: request.machineId,
       method: request.method,
     }))).toEqual([
-      { machineId: 'machine-admitted', method: RPC_METHODS.CAPABILITIES_DETECT },
+      { machineId: 'machine-admitted', method: RPC_METHODS.CAPABILITIES_DESCRIBE },
       { machineId: 'machine-admitted', method: SESSION_RPC_METHODS.EXECUTION_RUN_START },
     ]);
     expect(fetchSessionById).not.toHaveBeenCalled();
@@ -1766,17 +1725,7 @@ describe('createCliActionDeps execution-run plugin bindings', () => {
     };
     const startError = new Error(`start ${disposition}`);
     callMachineRpc
-      .mockResolvedValueOnce({
-        results: {
-          'tool.executionRuns': {
-            ok: true,
-            data: {
-              protocolVersion: 2,
-              features: { detachedScope: true, startAndWait: true },
-            },
-          },
-        },
-      })
+      .mockResolvedValueOnce(runProtocolDescribeResponse({ version: 2, features: { detachedScope: true, startAndWait: true } }))
       .mockRejectedValueOnce(startError);
     readMachineRpcRequestDisposition.mockImplementation((error) => (
       error === startError ? disposition : null

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { derivePluginSessionInputLocalIdV1, SessionInputRequestV1Schema, settleSessionInputRequestV1, type ActionCaller } from '@happier-dev/protocol';
 import { deriveSessionInputActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
+import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
 import {
   buildAutomationSessionInputAdmissionV1,
@@ -12,7 +13,22 @@ import {
   deriveAutomationSessionInputLocalIdV1,
   deriveWorkflowSessionInputLocalIdV2,
   requiresMachineAdmissionForSessionInput,
+  resolveSessionInputTargetMachineId,
 } from './sessionInputAdmissionIdentity';
+
+it.each(['raw', 'metadata'] as const)('targets the resumed Session using its %s Machine rather than its creation recipe', source => {
+  const sessionCreationCorrespondenceV1 = buildSessionCreationCorrespondence({
+    identity: { callerCreationNamespace: 'approval-delivery', creationKey: 'resumed-session' },
+    recipe: { execution: { machineId: 'birth-machine', directory: { kind: 'path', path: '/repo' } },
+      organization: { folderId: null, tagIds: [] },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+  });
+  const input = { rawSession: source === 'raw' ? { machineId: 'resumed-machine' } : {},
+    decryptedMetadata: { sessionCreationCorrespondenceV1, ...(source === 'metadata' ? { machineId: 'resumed-machine' } : {}) } };
+  expect(resolveSessionInputTargetMachineId(input)).toBe('resumed-machine');
+  expect(resolveSessionInputTargetMachineId({ ...input, targetMachineId: 'resumed-machine' })).toBe('resumed-machine');
+  expect(resolveSessionInputTargetMachineId({ ...input, targetMachineId: 'birth-machine' })).toBeNull();
+});
 
 describe('derivePluginSessionInputLocalIdV1', () => {
   it('keeps a human-origin return on Account admission for encrypted input', () => {
@@ -28,6 +44,7 @@ describe('derivePluginSessionInputLocalIdV1', () => {
   };
 
   it.each([
+    { kind: 'host' },
     { kind: 'session', sessionId: 'parent-session', starterDepth: 0, turnDepth: 0 },
     { kind: 'plugin', pluginId: 'acme.channels', contributionLocalId: 'inbound' },
     { kind: 'automationRun', automationId: 'automation', runId: 'run', cause: { kind: 'manual', invokedAt: 1 } },
@@ -35,7 +52,7 @@ describe('derivePluginSessionInputLocalIdV1', () => {
     const cause = { requestRef: 'original-parent-input', requester: { serverId: 'home', accountId: 'person' },
       persona: { serverId: 'home', sessionId: 'parent-session' }, origin: null };
     const first = buildSessionSpawnInitialInputAdmissionForLocalIdV1({ actionCaller,
-      callerSurface: 'agent', localId: 'child-first-input', actionRequestAttributionV1: cause });
+      callerSurface: 'agent', callerAuthority: 'present_user', localId: 'child-first-input', actionRequestAttributionV1: cause });
     const inputAdmissionReceipt = { v: 1, issuer: 'authenticatedMachine' } as const;
     const authority = settleSessionInputRequestV1({ request: first.inputAdmission.request,
       currentSessionPermissionCeiling: 'default', inputAdmissionReceipt });
@@ -44,6 +61,7 @@ describe('derivePluginSessionInputLocalIdV1', () => {
       messageRole: 'user', inputAuthority: authority, inputAdmissionReceipt });
     expect(derived).toEqual(cause);
     expect(derived).not.toBe(cause);
+    expect(first).not.toHaveProperty('executionAuthority');
   });
 
   it('derives one stable bounded Pending identity from caller, Session, and exact public key', () => {

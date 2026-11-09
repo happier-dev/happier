@@ -25,7 +25,8 @@ type CapabilityDeps = Pick<ActionExecutorDeps, 'sessionCapabilities' | 'sessionC
 /** Account selection writes and exact-machine previews retain the invocation's captured Home. */
 export function createCliSessionCapabilitiesActionDeps(params: Readonly<{
   credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string;
-  operationContext?: SavedSecretOperationContextV1; skillRules: SkillRulesActionPortV1;
+  operationContext?: SavedSecretOperationContextV1;
+  skillRulesForContext: (context: ActionExecutorContext) => SkillRulesActionPortV1;
   resolveAuthorizationHeaders: (actionId: 'session.capabilities.set' | 'session.capabilities.get', context: ActionExecutorContext, request: Readonly<{
     method: 'GET' | 'POST' | 'PATCH'; path: string; body?: unknown;
   }>) => Readonly<Record<string, string>> | null;
@@ -113,25 +114,33 @@ export function createCliSessionCapabilitiesActionDeps(params: Readonly<{
         // Native overlay ids are desired exact names, so saving Off stays Account-only while the Machine is offline.
         if (input.kind === 'native_skill') return input.id;
         if (input.kind === 'skill') {
+          const skillRules = params.skillRulesForContext(context);
           // Opaque ids need only their addressed content. Names still require
           // the complete catalog to preserve duplicate-name refusal.
-          const addressed = await params.skillRules.listSkills(context.signal, [input.id]).catch(() => {
+          const addressed = await skillRules.listSkills(context.signal, [input.id]).catch(() => {
             // A failed addressed read cannot replace the existing name-catalog
             // result or its available-only plugin-source semantics.
             context.signal?.throwIfAborted();
             return [];
           });
           if (addressed.some(item => item.id === input.id)) return input.id;
-          return resolveSessionCapabilityItemIdentityV1(await params.skillRules.listSkills(context.signal), input.id);
+          return resolveSessionCapabilityItemIdentityV1(await skillRules.listSkills(context.signal), input.id);
         }
         if (!params.operationContext) {
-          const { bootstrapAccountSettingsContext } = await import("@/settings/accountSettings/bootstrapAccountSettingsContext");
-          await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking' });
+          const { getActiveAccountSettingsSnapshot } = await import("@/settings/accountSettings/activeAccountSettingsSnapshot");
+          if (context.externalActionExecutionAuthorization || context.externalActionCredential) {
+            if (!getActiveAccountSettingsSnapshot()) throw new Error('mcp_catalog_unavailable');
+          } else {
+            const { bootstrapAccountSettingsContext } = await import("@/settings/accountSettings/bootstrapAccountSettingsContext");
+            await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking' });
+          }
         }
         const [{ readPluginMcpServerMetadata }, { createCliMcpServerStoreForOperation, createCliMcpServerStore }] = await Promise.all([import("@/mcp/runtime/pluginMcpServerItems"), import("@/settings/mcp/mcpServerStore")]);
+        const resolveAuthorizationHeaders = (request: Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown }>) =>
+          params.resolveAuthorizationHeaders('session.capabilities.set', context, request);
         const store = params.operationContext ? createCliMcpServerStoreForOperation({ operationContext: params.operationContext,
-          serverId: params.serverId, signal: context.signal }) : createCliMcpServerStore({ credentials: params.credentials,
-          serverId: params.serverId, signal: context.signal });
+          serverId: params.serverId, signal: context.signal, resolveAuthorizationHeaders }) : createCliMcpServerStore({ credentials: params.credentials,
+          serverId: params.serverId, signal: context.signal, resolveAuthorizationHeaders });
         const catalog = await store.readCatalogForOperation();
         if (catalog.status !== 'ready') throw new Error('mcp_catalog_unavailable');
         return resolveSessionCapabilityItemIdentityV1([...catalog.catalog.servers, ...await readPluginMcpServerMetadata()], input.id);

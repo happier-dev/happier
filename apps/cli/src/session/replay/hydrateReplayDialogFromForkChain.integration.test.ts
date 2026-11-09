@@ -3,7 +3,6 @@ import { createServer, type Server } from 'node:http';
 import nacl from 'tweetnacl';
 import { buildHappierReplayPromptFromDialog, HAPPIER_REPLAY_SEED_DISPATCH_RESERVED_CHARS } from '@happier-dev/agents';
 import {
-  createPlainSessionOwnerMetadataEnvelopeV1,
   deriveAccountMachineKeyFromRecoverySecret,
   sealEncryptedDataKeyEnvelopeV1,
   sealSessionOwnerMetadataEnvelopeV1,
@@ -16,6 +15,7 @@ import { HAPPIER_REPLAY_MIN_SEED_CHARS } from '@happier-dev/protocol/sessions/re
 import { sealSessionStoredContent } from '@/session/transport/encryption/sessionEncryptionContext';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { encodeBase64 } from '@/api/encryption';
 import { respondTranscriptMessagesQueryRejection } from '@/testkit/transcript/transcriptMessagesRouteContract';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -31,14 +31,7 @@ function respondAccountEncryptionCurrentness(url: URL, res: import('node:http').
   if (url.pathname !== '/v1/account/encryption/currentness') return false;
   res.statusCode = 200;
   res.setHeader('content-type', 'application/json');
-  res.end(JSON.stringify({
-    mode: 'plain',
-    version: 1,
-    signingKeyFingerprint: null,
-    contentKeyFingerprint: null,
-    updatedAt: 1,
-    recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' },
-  }));
+  res.end(JSON.stringify(createAccountEncryptionCurrentnessFixture({ mode: 'e2ee', version: 1, updatedAt: 1 })));
   return true;
 }
 
@@ -98,7 +91,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         metadataLayoutVersion: 1,
         metadata: JSON.stringify({ v: 1 }),
         metadataVersion: 0,
-        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
+        ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret }, ownerMetadata, randomBytes: length => new Uint8Array(length).fill(5) }),
         agentState: null,
         agentStateVersion: 0,
         pendingCount: 0,
@@ -452,7 +445,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         id: childSessionId,
         metadataLayoutVersion: 1,
         metadata: JSON.stringify({ v: 1 }),
-        ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
+        ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret }, ownerMetadata, randomBytes: length => new Uint8Array(length).fill(5) }),
       }],
       [parentSessionId, {
         ...baseSession,

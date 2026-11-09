@@ -20,7 +20,7 @@ import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/rp
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
-type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionExchangePrepare' | 'sessionExchangeControl' | 'sessionTurnCancel' | 'sessionCompact' | 'sessionRuntimeRefresh' | 'sessionStop' | 'sessionControlSwitch' | 'sessionModeSet'>;
+type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionExchangePrepare' | 'sessionExchangeControl' | 'sessionTurnCancel' | 'sessionCompact' | 'sessionRuntimeRefresh' | 'sessionStop' | 'sessionControlSwitch' | 'sessionModeSet' | 'sessionConnectedServicesAuthSet'>;
 
 export function createCliControlActionDeps(
   params: CliActionDepsParams,
@@ -38,6 +38,13 @@ export function createCliControlActionDeps(
   }>,
 ): FamilyActionDeps {
   return {
+    sessionConnectedServicesAuthSet: async ({ machineId, serverId, ...request }, context) => callMachineAction({
+      machineId, ...(serverId ? { serverId } : {}),
+      method: RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH,
+      request, context, authority: context.authority, effectActionId: 'session.connected_services_auth.set',
+      exactMachine: true, ...(context.signal ? { signal: context.signal } : {}),
+      ...(context.rpcSessionAuthorization ? { authorization: context.rpcSessionAuthorization } : {}),
+    }),
 
     sessionExchangePrepare: async ({ sessionId, originInputLocalId, context, serverId, signal }) => {
       const homeServerId = params.serverId ?? configuration.activeServerId;

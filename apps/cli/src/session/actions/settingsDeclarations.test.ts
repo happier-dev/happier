@@ -122,6 +122,82 @@ describe('CLI declared Account settings', () => {
     expect(axios.post).not.toHaveBeenCalled();
   });
 
+  it('commits a first Look field edit through the public CLI Action without Account encryption material', async () => {
+    const owner = executor();
+    expect(await owner.execute('settings.set', { anchor: 'appearance.atmosphereShowOn', value: ['home'] }, user))
+      .toMatchObject({ ok: true, result: { value: ['home'] } });
+    expect(content).toMatchObject({ t: 'plain', v: { favoriteMachines: ['neighbor'], homeAtmosphere: { showOn: ['home'] } } });
+    expect(await owner.execute('settings.get', { anchor: 'appearance.atmosphereShowOn' }, user))
+      .toMatchObject({ ok: true, result: { value: ['home'] } });
+  });
+
+  it('preserves retained field siblings after Account CAS conflict', async () => {
+    content = { t: 'plain', v: { externalSessionsSettingsV1: {
+      v: 1, keepPassivelyFollowingAfterRestart: false, autoLinkSourcePolicies: [], futureNested: { revision: 1 },
+    } } };
+    concurrentContent = { t: 'plain', v: { externalSessionsSettingsV1: {
+      v: 1, keepPassivelyFollowingAfterRestart: false, autoLinkSourcePolicies: [], futureNested: { revision: 2 },
+    }, futureRoot: { revision: 3 } } };
+    conflict = true;
+    const owner = executor();
+    expect(await owner.execute('settings.set', { anchor: 'externalSessions.keepFollowingAfterRestart', value: true },
+      user)).toMatchObject({ ok: true, result: { value: true } });
+    expect(content).toMatchObject({ t: 'plain', v: { externalSessionsSettingsV1: {
+      keepPassivelyFollowingAfterRestart: true, futureNested: { revision: 2 },
+    }, futureRoot: { revision: 3 } } });
+  });
+
+  it('returns settings_too_large without writing or changing an oversized scoped choice', async () => {
+    const owner = executor();
+    const input = { actionId: 'session.stop', audience: 'agent', mode: 'allowed',
+      scope: { kind: 'environment', environmentId: '界'.repeat(22000) } } as const;
+    const context = { ...user, presentUserConfirmation: { actionId: 'actions.policy.set' } } as const;
+    const before = structuredClone(content);
+    const previousVersion = version;
+    expect(await owner.execute('actions.policy.set', input, context))
+      .toMatchObject({ ok: false, errorCode: 'settings_too_large' });
+    expect(content).toEqual(before);
+    expect(version).toBe(previousVersion);
+    expect(input.scope.environmentId).toBe('界'.repeat(22000));
+  });
+
+  it('writes and clears only the chosen scoped approval row through the Action and CAS front door', async () => {
+    const scope = { kind: 'environment', environmentId: 'staging' } as const;
+    const sibling = { actionId: 'future.action', scope: { kind: 'machine', machineId: 'B' },
+      approvalRequiredSurfaces: ['agent'], approvalWaivedSurfaces: [] };
+    content = { t: 'plain', v: { actionsSettingsV1: { v: 1, actions: {
+      'session.stop': { approvalRequiredSurfaces: ['agent'] },
+    } } } };
+    concurrentContent = { t: 'plain', v: { favoriteMachines: ['concurrent'], actionsSettingsV1: {
+      v: 1, actions: { 'session.stop': { approvalRequiredSurfaces: ['agent'] } }, scopedApprovalPreferences: [sibling],
+    } } };
+    conflict = true;
+    const owner = executor();
+    const target = { actionId: 'session.stop', audience: 'agent', scope } as const;
+    const context = { ...user, presentUserConfirmation: { actionId: 'actions.policy.set' } } as const;
+    expect(await owner.execute('actions.policy.set', { ...target, mode: 'allowed' }, context))
+      .toMatchObject({ ok: true, result: { ...target, mode: 'allowed' } });
+    expect(await owner.execute('actions.policy.get', target, context))
+      .toMatchObject({ ok: true, result: { ...target, mode: 'allowed' } });
+    expect(content).toMatchObject({ t: 'plain', v: { favoriteMachines: ['concurrent'], actionsSettingsV1: {
+      actions: { 'session.stop': { approvalRequiredSurfaces: ['agent'] } },
+      scopedApprovalPreferences: [sibling, { actionId: 'session.stop', scope,
+        approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['agent'] }],
+    } } });
+    expect(await owner.execute('actions.policy.reset', target,
+      { ...context, presentUserConfirmation: { actionId: 'actions.policy.reset' } }))
+      .toMatchObject({ ok: true, result: { ...target, mode: 'default' } });
+    expect(content).toMatchObject({ t: 'plain', v: { actionsSettingsV1: { scopedApprovalPreferences: [sibling] } } });
+    expect(await owner.execute('actions.policy.set', { actionId: sibling.actionId,
+      change: { kind: 'scoped_approval_remove', scope: sibling.scope } }, context)).toMatchObject({ ok: true });
+    expect(content).toMatchObject({ t: 'plain', v: { actionsSettingsV1: {
+      scopedApprovalPreferences: [], actions: { 'session.stop': { approvalRequiredSurfaces: ['agent'] } },
+    } } });
+    const before = version;
+    expect(await owner.execute('actions.policy.set', { ...target, mode: 'off' }, context)).toMatchObject({ ok: false });
+    expect(version).toBe(before);
+  });
+
   it('applies typed global, placement and tool policy intents through the real Account CAS owner', async () => {
     content = { t: 'plain', v: { favoriteMachines: ['neighbor'], actionsSettingsV1: { v: 1, actions: {
       'capture.view': { futurePolicy: { retained: true } },
@@ -366,6 +442,33 @@ describe('CLI declared Account settings', () => {
     } });
   });
 
+  it('applies the four Voice restoration choices with the version read by an independent executor', async () => {
+    content = { t: 'plain', v: { favoriteMachines: ['neighbor'], voice: {
+      providerId: null,
+      adapters: { local_conversation: { agent: {
+        agentSource: 'agent', permissionIntent: 'safe-yolo', chatModelId: 'gpt-6-luna',
+      } } },
+    } } };
+    const choices = [
+      ['voiceConversations.provider', JSON.stringify({ providerId: 'local_conversation', optionId: 'local' })],
+      ['voiceConversations.agentSource', 'session'],
+      ['voiceConversations.permissionIntent', 'read-only'],
+      ['voiceConversations.chatModelId', 'claude-haiku-4-5'],
+    ] as const;
+    for (const [anchor, value] of choices) {
+      const before = await executor().execute('settings.get', { anchor, includeVersion: true }, user);
+      expect(before.ok).toBe(true);
+      if (!before.ok) throw new Error(JSON.stringify(before));
+      const snapshot = SettingsDeclarationActionOutputSchemasV1['settings.get'].parse(before.result);
+      expect(await executor().execute('settings.set', {
+        anchor, value, expectedSettingsVersion: snapshot.settingsVersion,
+      }, user)).toMatchObject({ ok: true, result: { anchor, value, settingsVersion: expect.any(Number) } });
+      expect(await executor().execute('settings.get', { anchor, includeVersion: true }, user))
+        .toMatchObject({ ok: true, result: { anchor, value } });
+    }
+    expect(content).toMatchObject({ t: 'plain', v: { favoriteMachines: ['neighbor'] } });
+  });
+
   it('writes Voice choices through their canonical persistence projection without replacing neighboring settings', async () => {
     content = { t: 'plain', v: { favoriteMachines: ['neighbor'], voice: {
       assistantLanguage: 'fr', privacy: { shareSessionSummary: true },
@@ -550,7 +653,8 @@ describe('CLI declared Account settings', () => {
     concurrentContent = { t: 'plain', v: { actionsSettingsV1: policy, favoriteMachines: ['concurrent'], futureSetting: 'preserved',
       machineRetentionDefaultsV1: { v: 1, unknown: siblingPolicy, 'stopped-billed': siblingPolicy } } };
     conflict = true;
-    expect(await invoke('settings.set', { anchor: 'machines.defaults.local', value: changedPolicy }))
+    const changed = await invoke('settings.set', { anchor: 'machines.defaults.local', value: changedPolicy });
+    expect(changed, JSON.stringify(changed))
       .toMatchObject({ ok: true, result: { anchor: 'machines.defaults.local', value: changedPolicy } });
     expect(await invoke('settings.get', { anchor: 'machines.defaults.local' }))
       .toMatchObject({ ok: true, result: { value: changedPolicy } });

@@ -6,6 +6,7 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract
 import { resolveForkCutoffSeqInclusive } from '@/session/fork/resolveForkCutoffSeqInclusive';
 import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
+import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
 import { seedForkVisualsBestEffort } from '@/session/fork/seedForkVisuals';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
@@ -93,7 +94,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         try {
             [parentSession, accountEncryptionCurrentness] = await Promise.all([
                 fetchSessionByIdCompat({ reason: 'session-replay', token: credentials.token, sessionId: parentSessionId }),
-                fetchAccountEncryptionCurrentness({ token: credentials.token }),
+                fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token }),
             ]);
         } catch (error) {
             if (isAuthenticationError(error)) throw error;
@@ -127,9 +128,11 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             };
         }
 
-        const directory = typeof parentMetadata.path === 'string' && parentMetadata.path.trim().length > 0
-            ? parentMetadata.path.trim()
-            : '';
+        const directory = resolveSessionMachineWorkspacePath({
+            metadata: parentMetadata,
+            currentMachineId: context?.machineAdmission?.machineId ?? params.deps?.currentMachineId,
+            candidatePath: parentMetadata.path,
+        });
         if (!directory) {
             return {
                 ok: false,
@@ -171,6 +174,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         const inheritedForkOverrides = resolveForkInheritedOverridesFromMetadata(
             parentMetadata,
             forkBackendResolution.backendTargetV2,
+            parsed.data.approvalProfileId,
         );
         // One shared fact, read by this gate and by the UI's fork-card
         // availability owner, so the modal can never offer a Native card this

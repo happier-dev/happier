@@ -9,6 +9,6 @@ export function buildHostOnboardingInput(
   const prepared = buildSessionHostOnboardingInputV1(onboarding);
   return {
     initialInput: prepared.initialInput,
-    buildInitialInputHandoff: () => ({ inputAdmission: prepared.inputAdmission }),
+    buildInitialInputHandoff: () => ({ inputAdmission: prepared.inputAdmission, meta: prepared.meta }),
   };
 }

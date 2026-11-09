@@ -17,6 +17,76 @@ import { createSessionUsageLimitRecoveryRuntime } from './createSessionUsageLimi
 describe('native usage-limit recovery composition', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it.each(['publication', 'restore'] as const)('retains an admitted wait without polling and wakes on %s', async edge => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const sessionId = 'quota-publication-edge';
+    const credentials = { token: 'publication-edge-test', encryption: null };
+    const issue: SessionRuntimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', source: 'usage_limit',
+      code: 'usage_limit', agentId: 'codex', agentTurnId: 'quota-turn', occurredAt: 1_000,
+      usageLimit: { v: 1, resetAtMs: 2_000, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' } };
+    let metadata = createTestMetadata({ flavor: 'codex', machineId: 'machine-local' });
+    const raw = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain',
+      metadata: JSON.stringify(metadata), latestTurnStatus: null, lastRuntimeIssue: null });
+    let contextReads = 0;
+    let featureAdmissions = 0;
+    const recovery = createSessionUsageLimitRecoveryRuntime({ sessionId, currentMachineId: 'machine-local',
+      getMetadata: () => metadata, updateMetadata: async update => { metadata = update(metadata); },
+      readContext: async () => { contextReads += 1; return { credentials, rawSession: raw, metadata, mode: 'plain', ctx: null }; },
+      runRequest: async operation => await operation(), isFeatureEnabled: async () => { featureAdmissions += 1; return true; },
+      readNativeReadiness: async () => ({ ok: true, status: 'ready' }),
+      nowMs: () => Date.now(), getAccountSettings: () => accountSettingsParse({ usageLimitRecoverySettingsV1: {
+        v: 1, mode: 'auto_wait', resumePromptMode: 'off',
+      } }),
+    });
+    try {
+      await recovery.observeFailure(issue);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ status: 'waiting', nextCheckAtMs: null });
+      await vi.advanceTimersByTimeAsync(600_001);
+      expect(contextReads).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+      raw.latestTurnStatus = 'failed';
+      raw.lastRuntimeIssue = issue;
+      if (edge === 'publication') await recovery.observeFailure(issue);
+      else await recovery.restore();
+      expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ status: 'paused', nextCheckAtMs: null });
+      expect(featureAdmissions).toBe(1);
+    } finally { recovery.dispose(); vi.useRealTimers(); }
+  });
+
+  it('settles an admitted wait at its real reset without polling feature configuration again', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const sessionId = 'admitted-quota-wait';
+    const credentials = { token: 'admitted-quota-test', encryption: null };
+    const issue: SessionRuntimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', source: 'usage_limit',
+      code: 'usage_limit', agentId: 'codex', agentTurnId: 'quota-turn', occurredAt: 1_000,
+      usageLimit: { v: 1, resetAtMs: 2_000, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' } };
+    let metadata = createTestMetadata({ flavor: 'codex', machineId: 'machine-local' });
+    const raw = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain',
+      metadata: JSON.stringify(metadata), latestTurnStatus: 'failed', latestTurnId: 'quota-turn', lastRuntimeIssue: issue });
+    let featureAdmissions = 0;
+    const recovery = createSessionUsageLimitRecoveryRuntime({ sessionId, currentMachineId: 'machine-local',
+      getMetadata: () => metadata, updateMetadata: async update => { metadata = update(metadata); },
+      readContext: async () => ({ credentials, rawSession: raw, metadata, mode: 'plain', ctx: null }),
+      runRequest: async operation => await operation(),
+      isFeatureEnabled: async () => ++featureAdmissions === 1,
+      nowMs: () => Date.now(),
+      getAccountSettings: () => accountSettingsParse({ usageLimitRecoverySettingsV1: {
+        v: 1, mode: 'auto_wait', resumePromptMode: 'off',
+      } }),
+    });
+    try {
+      await recovery.observeFailure(issue);
+      expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ status: 'waiting', nextCheckAtMs: 2_000 });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ status: 'paused', nextCheckAtMs: null });
+      expect(featureAdmissions).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { recovery.dispose(); vi.useRealTimers(); }
+  });
+
   it('replaces an older daemon-owned wait when a new accepted quota failure arrives', async () => {
     const issue: SessionRuntimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', source: 'usage_limit',
       code: 'usage_limit', agentId: 'codex', agentTurnId: 'new-turn', occurredAt: 300,

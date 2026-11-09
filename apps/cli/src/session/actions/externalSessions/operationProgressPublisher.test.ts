@@ -6,6 +6,10 @@ import {
   ExternalSessionOperationProgressV1Schema,
   projectExternalSessionOperationProgressV1,
   projectExternalSessionOperationSharedPresentationV1,
+  createAccountScopedCryptoMaterialSnapshotV1,
+  convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
+  SessionEffectiveAccessV1Schema,
+  projectSessionAccessCapabilitiesV1,
   type ExternalSessionOperationProgressV1,
   type ExternalSessionOperationRecordV1,
 } from '@happier-dev/protocol';
@@ -24,6 +28,8 @@ const admissionBoundaryMocks = vi.hoisted(() => ({
   fetchSessionById: vi.fn(),
   fetchAccountEncryptionCurrentness: vi.fn(),
   readSessionMetadataTupleWriterSnapshot: vi.fn(),
+  patchSessionMetadataEnvelopeTuple: vi.fn(),
+  fetchSessionByIdCompat: vi.fn(),
 }));
 
 vi.mock('./responseErrors', async (importOriginal) => {
@@ -40,6 +46,8 @@ vi.mock('@/persistence', () => ({
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionById: admissionBoundaryMocks.fetchSessionById,
+  fetchSessionByIdCompat: admissionBoundaryMocks.fetchSessionByIdCompat,
+  patchSessionMetadataEnvelopeTuple: admissionBoundaryMocks.patchSessionMetadataEnvelopeTuple,
 }));
 
 vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
@@ -63,9 +71,9 @@ vi.mock('@/session/metadata/updateSessionMetadataWithRetry', async (
 import {
   assertExternalSessionOperationProgressCanBeSelected,
   convergeExternalSessionOperationProgressProjection,
+  publishExternalSessionOperationProgress,
   readExternalSessionOperationSharedPresentation,
   repairExternalSessionOperationProgressProjections as repairExternalSessionOperationProgressProjectionsWithClaimInspection,
-  resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs,
   selectExternalSessionOperationPresentationMetadata,
   selectExternalSessionOperationProgressMetadata,
   selectExternalSessionOperationRecordsForPassiveRepair,
@@ -83,8 +91,11 @@ import {
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
   resolveExternalSessionOperationStartAdmission,
+  resolveExternalSessionOperationAccountScope,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import type { StoredCredentials } from '@/persistence';
 
 import {
   createExternalSessionOperationExclusion,
@@ -151,6 +162,8 @@ afterEach(async () => {
   admissionBoundaryMocks.fetchSessionById.mockReset();
   admissionBoundaryMocks.fetchAccountEncryptionCurrentness.mockReset();
   admissionBoundaryMocks.readSessionMetadataTupleWriterSnapshot.mockReset();
+  admissionBoundaryMocks.patchSessionMetadataEnvelopeTuple.mockReset();
+  admissionBoundaryMocks.fetchSessionByIdCompat.mockReset();
 });
 
 function progress(input: Readonly<{
@@ -429,16 +442,127 @@ function persistedTakeoverRuntimeRecord(input: Readonly<{
 }
 
 describe('external-session operation progress producer selection', () => {
-  it('derives and saturates the finite projection barrier acquisition budget', () => {
-    expect(resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs({
-      sessionControlTimeoutMs: 1_000,
-      connectedServicesTimeoutMs: 2_000,
-    })).toBe(90_000);
-    expect(resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs({
-      sessionControlTimeoutMs: Number.MAX_SAFE_INTEGER,
-      connectedServicesTimeoutMs: Number.MAX_SAFE_INTEGER,
-    })).toBe(Number.MAX_SAFE_INTEGER);
-  });
+  it.each([
+    { mode: 'plain', route: 'publish' },
+    { mode: 'e2ee', route: 'publish' },
+    { mode: 'plain', route: 'converge' },
+    { mode: 'plain', route: 'repair' },
+  ] as const)(
+    'publishes admitted Account A progress and compacts only A after ambient Account B is selected ($mode, $route)',
+    async ({ mode, route }) => {
+      const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-progress-account-custody-'));
+      roots.push(activeServerDir);
+      const tokenFor = (subject: string) => `eyJhbGciOiJub25lIn0.${Buffer.from(JSON.stringify({ sub: subject })).toString('base64url')}.`;
+      const encryption = mode === 'plain'
+        ? null
+        : { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+      const credentialsA = { token: tokenFor('publisher-account-a'), encryption } satisfies StoredCredentials;
+      const credentialsB = {
+        token: tokenFor('publisher-account-b'),
+        encryption: encryption ? { type: 'legacy' as const, secret: new Uint8Array(32).fill(8) } : null,
+      } satisfies StoredCredentials;
+      const accountScope = resolveExternalSessionOperationAccountScope(activeServerDir, credentialsA.token);
+      const accountScopeB = resolveExternalSessionOperationAccountScope(activeServerDir, credentialsB.token);
+      if (!accountScope || !accountScopeB) throw new Error('Expected authenticated Account fixtures.');
+      const record = privateRecord({
+        operationId: 'operation-captured-account-a', sessionId: 'session-captured-account-a',
+        plan: 'takeover', targetStorageMode: 'external-linked', status: 'completed', phase: 'finalizing',
+      });
+      await writeExternalSessionOperationRecord(activeServerDir, record, { accountScope });
+      const fields = buildSessionMetadataEnvelopeFields({
+        credentials: credentialsA, accountEncryptionMode: mode, metadata: {}, agentState: null,
+        ...(encryption
+          ? { storedContentMode: 'e2ee' as const, encryptionKey: encryption.secret, encryptionVariant: 'legacy' as const }
+          : { storedContentMode: 'plain' as const }),
+      });
+      const rawSession = {
+        metadata: fields.sharedMetadata.ciphertext, metadataVersion: 1,
+        metadataLayoutVersion: 1 as const, ownerMetadata: fields.ownerMetadata,
+        agentState: fields.agentState, agentStateVersion: 0,
+        encryptionMode: mode, dataEncryptionKey: null,
+        effectiveAccess: SessionEffectiveAccessV1Schema.parse({
+          v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+          capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }),
+        }),
+      };
+      admissionBoundaryMocks.readStoredCredentials.mockResolvedValue(credentialsB);
+      if (route === 'repair') {
+        admissionBoundaryMocks.readStoredCredentials.mockResolvedValueOnce(credentialsA);
+      }
+      admissionBoundaryMocks.fetchSessionById.mockImplementation(async (request: Readonly<{ token: string }>) => {
+        expect(request.token).toBe(credentialsA.token);
+        return rawSession;
+      });
+      admissionBoundaryMocks.fetchAccountEncryptionCurrentness.mockImplementation(async (request: Readonly<{ token: string }>) => {
+        const material = request.token === credentialsA.token ? credentialsA.encryption : credentialsB.encryption;
+        return {
+          mode, version: 1, signingKeyFingerprint: null, updatedAt: 1,
+          contentKeyFingerprint: material
+            ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+              createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material }).contentPublicKeyFingerprint,
+            )
+            : null,
+          recipientEnvelopeReadiness: material
+            ? { status: 'available' as const }
+            : { status: 'unavailable' as const, reason: 'plain_account' as const },
+        };
+      });
+      admissionBoundaryMocks.patchSessionMetadataEnvelopeTuple.mockImplementation(async (
+        request: Parameters<typeof import('@/session/transport/http/sessionsHttp').patchSessionMetadataEnvelopeTuple>[0],
+      ) => {
+        expect(request.token).toBe(credentialsA.token);
+        const { patch } = request;
+        if (patch.mode !== 'owner') throw new Error('Expected an owner tuple mutation.');
+        expect(patch.sharedMetadata.expectedVersion).toBe(rawSession.metadataVersion);
+        expect(patch.expectedOwnerMetadata).toEqual(rawSession.ownerMetadata);
+        rawSession.metadata = patch.sharedMetadata.ciphertext;
+        rawSession.ownerMetadata = patch.ownerMetadata;
+        rawSession.metadataVersion += 1;
+        rawSession.agentState = patch.agentState.ciphertext;
+        rawSession.agentStateVersion += 1;
+        return {
+          success: true as const, metadataLayoutVersion: 1 as const,
+          sharedMetadata: { version: rawSession.metadataVersion }, ownerMetadata: { version: rawSession.metadataVersion },
+          agentState: { version: rawSession.agentStateVersion },
+        };
+      });
+      const selectedProgress = projectExternalSessionOperationProgressV1(record);
+      if (route !== 'publish') {
+        const actual = await vi.importActual<typeof import('@/session/metadata/updateSessionMetadataWithRetry')>(
+          '@/session/metadata/updateSessionMetadataWithRetry',
+        );
+        admissionBoundaryMocks.readSessionMetadataTupleWriterSnapshot.mockImplementation(actual.readSessionMetadataTupleWriterSnapshot);
+        if (route === 'repair') {
+          await expect(repairExternalSessionOperationProgressProjections(activeServerDir, {})).resolves.toBe(1);
+        } else {
+          await expect(convergeExternalSessionOperationProgressProjection(activeServerDir, record, {
+            credentials: credentialsA, accountScope,
+          })).resolves.toBe('published');
+        }
+      } else {
+        await expect(publishExternalSessionOperationProgress({
+          activeServerDir, sessionId: record.request.sessionId, progress: selectedProgress,
+          credentials: credentialsA, accountScope,
+        })).resolves.toMatchObject({ progressProjection: { acknowledgedRevision: record.revision } });
+      }
+      expect(admissionBoundaryMocks.readStoredCredentials).toHaveBeenCalledTimes(route === 'repair' ? 1 : 0);
+      expect(admissionBoundaryMocks.patchSessionMetadataEnvelopeTuple).toHaveBeenCalledOnce();
+      await expect(readExternalSessionOperationStoredEntry(activeServerDir, record.operationId, accountScope))
+        .resolves.toMatchObject({ kind: 'terminal_receipt', receipt: { reference: { operationId: record.operationId } } });
+      await expect(readExternalSessionOperationStoredEntry(activeServerDir, record.operationId, accountScopeB)).resolves.toBeNull();
+      const metadataReadsBeforeIndependentRequest = admissionBoundaryMocks.fetchSessionById.mock.calls.length;
+      if (route === 'repair') {
+        await expect(repairExternalSessionOperationProgressProjections(activeServerDir, {})).resolves.toBe(0);
+      } else {
+        await expect(publishExternalSessionOperationProgress({
+          activeServerDir, sessionId: record.request.sessionId, progress: selectedProgress,
+        })).rejects.toThrow('external_session_operation_projection_stale_private_record');
+      }
+      expect(admissionBoundaryMocks.readStoredCredentials).toHaveBeenCalledTimes(route === 'repair' ? 2 : 1);
+      expect(admissionBoundaryMocks.fetchSessionById).toHaveBeenCalledTimes(metadataReadsBeforeIndependentRequest);
+      expect(admissionBoundaryMocks.patchSessionMetadataEnvelopeTuple).toHaveBeenCalledOnce();
+    },
+  );
 
   it('accepts only exact same-session completed receipt evidence for terminal replacement admission', async () => {
     const sessionId = 'session-receipt-predecessor-admission';
@@ -1156,7 +1280,7 @@ describe('external-session operation progress producer selection', () => {
   });
 
   it.each(['already-current', 'publish-required'] as const)(
-    'settles an unacknowledged terminal and prunes its expired predecessor without re-entering the Session lock when projection is %s',
+    'settles an unacknowledged terminal and retains predecessor replay without re-entering the Session lock when projection is %s',
     async (mode) => {
       const activeServerDir = await mkdtemp(join(
         tmpdir(),
@@ -1205,12 +1329,7 @@ describe('external-session operation progress producer selection', () => {
           ...currentTerminalPresentation,
           revision: currentTerminalPresentation.revision - 1,
         };
-      let failInitialPruneRead = true;
       const readPresentation = vi.fn(async () => {
-        if (failInitialPruneRead) {
-          failInitialPruneRead = false;
-          throw new Error('transient_session_read_failure');
-        }
         return {
           kind: 'valid' as const,
           presentation: selectedPresentation,
@@ -1226,8 +1345,6 @@ describe('external-session operation progress producer selection', () => {
         activeServerDir,
         durableIdempotencyKey: candidate.request.idempotencyKey,
         intent: candidate.request,
-        nowMs: predecessor.updatedAtMs + 86_400_000,
-        readSelectedPresentation: readPresentation,
       });
       expect(admission.kind).toBe('new_operation');
       if (admission.kind !== 'new_operation') {
@@ -1272,10 +1389,10 @@ describe('external-session operation progress producer selection', () => {
       )).resolves.toMatchObject({
         progressProjection: { acknowledgedRevision: terminal.revision },
       });
-      await expect(readExternalSessionOperationStoredEntry(
+await expect(readExternalSessionOperationStoredEntry(
         activeServerDir,
         predecessor.operationId,
-      )).resolves.toBeNull();
+      )).resolves.toMatchObject({ kind: 'terminal_receipt' });
       await expect(readExternalSessionOperationRecord(
         activeServerDir,
         successor.operationId,
@@ -1609,13 +1726,13 @@ describe('external-session operation progress producer selection', () => {
       },
     });
     expect(publish).toHaveBeenCalledTimes(2);
-    await expect(readExternalSessionOperationStoredEntry(
+await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       predecessor.operationId,
-    )).resolves.toBeNull();
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
   });
 
-  it('recovers an acknowledged successor by pruning its expired unselected predecessor receipt', async () => {
+  it('recovers an acknowledged successor while retaining its predecessor receipt', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-operation-successor-ack-before-predecessor-delete-',
@@ -1675,10 +1792,10 @@ describe('external-session operation progress producer selection', () => {
         }),
       },
     )).resolves.toBe('already_acknowledged');
-    await expect(readExternalSessionOperationStoredEntry(
+await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       predecessor.operationId,
-    )).resolves.toBeNull();
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
   });
 
   it('does not treat an unknown selected terminal as the admitted predecessor', async () => {
@@ -2341,8 +2458,6 @@ describe('external-session operation progress producer selection', () => {
     const operationExclusion = createExternalSessionOperationExclusion({
       activeServerDir,
       ownerId: 'daemon:claim-projection-barrier',
-      claimMutationLockAcquisitionTimeoutMs:
-        resolveExternalSessionOperationProjectionBarrierAcquisitionTimeoutMs(),
     });
     const running = privateRecord({
       operationId: 'operation-claim-projection-barrier',
@@ -3392,7 +3507,7 @@ describe('external-session operation progress producer selection', () => {
   });
 
   it.each(['completed', 'cancelled', 'discarded'] as const)(
-    'prunes an expired selected predecessor before boot compacts its already-acknowledged %s successor',
+    'retains predecessor replay when boot compacts its already-acknowledged %s successor',
     async (successorStatus) => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
@@ -3457,10 +3572,10 @@ describe('external-session operation progress producer selection', () => {
     );
 
     await expect(repair()).resolves.toBe(0);
-    await expect(readExternalSessionOperationStoredEntry(
+await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       predecessor.operationId,
-    )).resolves.toBeNull();
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
     const compactedSuccessor = await readExternalSessionOperationStoredEntry(
       activeServerDir,
       successor.operationId,
@@ -3478,10 +3593,10 @@ describe('external-session operation progress producer selection', () => {
     });
 
     await expect(repair()).resolves.toBe(0);
-    await expect(readExternalSessionOperationStoredEntry(
+await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       predecessor.operationId,
-    )).resolves.toBeNull();
+    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       successor.operationId,

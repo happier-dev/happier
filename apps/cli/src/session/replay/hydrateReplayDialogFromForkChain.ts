@@ -296,7 +296,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     throw new Error('External Action authorization unavailable');
   }
   const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({
-    token: params.credentials.token,
+    credentials: params.credentials, token: params.credentials.token,
     ...(currentnessAuthorizationHeaders ? { authorizationHeaders: currentnessAuthorizationHeaders } : {}),
   });
   const { segments, chainTerminatedNaturally, acquisitionError } = await fetchForkTranscriptSegments({

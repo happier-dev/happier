@@ -1,5 +1,5 @@
 import type { CliActionDepsParams } from './types';
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure } from '@happier-dev/protocol';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { decideUserPluginChange, requestUserPluginChange } from '@/plugins/daemon/changeClient';
@@ -14,9 +14,11 @@ import { createPluginPermissionGrantActionExecutor } from '@/plugins/runtime/lif
 import { createPluginWebhookActionExecutor } from '@/plugins/runtime/webhooks/pluginWebhookActionExecutor';
 import type { executePluginExternalSessionAction } from '../externalSessions/pluginExternalSessionActionExecutor';
 export type CliPluginAdministrationActionDeps = Pick<ActionExecutorDeps, 'pluginsDevLoopAction' | 'pluginSettingsAdministrationAction' | 'pluginPermissionGrantAction' | 'pluginWebhookAction' | 'pluginSessionHookManagementAction' | 'externalSessionAction'> & Readonly<{
-  pluginChangeServices: Readonly<{ requestUserPluginChange?: typeof requestUserPluginChange; decideUserPluginChange?: typeof decideUserPluginChange }>;
   pluginInstallApprovalChangeServices: Readonly<{ requestUserPluginChange?: typeof requestUserPluginChange }>;
   resolvePluginInstallWorkspaceRoot: (input: unknown, signal?: AbortSignal) => Promise<string | undefined>;
+  resolvePluginInstallRegistry: (context: ActionExecutorContext) => Promise<
+    Readonly<{ ok: true; registry: ReturnType<typeof createCliRegistryHostV1> | null }> | ActionExecuteFailure
+  >;
 }>;
 export function createCliPluginAdministrationActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'externalSessionPluginAdmissionOwner' | 'happyHomeDir' | 'pluginChangeService' | 'revalidatePluginActionCallerMaterialization' | 'savedSecretOperationContext' | 'serverHttpBaseUrl'>,
@@ -70,6 +72,22 @@ export function createCliPluginAdministrationActionDeps(
       || request.kind === 'npm' || request.kind === 'archive') return undefined;
     return await resolveCurrentSessionValue('path', signal) ?? undefined;
   };
+  const resolvePluginInstallRegistry: CliPluginAdministrationActionDeps['resolvePluginInstallRegistry'] = async context => {
+    if (!params.credentials || !approvalsStore) return { ok: true, registry: null };
+    const requesterAccountId = context.externalActionCredential?.accountId
+      ?? context.externalActionExecutionAuthorization?.binding.accountId;
+    if (requesterAccountId && requesterAccountId !== readAccountIdFromToken(params.credentials.token)) {
+      // Machine control does not grant access to the custodian's Account catalog,
+      // including existence checks performed while building an approval preview.
+      return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+    }
+    const { createCliRegistryHostV1 } = await import('@/registries/createCliRegistryHost');
+    const createRegistry = () => createCliRegistryHostV1({ credentials: params.credentials,
+      port: approvalsStore.promptLibraryStore.organization, signal: context.signal,
+      operationContext: params.savedSecretOperationContext });
+    return { ok: true, registry: params.serverHttpBaseUrl
+      ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, createRegistry) : createRegistry() };
+  };
   const pluginPermissionGrantAction = params.credentials
     ? createPluginPermissionGrantActionExecutor({
       credentials: params.credentials,
@@ -100,29 +118,19 @@ pluginsDevLoopAction: async ({ actionId, input, context }) => {
       const marketplaceInstall = actionId === 'plugins.install' && input !== null && typeof input === 'object'
         && 'source' in input && input.source !== null && typeof input.source === 'object'
         && 'kind' in input.source && input.source.kind === 'marketplace';
-      if (marketplaceInstall) {
-        if (!params.credentials || !approvalsStore) return notSupported();
-        const requesterAccountId = context.externalActionCredential?.accountId
-          ?? context.externalActionExecutionAuthorization?.binding.accountId;
-        if (requesterAccountId && requesterAccountId !== readAccountIdFromToken(params.credentials.token)) {
-          // Machine placement grants no custody of a foreign requester's private
-          // source catalog. The incumbent Action admission failure stays explicit.
-          return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-        }
-      }
+      if (marketplaceInstall && (!params.credentials || !approvalsStore)) return notSupported();
       const operation = async () => {
-        const [{ createCliRegistryHostV1 }, { executePluginDevLoopAction }, { createMarketplaceIndexService }] = await Promise.all([import("@/registries/createCliRegistryHost"), import("@/plugins/devLoop/actions"), import("@/plugins/store/marketplace/service")]);
-        const registry = marketplaceInstall && params.credentials && approvalsStore
-          ? createCliRegistryHostV1({ credentials: params.credentials,
-            port: approvalsStore.promptLibraryStore.organization, signal: context.signal,
-            operationContext: params.savedSecretOperationContext }) : null;
-        const approvedInstallReview = actionId === 'plugins.install' && context.presentUserApproval && approvalsStore
+        const registryResult = marketplaceInstall ? await resolvePluginInstallRegistry(context) : null;
+        if (registryResult && !registryResult.ok) return registryResult;
+        const registry = registryResult?.registry ?? null;
+        const [{ executePluginDevLoopAction }, { createMarketplaceIndexService }] = await Promise.all([import("@/plugins/devLoop/actions"), import("@/plugins/store/marketplace/service")]);
+        const approvedInstallReview = actionId === 'plugins.install' && context.presentUserApproval?.artifactId && approvalsStore
           ? readPluginInstallApprovalPendingReview(readRecord(await approvalsStore.approvalsGet({
               artifactId: context.presentUserApproval.artifactId,
               serverId: null,
             })).preview)
           : null;
-        if (actionId === 'plugins.install' && context.presentUserApproval && !approvedInstallReview) {
+        if (actionId === 'plugins.install' && context.presentUserApproval?.artifactId && !approvedInstallReview) {
           return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
         }
         return await executePluginDevLoopAction({ actionId, input,
@@ -139,7 +147,7 @@ pluginsDevLoopAction: async ({ actionId, input, context }) => {
             serverUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl() } } : {}),
           ...(actionId === 'plugins.install' ? { installEffectAdmitted: true as const } : {}),
           ...(registry ? { marketplaceIndexService: createMarketplaceIndexService({ happyHomeDir: params.happyHomeDir,
-            readRegistrySources: registry.readSources }) } : {}),
+            registryHost: registry }) } : {}),
           ...(approvedInstallReview ? { approvedInstallReview } : {}),
         });
       };
@@ -210,8 +218,8 @@ externalSessionAction: async (args) => {
         )
       : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
     },
-pluginChangeServices,
 pluginInstallApprovalChangeServices,
-resolvePluginInstallWorkspaceRoot
+resolvePluginInstallWorkspaceRoot,
+resolvePluginInstallRegistry
   };
 }

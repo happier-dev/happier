@@ -16,13 +16,65 @@ const guardEffect = { actionId: 'machines.guard.idleStop.keepRunning',
   input: { machineId: 'selected', sessionId: 'session' }, receipt: { status: 'kept' } } as const;
 const guardUndo = { actionId: 'machines.guard.activity.undo',
   input: { machineId: 'selected', entryId: 'entry' }, receipt: { status: 'restored', entryIds: ['entry'] } } as const;
+const adminAccessObservation = { version: 1, observedAt: 20, daemonUid: 1001, daemonUsername: 'happier',
+  daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid',
+  tailscaledOperator: { authorization: 'denied' } } as const;
+const adminAccessEffect = { actionId: 'machines.setup.adminAccess.set',
+  input: { machineId: 'selected', expectedMetadataVersion: 1, expectedAdminAccess: { version: 1, mode: 'none' },
+    adminAccess: { version: 1, mode: 'preauthorized' }, comparison: 'field' },
+  receipt: { status: 'applied', policy: { version: 1, mode: 'preauthorized' }, metadataVersion: 2,
+    effect: { outcome: 'applied', observation: adminAccessObservation } } } as const;
 const reads = [
+  { actionId: 'machines.setup.adminAccess.inspect', input: { machineId: 'selected' },
+    receipt: { observation: adminAccessObservation, checkedAt: 20 } },
   { actionId: 'machines.processes.get', input: { machineId: 'selected', ref: 'process-ref' }, receipt: { row: null } },
   { actionId: 'machines.guard.activity.list', input: { machineId: 'selected', range: 'today' },
     receipt: { entries: [], counts: { stopped: 0, cleanedUp: 0, needsLook: 0, others: 0 }, asOf: 1 } },
 ] as const;
 
 describe('CLI captured Machine acknowledgement settlement', () => {
+  it.each([
+    { actionId: 'machines.vitals.get', input: { machineId: 'selected', view: 'summary' } },
+    { actionId: 'machines.vitals.history.get', input: { machineId: 'selected', range: '1h' } },
+  ] as const)('withholds $actionId refusal after the captured credential retires', async action => {
+    const transport = await import('@/session/transport/rpc/machineRpc');
+    let current = true;
+    const rpc = vi.spyOn(transport, 'callExactMachineRpc').mockImplementation(async () => {
+      current = false;
+      return { error: 'private Vitals refusal', errorCode: 'policy_unavailable' };
+    });
+    const executor = createActionExecutor(createCliActionDeps({ ...params, isCredentialCurrent: async () => current }));
+    const result = await executor.execute(action.actionId, action.input, context);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: false, errorCode: 'action_failed', error: 'scope-retired' });
+    expect(JSON.stringify(result)).not.toContain('private Vitals refusal');
+  });
+
+  it('does not disclose a serialized read refusal after the captured credential retires', async () => {
+    const transport = await import('@/session/transport/rpc/machineRpc');
+    let current = true;
+    vi.spyOn(transport, 'callExactMachineRpc').mockImplementation(async () => {
+      current = false;
+      return { error: 'private refusal', errorCode: 'policy_unavailable' };
+    });
+    const executor = createActionExecutor(createCliActionDeps({ ...params, isCredentialCurrent: async () => current }));
+    const result = await executor.execute('machines.processes.get', { machineId: 'selected', ref: 'process-ref' }, context);
+    expect(result).toMatchObject({ ok: false, errorCode: 'action_failed' });
+    expect(result).not.toHaveProperty('error', 'private refusal');
+  });
+  it.each(reads)('keeps typed and legacy serialized refusals out of $actionId success parsing', async action => {
+    const transport = await import('@/session/transport/rpc/machineRpc');
+    const rpc = vi.spyOn(transport, 'callExactMachineRpc');
+    const executor = createActionExecutor(createCliActionDeps(params));
+    for (const [reply, errorCode] of [
+      [{ error: 'Policy unavailable', errorCode: 'policy_unavailable' }, 'policy_unavailable'],
+      [{ error: 'Unknown error' }, 'action_failed'],
+    ] as const) {
+      rpc.mockResolvedValueOnce(reply);
+      expect(await executor.execute(action.actionId, action.input, context))
+        .toEqual({ ok: false, errorCode, error: reply.error });
+    }
+  });
   it('retains delayed policy save completion without a subordinate acknowledgement deadline', async () => {
     const transport = await import('@/session/transport/rpc/machineRpc');
     const controller = new AbortController();
@@ -50,7 +102,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
   });
 
   for (const retirement of ['cancellation', 'credentials'] as const) {
-    it.each([processEffect, guardEffect, guardUndo])(`retains delayed $actionId acknowledgement after ${retirement}`, async action => {
+    it.each([processEffect, guardEffect, guardUndo, adminAccessEffect])(`retains delayed $actionId acknowledgement after ${retirement}`, async action => {
       const transport = await import('@/session/transport/rpc/machineRpc');
       const controller = new AbortController();
       let current = true;
@@ -65,7 +117,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
       const executor = createActionExecutor(createCliActionDeps({ ...params, isCredentialCurrent: async () => current }));
       const result = executor.execute(action.actionId, action.input, { ...context, signal: controller.signal,
         presentUserConfirmation: { actionId: action.actionId } });
-      await dispatched;
+      expect(await Promise.race([dispatched.then(() => 'issued'), result])).toBe('issued');
       if (retirement === 'cancellation') controller.abort(); else current = false;
       acknowledge(action.receipt);
       expect(await result).toEqual({ ok: true, result: action.receipt });
@@ -85,7 +137,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
       });
       const executor = createActionExecutor(createCliActionDeps({ ...params, isCredentialCurrent: async () => current }));
       const result = executor.execute(action.actionId, action.input, { ...context, signal: controller.signal });
-      await dispatched;
+      expect(await Promise.race([dispatched.then(() => 'issued'), result])).toBe('issued');
       if (retirement === 'cancellation') controller.abort(); else current = false;
       acknowledge(action.receipt);
       expect(await result).toMatchObject({ ok: false, errorCode: 'action_failed' });
@@ -115,5 +167,19 @@ describe('CLI captured Machine acknowledgement settlement', () => {
     expect(await executor.execute(guardEffect.actionId, guardEffect.input, context))
       .toMatchObject({ ok: false, errorCode: 'action_failed', error: 'scope-retired' });
     expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([adminAccessEffect, { actionId: 'machines.setup.adminAccess.inspect', input: { machineId: 'selected' },
+    receipt: { observation: adminAccessObservation, checkedAt: 20 } }] as const)(
+    'dispatches administrator Action $actionId to the selected daemon without a client metadata writer', async action => {
+    const transport = await import('@/session/transport/rpc/machineRpc');
+    const rpc = vi.spyOn(transport, 'callExactMachineRpc').mockResolvedValue(action.receipt);
+    const executor = createActionExecutor(createCliActionDeps(params));
+    expect(await executor.execute(action.actionId, action.input, {
+      ...context, presentUserConfirmation: { actionId: action.actionId }, actionRequestId: 'admin-operation',
+    })).toEqual({ ok: true, result: action.receipt });
+    expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'selected',
+      method: action.actionId, request: { ...action.input, serverId: 'home' }, requestId: 'admin-operation',
+      ...(action.actionId === 'machines.setup.adminAccess.set' ? { timeoutMs: null } : {}) }));
   });
 });

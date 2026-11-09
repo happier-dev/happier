@@ -739,6 +739,7 @@ describe('createExternalSessionTerminalFollowProjector', () => {
         createdAt: 11,
         updatedAt: 11,
         provenance: { kind: 'non_dependent', source: 'external' },
+        meta: { source: 'runtime', runtimeEventKind: 'transcript-message-committed' },
       },
     );
   });

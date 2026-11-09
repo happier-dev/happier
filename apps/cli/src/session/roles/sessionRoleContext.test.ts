@@ -22,10 +22,131 @@ import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
 import { randomBytes } from 'node:crypto';
 import { x25519 } from '@noble/curves/ed25519';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { snapshotSessionRolesAtSpawnV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import type { RoleInstructionsOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 const defaultEngine = { agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }) };
+const snapshotInputs = { defaultEngine, availableAgentTargetKeys: [defaultEngine.agentTargetKey] };
+
+function createPromptRoleInventoryBoundary(onRead?: () => void) {
+  let instructions = 'SELECTED_FIRST_REVISION';
+  let bodyVersion = 1;
+  let available = true;
+  const costs = { pages: 0, bodies: 0 };
+  const artifact = (artifactId: string) => ({
+    artifactId, ownerAccountId: 'account', access: 'owner' as const,
+    header: { kind: 'role.v1' }, headerVersion: 1, bodyVersion, seq: bodyVersion, createdAt: 1, updatedAt: bodyVersion,
+    body: JSON.stringify({ ...BUILT_IN_ROLES_V1.builder, instructions }),
+  });
+  const unrelatedRoleIds = Array.from({ length: 1_001 }, (_, index) => `unrelated-role-${index}`);
+  const roleIds = ['selected-role', ...unrelatedRoleIds];
+  // Artifact persistence is the boundary; paging, source admission, resolution
+  // and rendering remain the production owners.
+  const read = createRoleSourceReader({
+    readPluginRoles: () => available ? [{ pluginId: 'external-roles', localId: 'builder',
+      role: { ...BUILT_IN_ROLES_V1.builder, instructions } }] : [],
+    artifactStore: {
+      read: async roleId => {
+        if (!available || !roleIds.includes(roleId)) return null;
+        costs.bodies++;
+        onRead?.();
+        return { ...artifact(roleId), revision: { headerVersion: 1, bodyVersion } };
+      },
+      list: async options => {
+        costs.pages++;
+        onRead?.();
+        const start = Number(options?.cursor ?? 0);
+        const pageRoleIds = roleIds.slice(start, start + (options.limit ?? roleIds.length));
+        costs.bodies += pageRoleIds.length;
+        const next = start + pageRoleIds.length;
+        return { coverage: 'complete' as const, items: pageRoleIds.map(artifact),
+          ...(next < roleIds.length ? { nextCursor: String(next) } : {}) };
+      },
+    },
+  });
+  return { read, costs,
+    revise: () => { instructions = 'SELECTED_SECOND_REVISION'; bodyVersion++; },
+    revoke: () => { available = false; },
+  };
+}
 
 describe('session role prompt-plan context', () => {
+  it.each([
+    { roleId: 'builder', bodiesPerPrompt: 0 },
+    { roleId: 'selected-role', bodiesPerPrompt: 1 },
+    { roleId: 'plugin:external-roles/builder', bodiesPerPrompt: 0 },
+  ])('reads only selected Role bodies for nondelegating $roleId prompts and renders fresh revisions', async ({ roleId, bodiesPerPrompt }) => {
+    const boundary = createPromptRoleInventoryBoundary();
+    let settingsOverrides: Record<string, RoleInstructionsOverrideV1> = {};
+    const owner = createSessionRoleContext({ readMetadata: () => ({ work: { sessionRolesV1: {
+      roleId, overrides: {}, sessionRoles: {}, notes: '',
+    } } }), readOrganization: async () => ({}), readRoleSources: boundary.read,
+      readAccountRoleOverrides: () => ({ status: 'ready', overrides: settingsOverrides }), readDefaultEngine: () => defaultEngine });
+    const first = renderSessionRoleBlockV1((await owner.resolvePromptContext())!);
+    expect(first).toContain(roleId === 'builder' ? BUILT_IN_ROLES_V1.builder.instructions : 'SELECTED_FIRST_REVISION');
+    expect(boundary.costs).toEqual({ pages: 0, bodies: bodiesPerPrompt });
+    expect(() => owner.readResolvedRoles()).toThrow('role_source_incomplete');
+    boundary.revise();
+    if (roleId === 'builder') settingsOverrides = { builder: { roleId, instructionsOverride: 'SELECTED_SECOND_REVISION' } };
+    const updated = renderSessionRoleBlockV1((await owner.resolvePromptContext())!);
+    expect(updated).toContain('SELECTED_SECOND_REVISION');
+    expect(updated).not.toContain('SELECTED_FIRST_REVISION');
+    expect(boundary.costs).toEqual({ pages: 0, bodies: 2 * bodiesPerPrompt });
+    if (roleId !== 'builder') {
+      boundary.revoke();
+      await expect(owner.resolvePromptContext()).rejects.toMatchObject({ code: 'role_target_unavailable' });
+      expect(owner.readWorkspaceWrites()).toBe('deny');
+      expect(boundary.costs).toEqual({ pages: 0, bodies: 2 * bodiesPerPrompt });
+    }
+  });
+
+  it.each([false, true])('rechecks a Role selection changed during a source read and honors cancellation (%s)', async cancel => {
+    let roleId = 'selected-role';
+    const controller = new AbortController();
+    const boundary = createPromptRoleInventoryBoundary(() => {
+      roleId = 'unrelated-role-1000';
+      if (cancel) controller.abort(new Error('selection preparation cancelled'));
+    });
+    const owner = createSessionRoleContext({ readMetadata: () => ({ work: { sessionRolesV1: {
+      roleId, overrides: {}, sessionRoles: {}, notes: '',
+    } } }), readOrganization: async () => ({}), readRoleSources: boundary.read,
+      readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }), readDefaultEngine: () => defaultEngine });
+    if (cancel) await expect(owner.resolvePromptContext(controller.signal)).rejects.toThrow('selection preparation cancelled');
+    const current = renderSessionRoleBlockV1((await owner.resolvePromptContext(cancel ? undefined : controller.signal))!);
+    expect(current).toContain('role_id="unrelated-role-1000"');
+    expect(current).not.toContain('role_id="selected-role"');
+    expect(boundary.costs).toEqual({ pages: 0, bodies: 2 });
+    expect(() => owner.readResolvedRoles()).toThrow('role_source_incomplete');
+  });
+
+  it.each(['settings', 'session'] as const)('loads callable Roles only for the resolved %s delegation trait and keeps complete child snapshots', async layer => {
+    const boundary = createPromptRoleInventoryBoundary();
+    const roleId = 'plugin:external-roles/builder';
+    let canDelegateToOtherRoles = false;
+    const overrides = (): Record<string, RoleInstructionsOverrideV1> => ({ [roleId]: { roleId, canDelegateToOtherRoles } });
+    const owner = createSessionRoleContext({ readMetadata: () => ({ work: { sessionRolesV1: {
+      roleId, overrides: layer === 'session' ? overrides() : {}, sessionRoles: {}, notes: '',
+    } } }), readOrganization: async () => ({}), readRoleSources: boundary.read,
+      readAccountRoleOverrides: () => ({ status: 'ready', overrides: layer === 'settings' ? overrides() : {} }),
+      readDefaultEngine: () => defaultEngine });
+    expect(renderSessionRoleBlockV1((await owner.resolvePromptContext())!)).not.toContain('unrelated-role-1000');
+    expect(boundary.costs).toEqual({ pages: 0, bodies: 0 });
+    canDelegateToOtherRoles = true;
+    const delegating = renderSessionRoleBlockV1((await owner.resolvePromptContext())!);
+    expect(delegating).toContain('session.spawn_new {"roleId":"unrelated-role-1000"}');
+    expect(boundary.costs).toEqual({ pages: 3, bodies: 1_002 });
+    canDelegateToOtherRoles = false;
+    expect(renderSessionRoleBlockV1((await owner.resolvePromptContext())!)).not.toContain('unrelated-role-1000');
+    expect(boundary.costs).toEqual({ pages: 3, bodies: 1_002 });
+    expect(() => owner.readResolvedRoles()).toThrow('role_source_incomplete');
+    const roles = await owner.resolveRoles(snapshotInputs);
+    const snapshot = snapshotSessionRolesAtSpawnV1({ leadSessionId: 'lead', roles });
+    expect(snapshot.sessionRoles['unrelated-role-1000']?.instructions).toBe('SELECTED_FIRST_REVISION');
+    expect(snapshot.sessionRoles[roleId]?.canDelegateToOtherRoles).toBe(false);
+    expect(owner.readResolvedRoles()).toEqual(roles);
+    expect(boundary.costs).toEqual({ pages: 6, bodies: 2_004 });
+  });
+
   it.each(['plain', 'e2ee'] as const)('opens selected %s Roles without unrelated inventory and preserves fresh mode refusal', async mode => {
     const secret = randomBytes(32);
     const credentials = { token: 'selected-role-token', encryption: mode === 'plain' ? null : {
@@ -118,7 +239,7 @@ describe('session role prompt-plan context', () => {
     } } }), readOrganization: async () => ({}),
       readRoleSources: createRoleSourceReader({ readPluginRoles: () => [], artifactStore }),
       readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }), readDefaultEngine: () => defaultEngine });
-    const error: unknown = await owner.resolveRoles().catch((failure: unknown) => failure);
+    const error: unknown = await owner.resolveRoles(snapshotInputs).catch((failure: unknown) => failure);
     expect(error).toMatchObject({ code: 'preparation_pending', reason: 'unavailable' });
     expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error })).toMatchObject({ code: 'preparation_pending', source: 'dependency_failure' });
     expect(() => owner.readResolvedRoles()).toThrow('role_source_incomplete');
@@ -127,13 +248,18 @@ describe('session role prompt-plan context', () => {
   });
 
   afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
-  it('shares the live Artifact read across concurrent Session consumers and reobserves later edits', async () => {
+  it('shares concurrent complete snapshots and reads fresh selected prompt revisions independently', async () => {
     let release!: () => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
     let reads = 0;
+    let selectedReads = 0;
     let instructions = 'FIRST_ARTIFACT';
     const readSources = createRoleSourceReader({ readPluginRoles: () => [], artifactStore: {
-      read: async () => null,
+      read: async artifactId => {
+        selectedReads++;
+        return { artifactId, ownerAccountId: 'account', access: 'owner', header: { kind: 'role.v1' },
+          body: JSON.stringify({ ...BUILT_IN_ROLES_V1.builder, instructions }), revision: { headerVersion: 1, bodyVersion: selectedReads } };
+      },
       list: async () => {
         reads++;
         await pending;
@@ -146,15 +272,18 @@ describe('session role prompt-plan context', () => {
       roleId: 'user-role', overrides: {}, sessionRoles: {}, notes: '',
     } } }), readOrganization: async () => ({}), readRoleSources: readSources,
       readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }), readDefaultEngine: () => defaultEngine });
-    const roles = owner.resolveRoles();
+    const roles = owner.resolveRoles(snapshotInputs);
+    const concurrentRoles = owner.resolveRoles(snapshotInputs);
     const prompt = owner.resolvePromptContext();
     release();
     expect((await roles)['user-role']?.instructions).toBe('FIRST_ARTIFACT');
+    expect((await concurrentRoles)['user-role']?.instructions).toBe('FIRST_ARTIFACT');
     expect((await prompt)?.role?.instructions).toBe('FIRST_ARTIFACT');
     expect(reads).toBe(1);
     instructions = 'EDITED_ARTIFACT';
     expect((await owner.resolvePromptContext())?.role?.instructions).toBe('EDITED_ARTIFACT');
-    expect(reads).toBe(2);
+    expect(reads).toBe(1);
+    expect(selectedReads).toBe(2);
   });
   it('resolves conversational Role facts without fabricating a coding engine', async () => {
     // The conversational caller has no coding engine; the Role owner must not require one.
@@ -257,15 +386,22 @@ describe('session role prompt-plan context', () => {
     await expect(owner.resolvePromptContext()).rejects.toMatchObject({ code: 'role_overrides_unavailable' });
   });
   it('retains a complete inherited Role snapshot when Account catalog authority is unavailable', async () => {
+    const boundary = createPromptRoleInventoryBoundary();
     const inherited = { ...BUILT_IN_ROLES_V1.builder, roleId: 'builder', engine: defaultEngine,
-      instructions: 'FROZEN_ROLE', workspaceWrites: 'allow' as const };
+      instructions: 'FROZEN_ROLE', workspaceWrites: 'allow' as const, canDelegateToOtherRoles: true };
     const owner = createSessionRoleContext({ readMetadata: () => ({ work: { sessionRolesV1: {
-      roleId: 'builder', inheritedFrom: 'lead', overrides: {}, sessionRoles: { builder: inherited }, notes: '',
+      roleId: 'builder', inheritedFrom: 'lead', overrides: {}, sessionRoles: { builder: inherited,
+        'plugin:external-roles/builder': { ...BUILT_IN_ROLES_V1.builder, roleId: 'plugin:external-roles/builder', instructions: 'FROZEN_PLUGIN_ROLE' },
+      }, notes: '',
     } } }), readOrganization: async () => ({ manager: { sessionId: 'lead' } }),
-      readRoleSources: async () => ({ status: 'ready', entries: [], diagnostics: [] }), readDefaultEngine: () => defaultEngine,
+      readRoleSources: boundary.read, readDefaultEngine: () => defaultEngine,
       readAccountRoleOverrides: () => ({ status: 'unavailable', reason: 'catalog-unobserved' }),
     });
-    expect(renderSessionRoleBlockV1((await owner.resolvePromptContext())!)).toContain('FROZEN_ROLE');
+    const prompt = await owner.resolvePromptContext();
+    expect(renderSessionRoleBlockV1(prompt!)).toContain('FROZEN_ROLE');
+    expect(renderSessionRoleBlockV1(prompt!)).toContain('session.spawn_new {"roleId":"plugin:external-roles/builder"}');
+    expect(prompt?.availableRoles?.find(role => role.roleId === 'plugin:external-roles/builder')?.instructions).toBe('FROZEN_PLUGIN_ROLE');
+    expect(boundary.costs).toEqual({ pages: 0, bodies: 0 });
     expect(owner.readWorkspaceWrites()).toBe('allow');
   });
   it('does not create a Role ceiling after acknowledged Role removal when Account overrides are unavailable', () => {

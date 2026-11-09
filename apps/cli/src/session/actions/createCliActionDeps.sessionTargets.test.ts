@@ -2,7 +2,8 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, encodeV2SessionListCursorV2, API_TOKEN_FULL_GRANT_V1, normalizeActionsSettingsV1, wrapApiTokenEncryptionAccessV1,
-  deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
+  deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext, SessionMetadataTuplePatchV1Schema, FeaturesResponseSchema,
+  type V2SessionRecord } from '@happier-dev/protocol';
 import { formatAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createPlainSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -42,6 +43,12 @@ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createSessionDaemonAuthorityFixture } from '@/mcp/runtime/sessionDaemonAuthority.testkit';
 import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
+import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -346,7 +353,101 @@ describe('CLI Session target composition', () => {
     });
   });
 
-  function setup(manager: string | null = managerId, requester?: Readonly<{ privateKey: Uint8Array; installationId: string; secret?: Uint8Array }>) {
+  it.each([
+    ['advertised', 'plain'], ['advertised', 'e2ee'], ['older', 'plain'], ['malformed', 'plain'],
+    ['disabled', 'plain'], ['unavailable', 'plain'],
+  ] as const)(
+    'selects Project preview candidates before document hydration only with exact Home support (%s, %s)', async (support, mode) => {
+      await withConfiguredDaemonTestHome({ prefix: 'preview-project-selection-' }, async () => {
+        resetServerFeaturesClientForTests();
+        const { deps, session, credentials } = runWithServerHttpBaseUrl('https://construction-home.test', () => setup(null, mode === 'e2ee' ? {
+          privateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23)).secretKey,
+          installationId: 'installation', secret: new Uint8Array(32).fill(17),
+        } : undefined, support === 'advertised' ? null : home));
+        const invocationHome = support === 'advertised' ? home : 'https://unselected-ambient-home.test';
+        const ref = { id: 'checkout', serverId: context.serverId, machineId: 'machine-selected', rootPath: '/repo',
+          projectKey: 'qa-project', createdAtMs: 1 };
+        const key = { kind: 'workspace-ref' as const, serverId: context.serverId, id: ref.id };
+        const projectContent = createProjectAccountRowCipherV1({ mode, material: credentials.encryption,
+          randomBytes: nacl.randomBytes }).seal({ key, value: ref });
+        const rows: V2SessionRecord[] = [
+          ...Array.from({ length: 2_448 }, (_, index) => ({ ...createSessionNotificationContextFixture(`unrelated-${index}`),
+            ...session, id: `unrelated-${index}`, projectKey: 'other-project' })),
+          ...['matching-one', 'matching-two'].map(id => ({ ...createSessionNotificationContextFixture(id),
+            ...session, id, projectKey: ref.projectKey })),
+        ];
+        const featureReads: string[] = [];
+        vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+          featureReads.push(String(url));
+          expect(new URL(String(url)).origin).toBe(home);
+          if (support === 'unavailable') throw new TypeError('Home feature observation unavailable');
+          const payload = { features: { sessions: { enabled: true, filteredListing: { enabled: support !== 'disabled',
+            ...(support === 'older' ? {} : { projectSelectorVersion: support === 'malformed' ? 'invalid' : 1 }),
+          } } }, capabilities: {} };
+          return Response.json(support === 'malformed' ? payload : FeaturesResponseSchema.parse(payload));
+        });
+        const queries: SessionListQueryV1[] = [];
+        const hydratedIds: string[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+          expect(new URL(String(url)).origin).toBe(home);
+          if (String(url).endsWith('/v1/account/project-rows/list')) return { status: 200,
+            data: { status: 'listed', coverage: 'complete', rows: [{ key, revision: 0, content: projectContent }] } };
+          if (String(url).endsWith('/v2/sessions/read-batch')) {
+            const response = createSessionReadBatchResponseFixture({ request: body, sessions: rows });
+            hydratedIds.push(...response.results.map(result => result.sessionId));
+            return { status: 200, data: response };
+          }
+          expect(String(url)).toBe(`${home}/v2/sessions/query`);
+          const query = SessionListQueryV1Schema.parse(body);
+          queries.push(query);
+          const selector = query.projectKeys;
+          const selected = selector ? rows.filter(row => row.projectKey == null
+            || (selector.include.length === 0 || selector.include.includes(row.projectKey))
+              && !selector.exclude.includes(row.projectKey)) : rows;
+          const previousId = query.cursor ? rows.find(row => encodeV2SessionListCursorV2({ sessionId: row.id,
+            meaningfulActivityAt: 1 }) === query.cursor)?.id : undefined;
+          const offset = previousId === undefined ? 0 : selected.findIndex(row => row.id === previousId) + 1;
+          const page = selected.slice(offset, offset + SESSION_LIST_PAGE_MAX_LIMIT);
+          const hasNext = offset + page.length < selected.length;
+          return { status: 200, data: createCompactSessionListQueryResponseFixture({ sessions: page,
+            nextCursor: hasNext ? encodeV2SessionListCursorV2({ sessionId: page.at(-1)!.id, meaningfulActivityAt: 1 }) : null,
+            hasNext, attentionNextCursor: null, attentionHasNext: false }) };
+        });
+        const filter = normalizeSessionListFilterV1({ homeServerIds: [context.serverId], show: 'sessions', scope: 'all_accessible',
+          startedBy: ['you', 'agents', 'triggers'], projects: { include: [{ serverId: context.serverId, projectKey: ref.projectKey }], exclude: [] } });
+        await expect(runWithServerHttpBaseUrl(invocationHome, () => deps.sessionList({ context: {
+          ...context, sessionListAccess: 'current_session', defaultSessionId: sessionId,
+        } }))).resolves.toMatchObject({ sessions: [{ id: sessionId }] });
+        await expect(runWithServerHttpBaseUrl(invocationHome, () => deps.sessionFollowPreview!({ context,
+          input: { receiver: { kind: 'account' }, filter } })))
+          .resolves.toMatchObject({ coverage: 'complete', matchCount: 2,
+            matches: ['matching-one', 'matching-two'].map(id => ({ source: { kind: 'session', sessionId: id } })) });
+        expect(hydratedIds).toHaveLength(support === 'advertised' ? 2 : rows.length);
+        expect(queries).toHaveLength(support === 'advertised' ? 1 : Math.ceil(rows.length / SESSION_LIST_PAGE_MAX_LIMIT));
+        if (support === 'advertised') {
+          expect(queries[0]?.projectKeys).toEqual({ include: [ref.projectKey], exclude: [] });
+          expect(hydratedIds).toEqual(['matching-one', 'matching-two']);
+        } else for (const query of queries) expect(query).not.toHaveProperty('projectKeys');
+        expect(featureReads.length).toBeGreaterThan(0);
+        rows[0]!.projectKey = ref.projectKey;
+        rows.push({ ...createSessionNotificationContextFixture('unpublished'), ...session, id: 'unpublished', projectKey: null });
+        hydratedIds.length = 0;
+        queries.length = 0;
+        const result = await runWithServerHttpBaseUrl(invocationHome, () => createActionExecutor(deps).execute('session.targets.resolve', {
+          target: { selector: 'matching', filter }, actionId: 'session.message.send',
+        }, context));
+        expect(result).toMatchObject({ ok: true, result: { coverage: 'complete', addresses: [
+          { serverId: context.serverId, sessionId: rows[0]!.id },
+          ...['matching-one', 'matching-two', 'unpublished'].map(id => ({ serverId: context.serverId, sessionId: id })),
+        ] } });
+        expect(hydratedIds).toHaveLength(support === 'advertised' ? 4 : rows.length);
+        expect(queries).toHaveLength(support === 'advertised' ? 1 : Math.ceil(rows.length / SESSION_LIST_PAGE_MAX_LIMIT));
+      });
+    },
+  );
+
+  function setup(manager: string | null = managerId, requester?: Readonly<{ privateKey: Uint8Array; installationId: string; secret?: Uint8Array }>,
+    serverHttpBaseUrl: string | null = home) {
     const secret = requester?.secret;
     const encryption = secret ? { type: 'legacy' as const, secret } : null;
     const credentials = { token: 'token', encryption };
@@ -362,6 +463,8 @@ describe('CLI Session target composition', () => {
         : createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata),
       ...(manager ? { manager: { sessionId: manager } } : {}),
     });
+    const records: V2SessionRecord[] = [session];
+    const patchedSessionIds: string[] = [];
     // Only Home HTTP is substituted; reference resolution, currentness,
     // access projection, Action dispatch and status projection stay real.
     const get = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
@@ -371,20 +474,38 @@ describe('CLI Session target composition', () => {
         data: createAccountEncryptionCurrentnessFixture({ mode }) };
       if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode, updatedAt: 0 } };
       if (requester && String(url).endsWith('/v1/account/profile')) return { status: 200, data: { id: 'account-1' } };
-      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session } };
+      const record = records.find(row => String(url) === `${home}/v2/sessions/${row.id}`);
+      if (record) return { status: 200, data: { session: record } };
       if (String(url).endsWith('/v2/account/settings')) return { status: 200,
         data: AccountSettingsV2GetResponseSchema.parse({ content: encryption
           ? { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material: encryption, payload: {}, randomBytes: nacl.randomBytes }) }
           : { t: 'plain', v: {} }, version: 1 }) };
       throw new Error(`Unexpected Home read: ${url}`);
     });
+    // This fake Home owns the real tuple CAS boundary too: maintenance must
+    // persist its projection, rather than retry an unhandled network write.
+    vi.spyOn(axios, 'patch').mockImplementation(async (url, body, config) => {
+      expect(config?.headers).toMatchObject({ Authorization: 'Bearer token' });
+      const record = records.find(row => String(url) === `${home}/v2/sessions/${row.id}`);
+      if (!record) throw new Error(`Unexpected Home write: ${url}`);
+      const patch = SessionMetadataTuplePatchV1Schema.parse(body);
+      if (patch.mode !== 'owner' || !patch.displayProjectionV1) throw new Error('Expected owner display maintenance');
+      expect(patch).toMatchObject({ sharedMetadata: { ciphertext: record.metadata, expectedVersion: record.metadataVersion },
+        ownerMetadata: record.ownerMetadata, agentState: { ciphertext: record.agentState, expectedVersion: record.agentStateVersion } });
+      expect(patch.displayProjectionV1).toMatchObject({ metadataLayoutVersion: 1, sourceMetadataVersion: record.metadataVersion + 1 });
+      record.metadataVersion += 1;
+      record.displayProjectionV1 = patch.displayProjectionV1;
+      patchedSessionIds.push(record.id);
+      return { status: 200, data: { success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: record.metadataVersion }, agentState: { version: record.agentStateVersion } } };
+    });
     const deps = createCliActionDeps({ token: 'token', credentials,
-      sessionId, ...material, serverId: 'srv_target_home', serverIdentityId: 'srv_target_home',
-      serverHttpBaseUrl: home,
+      sessionId, ...material, serverIdentityId: 'srv_target_home',
+      ...(serverHttpBaseUrl ? { serverId: 'srv_target_home', serverHttpBaseUrl } : {}),
       ...(requester ? { externalActionMachineRequestPrivateKey: requester.privateKey,
         externalActionMachineInstallationId: requester.installationId } : {}),
     });
-    return { deps, get, session, credentials };
+    return { deps, get, session, credentials, records, patchedSessionIds };
   }
 
   it('binds the canonical reference resolver and manager read to the exact Home', async () => {
@@ -397,6 +518,183 @@ describe('CLI Session target composition', () => {
       .toEqual({ kind: 'manager', address: { serverId: 'srv_target_home', sessionId: managerId } });
     const result = await createActionExecutor(deps).execute('session.status.get', { sessionId, live: false }, context);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, session: { id: sessionId } } });
+  });
+
+  it('refuses a prefix that resolves outside an exact Session routing address without changing legacy omission', async () => {
+    const { deps } = setup();
+    const prefix = sessionId.slice(0, 8);
+    const listedSession = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadata: '{}', dataEncryptionKey: null });
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (String(url).endsWith('/v2/sessions/read-batch')) return { status: 200,
+        data: createSessionReadBatchResponseFixture({ request: body, sessions: [listedSession] }) };
+      expect(String(url)).toBe(`${home}/v2/sessions/lookup-by-tags`);
+      return { status: 200, data: { sessions: [] } };
+    });
+    const get = vi.mocked(axios.get);
+    const read = get.getMockImplementation()!;
+    get.mockImplementation(async (url, config) => {
+      const pathname = new URL(String(url)).pathname;
+      if (['/v2/sessions', '/v2/sessions/archived'].includes(pathname)) {
+        expect(new URL(String(url)).origin).toBe(home);
+        return { status: 200, data: { sessions: pathname.endsWith('/archived') ? [] : [createCompactSessionListRowFixture(listedSession)], nextCursor: null, hasNext: false } };
+      }
+      return read(url, config);
+    });
+    const sent: string[] = [];
+    const pluginId = 'example.exact-session-author';
+    const service = createPluginInvocationActionsService({
+      seed: { plugin: { id: pluginId, version: '1.0.0' },
+        contribution: { id: 'send', qualifiedId: `${pluginId}/actions/send` },
+        occurrenceId: 'exact-session-author-current', sourceCustody: { kind: 'development', registeredRootId: 'exact-session-author-root' },
+        resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+        surface: 'background', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        approvalContext: { serverId: context.serverId, runtimeAccountId: 'account-1' } },
+      actionExecutor: createActionExecutor({ ...deps, isActionApprovalRequired: () => false,
+        // Only the actual input writer is substituted. Home HTTP and canonical
+        // CLI reference/prefix resolution remain real above this boundary.
+        sessionSendMessage: async request => { sent.push(request.sessionId); return { status: 'accepted', localId: 'exact-send' }; },
+      }),
+      invokeContributedAction: async () => { throw new Error('Unexpected contributed Action'); },
+    });
+    const input = { sessionId: prefix, message: 'Exact routing', idempotencyKey: 'exact-send' };
+    expect(await deps.resolveSessionReference!({ sessionId: prefix, context, actionId: 'session.message.send' }))
+      .toEqual({ kind: 'unique', address: { serverId: context.serverId, sessionId } });
+    await expect(service.execute('session.message.send', input,
+      { sessionAddress: { serverId: context.serverId, sessionId: prefix } }))
+      .rejects.toMatchObject({ code: 'session_target_unavailable' });
+    expect(sent).toEqual([]);
+    await expect(service.execute('session.message.send', { ...input, sessionId },
+      { sessionAddress: { serverId: context.serverId, sessionId } })).resolves.toMatchObject({ status: 'accepted' });
+    await expect(service.execute('session.message.send', input)).resolves.toMatchObject({ status: 'accepted' });
+    expect(sent).toEqual([sessionId, prefix]);
+  });
+
+  it('does not retarget an admitted exact Session when the real writer later resolves its id as another Session tag', async () => {
+    const { get, session, credentials } = setup();
+    const originalRead = get.getMockImplementation()!;
+    let exactReads = 0;
+    const replacement = { ...session, id: managerId, active: true };
+    get.mockImplementation(async (url, config) => {
+      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) {
+        exactReads++;
+        return exactReads === 1 ? { status: 200, data: { session: { ...session, active: true } } }
+          : { status: 404, data: { error: 'Session not found' } };
+      }
+      return originalRead(url, config);
+    });
+    const tagLookups: unknown[] = [];
+    const written: string[] = [];
+    vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
+      expect(String(url)).toBe(`${home}/v2/sessions/lookup-by-tags`);
+      tagLookups.push(input);
+      return { status: 200, data: { sessions: [replacement] } };
+    });
+    const deps = createCliActionDeps({ token: credentials.token, credentials, mode: 'plain', ctx: null,
+      sessionId: 'cli-global', serverId: context.serverId, serverIdentityId: context.serverId, serverHttpBaseUrl: home,
+      // Protected plugin input reaches its actual authenticated Machine seam.
+      machineAdmissionTransport: async request => { written.push(request.sessionId); return { status: 'accepted', localId: request.localId }; },
+    });
+    let requireApproval = false;
+    let approval: ApprovalRequest | null = null;
+    const executor = createActionExecutor({ ...deps,
+      isActionApprovalRequired: actionId => requireApproval && actionId === 'session.message.send',
+      // Artifact persistence and host origin-currentness are genuine boundaries;
+      // canonical capture, lifecycle transition and replay stay real.
+      isApprovalExecutionOriginCurrent: async () => true,
+      approvalsCreate: async ({ request }) => {
+        approval = ApprovalRequestV2Schema.parse(request);
+        return { artifactId: 'reviewed-session-approval' };
+      },
+      approvalsGet: async () => approval,
+      approvalsUpdate: async ({ request }) => {
+        if (!approval) throw new Error('Missing reviewed Session approval');
+        const transition = decideApprovalRequestTransition(approval, request);
+        if (!transition.ok) return transition;
+        approval = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+    });
+    const pluginId = 'example.reviewed-session-author';
+    const service = createPluginInvocationActionsService({
+      seed: { plugin: { id: pluginId, version: '1.0.0' },
+        contribution: { id: 'send', qualifiedId: `${pluginId}/actions/send` },
+        occurrenceId: 'reviewed-session-author-current', sourceCustody: { kind: 'development', registeredRootId: 'reviewed-session-author-root' },
+        correlationId: 'reviewed-session-source-invocation',
+        resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+        surface: 'background', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        approvalContext: { serverId: context.serverId, serverIdentityId: context.serverId, runtimeAccountId: 'account-1' } },
+      actionExecutor: executor,
+      invokeContributedAction: async () => { throw new Error('Unexpected contributed Action'); },
+    });
+    const input = { sessionId, message: 'Only the reviewed Session', idempotencyKey: 'reviewed-session-send' };
+    const exactResult = await runWithServerHttpBaseUrl(home, () => service.execute('session.message.send', input,
+      { sessionAddress: { serverId: context.serverId, sessionId } }));
+    expect(written, JSON.stringify({ exactResult, exactReads, tagLookups })).toEqual([]);
+    expect(exactResult).toMatchObject({ status: 'rejected', code: 'session_input_target_unavailable' });
+    expect(exactReads).toBeGreaterThanOrEqual(2);
+    expect(written).toEqual([]);
+    // Omission intentionally retains the ordinary CLI reference/tag contract.
+    await expect(runWithServerHttpBaseUrl(home, () => service.execute('session.message.send', input)))
+      .resolves.toMatchObject({ status: 'accepted' });
+    expect(tagLookups).toContainEqual({ tags: [sessionId] });
+    expect(written).toEqual([managerId]);
+    written.length = 0;
+    exactReads = 0;
+    requireApproval = true;
+    const proposal = await runWithServerHttpBaseUrl(home, () => service.execute('session.message.send',
+      { ...input, idempotencyKey: 'reviewed-session-replay' }, { sessionAddress: { serverId: context.serverId, sessionId } }));
+    expect(proposal, JSON.stringify(proposal)).toMatchObject({ kind: 'approval_request_created' });
+    expect(approval).toMatchObject({ executionOriginV1: { sessionTargetsV1: {
+      targets: [{ serverId: context.serverId, sessionId }],
+    } } });
+    expect(written).toEqual([]);
+    const replay = await runWithServerHttpBaseUrl(home, () => executor.execute('approval.request.decide',
+      { artifactId: 'reviewed-session-approval', decision: 'approve' }, { ...context,
+        serverIdentityId: context.serverId, runtimeAccountId: 'account-1', actionCaller: { kind: 'host' } }));
+    expect(written, JSON.stringify(replay)).toEqual([]);
+    expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true });
+    expect(ApprovalRequestV2Schema.parse(approval).execution).toMatchObject({ result: {
+      status: 'rejected', code: 'session_input_target_unavailable',
+    } });
+  });
+
+  it.each(['session.status.get', 'session.open'] as const)('retains the admitted exact Session through the real %s reader', async actionId => {
+    const { deps, get, session } = setup();
+    const read = get.getMockImplementation()!;
+    let exactReads = 0;
+    get.mockImplementation(async (url, config) => {
+      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) {
+        exactReads++;
+        return exactReads === 1 ? { status: 200, data: { session: { ...session, active: true } } }
+          : { status: 404, data: { error: 'Session not found' } };
+      }
+      return read(url, config);
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (url, input) => {
+      expect(String(url)).toBe(`${home}/v2/sessions/lookup-by-tags`);
+      expect(input).toEqual({ tags: [sessionId] });
+      return { status: 200, data: { sessions: [{ ...session, id: managerId, active: true }] } };
+    });
+    const pluginId = 'example.exact-session-reader';
+    const service = createPluginInvocationActionsService({
+      seed: { plugin: { id: pluginId, version: '1.0.0' },
+        contribution: { id: 'read', qualifiedId: `${pluginId}/actions/read` },
+        occurrenceId: 'exact-session-reader-current', sourceCustody: { kind: 'development', registeredRootId: 'exact-session-reader-root' },
+        resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
+        surface: 'background', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+        approvalContext: { serverId: context.serverId, runtimeAccountId: 'account-1' } },
+      actionExecutor: createActionExecutor(deps),
+      invokeContributedAction: async () => { throw new Error('Unexpected contributed Action'); },
+    });
+    const input = actionId === 'session.status.get' ? { sessionId, live: false, includeAcceptedWorkspace: true }
+      : { sessionId, serverId: context.serverId, intent: 'resume' as const };
+    const exact = await runWithServerHttpBaseUrl(home, () => service.execute(actionId, input,
+      { sessionAddress: { serverId: context.serverId, sessionId } })).catch((error: unknown) => error);
+    expect(exact, JSON.stringify(exact)).toMatchObject({ code: 'session_not_found' });
+    expect(exactReads).toBeGreaterThanOrEqual(2);
+    const legacy = await runWithServerHttpBaseUrl(home, () => service.execute(actionId, input));
+    expect(legacy).toMatchObject(actionId === 'session.status.get' ? { ok: true, session: { id: managerId } }
+      : { ok: true, sessionId: managerId });
   });
 
   it('distinguishes a successful no-manager read from unavailable current access', async () => {
@@ -489,7 +787,7 @@ describe('CLI Session target composition', () => {
   });
 
   it('uses the real paged query and summary projection for direct and recursive workers', async () => {
-    const { deps, get, session } = setup();
+    const { deps, get, session, records, patchedSessionIds } = setup();
     const childId = 'c333333333333333333333333';
     const grandchildId = 'c444444444444444444444444';
     const archivedChildId = 'c555555555555555555555555';
@@ -497,6 +795,7 @@ describe('CLI Session target composition', () => {
     const grandchild = { ...createSessionNotificationContextFixture(grandchildId), ...session, id: grandchildId, manager: { sessionId: childId } };
     const archivedChild = { ...createSessionNotificationContextFixture(archivedChildId), ...session,
       id: archivedChildId, archivedAt: 5, manager: { sessionId } };
+    records.push(child, grandchild, archivedChild);
     const currentGet = get.getMockImplementation()!;
     get.mockImplementation(async (url, config) => {
       const row = [child, grandchild, archivedChild].find(candidate => String(url).endsWith(`/v2/sessions/${candidate.id}`));
@@ -527,11 +826,12 @@ describe('CLI Session target composition', () => {
     expect(recursive, JSON.stringify(recursive)).toMatchObject({ ok: true, result: { kind: 'fanout', results: [
       { target: { sessionId: childId } }, { target: { sessionId: grandchildId } }, { target: { sessionId: archivedChildId } },
     ] } });
+    expect(patchedSessionIds).toEqual([childId, archivedChildId, grandchildId]);
   });
 
   it.each(['complete', 'private_facts_unavailable', 'repeated_cursor'] as const)(
     'resolves matching from the complete authorized corpus (%s)', async coverage => {
-      const { deps, get, session } = setup();
+      const { deps, get, session, records, patchedSessionIds } = setup();
       const ids = ['c666666666666666666666666', 'c777777777777777777777777', 'c888888888888888888888888'] as const;
       const rows = ids.map((id, index) => {
         const row = { ...createSessionNotificationContextFixture(id), ...session, id };
@@ -543,6 +843,7 @@ describe('CLI Session target composition', () => {
           capabilities: projectSessionAccessCapabilitiesV1({ owner: false, grants: [share] }),
         } };
       });
+      records.push(...rows);
       const leafReads: string[] = [];
       const currentGet = get.getMockImplementation()!;
       get.mockImplementation(async (url, config) => {
@@ -586,9 +887,11 @@ describe('CLI Session target composition', () => {
           target: { serverId: 'srv_target_home', sessionId: id }, result: { ok: true, result: { session: { id } } },
         })) } });
         expect(leafReads).toEqual(ids);
+        expect(patchedSessionIds).toEqual(ids);
       } else {
         expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'session_target_unavailable' });
         expect(leafReads).toEqual([]);
+        expect(patchedSessionIds).toEqual([]);
       }
     },
   );

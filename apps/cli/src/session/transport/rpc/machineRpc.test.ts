@@ -52,6 +52,7 @@ const axiosRequest = vi.hoisted(() => vi.fn());
 vi.mock('socket.io-client', () => ({ io: vi.fn(() => socket) }));
 vi.mock('axios', () => ({
   default: {
+    defaults: {},
     get: (...args: unknown[]) => axiosGet(...args),
     post: (...args: unknown[]) => axiosPost(...args),
     request: (...args: unknown[]) => axiosRequest(...args),
@@ -90,6 +91,7 @@ import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/p
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 import { callExactMachineRpc, callMachineRpc, readMachineRpcRequestDisposition } from './machineRpc';
+import { prepareSessionFollowSourceKey } from '@/agent/runtime/session/follow/prepareSessionFollowSourceKey';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -118,6 +120,7 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/ma
 import { ScmPullRequestOpenComposeResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
 import { logger } from '@/ui/logger';
+import { createStoragePolicyFixture } from '@/storage/storagePolicy.testkit';
 
 /** Account content material exactly as the CLI persists it: a box seed plus its own public key. */
 function accountDataKeyCredentials(seedByte: number) {
@@ -212,8 +215,8 @@ describe('callMachineRpc', () => {
       let revokeDuringProtectionRead = false;
       const sessionStoppedAt = Date.now();
       const routes = createDaemonStorageRoutes({ target: () => identity,
-        readOwnSessionIds: accountId => accountId === 'recipient' ? ownSessionIds : new Set<string>(), deps: () => ({
-        serverId: identity.serverId, machineId: identity.machineId, custodianAccountId: identity.custodianAccountId, activityLog, homeDir: scratch,
+        readOwnSessionIds: accountId => accountId === 'recipient' ? ownSessionIds : new Set<string>(), deps: async () => ({
+        resourcesPolicy: await createStoragePolicyFixture(), serverId: identity.serverId, machineId: identity.machineId, custodianAccountId: identity.custodianAccountId, activityLog, homeDir: scratch,
         attributionFor: accountId => ({ serverId: identity.serverId, accountId, machineId: identity.machineId,
           installationId: identity.installationId }),
         readStorageProtectionFacts: async () => {
@@ -763,7 +766,7 @@ describe('callMachineRpc', () => {
       expect(JSON.stringify(request)).not.toContain(token);
       return { status: 200, data: { v: 1, actionId: 'session.spawn_new', requestId: request.envelope.requestId,
         execution: { ok: true, result: { type: 'success', disposition: 'created', sessionId: 'bob-session',
-          executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } } } };
+          executionTarget: input.executionTarget, organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } } } };
     });
     socket.emit.mockImplementation(() => { throw new Error('Raw shared Machine spawn is forbidden'); });
     const executor = createCliActionExecutorFromCredentials({ credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
@@ -1265,7 +1268,7 @@ describe('callMachineRpc', () => {
         timeoutMs: 100,
       }).catch((thrown) => thrown);
 
-      expect(error).toMatchObject({ code: 'machine_target_not_current' });
+      expect(error).toMatchObject({ code: 'machine_target_not_current', reason: 'machine_revoked_or_replaced' });
       expect(readMachineRpcRequestDisposition(error)).toBe('notSent');
       expect(socket.connect).not.toHaveBeenCalled();
       expect(socket.emit).not.toHaveBeenCalled();
@@ -1290,6 +1293,27 @@ describe('callMachineRpc', () => {
         message: expect.stringContaining('runner-expected was not returned'),
       });
       expect(readMachineRpcRequestDisposition(error)).toBe('notSent');
+      expect(socket.connect).not.toHaveBeenCalled();
+      expect(socket.emit).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { name: 'persistent', currentness: {}, expected: { kind: 'not_needed' } },
+      { name: 'revoked persistent', currentness: { revokedAt: 1234 }, expected: {
+        kind: 'waiting', reason: 'runner_unreachable', cause: 'machine_target_not_current',
+      } },
+      { name: 'replaced persistent', currentness: { replacedByMachineId: 'successor' }, expected: {
+        kind: 'waiting', reason: 'runner_unreachable', cause: 'machine_target_not_current',
+      } },
+    ])('classifies the $name Follow destination before requiring an unavailable source DEK', async ({ currentness, expected }) => {
+      axiosGet.mockResolvedValue({ data: { machine: {
+        storageMode: 'plain', id: 'machine-persistent', kind: 'persistent', ...currentness,
+      } } });
+      await expect(prepareSessionFollowSourceKey({
+        credentials: { token: 'account-token', encryption: null },
+        homeServerIdentityId: 'home-1', machineId: 'machine-persistent',
+        sourceSessionId: 'source', destinationSessionId: 'destination', sourceDataEncryptionKey: null,
+      })).resolves.toEqual(expected);
       expect(socket.connect).not.toHaveBeenCalled();
       expect(socket.emit).not.toHaveBeenCalled();
     });

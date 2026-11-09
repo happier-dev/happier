@@ -9,6 +9,7 @@ import type { buildCliSessionAwarenessInputV1 } from '@/cli/output/session/sessi
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import type { fetchSessionByIdCompat, fetchSessionTurnsProjection } from '@/session/transport/http/sessionsHttp';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { readSessionRecap } from '@/session/services/readSessionRecap';
 export function createCliAwarenessActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'serverId' | 'token'>,
   { resolveServerRequestHeaders, readServerFeaturesSnapshot, isSameActionHomeId }: Readonly<{
@@ -86,11 +87,14 @@ export function createCliAwarenessActionDeps(
         return { ok: false, errorCode: 'session_not_found', error: 'session_not_found', sessionId };
       }
       const currentness = await fetchAccountEncryptionCurrentness({
-        token: params.credentials.token,
+        credentials: params.credentials, token: params.credentials.token,
         authorizationHeaders: currentnessAuthorizationHeaders,
         signal,
       });
       signal?.throwIfAborted();
+      if (view === 'recap') return { view: 'recap', sessionId, ...await readSessionRecap({
+        credentials: params.credentials, row: session, currentness, resolveAuthorizationHeaders, signal,
+      }) };
       const awarenessInput = buildCliSessionAwarenessInputV1({
         credentials: params.credentials,
         accountEncryption: currentness,

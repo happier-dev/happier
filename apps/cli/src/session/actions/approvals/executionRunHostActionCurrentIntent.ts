@@ -4,8 +4,8 @@ import { ExecutionRunHostActionApprovalRequestV1Schema, StoredExecutionRunHostAc
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { ExecutionRunHostActionApprovalRequestV1, ReviewCommentProposalV1 } from '@happier-dev/protocol';
 
-import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { executionRunHostActionApprovalSubjectsEqual } from './executionRunHostActionApprovalSubject';
+import { createLiveApprovalDecision } from './liveDecision';
+import { executionRunHostActionApprovalSubjectsEqual } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
 
 export type ExecutionRunHostActionCurrentIntentSubject = Readonly<{
   actionId: 'reviews.comments.create';
@@ -53,7 +53,9 @@ function proposalPreview(proposal: ReviewCommentProposalV1) {
 }
 
 export function createExecutionRunHostActionCurrentIntentAdapter(deps: Readonly<{
-  create: (request: ExecutionRunHostActionApprovalRequestV1) => Promise<Readonly<{ artifactId: string }>>;
+  create: (request: ExecutionRunHostActionApprovalRequestV1,
+    onReady?: (created: Readonly<{ artifactId: string; request: ExecutionRunHostActionApprovalRequestV1 }>) => void,
+  ) => Promise<Readonly<{ artifactId: string }>>;
   read: (artifactId: string) => Promise<ExecutionRunHostActionApprovalRequestV1 | null>;
   subscribeChanges?: (
     artifactId: string,
@@ -62,7 +64,6 @@ export function createExecutionRunHostActionCurrentIntentAdapter(deps: Readonly<
   ) => Readonly<{ dispose(): void | Promise<void> }>;
   now?: () => number;
 }>): (subject: ExecutionRunHostActionCurrentIntentSubject) => Promise<ExecutionRunHostActionCurrentIntentResult> {
-  const coordinator = getSharedBlockingApprovalCoordinator();
   const subscribeChanges = deps.subscribeChanges;
   return async (subject) => {
     const now = (deps.now ?? Date.now)();
@@ -89,22 +90,17 @@ export function createExecutionRunHostActionCurrentIntentAdapter(deps: Readonly<
       subjectFingerprint: subject.subjectFingerprint,
       summary: `Create ${subject.proposals.length} proposed review comment${subject.proposals.length === 1 ? '' : 's'}`,
     });
+    const liveDecision = createLiveApprovalDecision({ read: deps.read, subscribeChanges });
     let created: Readonly<{ artifactId: string }>;
     try {
-      created = await deps.create(request);
+      created = await deps.create(request, ready => { void liveDecision.waitForDecision(ready); });
     } catch {
+      await liveDecision.cancelCreation();
       return { status: 'unavailable', code: 'execution_run_host_action_current_intent_unavailable' };
     }
 
     try {
-      const result = await coordinator.waitForDecision({
-        artifactId: created.artifactId,
-        request,
-        readRequest: () => deps.read(created.artifactId),
-        ...(subscribeChanges ? {
-          subscribeChanges: (onChange, onError) => subscribeChanges(created.artifactId, onChange, onError),
-        } : {}),
-      });
+      const result = await liveDecision.waitForDecision({ artifactId: created.artifactId, request });
       const decided = StoredExecutionRunHostActionApprovalRequestV1Schema.safeParse(result.request);
       if (!decided.success
         || decided.data.subjectFingerprint !== subject.subjectFingerprint

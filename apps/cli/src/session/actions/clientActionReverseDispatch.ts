@@ -6,7 +6,6 @@ import {
   buildUiActionDispatchRequestV1, type UiActionDispatchRequestV1,
   clientActionUnavailable,
   clientActionAmbiguous,
-  currentUiContextCommandClientRpcMethod,
   currentUiContextReadClientRpcMethod,
   mountedWorkReadClientRpcMethod,
   sessionUiActionClientRpcMethod,
@@ -109,11 +108,8 @@ export function createClientActionReverseDispatcher(
       ? mountedWorkReadClientRpcMethod(actionId, Reflect.get(input, 'sessionId'))
       : actionId === 'inbox.get' ? mountedWorkReadClientRpcMethod(actionId)
       : actionId === 'ui.current_context.read' || actionId === 'ui.current_context.command.invoke'
+        || actionId === 'account.home_continuation.invoke'
         ? currentUiContextReadClientRpcMethod()
-      : actionId === 'account.home_continuation.invoke'
-        && input && typeof input === 'object'
-        && typeof Reflect.get(input, 'commandId') === 'string'
-        ? currentUiContextCommandClientRpcMethod(Reflect.get(input, 'commandId'))
       : address?.success ? workflowDraftClientRpcMethod(address.data)
       : !originInput && !libraryAction && !accountClientAction && targetSessionId ? sessionUiActionClientRpcMethod(targetSessionId)
       : RPC_METHODS.UI_ACTION_EXECUTE;

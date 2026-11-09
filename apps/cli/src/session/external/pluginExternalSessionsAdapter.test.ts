@@ -67,6 +67,80 @@ const target = {
 } as const;
 
 describe('createPluginExternalSessionsAdapter', () => {
+  it.each(['list', 'listContinuation', 'attach', 'page', 'readAfter', 'accounting', 'takeover'] as const)(
+    'keeps admitted %s work after Account/source withdrawal and refuses the next request',
+    async (method) => {
+      let current = true;
+      let postWithdrawalChecks = 0;
+      const retirement = new AbortController();
+      let enter!: () => void;
+      let release!: () => void;
+      const entered = new Promise<void>((resolve) => { enter = resolve; });
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const hold = async () => { enter(); await held; };
+      const isCurrent = () => {
+        if (!current) postWithdrawalChecks++;
+        return current;
+      };
+      const adapter = createPluginExternalSessionsAdapter({
+        isCurrent,
+        retirementSignal: retirement.signal,
+        sources: [{ agentId: ref.agentId, sourceId: ref.sourceId, source: target.source, isCurrent }],
+        resolveProviderOps: async () => ({
+          validateSource: async ({ source }) => ({ ok: true, source }),
+          resolveLinkIdentity: async ({ source, remoteSessionId }) => {
+            if (method === 'accounting' || method === 'takeover') await hold();
+            return { source, remoteSessionId, linkData: {} };
+          },
+          listCandidates: async ({ cursor }) => {
+            if (method !== 'listContinuation' || cursor) await hold();
+            return {
+              candidates: [{ remoteSessionId: method === 'listContinuation' && !cursor ? 'remote-first' : 'remote-1' }],
+              nextCursor: method === 'listContinuation' && !cursor ? 'provider-next' : null,
+            };
+          },
+          pageTranscript: async () => { await hold(); return { items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }; },
+          readAfterTranscript: async () => { await hold(); return { outcome: 'already_current' }; },
+        }),
+        attach: async () => { await hold(); return { sessionId: 'linked-session' }; },
+      });
+      const cursor = method === 'listContinuation'
+        ? requireListCursor(await adapter.authorService.list({ limit: 1 }))
+        : undefined;
+      const invoke = () => {
+        switch (method) {
+          case 'list': return adapter.authorService.list();
+          case 'listContinuation': return adapter.authorService.list({ cursor, limit: 1 });
+          case 'attach': return adapter.authorService.attach(ref);
+          case 'page': return adapter.authorService.readTranscript(ref);
+          case 'readAfter': return adapter.authorService.readTranscript(ref, { mode: 'readAfter', cursor: 'cursor-1' });
+          case 'accounting':
+          case 'takeover': return adapter.compositionPort.resolveSourceIdentity({
+            agentId: ref.agentId, remoteSessionId: ref.remoteSessionId, purpose: method,
+          });
+        }
+      };
+      const pending = invoke();
+      const observed = pending.then(value => ({ value }), (error: unknown) => ({ error }));
+      await entered;
+      current = false;
+      retirement.abort();
+      release();
+      const expected = method === 'list' || method === 'listContinuation' ? { items: [expect.objectContaining({ ref })] }
+        : method === 'attach' ? { sessionId: 'linked-session' }
+          : method === 'page' ? { mode: 'page', items: [] }
+            : method === 'readAfter' ? { mode: 'readAfter', outcome: 'already_current' }
+              : { status: 'resolved', ref, source: target.source };
+      expect(await observed).toMatchObject({ value: expected });
+      expect(postWithdrawalChecks).toBe(0);
+      if (method === 'accounting' || method === 'takeover') {
+        await expect(invoke()).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_generation_retired' });
+      } else {
+        await expect(invoke()).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+      }
+    },
+  );
+
   it('retains privacy-safe follow identity failure reasons and nested provider codes', async () => {
     const source = { agentId: 'claude' as const, sourceId: 'source-1',
       source: { kind: 'claudeConfig' }, supportsFollow: true };
@@ -91,6 +165,39 @@ describe('createPluginExternalSessionsAdapter', () => {
           message: 'secret retained source credential' });
       } }) })).resolves.toMatchObject({ status: 'unavailable',
         diagnostic: { reason: 'retained_source_validation_failed', providerCode: 'source_unreachable' } });
+  });
+
+  it('cancels a held follow identity read when its ongoing source lifetime retires', async () => {
+    const retirement = new AbortController();
+    let enter!: () => void;
+    let release!: () => void;
+    let nativeSignal: AbortSignal | undefined;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const pending = resolvePluginExternalSessionFollowTarget({
+      agentId: ref.agentId, remoteSessionId: ref.remoteSessionId,
+      sources: [{ agentId: ref.agentId, sourceId: ref.sourceId, source: target.source, supportsFollow: true }],
+      isCurrent: () => !retirement.signal.aborted,
+      retirementSignal: retirement.signal,
+      resolveProviderOps: async () => ({
+        validateSource: async ({ source }) => ({ ok: true, source }),
+        resolveLinkIdentity: async ({ source, remoteSessionId, signal }) => {
+          nativeSignal = signal;
+          enter();
+          await held;
+          return { source, remoteSessionId, linkData: {} };
+        },
+      }),
+    });
+    await entered;
+    try {
+      retirement.abort();
+      expect(nativeSignal?.aborted).toBe(true);
+    } finally {
+      release();
+      await pending;
+    }
+    await expect(pending).resolves.toMatchObject({ status: 'unavailable', code: 'plugin_generation_retired' });
   });
   it('returns separate domain-author and source-bearing composition authorities', () => {
     const composition = createPluginExternalSessionsAdapter({
@@ -1382,18 +1489,21 @@ describe('createPluginExternalSessionsAdapter', () => {
     });
   });
 
-  it('closes a query during continuation acquisition and prevents a late successor page', async () => {
+  it('keeps explicit close authoritative after Account withdrawal during continuation acquisition', async () => {
     let started!: () => void;
     const entered = new Promise<void>((resolve) => { started = resolve; });
     let finish!: () => void;
     const heldPage = new Promise<void>((resolve) => { finish = resolve; });
+    const retirement = new AbortController();
+    let nativeSignal: AbortSignal | undefined;
     const adapter = createPluginExternalSessionsAdapter({
-      isCurrent: () => true,
+      isCurrent: () => !retirement.signal.aborted,
+      retirementSignal: retirement.signal,
       sources: [{ agentId: 'codex', sourceId: 'source-1', source: { kind: 'codexHome', home: 'user' } }],
       resolveProviderOps: async () => ({
         validateSource: async ({ source }) => ({ ok: true as const, source }),
-        listCandidates: async ({ cursor }) => {
-          if (cursor) { started(); await heldPage; }
+        listCandidates: async ({ cursor, signal }) => {
+          if (cursor) { nativeSignal = signal; started(); await heldPage; }
           return { candidates: [{ remoteSessionId: cursor ?? 'head', updatedAtMs: 1 }], nextCursor: 'provider-next' };
         },
         pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
@@ -1403,11 +1513,14 @@ describe('createPluginExternalSessionsAdapter', () => {
     const pending = adapter.authorService.list({ cursor, limit: 1 });
     const rejected = expect(pending).rejects.toMatchObject({ code: 'plugin_operation_aborted' });
     await entered;
+    retirement.abort();
+    expect(nativeSignal?.aborted).toBe(false);
     await adapter.authorService.closeList(cursor);
+    expect(nativeSignal?.aborted).toBe(true);
     finish();
     await rejected;
     await expect(adapter.authorService.list({ cursor, limit: 1 })).rejects.toMatchObject({
-      code: 'plugin_external_cursor_invalid',
+      code: 'plugin_generation_retired',
     });
   });
 
@@ -2252,19 +2365,29 @@ describe('createPluginExternalSessionsAdapter', () => {
     }
   });
 
-  it('rejects an in-flight provider result immediately when its generation retires', async () => {
+  it('keeps admitted provider acquisition through Account retirement', async () => {
     const retirement = new AbortController();
-    const never = new Promise<never>(() => undefined);
+    let enter!: () => void;
+    let release!: (ops: PluginExternalSessionsProviderOps) => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const held = new Promise<PluginExternalSessionsProviderOps>((resolve) => { release = resolve; });
     const adapter = createPluginExternalSessionsAdapter({
       isCurrent: () => !retirement.signal.aborted,
       retirementSignal: retirement.signal,
       sources: [{ agentId: 'codex', sourceId: 'source-1', source: { kind: 'codexHome', home: 'user' } }],
-      resolveProviderOps: async () => await never,
+      resolveProviderOps: async () => { enter(); return await held; },
     });
 
     const pending = adapter.authorService.list();
+    await entered;
     retirement.abort();
-    await expect(pending).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+    release({
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [{ remoteSessionId: 'remote-1' }], nextCursor: null }),
+      pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+    });
+    await expect(pending).resolves.toMatchObject({ items: [expect.objectContaining({ ref })] });
+    await expect(adapter.authorService.list()).rejects.toMatchObject({ code: 'plugin_generation_retired' });
   });
 
   it('rejects source fan-out above the canonical transcript-source ceiling before provider invocation', async () => {
@@ -2285,24 +2408,15 @@ describe('createPluginExternalSessionsAdapter', () => {
     expect(resolveProviderOps).not.toHaveBeenCalled();
   });
 
-  it('rechecks generation after async resolution and rejects non-finite bounds', async () => {
-    let current = true;
-    const validateSource = vi.fn();
-    const listCandidates = vi.fn();
+  it('rejects non-finite bounds before provider resolution', async () => {
+    const resolveProviderOps = vi.fn();
     const adapter = createPluginExternalSessionsAdapter({
-      isCurrent: () => current,
+      isCurrent: () => true,
       sources: [{ agentId: 'codex', sourceId: 'source-1', source: { kind: 'codexHome', home: 'user' } }],
-      resolveProviderOps: async () => {
-        current = false;
-        return { validateSource, listCandidates } as never;
-      },
+      resolveProviderOps,
     });
-    await expect(adapter.authorService.list()).rejects.toMatchObject({ code: 'plugin_generation_retired' });
-    expect(validateSource).not.toHaveBeenCalled();
-    expect(listCandidates).not.toHaveBeenCalled();
-
-    current = true;
     await expect(adapter.authorService.list({ limit: Number.NaN })).rejects.toMatchObject({ code: 'plugin_external_limit_invalid' });
+    expect(resolveProviderOps).not.toHaveBeenCalled();
   });
 
   it('rejects malformed list bounds before provider resolution', async () => {
@@ -3326,7 +3440,7 @@ describe('createPluginExternalSessionsAdapter', () => {
     });
   });
 
-  it('fences a public transcript ref when direct identity resolution returns after retirement', async () => {
+  it('keeps a public transcript ref admitted before Account withdrawal during identity resolution', async () => {
     let current = true;
     const listCandidates = vi.fn(async () => {
       throw new Error('public read must not re-list candidates');
@@ -3338,7 +3452,7 @@ describe('createPluginExternalSessionsAdapter', () => {
       current = false;
       return { source, remoteSessionId };
     });
-    const pageTranscript = vi.fn();
+    const pageTranscript = vi.fn(async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }));
     const adapter = createPluginExternalSessionsAdapter({
       isCurrent: () => current,
       sources: [{ agentId: 'codex', sourceId: 'source-1', source: { kind: 'codexHome', home: 'user' } }],
@@ -3353,12 +3467,11 @@ describe('createPluginExternalSessionsAdapter', () => {
       }) as never,
     });
 
-    await expect(adapter.authorService.readTranscript(ref)).rejects.toMatchObject({
-      code: 'plugin_generation_retired',
-    });
+    await expect(adapter.authorService.readTranscript(ref)).resolves.toMatchObject({ mode: 'page', items: [] });
     expect(resolveLinkIdentity).toHaveBeenCalledOnce();
     expect(listCandidates).not.toHaveBeenCalled();
-    expect(pageTranscript).not.toHaveBeenCalled();
+    expect(pageTranscript).toHaveBeenCalledOnce();
+    await expect(adapter.authorService.readTranscript(ref)).rejects.toMatchObject({ code: 'plugin_generation_retired' });
   });
 
   it('cancels public transcript identity resolution before transcript effects', async () => {

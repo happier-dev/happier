@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,6 +9,15 @@ import {
 
 describe('session runtime catalog hooks', () => {
   it('resolves provider runtime preferences from catalog entries', async () => {
+    const source = await readFile(new URL('./catalogHooks.ts', import.meta.url), 'utf8');
+    const file = ts.createSourceFile('catalogHooks.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const eagerAgentCatalogs = file.statements.filter(statement => (
+      ts.isImportDeclaration(statement)
+      && !statement.importClause?.isTypeOnly
+      && ts.isStringLiteral(statement.moduleSpecifier)
+      && statement.moduleSpecifier.text === '@happier-dev/agents'
+    ));
+    expect(eagerAgentCatalogs).toHaveLength(0);
     await expect(resolveProviderSessionRuntimePreferences('kilo', {
       isExplicitCliSubcommand: true,
       parsed: { agentArgs: [] },

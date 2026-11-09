@@ -54,7 +54,6 @@ describe('external session operation exclusion mutation races', () => {
             activeServerDir,
             ownerId: 'daemon:first',
             nowMs: () => nowMs,
-            ttlMs: 100,
         });
         const first = await firstOwner.acquire({
             kind: 'materialize',
@@ -74,7 +73,6 @@ describe('external session operation exclusion mutation races', () => {
             activeServerDir,
             ownerId: 'daemon:successor',
             nowMs: () => nowMs,
-            ttlMs: 100,
         });
         let successorSettled = false;
         const successorPromise = successorOwner.acquire({

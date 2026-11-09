@@ -189,6 +189,7 @@ async function restorePreparedReplayItems(input: Readonly<{
             item: Object.freeze({
                 ...entry.item,
                 content: prepared.items[index]!.item.content,
+                usageTimingV1: prepared.items[index]!.item.usageTimingV1,
             }),
         }))),
     });

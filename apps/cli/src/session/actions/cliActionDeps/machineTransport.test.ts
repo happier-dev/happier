@@ -48,7 +48,9 @@ describe('Machine capability observation during unsigned approval replay', () =>
   });
 
   it.each([RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES, RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIE_SOURCE_READ,
-    RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY])('keeps native credential %s on authenticated Machine ingress', async method => {
+    RPC_METHODS.DAEMON_BROWSER_PROFILE_COOKIES_APPLY,
+    RPC_METHODS.DAEMON_BROWSER_PROFILE_PASSKEYS_APPLY,
+  ])('keeps native credential %s on authenticated Machine ingress', async method => {
       const local = vi.fn<MachineActionDirectTargetTransport['invoke']>();
       const admitted = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ status: 'unavailable', code: 'permission_denied' });
       const transport = createCliMachineActionTransport({

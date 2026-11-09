@@ -6,6 +6,7 @@ import {
   mergeUsageLimitRecoveryIntent,
   mergeUsageLimitRecoveryRearm,
 } from './mergeUsageLimitRecoveryIntent';
+import { deterministicStringify } from '@/utils/deterministicJson';
 
 function readAttemptIdentity(value: unknown): Readonly<{
   issueFingerprint: string;
@@ -26,18 +27,20 @@ function readAttemptIdentity(value: unknown): Readonly<{
 
 export function mergeUsageLimitRecoveryFieldIntoMetadata(input: Readonly<{
   latestMetadata: Record<string, unknown>;
-  baseMetadata: Record<string, unknown>;
+  /** Actual predecessor used to author the candidate; omit for an unbased projection. */
+  baseMetadata?: Record<string, unknown>;
   candidateMetadata: Record<string, unknown>;
   mode?: 'converge' | 'rearm' | 'explicit_rearm' | 'cancel';
 }>): Record<string, unknown> {
   const key = SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY;
+  const baseMetadata = input.baseMetadata ?? {};
   const candidateHasField = Object.prototype.hasOwnProperty.call(input.candidateMetadata, key);
-  const baseHasField = Object.prototype.hasOwnProperty.call(input.baseMetadata, key);
+  const baseHasField = Object.prototype.hasOwnProperty.call(baseMetadata, key);
   const clearRequested = (baseHasField && !candidateHasField)
     || (candidateHasField && input.candidateMetadata[key] === null);
   if (clearRequested) {
     if (Object.prototype.hasOwnProperty.call(input.latestMetadata, key)) {
-      const baseIdentity = readAttemptIdentity(input.baseMetadata[key]);
+      const baseIdentity = readAttemptIdentity(baseMetadata[key]);
       const latestIdentity = readAttemptIdentity(input.latestMetadata[key]);
       if (
         !baseIdentity
@@ -52,8 +55,15 @@ export function mergeUsageLimitRecoveryFieldIntoMetadata(input: Readonly<{
   if (!candidateHasField) return input.latestMetadata;
   const latest = SessionUsageLimitRecoveryV1Schema.safeParse(input.latestMetadata[key]);
   const candidate = SessionUsageLimitRecoveryV1Schema.safeParse(input.candidateMetadata[key]);
+  const base = SessionUsageLimitRecoveryV1Schema.safeParse(baseMetadata[key]);
+  // A sequential owner transition applies as authored. Concurrent or unbased
+  // projections converge below, preserving terminal and replacement state.
+  if ((input.mode === undefined || input.mode === 'converge')
+    && latest.success && candidate.success && base.success
+    && deterministicStringify(latest.data) === deterministicStringify(base.data)) {
+    return { ...input.latestMetadata, [key]: candidate.data };
+  }
   if (input.mode === 'cancel') {
-    const base = SessionUsageLimitRecoveryV1Schema.safeParse(input.baseMetadata[key]);
     if (
       !base.success
       || !latest.success

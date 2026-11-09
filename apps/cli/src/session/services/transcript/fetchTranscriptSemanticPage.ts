@@ -104,7 +104,7 @@ function recordSemanticPageDiagnostics(params: Readonly<{
   pagesFetched: number;
   scanLimitReached: boolean;
   payloadTruncations: number;
-  maxPayloadChars?: number;
+  maxPayloadChars?: number | null;
   maxTotalPayloadBytes: number;
 }>): void {
   if (params.scanLimitReached) {
@@ -159,7 +159,7 @@ export async function fetchTranscriptSemanticPage(params: Readonly<{
   includeStructuredPayload?: boolean;
   eventKinds?: readonly string[];
   maxTextChars?: number | null;
-  maxPayloadChars?: number;
+  maxPayloadChars?: number | null;
   maxTotalPayloadBytes?: number;
   fetchPage?: FetchTranscriptRawPage;
   signal?: AbortSignal;

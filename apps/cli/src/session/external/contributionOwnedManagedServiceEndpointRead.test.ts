@@ -1,3 +1,4 @@
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -67,6 +68,7 @@ function createHandle(): ManagedServiceHandle {
 function createServices(supervise: (spec: ManagedServiceSpec) => Promise<ManagedServiceHandle>): PluginServices {
     return {
         managedServices: {
+            ...createUnavailableManagedServices(),
             dependencies: {},
             supervise,
         },

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, vi } from 'vitest';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
-import { CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } from '@happier-dev/protocol/agents/codex/native-home-policy';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { readRegistryCatalogHook } from '@/agent/catalog/runtimeEntry';
 import { createAgentExternalSessionsExecutionSurface } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';

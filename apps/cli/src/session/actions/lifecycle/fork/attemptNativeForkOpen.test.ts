@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deriveSessionCreationTagV1, SessionCreationCorrespondenceV1Schema, SessionTurnProviderCheckpointV1Schema, type RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { projectCurrentAgentSessionView } from '@happier-dev/agents';
+import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 
 const mocks = vi.hoisted(() => ({
     fetchSessionTurnsProjection: vi.fn(),
@@ -58,6 +59,20 @@ describe('attemptNativeForkOpen', () => {
         vi.clearAllMocks();
         mocks.fetchForkChildSessionOrThrow.mockResolvedValue({ id: 'host-child', metadata: '{}' });
         mocks.updateSessionMetadataWithRetry.mockResolvedValue(undefined);
+    });
+
+    it('retains the source approval profile when opening a native child', async () => {
+        const metadata = { ...parentMetadata, approvalProfileId: 'builtin:apply-safe' };
+        const spawnSession = vi.fn<ForkSpawnSession>(async () => ({
+            type: 'error', errorCode: 'INVALID_REQUEST', errorMessage: 'OS launch boundary rejection',
+        }));
+        await attemptNativeForkOpen({ credentials, parentSessionId: 'host-parent', parentMetadata: metadata,
+            directory: '/source', forkPoint: { type: 'latest' }, targetSeqInclusive: 9, effectiveCutoffSeqInclusive: 9,
+            spawnNonce: 'native-profile', forkBackendResolution,
+            inheritedForkOverrides: resolveForkInheritedOverridesFromMetadata(metadata, forkBackendResolution.backendTargetV2),
+            spawnSession, stopSession: vi.fn(),
+        });
+        expect(spawnSession.mock.calls[0]?.[0]).toMatchObject({ approvalProfileId: 'builtin:apply-safe' });
     });
 
     it('gives a managed fork its own creation identity and directory before daemon admission', async () => {

@@ -25,6 +25,7 @@ import {
 import {
   acknowledgeExternalSessionOperationProgressProjection,
   compactExternalSessionOperationRecordToTerminalReceipt,
+  resolveExternalSessionOperationAccountScope,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 
@@ -221,6 +222,73 @@ async function compactCompletedTakeoverReceipt(
 }
 
 describe('external-session materialize start intent', () => {
+  it('keeps a completed native source read when its occurrence retires before the read returns', async () => {
+    configureDefaultLinkedSource();
+    const retirement = new AbortController();
+    defaultDependencies.resolveGenerationBoundSurface.mockResolvedValue({
+      sourceCustody: { kind: 'development', registeredRootId: 'plugin-current' },
+      occurrenceId: 'plugin-occurrence-1',
+      resource: { retirementSignal: retirement.signal },
+      providerOps: {
+        pageTranscript: async () => {
+          retirement.abort();
+          return { tailCursor: 'tail-admitted' };
+        },
+      },
+    });
+    const start = vi.fn<ExternalSessionMaterializeActionExecutor['start']>(async () => ({
+      ok: false,
+      error: { code: 'internal_error', message: 'fixture' },
+    }));
+    const executor = createDefaultExternalSessionMaterializeStartActionExecutor({
+      activeServerDir: '/tmp/happier-materialize-start-admitted-read',
+      materialize: { start } as ExternalSessionMaterializeActionExecutor,
+    });
+
+    await executor.start({ request: intent });
+
+    expect(start).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('uses one admitted Account for source and durable admission (forwarded=%s)', async (forwarded) => {
+    configureDefaultLinkedSource();
+    const tokenFor = (sub: string) => `header.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`;
+    const credentialsA = { token: tokenFor('account-a'), encryption: null };
+    const credentialsB = { token: tokenFor('account-b'), encryption: null };
+    let selectedCredentials = forwarded ? credentialsB : credentialsA;
+    defaultDependencies.readCredentials.mockImplementation(async () => selectedCredentials);
+    defaultDependencies.readCredentials.mockClear();
+    const linked = await defaultDependencies.loadLinkedExternalSession();
+    defaultDependencies.loadLinkedExternalSession.mockImplementation(async () => {
+      selectedCredentials = credentialsB;
+      return linked;
+    });
+    const start = vi.fn<ExternalSessionMaterializeActionExecutor['start']>(async () => ({
+      ok: false,
+      error: { code: 'internal_error', message: 'fixture' },
+    }));
+    const executor = createDefaultExternalSessionMaterializeStartActionExecutor({
+      activeServerDir: '/tmp/happier-materialize-start-captured-account',
+      machineId: 'machine-1',
+      materialize: { start } as ExternalSessionMaterializeActionExecutor,
+    });
+
+    await executor.start({ request: intent }, forwarded ? {
+      accountAdmission: {
+        credentials: credentialsA,
+        accountScope: resolveExternalSessionOperationAccountScope('/tmp/happier-materialize-start-captured-account', credentialsA.token)!,
+      },
+    } : undefined);
+
+    expect(start.mock.calls[0]?.[1]?.accountScope).toMatchObject({ accountSubject: 'account-a' });
+    expect(defaultDependencies.loadLinkedExternalSession).toHaveBeenLastCalledWith({
+      credentials: credentialsA,
+      sessionId: intent.sessionId,
+      machineId: 'machine-1',
+    });
+    expect(defaultDependencies.readCredentials).toHaveBeenCalledTimes(forwarded ? 0 : 1);
+  });
+
   it('stamps the plugin author intent onto the direct durable Start request', async () => {
     const startSemanticRequest = vi.fn(async () => ({
       ok: false as const,
@@ -232,8 +300,10 @@ describe('external-session materialize start intent', () => {
         operationId: 'external-materialize:test-plugin-start',
       }),
       describeSession: async (startIntent) => ({
-        ...semanticRequest,
-        idempotencyKey: startIntent.idempotencyKey,
+        request: {
+          ...semanticRequest,
+          idempotencyKey: startIntent.idempotencyKey,
+        },
       }),
       startSemanticRequest,
     });
@@ -269,7 +339,7 @@ describe('external-session materialize start intent', () => {
       ok: false as const,
       error: { code: 'internal_error' as const, message: 'fixture' },
     }));
-    const describeSession = vi.fn(async () => semanticRequest);
+    const describeSession = vi.fn(async () => ({ request: semanticRequest }));
     const executor = createExternalSessionMaterializeStartActionExecutor({
       resolveAdmission: async () => ({
         kind: 'new_operation',
@@ -285,7 +355,7 @@ describe('external-session materialize start intent', () => {
       { signal: controller.signal },
     );
 
-    expect(describeSession).toHaveBeenCalledWith(intent);
+    expect(describeSession).toHaveBeenCalledWith(intent, undefined);
     expect(startSemanticRequest).toHaveBeenCalledWith(
       { request: semanticRequest },
       { signal: controller.signal, onAdmitted: expect.any(Function) },
@@ -344,10 +414,12 @@ describe('external-session materialize start intent', () => {
       error: { code: 'internal_error' as const, message: 'fixture' },
     }));
     const describeSession = vi.fn(async () => ({
-      ...semanticRequest,
-      source: {
-        ...semanticRequest.source,
-        sourceGeneration: 'source-advanced',
+      request: {
+        ...semanticRequest,
+        source: {
+          ...semanticRequest.source,
+          sourceGeneration: 'source-advanced',
+        },
       },
     }));
     const executor = createExternalSessionMaterializeStartActionExecutor({
@@ -361,7 +433,7 @@ describe('external-session materialize start intent', () => {
 
     await executor.start({ request: intent });
 
-    expect(describeSession).toHaveBeenCalledWith(intent);
+    expect(describeSession).toHaveBeenCalledWith(intent, undefined);
     expect(startSemanticRequest).toHaveBeenCalledWith(
       { request: semanticRequest },
       { onAdmitted: expect.any(Function) },
@@ -553,7 +625,7 @@ describe('external-session materialize start intent', () => {
         kind: 'new_operation',
         operationId: admitted.operationId,
       }),
-      describeSession: async () => semanticRequest,
+      describeSession: async () => ({ request: semanticRequest }),
       startSemanticRequest,
     });
 

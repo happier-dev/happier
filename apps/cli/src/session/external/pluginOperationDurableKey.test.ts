@@ -34,6 +34,10 @@ describe('External Sessions plugin operation durable key', () => {
       });
 
     const loneHighSurrogate = derive('\uD800');
+    expect(loneHighSurrogate).toBe('plugin-operation:v1:7a232b6354aff326e27786fb37974a1453a3b134ad72ce4c040b9b3a25a03152');
+    expect(derive('\uD801')).toBe('plugin-operation:v1:29905285e7ae425d2d0bd4ee255f88a813c4729bd2b03a5d9ed5349bd309fd72');
+    expect(derive('\uDC00')).toBe('plugin-operation:v1:c65fb120ecf6659faaacb283866cacbedfc71cde797b87aa5b1cdb014c0f06ba');
+    expect(derive('\uFFFD')).toBe('plugin-operation:v1:68046ada60fdced56b7be245006ccf7e69bdc28a63a61ed562109a28952970d2');
     expect(derive('\uD800')).toBe(loneHighSurrogate);
     expect(new Set([
       loneHighSurrogate,

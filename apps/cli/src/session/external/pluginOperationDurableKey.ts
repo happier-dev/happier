@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { toUSVString } from 'node:util';
 
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -31,7 +32,7 @@ export function deriveExternalSessionPluginOperationDurableKey(
   const hash = createHash('sha256')
     .update('happier.external-sessions.plugin-operation.v1\0', 'utf8')
     .update(framedPrefix, 'utf8');
-  if (hasLoneUtf16Surrogate(input.callerKey)) {
+  if (toUSVString(input.callerKey) !== input.callerKey) {
     // 0xff cannot occur in valid UTF-8, so exact UTF-16 code units cannot
     // alias any legacy well-formed key or another malformed key.
     hash
@@ -41,22 +42,6 @@ export function deriveExternalSessionPluginOperationDurableKey(
     hash.update(input.callerKey, 'utf8');
   }
   return `plugin-operation:v1:${hash.digest('hex')}`;
-}
-
-function hasLoneUtf16Surrogate(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
-      const nextCodeUnit = value.charCodeAt(index + 1);
-      if (nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) {
-        index += 1;
-        continue;
-      }
-      return true;
-    }
-    if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) return true;
-  }
-  return false;
 }
 
 function pluginOperationKeyFailure(code: string): PluginError {

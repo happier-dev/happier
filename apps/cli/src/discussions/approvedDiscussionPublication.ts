@@ -1,5 +1,5 @@
 import axios from '@/api/client/credentialAxios';
-import { StoredApprovalRequestSchema, admitApprovalRequesterDecisionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { StoredApprovalRequestSchema, admitApprovalRequesterDecisionV1, isHistoricalPublishApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { requiresPresentUserExecutionAuthorityForActionInputV1 } from '@happier-dev/protocol/actions/decisionAuthority';
@@ -56,6 +56,7 @@ async function readExecutingDiscussionApproval(params: Readonly<{
   if (parsed.data.status !== 'executing') return publicationRefusal('discussion_replay_approval_not_executing');
   if (parsed.data.decision?.kind !== 'approve') return publicationRefusal('discussion_replay_approval_not_approved');
   if (parsed.data.execution !== undefined) return publicationRefusal('discussion_replay_approval_already_executed');
+  if (isHistoricalPublishApprovalRequestV2(parsed.data)) return publicationRefusal('discussion_replay_action_mismatch');
   return { ok: true as const, approval: parsed.data };
 }
 

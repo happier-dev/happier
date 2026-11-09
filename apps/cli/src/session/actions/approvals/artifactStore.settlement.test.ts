@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
@@ -27,9 +27,16 @@ import { createLocalServicesDaemonFeatureGate } from '@/daemon/local/services/fe
 import { createLocalServicesDaemonRuntimeActionExecutor } from '@/daemon/local/services/actions/runtimeActionExecutor';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
-import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeEnvironmentIoForHost } from '@/plugins/runtime/invocation/services/exec';
-import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
-
+import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
+import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 
 // Only the Account server's HTTP boundary is replaced. The real Action executor,
 // the real approval Artifact store and its codecs, and the server's versioned
@@ -52,6 +59,7 @@ vi.mock('@/configuration', () => ({ configuration: {
   activeServerId: 'home-1',
   activeServerDir: '/tmp/happier-cli-approval-settlement-test',
   happyHomeDir: '/tmp/happier-cli-approval-settlement-test',
+  organizationPolicy: { status: 'absent' },
 } }));
 
 const rows = new Map<string, Record<string, unknown>>();
@@ -193,6 +201,85 @@ function storedBody(artifactId: string): string {
 }
 
 describe('approval settlement through the real CLI Artifact store', () => {
+  it('returns a deferred UI Ask from the accepted operation and rejects it without deploying', async () => {
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
+    const store = createStore();
+    const coordinator = createBlockingApprovalCoordinator();
+    const operations = createActionOperationStore();
+    const scope = { accountId: 'account-1', machineId: 'machine-a' };
+    const runner = createActionOperationRunner({ store: operations, generateOperationId: () => 'pending-approval-operation',
+      resolveAction: actionId => ({ actionId, title: 'Deploy', operation: getActionSpec('deployments.deploy').operation }) });
+    const environment = createDeploymentEnvironmentHeaderV1({ serverId: 'home-1' });
+    let deploymentWrites = 0;
+    let metadataReads = 0;
+    let executionOutcome: Readonly<{ ok: boolean; errorCode?: string; approvalCreated?: boolean }> | undefined;
+    http.request.mockImplementation(async ({ method, url }: { method: string; url: string }) => {
+      if (method === 'GET' && new URL(url).pathname === `/v1/deployments/environments/${environment.id}`) {
+        metadataReads += 1;
+        return { status: 200, data: { ok: true, environment, targetLinks: [] } };
+      }
+      deploymentWrites += 1;
+      throw new Error('A held or rejected approval cannot admit a deployment');
+    });
+    const input = { serverId: 'home-1', environmentId: environment.id, expectedRevision: environment.revision,
+      targetLinkId: environment.runtimeTargetLinkId!, expectedTargetLinkRevision: 1, requestKey: 'pending-approval',
+      contentArtifactId: 'fresh-reviewed-candidate', contentHeaderVersion: 1, contentBodyVersion: 1, whenBusy: 'supersede' as const };
+    const pending = { ok: true, environmentId: environment.id, revision: environment.revision,
+      kind: 'pending', actionOperationId: 'pending-approval-operation' };
+    let executor: ReturnType<typeof createCliActionExecutorHarness>['executor'] | undefined;
+    try {
+      const accepted = await runner.observe({ actionId: 'deployments.deploy', scope, input, execute: async operation => {
+        const harness = createCliActionExecutorHarness({ token, credentials: { token, encryption: null },
+          serverId: 'home-1', serverHttpBaseUrl: 'http://approval-settlement.invalid', sessionId: 'cli-global', mode: 'plain', ctx: null }, {
+          ...store,
+          hostActionApprovalLifetime: { operationId: operation.operationAcceptance!.operationId, signal: operation.signal },
+          approvalsWaitForDecision: async args => {
+            const decision = await coordinator.waitForDecision(args);
+            return { ...decision, request: ApprovalRequestV2Schema.parse(decision.request) };
+          },
+          approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
+        });
+        executor = harness.executor;
+        // This is the existing accepted-operation port, not a successful receipt.
+        // The re-entered executor retains the actual present person's authority.
+        operation.publishOwnerUpdate({ state: 'running' });
+        operation.operationAcceptance!.accept(pending);
+        const outcome = await harness.executor.execute('deployments.deploy', input, { ...uiContext,
+          serverIdentityId: 'srv_pending_approval', defaultSessionMachineId: 'machine-a',
+          actionRequestId: input.requestKey, signal: operation.signal,
+          operationAcceptance: operation.operationAcceptance,
+          operationOwnerUpdate: { update: operation.publishOwnerUpdate },
+          actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['ui'] } } }),
+        });
+        executionOutcome = outcome.ok
+          ? { ok: true, approvalCreated: ActionApprovalRequestCreatedResultSchema.safeParse(outcome.result).success }
+          : { ok: false, errorCode: outcome.errorCode };
+        return outcome;
+      } });
+      expect(accepted).toEqual({ ok: true, result: pending });
+      await vi.waitFor(() => expect(rows.size, JSON.stringify({ metadataReads, executionOutcome,
+        operationState: operations.get(scope, pending.actionOperationId)?.state,
+        operationErrorCode: operations.get(scope, pending.actionOperationId)?.error?.errorCode })).toBe(1));
+      const artifactId = [...rows.keys()][0]!;
+      const request = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: null }));
+      expect(request).toMatchObject({ status: 'open', actionId: 'deployments.deploy', approval: { flow: 'deferred' },
+        executionOriginV1: { authority: 'present_user', caller: { kind: 'host' }, requestId: input.requestKey } });
+      await expect(runner.waitForTerminal(scope, pending.actionOperationId))
+        .resolves.toMatchObject({ state: 'succeeded', result: { kind: 'approval_request_created', artifactId } });
+      expect(deploymentWrites).toBe(0);
+      if (!executor) throw new Error('The accepted operation must own its executor');
+      expect(await executor.execute('approval.request.decide', { artifactId, decision: 'reject' }, uiContext))
+        .toMatchObject({ ok: true });
+      expect(await store.approvalsGet({ artifactId, serverId: null })).toMatchObject({ status: 'rejected' });
+      expect(rows.size).toBe(1);
+      expect(deploymentWrites).toBe(0);
+    } finally {
+      runner.cancel(scope, pending.actionOperationId);
+      await runner.waitForTerminal(scope, pending.actionOperationId);
+      coordinator.dispose();
+    }
+  });
+
   it.each([
     { decision: 'approve', rollbackAt: 'decision' },
     { decision: 'reject', rollbackAt: 'decision' },
@@ -219,7 +306,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
       });
       const context = { ...uiContext, surface: 'cli' as const, defaultSessionId: 'clock-session' };
       const created = await executor.execute('session.delete', { sessionId: 'clock-session' }, context);
-      expect(created).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(created, JSON.stringify(created)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(created.ok ? created.result : null);
       if (rollbackAt === 'decision') clock.mockReturnValue(10_000);
       const decided = await executor.execute('approval.request.decide', { artifactId, decision }, context);
@@ -334,7 +421,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
         artifactId, decision: outcome === 'rejected' ? 'reject' : 'approve',
       }, uiContext);
       const persisted = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: null }));
-      expect(persisted).toMatchObject({ status: outcome === 'succeeded' ? 'executed' : outcome === 'rejected' ? 'rejected' : 'failed',
+      expect(persisted, JSON.stringify(decided)).toMatchObject({ status: outcome === 'succeeded' ? 'executed' : outcome === 'rejected' ? 'rejected' : 'failed',
         executionOriginV1: { actionRequestAttributionV1: attribution },
       });
       expect(decided).toMatchObject({ ok: true });
@@ -364,39 +451,42 @@ describe('approval settlement through the real CLI Artifact store', () => {
     },
   );
 
-  it.each(['saved', 'unavailable'] as const)('settles an unavailable Home recheck after the execution claim with its receipt %s', async receipt => {
+  // OWNER-RULINGS 2026-10-29: admission happens once; admitted work finishes
+  // without another Home permission/currentness read after the execution claim.
+  it.each(['saved', 'unavailable'] as const)('settles admitted work without a Home recheck with its receipt %s', async receipt => {
     const store = createStore();
-    let artifactId = '';
     let effects = 0;
+    let homeReads = 0;
     const executor = createExecutor(store, {
       isApprovalExecutionOriginCurrent: async () => {
-        const current = artifactId ? await store.approvalsGet({ artifactId, serverId: null }) : null;
-        // The Home evidence boundary becomes unavailable only after the real
-        // Artifact writer has committed its execution claim.
-        if (current?.status === 'executing') {
-          if (receipt === 'unavailable') http.beforeUpdate = () => { http.failNextUpdateStatus = 503; };
-          throw Object.assign(new Error('Home evidence unavailable'), { code: 'project_requester_home_unavailable' });
-        }
+        homeReads += 1;
+        if (homeReads > 1) throw Object.assign(new Error('Home evidence unavailable'), { code: 'project_requester_home_unavailable' });
         return true;
       },
-      homeDomainAction: async () => { effects += 1; return { ok: true }; },
+      homeDomainAction: async () => {
+        effects += 1;
+        if (receipt === 'unavailable') http.beforeUpdate = () => { http.failNextUpdateStatus = 503; };
+        return { ok: false, errorCode: 'provider_conflict', error: 'provider_conflict' };
+      },
     });
-    artifactId = await createDeferred(executor, 'identity.providers.secret.replace', providerSecretInput);
+    const artifactId = await createDeferred(executor, 'identity.providers.secret.replace', providerSecretInput);
     const deciding = executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext);
     if (receipt === 'unavailable') {
       await expect(deciding).resolves.toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
       expect(await store.approvalsGet({ artifactId, serverId: null })).toMatchObject({ status: 'executing' });
-      expect(effects).toBe(0);
+      expect(effects).toBe(1);
+      expect(homeReads).toBe(1);
       return;
     }
     await expect(deciding)
       .resolves.toMatchObject({ ok: true, result: { status: 'failed', execution: {
-        ok: false, effectAttempted: false, errorCode: 'project_requester_home_unavailable',
+        ok: false, effectAttempted: true, errorCode: 'provider_conflict',
       } } });
     expect(await store.approvalsGet({ artifactId, serverId: null })).toMatchObject({ status: 'failed', execution: {
-      ok: false, effectAttempted: false, errorCode: 'project_requester_home_unavailable',
+      ok: false, effectAttempted: true, errorCode: 'provider_conflict',
     } });
-    expect(effects).toBe(0);
+    expect(effects).toBe(1);
+    expect(homeReads).toBe(1);
     expect(storedBody(artifactId)).not.toContain(PROVIDER_SECRET);
   });
 
@@ -470,7 +560,8 @@ describe('approval settlement through the real CLI Artifact store', () => {
       expect(gate.isEnabled('localServices.actions')).toBe(true);
       expect(gate.isEnabled('localServices.managed')).toBe(true);
       try {
-        const handle = await owner.superviseProject({ kind: 'workspace',
+        const handle = await owner.superviseProject({
+          kind: 'workspace',
           workspace, declaration, cwd: workspace.rootPath,
           requester: { serverId: workspace.serverId, accountId: 'account-1',
             machineId: workspace.machineId, installationId: 'stop-installation' },
@@ -479,7 +570,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
           authorizeLaunch: ({ signal }) => authorizeResolvedProjectExecLaunchForHost({
             signal, assertCurrent() {},
             projectLaunch: { status: 'ready', reviewedEffectDigest: 'reviewed-stop-worker',
-              environment: { selection: { kind: 'host' }, root: workspace.rootPath, platform: process.platform,
+              toolchain: { selection: { kind: 'host' }, root: workspace.rootPath, platform: process.platform,
                 io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }) } },
             launch: { command: process.execPath, args: [], cwd: workspace.rootPath, env: {} },
           }),
@@ -546,7 +637,7 @@ describe('approval settlement through the real CLI Artifact store', () => {
           }) }) });
         };
         const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext);
-        const persisted = await store.approvalsGet({ artifactId, serverId: null });
+        const persisted = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: null }));
         const settlementDiagnostic = JSON.stringify({ ok: decided.ok,
           errorCode: decided.ok ? undefined : decided.errorCode,
           status: persisted?.status,
@@ -603,10 +694,11 @@ describe('approval settlement through the real CLI Artifact store', () => {
     const executor = createExecutor(store, { sessionModelSet: effect });
 
     await expect(executor.replayApprovedApprovalRequest({ artifactId }))
-      .resolves.toMatchObject({ ok: true, result: { status: 'failed' } });
+      .resolves.toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_stale' });
 
     const persisted = await store.approvalsGet({ artifactId, serverId: 'legacy-home' });
-    expect(persisted).toMatchObject({ v: 1, status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } });
+    expect(persisted).toMatchObject({ v: 1, status: 'approved' });
+    expect(persisted?.execution).toBeUndefined();
     expect(await store.approvalsGet({ artifactId, serverId: 'other-home' })).toBeNull();
     expect(effect).not.toHaveBeenCalled();
   });
@@ -692,7 +784,97 @@ describe('approval settlement through the real CLI Artifact store', () => {
     expect(storedBody(artifactId)).not.toContain(PROVIDER_SECRET);
   });
 
-  it('settles a pre-execution currentness failure without an effect and without the secret', async () => {
+  it.each([undefined, false, true] as const)(
+    'preserves producer effect evidence %s in public approval and operation reads', async effectAttempted => {
+      const store = createStore();
+      const operations = createHostActionOperationRuntime({ serverId: 'home-1', machineId: 'machine-a',
+        resolveAccountId: async () => 'account-1', generateOperationId: () => 'fork-evidence-operation' });
+      let nativeRequests = 0;
+      const executor = createExecutor(store, {
+        isActionApprovalRequired: actionId => actionId === 'session.fork',
+        runActionOperation: operations.runActionOperation,
+        // The native Session RPC answers with its producer's typed outcome.
+        // Approval admission, Artifact CAS, operation storage and public reads stay real.
+        sessionFork: async () => {
+          nativeRequests += 1;
+          return { ok: false, errorCode: 'server_unreachable', error: 'server_unreachable',
+            ...(effectAttempted === undefined ? {} : { effectAttempted }) };
+        },
+      });
+      const created = await executor.execute('session.fork', { serverId: 'home-1', sessionId: 'session',
+        requestId: 'fork-evidence' }, uiContext);
+      if (!created.ok) throw new Error('The native Session request must reach approval');
+      const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(created.result);
+      const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext);
+      expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'server_unreachable' } } });
+      if (effectAttempted === undefined) expect(decided).not.toHaveProperty('result.execution.effectAttempted');
+      else expect(decided).toHaveProperty('result.execution.effectAttempted', effectAttempted);
+      const persisted = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: null }));
+      const publicRead = await executor.execute('approval.request.get', { artifactId }, uiContext);
+      if (!publicRead.ok) throw new Error('The terminal approval must remain publicly readable');
+      const { request } = ApprovalRequestGetResultV1Schema.parse(publicRead.result);
+      if (request.v !== 2) throw new Error('The native approval must use the current execution schema');
+      const operation = ActionOperationGetV1ResponseSchema.parse(await executeActionOperationActionV1({
+        actionId: 'action.operations.get', input: { serverId: 'home-1', machineId: 'machine-a', operationId: 'fork-evidence-operation' },
+        transport: async ({ payload }) => operations.handlers.getV2(payload),
+      }));
+      expect(operation).toMatchObject({ kind: 'found', operation: { state: 'failed',
+        error: { errorCode: 'server_unreachable' } } });
+      if (operation.kind !== 'found') throw new Error('The terminal native operation must be retained');
+      for (const evidence of [persisted.execution, request.execution, operation.operation.error]) {
+        if (effectAttempted === undefined) expect(evidence).not.toHaveProperty('effectAttempted');
+        else expect(evidence).toHaveProperty('effectAttempted', effectAttempted);
+      }
+      expect(nativeRequests).toBe(1);
+    },
+  );
+
+  it.each([false, true])('preserves unclaimed consent or records a dispatched unknown outcome (dispatched=%s)', async dispatched => {
+    const store = createStore();
+    let effects = 0;
+    let replayRequests = 0;
+    const executor = createExecutor(store, {
+      homeDomainAction: async () => { effects++; return {}; },
+      approvalRequestApprovedReplay: async ({ onReplayDispatched }) => {
+        replayRequests++;
+        if (dispatched) onReplayDispatched?.();
+        const errorCode = dispatched ? 'invalid_action_transport_output' : 'approval_context_unavailable';
+        return { ok: false, errorCode, error: errorCode };
+      },
+    });
+    const artifactId = await createDeferred(executor, 'identity.providers.secret.replace', providerSecretInput);
+    const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext);
+    const persisted = await store.approvalsGet({ artifactId, serverId: null });
+    if (dispatched) {
+      const execution = { ok: false, errorCode: 'approval_execution_outcome_unknown' };
+      expect(decided).toMatchObject({ ok: true, result: { status: 'outcome_unknown', execution } });
+      expect(decided).not.toHaveProperty('result.execution.effectAttempted');
+      expect(persisted).toMatchObject({ status: 'outcome_unknown', execution });
+      expect(persisted?.execution).not.toHaveProperty('effectAttempted');
+      const publicRead = await executor.execute('approval.request.get', { artifactId }, uiContext);
+      if (!publicRead.ok) throw new Error('The uncertain approval must remain publicly readable');
+      const { request } = ApprovalRequestGetResultV1Schema.parse(publicRead.result);
+      expect(request).toMatchObject({ status: 'outcome_unknown', execution });
+      expect(request.execution).not.toHaveProperty('effectAttempted');
+      expect(storedBody(artifactId)).not.toContain(PROVIDER_SECRET);
+    } else {
+      expect(decided).toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_context_unavailable' });
+      expect(persisted).toMatchObject({ status: 'approved' });
+      expect(persisted?.execution).toBeUndefined();
+      const publicRead = await executor.execute('approval.request.get', { artifactId }, uiContext);
+      if (!publicRead.ok) throw new Error('Unclaimed consent must remain publicly readable');
+      const { request } = ApprovalRequestGetResultV1Schema.parse(publicRead.result);
+      expect(request.status).toBe('approved');
+      expect(request.execution).toBeUndefined();
+      // Unclaimed consent keeps the admitted operands for a visible retry.
+      expect(storedBody(artifactId)).toContain(PROVIDER_SECRET);
+    }
+    expect(await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext)).toEqual(decided);
+    expect(replayRequests).toBe(dispatched ? 1 : 2);
+    expect(effects).toBe(0);
+  });
+
+  it('preserves unclaimed consent on a pre-execution currentness refusal without an effect', async () => {
     const store = createStore();
     const effect = vi.fn(async () => ({}));
     const creator = createExecutor(store, { homeDomainAction: effect });
@@ -704,13 +886,32 @@ describe('approval settlement through the real CLI Artifact store', () => {
 
     const decided = await revokedOrigin.execute('approval.request.decide', { artifactId, decision: 'approve' }, uiContext);
 
-    expect(decided).toMatchObject({ ok: true, result: { status: 'failed' } });
+    expect(decided).toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_context_unavailable' });
     expect(effect).not.toHaveBeenCalled();
     expect(await store.approvalsGet({ artifactId, serverId: null })).toMatchObject({
-      status: 'failed',
-      execution: { ok: false, errorCode: 'approval_stale' },
+      status: 'approved',
     });
-    expect(storedBody(artifactId)).not.toContain(PROVIDER_SECRET);
+    expect((await store.approvalsGet({ artifactId, serverId: null }))?.execution).toBeUndefined();
+    expect(storedBody(artifactId)).toContain(PROVIDER_SECRET);
+  });
+
+  it('does not replace a raced execution claim with a pre-dispatch failure', async () => {
+    const store = createStore();
+    const executor = createExecutor(store);
+    const artifactId = await createDeferred(executor, 'identity.providers.secret.replace', providerSecretInput);
+    const open = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: null }));
+    const approved = ApprovalRequestV2Schema.parse({ ...open, status: 'approved',
+      updatedAtMs: open.updatedAtMs + 1, decision: { kind: 'approve', decidedAtMs: open.updatedAtMs + 1 } });
+    expect(await store.approvalsUpdate({ artifactId, request: approved, serverId: null })).toMatchObject({ ok: true });
+    expect(await store.approvalsUpdate({ artifactId, request: { ...approved, status: 'executing' }, serverId: null }))
+      .toMatchObject({ ok: true });
+    const { settleApprovalRequestReplayInputs } = await import('@happier-dev/protocol/approvals/approvalRequestTransition');
+    const proposed = ApprovalRequestV2Schema.parse({ ...settleApprovalRequestReplayInputs(approved), status: 'failed',
+      updatedAtMs: approved.updatedAtMs + 1, execution: { executedAtMs: approved.updatedAtMs + 1,
+        ok: false, effectAttempted: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' } });
+    expect(await store.approvalsUpdate({ artifactId, request: proposed, serverId: null, expectedStatus: 'approved' }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_transition' });
+    expect(await store.approvalsGet({ artifactId, serverId: null })).toMatchObject({ status: 'executing' });
   });
 
   it('refuses original-subject mutation and caller-authored terminal input at the store', async () => {
@@ -773,6 +974,10 @@ describe('approval settlement through the real CLI Artifact store', () => {
     const creator = createExecutor(store, { homeDomainAction: effect });
     const artifactId = await createDeferred(creator, 'secrets.shared.create', savedSecretInput);
     const open = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: null }));
+    // Both callers construct an identical claim; only the real Artifact CAS
+    // decides custody. A rejected writer must not terminalize the winner's claim.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(open.updatedAtMs + 1);
+    onTestFinished(() => clock.mockRestore());
     await expect(store.approvalsUpdate({ artifactId, serverId: null, request: {
       ...open,
       status: 'approved',

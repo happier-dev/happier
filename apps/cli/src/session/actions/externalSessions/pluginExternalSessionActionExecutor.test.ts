@@ -266,6 +266,7 @@ describe('plugin External Session action executor', () => {
     });
 
     expect(mocks.fetchSessionById).toHaveBeenCalledWith({
+      reason: 'session-control',
       token: credentials.token,
       sessionId: 'session-1',
       signal,
@@ -302,7 +303,7 @@ describe('plugin External Session action executor', () => {
       input,
       credentials,
       pluginId: 'author.example',
-    }, { activeServerDir, nowMs: () => 25_000 });
+    }, { activeServerDir });
 
     expect(mocks.callMachineRpc).toHaveBeenCalledWith({
       credentials,
@@ -313,7 +314,7 @@ describe('plugin External Session action executor', () => {
   });
 
   it.each(['completed', 'cancelled', 'discarded'] as const)(
-    'returns an unexpired %s terminal receipt through recipient-safe status without machine RPC',
+    'returns a retained %s terminal receipt through recipient-safe status without machine RPC',
     async (status) => {
       const activeServerDir = await createOperationRoot();
       const receipt = await seedTerminalReceipt({ activeServerDir, status });
@@ -323,7 +324,7 @@ describe('plugin External Session action executor', () => {
         input: receipt.reference,
         credentials,
         pluginId: 'author.example',
-      }, { activeServerDir, nowMs: () => receipt.expiresAtMs - 1 });
+      }, { activeServerDir });
 
       expect(result).toEqual({
         ok: true,
@@ -343,6 +344,7 @@ describe('plugin External Session action executor', () => {
       ]);
       expect(receipt.presentation.status).toBe(status);
       expect(mocks.fetchSessionById).toHaveBeenCalledWith({
+        reason: 'session-control',
         token: credentials.token,
         sessionId: receipt.reference.sessionId,
       });
@@ -363,7 +365,7 @@ describe('plugin External Session action executor', () => {
       input: { sessionId: 'session-1', operationId, revision: 6 },
       credentials,
       pluginId: 'author.example',
-    }, { activeServerDir, nowMs: () => 25_000 });
+    }, { activeServerDir });
 
     expect(result).toEqual({
       ok: false,
@@ -389,7 +391,7 @@ describe('plugin External Session action executor', () => {
       input: { sessionId: 'session-1', operationId: 'operation-other', revision: 6 },
       expectedCode: 'operation_not_found',
     },
-  ])('does not disclose or alias an unexpired receipt for $name input', async ({
+  ])('does not disclose or alias a retained receipt for $name input', async ({
     input,
     expectedCode,
   }) => {
@@ -401,7 +403,7 @@ describe('plugin External Session action executor', () => {
       input,
       credentials,
       pluginId: 'author.example',
-    }, { activeServerDir, nowMs: () => receipt.expiresAtMs - 1 });
+    }, { activeServerDir });
 
     expect(result).toMatchObject({
       ok: true,
@@ -410,24 +412,28 @@ describe('plugin External Session action executor', () => {
     expect(mocks.callMachineRpc).not.toHaveBeenCalled();
   });
 
-  it('treats expired and missing receipt references as unavailable without machine RPC', async () => {
+  it('retains old terminal outcomes while a missing reference stays unavailable without machine RPC', async () => {
     const activeServerDir = await createOperationRoot();
     const receipt = await seedTerminalReceipt({ activeServerDir });
 
-    for (const [input, nowMs] of [
-      [receipt.reference, receipt.expiresAtMs],
-      [{ ...receipt.reference, operationId: 'operation-missing' }, receipt.expiresAtMs - 1],
-    ] as const) {
-      await expect(executePluginExternalSessionAction({
+    await expect(executePluginExternalSessionAction({
+      actionId: 'sessions.external.operation.status.get',
+      input: receipt.reference,
+      credentials,
+      pluginId: 'author.example',
+    }, { activeServerDir })).resolves.toMatchObject({
+      ok: true,
+      result: { ok: true, operation: receipt.reference, presentation: receipt.presentation },
+    });
+    await expect(executePluginExternalSessionAction({
         actionId: 'sessions.external.operation.status.get',
-        input,
+        input: { ...receipt.reference, operationId: 'operation-missing' },
         credentials,
         pluginId: 'author.example',
-      }, { activeServerDir, nowMs: () => nowMs })).resolves.toMatchObject({
+      }, { activeServerDir })).resolves.toMatchObject({
         ok: true,
         result: { ok: false, error: { code: 'operation_not_found' } },
       });
-    }
     expect(mocks.callMachineRpc).not.toHaveBeenCalled();
   });
 
@@ -446,7 +452,7 @@ describe('plugin External Session action executor', () => {
       input: { sessionId: 'session-1', operationId, revision: 6 },
       credentials,
       pluginId: 'author.example',
-    }, { activeServerDir, nowMs: () => 25_000 });
+    }, { activeServerDir });
 
     expect(result).toMatchObject({
       ok: true,
@@ -617,7 +623,7 @@ describe('plugin External Session action executor', () => {
       input: materializeInput('same-key'),
       credentials,
       pluginId: 'author.example',
-    }, { materializeStart, activeServerDir, nowMs: () => receipt.expiresAtMs - 1 });
+    }, { materializeStart, activeServerDir });
     const first = await run();
     const second = await run();
 

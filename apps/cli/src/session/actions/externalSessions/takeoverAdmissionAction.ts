@@ -4,11 +4,7 @@ import { ExternalSessionOperationResumeInputV1Schema } from '@happier-dev/protoc
 import { projectExternalSessionOperationProgressV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import type { ExternalSessionOperationActionResponseV1, ExternalSessionOperationRecordV1 } from '@happier-dev/protocol';
 
-import {
-  ExternalSessionOperationClaimLostError,
-  maintainExternalSessionOperationClaim,
-  type ExternalSessionOperationExclusion,
-} from '@/session/external/operationExclusion';
+import type { ExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
 import type {
   SpawnSessionOptions,
   SpawnSessionResult,
@@ -20,12 +16,16 @@ import type {
 import type {
   PersistedTakeoverAdmissionWaitRegistration,
   PersistedTakeoverAdmissionWaiter,
+  PersistedTakeoverAdmissionContext,
 } from '@/daemon/spawn/persistedTakeoverAdmission';
 
 import {
   ExternalSessionOperationRecordReadError,
   mutateExternalSessionOperationRecordAtRevision,
   readExternalSessionOperationRecord,
+  captureExternalSessionOperationAccountAdmission,
+  type ExternalSessionOperationAccountAdmission,
+  resolveExternalSessionOperationRecordsDirectory,
 } from './operationRecordStore';
 import {
   recoverExternalSessionTakeoverPrecommitAdmission,
@@ -49,14 +49,17 @@ type TakeoverAdmissionActionDependencies = Readonly<{
   prepareSpawn(
     record: PersistedTakeoverRecord,
     signal?: AbortSignal,
-  ): Promise<ResolvedExternalTakeoverSpawn>;
+    context?: PersistedTakeoverAdmissionContext,
+  ): Promise<ResolvedExternalTakeoverSpawn & Readonly<{ admissionContext?: PersistedTakeoverAdmissionContext }>>;
   reconcileAuthority?(
     record: ExternalSessionOperationRecordV1,
+    context?: PersistedTakeoverAdmissionContext,
   ): Promise<ExternalSessionOperationRecordV1 | null>;
   reconcileRuntimeBindingFailure?(input: Readonly<{
     sessionId: string;
     operationId: string;
     attemptId: string;
+    context?: PersistedTakeoverAdmissionContext;
   }>): Promise<ExternalSessionOperationRecordV1 | null>;
   spawnSession(options: SpawnSessionOptions): Promise<SpawnSessionResult>;
   spawnResolvedTakeoverSession(input: Readonly<{
@@ -78,15 +81,16 @@ type TakeoverAdmissionActionDependencies = Readonly<{
   publishProgress?(input: Readonly<{
     sessionId: string;
     progress: ReturnType<typeof projectExternalSessionOperationProgressV1>;
+    credentials?: PersistedTakeoverAdmissionContext['credentials'];
+    accountScope?: PersistedTakeoverAdmissionContext['accountScope'];
   }>): Promise<ExternalSessionOperationRecordV1 | void>;
   createAttemptId?: () => string;
   nowMs?: () => number;
-  claimRenewalIntervalMs?: number;
 }>;
 
 export type ExternalSessionTakeoverAdmissionActionExecutor = Readonly<{
-  resume(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
-  retry(input: unknown): Promise<ExternalSessionOperationActionResponseV1>;
+  resume(input: unknown, admission?: ExternalSessionOperationAccountAdmission): Promise<ExternalSessionOperationActionResponseV1>;
+  retry(input: unknown, admission?: ExternalSessionOperationAccountAdmission): Promise<ExternalSessionOperationActionResponseV1>;
 }>;
 
 function failure(
@@ -181,18 +185,22 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
 
   const publish = async (
     record: ExternalSessionOperationRecordV1,
+    context: PersistedTakeoverAdmissionContext,
   ): Promise<ExternalSessionOperationRecordV1> => {
     return await dependencies.publishProgress?.({
       sessionId: record.request.sessionId,
       progress: projectExternalSessionOperationProgressV1(record),
+      ...(context.credentials ? { credentials: context.credentials } : {}),
+      ...(context.accountScope ? { accountScope: context.accountScope } : {}),
     }) ?? record;
   };
 
   const publishBestEffort = async (
     record: ExternalSessionOperationRecordV1,
+    context: PersistedTakeoverAdmissionContext,
   ): Promise<ExternalSessionOperationRecordV1> => {
     try {
-      return await publish(record);
+      return await publish(record, context);
     } catch {
       // The action response still carries the latest public projection, and this failure cannot
       // authorize additional operation or runtime effects.
@@ -202,6 +210,7 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
 
   const recoverPrecommitAdmissionFailure = async (
     record: PersistedTakeoverRecord,
+    context: PersistedTakeoverAdmissionContext,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
     // The admission owner commits refreshed authority evidence at
     // `revision + 1` before it sends the Server command, so `record.revision`
@@ -212,7 +221,9 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
     // the exact attempt left `running`/`admitting` may be reported as an
     // outcome; anything else leaves the operation stranded.
     const recovery = await recoverExternalSessionTakeoverPrecommitAdmission({
-      activeServerDir: dependencies.activeServerDir,
+      activeServerDir: await resolveExternalSessionOperationRecordsDirectory(
+        dependencies.activeServerDir, record.operationId, context.accountScope,
+      ),
       targetStorageMode: 'persisted',
       sessionId: record.request.sessionId,
       operationId: record.operationId,
@@ -225,7 +236,7 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
       recovery.status === 'recovered'
       || recovery.status === 'already_settled'
     ) {
-      return success(await publishBestEffort(recovery.record));
+      return success(await publishBestEffort(recovery.record, context));
     }
     return failure(
       'internal_error',
@@ -236,6 +247,7 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
   const execute = async (
     raw: unknown,
     intent: 'resume' | 'retry',
+    admission?: ExternalSessionOperationAccountAdmission,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
       const parsed = ExternalSessionOperationResumeInputV1Schema.safeParse(raw);
       if (!parsed.success) {
@@ -248,10 +260,13 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
         );
       }
       let current: ExternalSessionOperationRecordV1 | null;
+      let context: PersistedTakeoverAdmissionContext;
       try {
+        context = admission ?? await captureExternalSessionOperationAccountAdmission(dependencies.activeServerDir) ?? {};
         current = await readExternalSessionOperationRecord(
           dependencies.activeServerDir,
           parsed.data.operationId,
+          context.accountScope,
         );
       } catch (error) {
         if (error instanceof ExternalSessionOperationRecordReadError) {
@@ -290,7 +305,7 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
             'Persisted takeover admission authority cannot be reconciled.',
           );
         }
-        const reconciled = await dependencies.reconcileAuthority(current);
+        const reconciled = await dependencies.reconcileAuthority(current, context);
         if (!reconciled) {
           return failure(
             'source_unavailable',
@@ -301,7 +316,7 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
           reconciled.currentStorageState === 'hosted'
           && reconciled.phase === 'spawning'
         ) {
-          const published = await publishBestEffort(reconciled);
+          const published = await publishBestEffort(reconciled, context);
           return success(published);
         }
         current = reconciled;
@@ -323,16 +338,10 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
         sourceIdentity: JSON.stringify(request.source.qualifiedIdentity),
         sourceGeneration: request.source.sourceGeneration,
         plan: 'persisted',
-      });
+      }, context.accountScope ? { accountSubject: context.accountScope.accountSubject } : undefined);
       if (acquired.status !== 'acquired') {
         return failure('operation_conflict', 'Persisted takeover is already active.');
       }
-      const maintenance = maintainExternalSessionOperationClaim({
-        claim: acquired.claim,
-        ...(dependencies.claimRenewalIntervalMs === undefined
-          ? {}
-          : { renewalIntervalMs: dependencies.claimRenewalIntervalMs }),
-      });
       let activeRecord: PersistedTakeoverRecord = current;
       let admissionWait: PersistedTakeoverAdmissionWaitRegistration | null = null;
       let attemptCommitted = false;
@@ -354,6 +363,7 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
         const revalidated = await readExternalSessionOperationRecord(
           dependencies.activeServerDir,
           current.operationId,
+          context.accountScope,
         );
         if (!revalidated || revalidated.revision !== current.revision) {
           return failure(
@@ -377,33 +387,32 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
         // released claim satisfy this episode's waiter, so each new child gets
         // its own attempt identity.
         const attemptId = createAttemptId();
-        const admitted = await maintenance.race(
-          () => mutateExternalSessionOperationRecordAtRevision(
-            dependencies.activeServerDir,
-            revalidated.operationId,
-            revalidated.revision,
-            (fresh) => {
-              if (!isExternalSessionPersistedTakeoverAdmissionReady(fresh)) {
-                throw new Error('persisted_takeover_admission_state_changed');
-              }
-              const {
-                retryTargetPhase: _retryTargetPhase,
-                error: _error,
-                ...withoutRecovery
-              } = fresh;
-              return {
-                ...withoutRecovery,
-                revision: fresh.revision + 1,
-                status: 'running',
-                updatedAtMs: nowMs(),
-                bindings: {
-                  ...fresh.bindings,
-                  operationClaimId: acquired.claim.record.claimId,
-                  targetRuntimeAttemptId: attemptId,
-                },
-              };
-            },
-          ),
+        const admitted = await mutateExternalSessionOperationRecordAtRevision(
+          dependencies.activeServerDir,
+          revalidated.operationId,
+          revalidated.revision,
+          (fresh) => {
+            if (!isExternalSessionPersistedTakeoverAdmissionReady(fresh)) {
+              throw new Error('persisted_takeover_admission_state_changed');
+            }
+            const {
+              retryTargetPhase: _retryTargetPhase,
+              error: _error,
+              ...withoutRecovery
+            } = fresh;
+            return {
+              ...withoutRecovery,
+              revision: fresh.revision + 1,
+              status: 'running',
+              updatedAtMs: nowMs(),
+              bindings: {
+                ...fresh.bindings,
+                operationClaimId: acquired.claim.record.claimId,
+                targetRuntimeAttemptId: attemptId,
+              },
+            };
+          },
+          context.accountScope,
         );
         if (!admitted.ok) {
           return failure(
@@ -417,36 +426,30 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
         attemptCommitted = true;
         admissionStage = 'publish';
         activeRecord =
-          await publish(activeRecord) as PersistedTakeoverRecord;
+          await publish(activeRecord, context) as PersistedTakeoverRecord;
 
         admissionStage = 'prepare_spawn';
-        const preparedSpawn = await maintenance.race(
-          () => dependencies.prepareSpawn(activeRecord, maintenance.signal),
-        );
-        maintenance.throwIfLost();
+        const preparedSpawn = await dependencies.prepareSpawn(activeRecord, undefined, context);
+        context = preparedSpawn.admissionContext ?? context;
         admissionStage = 'register_wait';
         admissionWait = dependencies.admissionWaiter.register({
           mode: 'persisted',
           operationId: activeRecord.operationId,
           attemptId,
-        }, { signal: maintenance.signal });
+        }, { context });
         admissionStage = 'spawn';
-        const fencedSpawn = await maintenance.race(
-          () => dependencies.spawnResolvedTakeoverSession({
-            resolved: preparedSpawn,
-            options: {
-              transcriptStorage: 'persisted',
-              persistedTakeoverAdmission: {
-                mode: 'persisted',
-                operationId: activeRecord.operationId,
-                attemptId,
-              },
+        const fencedSpawn = await dependencies.spawnResolvedTakeoverSession({
+          resolved: preparedSpawn,
+          options: {
+            transcriptStorage: 'persisted',
+            persistedTakeoverAdmission: {
+              mode: 'persisted',
+              operationId: activeRecord.operationId,
+              attemptId,
             },
-            signal: maintenance.signal,
-            spawnSession: dependencies.spawnSession,
-          }),
-        );
-        maintenance.throwIfLost();
+          },
+          spawnSession: dependencies.spawnSession,
+        });
         if (!fencedSpawn.ok) {
           logExternalSessionsInternalError(
             fencedSpawn.code === 'cancelled'
@@ -460,23 +463,23 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
               sessionId: activeRecord.request.sessionId,
               operationId: activeRecord.operationId,
               attemptId,
+              context,
             });
           if (reconciled) {
-            const published = await publishBestEffort(reconciled);
+            const published = await publishBestEffort(reconciled, context);
             return success(published);
           }
-          return await recoverPrecommitAdmissionFailure(activeRecord);
+          return await recoverPrecommitAdmissionFailure(activeRecord, context);
         }
         const spawnResult = fencedSpawn.value;
         if (spawnResult.type === 'success') {
           admissionStage = 'await_admission';
-          const admissionOutcome = await maintenance.race(
-            () => admissionWait!.outcome,
-          );
+          const admissionOutcome = await admissionWait!.outcome;
           if (admissionOutcome.status === 'committed') {
             const committedRecord = await readExternalSessionOperationRecord(
               dependencies.activeServerDir,
               activeRecord.operationId,
+              context.accountScope,
             );
             if (!committedRecord) {
               return failure(
@@ -484,7 +487,7 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
                 'Committed persisted takeover operation could not be reread.',
               );
             }
-            const published = await publishBestEffort(committedRecord);
+            const published = await publishBestEffort(committedRecord, context);
             return success(published);
           }
           logExternalSessionsInternalError(
@@ -505,12 +508,13 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
           sessionId: activeRecord.request.sessionId,
           operationId: activeRecord.operationId,
           attemptId,
+          context,
         });
         if (reconciled) {
-          const published = await publishBestEffort(reconciled);
+          const published = await publishBestEffort(reconciled, context);
           return success(published);
         }
-        return await recoverPrecommitAdmissionFailure(activeRecord);
+        return await recoverPrecommitAdmissionFailure(activeRecord, context);
       } catch (error) {
         logExternalSessionsInternalError(
           `external_session.takeover_admission.${admissionStage}`,
@@ -525,10 +529,11 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
             const committedRecord = await readExternalSessionOperationRecord(
               dependencies.activeServerDir,
               activeRecord.operationId,
+              context.accountScope,
             ).catch(() => null);
             if (committedRecord) {
               const published =
-                await publishBestEffort(committedRecord);
+                await publishBestEffort(committedRecord, context);
               return success(published);
             }
             return failure(
@@ -542,27 +547,24 @@ export function createExternalSessionTakeoverAdmissionActionExecutor(
                 sessionId: activeRecord.request.sessionId,
                 operationId: activeRecord.operationId,
                 attemptId,
+                context,
               })
             : null;
           if (reconciled) {
-            const published = await publishBestEffort(reconciled);
+            const published = await publishBestEffort(reconciled, context);
             return success(published);
           }
-          return await recoverPrecommitAdmissionFailure(activeRecord);
-        }
-        if (error instanceof ExternalSessionOperationClaimLostError) {
-          return failure('operation_conflict', error.code);
+          return await recoverPrecommitAdmissionFailure(activeRecord, context);
         }
         return failure('internal_error', 'Persisted takeover admission failed.');
       } finally {
         cancelAdmissionWait();
-        maintenance.stop();
         await acquired.claim.release().catch(() => undefined);
       }
     };
 
   return Object.freeze({
-    resume: async (raw) => await execute(raw, 'resume'),
-    retry: async (raw) => await execute(raw, 'retry'),
+    resume: async (raw, admission) => await execute(raw, 'resume', admission),
+    retry: async (raw, admission) => await execute(raw, 'retry', admission),
   });
 }

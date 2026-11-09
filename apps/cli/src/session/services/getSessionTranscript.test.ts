@@ -33,6 +33,55 @@ describe('getSessionTranscript', () => {
 
   afterEach(() => vi.restoreAllMocks());
 
+  it.each([undefined, null])('preserves a complete large tool result when maxRawPayloadChars is %s', async maxRawPayloadChars => {
+    const { getSessionTranscript } = await import('./getSessionTranscript');
+    const raw = { role: 'agent', content: { type: 'acp', agentId: 'codex', data: {
+      type: 'tool-result', callId: 'usage-query',
+      output: { v: 1, results: [{ evidence: 'usage evidence '.repeat(22_000), last: 'complete' }] },
+    } } };
+    transcriptResponse.mockResolvedValue({ messages: [{
+      id: 'usage-tool-result', seq: 12, createdAt: 12, messageRole: 'agent',
+      content: { t: 'plain', v: raw },
+    }], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null });
+
+    const result = await getSessionTranscript({ credentials, idOrPrefix: sessionId,
+      messageId: 'usage-tool-result', includeTools: true, includeRaw: true,
+      ...(maxRawPayloadChars === undefined ? {} : { maxRawPayloadChars }),
+    });
+
+    expect(result).toMatchObject({ ok: true, items: [{ id: 'usage-tool-result', raw }],
+      diagnostics: { payloadTruncations: 0 } });
+    if (!result.ok) throw new Error(result.errorCode);
+    expect(result.items[0]?.rawTruncated).toBeUndefined();
+    expect(transcriptRequests()).toHaveLength(1);
+
+    const preview = await getSessionTranscript({ credentials, idOrPrefix: sessionId,
+      messageId: 'usage-tool-result', includeTools: true, includeRaw: true, maxRawPayloadChars: 32,
+    });
+    expect(preview).toMatchObject({ ok: true, items: [{ rawTruncated: true }],
+      diagnostics: { payloadTruncations: 1 } });
+  });
+
+  it('preserves complete tool results through legacy raw-history and event readers', async () => {
+    const { getSessionEvents } = await import('./getSessionEvents');
+    const { getSessionHistory, readRawSessionHistoryRows } = await import('./getSessionHistory');
+    const raw = { role: 'agent', content: { type: 'acp', agentId: 'codex', data: {
+      type: 'tool-result', callId: 'usage-query', output: { evidence: 'usage evidence '.repeat(22_000) },
+    } } };
+    transcriptResponse.mockResolvedValue({ messages: [{ id: 'usage-tool-result', seq: 12,
+      createdAt: 12, messageRole: 'agent', content: { t: 'plain', v: raw },
+    }], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null });
+
+    expect(await getSessionEvents({ credentials, idOrPrefix: sessionId, includeRaw: true }))
+      .toMatchObject({ ok: true, items: [{ raw }], diagnostics: { payloadTruncations: 0 } });
+    expect(await getSessionHistory({ credentials, idOrPrefix: sessionId, limit: 1,
+      format: 'raw', includeMeta: false, includeStructuredPayload: true }))
+      .toMatchObject({ ok: true, messages: [{ raw }] });
+    expect(await readRawSessionHistoryRows({ token: credentials.token, sessionId, limit: 1,
+      mode: 'plain', ctx: null }))
+      .toMatchObject([{ raw }]);
+  });
+
   it('measures HTTP work to reopen a known semantic message behind ten history pages', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
     const wantedId = 'message-3';
@@ -66,6 +115,7 @@ describe('getSessionTranscript', () => {
     }
     const counts = { historyMessages: rows.length, http: get.mock.calls.length,
       transcriptHttp: transcriptRequests().length, messageRows };
+    console.info('SEMANTIC_EXACT_MESSAGE_HTTP_COST', JSON.stringify(counts));
     expect(selected).toMatchObject({ ok: true, items: expect.arrayContaining([
       expect.objectContaining({ id: wantedId, role: 'user', kind: 'user_message', text: wantedText }),
     ]) });
@@ -321,35 +371,14 @@ describe('getSessionTranscript', () => {
     expect(get.mock.calls.some(([url]) => new URL(String(url)).pathname.endsWith('/turns'))).toBe(false);
   });
 
-  it('passes external transcript read cancellation through the raw page reader', async () => {
-    const { getSessionTranscript } = await import('./getSessionTranscript');
-    const cancellation = new AbortController();
-    transcriptResponse.mockResolvedValueOnce({
-      messages: [],
-      hasMore: false,
-      nextBeforeSeq: null,
-      nextAfterSeq: null,
-      publicationBlocked: false,
-      externalShareableSnapshot: { turns: [] },
-    });
-    const request: Parameters<typeof getSessionTranscript>[0] & Readonly<{ signal: AbortSignal }> = {
-      credentials,
-      idOrPrefix: sessionId,
-      projection: 'externalShareableV1',
-      signal: cancellation.signal,
-    };
-
-    await getSessionTranscript(request);
-
-    expect(transcriptRequests()[0]?.[1]?.signal).toBe(cancellation.signal);
-    expect(new URL(String(transcriptRequests()[0]?.[0])).searchParams.get('projection')).toBe('externalShareableV1');
-  });
-
   it('stops after the authoritative page returns when cancellation wins before local projection', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
     const cancellation = new AbortController();
     transcriptResponse.mockImplementationOnce(async () => {
+      const readSignal = transcriptRequests().at(-1)?.[1]?.signal;
+      expect(readSignal?.aborted).toBe(false);
       cancellation.abort();
+      expect(readSignal?.aborted).toBe(true);
       return {
         messages: [],
         hasMore: false,
@@ -366,6 +395,7 @@ describe('getSessionTranscript', () => {
       projection: 'externalShareableV1',
       signal: cancellation.signal,
     })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(new URL(String(transcriptRequests()[0]?.[0])).searchParams.get('projection')).toBe('externalShareableV1');
   });
 
   it('does not truncate semantic transcript message text by default', async () => {

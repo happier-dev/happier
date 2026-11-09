@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { buildHappierBaseSystemPromptV1 } from '@happier-dev/protocol/prompts/systemPromptBaseV1';
-import { ExternalSessionsCandidatesListResponseSchema, ExternalSessionTranscriptPageResponseSchema, ExternalSessionTranscriptRawMessageV1Schema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import { ExternalSessionsCandidatesListResponseSchema, ExternalSessionTranscriptPageRequestSchema, ExternalSessionTranscriptPageResponseSchema, ExternalSessionTranscriptRawMessageV1Schema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { createClaudeExternalSessionsContribution } from '../../../../../packages/plugins/claude/src/agent/surfaces/sessions/external/contribution';
+import { createCodexExternalSessionsContribution } from '../../../../../packages/plugins/codex/src/agent/surfaces/sessions/external/contribution';
 import { projectConversationSearchCandidates } from '../../../../ui/sources/components/sessions/external/browse/projectConversationSearchCandidates';
 import { queryRanges } from '../../../../ui/sources/components/ui/text/queryRanges';
 import { createBoundedAgentExternalSessionsContribution } from './agentExternalSessionsInvocation';
@@ -19,6 +20,64 @@ import { normalizeExternalSessionTranscriptMessages } from '../../../../ui/sourc
 import { ExternalSessionTranscriptRefreshItemV1Schema } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
 
 describe('native producer → wire → conversation row data', () => {
+    it.each([false, true])('keeps a Codex content hit readable through transcript admission (paginated rollout: %s)', async paginated => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-codex-conversation-hit-'));
+        try {
+            const remoteSessionId = 'aaaaaaaa-1111-4111-8111-111111111111';
+            const sessions = join(root, 'sessions', '2026', '10', '28');
+            await mkdir(sessions, { recursive: true });
+            await writeFile(join(sessions, `rollout-2026-10-28T00-00-00-${remoteSessionId}.jsonl`), [
+                { type: 'session_meta', timestamp: '2026-10-28T00:00:00Z', payload: { id: remoteSessionId, cwd: '/repo', ...(paginated ? { history_mode: 'paginated' } : {}) } },
+                { type: 'response_item', timestamp: '2026-10-28T00:00:01Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Explain the build failure.' }] } },
+                { type: 'response_item', timestamp: '2026-10-28T00:00:02Z', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'The silver meadow check failed.' }] } },
+            ].map(row => JSON.stringify(row)).join('\n') + '\n');
+            const source = { kind: 'codexHome' as const, home: 'user' as const, homePath: root };
+            const surface = createAgentExternalSessionsExecutionSurface(createBoundedAgentExternalSessionsContribution({
+                contribution: createCodexExternalSessionsContribution({ env: { CODEX_HOME: root } }),
+                identity: { pluginId: 'happier.codex', agentId: 'codex', occurrenceId: 'fixture',
+                    contributionQualifiedId: 'happier.codex/agents/codex', sourceCustody: { kind: 'development', registeredRootId: 'fixture' } },
+                isCurrent: () => true, retirementSignal: new AbortController().signal,
+                createInvocationExec: async () => createUnavailablePluginServices().exec,
+            }), 'unsupported');
+            const listed = ExternalSessionsCandidatesListResponseSchema.parse({ ok: true,
+                ...await surface.listCandidates({ source, limit: 50, searchTerm: 'silver meadow', searchTarget: 'content' }),
+            });
+            if (!listed.ok) throw new Error('Expected native content search success');
+            expect(listed.candidates).toHaveLength(1);
+            const hit = listed.candidates[0]!;
+            expect(hit.match?.sourceItemId).toBeTruthy();
+            const items = [];
+            let cursor: string | undefined;
+            do {
+                const request = ExternalSessionTranscriptPageRequestSchema.parse({ machineId: 'fixture', agentId: 'codex',
+                    source, remoteSessionId: hit.remoteSessionId, sourceItemId: hit.match!.sourceItemId,
+                    direction: 'older', maxBytes: 524_288, maxItems: 1, ...(cursor ? { cursor } : {}) });
+                const transcript = ExternalSessionTranscriptPageResponseSchema.parse({ ok: true,
+                    ...await surface.pageTranscript({ ...request, maxBytes: 524_288, maxItems: 1 }),
+                });
+                if (!transcript.ok) throw new Error('Expected native transcript page');
+                items.unshift(...transcript.items);
+                expect(transcript.truncated).toBe(paginated);
+                if (paginated) expect(transcript.tailCursor).toBeNull();
+                cursor = transcript.hasMore ? transcript.nextCursor ?? undefined : undefined;
+            } while (cursor);
+            expect(normalizeExternalSessionTranscriptMessages(items))
+                .toEqual(expect.arrayContaining([expect.objectContaining({ id: hit.match!.sourceItemId })]));
+            expect(items).toHaveLength(2);
+            if (paginated) {
+                // A selected available hit does not establish full native history
+                // or authorize starting Codex's server to backfill its database.
+                await expect(surface.pageTranscript({ source, remoteSessionId: hit.remoteSessionId,
+                    direction: 'older', maxBytes: 524_288, maxItems: 200 })).rejects.toMatchObject({ code: 'agent_unavailable' });
+                await expect(surface.pageTranscript({ source, remoteSessionId: hit.remoteSessionId,
+                    sourceItemId: 'codex:another-conversation:000000000001:000',
+                    direction: 'older', maxBytes: 524_288, maxItems: 200 })).rejects.toMatchObject({ code: 'agent_unavailable' });
+                await expect(surface.pageTranscript({ source, remoteSessionId: hit.remoteSessionId,
+                    sourceItemId: hit.match!.sourceItemId,
+                    direction: 'newer', maxBytes: 524_288, maxItems: 200 })).rejects.toMatchObject({ code: 'unsupported' });
+            }
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
     it.each(['claude', 'external-plugin'])('strips %s guidance and preserves title, match coordinates and row facts through native production wiring', async producer => {
         const root = await mkdtemp(join(tmpdir(), 'happier-conversation-hit-'));
         try {

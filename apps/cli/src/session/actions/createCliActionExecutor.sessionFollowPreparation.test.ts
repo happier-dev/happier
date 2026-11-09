@@ -13,6 +13,7 @@ import {
   signRunnerMachineContentKeyBindingV1,
 } from '@happier-dev/protocol';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { SessionFollowSourceV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
@@ -28,6 +29,7 @@ import {
 } from '@/testkit/backends/sessionFixtures';
 
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
+import { registerAccountHomeHttp, registerPlainArtifactRoutes } from './widgetApproval.testkit';
 
 // Only the network boundary is substituted; credential enrichment, Follow
 // mutation/preparation, envelope opening and exact Machine RPC remain real.
@@ -59,6 +61,47 @@ const sealKey = (dataKey: Uint8Array) => encodeBase64(sealEncryptedDataKeyEnvelo
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 describe('credentialed CLI relation source-key preparation composition', () => {
+  it.each(['disabled', 'approval'] as const)('retains %s Follow admission before the credentialed CLI transport', async policy => {
+    const app = fastify();
+    const serverUrl = 'https://follow-admission.test';
+    const settings = accountSettingsParse({ actionsSettingsV1: { v: 1, actions: {
+      'follow.set': policy === 'disabled' ? { enabled: false } : { approvalRequiredSurfaces: ['cli'] },
+    } } });
+    registerAccountHomeHttp(app, { accountId, serverId: serverIdentityId, settings });
+    registerPlainArtifactRoutes(app, accountId);
+    const snapshot = FeaturesResponseSchema.parse({ features: { sessions: { enabled: true, following: { enabled: true } } },
+      capabilities: { serverIdentity: { serverIdentityId } } });
+    app.get('/v1/features', async () => snapshot);
+    app.get('/v1/features/authenticated', async () => snapshot);
+    app.get('/v2/sessions/:sessionId', async request => ({ session: createSessionRecordFixture({
+      id: (request.params as { sessionId: string }).sessionId, encryptionMode: 'plain', metadata: '{}',
+    }) }));
+    const effects: string[] = [];
+    app.put(`/v2/sessions/${destinationSessionId}/follows/sessions/${sourceSessionId}`, async () => {
+      effects.push('edge');
+      return { changed: true, source: { sourceSessionId, destinationSessionId,
+        policy: { preset: 'quiet' }, deliveryState: 'eligible', hasPendingUpdates: false } };
+    });
+    const restore = installAxiosFastifyAdapter({ app, origin: serverUrl });
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      const response = await app.inject({ method: 'GET', url: url.pathname + url.search });
+      return new Response(response.body, { status: response.statusCode, headers: { 'Content-Type': 'application/json' } });
+    });
+    try {
+      const executor = createCliActionExecutorFromCredentials({ credentials: { token: credentials.token,
+        encryption: null, credentialProvenance: 'stored_session' }, serverId: 'follow-home', serverApiUrl: serverUrl,
+        serverIdentityId, pluginActionExecutionOwner: 'current_process', actionsSettingsProvider: {
+          getActionsSettings: () => settings.actionsSettingsV1, getAccountSettings: () => settings,
+        } });
+      const result = await executor.execute('follow.set', { receiver: { kind: 'session', sessionId: destinationSessionId },
+        source: { kind: 'session', sessionId: sourceSessionId }, policy: { preset: 'quiet' } },
+      { surface: 'cli', actionCaller: { kind: 'host' }, actionRequestId: `follow-${policy}` });
+      expect(result).toMatchObject(policy === 'disabled' ? { ok: false, errorCode: 'action_disabled' }
+        : { ok: true, result: { kind: 'approval_request_created', actionId: 'follow.set' } });
+      expect(effects).toEqual([]);
+    } finally { restore(); await app.close(); }
+  });
   it.each(([
     { name: 'active Home authenticated context', fixed: false, provenance: 'authenticated', plain: false, prepares: true },
     { name: 'explicit verified Home', fixed: true, provenance: 'public', plain: false, prepares: true },
@@ -97,9 +140,10 @@ describe('credentialed CLI relation source-key preparation composition', () => {
     app.post('/v2/sessions/lookup-by-tags', async () => ({ sessions: [] }));
     app.get('/v2/sessions', async () => ({ sessions: [], nextCursor: null, hasNext: false }));
     app.get('/v2/sessions/archived', async () => ({ sessions: [], nextCursor: null, hasNext: false }));
-    const source = {
-      sourceSessionId, destinationSessionId, deliveryState: 'eligible', hasPendingUpdates: false,
-    };
+    const source = SessionFollowSourceV1Schema.parse({
+      sourceSessionId, destinationSessionId, policy: { preset: 'important' },
+      deliveryState: 'eligible', hasPendingUpdates: false,
+    });
     app.put(`/v2/sessions/${destinationSessionId}/follows/sessions/${sourceSessionId}`, async () => {
       events.push('edge_committed');
       return { changed: true, source };

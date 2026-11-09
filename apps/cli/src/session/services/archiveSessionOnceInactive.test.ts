@@ -15,7 +15,7 @@ vi.mock('@/api/session/sockets', () => ({
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
-it('retries archive on an inactive event after parking without reads or writes', async () => {
+it('keeps observing beyond the former archive cutoff without idle reads or writes, then archives on inactivity', async () => {
   vi.useFakeTimers();
   const socket = Object.assign(new EventEmitter(), { connected: false, connect: vi.fn(), disconnect: vi.fn(), close: vi.fn() });
   boundary.create.mockReturnValue(socket);
@@ -26,11 +26,16 @@ it('retries archive on an inactive event after parking without reads or writes',
   const post = vi.spyOn(axios, 'post').mockImplementation(async () => active
     ? { status: 409, data: { error: 'session_active' } }
     : { status: 200, data: { success: true, archivedAt: 123 } });
-  const result = archiveSessionOnceInactive({ token: 'token', sessionId, timeoutMs: 5_000 });
+  const result = archiveSessionOnceInactive({ token: 'token', sessionId });
+  // Observe rejection immediately so the old cutoff produces the intended
+  // assertion failure rather than an unhandled-rejection harness failure.
+  let failure: unknown;
+  void result.catch(error => { failure = error; });
   await vi.advanceTimersByTimeAsync(0);
   const reads = get.mock.calls.length;
   const writes = post.mock.calls.length;
-  await vi.advanceTimersByTimeAsync(1_000);
+  await vi.advanceTimersByTimeAsync(10_001);
+  expect(failure).toBeUndefined();
   expect(get.mock.calls).toHaveLength(reads);
   expect(post.mock.calls).toHaveLength(writes);
   active = false;

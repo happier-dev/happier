@@ -29,6 +29,7 @@ import { applyRunnerMcpSessionContext } from '@/mcp/runtime/applyRunnerMcpSessio
 import { createWorkspaceWritesPolicyPreparation } from '@/session/roles/workspaceWritesPolicyPreparation';
 import { logger } from '@/ui/logger';
 import { serveSessionActionHome } from '../../../../ui/sources/dev/testkit/harness/sessionActionHome';
+import { loadSyncSingletonForTests } from '../../../../ui/sources/dev/testkit/harness/syncSingletonLoader';
 import { createSessionFixture } from '../../../../ui/sources/dev/testkit';
 
 const transport = vi.hoisted(() => vi.fn());
@@ -41,6 +42,8 @@ vi.mock('react-native', async () => (await import('../../../../ui/sources/dev/te
 vi.mock('react-native-unistyles', async () => (await import('../../../../ui/sources/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => (await import('../../../../ui/sources/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
+// Match app bootstrap after the transport mocks above, before starting an Action's budget.
+await loadSyncSingletonForTests();
 const { storage } = await import('../../../../ui/sources/sync/domains/state/storageStore');
 const { roleActions } = await import('../../../../ui/sources/sync/ops/roles/roleActions');
 const previous = storage.getState();

@@ -378,6 +378,13 @@ export function admitSessionStructuredInputV1(params: Readonly<{
       : {}),
     text: params.text,
   });
+  // An explicit (or already retained) envelope owns the descriptive metadata.
+  // Otherwise project the admitted attachments once, before persistence. Rejoin
+  // must not append their same evidence to the envelope a second time.
+  if (!Object.prototype.hasOwnProperty.call(sanitizedMeta, 'forgeEvidence')) {
+    const items = prepared.flatMap(attachment => attachment.forgeEvidence?.items ?? []);
+    if (items.length > 0) sanitizedMeta.forgeEvidence = { v: 1, items };
+  }
   const sanitizedInput = readHappierStructuredInputV1FromMeta(sanitizedMeta, {
     ...(params.admissionPolicy?.allowedLocalImagePaths
       ? { allowedLocalImagePaths: params.admissionPolicy.allowedLocalImagePaths }

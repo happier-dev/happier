@@ -23,7 +23,6 @@ export async function updateSessionMetadataForTarget(params: Readonly<{
   updater: Parameters<typeof updateSessionMetadataWithRetry>[0]['updater'];
   expectedMetadataRevision?: number;
   currentness?: SessionMetadataMutationCurrentness;
-  maxAttempts?: number;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>): Promise<UpdateSessionMetadataForTargetResult> {
   assertSessionMetadataMutationCurrentness(params.currentness);
@@ -34,6 +33,7 @@ export async function updateSessionMetadataForTarget(params: Readonly<{
       ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
       : {}),
     idOrPrefix: params.idOrPrefix,
+    ...(params.expectedSessionId !== undefined ? { exact: true } : {}),
     ...(params.currentness?.signal ? { signal: params.currentness.signal } : {}),
     ...(params.serverFeaturesSnapshot ? { serverFeaturesSnapshot: params.serverFeaturesSnapshot } : {}),
   });
@@ -65,7 +65,6 @@ export async function updateSessionMetadataForTarget(params: Readonly<{
     updater: params.updater,
     expectedMetadataRevision: params.expectedMetadataRevision,
     currentness: params.currentness,
-    ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
   });
 
   return {

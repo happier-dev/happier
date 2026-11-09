@@ -21,6 +21,11 @@ import {
 import { createWorkflowRunActionOwner as createRunOwner } from './workflowRunActions';
 import { doesWorkflowImmediateEligibleStepTargetSession } from '@/daemon/workflows/coordinator';
 import type { WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1, WorkflowWorkspaceProgressV1 } from '@happier-dev/protocol/workflows';
+import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 
 const definition = {
   version: 1 as const,
@@ -99,6 +104,50 @@ function withStoredRoot(runId: string, execute: Parameters<typeof createRunOwner
 }
 
 describe('workflow Run Actions', () => {
+
+  it.each([true, false])('stores exact child consent only with witnessed parent approval: %s', async approved => {
+    const runId = '71111111-1111-4111-8111-111111111111';
+    const child = { actionId: 'machines.setup.apply' as const,
+      input: { homeId: 'home', machineId: 'target', targets: [{
+        homeId: 'home', machineId: 'target', desiredRevision: 0, recipePlans: [], sources: [
+        { kind: 'accountPreset', presetId: 'preset', presetRevision: 1, setup: { scripts: [{ body: 'echo retained', affects: 'none' }],  } },
+        { kind: 'direct', setup: {} },
+      ] }] } };
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId, executionTarget: { kind: 'session' },
+      source: { kind: 'inline', definition: { version: 1, defaults: {}, inputs: [], blocks: [
+        { kind: 'action', id: 'setup', actionId: child.actionId,
+          input: Object.fromEntries(Object.entries(child.input).map(([key, value]) => [key, { kind: 'literal', value }])) },
+      ] } } });
+    const storage = createWorkflowRunStorageTestkit({ runId, machineId: 'machine-1', origin: { kind: 'direct' } });
+    const owner = createWorkflowRunActionOwner({ storage, resolveAccountId: async () => 'account-1',
+      definitions: { get: async () => { throw new Error('inline_workflow_has_no_saved_definition'); } },
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: {
+        machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async () => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(child.actionId))) } }),
+    });
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context: {
+      surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: 'parent-request', callerPermissionMode: 'default',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } },
+      // The incumbent approval decision is an external boundary in this owner
+      // test. The cross-package composed case exercises its real Artifact path.
+      ...(approved ? { approvedActionReplay: { artifactId: 'parent-approval' }, presentUserApproval: {
+        artifactId: 'parent-approval', actionId: 'workflow.run.start', requestId: 'parent-request',
+        inputDigest: computeActionInputApprovalDigestV1('workflow.run.start', input), decidingAccountId: 'account-1',
+      } } : {}),
+    } })).resolves.toMatchObject({ admission: 'created' });
+    const stored = storage.acceptedEnvelope();
+    if (!stored) throw new Error('accepted_snapshot_not_stored');
+    const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
+      envelope: parseWorkflowStoredContentEnvelopeV1(stored) });
+    if (opened.kind !== 'available') throw new Error('accepted_snapshot_not_readable');
+    if (approved) expect(opened.content.approvedOperation).toEqual({ parent: { actionId: 'workflow.run.start', input },
+      approvedBy: { accountId: 'account-1' }, steps: [child] });
+    else expect(opened.content.approvedOperation).toBeUndefined();
+  });
+
   it.each(['present_user', 'agent', 'nested'] as const)('admits a %s built-in through the real Run owner and freezes its catalog source', async (caller) => {
     const runId = '91111111-1111-4111-8111-111111111111';
     let acceptedEnvelope = '';
@@ -110,6 +159,7 @@ describe('workflow Run Actions', () => {
           if (typeof operation.acceptedEnvelope !== 'string') throw new Error('Expected accepted snapshot envelope');
           acceptedEnvelope = operation.acceptedEnvelope;
           return { kind: 'created', run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+            attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
             id: runId, origin: operation.origin, state: 'queued', revision: 0,
             machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
             availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -193,6 +243,7 @@ describe('workflow Run Actions', () => {
       },
     }));
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: runId, origin: { kind: 'direct' as const }, state: 'succeeded' as const, revision: 2,
       machineId: 'machine-1', workflowCustodyState: 'settled' as const, originDeliveryAckRevision: null,
       availability: { pause: false, resumeBoundary: false,
@@ -227,6 +278,7 @@ describe('workflow Run Actions', () => {
       },
     }));
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: runId, origin: { kind: 'direct' as const }, state: 'interrupted' as const, revision: 5,
       machineId: 'machine-1', workflowCustodyState: 'settled' as const, originDeliveryAckRevision: null,
       availability: { pause: false, resumeBoundary: false,
@@ -312,6 +364,7 @@ describe('workflow Run Actions', () => {
       },
     }));
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: runId, origin: { kind: 'direct' as const }, state: 'succeeded' as const, revision: 2,
       machineId: 'machine-1', workflowCustodyState: 'settled' as const, originDeliveryAckRevision: null,
       availability: { pause: false, resumeBoundary: false,
@@ -387,6 +440,7 @@ describe('workflow Run Actions', () => {
       },
     }));
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: runId, origin: { kind: 'direct' as const }, state: 'succeeded' as const, revision: 2,
       machineId: 'machine-1', workflowCustodyState: 'settled' as const, originDeliveryAckRevision: null,
       availability: { pause: false, resumeBoundary: false,
@@ -450,6 +504,7 @@ describe('workflow Run Actions', () => {
         if (reads === 1 || scenario === 'run_absent') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
         return {
           run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'queued', revision: 0,
+            attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
             machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
             availability: { pause: true, resumeBoundary: false,
                restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -507,6 +562,7 @@ describe('workflow Run Actions', () => {
       if (operation.operation !== 'get') throw new Error('must_not_readmit');
       return {
         run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: '11111111-1111-4111-8111-111111111111', origin: { kind: 'direct' }, state: 'queued', revision: 0,
+          attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
           machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
           availability: { pause: true, resumeBoundary: false,
              restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -565,6 +621,7 @@ describe('workflow Run Actions', () => {
   it('projects frozen private metadata beside structural list rows and preserves unreadable rows', async () => {
     const normalizedDefinition = validateWorkflowDefinition(definition).normalizedDefinition!;
     const run = (id: string) => ({ sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id, origin: { kind: 'direct' as const }, state: 'running' as const, revision: 1,
       machineId: 'machine-1', workflowCustodyState: 'pending' as const, originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false,
@@ -649,6 +706,7 @@ describe('workflow Run Actions', () => {
     const normalizedDefinition = validateWorkflowDefinition(definition).normalizedDefinition!;
     const ids = Array.from({ length: 110 }, (_, index) => `33333333-3333-4333-8333-${index.toString().padStart(12, '0')}`);
     const run = (id: string) => ({ sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id, origin: { kind: 'direct' as const }, state: 'running' as const, revision: 1,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       machineId: 'machine-1', workflowCustodyState: 'pending' as const, originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false,
          restoreWorkspace: false, cancel: true, inspectExecution: true, disabledReasons: [] },
@@ -715,6 +773,7 @@ describe('workflow Run Actions', () => {
       },
     }));
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: runId, origin: { kind: 'direct' }, state: 'queued', revision: 0,
       machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false,
@@ -764,6 +823,7 @@ describe('workflow Run Actions', () => {
     };
     let acceptedEnvelope = '';
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: runId, origin: { kind: 'direct' }, state: 'queued', revision: 0,
       machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false,
@@ -857,6 +917,7 @@ describe('workflow Run Actions', () => {
     const execute = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {
       if (operation.operation === 'get') throw Object.assign(new Error('not found'), { response: { status: 404 } });
       if (operation.operation === 'admit') return { kind: 'created', run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         id: '22222222-2222-4222-8222-222222222222', origin: { kind: 'direct' }, state: 'queued', revision: 0,
         machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false,
@@ -885,7 +946,8 @@ describe('workflow Run Actions', () => {
     ]) {
       await expect(owner.execute({ actionId: 'workflow.run.start', input: {
         runId: '22222222-2222-4222-8222-222222222222', source,
-      }, context })).rejects.toMatchObject({ code: 'policy_denied_field' });
+      }, context })).rejects.toMatchObject({ code: 'definition_exceeds_authority', details: {
+        cause: { code: 'policy_denied_field' } } });
     }
     expect(execute.mock.calls.every(([operation]) => operation.operation === 'get')).toBe(true);
   });
@@ -894,6 +956,7 @@ describe('workflow Run Actions', () => {
     const execute = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {
       if (operation.operation === 'get') throw Object.assign(new Error('not found'), { response: { status: 404 } });
       return { kind: 'created', run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         id: '22222222-2222-4222-8222-222222222222', origin: { kind: 'direct' }, state: 'queued', revision: 0,
         machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -931,7 +994,8 @@ describe('workflow Run Actions', () => {
       } },
     }, context: { surface: 'agent', callerPermissionMode: 'default',
       externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } },
-    } })).rejects.toMatchObject({ code: 'policy_denied_field', details: { field: 'agentTarget', blockId: 'fanout' } });
+    } })).rejects.toMatchObject({ code: 'definition_exceeds_authority', details: { blockId: 'fanout',
+      cause: { code: 'policy_denied_field', field: 'agentTarget' } } });
     expect(execute.mock.calls.some(([operation]) => operation.operation === 'admit')).toBe(false);
   });
 
@@ -941,6 +1005,7 @@ describe('workflow Run Actions', () => {
       if (operation.operation === 'get') throw Object.assign(new Error('not found'), { response: { status: 404 } });
       if (operation.operation !== 'admit') throw new Error(`unexpected:${String(operation.operation)}`);
       return { kind: 'created', run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         id: runId, origin: operation.origin, state: 'queued', revision: 0,
         machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -976,7 +1041,8 @@ describe('workflow Run Actions', () => {
       externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } },
     } });
     if (permissionMode === 'yolo') {
-      await expect(starting).rejects.toMatchObject({ code: 'permission_exceeds_ceiling' });
+      await expect(starting).rejects.toMatchObject({ code: 'definition_exceeds_authority', details: {
+        blockId: 'synthesis', cause: { code: 'permission_exceeds_ceiling' } } });
       expect(execute.mock.calls.some(([operation]) => operation.operation === 'admit')).toBe(false);
     } else {
       await expect(starting).resolves.toMatchObject({ admission: 'created', run: { id: runId } });
@@ -988,6 +1054,7 @@ describe('workflow Run Actions', () => {
     const execute = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {
       if (operation.operation === 'get') throw Object.assign(new Error('not found'), { response: { status: 404 } });
       if (operation.operation === 'admit') return { kind: 'created', run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         id: '22222222-2222-4222-8222-222222222222', origin: { kind: 'direct' }, state: 'queued', revision: 0,
         machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false,
@@ -1021,6 +1088,7 @@ describe('workflow Run Actions', () => {
     const execute = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {
       if (operation.operation === 'get') throw Object.assign(new Error('not found'), { response: { status: 404 } });
       if (operation.operation === 'admit') return { kind: 'created', run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         id: '22222222-2222-4222-8222-222222222222', origin: { kind: 'direct' }, state: 'queued', revision: 0,
         machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false,
@@ -1042,8 +1110,8 @@ describe('workflow Run Actions', () => {
       surface: 'agent', callerPermissionMode: 'yolo',
       sessionAgentSpawnPolicyV1: { v: 1, permissionCeiling: 'read-only' },
       externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } },
-    } })).rejects.toMatchObject({ code: 'policy_denied_field', details: {
-      code: 'policy_denied_field', field: 'permissionMode',
+    } })).rejects.toMatchObject({ code: 'definition_exceeds_authority', details: {
+      code: 'definition_exceeds_authority', cause: { code: 'policy_denied_field', field: 'permissionMode' },
     } });
     expect(execute.mock.calls.every(([operation]) => operation.operation === 'get')).toBe(true);
   });
@@ -1054,6 +1122,7 @@ describe('workflow Run Actions', () => {
     const admittedRunId = '11111111-1111-4111-8111-111111111111';
     const accountCurrentness = { mode: 'plain' as const, version: 7, contentKeyFingerprint: null };
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: admittedRunId, origin: { kind: 'direct', originSessionId: 'session-1' }, state: 'queued', revision: 0,
       machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: 0,
       availability: { pause: true, resumeBoundary: false,
@@ -1122,6 +1191,7 @@ describe('workflow Run Actions', () => {
     const execute = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {
       if (operation.operation !== 'resume') throw new Error('boundary_resume_must_not_read_private_content');
       return { run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         id: runId, origin: { kind: 'direct' }, state: 'queued', revision: 5,
         machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false,
@@ -1197,6 +1267,7 @@ describe('workflow Run Actions', () => {
       },
     }));
     const runRow = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'interrupted', revision: 1,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: false, resumeBoundary: false,    restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
@@ -1342,6 +1413,7 @@ describe('workflow Run Actions', () => {
       progress: { kind: 'happier.workflow-progress.v1', invocationPath: { blockId: 'work', scope: [] }, blockKind: 'step', attempt: '0', logicalInvocationRecordId: priorId },
     }));
     const runRow = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'interrupted', revision: 2,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: false, resumeBoundary: false,    restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
@@ -1380,6 +1452,9 @@ describe('workflow Run Actions', () => {
       resolveAccountId: async () => 'account-1', storage: { execute: withStoredRoot(runId, execute) }, definitions: { get: vi.fn() },
       resolveEncryption,
       prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      // Native observation is the process boundary; missing correspondence
+      // alone cannot establish that the prior attempt is inactive.
+      observeRecovery: async () => ({ activity: 'not_active', canReattach: false, canContinueConversation: false }),
     });
 
     const result = await owner.execute({
@@ -1423,6 +1498,7 @@ describe('workflow Run Actions', () => {
         execution: { kind: 'session', sessionId: 'session-1', localInputId: 'input-1' } },
     }));
     const runRow = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'interrupted', revision: 2,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: false, resumeBoundary: false,    restoreWorkspace: false, cancel: true, inspectExecution: true, disabledReasons: [] },
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };
@@ -1489,6 +1565,7 @@ describe('workflow Run Actions', () => {
       },
     }));
     const runRow = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: runId, origin: { kind: 'direct' }, state: 'interrupted', revision: 2,
       machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: {
@@ -1661,6 +1738,7 @@ describe('workflow Run Actions', () => {
         authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } },
     }));
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'interrupted', revision: 2, machineId: 'machine-1',
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: false, resumeBoundary: false,
          restoreWorkspace: true, cancel: true, inspectExecution: true, disabledReasons: [] },
@@ -1731,6 +1809,7 @@ describe('workflow Run Actions', () => {
     const execute = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {
       if (operation.operation === 'get') return {
         run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'running', revision: 3,
+          attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
           machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
           availability: { pause: true, resumeBoundary: false,
               restoreWorkspace: false, cancel: true, inspectExecution: true, disabledReasons: [] },
@@ -1786,7 +1865,7 @@ describe('workflow Run Actions', () => {
     const execute = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {
       if (operation.operation === 'invocations.list') return { invocations: listed++ === 0 ? [] : [index], parentRevision: listed };
       if (operation.operation === 'invocations.get') return { invocation: { index, contentEnvelope, parentRevision: 1 } };
-      if (operation.operation === 'get') return { run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'running', revision: 0, machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null, availability: { pause: true, resumeBoundary: false,    restoreWorkspace: false, cancel: true, inspectExecution: true, disabledReasons: [] }, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }, acceptedEnvelope, checkpointEnvelope: null, resultEnvelope: null };
+      if (operation.operation === 'get') return { run: { attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null, sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'running', revision: 0, machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null, availability: { pause: true, resumeBoundary: false,    restoreWorkspace: false, cancel: true, inspectExecution: true, disabledReasons: [] }, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }, acceptedEnvelope, checkpointEnvelope: null, resultEnvelope: null };
       if (operation.operation === 'wait') return { observation: 'changed', run: { revision: 1 } };
       throw new Error(`unexpected:${String(operation.operation)}`);
     });
@@ -1854,6 +1933,7 @@ describe('workflow Run Actions', () => {
       },
     }));
     const run = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+      attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: runId, origin: { kind: 'direct' as const }, state: 'interrupted' as const, revision: 1,
       machineId: 'machine-1', workflowCustodyState: 'settled' as const, originDeliveryAckRevision: null,
       availability: { pause: false, resumeBoundary: false, restoreWorkspace: false, cancel: false, inspectExecution: true, disabledReasons: [] },
@@ -2001,6 +2081,7 @@ describe('workflow Run Actions', () => {
       if (operation.operation === 'invocations.list') return { invocations: [], parentRevision: 0 };
       if (operation.operation === 'get') return {
         run: { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null,
+          attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
           id: runId, origin: { kind: 'direct' }, state: 'queued', revision: 0, machineId: 'machine-1',
           workflowCustodyState: 'pending', originDeliveryAckRevision: null,
           availability: { pause: true, resumeBoundary: false,
@@ -2041,6 +2122,7 @@ describe('workflow Run Actions', () => {
       },
     }));
     const runRow = { sourceArtifactId: null, ownerAccountId: 'account-1', visibleTeamId: null, id: runId, origin: { kind: 'direct' }, state: 'failed', revision: 1,
+      attentionRequired: true, failureUnseen: true, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       machineId: 'machine-1', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: false, resumeBoundary: false,    restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
       createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' };

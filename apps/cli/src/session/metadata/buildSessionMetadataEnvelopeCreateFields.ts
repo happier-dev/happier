@@ -1,4 +1,5 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
+import { projectUsageSessionTimingV1, type UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
 import { SESSION_METADATA_LAYOUT_VERSION_V1, createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
@@ -38,6 +39,7 @@ type SessionMetadataEnvelopeBuildParams =
     }>;
 
 type SessionMetadataEnvelopeFields = Readonly<{
+  usageTimingV1: UsageSessionTimingV1;
   metadataLayoutVersion: typeof SESSION_METADATA_LAYOUT_VERSION_V1;
   sharedMetadata: Readonly<{ ciphertext: string }>;
   ownerMetadata: SessionOwnerMetadataEnvelopeV1;
@@ -132,6 +134,7 @@ export function buildSessionMetadataEnvelopeFields(
         ));
 
   return {
+    usageTimingV1: projectUsageSessionTimingV1({ metadata: params.metadata, agentState: params.agentState ?? {} }),
     metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
     sharedMetadata: { ciphertext: sharedMetadataCiphertext },
     ownerMetadata: params.accountEncryptionMode === 'plain'

@@ -22,6 +22,9 @@ import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/acc
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { handleActionsCommand } from '@/cli/commands/actions';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -36,6 +39,76 @@ function deps() {
 }
 
 describe('Source Actions through the CLI Account front door', () => {
+  it.each(['signed_phase', 'signed_unknown', 'signed_forbidden', 'bearer'] as const)(
+    'reports %s Home refusal through the real signed Source transport and CLI writer', async scenario => {
+      await withConfiguredDaemonTestHome({ prefix: 'source-http-refusal-' }, async () => {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(FeaturesResponseSchema.parse({
+        features: { sessions: { enabled: true } }, capabilities: { serverIdentity: { serverIdentityId: 'source-home-identity' } },
+      })));
+      const signed = scenario !== 'bearer';
+      const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
+      const target = { kind: 'session' as const, sessionId: 'source-session' };
+      // The issued Home response is a network fixture; request signing and the Source/CLI owners stay real.
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'never-copy-signed-proof', binding: {
+        accountId: 'foreign-requester', principalId: 'foreign-requester', credentialId: 'requester-token', grant: API_TOKEN_FULL_GRANT_V1,
+        serverIdentityId: 'source-home-identity', machineId: 'source-machine', custodianAccountId: 'source-account',
+        installationId: 'source-installation', actionId: 'projects.sources.read', requestId: 'source-request',
+        requestEnvelopeDigest: 'A'.repeat(43), target,
+      } });
+      const owner = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId: 'source-session',
+        mode: 'plain', ctx: null, serverId: 'source-home', serverHttpBaseUrl: 'https://source-home.test',
+        serverIdentityId: 'source-home-identity', externalActionMachineRequestPrivateKey: keys.secretKey,
+        externalActionMachineInstallationId: 'source-installation' });
+      vi.spyOn(axios, 'request').mockImplementation(async request => {
+        expect(request.url).toContain('/v1/projects/sources/source%2Fa');
+        if (signed) {
+          expect(request.headers).not.toHaveProperty('Authorization');
+          expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+            effectActionId: 'projects.sources.read', target, installationId: 'source-installation',
+            requestId: authorization.binding.requestId, method: 'GET',
+            path: '/v1/projects/sources/source%2Fa?serverId=source-home-identity',
+            signature: String(request.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER] ?? ''), publicKey: keys.publicKey })).toBe(true);
+        } else expect(request.headers).toMatchObject({ Authorization: `Bearer ${token}` });
+        return { status: scenario === 'signed_forbidden' ? 403 : 401, data: {
+          error: scenario === 'signed_forbidden' ? 'credential_scope_denied' : 'invalid_token',
+          ...(signed ? { authorizationRefusal: scenario === 'signed_unknown' ? 'never-copy-authored-phase' : 'deployment_preparation' } : {}),
+        } };
+      });
+      const executor = createActionExecutor(owner);
+      let output = '';
+      const previousExitCode = process.exitCode;
+      vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...args) => {
+        output += String(chunk);
+        const callback = args.find(argument => typeof argument === 'function');
+        if (typeof callback === 'function') callback();
+        return true;
+      });
+      try {
+        await handleActionsCommand(['invoke', 'projects.sources.read', '--input-json',
+          JSON.stringify({ serverId: 'source-home', sourceId: source.id }), '--yes', '--json'], {
+          readCredentialsFn: async () => ({ token, encryption: null, credentialProvenance: 'stored_session' }),
+          createExecutorFn: () => ({ execute: (id, input, context) => executor.execute(id, input, { ...context,
+            ...(signed ? { externalActionExecutionAuthorization: authorization, externalActionTarget: target } : {}) }),
+            resolveSessionTarget: async () => { throw new Error('Source read has no Session lookup'); } }),
+        });
+        const message = signed ? `action_forbidden (home_signed_authorization_rejected${scenario === 'signed_unknown' ? '' : ':deployment_preparation'})`
+          : 'action_home_signed_out';
+        expect(JSON.parse(output), output).toMatchObject({ ok: false, error: {
+          code: signed ? 'action_forbidden' : 'action_home_signed_out', message,
+        } });
+        expect(output).not.toContain('never-copy');
+      } finally { process.exitCode = previousExitCode; }
+      });
+    });
+
+  it('returns the canonical delete acknowledgement through the public delete Action', async () => {
+    const deleted = { ok: true, sourceId: source.id, revision: 2 };
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: deleted });
+    const executor = createActionExecutor(deps());
+    expect(await executor.execute('projects.sources.delete', { serverId: 'source-home', sourceId: source.id, expectedRevision: 2 },
+      { surface: 'cli', bypassApprovals: true })).toEqual({ ok: true, result: deleted });
+  });
+
   it('admits portable Home private Artifact attachment through real requester custody without borrowing the owner', async () => {
     const currentness = await createRequesterCurrentnessSocketHarness();
     onTestFinished(() => currentness.close());

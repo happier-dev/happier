@@ -11,15 +11,17 @@ import { createCurrentSessionProjectionRecordFixture, createSessionRuntimeManage
 
 afterEach(() => vi.restoreAllMocks());
 
+function batchResponse(results: unknown[]) {
+  return { status: 200, data: { results } };
+}
+
 describe('compact Session list document demand', () => {
   it('keeps the runtime subtree proof on the full snapshot demand', async () => {
     const session = createSessionRuntimeManagedSubtreeRecordFixture({ id: 'child' });
     const post = vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: {
       sessions: [compactRow(session)], nextCursor: null, hasNext: false,
       attentionNextCursor: null, attentionHasNext: false,
-    } }).mockResolvedValueOnce({ status: 200, data: {
-      results: [{ sessionId: session.id, detail: { status: 200, body: { session } } }],
-    } });
+    } }).mockResolvedValueOnce(batchResponse([{ sessionId: session.id, detail: { status: 200, body: { session } } }]));
     const page = await runWithServerHttpBaseUrl('https://home.example.test', () => fetchSessionRuntimeManagedSubtreeQueryPage({
       token: 'runtime', query: { v: 1, underSessionId: 'root', storage: 'active', includeInactive: true,
         scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] },
@@ -35,9 +37,9 @@ describe('compact Session list document demand', () => {
     vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: {
       sessions: [compactRow(session)], nextCursor: null, hasNext: false,
       attentionNextCursor: null, attentionHasNext: false,
-    } }).mockResolvedValueOnce({ status: 200, data: {
-      results: [{ sessionId: session.id, detail: { status: 200, body: { session: { ...session, receivedRuleCount: 3 } } } }],
-    } });
+    } }).mockResolvedValueOnce(batchResponse([
+      { sessionId: session.id, detail: { status: 200, body: { session: { ...session, receivedRuleCount: 3 } } } },
+    ]));
     await expect(runWithServerHttpBaseUrl('https://home.example.test', () => fetchSessionRuntimeManagedSubtreeQueryPage({
       token: 'runtime', query: { v: 1, underSessionId: 'root', storage: 'active', includeInactive: true,
         scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] },
@@ -67,9 +69,7 @@ describe('compact Session list document demand', () => {
     const post = vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: {
       sessions: [compactRow(session)], nextCursor: 'ordinary', hasNext: true,
       attentionNextCursor: 'attention', attentionHasNext: true,
-    } }).mockResolvedValueOnce({ status: 200, data: {
-      results: [{ sessionId: session.id, detail: { status: 200, body: { session } } }],
-    } });
+    } }).mockResolvedValueOnce(batchResponse([{ sessionId: session.id, detail: { status: 200, body: { session } } }]));
     const page = await runWithServerHttpBaseUrl('https://home.example.test', () => fetchSessionsQueryPage({ token: 'token',
       query: { v: 1, underSessionId: 'query-root', storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] } }));
     expect(page).toEqual({ sessions: [session], nextCursor: 'ordinary', hasNext: true,
@@ -100,9 +100,9 @@ describe('compact Session list document demand', () => {
       sessions: sessions.map(compactRow), nextCursor: 'ordinary-next', hasNext: true,
       attentionNextCursor: 'attention-next', attentionHasNext: true,
     } });
-    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: {
-      results: sessions.map(session => ({ sessionId: session.id, detail: { status: 200, body: { session } } })),
-    } });
+    const post = vi.spyOn(axios, 'post').mockResolvedValue(batchResponse(
+      sessions.map(session => ({ sessionId: session.id, detail: { status: 200, body: { session } } })),
+    ));
 
     const page = await runWithServerHttpBaseUrl('https://home.example.test',
       () => fetchSessionsPage({ token: 'token' }));
@@ -120,9 +120,9 @@ describe('compact Session list document demand', () => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: {
       sessions: [compactRow(session)], nextCursor: null, hasNext: false,
     } });
-    vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: {
-      results: [{ sessionId: 'session', detail: { status, body: { error: 'not_available' } } }],
-    } });
+    vi.spyOn(axios, 'post').mockResolvedValue(batchResponse([
+      { sessionId: 'session', detail: { status, body: { error: 'not_available' } } },
+    ]));
 
     await expect(runWithServerHttpBaseUrl('https://home.example.test',
       () => fetchSessionsPage({ token: 'token' }))).rejects.toMatchObject({
@@ -139,7 +139,7 @@ describe('compact Session list document demand', () => {
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: {
       sessions: [compactRow(session)], nextCursor: null, hasNext: false,
     } });
-    vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { results } });
+    vi.spyOn(axios, 'post').mockResolvedValue(batchResponse(results));
     await expect(runWithServerHttpBaseUrl('https://home.example.test',
       () => fetchSessionsPage({ token: 'token' }))).rejects.toMatchObject({ code: 'session_read_batch_invalid_response' });
   });

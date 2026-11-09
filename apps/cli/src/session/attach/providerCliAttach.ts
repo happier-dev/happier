@@ -18,6 +18,8 @@ import type {
 import type { AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import { requireAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import { logger } from '@/ui/logger';
+import type { HostAgentNativeLaunchAuthority } from '@/plugins/runtime/invocation/services/exec';
+import { withHostProcessOwnerEnvironment } from '@/processes/ownerTag';
 import { launchBorrowedTerminalProcess, type TerminalSpawnProcess, type BorrowedTerminalProcessIdentity } from '@/terminal/host/borrowedTerminalProcess';
 import { finalizeSessionChildEnvironment } from '@/session/runtime/control/finalizeSessionChildEnvironment';
 import type { TerminalHostHandle, TerminalHostPreference } from '@happier-dev/agents';
@@ -42,6 +44,10 @@ export type ProviderCliAttachManagedServiceAccess = Readonly<{
 /** Host-owned managed custody, not a public Agent AttachSurface extension. */
 export type HostProviderCliAttachRequest = Parameters<AttachSurface['attach']>[0] & Readonly<{
     onAttached(): Promise<void>;
+    /** Captured original Session incarnation, not a caller-selected identity. */
+    nativeLaunchAuthority?: HostAgentNativeLaunchAuthority;
+    /** Original Session placement, not authored native-presentation metadata. */
+    workingDirectory?: string;
     /** Strict controller observation owns custody; ordinary AttachSurface never publishes it. */
     terminalClient?: Readonly<{
         onStarted(identity: BorrowedTerminalProcessIdentity): Promise<void>;
@@ -115,15 +121,24 @@ async function readProviderCliVersion(params: Readonly<{
     launch: AgentCliLaunchSpec;
     args: readonly string[];
     env: NodeJS.ProcessEnv;
+    nativeLaunchAuthority?: HostAgentNativeLaunchAuthority;
+    signal?: AbortSignal;
+    cwd?: string;
 }>): Promise<string | null> {
+    const authorized = params.nativeLaunchAuthority ? await params.nativeLaunchAuthority.authorize({
+        command: params.launch.command, args: [...params.launch.args, ...params.args], cwd: params.cwd ?? process.cwd(),
+        env: Object.fromEntries(Object.entries(params.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
+    }, params.signal) : undefined;
     try {
         const result = await execFileWithDeadline(
-            params.launch.command,
-            [...params.launch.args, ...params.args],
+            authorized?.command ?? params.launch.command,
+            authorized?.args ?? [...params.launch.args, ...params.args],
             {
-                env: params.env,
+                env: authorized ? withHostProcessOwnerEnvironment(authorized.env, authorized.processOwnerTag) : params.env,
+                ...(authorized?.cwd ? { cwd: authorized.cwd } : {}),
                 timeout: 5_000,
                 windowsHide: true,
+                ...(params.signal ? { signal: params.signal } : {}),
             },
         );
         const stdout = typeof result.stdout === 'string'
@@ -133,7 +148,7 @@ async function readProviderCliVersion(params: Readonly<{
         return normalized.length > 0 ? normalized : null;
     } catch {
         return null;
-    }
+    } finally { await authorized?.release(); }
 }
 
 export type ProviderCliAttachTargetResult<TTarget extends object> =
@@ -236,6 +251,9 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
         launch: AgentCliLaunchSpec;
         args: readonly string[];
         env: NodeJS.ProcessEnv;
+        nativeLaunchAuthority?: HostAgentNativeLaunchAuthority;
+        signal?: AbortSignal;
+        cwd?: string;
     }>) => Promise<string | null>;
     readFallbackServerBaseUrl?: (
         input: Readonly<{ sessionId: string }>,
@@ -270,6 +288,9 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
     const resolveHostFacts = async (
         env: NodeJS.ProcessEnv,
         selectedLaunch?: AgentCliLaunchSpec,
+        nativeLaunchAuthority?: HostAgentNativeLaunchAuthority,
+        signal?: AbortSignal,
+        cwd?: string,
     ): Promise<ProviderCliAttachHostFacts> => {
         if (!params.cliVersionArgs) return Object.freeze({ cliVersion: null });
         const launch = selectedLaunch ?? await resolveLaunch(env);
@@ -278,6 +299,9 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                 launch,
                 args: params.cliVersionArgs,
                 env,
+                ...(nativeLaunchAuthority ? { nativeLaunchAuthority } : {}),
+                ...(signal ? { signal } : {}),
+                ...(cwd ? { cwd } : {}),
             }),
         });
     };
@@ -387,6 +411,7 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
     const prepareInvocation = async (request: HostProviderCliAttachPreparationRequest): Promise<HostProviderCliAttachPreparation> => {
             const { metadata, sessionId, signal } = request;
             signal?.throwIfAborted();
+            await request.nativeLaunchAuthority?.admit(signal);
             const target = await resolveTargetWithFallback({
                 metadata,
                 sessionId,
@@ -440,11 +465,12 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                 }
             }
             const launch = await resolveLaunch(childEnv);
+            await request.nativeLaunchAuthority?.admit(signal);
             const invocation = resolveInvocation({
                 command: launch.command,
                 args: [
                     ...launch.args,
-                    ...params.createArgs(target.value, await resolveHostFacts(childEnv, launch)),
+                    ...params.createArgs(target.value, await resolveHostFacts(childEnv, launch, request.nativeLaunchAuthority, signal, request.workingDirectory)),
                 ],
                 env: childEnv,
             });
@@ -459,6 +485,8 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
             const onAttached = 'onAttached' in request ? request.onAttached : undefined;
             const terminalClient = 'onAttached' in request ? request.terminalClient : undefined;
             const hostPresentation = 'onAttached' in request ? request.hostPresentation : undefined;
+            const nativeLaunchAuthority = 'nativeLaunchAuthority' in request ? request.nativeLaunchAuthority : undefined;
+            const workingDirectory = 'workingDirectory' in request ? request.workingDirectory : undefined;
             const startupDeadline = hostPresentation?.startupDeadline();
             if (signal?.aborted) return { ok: true, value: { exitCode: 0 } };
             let prepared: HostProviderCliAttachPreparation;
@@ -469,6 +497,11 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
             }
             if (!prepared.ok) return prepared;
             const { invocation, childEnv, managedServiceAccess } = prepared.value;
+            const nativeLaunch = nativeLaunchAuthority
+                ? await nativeLaunchAuthority.authorize({ command: invocation.command, args: [...invocation.args],
+                    cwd: workingDirectory ?? hostPresentation?.workingDirectory ?? process.cwd(),
+                    env: Object.fromEntries(Object.entries(childEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) }, signal)
+                : undefined;
             if (hostPresentation) {
                 const localAbort = new AbortController();
                 const retiredAbort = new AbortController();
@@ -476,17 +509,24 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                 const startupSignal = AbortSignal.any([ownerSignal, retiredAbort.signal]);
                 let created: Awaited<ReturnType<PreparedTerminalHostOwner['createPreparedHost']>> | null = null;
                 let physicallyRetired = false;
+                let nativeCustodyTransferred = false;
                 let phase = 'prepare_native';
                 try {
                     created = await hostPresentation.owner.createPreparedHost({
                         preference: hostPresentation.preference, sessionName: hostPresentation.sessionName,
-                        workingDirectory: hostPresentation.workingDirectory,
-                        spawnArgv: [invocation.command, ...invocation.args],
-                        spawnEnv: Object.fromEntries(Object.entries(childEnv).filter(
+                        workingDirectory: nativeLaunch?.cwd ?? hostPresentation.workingDirectory,
+                        spawnArgv: nativeLaunch ? [nativeLaunch.command, ...nativeLaunch.args] : [invocation.command, ...invocation.args],
+                        spawnEnv: nativeLaunch ? withHostProcessOwnerEnvironment(nativeLaunch.env, nativeLaunch.processOwnerTag)
+                            : Object.fromEntries(Object.entries(childEnv).filter(
                             (entry): entry is [string, string] => typeof entry[1] === 'string',
                         )),
                         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
                         signal: ownerSignal,
+                        ...(nativeLaunch ? { finalizeNativeLaunch: async () => {
+                            await nativeLaunchAuthority?.admit(ownerSignal);
+                            nativeCustodyTransferred = true;
+                            return nativeLaunch;
+                        } } : {}),
                         beforeSpawn: () => {
                             if (managedServiceAccess?.isCurrent?.() === false) throw new Error('Provider managed-service access was withdrawn');
                         },
@@ -526,19 +566,22 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                     if (created) await hostPresentation.owner.dispose(created.handle, physicallyRetired
                         ? { kind: 'preserve_host', reason: 'runtime_recovery' }
                         : { kind: 'destroy_owned_host', reason: 'session_closed' });
+                    if (!nativeCustodyTransferred) await nativeLaunch?.release();
                 }
             }
             let child: Awaited<ReturnType<typeof launchBorrowedTerminalProcess>>;
             try {
                 child = await launchBorrowedTerminalProcess({
-                    spawnArgv: [invocation.command, ...invocation.args],
-                    workingDirectory: process.cwd(),
-                    spawnEnv: Object.fromEntries(Object.entries(childEnv).filter(
+                    spawnArgv: nativeLaunch ? [nativeLaunch.command, ...nativeLaunch.args] : [invocation.command, ...invocation.args],
+                    workingDirectory: nativeLaunch?.cwd ?? workingDirectory ?? process.cwd(),
+                    spawnEnv: nativeLaunch ? withHostProcessOwnerEnvironment(nativeLaunch.env, nativeLaunch.processOwnerTag)
+                        : Object.fromEntries(Object.entries(childEnv).filter(
                         (entry): entry is [string, string] => typeof entry[1] === 'string',
                     )),
                     envPassthroughKeys: [],
                     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
-                    beforeSpawn: () => {
+                    beforeSpawn: async () => {
+                        await nativeLaunchAuthority?.admit(signal);
                         if (managedServiceAccess?.isCurrent?.() === false) {
                             throw new Error('Provider managed-service access was withdrawn');
                         }
@@ -547,6 +590,7 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                     ...(signal ? { signal } : {}),
                 });
             } catch {
+                await nativeLaunch?.release();
                 return signal?.aborted
                     ? { ok: true, value: { exitCode: 0 } }
                     : { ok: false, code: 'attach_failed', message: 'Provider native attach startup failed.' };
@@ -554,7 +598,9 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
 
             let startupFailed = false;
             let clientAdmitted = false;
-            const exitCode = await new Promise<number>((resolve, reject) => {
+            let exitCode: number;
+            let physicallySettled = false;
+            try { exitCode = await new Promise<number>((resolve, reject) => {
                 let stopTimer: NodeJS.Timeout | null = null;
                 let startupPublication: Promise<void> | null = null;
                 let finished = false;
@@ -614,7 +660,16 @@ export function createProviderCliAttachSurface<TTarget extends object>(params: R
                 );
                 signal?.addEventListener('abort', stop, { once: true });
                 if (signal?.aborted) stop();
-            });
+            }); physicallySettled = true; }
+            catch (error) {
+                await child.terminate();
+                physicallySettled = true;
+                throw error;
+            } finally {
+                // An ambiguous physical stop must retain the exact native
+                // launch's material rather than pretending retirement.
+                if (physicallySettled) await nativeLaunch?.release();
+            }
             return startupFailed
                 ? { ok: false, code: 'attach_failed', message: 'Managed provider attach startup failed.' }
                 : { ok: true, value: { exitCode } };

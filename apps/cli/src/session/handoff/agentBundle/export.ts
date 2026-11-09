@@ -13,13 +13,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-export async function exportSessionHandoffAgentBundle(params: Readonly<{
-  metadata: unknown;
-  activeServerDir: string;
-}>): Promise<Readonly<{
+export type PreparedSessionHandoffAgentBundleExport = () => Promise<Readonly<{
   agentBundle: SessionHandoffAgentBundle;
   targetPath: string;
-}>> {
+}>>;
+
+/** Resolve export eligibility before Stop; read the final native snapshot afterwards. */
+export async function prepareSessionHandoffAgentBundleExport(params: Readonly<{
+  metadata: unknown;
+  activeServerDir: string;
+}>): Promise<PreparedSessionHandoffAgentBundleExport> {
   const metadata = asRecord(params.metadata);
   if (!metadata) {
     throw new Error('Session metadata is unavailable');
@@ -58,16 +61,25 @@ export async function exportSessionHandoffAgentBundle(params: Readonly<{
     throw new Error(`Unsupported handoff provider: ${eligibility.agentId}`);
   }
 
-  const agentBundle = await providerOps.exportBundle({
-    sessionId: eligibility.vendorHandoffId,
-    metadata: agentMetadata,
-    directory: params.activeServerDir,
-  });
-  if (!agentBundle.ok) {
-    throw new Error(agentBundle.message ?? `Session handoff export failed: ${agentBundle.code}`);
-  }
-  return {
-    agentBundle: agentBundle.value.bundle as SessionHandoffAgentBundle,
-    targetPath,
+  return async () => {
+    const agentBundle = await providerOps.exportBundle({
+      sessionId: eligibility.vendorHandoffId,
+      metadata: agentMetadata,
+      directory: params.activeServerDir,
+    });
+    if (!agentBundle.ok) {
+      throw new Error(agentBundle.message ?? `Session handoff export failed: ${agentBundle.code}`);
+    }
+    return {
+      agentBundle: agentBundle.value.bundle as SessionHandoffAgentBundle,
+      targetPath,
+    };
   };
+}
+
+export async function exportSessionHandoffAgentBundle(params: Readonly<{
+  metadata: unknown;
+  activeServerDir: string;
+}>): ReturnType<PreparedSessionHandoffAgentBundleExport> {
+  return await (await prepareSessionHandoffAgentBundleExport(params))();
 }

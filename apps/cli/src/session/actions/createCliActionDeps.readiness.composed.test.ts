@@ -40,8 +40,8 @@ it('reads an entitled exact Team binding through the live CLI composition withou
     const path = new URL(String(url)).pathname;
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
     if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: row } };
-    if (path === '/v1/machines') return { status: 200, data: [{ id: 'machine-1', active: true, revokedAt: null, replacedByMachineId: null,
-      kind: 'persistent', access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } }] };
+    if (path === '/v1/machines/machine-1') return { status: 200, data: { machine: { id: 'machine-1', active: true, revokedAt: null, replacedByMachineId: null,
+      kind: 'persistent', access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } } } };
     throw new Error(`Unexpected private Account read ${path}`);
   });
   vi.spyOn(axios, 'request').mockImplementation(async request => {
@@ -94,9 +94,9 @@ it.each(['resource', 'machineProvisioner'] as const)('reads the %s operation exe
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
     if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
     if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: row } };
-    if (path === '/v1/machines') return { status: 200, data: [{ id: 'machine-1', active: true,
+    if (path === '/v1/machines/machine-1') return { status: 200, data: { machine: { id: 'machine-1', active: true,
       revokedAt: null, replacedByMachineId: null, kind: 'persistent',
-      access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }] };
+      access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } } };
     if (path === '/v1/account/profile') return { status: 200, data: profile() };
     if (path.endsWith('/connected-accounts/purposes')) return { status: 200, data: { status: 'present', revision: 1,
       content: { t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [{ purpose, target: { kind: 'account', account } }] } } } } };
@@ -175,9 +175,9 @@ it('reads on demand, repairs through the real sign-in Action, and observes the a
     if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: { ...row,
       effectiveAccess: { v: 1, level: invokeAllowed ? 'owner' : 'view', sources: [],
         capabilities: projectSessionAccessCapabilitiesV1({ owner: invokeAllowed, grants: [] }) } } } };
-    if (path === '/v1/machines') return { status: 200, data: [{ id: 'machine-1', active: machineOnline,
+    if (path === '/v1/machines/machine-1') return { status: 200, data: { machine: { id: 'machine-1', active: machineOnline,
       revokedAt: null, replacedByMachineId: null, kind: 'persistent',
-      access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } }] };
+      access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } } } };
     throw new Error(`Unexpected HTTP read ${path}`);
   });
   let signedIn = false;

@@ -1,15 +1,18 @@
 import '../../../../../ui/sources/dev/vitestSetup';
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, vi } from 'vitest';
 import { Server } from 'socket.io';
+import type { Prisma } from '@prisma/client';
 import { io } from 'socket.io-client';
 import { createLightSqliteHarness } from '../../../../../server/sources/testkit/lightSqliteHarness';
 import { createAuthenticatedTestApp } from '../../../../../server/sources/app/api/testkit/sqliteFastify';
 import { accountRoutes } from '../../../../../server/sources/app/api/routes/account/accountRoutes';
 import { artifactsRoutes } from '../../../../../server/sources/app/api/routes/artifacts/artifactsRoutes';
-import { initializeServerIdentityCache } from '../../../../../server/sources/app/serverIdentity/serverIdentity';
+import { getOrCreateServerIdentityId, initializeServerIdentityCache } from '../../../../../server/sources/app/serverIdentity/serverIdentity';
 import { enableOptionalStatics } from '../../../../../server/sources/app/api/utils/enableOptionalStatics';
 import { auth } from '../../../../../server/sources/app/auth/auth';
 import { db } from '../../../../../server/sources/storage/db';
+import { observeSqliteRequests } from '../../../../../server/sources/testkit/observeSqliteRequests';
+import * as requestPrincipalOwner from '../../../../../server/sources/app/api/utils/verifyRequestPrincipal';
 import { eventRouter } from '../../../../../server/sources/app/events/connectionEventRouter';
 import { getAccountStoredContentV3SocketRoom } from '../../../../../server/sources/app/api/socketRooms';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '../../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
@@ -36,6 +39,18 @@ import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/librar
 import { PromptLibraryCatalogKeyV1Schema, buildPromptLibraryPhysicalKeyV1, PROMPT_LIBRARY_ROWS_ROUTE_V1,
   PromptLibraryRowReadResponseV1Schema, openPromptLibraryContentV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 
+const flowSql = vi.hoisted(() => ({ statements: 0 }));
+// Observe physical IO without replacing Prisma's real SQLite adapter.
+vi.mock('../../../../../server/generated/sqlite-client/index.js', async importOriginal => {
+  const original = await importOriginal<typeof import('@prisma/client')>();
+  return { ...original, PrismaClient: class extends original.PrismaClient<Prisma.PrismaClientOptions, 'query'> {
+    constructor(options: Prisma.PrismaClientOptions) {
+      super({ ...options, log: [{ emit: 'event', level: 'query' }] });
+      this.$on('query', () => { flowSql.statements++; });
+    }
+  } };
+});
+
 // Only device credential storage and endpoint selection are substituted. Every
 // Artifact and entity-row request reaches the real authenticated HTTP/SQLite owners.
 const homes = createHomeGovernanceHarness();
@@ -53,13 +68,68 @@ describe('CLI capability approval replayed by the app', () => {
   }, 0);
   afterAll(async () => { await homes.reset(); if (sqlite) await sqlite.close(); });
 
-  it.each([['skill', false], ['skill', true], ['MCP', false], ['MCP', true], ['prompt', false], ['prompt', true]] as const)(
-    'writes and restores %s through original Account custody (miswired storage: %s)', async (family, miswired) => {
+  const replayApproval = async (family: 'skill' | 'MCP' | 'prompt', miswired: boolean, requireInitialReadShape = false) => {
     let phase = 'setup';
     onTestFailed(() => { console.info(`[capability-approval-replay] ${family}, miswired=${miswired}, phase=${phase}`); });
     const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_SERVER_UI_DIR', 'HAPPIER_SERVER_UI_REQUIRED']);
     const locks = installWebLockManagerMock();
     const app = createAuthenticatedTestApp({ authentication: 'real' }) as import('../../../../../server/sources/app/api/types').Fastify;
+    const admissions = vi.spyOn(requestPrincipalOwner, 'verifyRequestPrincipal');
+    let counting = false;
+    let measuredApprovalPath = '';
+    let approvalWriteRequestStarted = false;
+    let approvalGetsBeforeFirstWriteRequest = 0;
+    let initialApprovalGets = 0;
+    const httpCounts = new Map<string, number>();
+    const dbCounts = new Map<string, number>();
+    app.addHook('onRequest', async request => {
+      if (!counting) return;
+      const key = `${request.method} ${request.url}`;
+      httpCounts.set(key, (httpCounts.get(key) ?? 0) + 1);
+      if (request.url === measuredApprovalPath) {
+        if (request.method === 'POST') approvalWriteRequestStarted = true;
+        if (request.method === 'GET' && !approvalWriteRequestStarted) approvalGetsBeforeFirstWriteRequest++;
+      }
+    });
+    const stopDbObservation = observeSqliteRequests({ before: request => {
+      if (!counting) return;
+      const key = `${request.model ?? 'raw'}.${request.action}`;
+      dbCounts.set(key, (dbCounts.get(key) ?? 0) + 1);
+    } });
+    const measureApproval = async <T,>(phase: string, artifactId: string, operation: () => Promise<T>): Promise<T> => {
+      if (family !== 'skill' || miswired) return operation();
+      httpCounts.clear(); dbCounts.clear();
+      measuredApprovalPath = `/v1/artifacts/${artifactId}`;
+      approvalWriteRequestStarted = false; approvalGetsBeforeFirstWriteRequest = 0;
+      const initialAdmissions = admissions.mock.calls.length;
+      const initialSql = flowSql.statements;
+      counting = true;
+      try {
+        const result = await operation();
+        const requests = [...httpCounts.values()].reduce((sum, count) => sum + count, 0);
+        // Each real HTTP ingress admits once; lifecycle steps do not multiply it.
+        expect(admissions.mock.calls.length - initialAdmissions).toBe(requests);
+        expect(httpCounts.get(`POST ${PROMPT_LIBRARY_ROWS_ROUTE_V1}/skill-rules`) ?? 0)
+          .toBe(phase === 'first decision' ? 1 : 0);
+        if (phase === 'settled decision') {
+          const approvalGets = httpCounts.get(`GET ${measuredApprovalPath}`) ?? 0;
+          expect(approvalGets).toBe(1);
+          // One real Artifact row acquisition for the one demanded resource.
+          // SQL totals include auth/configuration/transaction work and are not ceilings.
+          const artifactReads = [...dbCounts].filter(([key]) => key.startsWith('Artifact.find'))
+            .reduce((sum, [, count]) => sum + count, 0);
+          expect(artifactReads).toBe(approvalGets);
+          expect([...httpCounts.keys()].filter(key => key.startsWith('POST '))).toEqual([]);
+        }
+        return result;
+      } finally {
+        counting = false;
+        if (phase === 'first decision') initialApprovalGets = approvalGetsBeforeFirstWriteRequest;
+        console.info('[FLOWBUDGET phone approval]', JSON.stringify({ phase,
+          http: Object.fromEntries(httpCounts), admission: admissions.mock.calls.length - initialAdmissions,
+          sql: flowSql.statements - initialSql, database: Object.fromEntries(dbCounts), approvalGetsBeforeFirstWriteRequest }));
+      }
+    };
     const account = await db.account.create({ data: { encryptionMode: 'plain', settingsVersion: 1 } });
     for (const key of PromptLibraryCatalogKeyV1Schema.options) await db.userKVStore.create({ data: {
       accountId: account.id, key: buildPromptLibraryPhysicalKeyV1(key), version: 1,
@@ -154,7 +224,7 @@ describe('CLI capability approval replayed by the app', () => {
           const response = await request(path, input === null ? undefined : { method: 'POST', body: JSON.stringify(input) });
           return { status: response.status, body: await response.json() };
         } });
-        const decided = await appExecutor.execute('approval.request.decide', { artifactId, decision: 'approve' }, { surface: 'ui', serverId: profileId });
+        const decided = await measureApproval('first decision', artifactId, () => appExecutor.execute('approval.request.decide', { artifactId, decision: 'approve' }, { surface: 'ui', serverId: profileId }));
         const row = PromptLibraryRowReadResponseV1Schema.parse(await (await request(rulePath)).json());
         if (row.status !== 'present') throw new Error('Rules row unavailable');
         const opened = openPromptLibraryContentV1({ key: 'skill-rules', content: row.content, mode: 'plain', material: null });
@@ -171,7 +241,7 @@ describe('CLI capability approval replayed by the app', () => {
           expect(describeApprovalRequestFields(settled)).toEqual(describeApprovalRequestFields(stored));
           expect(rules.rules.filter(rule => rule.skillId === skill.skillId)).toEqual([expect.objectContaining({ skillId: skill.skillId, enabled: true, target: { t: 'machine', machineId } })]);
           expect(hints.length).toBeGreaterThan(0);
-          const again = await appExecutor.execute('approval.request.decide', { artifactId, decision: 'approve' }, { surface: 'ui', serverId: profileId });
+          const again = await measureApproval('settled decision', artifactId, () => appExecutor.execute('approval.request.decide', { artifactId, decision: 'approve' }, { surface: 'ui', serverId: profileId }));
           expect(again).toMatchObject({ ok: true, result: { status: 'executed' } });
           await expect(appExecutor.execute('skills.rules.set', { ...input,
             change: { kind: 'write', write: { place: { t: 'machine', machineId }, state: 'inherit' } } }, { surface: 'ui', serverId: profileId }))
@@ -317,13 +387,27 @@ describe('CLI capability approval replayed by the app', () => {
         }
         }
       });
+      if (requireInitialReadShape) {
+        phase = 'FLOWBUDGET initial approval acquisition';
+        expect(initialApprovalGets).toBe(1);
+      }
     } finally {
       // Retire captured readers and close only this fixture's HTTP keep-alives
       // before Socket.IO waits for its shared HTTP server to shut down.
       await homes.reset();
+      stopDbObservation();
       observer?.disconnect(); app.server.closeAllConnections(); await sockets.close(); await app.close();
       vi.restoreAllMocks(); locks.restore(); env.restore(); reloadConfiguration();
       resetInMemoryAccountSettingsContextForTests();
     }
-  });
+  };
+
+  it.each([['skill', false], ['skill', true], ['MCP', false], ['MCP', true], ['prompt', false], ['prompt', true]] as const)(
+    'writes and restores %s through original Account custody (miswired storage: %s)',
+    (family, miswired) => replayApproval(family, miswired));
+
+  // App approval/Artifact acquisition cleanup: reuse the admitted unchanged
+  // approval before its first write; later real CAS state transitions are distinct.
+  it('FLOWBUDGET phone approval acquires the unchanged request once before its first write (app approval/Artifact acquisition cleanup)',
+    () => replayApproval('skill', false, true));
 });

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { readFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
@@ -29,9 +30,13 @@ import '@happier-dev/plugins-custom-acp';
 async function createNativeCatalog() {
         const home = createTempDirSync('summary-native-discovery-');
         const modelFile = join(home, 'models.json');
+        const signInFile = join(home, 'signed-in');
+        const modelReadsFile = join(home, 'model-reads');
+        writeTextFileSync(signInFile, 'yes');
+        writeTextFileSync(modelReadsFile, '0');
         writeTextFileSync(modelFile, JSON.stringify([{ id: 'initial-model', displayName: 'Initial model', isDefault: true }]));
         const script = writeAcpTestAgentScript({ dir: home, fileName: 'native-catalog.cjs', source: `
-            if (process.argv[2] === 'login') process.exit(0);
+            if (process.argv[2] === 'login') process.exit(require('node:fs').readFileSync(${JSON.stringify(signInFile)}, 'utf8') === 'yes' ? 0 : 1);
             if (process.argv[2] === '--version') { console.log('codex-cli 1.0.0'); process.exit(0); }
             let buffer = '';
             process.stdin.on('data', chunk => {
@@ -40,6 +45,10 @@ async function createNativeCatalog() {
                     if (!line.trim()) continue;
                     const request = JSON.parse(line);
                     if (request.id === undefined) continue;
+                    if (request.method === 'model/list') {
+                        const fs = require('node:fs');
+                        fs.writeFileSync(${JSON.stringify(modelReadsFile)}, String(Number(fs.readFileSync(${JSON.stringify(modelReadsFile)}, 'utf8')) + 1));
+                    }
                     const result = request.method === 'model/list'
                         ? { data: JSON.parse(require('node:fs').readFileSync(${JSON.stringify(modelFile)}, 'utf8')) }
                         : request.method === 'collaborationMode/list' ? { data: [] } : {};
@@ -135,6 +144,8 @@ async function createNativeCatalog() {
                 return ScmDiffSummaryModelCatalogObservationV1Schema.parse(result.result.scmDiffSummaryCatalog);
             };
             return { executor, observe, configuredTargetKey,
+                setNativeSignIn: (signedIn: boolean) => writeTextFileSync(signInFile, signedIn ? 'yes' : 'no'),
+                modelReads: () => Number(readFileSync(modelReadsFile, 'utf8')),
                 writeModels: (modelId: string) => writeTextFileSync(modelFile, JSON.stringify([{ id: modelId, displayName: modelId, isDefault: true }])),
                 disablePurposeMetadata: () => { purposeAvailable = false; }, dispose };
         } catch (error) {
@@ -147,6 +158,23 @@ describe('Summary native model discovery', () => {
     let catalog: Awaited<ReturnType<typeof createNativeCatalog>>;
     beforeAll(async () => { catalog = await createNativeCatalog(); });
     afterAll(async () => { await catalog?.dispose(); });
+
+    it('offers dynamic explicit Codex models without native sign-in or an Account default, through the picker catalog', async () => {
+            const targetKey = 'agent:happier.agent.codex/codex';
+            catalog.setNativeSignIn(false);
+            try {
+                const observed = await catalog.observe();
+                expect(observed.profiles).toEqual(expect.arrayContaining([expect.objectContaining({
+                    modelSelector: { backendTargetKey: targetKey, modelId: 'initial-model' }, structuredOutput: 'supported',
+                })]));
+                expect(observed.automaticProfiles.some(profile => profile.modelSelector?.backendTargetKey === targetKey)).toBe(false);
+                expect(observed.unavailableTargets).toContainEqual({ backendTargetKey: targetKey, reason: 'native_sign_in_required' });
+                const reads = catalog.modelReads();
+                expect(reads).toBe(1);
+                expect((await catalog.observe()).profiles).toEqual(observed.profiles);
+                expect(catalog.modelReads()).toBe(reads);
+            } finally { catalog.setNativeSignIn(true); }
+    });
 
     it('offers explicit Claude models with two connected accounts and no automatic default', async () => {
             const { executor, observe } = catalog;
@@ -203,7 +231,8 @@ describe('Summary native model discovery', () => {
                 discoveryTargetKeys: readonly string[]; defaultModelTitle: string }>): Readonly<{ selections: Map<string, unknown>; defaultProfile: unknown }> }
                 = await import(new URL('../../../../ui/sources/components/settings/pickers/projectAgentModelChoices.ts', import.meta.url).href);
             const projected = picker.projectAgentModelChoices({ purpose: 'walkthrough', sources: [{
-                entry: { kind: 'builtInAgent', backendTarget: 'agent:happier.agent.codex/codex', agentId: 'codex', title: 'Codex' },
+                entry: { kind: 'builtInAgent', backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                    backendTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', title: 'Codex' },
                 models: [], catalogModels: [], runnerCapable: true, discoverable: true,
             }], executableProfiles: discovered.profiles, automaticProfiles: discovered.automaticProfiles,
                 discoveryTargetKeys: discovered.discoveryTargetKeys, defaultModelTitle: 'Default' });

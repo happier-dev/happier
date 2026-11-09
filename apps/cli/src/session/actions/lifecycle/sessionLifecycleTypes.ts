@@ -13,7 +13,7 @@ export type SessionLifecycleActionHandler = (
     rawParams: unknown,
     context?: Readonly<{ signal?: AbortSignal }> & Pick<SpawnSessionOptions, 'creationAuthorization' | 'callerInputConstraints'>
         & Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'requesterSessionBootstrap' | 'beforeSessionRunnerLaunch' | 'localActionContext'
-            | 'callerInputAuthorization' | 'originalActionEnvelope'>,
+            | 'callerInputAuthorization' | 'originalActionEnvelope' | 'callerAuthority' | 'sessionActionOrigin'>,
 ) => Promise<unknown>;
 
 export type SessionLifecycleMachineHandlers = Readonly<{
@@ -22,6 +22,7 @@ export type SessionLifecycleMachineHandlers = Readonly<{
 }>;
 
 export type SessionLifecycleMachineDeps = Readonly<{
+    currentMachineId?: string;
     runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
     resolveExecutionSurfaces?: (
         backendId?: string | null,

@@ -16,11 +16,15 @@ import { CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountControlCo
 import type { readCatalogEntriesSnapshot } from '@/agent/catalog/registry';
 import type { readPluginMcpServerMetadata } from '@/mcp/runtime/pluginMcpServerItems';
 import type { resolveCliHomeTarget } from '@/server/homeTarget';
+import { resolveExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import type { McpServerStoreAuthorizationRequest } from '@/settings/mcp/mcpServerStore';
 
 /** Catalog and Machine operations retain the exact CLI invocation's Home and Account. */
 export function createCliMcpServerActionExecuteV1(params: Readonly<{
   credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string;
   operationContext?: SavedSecretOperationContextV1;
+  resolveAuthorizationHeaders?: (actionId: string, context: ActionExecutorContext, request: McpServerStoreAuthorizationRequest) =>
+    Readonly<Record<string, string>> | null;
   connectedServiceAction?: ActionExecutorDeps['connectedServiceAction'];
   registryActionExecute?: ActionExecutorDeps['registryActionExecute'];
   personalSavedSecretActionExecute?: ActionExecutorDeps['personalSavedSecretActionExecute'];
@@ -42,14 +46,23 @@ export function createCliMcpServerActionExecuteV1(params: Readonly<{
       } else {
         const { getActiveAccountSettingsSnapshot } = await import("@/settings/accountSettings/activeAccountSettingsSnapshot");
         if (!getActiveAccountSettingsSnapshot()) {
-        const { bootstrapAccountSettingsContext } = await import("@/settings/accountSettings/bootstrapAccountSettingsContext");
-        await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking' });
-      }
+          if (context.externalActionExecutionAuthorization || context.externalActionCredential)
+            throw Object.assign(new Error('Captured MCP Account is unavailable'), { code: 'scope-retired' });
+          const { bootstrapAccountSettingsContext } = await import("@/settings/accountSettings/bootstrapAccountSettingsContext");
+          await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking' });
+        }
       }
       const { createCliMcpServerStoreForOperation, createCliMcpServerStore } = await import("@/settings/mcp/mcpServerStore");
+      const resolveAuthorizationHeaders = (httpRequest: McpServerStoreAuthorizationRequest) => {
+        if (params.resolveAuthorizationHeaders) return params.resolveAuthorizationHeaders(request.actionId, context, httpRequest);
+        if (!context.externalActionExecutionAuthorization) return context.externalActionCredential ? null
+          : { Authorization: `Bearer ${params.credentials.token}` };
+        return resolveExternalActionRequesterServerRequestHeaders({ context, effectActionId: request.actionId,
+          serverHttpBaseUrl: params.serverHttpBaseUrl, ...httpRequest });
+      };
       const store = params.operationContext
-        ? createCliMcpServerStoreForOperation({ operationContext: params.operationContext, serverId: params.serverId, signal: context.signal })
-        : createCliMcpServerStore({ credentials: params.credentials, serverId: params.serverId, signal: context.signal });
+        ? createCliMcpServerStoreForOperation({ operationContext: params.operationContext, serverId: params.serverId, signal: context.signal, resolveAuthorizationHeaders })
+        : createCliMcpServerStore({ credentials: params.credentials, serverId: params.serverId, signal: context.signal, resolveAuthorizationHeaders });
       store.assertCurrent();
       const assertCurrent = async () => {
         store.assertCurrent();

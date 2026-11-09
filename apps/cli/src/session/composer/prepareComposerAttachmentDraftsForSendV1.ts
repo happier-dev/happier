@@ -110,11 +110,13 @@ export async function prepareComposerAttachmentDraftsForSendV1(params: Readonly<
         });
       }
       const input = group.inputs[index]!;
+      const { forgeEvidence: _previousForgeEvidence, ...unannotatedInput } = input;
       preparedByInstanceId.set(
         input.instanceId,
         Object.freeze({
-          ...input,
+          ...unannotatedInput,
           value: outcome.value,
+          ...(outcome.forgeEvidence ? { forgeEvidence: outcome.forgeEvidence } : {}),
           ...(outcome.content ? { content: outcome.content } : {}),
           ...(outcome.presentation
             ? {

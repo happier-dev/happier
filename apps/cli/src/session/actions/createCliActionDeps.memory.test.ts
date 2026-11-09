@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { artifactReadResponse } from '@/testkit/http/artifactHome';
-import { projectAccountRowReadResponse } from '@/testkit/http/projectAccountRows';
 import { createActionExecutor, SessionEffectiveAccessV1Schema, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import axios from 'axios';
@@ -14,11 +13,12 @@ import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/p
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MemoryDocBodyV1Schema } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
-import { createPlainSessionOwnerMetadataEnvelopeV1, SessionMetadataOwnerPatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { createPlainSessionOwnerMetadataEnvelopeV1, SessionMetadataOwnerPatchV1Schema, type SessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountOrganizationV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { z } from 'zod/mini';
 import { ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 
@@ -46,6 +46,60 @@ import { MemorySettingsV1Schema } from '@happier-dev/protocol/memory/memorySetti
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 describe('createCliActionDeps memory bindings', () => {
+  it.each(['memory', 'context', 'instructions', 'voice'] as const)('rejects a stale %s caller before the first metadata write', async field => {
+    const serverId = 'reviewed-home';
+    const serverHttpBaseUrl = 'https://reviewed-home.test';
+    const sessionId = 'creviewedsession000000001';
+    const work = { memoryEnabled: false, voicePreference: {
+      providerContributionId: 'example.voice/speech', settingFieldPath: 'voice', value: 'current',
+    }, promptStack: [{ id: 'session.instructions', ref: { kind: 'doc', artifactId: 'current' },
+      enabled: true, required: true, placement: 'system_append' }],
+      sessionRolesV1: { overrides: {}, sessionRoles: {}, notes: 'Keep current notes' } } satisfies NonNullable<SessionOwnerMetadataV1['work']>;
+    let row = V2SessionRecordSchema.parse({ id: sessionId, seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
+      encryptionMode: 'plain', metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), metadataVersion: 5,
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, work }),
+      agentState: null, agentStateVersion: 1, dataEncryptionKey: null, share: null });
+    // HTTP is the boundary: keep the real lookup, decoder, tuple CAS and registered updater.
+    const http = await vi.importActual<typeof import('@/session/transport/http/sessionsHttp')>('@/session/transport/http/sessionsHttp');
+    fetchSessionById.mockImplementation(http.fetchSessionById);
+    patchSessionMetadataEnvelopeTuple.mockImplementation(http.patchSessionMetadataEnvelopeTuple);
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: row } };
+      throw new Error(`Unexpected reviewed read: ${path}`);
+    });
+    const patch = vi.spyOn(axios, 'patch').mockImplementation(async (_url, body) => {
+      const input = SessionMetadataOwnerPatchV1Schema.parse(body);
+      expect(input.sharedMetadata.expectedVersion).toBe(row.metadataVersion);
+      row = { ...row, metadataVersion: row.metadataVersion + 1, metadata: input.sharedMetadata.ciphertext,
+        ownerMetadata: input.ownerMetadata, agentState: input.agentState.ciphertext, agentStateVersion: row.agentStateVersion! + 1 };
+      return { status: 200, data: { success: true, metadataLayoutVersion: 1,
+        sharedMetadata: { version: row.metadataVersion }, agentState: { version: row.agentStateVersion } } };
+    });
+    const executor = createActionExecutor(createCliActionDeps({ token: 'reviewed-token', credentials: { token: 'reviewed-token', encryption: null },
+      sessionId, serverId, serverHttpBaseUrl, mode: 'plain', ctx: null }));
+    const execute = (expectedMetadataRevision: number) => {
+      const target = { sessionId, serverId, expectedMetadataRevision };
+      const context = { surface: 'cli', authority: 'present_user', serverId } as const;
+      return field === 'memory' ? executor.execute('session.memory.set', { ...target, enabled: true }, context)
+        : field === 'context' ? executor.execute('session.context.update', { ...target,
+          intent: { kind: 'inherited_enable', entryId: 'account-memory', enabled: false } }, context)
+        : field === 'instructions' ? executor.execute('session.instructions.set', { ...target, ref: null }, context)
+        : executor.execute('session.voice.preference.set', { ...target, preference: null }, context);
+    };
+    expect(await execute(4)).toMatchObject({ ok: false, errorCode: 'conflict' });
+    expect(patch).not.toHaveBeenCalled();
+    expect(row.ownerMetadata).toEqual(createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, work }));
+    expect(await execute(5)).toMatchObject({ ok: true });
+    expect(row.ownerMetadata).toMatchObject({ t: 'plain', v: { work: { sessionRolesV1: { notes: 'Keep current notes' } } } });
+    if (row.ownerMetadata?.t !== 'plain') throw new Error('Expected plain owner fixture');
+    expect(row.ownerMetadata.v.work).toMatchObject(field === 'memory' ? { memoryEnabled: true }
+      : field === 'context' ? { disabledInheritedEntryIds: ['account-memory'] }
+      : field === 'instructions' ? { promptStack: [] } : { memoryEnabled: false });
+    if (field === 'voice') expect(row.ownerMetadata.v.work).not.toHaveProperty('voicePreference');
+  });
   it.each(['keep_both', 'update', 'replace'] as const)('resubmits %s through the real CLI bindings on the reviewed Team-shared Memory document', async kind => {
     const serverHttpBaseUrl = 'https://qa-memory-home.test';
     const serverId = 'qa-memory-home';
@@ -214,16 +268,16 @@ describe('createCliActionDeps memory bindings', () => {
       expect(new URL(String(url)).origin).toBe(serverHttpBaseUrl);
       const path = new URL(String(url)).pathname;
       reads.push(path);
-      if (path === '/v1/account/project-rows/list') {
+      if (path === '/v1/account/project-rows/list' || path === '/v1/account/project-rows/read') {
         const key = { kind: 'project-organization', serverId, projectKey: 'project' };
         const refKey = { kind: 'workspace-ref', serverId, id: 'checkout' };
-        return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [
+        return projectAccountRowsReadHttpResponse([
           { key: refKey, revision: 1, content: { t: 'plain', v: { key: refKey, value: {
             id: 'checkout', serverId, machineId: 'machine', rootPath: '/repo', projectKey: 'project', createdAtMs: 1,
           } } } },
           { key, revision: 1, content: { t: 'plain', v: { key, value: { promptStack: [{ id: 'project.memory',
             ref: { kind: 'doc', artifactId }, enabled: true, placement: 'system_append' }] } } } },
-        ] } };
+        ], String(url), body);
       }
       if (path === '/v1/artifacts/read') {
         const request = ArtifactReadHeadersBatchInputV1Schema.parse(body);
@@ -458,6 +512,7 @@ describe('createCliActionDeps memory bindings', () => {
     let value = ProjectAccountOrganizationV1Schema.parse({ hidden: true, pinned: true, promptStack: [neighbor] });
     let revision = 4;
     const writes: unknown[] = [];
+    const projectReads: unknown[] = [];
     const created = {
       id: 'created', ownerAccountId: 'scope-account', access: 'owner', encryptionMode: 'plain',
       header: encodePlainArtifactStoredContent({ v: 1, kind: 'memory_doc.v1', title: 'Memory' }),
@@ -473,12 +528,12 @@ describe('createCliActionDeps memory bindings', () => {
     vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       expect(String(url).startsWith(serverHttpBaseUrl)).toBe(true);
       if (new URL(String(url)).pathname === '/v1/artifacts/read') return artifactReadResponse(body, id => id === created.id ? created : null);
-      if (String(url).endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [
-        { key, revision, content: { t: 'plain', v: { key, value } } },
-      ] } };
-      // The organization CAS reads exactly its row, not the whole census.
-      if (String(url).endsWith('/read')) return projectAccountRowReadResponse(
-        [{ key, revision, content: { t: 'plain', v: { key, value } } }], body);
+      if (String(url).endsWith('/list') || String(url).endsWith('/read')) {
+        projectReads.push(body);
+        return projectAccountRowsReadHttpResponse([
+          { key, revision, content: { t: 'plain', v: { key, value } } },
+        ], String(url), body);
+      }
       const mutation = ProjectAccountRowMutationRequestV1Schema.parse(body);
       writes.push(mutation);
       expect(mutation.mutations[0]?.expectedRevision).toBe(4);
@@ -492,6 +547,7 @@ describe('createCliActionDeps memory bindings', () => {
     const deps = createCliActionDeps({ token, credentials, sessionId: 'unused-session', mode: 'plain', ctx: null, serverId, serverHttpBaseUrl });
     const scope = await deps.memoryLibrary!.readScopeContext!({ scope: 'project', projectRef: { serverId, projectKey: 'project' } }, { surface: 'cli' });
     expect(scope).toMatchObject({ safety: 'safe', entries: [{ id: neighbor.id }] });
+    expect(projectReads).toEqual([{ kinds: ['workspace-ref'], serverId }, { key }]);
     await expect(scope.attachMemory({ kind: 'doc', artifactId: 'created', serverId })).resolves.toBe(true);
     expect(value).toMatchObject({ hidden: true, pinned: true, promptStack: [{ id: neighbor.id }, { id: 'project.memory' }] });
     await expect(scope.attachMemory({ kind: 'doc', artifactId: 'created', serverId })).resolves.toBe(false);
@@ -512,12 +568,18 @@ describe('createCliActionDeps memory bindings', () => {
         repository: { nameWithOwner: 'happier-dev/happier', cloneUrl: 'https://github.com/happier-dev/happier.git', visibility: 'public' }, protocol: 'https' },
       attachments: [{ purpose: 'context', entry }] };
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
-    vi.spyOn(axios, 'post').mockImplementation(async url => {
-      expect(String(url)).toBe(`${serverHttpBaseUrl}/v1/account/project-rows/list`);
-      return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [
+    const projectReads: unknown[] = [];
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(String(url)).toMatch(new RegExp(`${serverHttpBaseUrl}/v1/account/project-rows/(list|read)$`));
+      projectReads.push(body);
+      return projectAccountRowsReadHttpResponse([
         { key: workspaceKey, revision: 1, content: { t: 'plain', v: { key: workspaceKey, value: { id: 'checkout', serverId,
           projectKey: 'project', machineId: 'machine', rootPath: '/repo', createdAtMs: 1, source: { sourceId: source.id, revision: 3 } } } } },
-      ] } };
+        ...Array.from({ length: 1024 }, (_, index) => {
+          const key = { kind: 'project-organization', serverId, projectKey: `unrelated-${index}` };
+          return { key, revision: 0, content: { t: 'plain', v: { key, value: {} } } };
+        }),
+      ], String(url), body);
     });
     vi.spyOn(axios, 'request').mockImplementation(async request => {
       expect(request.method).toBe('GET');
@@ -529,6 +591,7 @@ describe('createCliActionDeps memory bindings', () => {
     await expect(deps.memoryLibrary!.readScopeContext!(target, { surface: 'cli' })).resolves.toMatchObject({
       safety: 'danger', entries: [{ id: entry.id, ref: { serverId } }],
     });
+    expect(projectReads).toEqual([{ kinds: ['workspace-ref'], serverId }]);
     canManage = false;
     await expect(deps.memoryLibrary!.readScopeContext!(target, { surface: 'cli' })).rejects.toMatchObject({ code: 'project_context_access_denied' });
     expect(fetchSessionById).not.toHaveBeenCalled();
@@ -570,11 +633,11 @@ describe('createCliActionDeps memory bindings', () => {
             dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
         }) }) };
       }
-      return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [
+      return projectAccountRowsReadHttpResponse([
       { key: workspaceKey, revision: 1, content: { t: 'plain', v: { key: workspaceKey, value: { id: 'checkout', serverId,
         machineId: 'actual-machine', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 } } } },
       { key: organizationKey, revision: 1, content: { t: 'plain', v: { key: organizationKey, value: { promptStack: entries } } } },
-      ] } };
+      ], String(url), body);
     });
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'session', mode: 'plain', ctx: null,
       serverId: serverProfileId, serverIdentityId: serverId, serverHttpBaseUrl });
@@ -658,14 +721,14 @@ describe('createCliActionDeps memory bindings', () => {
       if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       throw new Error(`Unexpected read: ${String(url)}`);
     });
-    vi.spyOn(axios, 'post').mockImplementation(async url => {
-      expect(String(url)).toBe(`${serverHttpBaseUrl}/v1/account/project-rows/list`);
-      return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(String(url)).toMatch(new RegExp(`${serverHttpBaseUrl}/v1/account/project-rows/(list|read)$`));
+      return projectAccountRowsReadHttpResponse([
         { key: workspaceKey, revision: 1, content: { t: 'plain', v: { key: workspaceKey, value: {
           id: 'checkout', serverId, machineId: 'stale-machine', rootPath: '/stale-repo', projectKey: 'project', createdAtMs: 1,
         } } } },
         { key: organizationKey, revision: 1, content: { t: 'plain', v: { key: organizationKey, value: { promptStack: [staleMemory] } } } },
-      ] } };
+      ], String(url), body);
     });
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null,
       serverId, serverHttpBaseUrl });
@@ -724,6 +787,7 @@ describe('createCliActionDeps memory bindings', () => {
         credentials, signal: controller.signal, timeoutMs: null },
     ]);
     expect(fetchSessionById).toHaveBeenCalledWith({
+      reason: 'session-action',
       token: credentials.token, sessionId: 'session-a', serverUrl: 'https://home-a.test', signal: controller.signal,
     });
     await expect(deps.daemonMemorySearch({

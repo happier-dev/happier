@@ -48,7 +48,10 @@ export async function readSessionReadiness(input: Readonly<{
   // A denied invocation needs no Machine census, credentials or Agent probe.
   if (machineId && input.readInventory && invocation?.capabilities.submitAgentInput === true) {
     try {
+      // Readiness consumes this one Machine's identity, access and presence, never the
+      // fleet or private metadata: the exact host-facts read, as Machine source selection does.
       const machines = await listCurrentAccountMachines({ credentials: input.credentials, token: input.credentials.token,
+        projection: 'hostFacts', machineIds: [machineId],
         ...(input.serverHttpBaseUrl ? { serverHttpBaseUrl: input.serverHttpBaseUrl } : {}), signal: input.signal,
         ...(input.authorization ? { authorization: input.authorization, effectActionId: 'session.status.get' } : {}) });
       const target = machines.find(machine => machine.id === machineId);
@@ -79,7 +82,7 @@ export async function readSessionReadiness(input: Readonly<{
               providerConnectionId: ambientProvider?.status === 'resolved' ? ambientProvider.providerConnectionId : undefined });
             const state = facts ? resolveMachineAgentExecutionStateV1({ ...facts,
               signIn: { status: native ? facts.signIn.status : 'unknown', native: facts.signIn },
-              known: !unavailable, authenticationRequired: native ? facts.signIn.required !== false : true }) : 'unknown';
+              known: !unavailable, ...(native ? {} : { authenticationRequired: true }) }) : 'unknown';
             agent = { agentId, ...(definitionId ? { definitionId } : {}), current: Boolean(facts && !unavailable),
               observedAtMs: facts && !unavailable ? Date.now() : null, state,
               repair: state === 'needsSignIn' && native && target.access?.role === 'manage'

@@ -16,8 +16,6 @@ export type ResolveSessionIdResult =
   | { ok: true; sessionId: string; rawSession?: RawSessionRecord }
   | { ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'unsupported'; candidates?: string[] };
 
-type AccountEncryptionModeSource = 'plain' | 'e2ee' | (() => Promise<'plain' | 'e2ee'>);
-
 function normalizeIdOrPrefix(value: string): string {
   return value.trim();
 }
@@ -109,8 +107,6 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   signal?: AbortSignal;
   /** Snapshot already bound to this exact Home; absence preserves released detail semantics. */
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
-  /** Persisted mode or its pending exact-Home read; only legacy metadata lookup consumes it. */
-  accountEncryptionMode?: AccountEncryptionModeSource;
 }>): Promise<ResolveSessionIdResult> {
   params.signal?.throwIfAborted();
   const input = normalizeIdOrPrefix(params.idOrPrefix);

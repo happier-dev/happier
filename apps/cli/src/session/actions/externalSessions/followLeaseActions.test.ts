@@ -544,7 +544,7 @@ describe('external-session follow lease actions', () => {
         }));
     });
 
-    it('maps viewer capacity exhaustion to a stable typed availability response', async () => {
+    it('admits viewers beyond the former local ceiling and refreshes each accepted cursor', async () => {
         const resource = {
             linkGeneration: 'link-1',
             occurrenceId: 'plugin-1',
@@ -589,22 +589,18 @@ describe('external-session follow lease actions', () => {
         await expect(executeExternalSessionAttachAction({
             ...request,
             leaseId: 'viewer-over-capacity',
-        }, context)).resolves.toEqual({
-            ok: false,
-            errorCode: 'agent_unavailable',
-            error: 'external_session_viewer_capacity_exceeded',
-        });
+        }, context)).resolves.toEqual(expect.objectContaining({ ok: true }));
 
         emitExternalSessionTranscriptRefreshInvalidationMock.mockClear();
         await expect(followLeaseManager.requestTranscriptRefresh({
             sessionId: 'session-capacity',
             resource,
         })).resolves.toEqual({ requested: true, coalesced: false });
-        expect(emitExternalSessionTranscriptRefreshInvalidationMock).toHaveBeenCalledTimes(64);
+        expect(emitExternalSessionTranscriptRefreshInvalidationMock).toHaveBeenCalledTimes(65);
         expect(new Set(
             emitExternalSessionTranscriptRefreshInvalidationMock.mock.calls
                 .map(([input]) => input.cursor),
-        ).size).toBe(64);
+        ).size).toBe(65);
 
         await followLeaseManager.dispose();
     });
@@ -689,7 +685,7 @@ describe('external-session follow lease actions', () => {
         });
     });
 
-    it('preserves a provider failure from initial background-follow acquisition', async () => {
+    it('commits background intent before its passive owner reports unavailable without acquiring twice', async () => {
         resolveOccurrenceBoundExternalSessionFollowSurfaceMock.mockResolvedValue({
             providerOps: {
                 pageTranscript: vi.fn(async () => {
@@ -708,6 +704,10 @@ describe('external-session follow lease actions', () => {
             },
         });
         const followLeaseManager = createExternalSessionFollowLeaseManager();
+        const reconcilePassiveFollowSession = async () => {
+            expect(updateSessionMetadataWithExternalSessionFollowPolicyMock).toHaveBeenCalledOnce();
+            return { status: 'unavailable' as const };
+        };
 
         await expect(executeExternalSessionFollowPolicySetAction({
             machineId: 'machine-1',
@@ -721,14 +721,15 @@ describe('external-session follow lease actions', () => {
             observationProjection: {
                 reconcileTranscriptDemand: vi.fn(async () => ({ state: 'observing' })),
             },
+            reconcilePassiveFollowSession,
         } as never)).resolves.toEqual({
             ok: false,
             errorCode: 'agent_unavailable',
-            error: 'agent_unavailable',
-            retryable: true,
+            error: 'follow_policy_reconciliation_unavailable',
         });
 
-        expect(updateSessionMetadataWithExternalSessionFollowPolicyMock).not.toHaveBeenCalled();
+        expect(updateSessionMetadataWithExternalSessionFollowPolicyMock).toHaveBeenCalledOnce();
+        expect(followLeaseManager.hasBackgroundFollowLease('session-1')).toBe(false);
         await followLeaseManager.dispose();
     });
 
@@ -789,9 +790,12 @@ describe('external-session follow lease actions', () => {
         });
         resolveOccurrenceBoundExternalSessionFollowSurfaceMock
             .mockRejectedValueOnce(new Error('Agent unavailable'));
-        const reconcilePassiveFollowSession = vi.fn(async () => ({
-            status: 'settled' as const,
-        }));
+        const reconcilePassiveFollowSession = vi.fn(async () => {
+            await manager.setBackgroundFollowEnabled({
+                sessionId: 'session-disable-agent-unavailable', enabled: false,
+            });
+            return { status: 'settled' as const };
+        });
         const manager = createExternalSessionFollowLeaseManager();
         await manager.setBackgroundFollowEnabled({
             sessionId: 'session-disable-agent-unavailable',
@@ -852,9 +856,12 @@ describe('external-session follow lease actions', () => {
         });
         resolveOccurrenceBoundExternalSessionFollowSurfaceMock
             .mockRejectedValueOnce(new Error('Agent unavailable'));
-        const reconcilePassiveFollowSession = vi.fn(async () => ({
-            status: 'settled' as const,
-        }));
+        const reconcilePassiveFollowSession = vi.fn(async () => {
+            await manager.archiveSession({
+                sessionId: 'session-archived-enable', preserveBackgroundFollow: true,
+            });
+            return { status: 'settled' as const };
+        });
         const manager = createExternalSessionFollowLeaseManager();
 
         await expect(executeExternalSessionFollowPolicySetAction({
@@ -953,7 +960,7 @@ describe('external-session follow lease actions', () => {
         ).toHaveBeenCalledOnce();
         expect(manager.isBackgroundFollowEnabled(
             'session-disable-cleanup-unavailable',
-        )).toBe(false);
+        )).toBe(true);
         await manager.dispose();
     });
 
@@ -1049,6 +1056,7 @@ describe('external-session follow lease actions', () => {
         });
         const reconcilePassiveFollowSession = vi.fn(async () => {
             await passiveReconcileBarrier;
+            await manager.setBackgroundFollowEnabled({ sessionId: 'session-1', enabled: false });
             return { status: 'settled' as const };
         });
         const manager = createExternalSessionFollowLeaseManager();

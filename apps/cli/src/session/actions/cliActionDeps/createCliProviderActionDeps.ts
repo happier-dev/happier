@@ -9,6 +9,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import { setDefaultProviderModelSelection } from '@/providers/connections/service/settings';
 import { createCliAccountProviderActionExecuteV1 } from '@/providers/connections/accountActions';
 import type { DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import type { RuntimeProviderAccountReadRequest, RuntimeProviderAccountRead } from '@/providers/runtimeServices';
 import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -23,6 +24,7 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
   isCredentialCurrent?(): boolean | Promise<boolean>;
   /** Bound by the receiving host to admitted foreign requester Account custody. */
   projectModelsForAccount?(request: DaemonProviderModelProjectionRequestV1, context: ActionExecutorContext): Promise<DaemonProviderModelProjectionResponseV1>;
+  readProviderForAccount?(request: RuntimeProviderAccountReadRequest, context: ActionExecutorContext): ReturnType<RuntimeProviderAccountRead>;
   callMachineAction(input: Readonly<{
     machineId: string; serverId?: string; method: string; request: unknown; signal?: AbortSignal;
     authority?: ActionExecutorContext['authority']; authorization?: ActionExecutorContext['rpcSessionAuthorization'];
@@ -45,14 +47,22 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
         accountEncryptionMode: target.accountEncryptionCurrentness.mode, rawSession: target.rawSession });
     },
     rpc: async ({ machineId, method, request, context, operationTimeoutMs }) => {
-      if (params.operationContext && params.projectModelsForAccount
+      const requesterProjection = params.projectModelsForAccount
         && (request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh')
-        && request.input.teamCredentialResources === undefined) {
+        && request.input.teamCredentialResources === undefined;
+      const requesterRead = params.readProviderForAccount
+        && (request.actionId === 'providers.connections.describe' || request.actionId === 'providers.models.list');
+      if (params.operationContext && (requesterProjection || requesterRead)) {
         const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: scopeKey,
           operationContext: params.operationContext, signal: context.signal });
         if (catalog.status !== 'ready') return { status: 'error', error: createProviderErrorV1('provider_catalog_unavailable', { machineId }) };
         // The dispatch owner routes here only with the operand's exact Machine.
-        return params.projectModelsForAccount({ ...request.input, machineId }, context);
+        if (request.actionId === 'providers.connections.describe' || request.actionId === 'providers.models.list') {
+          return params.readProviderForAccount!(request, context);
+        }
+        if (request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh') {
+          return params.projectModelsForAccount!({ ...request.input, machineId }, context);
+        }
       }
       return params.callMachineAction({
       machineId, serverId: params.serverId, method, request: request.input, signal: context.signal,

@@ -2,27 +2,33 @@ import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '@happier-dev/protocol/automations/automationStoredContentEnvelopeV1';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { RpcHandler } from '@/api/rpc/types';
-import { registerBashHandler } from '@/rpc/handlers/bash';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/installedFilesystemMachineFixture';
 import { createCliActionDeps } from './createCliActionDeps';
 
-function createLocalCommandDeps() {
-    const handlers = new Map<string, RpcHandler>();
-    registerBashHandler({ registerHandler: (method, handler) => handlers.set(method, handler) }, process.cwd());
-    return createCliActionDeps({
-        token: 'unused-local-token', sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null,
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+async function createLocalCommandDeps() {
+    // The canonical installed fixture substitutes only Home HTTP. Keep the
+    // actual local transport, receiver admission, identity selector and process.
+    const f = await createInstalledFilesystemMachineFixture();
+    const deps = createCliActionDeps({
+        token: 'unused-local-token', sessionId: 'cli-global', serverId: f.serverId, serverHttpBaseUrl: f.serverHttpBaseUrl, mode: 'plain', ctx: null,
         machineActionDirectTargetTransport: {
-            machineId: 'run-machine',
-            invoke: async (method, request, options) => {
-                const handler = handlers.get(method);
-                if (!handler) throw new Error(`Missing machine handler: ${method}`);
-                return handler(request, { signal: options?.signal ?? new AbortController().signal });
-            },
+            machineId: f.machineId,
+            invoke: (method, request, options) => f.machine.invokeLocalMachineAction(method, request, options),
         },
     });
+    const context = { surface: 'cli', authority: 'present_user', serverId: f.serverId,
+        machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: f.machineId,
+            installationId: f.installation.installationId, role: 'manage', encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: async () => f.isHomeCurrent() } satisfies RpcActionExecutorContext;
+    return { deps, context, machineId: f.machineId, admissionChecks: f.admissionChecks,
+        invokeLocalMachineAction: f.machine.invokeLocalMachineAction.bind(f.machine) };
 }
 
 describe('CLI command Action host', () => {
@@ -44,38 +50,50 @@ describe('CLI command Action host', () => {
         } finally { rpc.mockRestore(); }
     });
     it.skipIf(process.platform === 'win32')('uses the existing local machine exec owner in the selected workspace with env-only values', async () => {
-        const deps = createLocalCommandDeps();
+        const { deps, context, machineId, admissionChecks } = await createLocalCommandDeps();
+        const admittedBefore = admissionChecks();
         const directory = await realpath(tmpdir());
         const value = '$(printf injected); "quoted" & literal';
         await expect(deps.machineCommandRun!({ command: 'printf "%s" "$HB_COMMAND_VALUE"; printf "%s" "$PWD" >&2', env: { HB_COMMAND_VALUE: value } }, {
-            surface: 'cli', authority: 'present_user', serverId: 'home',
-            externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory } },
+            ...context,
+            externalActionTarget: { kind: 'machine', machineId, project: { machineId, directory } },
         })).resolves.toEqual({ exitCode: 0, stdout: value, stderr: directory });
+        // The installed receiver verifies its original ingress once; the
+        // transport must not send an already-admitted child through Home again.
+        expect(admissionChecks() - admittedBefore).toBe(1);
+    });
+
+    it.each(['machineId', 'installationId'] as const)('refuses a mismatched admitted %s at the installed receiver', async field => {
+        const { context, invokeLocalMachineAction } = await createLocalCommandDeps();
+        await expect(invokeLocalMachineAction(RPC_METHODS.BASH, { command: 'echo must-not-run' }, {
+            rpcContext: { machineAdmission: { ...context.machineAdmission, [field]: 'different-target' },
+                verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent, callerAuthority: context.authority },
+        })).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     });
 
     it.skipIf(process.platform === 'win32')('retains a command failure and its output as Action failure details', async () => {
-        const deps = createLocalCommandDeps();
+        const { deps, context, machineId } = await createLocalCommandDeps();
         await expect(deps.machineCommandRun!({ command: 'printf partial; printf refused >&2; exit 7' }, {
-            surface: 'cli', authority: 'present_user', serverId: 'home',
-            externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: process.cwd() } },
+            ...context,
+            externalActionTarget: { kind: 'machine', machineId, project: { machineId, directory: process.cwd() } },
         })).resolves.toMatchObject({ ok: false, errorCode: 'command_failed', details: { exitCode: 7, stdout: 'partial', stderr: 'refused' } });
     });
 
     it('refuses an incomplete or mismatched machine workspace before running anything', async () => {
-        const deps = createLocalCommandDeps();
+        const { deps, context, machineId } = await createLocalCommandDeps();
         await expect(deps.machineCommandRun!({ command: 'unused' }, { surface: 'cli', authority: 'present_user' }))
             .resolves.toMatchObject({ ok: false, errorCode: 'command_target_required' });
-        await expect(deps.machineCommandRun!({ command: 'unused' }, { surface: 'cli', authority: 'present_user',
-            externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'other', directory: process.cwd() } },
+        await expect(deps.machineCommandRun!({ command: 'unused' }, { ...context,
+            externalActionTarget: { kind: 'machine', machineId, project: { machineId: 'other', directory: process.cwd() } },
         })).resolves.toMatchObject({ ok: false, errorCode: 'command_target_required' });
-        await expect(deps.machineCommandRun!({ command: 'unused' }, { surface: 'cli', authority: 'present_user', serverId: 'other',
-            externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: process.cwd() } },
+        await expect(deps.machineCommandRun!({ command: 'unused' }, { ...context, serverId: 'other',
+            externalActionTarget: { kind: 'machine', machineId, project: { machineId, directory: process.cwd() } },
         })).resolves.toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
     });
 
     it('refuses an unauthenticated foreign machine rather than executing on the local machine', async () => {
-        const deps = createLocalCommandDeps();
-        await expect(deps.machineCommandRun!({ command: 'unused' }, { surface: 'cli', authority: 'present_user', serverId: 'home',
+        const { deps, context } = await createLocalCommandDeps();
+        await expect(deps.machineCommandRun!({ command: 'unused' }, { ...context,
             externalActionTarget: { kind: 'machine', machineId: 'other', project: { machineId: 'other', directory: process.cwd() } },
         })).resolves.toMatchObject({ ok: false, errorCode: 'command_transport_unavailable' });
     });

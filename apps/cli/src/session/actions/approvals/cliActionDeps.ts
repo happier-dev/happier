@@ -7,10 +7,8 @@ import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessio
 import { projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import type { buildPluginInstallApprovalPreview } from '@/plugins/devLoop/installApprovalPreview';
-import type { decideUserPluginChange } from '@/plugins/daemon/changeClient';
 import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import type { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
-import type { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import type { createMarketplaceIndexService } from '@/plugins/store/marketplace/service';
 import type { CliPluginAdministrationActionDeps } from '../cliActionDeps/pluginAdministration';
 
@@ -18,38 +16,18 @@ export type CliApprovalActionDeps = Pick<ActionExecutorDeps, 'buildApprovalPrevi
   artifactApprovalStore: ReturnType<typeof createCliApprovalsArtifactStore> | null;
 }>;
 export function createCliApprovalActionDeps(
-  params: Pick<CliActionDepsParams, 'credentials' | 'happyHomeDir' | 'requesterSessionBootstrap' | 'savedSecretOperationContext'>,
-  { approvalsStore, managedMachineReferences, normalizeStringValue, pluginChangeServices, pluginInstallApprovalChangeServices, readRecord, resolvePluginInstallWorkspaceRoot }: Readonly<{
+  params: Pick<CliActionDepsParams, 'happyHomeDir' | 'requesterSessionBootstrap'>,
+  { approvalsStore, managedMachineReferences, normalizeStringValue, pluginInstallApprovalChangeServices, readRecord, resolvePluginInstallWorkspaceRoot, resolvePluginInstallRegistry }: Readonly<{
     approvalsStore: ReturnType<typeof createCliApprovalsArtifactStore> | null;
     managedMachineReferences: NonNullable<ActionExecutorDeps["managedMachineReferences"]>;
     normalizeStringValue: (value: unknown) => string | null;
-    pluginChangeServices: CliPluginAdministrationActionDeps["pluginChangeServices"];
     pluginInstallApprovalChangeServices: CliPluginAdministrationActionDeps["pluginInstallApprovalChangeServices"];
     readRecord: (value: unknown) => Record<string, unknown>;
     resolvePluginInstallWorkspaceRoot: CliPluginAdministrationActionDeps["resolvePluginInstallWorkspaceRoot"];
+    resolvePluginInstallRegistry: CliPluginAdministrationActionDeps["resolvePluginInstallRegistry"];
   }>,
 ): CliApprovalActionDeps {
-  const cancelRetainedPluginInstallReview = async (request: unknown): Promise<void> => {
-    const pending = readPluginInstallApprovalPendingReview(readRecord(request).preview);
-    if (!pending) return;
-    try {
-      const { decideUserPluginChange } = await import("@/plugins/daemon/changeClient");
-      await (pluginChangeServices.decideUserPluginChange ?? decideUserPluginChange)({ pendingChangeId: pending.pendingChangeId, decision: 'reject' });
-    } catch {
-      // The daemon owns expiry. Artifact persistence remains authoritative even
-      // when a best-effort cancellation transport is unavailable.
-    }
-  };
-  const artifactApprovalStore = approvalsStore ? {
-    ...approvalsStore,
-    approvalsUpdate: async (args: Parameters<typeof approvalsStore.approvalsUpdate>[0]) => {
-      const result = await approvalsStore.approvalsUpdate(args);
-      if ((result as { ok?: false }).ok !== false && (args.request.status === 'rejected' || args.request.status === 'canceled')) {
-        await cancelRetainedPluginInstallReview(args.request);
-      }
-      return result;
-    },
-  } : null;
+  const artifactApprovalStore = approvalsStore;
   return { artifactApprovalStore,
     ...(approvalsStore ? { executionRunHostActionApprovalReplay: createExecutionRunHostActionApprovalDecision({
       read: artifactId => approvalsStore.executionRunHostActionApprovalsGet({ artifactId }),
@@ -95,11 +73,9 @@ buildApprovalPreview: async ({ actionId, input, context, defaultPreview, machine
         const marketplaceInstall = input !== null && typeof input === 'object'
           && 'source' in input && input.source !== null && typeof input.source === 'object'
           && 'kind' in input.source && input.source.kind === 'marketplace';
-        const registry = marketplaceInstall && params.credentials && approvalsStore
-          ? (await import('@/registries/createCliRegistryHost')).createCliRegistryHostV1({ credentials: params.credentials,
-            port: approvalsStore.promptLibraryStore.organization, signal: context.signal,
-            operationContext: params.savedSecretOperationContext })
-          : null;
+        const registryResult = marketplaceInstall ? await resolvePluginInstallRegistry(context) : null;
+        if (registryResult && !registryResult.ok) return registryResult;
+        const registry = registryResult?.registry ?? null;
         const evaluation = await executePluginDevLoopAction({
           actionId,
           input,
@@ -110,7 +86,7 @@ buildApprovalPreview: async ({ actionId, input, context, defaultPreview, machine
           ...pluginInstallApprovalChangeServices,
           ...(registry ? { marketplaceIndexService: (await import('@/plugins/store/marketplace/service')).createMarketplaceIndexService({
             happyHomeDir: params.happyHomeDir,
-            readRegistrySources: registry.readSources,
+            registryHost: registry,
           }) } : {}),
         });
         const daemonEvaluation = readPluginInstallApprovalPendingReview({

@@ -61,6 +61,7 @@ describe('buildAgentBackendInventoryItems', () => {
       enabled: true,
       agentId: 'acme.plugin/acme-agent',
       identity: { pluginId: 'acme.plugin', localId: 'acme-agent' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'acme.plugin', localId: 'acme-agent' } },
     });
   });
 
@@ -75,6 +76,7 @@ describe('buildAgentBackendInventoryItems', () => {
       enabled: true,
       agentId: 'codex',
       identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
     });
   });
 
@@ -99,6 +101,7 @@ describe('buildAgentBackendInventoryItems', () => {
       backendId: 'review-bot',
       agentId: 'custom-acp',
       identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-bot' },
     });
     expect(items.filter((item) => item.agentId === 'custom-acp')).toHaveLength(1);
   });

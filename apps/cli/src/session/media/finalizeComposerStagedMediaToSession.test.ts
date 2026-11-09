@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
   SessionMediaMessageMetaV1Schema,
+  renderSessionInputContextPromptV1,
 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -17,6 +18,7 @@ import {
 import { settleComposerStagedMediaAdmissionV1 } from './settleComposerStagedMediaAdmission';
 import { SessionUserMessageSendRequestSchema } from '@happier-dev/protocol/sessions/userMessageRpc';
 import { admitSessionStructuredInputV1, preserveComposerAttachmentSelectionAcrossSessionInputTransformV1 } from '@/session/services/admitSessionStructuredInputV1';
+import { resolveStructuredInputProviderDispatchContext } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 
 const sessionMediaBridgeSpies = vi.hoisted(() => ({
   persist: vi.fn(),
@@ -45,22 +47,24 @@ function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function createReadyStage(root: string) {
-  const sourcePath = join(root, 'incoming.png');
-  await writeFile(sourcePath, pngBytes);
+async function createReadyStage(root: string, format?: 'mp4' | 'webm') {
+  const bytes = format === 'mp4' ? Buffer.from('000000186674797069736f6d0000020069736f6d61766331', 'hex')
+    : format === 'webm' ? Buffer.concat([Buffer.from('1a45dfa342868101', 'hex'), Buffer.from('webm recording bytes')]) : pngBytes;
+  const sourcePath = join(root, `incoming.${format ?? 'png'}`);
+  await writeFile(sourcePath, bytes);
   const stageStore = createComposerMediaStageStore({
     rootDirectory: join(root, 'stages'),
     executionTarget,
   });
   const staged = await stageStore.finalizeUpload({
     tempPath: sourcePath,
-    sizeBytes: pngBytes.byteLength,
-    sha256: sha256(pngBytes),
+    sizeBytes: bytes.byteLength,
+    sha256: sha256(bytes),
     executionTarget,
     owner: attachmentOwner,
-    mediaKind: 'image',
-    mimeType: 'image/png',
-    name: 'review.png',
+    mediaKind: format ? 'video' : 'image',
+    mimeType: format ? `video/${format}` : 'image/png',
+    name: `review.${format ?? 'png'}`,
   });
   expect(staged.success).toBe(true);
   if (!staged.success) throw new Error(staged.error);
@@ -107,6 +111,32 @@ describe('finalizeComposerStagedMediaToSession', () => {
     await Promise.all(temporaryDirectories.splice(0).map(async (directory) => {
       await rm(directory, { recursive: true, force: true });
     }));
+  });
+
+  it.each(['mp4', 'webm'] as const)('makes staged %s bytes readable at the path delivered in the Agent turn', async format => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-composer-video-dispatch-'));
+    temporaryDirectories.push(root);
+    const { stageStore, draftAttachment } = await createReadyStage(root, format);
+    const finalized = await finalizeComposerStagedMediaToSession(finalizationParams({ root, stageStore, draftAttachment }));
+    const admitted = admitSessionStructuredInputV1({ text: 'Watch the transition', meta: finalized.meta,
+      preparedComposerAttachments: finalized.attachments });
+    const media = SessionMediaMessageMetaV1Schema.parse(finalized.meta.happier).payload.media;
+    const dispatched = await resolveStructuredInputProviderDispatchContext({
+      structuredInput: admitted.structuredInput, sessionMedia: media,
+      composerAttachments: { scope: { kind: 'session', sessionId: 'session-1' }, localId: 'local-1',
+        signal: new AbortController().signal,
+        resolve: async input => ({ attachments: input.request.attachments.map(attachment => ({
+          instanceId: attachment.instanceId, status: 'ready' as const, data: {},
+        })) }),
+      },
+    });
+    const file = dispatched.promptContext.references?.uploads?.[0];
+    expect(file).toMatchObject({ path: media[0]!.path, mimeType: `video/${format}` });
+    if (!file) throw new Error('Expected the persisted movie in the turn file context');
+    const prompt = renderSessionInputContextPromptV1({ ...dispatched.promptContext, transformedUserText: admitted.text });
+    expect(prompt).toContain(`path=${JSON.stringify(file.path)}`);
+    await expect(readFile(join(root, 'workspace', file.path))).resolves.toEqual(await readFile(join(root, `incoming.${format}`)));
+    expect(dispatched.structuredInput?.imageInputs ?? []).toEqual([]);
   });
 
   it('projects source review context before media slot selection and persists one review representation', async () => {

@@ -43,6 +43,7 @@ export async function runRequesterSessionLifecycle<T>(params: Readonly<{
             errorMessage: 'Requester Session authority is unavailable' };
         const prepared = await readRequesterHomeWithinActionLifetime(() => prepareRequesterSessionBootstrap({ credentials: requester.credentials,
             machineAdmission: params.context?.machineAdmission ?? requester.savedSecretOperationContext.machineAdmission,
+            homeServerIdentityId: requester.homeServerIdentityId,
             attribution: requester.attribution, boundary: { serverId: requester.attribution.serverId,
                 serverHttpBaseUrl: requester.serverHttpBaseUrl, happyHomeDir: configuration.happyHomeDir },
             verifyMachineAdmissionCurrent: isCurrent, ...(params.context?.signal ? { signal: params.context.signal } : {}) }), params.context?.signal);

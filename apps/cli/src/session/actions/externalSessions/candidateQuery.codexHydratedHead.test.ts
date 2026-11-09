@@ -1,4 +1,3 @@
-import type { JsonValue } from '@happier-dev/protocol';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -6,7 +5,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource, JsonValue } from '@happier-dev/protocol';
 
 import type { ExternalSessionCandidatesPage } from '@/session/external/providerOps';
 import { createBoundedAgentExternalSessionsContribution } from '@/session/external/agentExternalSessionsInvocation';

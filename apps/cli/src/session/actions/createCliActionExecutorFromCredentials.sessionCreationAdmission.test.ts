@@ -1,16 +1,16 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
-import { PLUGIN_ACTION_EXECUTE_PATH } from '@/plugins/daemon/controlRoutes';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { SessionSpawnNewInputV2Schema, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 import { ExternalActionRequestEnvelopeV2Schema, openExternalActionRequestV2,
     prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { configuration } from '@/configuration';
-import { writeDaemonState } from '@/persistence';
+import { updateSettings, writeDaemonState } from '@/persistence';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -18,6 +18,7 @@ import { encryptSessionPayload } from '@/session/transport/encryption/sessionEnc
 import { reconcileExternalActionTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -26,6 +27,7 @@ import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSna
 import { McpServerCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { SessionSpawnNewInputV2Schema as BeforeCommitObservationInputSchema } from '../../../../../packages/protocol/src/sessions/creation/testFixtures/sessionSpawnInputBeforeCommitObservation';
 
 // The daemon uses bundled Undici; keep the file's HTTP fixtures at that same
 // network boundary while retaining its real control transport and parsers.
@@ -86,6 +88,174 @@ describe('paired terminal Action admission', () => {
             }, { surface: 'cli', externalActionTarget: { kind: 'machine', machineId: 'envelope-machine' } });
             expect(result).toEqual({ ok: false, errorCode: 'target_not_local', error: 'target_not_local',
                 details: { phase: 'target_machine_selection' } });
+        });
+    });
+
+    it.each(['execute', 'prepare'] as const)('admits template %s locally before reading its source without requiring any daemon', async method => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-template-requester-admission-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const input = { source: { kind: 'artifact' as const, serverId: 'srv_home', artifactId: '84a6bc9c-0418-44f6-a593-8a751bde13e0' },
+                expectedVersion: '1.0.0', creation: { creationKey: 'private-template-creation-key', environmentVariables: { PRIVATE_TOKEN: 'private-template-env-secret' },
+                    executionTarget: { serverId: 'srv_home', machineId: 'asleep-machine' }, directory: { kind: 'managed' as const },
+                    agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } };
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                expect(String(url)).toBe('https://home.test/v1/account/encryption');
+                return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            });
+            let admittedRequest: unknown;
+            const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                expect(String(url)).toBe('https://home.test/v1/actions/template.instantiate/execution-authorization');
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                admittedRequest = request;
+                expect(request).toMatchObject({ machineId: 'asleep-machine', envelope: { input: { source: input.source,
+                    expectedVersion: input.expectedVersion, creation: { executionTarget: input.creation.executionTarget } },
+                    target: { kind: 'machine', machineId: 'asleep-machine' } } });
+                expect(request.installationProof).toBeUndefined();
+                const refusal = projectExternalActionHttpError('credential_scope_denied', request.envelope.requestId);
+                return { status: refusal.statusCode, data: refusal.payload };
+            });
+            vi.stubGlobal('fetch', async () => { throw new Error('Requester-local creation must not contact a daemon'); });
+            const executor = createCliActionExecutorFromCredentials({
+                credentials: { token, encryption: null, credentialProvenance: 'stored_session' }, externalActionClient: true,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) },
+            });
+            const context = { surface: 'cli' as const, authority: 'present_user' as const };
+            const result = method === 'execute' ? await executor.execute('template.instantiate', input, context)
+                : await (async () => {
+                    const prepared = await executor.prepare('template.instantiate', input, context);
+                    return prepared.kind === 'ready' ? prepared.invocation.run() : prepared.result;
+                })();
+            expect(JSON.stringify(admittedRequest)).not.toContain('private-template-creation-key');
+            expect(JSON.stringify(admittedRequest)).not.toContain('private-template-env-secret');
+            expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+            expect(post).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    it('keeps the Account-scoped configured Machine ahead of the global default', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-session-create-configured-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            await updateSettings(settings => ({ ...settings, machineId: 'another-account-machine',
+                machineIdByServerIdByAccountId: { [configuration.activeServerId]: { owner: 'account-scoped-machine' } },
+                lastTokenSubByServerId: { [configuration.activeServerId]: 'owner' },
+            }));
+            const get = vi.spyOn(axios, 'get').mockRejectedValue(new Error('A configured target needs no inventory read'));
+            const executor = createCliActionExecutorFromCredentials({
+                credentials: { token, encryption: null, credentialProvenance: 'stored_session' }, externalActionClient: true,
+            });
+            expect(await executor.resolveMachineTarget()).toEqual({ ok: true, machineId: 'account-scoped-machine' });
+            expect(get).not.toHaveBeenCalled();
+        });
+    });
+
+    it.each([false, true])('returns a typed Session-create refusal before dispatch when its Machine is unavailable (missing: %s)', async missing => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-session-create-offline-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const machineId = 'offline-machine';
+            const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            const input = { creationKey: 'offline-create', executionTarget: { serverId: configuration.activeServerId, machineId },
+                directory: { kind: 'managed' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
+            const machine = { id: machineId, kind: 'persistent', active: false, revokedAt: null, replacedByMachineId: null,
+                access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: 'owner', displayName: 'Owner' },
+                    role: 'manage', resourceMode: 'plain', accessState: 'ready' }) };
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (String(url).endsWith('/v1/machines')) return { status: 200, data: missing ? [] : [machine] };
+                if (String(url).endsWith(`/v1/machines/${machineId}`)) return { status: missing ? 404 : 200, data: { machine } };
+                if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                throw new Error('Unexpected Home read');
+            });
+            const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('No create may be dispatched'));
+            const localRequests: unknown[] = [];
+            vi.stubGlobal('fetch', async () => { localRequests.push(true); throw new Error('No daemon request expected'); });
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                resolveServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            expect(await executor.execute('session.spawn_new', input, { surface: 'cli' })).toMatchObject({
+                ok: false, errorCode: 'machine_offline', details: { machineId },
+            });
+            expect(post).not.toHaveBeenCalled();
+            expect(localRequests).toEqual([]);
+        });
+    });
+
+    it.each(['execute', 'prepare'] as const)('rejects raw terminal CLI observer authoring before %s transport', async method => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-terminal-observer-admission-', }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
+                provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
+                controlToken: 'fixture-control-token', machineId: 'own-machine', accountId: 'owner' });
+            const input = { creationKey: 'terminal-observer-admission',
+                executionTarget: { serverId: configuration.activeServerId, machineId: 'own-machine' },
+                directory: { kind: 'managed' }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
+            const transported: unknown[] = [];
+            vi.spyOn(axios, 'get').mockRejectedValue(new Error('Requester Machine probe unavailable'));
+            vi.spyOn(axios, 'post').mockRejectedValue(new Error('No Home Action dispatch expected'));
+            vi.stubGlobal('fetch', async (_url: unknown, options: RequestInit) => {
+                const request: unknown = JSON.parse(String(options.body));
+                transported.push(request && typeof request === 'object' ? Reflect.get(request, 'input') : null);
+                return Response.json({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false } });
+            });
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                resolveServerFeaturesSnapshot: async () => ({ status: 'unsupported', reason: 'endpoint_missing' }),
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            const invoke = async (value: unknown) => {
+                if (method === 'execute') return await executor.execute('session.spawn_new', value, { surface: 'cli' });
+                const prepared = await executor.prepare('session.spawn_new', value, { surface: 'cli' });
+                return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+            };
+            expect(await invoke(input)).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false } });
+            expect(transported).toHaveLength(1);
+            expect(BeforeCommitObservationInputSchema.safeParse(transported[0]).success).toBe(true);
+            const observed = await invoke({ ...input, observeSessionCommit: true });
+            expect(transported.every(value => BeforeCommitObservationInputSchema.safeParse(value).success)).toBe(true);
+            expect(observed).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+            expect(transported).toHaveLength(1);
+        });
+    });
+
+    it.each(['execute', 'prepare'] as const)('keeps scoped service-log %s admission at the owning daemon without ingress opt-in', async method => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-service-log-scope-', }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
+                controlToken: 'fixture-control-token', machineId: 'own-machine', accountId: 'owner' });
+            const actionId = 'machines.services.logs.read';
+            const input = { serverId: 'srv_home', machineId: 'own-machine', serviceId: 'instance/db' };
+            const settings = setScopedActionApprovalPreference({ actionId, scope: { kind: 'environment', environmentId: 'environment-a' },
+                surface: 'cli', mode: 'waived', settings: ActionsSettingsV1Schema.parse({ v: 1,
+                    actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } }) });
+            const expected = { ok: true, result: { kind: 'page', page: {
+                sourceRevision: 'container-a', text: 'db output', nextCursor: null, truncated: false } } };
+            vi.spyOn(axios, 'get').mockRejectedValue(new Error('Service scope belongs to the target daemon'));
+            vi.spyOn(axios, 'post').mockRejectedValue(new Error('No outer approval may precede service scope'));
+            const requests: unknown[] = [];
+            // Only the daemon HTTP boundary is substituted; original admission/credential selection stay real.
+            vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
+                expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
+                expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
+                const request: unknown = JSON.parse(String(options.body));
+                requests.push(request);
+                expect(request).toMatchObject({ actionId, input, target: { kind: 'machine', machineId: input.machineId } });
+                return Response.json(expected);
+            });
+            const executor = createCliActionExecutorFromCredentials({ credentials,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                actionsSettingsProvider: { getActionsSettings: () => settings } });
+            const result = method === 'execute' ? await executor.execute(actionId, input, { surface: 'cli' })
+                : await (async () => {
+                    const prepared = await executor.prepare(actionId, input, { surface: 'cli' });
+                    return prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+                })();
+            expect(result).toEqual(expected);
+            expect(requests).toHaveLength(1);
         });
     });
 
@@ -160,8 +330,7 @@ describe('paired terminal Action admission', () => {
         { explicitMachine: false, daemonAccountId: null },
         { explicitMachine: false, daemonAccountId: 'another-account' },
     ])('retains a blocking private result on the same-Account daemon invocation without ingress opt-in (%j)', async ({ explicitMachine, daemonAccountId }) => {
-        await withConfiguredDaemonTestHome({ prefix: 'happier-live-result-admission-',
-            env: { HAPPIER_CLI_PRESENT_USER: 'allowed' } }, async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-live-result-admission-', }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
                 provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
             const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
@@ -269,16 +438,87 @@ describe('paired terminal Action admission', () => {
     });
 
     it.each([
+        { method: 'execute', placement: 'machine' },
+        { method: 'prepare', placement: 'machine' },
+        { method: 'execute', placement: 'account' },
+    ] as const)('uses selected-Machine plugin discovery without borrowing Account custody ($method/$placement)', async ({ method, placement }) => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-plugin-selected-machine-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
+                provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+            const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            const id = 'acme.source/actions/discover';
+            const descriptor = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse({ actionSpec: {
+                id, title: 'Discover', description: null, safety: 'safe', executionPlacement: placement,
+                placements: [], slash: null, bindings: null, examples: null, surfaces: { cli: true }, inputHints: null,
+                inputSchema: { type: 'object' } } });
+            // Only Home/daemon HTTP is substituted. Account placement, credential
+            // provenance, target selection and both Action factories stay real.
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                if (url.endsWith('/v1/machines')) return { status: 200, data: [{ id: 'selected-machine', active: true,
+                    activeAt: Date.now(), kind: 'persistent', revokedAt: null, replacedByMachineId: null,
+                    access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage',
+                        resourceMode: 'plain', accessState: 'ready' } }] };
+                throw new Error(`Unexpected Home read: ${url}`);
+            });
+            const routed: string[] = [];
+            vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
+                if (url.endsWith(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'])) return { status: 200,
+                    data: { availabilityCursor: 1, pluginIds: [], intentReads: [], failedPluginIds: [] } };
+                if (url.endsWith(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'])) return { status: 200,
+                    data: { availabilityCursor: 1, hostingCapability: { enabled: true, maxArtifactBytes: 16777216, maxAccountBytes: 268435456 },
+                        intent: null, release: null, uiArtifacts: [], packageAssets: [] } };
+                const actionId = url.endsWith('/v1/actions/action.spec.get') ? 'action.spec.get' : 'action.invoke';
+                expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
+                expect(options?.headers).toMatchObject({ [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' });
+                const envelope = body as { requestId: string; target: unknown; input: unknown };
+                expect(envelope.target).toEqual({ kind: 'machine', machineId: 'selected-machine' });
+                expect(envelope.input).toEqual(actionId === 'action.spec.get' ? { id }
+                    : { action: { pluginId: 'acme.source', localId: 'discover' }, input: { limit: 100 } });
+                routed.push(actionId);
+                return { status: 200, data: { v: 1, actionId, requestId: envelope.requestId,
+                    execution: { ok: true, result: actionId === 'action.spec.get' ? descriptor : { candidates: ['retained'] } } } };
+            });
+            vi.stubGlobal('fetch', async () => { throw new Error('A separate CLI identity has no local daemon'); });
+            const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test', machineId: 'selected-machine',
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            const run = async (actionId: 'action.spec.get' | 'action.invoke', input: unknown) => {
+                const context = { surface: 'cli' as const, authority: 'account_automation' as const };
+                if (method === 'execute') return await executor.execute(actionId, input, context);
+                const before = [...routed];
+                const prepared = await executor.prepare(actionId, input, context);
+                expect(routed).toEqual(before);
+                if (prepared.kind !== 'ready') return prepared.result;
+                const result = await prepared.invocation.run();
+                expect(await prepared.invocation.run()).toEqual(result);
+                return result;
+            };
+            const discovered = await run('action.spec.get', { id });
+            if (placement === 'account') {
+                expect(discovered).toMatchObject({ ok: false, errorCode: 'plugin_action_execution_placement_unavailable' });
+                expect(routed).toEqual(['action.spec.get']);
+                return;
+            }
+            expect(discovered).toEqual({ ok: true, result: descriptor });
+            expect(await run('action.invoke', { action: { pluginId: 'acme.source', localId: 'discover' }, input: { limit: 100 } }))
+                .toEqual({ ok: true, result: { candidates: ['retained'] } });
+            // One exact descriptor per invocation, then the effect: no inventory
+            // fan-out or fallback to a different daemon on refusal.
+            expect(routed).toEqual(['action.spec.get', 'action.spec.get', 'action.invoke']);
+        });
+    });
+
+    it.each([
         { actionId: 'session.role.set', input: { sessionId: 'session-one', roleId: 'builder' }, method: 'execute', output: { updated: true } },
         { actionId: 'session.read_state.set', input: { sessionId: 'session-one', state: 'read' }, method: 'execute',
             output: { state: 'read', lastViewedSessionSeq: 7, didChange: true } },
-        { actionId: 'action.spec.search', input: { query: 'triage' }, method: 'execute', output: { actionSpecs: [] } },
+        { actionId: 'action.spec.search', input: { query: 'sessioncreaterefusal_ingress_fixture' }, method: 'execute', output: { actionSpecs: [] } },
         { actionId: 'action.invoke', input: { action: { pluginId: 'acme.source', localId: 'discover' }, input: { v: 1 } },
             method: 'execute', output: { candidates: [] } },
         { actionId: 'session.role.set', input: { sessionId: 'session-one', roleId: 'builder' }, method: 'prepare', output: { updated: true } },
     ] as const)('keeps an own-Machine terminal $actionId $method on its authenticated daemon ingress', async ({ actionId, input, method, output }) => {
-        await withConfiguredDaemonTestHome({ prefix: 'happier-terminal-action-admission-',
-            env: { HAPPIER_CLI_PRESENT_USER: 'allowed' } }, async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-terminal-action-admission-', }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
                 provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
             const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
@@ -306,23 +546,22 @@ describe('paired terminal Action admission', () => {
                 ? { status: 200, data: { sessions: [createSessionRecordFixture({ id: 'session-one', encryptionMode: 'plain', share: null,
                     metadata: JSON.stringify({ machineId: 'own-machine', path: '/workspace', flavor: 'claude' }) })] } }
                 : availability(url) ? { status: 200, data: availability(url) } : { status: 401, data: { error: 'invalid_token' } });
-            // Plugin discovery and contributed-Action invocation enter the daemon's placement-aware plugin ingress;
-            // every other Action enters the signed root ingress. Both authenticate with the daemon control token.
-            const pluginIngress = actionId === 'action.spec.search' || actionId === 'action.invoke';
+            // An explicit Machine uses the original CLI's signed root owner,
+            // including the placement-aware plugin discovery/invocation path.
             let ingressRequests = 0;
             vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
                 ingressRequests++;
-                expect(String(url)).toBe(`http://127.0.0.1:43123${pluginIngress ? PLUGIN_ACTION_EXECUTE_PATH : '/actions/root/execute'}`);
+                expect(String(url)).toBe('http://127.0.0.1:43123/actions/root/execute');
                 expect(options.headers).toMatchObject({ 'x-happier-daemon-token': 'fixture-control-token' });
                 const body = JSON.parse(String(options.body));
                 // A contributed Action's typed Machine placement is read before its effect reaches the daemon.
-                if (actionId === 'action.invoke' && body.actionId === 'action.spec.get') return Response.json({ matched: true,
-                    result: { ok: true, result: PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse({ actionSpec: {
+                if (actionId === 'action.invoke' && body.actionId === 'action.spec.get') return Response.json({
+                    ok: true, result: PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse({ actionSpec: {
                         id: body.input.id, title: 'Discover', description: null, safety: 'safe', executionPlacement: 'machine',
                         placements: [], slash: null, bindings: null, examples: null, surfaces: { cli: true }, inputHints: null,
-                        inputSchema: { type: 'object' } } }) } });
+                        inputSchema: { type: 'object' } } }) });
                 expect(body).toMatchObject({ actionId, input });
-                return Response.json(pluginIngress ? { matched: true, result: expected } : expected);
+                return Response.json(expected);
             });
             const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
                 serverId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test', machineId: 'own-machine',
@@ -372,18 +611,16 @@ describe('paired terminal Action admission', () => {
     });
 
     it.each([
-        { outerTarget: false, daemonAccountId: 'owner', terminalPolicy: 'allowed', authority: undefined, errorCode: null },
-        { outerTarget: false, daemonAccountId: 'owner', terminalPolicy: 'allowed', authority: undefined, errorCode: null, requesterProbeUnavailable: true },
-        { outerTarget: false, daemonAccountId: 'owner', terminalPolicy: 'allowed', authority: undefined, errorCode: null, discoverIdentity: true },
-        { outerTarget: false, daemonAccountId: 'owner', terminalPolicy: 'allowed', authority: undefined, errorCode: null, discoverIdentity: true, prepare: true },
-        { outerTarget: true, daemonAccountId: 'owner', terminalPolicy: 'allowed', authority: undefined, errorCode: null },
-        { outerTarget: false, daemonAccountId: 'different-account', terminalPolicy: 'allowed', authority: undefined, errorCode: 'target_unavailable' },
-        { outerTarget: false, daemonAccountId: 'owner', terminalPolicy: 'allowed', authority: 'account_automation', errorCode: 'invalid_parameters' },
-        { outerTarget: false, daemonAccountId: 'owner', terminalPolicy: 'disallowed', authority: undefined, errorCode: 'invalid_parameters' },
-    ] as const)('preserves exact Home/Account and terminal policy (%j)', async scenario => {
-        const { outerTarget, daemonAccountId, terminalPolicy, authority, errorCode } = scenario;
-        await withConfiguredDaemonTestHome({ prefix: 'happier-terminal-create-admission-',
-            env: { HAPPIER_CLI_PRESENT_USER: terminalPolicy } }, async () => {
+        { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: null },
+        { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: null, requesterProbeUnavailable: true },
+        { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: null, discoverIdentity: true },
+        { outerTarget: false, daemonAccountId: 'owner', authority: undefined, errorCode: null, discoverIdentity: true, prepare: true },
+        { outerTarget: true, daemonAccountId: 'owner', authority: undefined, errorCode: null },
+        { outerTarget: false, daemonAccountId: 'different-account', authority: undefined, errorCode: 'target_unavailable' },
+        { outerTarget: false, daemonAccountId: 'owner', authority: 'account_automation', errorCode: 'invalid_parameters' },
+    ] as const)('preserves exact Home/Account and terminal authority (%j)', async scenario => {
+        const { outerTarget, daemonAccountId, authority, errorCode } = scenario;
+        await withConfiguredDaemonTestHome({ prefix: 'happier-terminal-create-admission-' }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
                 provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
             const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, expect, it, vi } from 'vitest';
-import { DiskScanStateV1Schema, MachineStorageCategoryListResultV1Schema, MachineStorageScanGetResultV1Schema, MachineStoragePolicyV1Schema, MachineStoragePileResultV1Schema, PileApplyResultV1Schema,
+import { DiskScanStateV1Schema, MachineStorageCategoryListResultV1Schema, MachineStorageScanGetResultV1Schema, MachineStoragePileResultV1Schema, PileApplyResultV1Schema,
     PileReviewV1Schema, TrashRestoreResultV1Schema } from '@happier-dev/protocol/storage/storageV1';
 import { WorkspaceRefV1WriteSchema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createCliActionExecutor } from './createCliActionExecutor';
@@ -18,16 +18,17 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { readStorageWorktrees } from '@/daemon/resources/readStorageWorktrees';
 import { createStorageWorktreeOperations } from '@/storage/worktrees/storageWorktreeOperations';
 import { createProjectWorkspaceRetirement } from '@/workspaces/projectWorkspaceRetirement';
-import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createPlainProjectAccountRefRow, mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
 import { createActivityLog } from '@/daemon/guard/activityLog';
 import { createMachineResourceSummary } from '@/daemon/resources/machineResourceSummary';
 import { createMachineVitalsSampler } from '@/daemon/vitals/createMachineVitalsSampler';
 import { createMinuteHistoryStore } from '@/daemon/vitals/history/minuteHistoryStore';
 import { decodeStoredCredentials, encodeStoredCredentials } from '@/persistence';
+import { createStoragePolicyFixture } from '@/storage/storagePolicy.testkit';
 
 const execute = promisify(execFile);
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { withdrawActiveProjectAccountRowsSnapshot(); vi.restoreAllMocks(); });
 
 it.each(['catalog', 'scan'] as const)('retires reviewed main/common checkouts and registration-gone orphans through real Storage Actions (%s) and restores exact Git and Project state', async source => {
     const scratch = await realpath(await mkdtemp(join(tmpdir(), 'happier-storage-action-retirement-')));
@@ -64,7 +65,8 @@ it.each(['catalog', 'scan'] as const)('retires reviewed main/common checkouts an
         const graph = { key, revision, content: { t: 'plain', v: { key, value: { relationships: [] } } } };
         if (index < 0) rows.push(graph); else rows[index] = graph;
     } });
-    await readProjectAccountRows({ credentials, serverId: 'home' });
+    // The installed Account owns the Project census consumed by Storage discovery.
+    await readProjectAccountRows({ credentials, serverId: 'home', publication: 'installed' });
     const registration = createGitScmBackendRuntimeRegistration();
     const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({ definition: { id: 'git', kind: 'git' },
         qualifiedId: 'happier.scm.git/git', executableDefinition: registration.runtime!, registration,
@@ -83,7 +85,7 @@ it.each(['catalog', 'scan'] as const)('retires reviewed main/common checkouts an
         assertCurrentAuthority: async () => {} });
     const routes = createDaemonStorageRoutes({ target: () => identity, readOwnSessionIds: () => new Set(), deps: async () => ({
         ...identity, homeDir: home, scmRegistry: registry, activityLog: await createActivityLog({ activeServerDir: home, resourceSummary: summary }),
-        readPolicy: () => MachineStoragePolicyV1Schema.parse({ wholeDiskEnabled: true }),
+        resourcesPolicy: await createStoragePolicyFixture({ wholeDiskEnabled: true }),
         catalog: { happyHomeDir: home, activeServerDir: home, tempRoot: join(scratch, 'absent-temp'),
             readProjects, readInUsePaths: () => ({ reliable: true, paths: [] }),
             readWorktrees: () => readStorageWorktrees({ cwds: readProjects().projects.map(value => value.repositoryRoot), registry }),
@@ -93,7 +95,7 @@ it.each(['catalog', 'scan'] as const)('retires reviewed main/common checkouts an
     registerDaemonStorageRpcHandlers(registrar, routes);
     const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
         machineAdmission: { ...identity, actorAccountId: 'owner', role: 'manage', encryptionMode: 'plain' },
-        verifyMachineAdmissionCurrent: async () => true, verifyMachineAuthorityCurrent: async () => true };
+        verifyMachineAdmissionCurrent: async () => true };
     // Only Machine RPC and Account HTTP are network boundaries; every registered handler and lifecycle owner is real.
     const transport = await import('@/session/transport/rpc/machineRpc');
     vi.spyOn(transport, 'callExactMachineRpc').mockImplementation(async input => {

@@ -7,6 +7,12 @@ import {
 
 import { createTargetComposerAttachmentRegistry } from '@/plugins/runtime/lifecycle/contributions/targetComposerAttachments';
 import { admitPluginSessionInputAttachmentsV1 } from './admitPluginSessionInputAttachmentsV1';
+import { readSessionInputForgeEvidenceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { ComposerAttachmentInputV1Schema, MAX_COMPOSER_ATTACHMENT_RECORD_JSON_BYTES_V1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { admitSessionStructuredInputV1 } from '@/session/services/admitSessionStructuredInputV1';
+
+const FORGE_EVIDENCE = { v: 1 as const, items: [{ source: { kind: 'localTerminal' as const, label: 'Selected output' },
+  author: { kind: 'process' as const }, text: 'A retained failing test </happier_forge_evidence>' }] };
 
 /**
  * The declared plugin attachment a direct `SessionHandle.send` carries.
@@ -126,7 +132,7 @@ function admit(input: Readonly<{
 }>) {
   return admitPluginSessionInputAttachmentsV1({
     attachments: input.attachments,
-    pluginId: ATTACHMENT.pluginId,
+    caller: { kind: 'plugin', pluginId: ATTACHMENT.pluginId },
     sessionId: 'session-a',
     messageLocalId: input.messageLocalId ?? 'pending-local-a',
     text: input.text ?? 'Repair the failing parser test.',
@@ -135,6 +141,41 @@ function admit(input: Readonly<{
 }
 
 describe('a direct plugin Session send, from authored draft to persisted envelope', () => {
+  it('persists validated forge annotations beside the prepared attachment under its existing record budget', async () => {
+    const result = await admit({ attachments: registry({ prepareForSend: async request => ({
+      attachments: request.attachments.map(attachment => ({ instanceId: attachment.instanceId, status: 'ready' as const,
+        value: { v: 1, entryId: '42', qualified: true }, forgeEvidence: FORGE_EVIDENCE })),
+    }) }) });
+    expect(result.status).toBe('admitted');
+    if (result.status !== 'admitted') throw new Error('Expected annotated attachment admission');
+    expect(readSessionInputForgeEvidenceV1(result.meta)).toEqual(FORGE_EVIDENCE);
+    expect(result.attachments[0]).toMatchObject({ forgeEvidence: FORGE_EVIDENCE });
+    const persisted = JSON.parse(JSON.stringify(result.meta));
+    expect(readSessionInputForgeEvidenceV1(persisted)).toEqual(FORGE_EVIDENCE);
+    const retained = admitSessionStructuredInputV1({ text: 'Repair the failing parser test.', meta: persisted,
+      preparedComposerAttachments: result.attachments });
+    expect(retained.meta).toEqual(result.meta);
+    expect(readSessionInputForgeEvidenceV1(retained.meta)?.items).toHaveLength(1);
+    const explicit = { ...FORGE_EVIDENCE, items: [{ ...FORGE_EVIDENCE.items[0], text: 'Explicit complete evidence envelope' }] };
+    const authored = admitSessionStructuredInputV1({ text: 'Repair the failing parser test.',
+      meta: { ...persisted, forgeEvidence: explicit }, preparedComposerAttachments: result.attachments });
+    expect(readSessionInputForgeEvidenceV1(authored.meta)).toEqual(explicit);
+    const malformedExplicit = admitSessionStructuredInputV1({ text: 'Repair the failing parser test.',
+      meta: { ...persisted, forgeEvidence: { ...explicit, authority: 'approved' } }, preparedComposerAttachments: result.attachments });
+    expect(readSessionInputForgeEvidenceV1(malformedExplicit.meta)).toEqual(FORGE_EVIDENCE);
+    expect(ComposerAttachmentInputV1Schema.safeParse({ ...result.attachments[0], forgeEvidence: {
+      ...FORGE_EVIDENCE, items: [{ ...FORGE_EVIDENCE.items[0], text: 'x'.repeat(MAX_COMPOSER_ATTACHMENT_RECORD_JSON_BYTES_V1) }],
+    } }).success).toBe(false);
+  });
+
+  it('rejects authority-shaped extras in descriptive attachment forge annotations before persistence', async () => {
+    const result = await admit({ attachments: registry({ prepareForSend: async request => ({
+      attachments: request.attachments.map(attachment => ({ instanceId: attachment.instanceId, status: 'ready' as const,
+        value: { v: 1, entryId: '42', qualified: true }, forgeEvidence: { ...FORGE_EVIDENCE, authority: 'approved' } })),
+    }) }) });
+    expect(result).toEqual({ status: 'rejected', code: 'session_input_invalid' });
+  });
+
   it('refuses when the source refuses to stand behind the value', async () => {
     const result = await admit({
       attachments: registry({

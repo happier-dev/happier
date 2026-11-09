@@ -53,6 +53,7 @@ type StoredCandidate = Readonly<{
     createdAtMs?: number;
     archived?: boolean;
     title?: string;
+    cwd?: string;
     thread?: ExternalSessionCandidateThreadV1;
     linkData?: StrictJsonObject;
     candidateIndexState?: StrictJsonObject;
@@ -489,6 +490,7 @@ function sanitizeCandidate(value: ExternalSessionCandidatesPage['candidates'][nu
         || !Number.isSafeInteger(value.updatedAtMs)
         || (value.createdAtMs !== undefined && !Number.isSafeInteger(value.createdAtMs))
         || (value.archived !== undefined && typeof value.archived !== 'boolean')
+        || (value.cwd !== undefined && typeof value.cwd !== 'string')
         || (
             value.title !== undefined
             && (typeof value.title !== 'string' || value.title.length === 0)
@@ -528,6 +530,7 @@ function sanitizeCandidate(value: ExternalSessionCandidatesPage['candidates'][nu
         ...(value.createdAtMs === undefined ? {} : { createdAtMs: value.createdAtMs }),
         ...(value.archived === undefined ? {} : { archived: value.archived }),
         ...(value.title === undefined ? {} : { title: value.title }),
+        ...(value.cwd === undefined ? {} : { cwd: value.cwd }),
         ...(parsedThread === undefined ? {} : { thread: parsedThread.data }),
         ...(linkData === undefined ? {} : { linkData }),
         ...(candidateIndexState === undefined ? {} : { candidateIndexState }),
@@ -777,6 +780,7 @@ function parseStoredCandidate(value: unknown): StoredCandidate | null {
         'createdAtMs',
         'archived',
         'title',
+        'cwd',
         'thread',
         'linkData',
         'candidateIndexState',
@@ -845,6 +849,7 @@ function parsePersistedCompleteCandidate(
         'createdAtMs',
         'archived',
         'title',
+        'cwd',
         'thread',
         'linkData',
         'candidateIndexState',
@@ -2206,6 +2211,8 @@ type ExternalSessionCandidateQueryRequest = Readonly<{
      * `CandidateIndexRecord.sourceCustody`.
      */
     agentSourceCustody: PluginSourceCustodyV1;
+    /** Existing Live source-set projection; omitted by ordinary retained compositions. */
+    readRetainedIndexIdentities?: () => readonly CandidateIndexIdentity[];
     /**
      * The caller's cancellation. It reaches the Agent leaf through the two
      * request closures below and fences candidate-index lock admission here.
@@ -2518,6 +2525,17 @@ export async function executeExternalSessionCandidateQuery(params: ExternalSessi
                 ),
             });
         };
+        // The native read was already admitted and its incomplete result stays
+        // useful. Only the Live source-set owner can retire this projection;
+        // consult that existing fact once under the publication lock so a
+        // removed source cannot recreate an index reconciliation already missed.
+        const retainedIdentities = params.readRetainedIndexIdentities?.();
+        if (retainedIdentities && !retainedIdentities.some(identity => {
+            const retainedKeys = resolveKeys(identity.agentIdentity, identity.source, null);
+            return retainedKeys.agentKey === keys.agentKey && retainedKeys.sourceKey === keys.sourceKey;
+        })) {
+            return await preparationResponse(initialPage);
+        }
         const rebuildAndThrow = async (message: string): Promise<never> => {
             await writeIndexRecord(paths.indexPath, replacementBuilding());
             throw sourceInvalid(message);

@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { createAccountRoleActionExecutorV1, RoleActionRefusalV1 } from '@happier-dev/protocol/prompts/roles/accountRoleActions';
 import { RoleActionInputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { readSessionRolesV1, writeSessionRoleIdV1ToMetadata, SessionRoleConfigurationV1Schema, snapshotSessionRolesAtSpawnV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
-import { resolveRoleSelectionV1, readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { resolveRoleSelectionV1, resolveRolesSnapshotV1, readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
-import type { ActionExecutorDeps, PluginRoleContributionV1, SessionRoleConfigurationV1, ActionExecutorContext } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, PluginRoleContributionV1, SessionRoleConfigurationV1, ActionExecutorContext, RoleEngineV1 } from '@happier-dev/protocol';
 import type { AccountRoleOverridesReadV1, RoleOverrideMutationV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
 import { createRoleSourceReader, type RoleSourceReader } from '@/session/roles/roleSources';
 import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -32,8 +32,13 @@ export function createRoleActionExecutor(params: Readonly<{
   artifactStore?: RoleArtifactStore;
   readSettingsOverrides?: (signal?: AbortSignal) => AccountRoleOverridesReadV1 | Promise<AccountRoleOverridesReadV1>;
   readPluginRoles?: () => readonly PluginRoleContributionV1[];
+  readRoleSnapshotInputs?: (metadata: Readonly<Record<string, unknown>>, context: ActionExecutorContext) => Promise<Readonly<{
+    defaultEngine: RoleEngineV1;
+    availableAgentTargetKeys: readonly string[];
+  }>>;
   accountId?: string;
   readRawAccountSettings?: () => Promise<Readonly<Record<string, unknown>>>;
+  mutateRawAccountSettings?: Parameters<typeof createAccountRoleActionExecutorV1>[0]['mutateRawAccountSettings'];
   mutateAccountRoleOverrides?: (mutation: RoleOverrideMutationV1, context: ActionExecutorContext) => Promise<void>;
   readRoleSources?: RoleSourceReader;
   listReportSessions?: (leadSessionId: string, context: import('@happier-dev/protocol').ActionExecutorContext) => Promise<readonly Readonly<{ sessionId: string; ownerAccountId: string }>[]>;
@@ -100,14 +105,10 @@ export function createRoleActionExecutor(params: Readonly<{
         if (inventory.status !== 'ready') refuse('role_source_incomplete');
         return inventory;
       });
-      const entries = inventory.entries;
       const settingsOverrides = await measurePhase('settings', () => readSettingsOverrides(context.signal));
-      const roles = Object.fromEntries([...new Set([...entries.map((entry) => entry.roleId), ...Object.keys(current?.sessionRoles ?? {}),
-        ...Object.keys(current?.overrides ?? {})])].flatMap((roleId) => {
-        const resolved = resolveRoleSelectionV1({ roleId, roleSourceInventory: inventory, settingsOverrides,
-          sessionRoles: current, pluginRoles: params.readPluginRoles?.() });
-        return resolved.ok ? [[roleId, resolved.selection]] : [];
-      }));
+      if (!params.readRoleSnapshotInputs) refuse('target_unavailable');
+      const engineInputs = await measurePhase('engine', () => params.readRoleSnapshotInputs!(metadata as Record<string, unknown>, context));
+      const roles = resolveRolesSnapshotV1({ roleSourceInventory: inventory, settingsOverrides, sessionRoles: current, ...engineInputs });
       const configuration = SessionRoleConfigurationV1Schema.parse(snapshotSessionRolesAtSpawnV1({
         leadSessionId: request.sessionId, roles, notes: current?.notes,
       }));

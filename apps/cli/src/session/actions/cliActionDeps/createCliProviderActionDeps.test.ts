@@ -22,6 +22,7 @@ import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountS
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
 import { createCliProviderActionExecuteV1 } from './createCliProviderActionDeps';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createCurrentSessionProjectionRecordFixture, createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -75,6 +76,29 @@ describe('Provider default preference Action at its Account Settings boundary', 
       expect(result).toMatchObject({ ok: false, errorCode: 'session_target_unavailable' });
       expect(paired).toEqual([]);
     }
+  });
+  it('projects a Team batch without loading the recipient personal catalog across CLI and MCP', async () => {
+    const credentials = { token: 'recipient-token', encryption: null };
+    const operationContext = createInvocationSavedSecretOperationContextV1({ credentials,
+      snapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+        loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) },
+      serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true });
+    const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Team batches do not need the personal catalog'));
+    const execute = createCliProviderActionExecuteV1({ credentials, operationContext,
+      serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+      projectModelsForAccount: async () => { throw new Error('Team batches belong to the worker projection'); },
+      // Machine RPC is the only substituted execution boundary.
+      callMachineAction: async input => {
+        expect(input.request).toMatchObject({ teamCredentialResources: [] });
+        return { status: 'success', agentTargetKey: 'agent:happier.agent.codex/codex', groups: [], teamCredentialResources: [] };
+      } });
+    for (const surface of ['cli', 'mcp'] as const) {
+      expect(await execute({ actionId: 'providers.models.projection', input: {
+        machineId: 'worker-machine', agentTargetKey: 'agent:happier.agent.codex/codex', teamCredentialResources: [],
+      } }, { surface, serverId: 'home' })).toMatchObject({ ok: true, result: { status: 'success', teamCredentialResources: [] } });
+    }
+    expect(http).not.toHaveBeenCalled();
+    expect(operationContext.readSnapshot()?.providerConnectionsCatalog).toBeUndefined();
   });
   afterEach(async () => {
     vi.restoreAllMocks();

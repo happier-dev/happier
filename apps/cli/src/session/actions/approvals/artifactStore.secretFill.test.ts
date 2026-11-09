@@ -220,18 +220,21 @@ describe('confidential continuation Artifact custody', () => {
   });
   it.each([
     { name: 'same Home', localHome: 'home', hostIdentity: 'srv_verified_home', identitySource: 'bound', mode: 'plain', code: 'filled' },
+    { name: 'unstamped Home origin', localHome: 'home', hostIdentity: 'srv_verified_home', identitySource: 'bound', mode: 'plain', code: 'filled', unstampedOrigin: true },
     { name: 'portable Home alias', localHome: 'local-home', hostIdentity: 'srv_verified_home', identitySource: 'bound', mode: 'plain', code: 'filled' },
     { name: 'different Home despite caller identity', localHome: 'local-home', hostIdentity: 'srv_different_home', identitySource: 'bound', mode: 'plain', code: 'approval_changed' },
     { name: 'authenticated Home identity', localHome: 'local-home', hostIdentity: 'srv_verified_home', identitySource: 'features', mode: 'plain', code: 'filled' },
     { name: 'authenticated different Home despite caller identity', localHome: 'local-home', hostIdentity: 'srv_different_home', identitySource: 'features', mode: 'plain', code: 'approval_changed' },
     { name: 'changed Account mode', localHome: 'home', hostIdentity: 'srv_verified_home', identitySource: 'bound', mode: 'e2ee', code: 'saved_secret_mode_incompatible' },
     { name: 'uncertain issued delivery is not retried', localHome: 'home', hostIdentity: 'srv_verified_home', identitySource: 'bound', mode: 'plain', code: 'delivery_unknown' },
-  ] as const)('consumes the credential-backed private RPC through the installed trusted producer: $name', async ({ localHome, hostIdentity, identitySource, mode, code }) => {
+  ] as const)('consumes the credential-backed private RPC through the installed trusted producer: $name', async scenario => {
+    const { localHome, hostIdentity, identitySource, mode, code } = scenario;
     let created: ApprovalRequest | null = null;
     await createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsCreate: async ({ request }) => {
       created = request; return { artifactId: 'approval' };
     }, isActionApprovalRequired: () => false }).execute('browser.automation.secret.fill', request, {
-      surface: 'agent', authority: 'account_automation', serverId: 'home', serverIdentityId: 'srv_verified_home',
+      surface: 'agent', authority: 'account_automation', serverId: 'home',
+      ...('unstampedOrigin' in scenario ? {} : { serverIdentityId: 'srv_verified_home' }),
       defaultSessionId: 'session', defaultSessionMachineId: 'machine', actionRequestId: 'request', actionCaller: { kind: 'host' },
     });
     const approval = ApprovalRequestV2Schema.parse(created);
@@ -318,10 +321,11 @@ describe('confidential continuation Artifact custody', () => {
   });
   it.each([
     { name: 'global canonical Home', localHome: 'srv_verified_home', sessionId: undefined },
+    { name: 'unstamped Home origin', localHome: 'srv_verified_home', sessionId: undefined, unstampedOrigin: true },
     { name: 'global portable Home alias', localHome: 'local-home', sessionId: undefined },
     { name: 'global browser and daemon Home aliases differ', localHome: 'daemon-home', answerHome: 'browser-home', sessionId: undefined },
     { name: 'Session portable Home alias', localHome: 'local-home', sessionId: 'session' },
-  ])('approves private declared Action inputs without changing the reviewed binding: $name', async ({ localHome, answerHome, sessionId }) => {
+  ])('approves private declared Action inputs without changing the reviewed binding: $name', async ({ localHome, answerHome, sessionId, unstampedOrigin }) => {
     const definition: ActionDefinitionV1 = {
       kindVersion: 1, id: 'com.acme.credentials/actions/connect', title: 'Connect', description: 'Connect service',
       safety: 'safe', placements: [], slash: null, bindings: null, examples: null,
@@ -336,7 +340,7 @@ describe('confidential continuation Artifact custody', () => {
       approvalsCreate: async ({ request }) => { created = request; return { artifactId: 'approval' }; },
       isActionApprovalRequired: () => false,
     }).execute('action.invoke', reviewed, { surface: 'ui', authority: 'present_user',
-      serverId: 'srv_verified_home', serverIdentityId: 'srv_verified_home', defaultSessionId: sessionId,
+      serverId: 'srv_verified_home', ...(unstampedOrigin ? {} : { serverIdentityId: 'srv_verified_home' }), defaultSessionId: sessionId,
       defaultSessionMachineId: 'machine', actionRequestId: 'request', actionCaller: { kind: 'host' },
       externalActionTarget: sessionId ? { kind: 'session', sessionId } : { kind: 'machine', machineId: 'machine' },
     })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });

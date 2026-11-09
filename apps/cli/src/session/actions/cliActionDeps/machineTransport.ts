@@ -2,10 +2,13 @@ import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalAction
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { CliActionDepsParams } from './types';
 import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { ManagedMachineActionIdV1Schema, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { isManagedControllerCodecActionV1, projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -155,6 +158,35 @@ export function createCliMachineActionTransport(
     if (!await isMachineActionServerScopeCurrent(input)) {
       throw Object.assign(new Error('server_scope_mismatch'), { code: 'server_scope_mismatch' });
     }
+    const originalContext = input.context;
+    if (params.credentials && originalContext && isLocalServiceStopActionIdV1(input.effectActionId)
+      && !originalContext.externalActionExecutionAuthorization && !originalContext.externalActionCredential
+      && !originalContext.rpcSessionAuthorization && !originalContext.causalPermissionAuthority
+      && (!originalContext.actionCaller || originalContext.actionCaller.kind === 'host')) {
+      const target = { kind: 'machine' as const, machineId: input.machineId };
+      const accountId = readAccountIdFromToken(params.credentials.token);
+      const serverId = originalContext.serverId ?? params.serverId;
+      const serverIdentityId = originalContext.serverIdentityId ?? params.serverIdentityId;
+      const provenance = readAuthTokenProvenance(decodeJwtPayload(params.credentials.token), { allowLegacyHome: true });
+      const authentication = provenance?.provenance.kind;
+      const invocation = accountId && serverId && (authentication === 'account' || authentication === 'terminal')
+        ? projectExternalActionRequesterInvocationV1({ actionId: input.effectActionId,
+          context: { ...originalContext, actionCaller: { kind: 'host' } },
+          account: { accountId, serverId, ...(serverIdentityId ? { serverIdentityId } : {}) }, target,
+          authentication: { kind: authentication } }) : null;
+      if (!invocation || !originalContext.actionRequestId) {
+        throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+      }
+      const wrapped = TargetedActionRpcRequestV1Schema.safeParse(input.request);
+      const execution = await dispatchOriginalAccountAction({ actionId: input.effectActionId,
+        input: wrapped.success ? wrapped.data.input : input.request, requestId: originalContext.actionRequestId, target,
+        credentials: params.credentials, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+        ...(serverIdentityId ? { serverIdentityId } : {}), authority: invocation.authority, invocation,
+        ...(input.signal ? { signal: input.signal } : {}) });
+      if (!execution.ok) throw Object.assign(new RpcError(execution.error, execution.errorCode),
+        execution.details === undefined ? {} : { details: execution.details });
+      return execution.result;
+    }
     const workflowCaller = input.context?.actionCaller;
     const workflowOrigin = input.context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin;
     if (input.context && workflowCaller?.kind === 'workflowRun'
@@ -218,10 +250,16 @@ export function createCliMachineActionTransport(
     // Role/target authorization for this method was decided once by Home's Action
     // admission (machineAccess method policy); invokeLocal spends that receiving
     // Machine admission and does not re-authorize the role.
+    const admittedMoveStatusRead = Boolean(boundToThisMachine && managedBinding
+      && managedBinding.actionId === 'projects.service.relocate'
+      && input.effectActionId === managedBinding.actionId
+      && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST
+      && managedBinding.workspaceSyncAdmission?.source.machineId === input.machineId
+      && managedBinding.workspaceSyncAdmission.source.installationId === params.externalActionMachineInstallationId);
     const admittedLocalAction = Boolean(boundToThisMachine && managedBinding
       && managedBinding.installationId === params.externalActionMachineInstallationId
       && managedBinding.actionId === input.effectActionId
-      && resolveMachineRpcExternalActionEffectV1(input.method, managedBinding) === input.effectActionId);
+      && (admittedMoveStatusRead || resolveMachineRpcExternalActionEffectV1(input.method, managedBinding) === input.effectActionId));
     // This in-process admission was installed only after opening the exact
     // controller codec at Home. Reuse it for the two scoped reads; serializing
     // a self-RPC would lose that private receiver authority. A foreign requester
@@ -300,7 +338,7 @@ export function createCliMachineActionTransport(
         verifyMachineAdmissionCurrent: host.verifyMachineAdmissionCurrent,
         callerAuthority: input.authority ?? host.authority,
         callerInputAuthorization: host.callerInputAuthorization
-          ?? (admittedLocalDiscovery ? host.externalActionExecutionAuthorization : undefined),
+          ?? (admittedLocalDiscovery || admittedMoveStatusRead ? host.externalActionExecutionAuthorization : undefined),
         callerInputConstraints: host.callerInputConstraints,
         sessionActionOrigin: host.sessionActionOrigin,
         originalActionEnvelope: host.originalActionEnvelope,

@@ -36,6 +36,8 @@ import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/pl
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { createCustomAcpAgentRuntime } from '../../../../../packages/plugins/custom-acp/src/agent/runtime/factory';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -234,7 +236,7 @@ describe('current-session presentation publication composition', () => {
       }),
       resolveAcpHostLaunch: async () => ({ command: process.execPath, args: [executable], env: {}, unsetEnv: [], timeouts: {} }),
       createInvocationServices: async ({ signal }) => ({ ...createUnavailablePluginServices(),
-        exec: createStablePluginExecService({  signal,
+        exec: createStablePluginExecService({ signal,
           isOccurrenceCurrent: () => !controller.signal.aborted,
           resolveExecutable: async () => { throw new Error('The host-owned ACP fixture already resolved its executable'); },
           resolvePath: async () => directory,
@@ -324,6 +326,48 @@ describe('current-session presentation publication composition', () => {
     expect(vendorMethods.filter(method => method === 'session/new' || method === 'session/load'))
       .toEqual(['session/new', 'session/load']);
     expect(nativeEvents).toContainEqual(expect.objectContaining({ kind: 'provider-session-id' }));
+
+    // Native MCP must keep current-UI presentation with this Session's live
+    // owner, even though the Action's resulting effect is client-placed.
+    const mcp = createHappierMcpServer(Object.assign(client, {
+      getWorkDepth: () => 0,
+      getActiveTurnPermissionWitness: () => ({ turnId: 'presentation-turn', workDepth: 0 }),
+    }), {
+      sessionCredentials: credentials, credentials,
+      accountSettings: accountSettingsParse({}),
+      requiredDirectActionIds: ['session.presentation.apply'],
+    });
+    try {
+      for (const intent of [
+        { kind: 'board.open', mode: 'beside_chat' },
+        { kind: 'board.item.reveal', widgetId: 'release-checklist', viewId: 'notes' },
+      ] as const) {
+        const operationId = `native-${intent.kind}`;
+        const pendingPresentation = mcp.executeTool({ toolName: 'action_execute', toolCallId: operationId,
+          args: { actionId: 'session.presentation.apply', input: { intent } } });
+        let outcome: Awaited<typeof pendingPresentation> | undefined;
+        void pendingPresentation.then(result => { outcome = result; });
+        await vi.waitFor(() => {
+          if (outcome) expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true });
+          expect(JSON.parse(stored.agentState ?? '{}')[CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY]?.command)
+            .toMatchObject({ id: operationId, kind: 'presentation.apply', intent });
+        });
+        const state = CurrentSessionPresentationStateV1Schema.parse(
+          (await hydrateSocketState())?.[CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY],
+        );
+        const received: unknown[] = [];
+        const application = applyCurrentSessionPresentationCommand({
+          state, hostNonce: bound.hostNonce, clientId: 'viewer-client', isCurrentSession: true,
+          notify: () => {}, composer: null,
+          presentation: { apply: value => { received.push(value); return { status: 'applied' }; } },
+        });
+        expect(received).toEqual([intent]);
+        expect(application?.ack).toBeDefined();
+        expect(await call(CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD, application!.ack)).toEqual({ status: 'accepted' });
+        expect(await pendingPresentation).toMatchObject({ ok: true,
+          result: { status: 'applied', revision: `${bound.hostNonce}:${state.revision}` } });
+      }
+    } finally { await mcp.mcp.close(); }
 
     const pending = apply('agent-computer-open');
     let settledAction: Awaited<typeof pending> | undefined;

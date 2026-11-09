@@ -29,7 +29,11 @@ vi.mock('@/api/session/external/secureRefresh/resolveExternalSessionTranscriptRe
   resolveExternalSessionTranscriptRefreshCurrentness: async (...args: unknown[]) => {
     const binding = await resolveTranscriptRefreshBindingMock(...args);
     return binding
-      ? { binding, occurrenceId: resolveTranscriptRefreshOccurrenceIdMock() }
+      ? {
+          binding,
+          occurrenceId: resolveTranscriptRefreshOccurrenceIdMock(),
+          linked: (await loadLinkedExternalSessionMock()).session,
+        }
       : null;
   },
 }));
@@ -168,12 +172,7 @@ describe('external session transcript actions', () => {
       deviceLocalSecretStorage:
         secureRefreshContext.deviceLocalSecretStorage,
     });
-    expect(resolveTranscriptRefreshBindingMock).toHaveBeenNthCalledWith(2, {
-      sessionId: binding.sessionId,
-      cursor: secureRefreshCursor,
-      deviceLocalSecretStorage:
-        secureRefreshContext.deviceLocalSecretStorage,
-    });
+    expect(resolveTranscriptRefreshBindingMock).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed when an Agent returns a malformed current raw record', async () => {
@@ -447,7 +446,7 @@ describe('external session transcript actions', () => {
     expect(resolveExternalSessionSurfaceOpsMock).not.toHaveBeenCalled();
   });
 
-  it('applies zero source items when the live plugin occurrence changes during readAfter', async () => {
+  it('finishes an admitted read under its captured binding and refuses a subsequent request after authority changes', async () => {
     const binding = {
       v: 1 as const,
       machineId: 'machine-1',
@@ -465,9 +464,6 @@ describe('external session transcript actions', () => {
       cursorIdentity: secureRefreshCursorIdentity,
     };
     resolveTranscriptRefreshBindingMock.mockResolvedValue(binding);
-    resolveTranscriptRefreshOccurrenceIdMock
-      .mockReturnValueOnce('occurrence-1')
-      .mockReturnValueOnce('occurrence-2');
     readStoredCredentialsMock.mockResolvedValue({ token: 'token', encryption: null });
     loadLinkedExternalSessionMock.mockResolvedValue({
       ok: true,
@@ -478,7 +474,10 @@ describe('external session transcript actions', () => {
       },
     });
     resolveExternalSessionSurfaceOpsMock.mockResolvedValue({
-      readAfterTranscript: async () => ({
+      readAfterTranscript: async () => {
+        resolveTranscriptRefreshBindingMock.mockResolvedValue(null);
+        readStoredCredentialsMock.mockResolvedValue(null);
+        return {
         outcome: 'advanced',
         items: [{
           id: 'item-from-retired-generation',
@@ -494,7 +493,9 @@ describe('external session transcript actions', () => {
         }],
         nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
         boundary: 'item-from-retired-generation',
-      }),
+        hasMore: false,
+        };
+      },
     });
 
     await expect(transcriptActionsModule.executeExternalSessionTranscriptReadAfterAction({
@@ -504,9 +505,22 @@ describe('external session transcript actions', () => {
     }, secureRefreshContext)).resolves.toEqual({
       v: 1,
       binding,
-      result: { outcome: 'source_replaced' },
+      result: expect.objectContaining({
+        outcome: 'advanced',
+        nextCursor: 'happier_external_cursor_v1:Y3Vyc29yLTI',
+        items: [expect.objectContaining({ id: 'item-from-retired-generation' })],
+      }),
     });
-    expect(resolveTranscriptRefreshBindingMock).toHaveBeenCalledTimes(2);
+    expect(resolveTranscriptRefreshBindingMock).toHaveBeenCalledTimes(1);
+    await expect(transcriptActionsModule.executeExternalSessionTranscriptReadAfterAction({
+      v: 1,
+      binding,
+      cursor: secureRefreshCursor,
+    }, secureRefreshContext)).resolves.toEqual({
+      v: 1,
+      binding,
+      result: { outcome: 'source_unavailable' },
+    });
   });
 
   it('keeps direct-session media browsing transient with scoped read files only', async () => {

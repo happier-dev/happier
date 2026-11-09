@@ -74,13 +74,8 @@ function createWaitingIntent() {
 function createAdapter() {
   return createBackoffSessionUsageLimitRecoveryControlAdapter({
     providerId: 'codex',
-    fallbackBackoffEnvKey: 'HAPPIER_TEST_FALLBACK_BACKOFF_MS',
-    maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
-    defaultFallbackBackoffMs: 60_000,
-    defaultMaxAttempts: 3,
     defaultNativeServiceId: 'openai-codex',
     nowMs: () => 1_700_000_120_000,
-    processEnv: {},
   });
 }
 
@@ -145,15 +140,43 @@ describe('createBackoffSessionUsageLimitRecoveryControlAdapter', () => {
     } } });
   });
 
-  it('uses the shared fallback policy when a provider supplies no overrides', async () => {
+  it('retains an untimed explicit wait without inventing a provider reset or attempt budget', async () => {
     const params = createParams();
     params.rawSession.lastRuntimeIssue!.usageLimit!.resetAtMs = null;
     const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({
-      providerId: 'codex', fallbackBackoffEnvKey: 'HAPPIER_TEST_FALLBACK_BACKOFF_MS', maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
-      nowMs: () => 1_700_000_000_000, processEnv: {},
+      providerId: 'codex', nowMs: () => 1_700_000_000_000,
     });
     expect(await adapter.checkNow?.(params)).toMatchObject({ status: 'waiting', metadata: { sessionUsageLimitRecoveryV1: {
-      nextCheckAtMs: 1_700_000_600_000, maxAttempts: 3,
+      nextCheckAtMs: null, maxAttempts: 0,
+    } } });
+  });
+
+  it('checks native readiness for an untimed wait and uses only its real retry-after', async () => {
+    const params = createParams();
+    params.rawSession.lastRuntimeIssue!.usageLimit!.resetAtMs = null;
+    let probes = 0;
+    const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({
+      providerId: 'codex', nowMs: () => 1_700_000_000_000,
+      readinessProbe: async () => ++probes === 1
+        ? { status: 'waiting', retryAfterMs: 42_000 }
+        : { status: 'ready' },
+    });
+    expect(await adapter.checkNow?.(params)).toMatchObject({ status: 'waiting', metadata: { sessionUsageLimitRecoveryV1: {
+      nextCheckAtMs: 1_700_000_042_000, maxAttempts: 0,
+    } } });
+    expect(await adapter.checkNow?.(params)).toMatchObject({ status: 'ready', metadata: { sessionUsageLimitRecoveryV1: {
+      nextCheckAtMs: null, status: 'paused',
+    } } });
+    expect(probes).toBe(2);
+  });
+
+  it('does not turn a held wait back into readiness from its historical reset', async () => {
+    const result = await createAdapter().checkNow?.({ ...createParams(), metadata: {
+      sessionUsageLimitRecoveryV1: { ...createWaitingIntent(), nextCheckAtMs: null,
+        lastProbeError: 'usage_limit_recovery_readiness_probe_failed' },
+    } });
+    expect(result).toMatchObject({ status: 'waiting', metadata: { sessionUsageLimitRecoveryV1: {
+      nextCheckAtMs: null,
     } } });
   });
 
@@ -204,13 +227,8 @@ describe('createBackoffSessionUsageLimitRecoveryControlAdapter', () => {
   it('preserves group identity when the latest issue omits profileId', async () => {
     const adapter = createBackoffSessionUsageLimitRecoveryControlAdapter({
       providerId: 'codex',
-      fallbackBackoffEnvKey: 'HAPPIER_TEST_FALLBACK_BACKOFF_MS',
-      maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
-      defaultFallbackBackoffMs: 60_000,
-      defaultMaxAttempts: 3,
       defaultNativeServiceId: 'openai-codex',
       nowMs: () => 1_700_000_000_000,
-      processEnv: {},
     });
 
     const result = await adapter.checkNow?.(createParams());

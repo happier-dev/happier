@@ -23,6 +23,7 @@ describe('buildAgentBackendInventoryItems with the bundled catalog', () => {
     expect(items).toContainEqual(expect.objectContaining({
       agentId: 'antigravity',
       identity: { pluginId: 'happier.agent.antigravity', localId: 'antigravity' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.antigravity', localId: 'antigravity' } },
     }));
     expect(items.some((item) => item.identity?.pluginId === CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.pluginId)).toBe(false);
   });
@@ -35,6 +36,7 @@ describe('buildAgentBackendInventoryItems with the bundled catalog', () => {
         targetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: definition.id }),
         label: definition.title, enabled: true, agentId: 'custom-acp', backendId: definition.id,
         identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1,
+        agentTarget: { kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: definition.id },
       })),
     );
   });

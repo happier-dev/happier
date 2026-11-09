@@ -3,6 +3,7 @@ import type { SessionMetadataOwnerPatchV1, ExternalSessionOperationRecordV1, Ext
 
 import type {
   PersistedTakeoverAdmissionWaiter,
+  PersistedTakeoverAdmissionContext,
 } from '@/daemon/spawn/persistedTakeoverAdmission';
 import {
   resolveExternalTakeoverSpawnOptions,
@@ -30,6 +31,7 @@ import {
 } from './responseErrors';
 import {
   loadCurrentExternalSessionExternalLinkedTakeoverSource,
+  loadCurrentExternalSessionTakeoverTarget,
   loadCurrentExternalSessionPersistedTakeoverTarget,
   loadCurrentExternalSessionPersistedTakeoverSource,
   type PreparedExternalSessionExternalLinkedTakeoverSource,
@@ -72,6 +74,7 @@ type AdmissionCorrelation = Readonly<{
   attemptId: string;
   publisherPrecondition?: SessionMetadataPublisherPreconditionV1;
   signal?: AbortSignal;
+  context?: PersistedTakeoverAdmissionContext;
 }>;
 
 type PersistedTakeoverMetadataPatch = SessionMetadataOwnerPatchV1;
@@ -81,7 +84,7 @@ type PersistedTakeoverAdmissionOwnerDependencies = Readonly<{
   admissionWaiter: Pick<
     PersistedTakeoverAdmissionWaiter,
     'isPending' | 'settle' | 'reserveRuntimeBound'
-  >;
+  > & Partial<Pick<PersistedTakeoverAdmissionWaiter, 'getRegistration'>>;
   isFollowSuspended(input: Readonly<{
     sessionId: string;
     reason: string;
@@ -96,20 +99,26 @@ type PersistedTakeoverAdmissionOwnerDependencies = Readonly<{
   ): Promise<ExternalSessionOperationSocketResponseV1>;
   cleanupTerminalStaging?(
     operationId: string,
+    accountScope?: PersistedTakeoverAdmissionContext['accountScope'],
   ): Promise<'cleaned' | 'missing' | 'not_ready' | 'not_terminal'>;
   loadCurrent?(
     record: ExternalSessionPersistedTakeoverImportRecord,
     requirement?: 'allow_advanced_for_catch_up' | 'already_current_for_admission',
+    context?: PersistedTakeoverAdmissionContext,
   ): Promise<PreparedExternalSessionPersistedTakeoverSource>;
   loadExternalLinkedCurrent?(
     record: ExternalLinkedTakeoverRecord,
+    admittedSource?: Pick<PreparedExternalSessionExternalLinkedTakeoverSource, 'linked'>,
+    credentials?: PersistedTakeoverAdmissionContext['credentials'],
   ): Promise<PreparedExternalSessionExternalLinkedTakeoverSource>;
   loadCanonicalTarget?(
     record: ExternalSessionPersistedTakeoverImportRecord,
+    context?: PersistedTakeoverAdmissionContext,
   ): Promise<LoadedLinkedExternalSession>;
   prepareLinkRetirementPatch?(input: Readonly<{
     linked: LoadedLinkedExternalSession;
     importedAtMs: number;
+    credentials?: PersistedTakeoverAdmissionContext['credentials'];
   }>): Promise<PersistedTakeoverMetadataPatch>;
   resolveSpawnOptions?: typeof resolveExternalTakeoverSpawnOptions;
   nowMs?: () => number;
@@ -141,13 +150,14 @@ export function buildPersistedTakeoverRetiredMetadata(input: Readonly<{
 async function preparePersistedTakeoverLinkRetirementPatch(input: Readonly<{
   linked: LoadedLinkedExternalSession;
   importedAtMs: number;
+  credentials?: PersistedTakeoverAdmissionContext['credentials'];
 }>): Promise<PersistedTakeoverMetadataPatch> {
-  const credentials = await readStoredCredentials();
+  const credentials = input.credentials ?? await readStoredCredentials();
   if (!credentials) {
     throw new Error('persisted_takeover_admission_credentials_unavailable');
   }
   const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({
-    token: credentials.token,
+    credentials: credentials, token: credentials.token,
   });
   const patch = await prepareSessionMetadataTuplePatchForTransaction({
     credentials,
@@ -166,7 +176,8 @@ export type ExternalSessionPersistedTakeoverAdmissionOwner = Readonly<{
   prepareSpawn(
     record: ExternalSessionOperationRecordV1,
     signal?: AbortSignal,
-  ): Promise<ResolvedExternalTakeoverSpawn>;
+    context?: PersistedTakeoverAdmissionContext,
+  ): Promise<ResolvedExternalTakeoverSpawn & Readonly<{ admissionContext?: PersistedTakeoverAdmissionContext }>>;
   admit(input: AdmissionCorrelation): Promise<void>;
   runtimeBound(input: AdmissionCorrelation): Promise<void>;
   reconcileRuntimeBindingFailure(
@@ -174,6 +185,7 @@ export type ExternalSessionPersistedTakeoverAdmissionOwner = Readonly<{
   ): Promise<ExternalSessionOperationRecordV1 | null>;
   reconcileAuthority(
     record: ExternalSessionOperationRecordV1,
+    context?: PersistedTakeoverAdmissionContext,
   ): Promise<ExternalSessionOperationRecordV1 | null>;
 }>;
 
@@ -694,17 +706,44 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
     ?? loadCurrentExternalSessionPersistedTakeoverTarget;
   const loadExternalLinkedCurrent = dependencies.loadExternalLinkedCurrent
     ?? loadCurrentExternalSessionExternalLinkedTakeoverSource;
+  const refreshAdmissionContext = async (
+    record: PersistedTakeoverRecord | ExternalLinkedTakeoverRecord,
+    context?: PersistedTakeoverAdmissionContext,
+  ): Promise<PersistedTakeoverAdmissionContext | undefined> => {
+    if (!context?.credentials || !context.linked) return context;
+    // Progress publication can advance metadata after source admission. Read
+    // that exact Session's current tuple for the server CAS, retaining the
+    // admitted source and credentials instead of re-admitting source policy.
+    const linked = await loadCurrentExternalSessionTakeoverTarget(
+      record, context.credentials, context.linked,
+    );
+    return {
+      ...context,
+      linked,
+    };
+  };
   const loadAdmissionAuthority = async (
     record: ExternalSessionPersistedTakeoverImportRecord,
+    context?: PersistedTakeoverAdmissionContext,
   ): Promise<PreparedExternalSessionPersistedTakeoverSource> => await loadCurrent(
     record,
     'already_current_for_admission',
+    await refreshAdmissionContext(record, context),
   );
   const resolveSpawnOptions = dependencies.resolveSpawnOptions
     ?? resolveExternalTakeoverSpawnOptions;
   const prepareLinkRetirementPatch = dependencies.prepareLinkRetirementPatch
     ?? preparePersistedTakeoverLinkRetirementPatch;
   const nowMs = dependencies.nowMs ?? Date.now;
+  const withAttemptContext = (input: AdmissionCorrelation): AdmissionCorrelation => {
+    if (input.context) return input;
+    const context = dependencies.admissionWaiter.getRegistration?.({
+      mode: input.mode ?? 'persisted',
+      operationId: input.operationId,
+      attemptId: input.attemptId,
+    })?.context;
+    return context ? { ...input, context } : input;
+  };
   const markHostedOffline = async (
     input: AdmissionCorrelation,
   ): Promise<void> => {
@@ -712,6 +751,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
       const latest = await readExternalSessionOperationRecord(
         dependencies.activeServerDir,
         input.operationId,
+        input.context?.accountScope,
       );
       if (!latest || !isExactPostcommitCandidate(latest, input)) {
         throw new Error('persisted_takeover_admission_offline_convergence_conflict');
@@ -740,6 +780,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
             nowMs(),
           );
         },
+        input.context?.accountScope,
       );
       if (offline.ok) return;
       if (attempt === 2) {
@@ -753,6 +794,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
     const latest = await readExternalSessionOperationRecord(
       dependencies.activeServerDir,
       input.operationId,
+      input.context?.accountScope,
     );
     if (isRuntimeBoundCompleted(latest, input)) return latest;
     if (!isExactPostcommitCandidate(latest, input)) return null;
@@ -766,6 +808,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
     return await readExternalSessionOperationRecord(
       dependencies.activeServerDir,
       input.operationId,
+      input.context?.accountScope,
     );
   };
   const fenceUnresolvedAdmission = async (
@@ -779,6 +822,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
       const latest = await readExternalSessionOperationRecord(
         dependencies.activeServerDir,
         input.operationId,
+        input.context?.accountScope,
       );
       if (!isExactPostcommitCandidate(latest, input)) {
         throw new Error('persisted_takeover_admission_unresolved_convergence_conflict');
@@ -817,6 +861,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
             occurredAtMs: nowMs(),
           },
         }),
+        input.context?.accountScope,
       );
       if (fenced.ok) return;
       if (attempt === 2) {
@@ -831,6 +876,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
       const latest = await readExternalSessionOperationRecord(
         dependencies.activeServerDir,
         input.operationId,
+        input.context?.accountScope,
       );
       if (!latest || !isExternalLinkedPostcommitCandidate(latest, input)) {
         throw new Error('external_linked_takeover_admission_offline_convergence_conflict');
@@ -851,6 +897,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
             nowMs(),
           );
         },
+        input.context?.accountScope,
       );
       if (offline.ok) return;
       if (attempt === 2) {
@@ -864,6 +911,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
     const latest = await readExternalSessionOperationRecord(
       dependencies.activeServerDir,
       input.operationId,
+      input.context?.accountScope,
     );
     if (isExternalLinkedRuntimeBoundCompleted(latest, input)) return latest;
     if (!isExternalLinkedPostcommitCandidate(latest, input)) return null;
@@ -871,6 +919,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
     return await readExternalSessionOperationRecord(
       dependencies.activeServerDir,
       input.operationId,
+      input.context?.accountScope,
     );
   };
   const admitExternalLinked = async (
@@ -903,6 +952,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
       const record = await readExternalSessionOperationRecord(
         dependencies.activeServerDir,
         input.operationId,
+        input.context?.accountScope,
       );
       if (isExternalLinkedLocallyConverged(record, input)) return;
       assertExternalLinkedAdmissionRecord(record, input);
@@ -912,7 +962,12 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
       })) {
         throw new Error('external_linked_takeover_admission_follow_not_suspended');
       }
-      const current = await loadExternalLinkedCurrent(record);
+      const context = await refreshAdmissionContext(record, input.context);
+      const current = await loadExternalLinkedCurrent(
+        record,
+        context?.linked ? { linked: context.linked } : undefined,
+        input.context?.credentials,
+      );
       const authority = assertExternalLinkedCurrentAuthority(
         record,
         current,
@@ -943,12 +998,15 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
             updatedAtMs: nowMs(),
           };
         },
+        input.context?.accountScope,
       );
       if (!prepared.ok) {
         throw new Error(`external_linked_takeover_admission_prepare_${prepared.code}`);
       }
       const authorityRecord = prepared.record as ExternalLinkedTakeoverAdmissionRecord;
-      const finalCurrent = await loadExternalLinkedCurrent(authorityRecord);
+      const finalCurrent = await loadExternalLinkedCurrent(
+        authorityRecord, { linked: current.linked }, input.context?.credentials,
+      );
       const finalAuthority = assertExternalLinkedCurrentAuthority(
         authorityRecord,
         finalCurrent,
@@ -1006,6 +1064,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
         const latest = await readExternalSessionOperationRecord(
           dependencies.activeServerDir,
           input.operationId,
+          input.context?.accountScope,
         );
         if (isExternalLinkedLocallyConverged(latest, input)) break;
         if (!isExternalLinkedAdmissionCandidate(latest, input)) {
@@ -1021,6 +1080,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
             dependencies.admissionWaiter.isPending(correlation),
             nowMs(),
           ),
+          input.context?.accountScope,
         );
         if (converged.ok) break;
         if (attempt === 2) {
@@ -1069,6 +1129,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
       const initial = await readExternalSessionOperationRecord(
         dependencies.activeServerDir,
         input.operationId,
+        input.context?.accountScope,
       );
       if (isExternalLinkedRuntimeBoundCompleted(initial, input)) return;
       if (!isExternalLinkedLocallyConverged(initial, input)) {
@@ -1081,6 +1142,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
         const completed = await readExternalSessionOperationRecord(
           dependencies.activeServerDir,
           input.operationId,
+          input.context?.accountScope,
         );
         if (!isExternalLinkedRuntimeBoundCompleted(completed, input)) {
           throw new Error('external_linked_takeover_runtime_bound_duplicate_mismatch');
@@ -1099,6 +1161,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
           const latest = await readExternalSessionOperationRecord(
             dependencies.activeServerDir,
             input.operationId,
+            input.context?.accountScope,
           );
           if (isExternalLinkedRuntimeBoundCompleted(latest, input)) {
             reserved.reservation.commit();
@@ -1132,6 +1195,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
                 terminalResult: { kind: 'completed' },
               };
             },
+            input.context?.accountScope,
           );
           if (completed.ok) {
             if (!reserved.reservation.commit()) {
@@ -1158,7 +1222,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
   };
 
   return Object.freeze({
-    async reconcileAuthority(record) {
+    async reconcileAuthority(record, context) {
       if (!isAuthorityReconciliationRecord(record)) {
         throw new Error(
           'persisted_takeover_admission_reconciliation_operation_mismatch',
@@ -1168,6 +1232,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
       try {
         target = await loadCanonicalTarget(
           record as ExternalSessionPersistedTakeoverImportRecord,
+          context,
         );
       } catch {
         return null;
@@ -1176,12 +1241,14 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
         sessionId: record.request.sessionId,
         operationId: record.operationId,
         attemptId: record.bindings.targetRuntimeAttemptId,
+        context,
       };
       if (isExactPersistedHostedTarget(record, target)) {
         await markHostedOffline(input);
         return await readExternalSessionOperationRecord(
           dependencies.activeServerDir,
           record.operationId,
+          context?.accountScope,
         );
       }
       if (!isExactPersistedSnapshotTarget(record, target)) {
@@ -1210,29 +1277,34 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
             fence: { kind: 'none' },
           };
         },
+        context?.accountScope,
       );
       return resumed.ok
         ? resumed.record
         : await readExternalSessionOperationRecord(
           dependencies.activeServerDir,
           record.operationId,
+          context?.accountScope,
         );
     },
 
-    async prepareSpawn(record, signal) {
+    async prepareSpawn(record, signal, context) {
       const input = {
         sessionId: record.request.sessionId,
         operationId: record.operationId,
         attemptId: record.bindings.targetRuntimeAttemptId ?? '',
+        context,
       };
       if (isHostedOfflineRetryCandidate(record)) {
         const linked = await loadCanonicalTarget(
           record as ExternalSessionPersistedTakeoverImportRecord,
+          context,
         );
         if (!isCurrentHostedTarget(record, linked)) {
           throw new ExternalSessionTakeoverAdmissionInvariantError('persisted_takeover_retry_hosted_target_mismatch');
         }
         const options = await resolveSpawnOptions({
+          ...(context?.credentials ? { credentials: context.credentials } : {}),
           linked,
           sessionId: input.sessionId,
           targetDirectory: record.request.targetDirectory,
@@ -1244,7 +1316,10 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
             `persisted_takeover_admission_spawn_${options.code}`,
           );
         }
-        return options.value;
+        return {
+          ...options.value,
+          ...(context ? { admissionContext: { ...context, linked } } : {}),
+        };
       }
       assertAdmissionRecord(record, input);
       const suspension = {
@@ -1259,9 +1334,11 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
       }
       const current = await loadAdmissionAuthority(
         record as ExternalSessionPersistedTakeoverImportRecord,
+        context,
       );
       assertCurrentAuthority(record, current);
       const options = await resolveSpawnOptions({
+        ...(context?.credentials ? { credentials: context.credentials } : {}),
         linked: current.linked,
         sessionId: input.sessionId,
         targetDirectory: record.request.targetDirectory,
@@ -1273,10 +1350,14 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
           `persisted_takeover_admission_spawn_${options.code}`,
         );
       }
-      return options.value;
+      return {
+        ...options.value,
+        ...(context ? { admissionContext: { ...context, linked: current.linked } } : {}),
+      };
     },
 
     async admit(input) {
+      input = withAttemptContext(input);
       if (input.mode === 'external_linked') {
         return await admitExternalLinked(input);
       }
@@ -1310,6 +1391,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
         const record = await readExternalSessionOperationRecord(
           dependencies.activeServerDir,
           input.operationId,
+          input.context?.accountScope,
         );
         if (isLocallyConverged(record, input)) {
           return;
@@ -1329,11 +1411,13 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
         }
         const current = await loadAdmissionAuthority(
           record as ExternalSessionPersistedTakeoverImportRecord,
+          input.context,
         );
         const authority = assertCurrentAuthority(record, current);
         const preparedMetadataPatch = await prepareLinkRetirementPatch({
           linked: current.linked,
           importedAtMs: nowMs(),
+          ...(input.context?.credentials ? { credentials: input.context.credentials } : {}),
         });
         const metadataPatch: PersistedTakeoverMetadataPatch = {
           ...preparedMetadataPatch,
@@ -1375,6 +1459,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
               updatedAtMs: nowMs(),
             };
           },
+          input.context?.accountScope,
         );
         if (!prepared.ok) {
           throw new Error(
@@ -1418,6 +1503,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
             try {
               targetAfterAmbiguousSend = await loadCanonicalTarget(
                 record as ExternalSessionPersistedTakeoverImportRecord,
+                input.context,
               );
             } catch {
               // The exact canonical reread below decides whether this is a
@@ -1466,6 +1552,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
           const latest = await readExternalSessionOperationRecord(
             dependencies.activeServerDir,
             input.operationId,
+            input.context?.accountScope,
           );
           if (!isExactPostcommitCandidate(latest, input)) {
             throw new Error('persisted_takeover_admission_local_convergence_conflict');
@@ -1491,6 +1578,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
               waiterPending,
               nowMs(),
             ),
+            input.context?.accountScope,
           );
           if (converged.ok) break;
           if (attempt === 2) {
@@ -1518,6 +1606,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
     },
 
     async runtimeBound(input) {
+      input = withAttemptContext(input);
       if (input.mode === 'external_linked') {
         return await runtimeBoundExternalLinked(input);
       }
@@ -1544,6 +1633,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
         const initial = await readExternalSessionOperationRecord(
           dependencies.activeServerDir,
           input.operationId,
+          input.context?.accountScope,
         );
         if (isRuntimeBoundCompleted(initial, input)) return;
         if (!isLocallyConverged(initial, input)) {
@@ -1559,6 +1649,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
           const completed = await readExternalSessionOperationRecord(
             dependencies.activeServerDir,
             input.operationId,
+            input.context?.accountScope,
           );
           if (!isRuntimeBoundCompleted(completed, input)) {
             throw new Error('persisted_takeover_runtime_bound_duplicate_mismatch');
@@ -1577,6 +1668,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
             const latest = await readExternalSessionOperationRecord(
               dependencies.activeServerDir,
               input.operationId,
+              input.context?.accountScope,
             );
             if (isRuntimeBoundCompleted(latest, input)) {
               reserved.reservation.commit();
@@ -1612,6 +1704,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
                   terminalResult: { kind: 'completed' },
                 };
               },
+              input.context?.accountScope,
             );
             if (completed.ok) {
               if (!reserved.reservation.commit()) {
@@ -1620,7 +1713,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
                 );
               }
               try {
-                await dependencies.cleanupTerminalStaging?.(input.operationId);
+                await dependencies.cleanupTerminalStaging?.(input.operationId, input.context?.accountScope);
               } catch (error) {
                 // Terminal completion is authoritative. The existing bounded
                 // lifecycle repair retries operation-private staging cleanup.
@@ -1652,6 +1745,7 @@ export function createExternalSessionPersistedTakeoverAdmissionOwner(
     },
 
     async reconcileRuntimeBindingFailure(input) {
+      input = withAttemptContext(input);
       if (input.mode === 'external_linked') {
         return await readAfterExternalLinkedRuntimeBindingFailure(input);
       }

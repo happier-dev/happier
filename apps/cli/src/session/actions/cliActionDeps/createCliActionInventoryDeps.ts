@@ -1,6 +1,6 @@
 import type { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
-import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isLegacyConfiguredAcpFlavorCarrier } from '@happier-dev/protocol/backends/targets/compat/customAcp';
@@ -935,10 +935,8 @@ export function createCliActionInventoryDeps(params: Readonly<{
         return byServiceId;
       }, {});
       const declaration = readCurrentContributionRegistry().agentDefinitionsById.get(agentId);
-      const connectedAccounts = (declaration?.richDefinition?.definition.connectedAccounts ?? []).map(purpose => ({
-        ...purpose,
-        service: qualifyPluginContributionReferenceV1(purpose.service, declaration!.identity.pluginId),
-      }));
+      const { projectAgentConnectedAccounts } = await import('@/plugins/projection/registry/projection/v2');
+      const connectedAccounts = declaration ? projectAgentConnectedAccounts(declaration) : [];
       const normalizedProfileOptionsByServiceId = applyProjectedCredentialKindRestrictions({ connectedAccounts, optionsByServiceId: Object.fromEntries(
         Object.entries(profileOptionsByServiceId).map(([serviceId, accounts]) => [
           serviceId,

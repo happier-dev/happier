@@ -19,12 +19,7 @@ export async function resolveRoutedUsageLimitRecoveryResumePromptMode(input: Rea
   const existing = readRecord(input.existingIntent);
   const higher = readMode(input.explicit) ?? readMode(existing?.resumePromptMode);
   if (higher) return higher;
-  let groupPolicy: unknown = null;
-  try {
-    groupPolicy = await input.loadGroupPolicy?.() ?? null;
-  } catch {
-    groupPolicy = null;
-  }
+  const groupPolicy = await input.loadGroupPolicy?.() ?? null;
   const group = readRecord(groupPolicy);
   const account = readRecord(input.accountSettings);
   const nestedAccount = readRecord(account?.usageLimitRecoverySettingsV1);

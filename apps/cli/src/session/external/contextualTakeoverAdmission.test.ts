@@ -20,6 +20,7 @@ import {
   createContextualExternalSessionTakeoverAdapter,
   type ContextualExternalSessionTakeoverAuthorIntent,
   type ContextualExternalSessionTakeoverDependencies,
+  type ContextualExternalSessionTakeoverSourceOps,
 } from './contextualTakeoverAdmission';
 import { deriveExternalSessionPluginOperationDurableKey } from './pluginOperationDurableKey';
 
@@ -163,7 +164,7 @@ function dependencies(input: Readonly<{
 }>) {
   const calls: string[] = [];
   const resolveCurrentSource = vi.fn<
-    ContextualExternalSessionTakeoverDependencies['resolveCurrentSource']
+    ContextualExternalSessionTakeoverSourceOps['resolveCurrentSource']
   >(async () => {
     calls.push('source');
     return {
@@ -187,13 +188,13 @@ function dependencies(input: Readonly<{
         ? 'acme.external-agent/codex'
         : null
   ));
-  const deriveTakeoverStartRequest = vi.fn(async (requestInput) => {
+  const deriveTakeoverStartRequest = vi.fn<ContextualExternalSessionTakeoverSourceOps['deriveTakeoverStartRequest']>(async (requestInput) => {
     calls.push('derive');
-    return startRequest({
+    return { request: startRequest({
       sessionId: requestInput.sessionId,
       durableIdempotencyKey: requestInput.durableIdempotencyKey,
       targetStorageMode: requestInput.targetStorageMode,
-    });
+    }) };
   });
   const startDurableTakeover = input.startDurableTakeover ?? vi.fn(async (
     raw: unknown,
@@ -219,12 +220,13 @@ function dependencies(input: Readonly<{
     value: {
       activeServerDir: input.activeServerDir,
       pluginId: input.pluginId ?? 'plugin.alpha',
-      resolveCurrentSource,
-      ensureLink,
-      resolveAgentRoutingId,
-      deriveTakeoverStartRequest,
+      resolveSourceOps: () => ({
+        resolveCurrentSource,
+        ensureLink,
+        resolveAgentRoutingId,
+        deriveTakeoverStartRequest,
+      }),
       startDurableTakeover,
-      nowMs: () => 5,
     } satisfies ContextualExternalSessionTakeoverDependencies,
   };
 }
@@ -392,7 +394,7 @@ describe('contextual External Sessions takeover durable admission', () => {
     },
   );
 
-  it('fences a retired configured snapshot after source resolution and freshly resolves a same-tuple retry', async () => {
+  it('finishes admitted takeover through configured-source retirement and refuses the next retired admission', async () => {
     const activeServerDir = await createRoot();
     const harness = dependencies({ activeServerDir });
     const oldSource = Object.freeze({ kind: 'codexHome', home: '/tmp/old' });
@@ -437,11 +439,23 @@ describe('contextual External Sessions takeover durable admission', () => {
     oldRetirement.abort();
     releaseOldResolution();
 
-    await expect(staleAttempt).rejects.toMatchObject({
-      code: 'plugin_generation_retired',
+    await expect(staleAttempt).resolves.toMatchObject({
+      operationId: 'external-takeover:new-plugin-operation',
     });
-    expect(harness.ensureLink).not.toHaveBeenCalled();
-    expect(harness.startDurableTakeover).not.toHaveBeenCalled();
+    expect(harness.ensureLink).toHaveBeenCalledWith(expect.objectContaining({
+      source: oldSource,
+      signal: caller.signal,
+    }));
+    expect(harness.startDurableTakeover).toHaveBeenCalledOnce();
+    await expect(adapter.takeover(ref, {
+      targetStorageMode: 'persisted',
+      idempotencyKey: 'next-retired-admission',
+    }, {
+      signal: caller.signal,
+      retirementSignal: oldRetirement.signal,
+      isCurrent: () => oldCurrent,
+    })).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+    expect(harness.resolveCurrentSource).toHaveBeenCalledOnce();
 
     const currentRetirement = new AbortController();
     await expect(adapter.takeover(ref, {
@@ -455,11 +469,11 @@ describe('contextual External Sessions takeover durable admission', () => {
       operationId: 'external-takeover:new-plugin-operation',
     });
     expect(harness.resolveCurrentSource).toHaveBeenCalledTimes(2);
-    expect(harness.ensureLink).toHaveBeenCalledOnce();
+    expect(harness.ensureLink).toHaveBeenCalledTimes(2);
     expect(harness.ensureLink).toHaveBeenCalledWith(expect.objectContaining({
       source: currentSource,
     }));
-    expect(harness.startDurableTakeover).toHaveBeenCalledOnce();
+    expect(harness.startDurableTakeover).toHaveBeenCalledTimes(2);
   });
 
   it('preserves caller cancellation precedence when snapshot retirement is concurrent', async () => {
@@ -496,6 +510,7 @@ describe('contextual External Sessions takeover durable admission', () => {
         targetStorageMode: requestInput.targetStorageMode,
       });
       return {
+        request: {
         ...request,
         source: {
           ...request.source,
@@ -506,6 +521,7 @@ describe('contextual External Sessions takeover durable admission', () => {
               localId: 'different-agent',
             },
           },
+        },
         },
       };
     });
@@ -539,6 +555,7 @@ describe('contextual External Sessions takeover durable admission', () => {
         targetStorageMode: requestInput.targetStorageMode,
       });
       return {
+        request: {
         ...request,
         source: {
           ...request.source,
@@ -548,6 +565,7 @@ describe('contextual External Sessions takeover durable admission', () => {
             // id; the registry projection is what relates them.
             agent: { pluginId: 'acme.external-agent', localId: 'codex' },
           },
+        },
         },
       };
     });

@@ -359,7 +359,7 @@ it.each(['compact repository', 'compact repository build running', 'compact repo
         }
         const proposal = await execute('deployments.deploy', candidate.input);
         note('root-proposed');
-        expect(proposal).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+        expect(proposal, JSON.stringify(proposal)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
         expect(reservations).toBe(0); expect(providerSends).toBe(0);
         const created = z.looseObject({ ok: z.literal(true), result: z.looseObject({ artifactId: z.string() }) }).parse(proposal);
         const approval = artifacts.read(created.result.artifactId);

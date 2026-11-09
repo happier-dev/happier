@@ -1,4 +1,5 @@
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
+import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createWidgetAreaActionPortV1, createWidgetSurfaceArtifactPortV1, createWidgetAreaLayoutArtifactPortV1, WidgetAreaMutationErrorV1, type WidgetAreaPresetV1 } from '@happier-dev/protocol/widgets/widgetSurfaceArtifactV1';
 import type { WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
@@ -8,12 +9,14 @@ import type { WorkBoardArtifactTransportV1 } from '@happier-dev/protocol/boards/
 export function createCliWidgetAreaActionDepsV1(input: Readonly<{
     transport: HomeHubArtifactTransportV1 & Partial<Pick<WorkBoardArtifactTransportV1, 'list' | 'delete'>>; scope: Readonly<{ serverId: string; accountId: string }>;
     isCurrent(): boolean;
+    readTitles?: Parameters<typeof createWidgetSurfaceArtifactPortV1>[1]['readTitles'];
     resolvePresets?: (surface: WidgetSurfaceRefV1) => readonly WidgetAreaPresetV1[] | undefined;
+    readProjectReference?: (project: QualifiedProjectKeyV1, signal?: AbortSignal, context?: ActionExecutorContext) => Promise<'referenced' | 'unreferenced'>;
 }>): Pick<ActionExecutorDeps, 'widgetSurfaceActions' | 'widgetAreaLayouts'> {
     const areaPort = (surface: WidgetSurfaceRefV1) => {
         if (!input.isCurrent()) throw new WidgetAreaMutationErrorV1('widget_area_scope_retired');
         if (surface.serverId !== input.scope.serverId || surface.accountId !== input.scope.accountId && !(surface.owner.kind === 'project' && surface.artifactId)) throw new WidgetAreaMutationErrorV1('widget_area_owner_mismatch');
-        return createWidgetSurfaceArtifactPortV1(input.transport, { surface, presets: input.resolvePresets?.(surface), isCurrent: input.isCurrent });
+        return createWidgetSurfaceArtifactPortV1(input.transport, { surface, presets: input.resolvePresets?.(surface), isCurrent: input.isCurrent, readTitles: input.readTitles });
     };
     const area = createWidgetAreaActionPortV1(areaPort);
     const run = async <T>(operation: () => Promise<T>) => {
@@ -23,12 +26,13 @@ export function createCliWidgetAreaActionDepsV1(input: Readonly<{
     const areaDeps = { widgetSurfaceActions: { pluginArea: area, project: area, corePage: area } };
     const list = input.transport.list;
     const remove = input.transport.delete;
-    const dashboard = (surface: Parameters<typeof createWidgetAreaLayoutArtifactPortV1>[1]['surface']) => {
+    const dashboard = (surface: Parameters<typeof createWidgetAreaLayoutArtifactPortV1>[1]['surface'], context?: ActionExecutorContext) => {
         if (!input.isCurrent()) throw new WidgetAreaMutationErrorV1('widget_area_scope_retired');
         if (!list || !remove) throw new WidgetAreaMutationErrorV1('widget_layouts_unavailable');
         const transport = { ...input.transport, list, delete: remove };
         if (surface.serverId !== input.scope.serverId || surface.accountId !== input.scope.accountId && !(surface.owner.kind === 'project' && surface.artifactId)) throw new WidgetAreaMutationErrorV1('widget_area_owner_mismatch');
-        return createWidgetAreaLayoutArtifactPortV1(transport, { surface, presets: input.resolvePresets?.(surface), isCurrent: input.isCurrent });
+        return createWidgetAreaLayoutArtifactPortV1(transport, { surface, presets: input.resolvePresets?.(surface), isCurrent: input.isCurrent,
+            readProjectReference: input.readProjectReference ? (project, signal) => input.readProjectReference!(project, signal, context) : undefined });
     };
     return { ...areaDeps, widgetAreaLayouts: {
         reset: (args, _context, signal) => run(() => areaPort(args.surface).resetPreset(args.expectedRevision, signal)),
@@ -36,7 +40,7 @@ export function createCliWidgetAreaActionDepsV1(input: Readonly<{
         list: (args, _context, signal) => run(() => dashboard(args.surface).list(signal)),
         create: (args, _context, signal) => run(() => dashboard(args.surface).create(args, signal)),
         rename: (args, _context, signal) => run(() => dashboard(args.surface).rename(args, signal)),
-        delete: (args, _context, signal) => run(() => dashboard(args.surface).delete(args, signal)),
+        delete: (args, context, signal) => run(() => dashboard(args.surface, context).delete(args, signal)),
         reorder: (args, _context, signal) => run(() => dashboard(args.surface).reorder(args, signal)),
     } };
 }

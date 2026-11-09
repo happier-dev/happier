@@ -18,6 +18,8 @@ import {
   sanitizeSessionMediaIdentifier,
 } from './names';
 import { prepareSource } from './source';
+import { extractImportedSessionMedia } from './imported';
+import { resolveTranscriptBodySemanticEvent } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import {
   extensionForSessionMediaMimeType,
   sessionMediaKindForMimeType,
@@ -482,13 +484,39 @@ async function stageSessionMediaEnvelope(params: Readonly<{
   };
 }
 
+/** Convert source-only image blocks into the incumbent private staging envelope. */
+function stageInlineImportedMedia(raw: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(raw.media)) return raw;
+  const { media: content, ...withoutInline } = raw;
+  if (content.length === 0) return withoutInline;
+  const semantic = resolveTranscriptBodySemanticEvent({ protocol: 'acp', body: raw.content });
+  const body = asRecord(semantic?.body);
+  const toolCallId = body?.type === 'tool-result' || body?.type === 'tool-call-result' ? readString(body.callId) : null;
+  const extracted = extractImportedSessionMedia({ content, role: raw.role === 'user' ? 'user' : 'agent',
+    ...(toolCallId ? { toolCallId } : {}) });
+  const media = extracted.media.map(entry => {
+    if (entry.source.kind !== 'base64') throw new Error('external_session_inline_media_required');
+    return { role: extracted.role, category: extracted.category, origin: entry.origin,
+      ...(entry.suggestedName ? { name: entry.suggestedName } : {}),
+      stagedSource: { ...entry.source, kind: HISTORICAL_IMPORT_STAGED_MEDIA_KIND } };
+  });
+  const meta = asRecord(raw.meta) ?? {};
+  const slot = Object.hasOwn(meta, 'happier') ? 'happierMedia' : 'happier';
+  return { ...withoutInline, meta: { ...meta,
+    ...(extracted.failures.length ? { importedHistoryCoverage: 'partial' } : {}),
+    [slot]: { kind: SESSION_MEDIA_ENVELOPE_KIND, payload: { media,
+      ...(extracted.failures.length ? { failures: extracted.failures } : {}) } },
+  } };
+}
+
 export async function stageSessionMediaMetadataForHistoricalImport(params: Readonly<{
   raw: Record<string, unknown>;
   workingDirectory: string | null;
   sourceReadRoots?: readonly string[];
 }>): Promise<Record<string, unknown>> {
-  const meta = asRecord(params.raw.meta);
-  if (!meta) return params.raw;
+  const raw = stageInlineImportedMedia(params.raw);
+  const meta = asRecord(raw.meta);
+  if (!meta) return raw;
   if (!params.workingDirectory) {
     const hasMedia = [meta.happier, meta.happierMedia].some((value) => {
       const envelope = asRecord(value);
@@ -500,7 +528,7 @@ export async function stageSessionMediaMetadataForHistoricalImport(params: Reado
     if (hasMedia) {
       throw new Error('historical_import_media_working_directory_unavailable');
     }
-    return params.raw;
+    return raw;
   }
   const nextMeta: Record<string, unknown> = { ...meta };
   const primary = await stageSessionMediaEnvelope({
@@ -523,10 +551,11 @@ export async function stageSessionMediaMetadataForHistoricalImport(params: Reado
   } else {
     nextMeta.happierMedia = secondary;
   }
-  return { ...params.raw, meta: nextMeta };
+  return { ...raw, meta: nextMeta };
 }
 
 export function countStagedSessionMediaMetadata(raw: Record<string, unknown>): number {
+  if (Array.isArray(raw.media) && raw.media.length > 0) return raw.media.length;
   const meta = asRecord(raw.meta);
   if (!meta) return 0;
   let count = 0;
@@ -634,9 +663,13 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
   onCreatedWorkspacePath?: (path: string) => void;
   onPersistedWorkspacePath?: (path: string) => void;
 }>): Promise<Record<string, unknown>> {
-  if (!params.workingDirectory) return params.raw;
-  const meta = asRecord(params.raw.meta);
-  if (!meta) return params.raw;
+  const raw = stageInlineImportedMedia(params.raw);
+  if (!params.workingDirectory) {
+    if (countStagedSessionMediaMetadata(raw)) throw new Error('historical_import_media_working_directory_unavailable');
+    return raw;
+  }
+  const meta = asRecord(raw.meta);
+  if (!meta) return raw;
 
   const nextMeta: Record<string, unknown> = { ...meta };
   const primary = await adoptSessionMediaEnvelope({
@@ -671,5 +704,5 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
     nextMeta.happierMedia = secondary;
   }
 
-  return { ...params.raw, meta: nextMeta };
+  return { ...raw, meta: nextMeta };
 }

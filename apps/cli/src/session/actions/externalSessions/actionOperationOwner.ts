@@ -9,9 +9,11 @@ import {
   listExternalSessionOperationStoredEntries,
   readExternalSessionOperationStoredEntry,
   resolveExternalSessionOperationRecordsDirectory,
-  resolveExternalSessionOperationAdmissionAccountScope,
+  captureExternalSessionOperationAccountAdmission,
+  ExternalSessionOperationRecordReadError,
   subscribeExternalSessionOperationRecords,
   type ExternalSessionOperationStoredEntry,
+  type ExternalSessionOperationAccountAdmission,
 } from './operationRecordStore';
 import { logExternalSessionsInternalError } from './responseErrors';
 
@@ -72,62 +74,63 @@ export function createExternalSessionActionOperationOwner(deps: Readonly<{
   activeServerDir: string;
   execute: RpcActionExecutor['execute'];
 }>): ActionOperationDomainOwner {
-  const directoryForScope = async (scope: ActionOperationQueryScope) => {
-    const admitted = await resolveExternalSessionOperationAdmissionAccountScope(deps.activeServerDir);
+  const admissionForScope = async (scope: ActionOperationQueryScope, captured?: ExternalSessionOperationAccountAdmission) => {
+    const admission = captured ?? await captureExternalSessionOperationAccountAdmission(deps.activeServerDir);
+    if (!admission) throw new ExternalSessionOperationRecordReadError('account_scope_unavailable', 'activity');
+    const admitted = admission?.accountScope;
     // This durable domain belongs to the installed Account. Foreign requesters
     // may still inspect their host-owned Browser and other in-memory operations.
     if (admitted && admitted.accountSubject !== scope.accountId) return null;
-    return await resolveExternalSessionOperationRecordsDirectory(
+    const directory = await resolveExternalSessionOperationRecordsDirectory(
       deps.activeServerDir, 'activity', { activeServerDir: deps.activeServerDir, accountSubject: scope.accountId },
     );
+    return { directory, admission };
   };
-  const read = async (scope: ActionOperationQueryScope, operationId: string) => {
-    const directory = await directoryForScope(scope);
-    return directory ? await readExternalSessionOperationStoredEntry(directory, operationId) : null;
+  const read = async (scope: ActionOperationQueryScope, operationId: string, captured?: ExternalSessionOperationAccountAdmission) => {
+    const admitted = await admissionForScope(scope, captured);
+    return admitted ? { entry: await readExternalSessionOperationStoredEntry(admitted.directory, operationId), admission: admitted.admission } : null;
   };
   return Object.freeze<ActionOperationDomainOwner>({
     actionIds: ACTION_IDS,
     async list(scope) {
-      const directory = await directoryForScope(scope);
-      if (!directory) return [];
-      return (await listExternalSessionOperationStoredEntries(directory))
+      const admitted = await admissionForScope(scope);
+      if (!admitted) return [];
+      return (await listExternalSessionOperationStoredEntries(admitted.directory))
         .flatMap((entry) => {
           const snapshot = projectExternalSessionActionOperation(entry, scope);
           return snapshot ? [snapshot] : [];
         });
     },
     async get(scope, operationId) {
-      const entry = await read(scope, operationId);
+      const entry = (await read(scope, operationId))?.entry;
       return entry ? projectExternalSessionActionOperation(entry, scope) : null;
     },
-    async cancel(scope, operationId) {
-      // Only the durable executor may decide or mutate cancellation. Retry its CAS when a progress commit races Stop.
-      for (;;) {
-        const entry = await read(scope, operationId);
-        if (!entry) return null;
-        const snapshot = projectExternalSessionActionOperation(entry, scope);
-        if (!snapshot) return null;
-        if (entry.kind === 'terminal_receipt' || isExternalSessionOperationTerminalStatusV1(entry.record.status)) return { kind: 'already_settled' as const };
-        const record = entry.record;
-        if (record.status === 'cancel_requested') return { kind: 'requested' as const };
-        if (!canCancelExternalSessionOperationV1(record)) return { kind: 'unsupported' as const };
-        const result = await deps.execute('sessions.external.operation.cancel', {
-          sessionId: record.request.sessionId, operationId, revision: record.revision,
-        });
-        if (!result.ok) throw new Error(`external_session_activity_cancel_failed:${result.errorCode}`);
-        const response = ExternalSessionOperationActionResponseV1Schema.parse(result.result);
-        if (response.ok) return { kind: 'requested' as const };
-        if (response.error.code === 'stale_revision') continue;
-        if (response.error.code === 'not_allowed' || response.error.code === 'operation_conflict') return { kind: 'unsupported' as const };
-        throw new Error(`external_session_activity_cancel_failed:${response.error.code}`);
-      }
+    async cancel(scope, operationId, context) {
+      const admitted = await read(scope, operationId, context?.externalSessionOperationAdmission);
+      if (!admitted) return null;
+      const entry = admitted.entry;
+      if (!entry) return null;
+      const snapshot = projectExternalSessionActionOperation(entry, scope);
+      if (!snapshot) return null;
+      if (entry.kind === 'terminal_receipt' || isExternalSessionOperationTerminalStatusV1(entry.record.status)) return { kind: 'already_settled' as const };
+      const record = entry.record;
+      if (record.status === 'cancel_requested') return { kind: 'requested' as const };
+      const result = await deps.execute('sessions.external.operation.cancel', {
+        sessionId: record.request.sessionId, operationId, revision: record.revision,
+      }, { ...context, ...(admitted.admission ? { externalSessionOperationAdmission: admitted.admission } : {}) });
+      if (!result.ok) throw new Error(`external_session_activity_cancel_failed:${result.errorCode}`);
+      const response = ExternalSessionOperationActionResponseV1Schema.parse(result.result);
+      if (response.ok) return { kind: 'requested' as const };
+      if (response.error.code === 'operation_not_found') return null;
+      if (response.error.code === 'not_allowed' || response.error.code === 'operation_conflict') return { kind: 'unsupported' as const };
+      throw new Error(`external_session_activity_cancel_failed:${response.error.code}`);
     },
     subscribe({ resolveScope, publishSnapshot }) {
       let disposed = false;
       const unsubscribe = subscribeExternalSessionOperationRecords((directory, record) => {
         void (async () => {
           const scope = await resolveScope();
-          if (!scope || disposed || directory !== await directoryForScope(scope)) return;
+          if (!scope || disposed || directory !== (await admissionForScope(scope))?.directory) return;
           const snapshot = projectExternalSessionActionOperation({ kind: 'full_record', record }, scope);
           if (!disposed && snapshot) publishSnapshot(snapshot);
         })().catch((error) => logExternalSessionsInternalError('external_session.operation_activity_projection', error));

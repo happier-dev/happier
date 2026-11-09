@@ -79,11 +79,13 @@ it('keeps Session transition implementations cold through the real Action factor
     const diagnostics: string[] = [];
     child.stdout?.on('data', chunk => diagnostics.push(String(chunk)));
     child.stderr?.on('data', chunk => diagnostics.push(String(chunk)));
+    onTestFailed(() => console.error(diagnostics.join('')));
     onTestFinished(async () => {
       if (child.exitCode === null && child.signalCode === null) { child.kill(); await closed; }
     });
     const [code] = await closed;
     expect(code, diagnostics.join('')).toBe(0);
+    console.info(diagnostics.join(''));
     expect(diagnostics.join('')).toContain('cold-action-ports-verified');
 
     const entry = join(directory, 'component.ts');
@@ -124,5 +126,10 @@ it('keeps Session transition implementations cold through the real Action factor
     const allDemand = reachable(true);
     expect(heavy.filter(path => cold.has(path))).toEqual([]);
     expect(heavy.every(path => allDemand.has(path))).toBe(true);
+    console.info('Emitted Action component reachability', {
+      coldOutputs: cold.size, allDemandOutputs: allDemand.size, heavyOutputs: heavy.length,
+      coldBytes: [...cold].reduce((total, path) => total + outputs[path].bytes, 0),
+      allDemandBytes: [...allDemand].reduce((total, path) => total + outputs[path].bytes, 0),
+    });
   });
 }, 120_000);

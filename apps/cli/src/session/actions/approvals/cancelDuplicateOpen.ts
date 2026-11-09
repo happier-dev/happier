@@ -4,6 +4,7 @@ import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/appro
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { deriveRetainedPluginObligationDuplicateKey, RETAINED_PLUGIN_OBLIGATION_ACTION_IDS } from '@happier-dev/protocol/approvals/creation';
+import { readApprovalPassFailure, type ApprovalPassFailure } from './passFailure';
 
 type Header = Readonly<Record<string, unknown>>;
 
@@ -38,7 +39,14 @@ export async function cancelDuplicateOpenApprovals(input: Readonly<{ accountArti
   }
   let duplicateGroups = 0;
   let canceled = 0;
-  let failed = 0;
+  let alreadySettled = 0;
+  const failures = new Map<string, ApprovalPassFailure & { count: number }>();
+  const fail = (failure: ApprovalPassFailure) => {
+    const key = JSON.stringify([failure.errorClass, failure.errorCode ?? null, failure.status ?? null]);
+    const entry = failures.get(key) ?? { ...failure, count: 0 };
+    entry.count++;
+    failures.set(key, entry);
+  };
   for (const group of groups.values()) {
     if (group.length < 2) continue;
     duplicateGroups++;
@@ -48,9 +56,15 @@ export async function cancelDuplicateOpenApprovals(input: Readonly<{ accountArti
       try {
         const updated = await input.accountArtifactStore.approvalsUpdate({ artifactId, serverId: null, expectedStatus: 'open',
           request: { ...settleApprovalRequestReplayInputs(request), status: 'canceled', updatedAtMs: Math.max(Date.now(), request.updatedAtMs) } });
-        if (updated.ok) canceled++; else failed++;
-      } catch { failed++; }
+        if (updated.ok) canceled++;
+        // The transition owner refused because the row is no longer open: another daemon of the
+        // Account canceled it first, or a person decided it. Nothing is left for this pass to do.
+        else if (updated.errorCode === 'invalid_transition') alreadySettled++;
+        else fail({ errorClass: 'ApprovalUpdateRefused', errorCode: updated.errorCode });
+      } catch (error) { fail(readApprovalPassFailure(error)); }
     }
   }
-  return { groups: duplicateGroups, canceled, unclassified, failed, coverage: selected.coverage };
+  const failed = [...failures.values()].reduce((sum, entry) => sum + entry.count, 0);
+  return { groups: duplicateGroups, canceled, alreadySettled, unclassified, failed, coverage: selected.coverage,
+    ...(failed ? { failures: [...failures.values()] } : {}) };
 }

@@ -2,6 +2,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { SessionSnapshotRefreshReason } from '@/api/session/sessionSnapshotRefreshReason';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import type {
@@ -71,6 +72,8 @@ export async function resolveSessionTransportContext(params: Readonly<{
     idOrPrefix: string;
     /** The daemon already owns this exact effect target; never search for a substitute. */
     exact?: true;
+    /** Host-only exact routing fact retained from Action admission, never authored input. */
+    expectedSessionAddress?: ActionSessionAddressV1;
     resolveAuthorizationHeaders?: (request: Readonly<{
         method: 'GET' | 'POST'; path: string; body?: unknown;
     }>) => Readonly<Record<string, string>> | null;
@@ -94,7 +97,7 @@ export async function resolveSessionTransportContext(params: Readonly<{
         throw new Error('External Action authorization unavailable');
     }
     const accountEncryptionCurrentnessRead = fetchAccountEncryptionCurrentness({
-        token: params.credentials.token,
+        credentials: params.credentials, token: params.credentials.token,
         ...(currentnessAuthorizationHeaders
             ? { authorizationHeaders: currentnessAuthorizationHeaders }
             : {}),
@@ -125,13 +128,12 @@ export async function resolveSessionTransportContext(params: Readonly<{
         reason: params.reason,
         credentials: params.credentials,
         idOrPrefix: params.idOrPrefix,
-        ...(params.exact ? { exact: true as const } : {}),
+        ...(params.exact || params.expectedSessionAddress ? { exact: true as const } : {}),
         ...(params.resolveAuthorizationHeaders
             ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
             : {}),
         ...(params.signal ? { signal: params.signal } : {}),
         ...(params.serverFeaturesSnapshot ? { serverFeaturesSnapshot: params.serverFeaturesSnapshot } : {}),
-        accountEncryptionMode: async () => (await accountEncryptionCurrentnessRead).mode,
     }).then(resolved => { phase('session_lookup', lookupStartedAt); return resolved; });
     // Both reads stay fresh. No transport or encryption material is published
     // until the Account witness and the canonical selector have both settled.
@@ -143,6 +145,12 @@ export async function resolveSessionTransportContext(params: Readonly<{
             code: resolved.code,
             ...(resolved.candidates ? { candidates: resolved.candidates } : {}),
         };
+    }
+    // A fresh lookup may fall back from a disappeared exact id to another
+    // Session's tag. That reference behavior is retained only when no exact
+    // routing address was admitted. Never publish a different effect target.
+    if (params.expectedSessionAddress && resolved.sessionId !== params.expectedSessionAddress.sessionId) {
+        return { ok: false, code: 'session_not_found', sessionId: params.expectedSessionAddress.sessionId };
     }
 
     const rawSessionPromise = resolved.rawSession

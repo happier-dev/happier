@@ -1,10 +1,41 @@
 import { describe, expect, it, vi } from 'vitest';
 import { logger } from '@/ui/logger';
-import { createStopSession } from '@/daemon/sessions/stopSession';
 
 import { createMachineSessionStopLifecycleActionExecutor } from './createStopSessionLifecycleActionExecutor';
+import { createStopSession } from '@/daemon/sessions/stopSession';
+import { recoverStrandedTerminalControlServiceability } from '@/daemon/sessions/recoverStrandedTerminalControlServiceability';
+import { retireExactTerminalControlServiceability } from '@/daemon/sessions/retireTerminalControlServiceability';
+import { StopSessionResultSchema } from '@/daemon/sessions/stopSessionContract';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 describe('createMachineSessionStopLifecycleActionExecutor', () => {
+  it.each(['machine-current', 'machine-foreign'] as const)(
+    'keeps pre-runner Stop refusal typed through the real lifecycle owner (%s)', async currentMachineId => {
+      const credentials = { token: 'token', encryption: null };
+      const stopSession = createStopSession({
+        pidToTrackedSession: new Map(),
+        // Files and Home are boundaries. The Session exists before runner birth;
+        // no process identity or terminal descriptor has been published yet.
+        readHostAttachmentState: async () => ({ status: 'absent' }),
+        readTerminalAttachmentInfo: async () => null,
+        recoverStrandedTerminalControlServiceability: async input =>
+          await recoverStrandedTerminalControlServiceability({ ...input, credentials, currentMachineId,
+            resolveAccountEncryptionMode: async () => 'plain',
+            fetchSession: async () => createSessionRecordFixture({ id: 'session-starting', encryptionMode: 'plain',
+              metadataLayoutVersion: 0, metadata: JSON.stringify({ machineId: 'machine-current', terminal: { mode: 'plain' } }) }),
+            loadTerminalHostAdapters: async () => ({}),
+            retireExactTerminalControlServiceability: input => retireExactTerminalControlServiceability({ credentials, ...input }),
+          }),
+      });
+      const executor = createMachineSessionStopLifecycleActionExecutor({ stopSession });
+      const result = await executor.execute('session.stop', { sessionId: 'session-starting' });
+      expect(result).toEqual({ ok: true, result: currentMachineId === 'machine-current'
+        ? { status: 'incomplete', reason: 'missing_topology_proof' } : { status: 'not_found' } });
+      if (!result.ok) throw new Error('Expected a typed lifecycle result');
+      expect(StopSessionResultSchema.parse(result.result)).toEqual(result.result);
+    },
+  );
+
   it.each([
     { status: 'stopped' as const },
     { status: 'requested' as const },

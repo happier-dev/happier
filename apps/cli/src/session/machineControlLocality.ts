@@ -3,7 +3,7 @@ import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identi
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 
 import { fetchAccountMachineReplacements } from '@/api/machine/fetchAccountMachineReplacements';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { configuration } from '@/configuration';
 import type { StoredCredentials } from '@/persistence';
 import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMode';
@@ -100,15 +100,14 @@ export function resolveSessionMachineWorkspacePath(params: Readonly<{
   currentMachineId?: unknown;
   candidatePath?: unknown;
 }>): string | null {
-  const candidatePath = readString(params.candidatePath);
-  if (!candidatePath) return null;
+  const candidatePath = readString(params.candidatePath) ?? '';
   const currentMachineId = readString(params.currentMachineId);
-  if (!currentMachineId) return candidatePath;
+  if (!currentMachineId) return candidatePath || null;
   return resolveSessionWorkspaceRootForMachine({
     metadata: params.metadata,
     machineId: currentMachineId,
     candidatePath,
-  }).machinePath;
+  }).machinePath || null;
 }
 
 /** Exact owner metadata and locality read shared by installed and admitted Account custody. */

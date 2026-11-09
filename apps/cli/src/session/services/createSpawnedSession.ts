@@ -1513,9 +1513,16 @@ export async function createSpawnedSession(
       : typeof spawnResponseRecord?.error === 'string' && spawnResponseRecord.error.trim().length > 0
         ? spawnResponseRecord.error
         : 'Failed to spawn session';
+    // The daemon asks for folder-creation consent only when the folder is absent at
+    // launch. Creation callers decide consent from target preparation first, so this
+    // reply means the folder is missing now: name that cause instead of `conflict`.
+    if (spawnResponseRecord?.type === 'requestToApproveDirectoryCreation') {
+      throw createCodedError('The Session folder does not exist on the Machine. Choose another folder.',
+        SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING, spawnResponse ?? null);
+    }
     throw createCodedError(
       responseError,
-      spawnResponseRecord?.requiresUserApproval === true || spawnResponseRecord?.type === 'requestToApproveDirectoryCreation'
+      spawnResponseRecord?.requiresUserApproval === true
         ? 'conflict'
         : readSpawnFailureCode(spawnResponseRecord, 'unknown_error'),
       spawnResponse ?? null,

@@ -158,22 +158,37 @@ describe('fetchEncryptedTranscriptMessages', () => {
     });
   });
 
-  it('passes an active cancellation signal to the axios transcript-read boundary', async () => {
+  it('preserves cancellation through completion of the transcript response', async () => {
     const cancellation = new AbortController();
-    const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
-      status: 200,
-      data: { messages: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null },
-    } as any);
+    const reason = new Error('read superseded');
+    vi.spyOn(axios, 'get').mockImplementationOnce(async (_url, config) => {
+      expect(config?.signal?.aborted).toBe(false);
+      cancellation.abort(reason);
+      expect(config?.signal?.aborted).toBe(true);
+      return {
+        status: 200,
+        data: { messages: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null },
+      };
+    });
 
     const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
-    await fetchEncryptedTranscriptMessagesPage({
+    await expect(fetchEncryptedTranscriptMessagesPage({
       token: 't',
       sessionId: 'sess_1',
       limit: 10,
       signal: cancellation.signal,
-    });
+    })).rejects.toBe(reason);
+  });
 
-    expect((getSpy as any).mock.calls[0]?.[1]?.signal).toBe(cancellation.signal);
+  it('uses the caller absolute deadline beyond the standalone request default', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(0);
+    const get = vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: { messages: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null },
+    });
+    const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
+    await fetchEncryptedTranscriptMessagesPage({ token: 't', sessionId: 'sess_1', limit: 10, deadlineAtMs: 30_000 });
+    expect(get.mock.calls[0]?.[1]?.timeout).toBe(30_000);
   });
 
   it('rejects a whole authoritative page when one row has malformed stored content', async () => {
@@ -280,5 +295,17 @@ describe('fetchEncryptedTranscriptMessages', () => {
       name: 'HttpStatusError',
       response: { status: 401 },
     } satisfies Partial<HttpStatusError>);
+  });  it.each(['before', 'after'] as const)('rejects a %s continuation that skips past the returned boundary', async (direction) => {
+    const messages = (direction === 'before' ? [8, 3] : [3, 8]).map(seq => ({ id: `m-${seq}`, seq, localId: null, createdAt: seq, updatedAt: seq, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'prompt' } } } }));
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: { messages, hasMore: true, nextBeforeSeq: direction === 'before' ? 1 : null, nextAfterSeq: direction === 'after' ? 10 : null } });
+    const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
+    await expect(fetchEncryptedTranscriptMessagesPage({ token: 't', sessionId: 'sess_1', limit: 2, ...(direction === 'before' ? { beforeSeq: 10 } : { afterSeq: 0 }) })).rejects.toThrow();
   });
+  it.each(['before', 'after'] as const)('preserves valid sequence gaps in a %s page', async (direction) => {
+    const messages = (direction === 'before' ? [8, 3] : [3, 8]).map(seq => ({ id: `m-${seq}`, seq, localId: null, createdAt: seq, updatedAt: seq, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'prompt' } } } }));
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: { messages, hasMore: true, nextBeforeSeq: direction === 'before' ? 3 : null, nextAfterSeq: direction === 'after' ? 8 : null } });
+    const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
+    await expect(fetchEncryptedTranscriptMessagesPage({ token: 't', sessionId: 'sess_1', limit: 2, ...(direction === 'before' ? { beforeSeq: 10 } : { afterSeq: 0 }) })).resolves.toMatchObject({ messages, hasMore: true });
+  });
+
 });

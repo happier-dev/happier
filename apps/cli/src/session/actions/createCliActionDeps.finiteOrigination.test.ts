@@ -1,12 +1,6 @@
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
-import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { AccountSettingsSchema } from '@happier-dev/protocol';
-import { onTestFinished } from 'vitest';
-import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import axios from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createCliActionDeps } from './createCliActionDeps';
 import * as machineTransport from '@/session/transport/rpc/machineRpc';
@@ -15,6 +9,10 @@ import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@h
 import { ExternalActionRequestEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { AccountSettingsSchema } from '@happier-dev/protocol';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { prepareExternalActionRequesterAccountAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';

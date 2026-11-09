@@ -15,7 +15,6 @@ import { createCliMcpServerActionExecuteV1 } from './createCliMcpServerActionDep
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
-import { DEFAULT_MACHINE_ONLINE_GRACE_MS } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
@@ -42,6 +41,8 @@ afterEach(async () => {
 describe('MCP Machine Action transport disposition', () => {
   it('retains the requester HTTP proof for Machine administration and tool inventory, refusing retired or mismatched custody', async () => {
     const inventoryHeaders: (string | undefined)[] = [];
+    const catalogHeaders: (string | undefined)[] = [];
+    const catalogBearerHeaders: (string | undefined)[] = [];
     const server = createServer((request, response) => {
       response.setHeader('Content-Type', 'application/json');
       if (request.url?.endsWith('/execution-authorization/verify')) return response.end(JSON.stringify({ ok: true }));
@@ -53,10 +54,14 @@ describe('MCP Machine Action transport disposition', () => {
         return response.end(JSON.stringify([{ id: 'selected-machine', active: true, activeAt: Date.now(), revokedAt: null,
           replacedByMachineId: null, storageMode: 'plain', dataEncryptionKey: null }]));
       }
-      if (request.url === '/v1/account/entity-rows/mcp') return response.end(JSON.stringify({ status: 'present', revision: 1,
+      if (request.url === '/v1/account/entity-rows/mcp') {
+        catalogHeaders.push(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]?.toString());
+        catalogBearerHeaders.push(request.headers.authorization);
+        return response.end(JSON.stringify({ status: 'present', revision: 1,
         content: { t: 'plain', v: { v: 1, bindings: [], servers: [{ id: 'server', name: 'server', transport: 'http',
           remote: { url: 'https://mcp.fixture.test/mcp', headers: {}, auth: { kind: 'oauth' } },
           env: {}, createdAt: 1, updatedAt: 1 }] } } }));
+      }
       if (request.url === '/v1/account/entity-rows/profiles/transfer') return response.end(JSON.stringify({ status: 'absent' }));
       response.statusCode = 404;
       return response.end('{}');
@@ -93,8 +98,12 @@ describe('MCP Machine Action transport disposition', () => {
         rpcSessionAuthorization: { kind: 'session.write' as const, sessionId: 'caller-session' },
         externalActionExecutionAuthorization: authorization };
       const before = inventoryHeaders.length;
+      const catalogBefore = catalogHeaders.length;
       const receipt = await execute({ actionId, input: { serverId: 'server' }, context });
       expect(inventoryHeaders.slice(before)).toEqual([root.token]);
+      expect(catalogHeaders.slice(catalogBefore)).not.toHaveLength(0);
+      expect(catalogHeaders.slice(catalogBefore).every(token => token === root.token)).toBe(true);
+      expect(catalogBearerHeaders.slice(catalogBefore).every(value => value === undefined)).toBe(true);
       expect(receipt).toMatchObject(actionId === 'mcp.servers.signIn.start'
         ? { ok: false, errorCode: 'mcp_sign_in_not_supported' } : { ok: true });
       for (const mismatch of [{ accountId: 'another-account' }, { serverHttpBaseUrl: 'https://another-home.test' }]) {
@@ -231,8 +240,8 @@ describe('MCP Machine Action transport disposition', () => {
     });
   });
   it.each([true, false])('keeps sign-in administration on the admitted Machine and automatic selection on reachable Machines (explicit=%s)', async explicit => {
-    const machines = ['other-machine', 'selected-machine'].map(id => ({ id, active: true,
-      activeAt: id === 'selected-machine' ? Date.now() - DEFAULT_MACHINE_ONLINE_GRACE_MS - 1 : Date.now(),
+    const machines = ['other-machine', 'selected-machine'].map(id => ({ id, active: id !== 'selected-machine',
+      activeAt: Date.now(),
       revokedAt: null, replacedByMachineId: null, storageMode: 'plain', dataEncryptionKey: null }));
     const server = createServer((request, response) => {
       response.setHeader('Content-Type', 'application/json');

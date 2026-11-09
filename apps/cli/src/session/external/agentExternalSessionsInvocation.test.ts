@@ -54,6 +54,8 @@ const unavailableManagedEndpointRead = async (): Promise<AgentExternalSessionsMa
     throw new Error('unavailable');
 };
 const unavailableInvocationExec = createUnavailablePluginServices().exec;
+// Capture the native clock before any test replaces process.hrtime.
+const realMonotonicTime = process.hrtime.bigint;
 
 type MethodName =
     | 'resolveSource'
@@ -346,25 +348,27 @@ describe('bounded Agent External Sessions invocation', () => {
             .resolves.toMatchObject({ ok: false, code: 'timeout', retryable: true });
     });
 
-    it('reports older accounting facets unsupported and fences cancelled or retired accounting', async () => {
+    it('reports older accounting facets unsupported and finishes admitted accounting until caller cancellation', async () => {
         const older = createWrapper();
         expect(older.supportsAccounting).toBe(false);
         await expect(older.readAccounting!({ source, signal: new AbortController().signal })).resolves.toMatchObject({ ok: false, code: 'unsupported' });
         const pending = deferred<AgentExternalSessionsResult<{ outcome: 'unchanged' }>>();
+        const entered = deferred<void>();
         const retirement = new AbortController();
         const caller = new AbortController();
         const wrapped = createWrapper({ retirementSignal: retirement.signal, contribution: {
             ...contributionWith((method) => successFor(method)),
-            readAccounting: async () => pending.promise,
+            readAccounting: async () => { entered.resolve(); return pending.promise; },
         } });
         const cancelled = wrapped.readAccounting!({ source, signal: caller.signal });
         expect(wrapped.supportsAccounting).toBe(true);
         caller.abort();
         await expect(cancelled).resolves.toMatchObject({ ok: false, code: 'cancelled' });
         const retired = wrapped.readAccounting!({ source, signal: new AbortController().signal });
+        await entered.promise;
         retirement.abort();
-        await expect(retired).resolves.toMatchObject({ ok: false, code: 'unavailable' });
         pending.resolve({ ok: true, value: { outcome: 'unchanged' } });
+        await expect(retired).resolves.toMatchObject({ ok: true, value: { outcome: 'unchanged' } });
     });
     it('preserves a caller deadline beyond the native timer range and cancels its rearmed timer', async () => {
         vi.useFakeTimers();
@@ -528,7 +532,7 @@ describe('bounded Agent External Sessions invocation', () => {
         expect(receivedRequest?.exec).not.toBe(hostSuppliedExec);
     });
 
-    it('binds the exact managed endpoint read once before contribution entry and retires it when the contribution settles', async () => {
+    it('retains the exact acquired managed read through retirement until its containing operation settles', async () => {
         const admittedRead = vi.fn(async () => Object.freeze({
             ok: true,
             status: 200,
@@ -560,6 +564,7 @@ describe('bounded Agent External Sessions invocation', () => {
                     signal: capturedRequest.signal,
                 });
                 selectedRead = replacementRead;
+                current = false;
                 inContributionResponse = await capturedRequest.managedEndpointRead({
                     pathAndQuery: '/session?directory=workspace',
                     headers: { accept: 'application/json' },
@@ -593,7 +598,7 @@ describe('bounded Agent External Sessions invocation', () => {
         current = false;
         await expect(endpointRead({
             pathAndQuery: '/session',
-        })).rejects.toThrow('retired generation');
+        })).rejects.toThrow('settled');
         expect(delegated).toHaveBeenCalledOnce();
         expect(admittedRead).toHaveBeenCalledOnce();
         expect(replacementRead).not.toHaveBeenCalled();
@@ -987,31 +992,33 @@ describe('bounded Agent External Sessions invocation', () => {
         'resolveLinkedIdentity',
         'pageTranscript',
         'readAfterTranscript',
-    ] as const)('retires an in-flight %s call and drops its late settlement', async (method) => {
+    ] as const)('finishes an admitted %s call under its captured codec and refuses the next request', async (method) => {
         const pending = deferred<AgentExternalSessionsResult<unknown>>();
+        const entered = deferred<void>();
         const retirement = new AbortController();
         let current = true;
+        const isCurrent = vi.fn(() => current);
         const wrapped = createWrapper({
-            contribution: contributionWith(() => pending.promise),
-            isCurrent: () => current,
+            contribution: contributionWith(() => { entered.resolve(); return pending.promise; }),
+            isCurrent,
             retirementSignal: retirement.signal,
         });
 
         const resultPromise = invoke(wrapped, method);
-        await Promise.resolve();
+        await entered.promise;
+        const admissionChecks = isCurrent.mock.calls.length;
         current = false;
         retirement.abort();
-        await expect(resultPromise).resolves.toEqual({
-            ok: false,
-            code: 'unavailable',
-            retryable: true,
-        });
         pending.resolve(successFor(method));
-        await Promise.resolve();
+        await expect(resultPromise).resolves.toMatchObject({ ok: true });
+        expect(isCurrent).toHaveBeenCalledTimes(admissionChecks);
+        await expect(invoke(wrapped, method)).resolves.toMatchObject({ ok: false, code: 'unavailable' });
+        expect(isCurrent).toHaveBeenCalledTimes(admissionChecks + 1);
     });
 
-    it('gives retirement precedence over concurrent caller cancellation and deadline, then refuses new calls', async () => {
+    it('preserves explicit caller cancellation after source retirement and refuses new calls', async () => {
         vi.useFakeTimers();
+        try {
         const pending = deferred<AgentExternalSessionsResult<unknown>>();
         const caller = new AbortController();
         const retirement = new AbortController();
@@ -1032,11 +1039,8 @@ describe('bounded Agent External Sessions invocation', () => {
         caller.abort();
         current = false;
         retirement.abort();
-        await expect(cancelledResult).resolves.toEqual({ ok: false, code: 'unavailable', retryable: true });
-        await expect(wrapped.resolveSource({
-            ...requestFor('resolveSource'),
-            maxSerializedBytes: 0,
-        })).resolves.toEqual({
+        await expect(cancelledResult).resolves.toEqual({ ok: false, code: 'cancelled', retryable: false });
+        await expect(wrapped.resolveSource(requestFor('resolveSource'))).resolves.toEqual({
             ok: false,
             code: 'unavailable',
             retryable: true,
@@ -1044,7 +1048,9 @@ describe('bounded Agent External Sessions invocation', () => {
         expect(called).toHaveBeenCalledOnce();
         pending.resolve(successFor('resolveSource'));
         await vi.advanceTimersByTimeAsync(60_000);
-        vi.useRealTimers();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it.each([
@@ -2231,8 +2237,8 @@ describe('bounded Agent External Sessions invocation', () => {
         const caller = new AbortController();
         const wrapped = createWrapper({
             contribution: contributionWith((method) => {
-                const end = Date.now() + 5;
-                while (Date.now() < end) {
+                const end = realMonotonicTime() + 5_000_000n;
+                while (realMonotonicTime() < end) {
                     // Synchronous plugin code cannot be preempted by AbortSignal.
                 }
                 return successFor(method);
@@ -2499,19 +2505,22 @@ describe('bounded selected-page candidate hydration', () => {
             .resolves.toMatchObject({ ok: false, code: 'agent_error' });
     });
 
-    it.each(['cancelled', 'unavailable'] as const)('settles pending hydration when %s', async code => {
+    it.each(['cancelled', 'retired'] as const)('settles admitted hydration when %s', async code => {
         const entered = deferred<void>();
+        const pending = deferred<AgentExternalSessionsResult<{ candidates: AgentExternalSessionCandidate[] }>>();
         const controller = new AbortController();
         const retirement = new AbortController();
         const wrapped = createWrapper({ retirementSignal: retirement.signal, contribution: withHydration(() => {
             entered.resolve();
-            return new Promise(() => undefined);
+            return pending.promise;
         }) });
         const result = wrapped.hydrateCandidates({ ...request(), signal: controller.signal });
         await entered.promise;
         if (code === 'cancelled') controller.abort();
         else retirement.abort();
-        await expect(result).resolves.toMatchObject({ ok: false, code });
+        pending.resolve({ ok: true, value: { candidates: [...candidates] } });
+        await expect(result).resolves.toMatchObject(code === 'cancelled'
+            ? { ok: false, code: 'cancelled' } : { ok: true, value: { candidates } });
     });
 
     it('settles pending hydration at the inherited deadline', async () => {

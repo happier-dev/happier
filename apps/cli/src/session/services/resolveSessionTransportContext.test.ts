@@ -111,6 +111,7 @@ describe('resolveSessionTransportContext', () => {
             signal: cancellation.signal,
         });
         expect(fetchAccountEncryptionCurrentness).toHaveBeenCalledWith({
+            credentials: expect.objectContaining({ token: 'token' }),
             token: 'token',
             signal: cancellation.signal,
         });

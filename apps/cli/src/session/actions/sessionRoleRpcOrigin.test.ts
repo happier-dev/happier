@@ -5,6 +5,8 @@ import { hasReceivedWorkflowSessionRoleAuthority, resolveSessionRoleRpcOrigin } 
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { deriveSessionInputActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 
 const context: ActionExecutorContext = {
   authority: 'account_automation',
@@ -72,4 +74,18 @@ describe('Session role RPC origin', () => {
     expectOriginUnavailable({ ...context, callerPermissionMode: 'not-a-permission' });
     expectOriginUnavailable({ ...context, causalPermissionAuthority: { v: 1 } });
   });
+
+  it.each([undefined, { actionRequestAttributionV1: { requester: { accountId: 'owner' } } }])(
+    'keeps unknown Machine input unknown through Session RPC instead of borrowing the owner', async inputAuthority => {
+      const cause = deriveSessionInputActionRequestAttributionV1({ requestRef: 'machine-input',
+        persona: { serverId: 'home', sessionId: 'caller-session' }, messageRole: 'user', origin: null,
+        inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine' }, inputAuthority });
+      const origin = resolveSessionRoleRpcOrigin({ ...context, actionRequestAttributionV1: cause });
+      const received = buildActionExecutorContextForRpc({ sessionActionOrigin: origin, serverId: 'home' });
+      let cards = 0;
+      const executor = createActionExecutor({ approvalsCreate: async () => { cards++; return { artifactId: 'forbidden' }; } });
+      expect(await executor.execute('mcp.servers.test', { t: 'byId', serverId: 'mcp-server', machineId: 'machine', directory: '/repo' },
+        { ...received, runtimeAccountId: 'owner' })).toMatchObject({ ok: false, errorCode: 'approval_requester_unavailable' });
+      expect(cards).toBe(0);
+    });
 });

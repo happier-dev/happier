@@ -184,7 +184,7 @@ describe('Project finite Actions through exact Machine transport', () => {
     } });
     const inspection = ProjectDefinitionInspectOutputSchema.parse({
       definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: readProjectManifestDocument(bytes) },
-      detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
+      detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
       importCandidates: [],
     });
     const settings = ActionsSettingsV1Schema.parse({ v: 1,

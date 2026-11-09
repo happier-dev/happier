@@ -30,14 +30,17 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import type { createCliRegistryUpdateCheck } from '@/registries/updates/createCliRegistryUpdateCheck';
+import type { PromptLibraryArtifactStore } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 export function createCliPromptsActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'getCurrentSessionSkillItems' | 'machineActionDirectTargetTransport' | 'savedSecretOperationContext' | 'serverHttpBaseUrl' | 'serverId' | 'sessionId'>,
-  { approvalsStore, callMachineAction, callSessionActionRpc, notSupported, projectHomeId, readCurrentMachineControlIdentity, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveTransportForSession, readRegistryAppEnvironment }: Readonly<{
+  { approvalsStore, callMachineAction, callSessionActionRpc, notSupported, projectHomeId, promptLibraryStoreForContext, skillRulesForContext, readCurrentMachineControlIdentity, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveTransportForSession, readRegistryAppEnvironment }: Readonly<{
     approvalsStore: ReturnType<typeof createCliApprovalsArtifactStore> | null;
     callMachineAction: CliMachineActionCall;
     callSessionActionRpc: (transport: ResolvedSessionTransport, method: string, input: unknown, context: ActionExecutorContext) => Promise<unknown>;
     notSupported: () => never;
     projectHomeId: string;
+    promptLibraryStoreForContext: (context: ActionExecutorContext | undefined, effectActionId: string) => PromptLibraryArtifactStore | null;
+    skillRulesForContext: (context: ActionExecutorContext, effectActionId: string) => ReturnType<typeof createCliApprovalsArtifactStore>['skillRules'] | null;
     readRegistryAppEnvironment: (environmentId: string, context: ActionExecutorContext) =>
       Promise<import('@happier-dev/protocol/registries').RegistryAppUpdateEnvironmentV1>;
     readCurrentMachineControlIdentity: () => Promise<CurrentMachineControlIdentity>;
@@ -56,6 +59,8 @@ export function createCliPromptsActionDeps(
   }>>;
   }>,
 ): Pick<ActionExecutorDeps, 'registryActionExecute' | 'promptDocGet' | 'promptDocCreate' | 'promptDocFavoriteSet' | 'promptsLibraryList' | 'promptInvocationsList' | 'promptInvocationResolve' | 'promptDocUpdate' | 'skillsRead' | 'skillActionExecute' | 'skillMachineActionExecute' | 'promptBundleUpdate' | 'promptRegistryInstall'> {
+  const promptStoreForContext = (context: ActionExecutorContext | undefined, effectActionId: string) =>
+    promptLibraryStoreForContext(context, effectActionId) ?? notSupported();
   const executeSkillAction = async ({ actionId, input, context }: Parameters<NonNullable<ActionExecutorDeps['skillActionExecute']>>[0]) => {
       if (!approvalsStore || !params.credentials) return notSupported();
       const readFoundSkillBundle: NonNullable<Parameters<typeof createSkillActionExecuteV1>[0]['readFoundSkillBundle']> = async (machineId, path, signal) => {
@@ -74,13 +79,15 @@ export function createCliPromptsActionDeps(
       const { createCliRegistryHostV1 } = await import("@/registries/createCliRegistryHost");
       const registry = createCliRegistryHostV1({ credentials: params.credentials, port: approvalsStore.promptLibraryStore.organization, signal: context.signal,
         operationContext: params.savedSecretOperationContext });
-      const execute = createSkillActionExecuteV1({ store: approvalsStore.promptLibraryStore, skillRules: approvalsStore.skillRules, randomId: randomUUID, readFoundSkillBundle, readPluginSkills: approvalsStore.readPluginSkills,
+      const execute = createSkillActionExecuteV1({ store: promptStoreForContext(context, actionId), skillRules: approvalsStore.skillRules, randomId: randomUUID, readFoundSkillBundle, readPluginSkills: approvalsStore.readPluginSkills,
+        savedBy: artifactSavedByFromActionContextV1(context),
         readRegistryItem: registry.readRegistryItem, readRegistrySource: registry.readRegistrySource,
         fetchRegistrySkillFiles: registry.filesForPointer, readLinkSkills: registry.readLinkSkills, fetchLinkSkillFiles: registry.fetchLinkSkillFiles,
         includeInSession: async (sessionId, skillId, signal) => {
           const port = createCliSessionCapabilitiesActionDeps({ credentials: params.credentials!,
             serverId: params.serverId ?? configuration.activeServerId, serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
-            operationContext: params.savedSecretOperationContext, skillRules: approvalsStore.skillRules, callMachineAction,
+            operationContext: params.savedSecretOperationContext,
+            skillRulesForContext: caller => skillRulesForContext(caller, actionId) ?? notSupported(), callMachineAction,
             resolveAuthorizationHeaders: (_selectionActionId, caller, request) => resolveServerRequestHeaders(caller, actionId, request),
           }).sessionCapabilities!;
           return setSessionCapabilityV1({ port, request: { sessionId, kind: 'skill', id: skillId, state: 'on' },
@@ -88,6 +95,7 @@ export function createCliPromptsActionDeps(
         },
       });
       const caller = { surface: context.surface ?? null, ...(context.defaultSessionId ? { sessionId: context.defaultSessionId } : {}),
+        invocationServices: context.invocationServices,
         ...(context.approvedActionReplay ? { approvedActionReplay: context.approvedActionReplay } : {}) };
       const operation = () => execute(actionId, input, caller, context.signal);
       return params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, operation) : operation();
@@ -124,21 +132,21 @@ export function createCliPromptsActionDeps(
           readEnvironment: environmentId => readRegistryAppEnvironment(environmentId, context) }).checkNow(filter),
       }).execute(actionId,input);
     },
-    promptDocGet: async ({ artifactId, signal }) => {
+    promptDocGet: async ({ artifactId, signal }, context) => {
       if (!approvalsStore) return notSupported();
-      return await readPromptDocInLibrary({ store: approvalsStore.promptLibraryStore, artifactId, ...(signal ? { signal } : {}) });
+      return await readPromptDocInLibrary({ store: promptStoreForContext(context, 'prompt_doc.get'), artifactId, ...(signal ? { signal } : {}) });
     },
-    promptDocCreate: async ({ signal, ...request }) => {
+    promptDocCreate: async ({ signal, ...request }, context) => {
       if (!approvalsStore) return notSupported();
-      return createPromptDocInLibrary({ store: approvalsStore.promptLibraryStore, request: resolvePromptDocCreateActionInputV1(request), signal });
+      return createPromptDocInLibrary({ store: promptStoreForContext(context, 'prompt_doc.create'), request: resolvePromptDocCreateActionInputV1(request), signal });
     },
-    promptDocFavoriteSet: async ({ signal, ...request }) => {
+    promptDocFavoriteSet: async ({ signal, ...request }, context) => {
       if (!approvalsStore) return notSupported();
-      return setPromptDocFavorite({ store: approvalsStore.promptLibraryStore, request, signal });
+      return setPromptDocFavorite({ store: promptStoreForContext(context, 'prompt_doc.favorite.set'), request, signal });
     },
-    promptsLibraryList: async ({ signal, ...request }) => {
+    promptsLibraryList: async ({ signal, ...request }, context) => {
       if (!approvalsStore) return notSupported();
-      return listPromptLibrary({ store: approvalsStore.promptLibraryStore, request, signal });
+      return listPromptLibrary({ store: promptStoreForContext(context, 'prompts.library.list'), request, signal });
     },
     promptInvocationsList: async (request) => {
       request.signal?.throwIfAborted();
@@ -174,7 +182,7 @@ export function createCliPromptsActionDeps(
     promptDocUpdate: async ({ signal, ...request }, context) => {
       if (!approvalsStore) return notSupported();
       return await updatePromptDocInLibrary({
-        store: approvalsStore.promptLibraryStore,
+        store: promptStoreForContext(context, 'prompt_doc.update'),
         request,
         savedBy: artifactSavedByFromActionContextV1(context),
         ...(signal ? { signal } : {}),
@@ -183,7 +191,7 @@ export function createCliPromptsActionDeps(
     skillsRead: async ({ signal, ...request }, context) => {
       const operation = async () => {
         if (request.sessionId && !(request.sessionId === params.sessionId && params.getCurrentSessionSkillItems)) {
-          const transport = await resolveTransportForSession(request.sessionId, signal);
+          const transport = await resolveTransportForSession(request.sessionId, signal, { context, actionId: 'skills.read' });
           if ('ok' in transport && transport.ok === false) return { ok: false, errorCode: transport.code, error: transport.code };
           const response = await callSessionActionRpc(transport, 'skills.read', request, context);
           if (response && typeof response === 'object' && 'ok' in response && response.ok === false) return response;
@@ -199,7 +207,7 @@ export function createCliPromptsActionDeps(
         const skillId = 'skillId' in request ? request.skillId : resolveHappierSkillIdentity(
           { name: request.name }, sessionItems ? { items: sessionItems } : undefined);
         const pluginSkills = await approvalsStore.readPluginSkills(signal, skillId ? [skillId] : []);
-        const result = await readSkillInLibrary({ store: approvalsStore.promptLibraryStore, request, sessionItems, pluginSkills,
+        const result = await readSkillInLibrary({ store: promptStoreForContext(context, 'skills.read'), request, sessionItems, pluginSkills,
           usage: usage?.row, signal, recordSessionUse: async selected => {
             // Join failures and retired plans must fail before the best-effort use fact is sent.
             rules = await readSkillRulesForItemV1(approvalsStore.skillRules, selected.skillId, signal);
@@ -236,10 +244,10 @@ export function createCliPromptsActionDeps(
       });
       return params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, call) : call();
     },
-    promptBundleUpdate: async ({ signal, ...request }) => {
+    promptBundleUpdate: async ({ signal, ...request }, context) => {
       if (!approvalsStore) return notSupported();
       return await updatePromptBundleInLibrary({
-        store: approvalsStore.promptLibraryStore,
+        store: promptStoreForContext(context, 'prompt_bundle.update'),
         request,
         ...(signal ? { signal } : {}),
       });

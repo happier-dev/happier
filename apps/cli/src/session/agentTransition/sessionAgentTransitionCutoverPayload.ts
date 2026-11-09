@@ -1,6 +1,8 @@
 import { SESSION_AGENT_TRANSITION_DIVIDER_MESSAGE, SESSION_AGENT_TRANSITION_DIVIDER_SIDECAR_KEY, SessionAgentTransitionDividerV1Schema, buildSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { projectSessionMetadataForWire } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
+import { projectUsageSessionTimingV1, projectUsageSessionMessageTimingV1,
+  type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import type { AccountEncryptionCurrentnessResponse, SessionStoredMessageContent } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
@@ -61,6 +63,7 @@ export async function sealSessionAgentTransitionCurrentView(
         ok: true,
         currentView: {
           kind: 'legacy_v0',
+          usageTimingV1: projectUsageSessionTimingV1({ metadata: targetMetadata, agentState: {} }),
           expectedMetadataVersion: snapshot.metadataVersion,
           metadataCiphertext: encryptStoredSessionPayload({
             ...cryptoContext,
@@ -99,6 +102,7 @@ export async function sealSessionAgentTransitionCurrentView(
 export type SessionAgentTransitionDividerPayload = Readonly<{
   localId: string;
   content: SessionStoredMessageContent;
+  usageTimingV1: UsageTimingBoundsV1 | null;
 }>;
 
 /**
@@ -113,6 +117,7 @@ export type SessionAgentTransitionDividerPayload = Readonly<{
  */
 export function buildSessionAgentTransitionDividerPayload(
   params: Readonly<{
+    sessionId: string;
     submittedLocalId: string;
     fromAgentId: string;
     toAgentId: string;
@@ -172,5 +177,7 @@ export function buildSessionAgentTransitionDividerPayload(
     payload,
     idempotencyKey: localId,
   }));
-  return { localId, content };
+  return { localId, content, usageTimingV1: projectUsageSessionMessageTimingV1({
+    sessionId: params.sessionId, message: { id: localId, localId, content: payload },
+  }) };
 }

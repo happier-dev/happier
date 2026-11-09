@@ -3,7 +3,7 @@ import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createSessionHandoffAgentBundlePayloadSource,
@@ -14,6 +14,39 @@ import type { SessionHandoffAgentBundle } from '../types';
 const handoffTypesSource = readFileSync(new URL('../types.ts', import.meta.url), 'utf8');
 
 describe('session handoff provider bundle file ABI', () => {
+  it('round-trips a valid manifest beyond the former 64 MiB policy limit', async () => {
+    const bundle = {
+      agentId: 'acme.large-manifest',
+      remoteSessionId: 'large-manifest',
+      context: 'x'.repeat(65 * 1024 * 1024),
+    } satisfies SessionHandoffAgentBundle;
+    const source = await createSessionHandoffAgentBundlePayloadSource(bundle);
+    try {
+      if (source.kind !== 'file') throw new Error('Expected file-backed provider bundle payload');
+      const imported = await readSessionHandoffAgentBundleFile(source.filePath);
+      expect(imported.context).toBe(bundle.context);
+    } finally {
+      await source.dispose?.();
+    }
+  });
+
+  it('rejects a declared manifest beyond the actual file extent before allocating it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-handoff-truncated-manifest-'));
+    const filePath = join(root, 'truncated.bin');
+    const magic = Buffer.from('HAPPIER_SESSION_HANDOFF_BUNDLE_V2\n');
+    const length = Buffer.alloc(8);
+    length.writeBigUInt64BE(1024n * 1024n);
+    await writeFile(filePath, Buffer.concat([magic, length]));
+    const allocate = vi.spyOn(Buffer, 'allocUnsafe');
+    try {
+      await expect(readSessionHandoffAgentBundleFile(filePath)).rejects.toThrow('Invalid session handoff transfer payload');
+      expect(allocate.mock.calls.some(([size]) => size === 1024 * 1024)).toBe(false);
+    } finally {
+      allocate.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('round-trips provider-owned bundles without a closed first-party provider union', async () => {
     expect(handoffTypesSource).not.toMatch(/\bSESSION_HANDOFF_PROVIDER_BUNDLE_IDS_V1\b/u);
     expect(handoffTypesSource).not.toMatch(/\bSessionHandoffAgentBundleId\b/u);

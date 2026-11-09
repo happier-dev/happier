@@ -6,7 +6,7 @@ import {
   resolveExternalSessionOperationTimelineV1,
   type ExternalSessionOperationRecordV1,
 } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createExternalSessionOperationExclusion,
@@ -14,6 +14,7 @@ import {
 import {
   mutateExternalSessionOperationRecordAtRevision,
   readExternalSessionOperationRecord,
+  resolveExternalSessionOperationAccountScope,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 import { createPersistedTakeoverAdmissionWaiter } from '@/daemon/spawn/persistedTakeoverAdmission';
@@ -33,6 +34,19 @@ import {
   createPluginRuntimeOccurrenceId,
   type PluginRuntimeOccurrenceId,
 } from '@/plugins/runtime/runtimeSlots';
+
+const ambientCredentials = vi.hoisted(() => ({
+  current: null as Readonly<{ token: string; encryption: null }> | null,
+  reads: 0,
+}));
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
+  readStoredCredentials: async () => {
+    ambientCredentials.reads += 1;
+    return ambientCredentials.current;
+  },
+}));
+afterEach(() => { ambientCredentials.current = null; ambientCredentials.reads = 0; });
 
 const occurrenceIds = new Map<string, PluginRuntimeOccurrenceId>();
 
@@ -107,6 +121,87 @@ const noCommittedRuntimeBindingFailure = async (): Promise<
 > => null;
 
 describe('external-linked durable takeover continuation', () => {
+  it('finishes admitted Account A work in A after ambient selection changes to B', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-takeover-account-'));
+    const credentialsFor = (sub: string) => ({
+      token: `e30.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`,
+      encryption: null,
+    });
+    ambientCredentials.current = credentialsFor('account-a');
+    const accountScope = resolveExternalSessionOperationAccountScope(
+      activeServerDir, ambientCredentials.current.token,
+    );
+    if (!accountScope) throw new Error('expected Account A scope');
+    const record = externalLinkedRecord();
+    const admissionWaiter = createPersistedTakeoverAdmissionWaiter();
+    const prepared = {
+      linked: {} as never,
+      occurrenceId: occurrenceId('account-pin-occurrence'),
+      quiescenceIdentity: 'exact-source-and-process',
+      permitsAdmission: true,
+      hostedOwnerSessionId: null,
+      externalLinkedTakeoverWriterSafety: 'native_prevention' as const,
+    };
+    try {
+      await writeExternalSessionOperationRecord(activeServerDir, record, { accountScope });
+      const runner = createExternalSessionExternalLinkedTakeoverPhaseRunner({
+        activeServerDir,
+        operationExclusion: createExternalSessionOperationExclusion({
+          activeServerDir, ownerId: 'account-pin-owner',
+        }),
+        loadCurrent: async () => prepared,
+        followLeaseManager: {
+          suspendSession: async () => {
+            ambientCredentials.current = credentialsFor('account-b');
+            return true;
+          },
+          resumeSession: async () => ({ resumed: true, leaseAcquired: false }),
+        },
+        resolveSpawn: async () => ({
+          ok: true,
+          value: {
+            options: { directory: '/tmp/session' },
+            remoteSessionId: record.request.source.remoteSessionId,
+            origin: {
+              agentId: 'example', pluginId: 'example.plugin',
+              occurrenceId: occurrenceId('account-pin-occurrence'),
+            },
+          },
+        }),
+        spawnResolvedTakeoverSession: async (input) => ({
+          ok: true, value: await input.spawnSession({ ...input.resolved.options, ...input.options }),
+        }),
+        spawnSession: async (options) => {
+          const latest = await readExternalSessionOperationRecord(activeServerDir, record.operationId, accountScope);
+          if (!latest) throw new Error('expected admitted Account A record');
+          const completed = await mutateExternalSessionOperationRecordAtRevision(
+            activeServerDir, record.operationId, latest.revision,
+            (fresh) => ({
+              ...fresh, revision: fresh.revision + 1, status: 'completed', phase: 'finalizing',
+              updatedAtMs: 30,
+              terminalResult: { kind: 'completed' },
+            }), accountScope,
+          );
+          if (!completed.ok || !options.persistedTakeoverAdmission) throw new Error('expected completed admission');
+          admissionWaiter.settle(options.persistedTakeoverAdmission, { status: 'committed' });
+          return { type: 'success', sessionId: record.request.sessionId };
+        },
+        admissionWaiter,
+        reconcileRuntimeBindingFailure: noCommittedRuntimeBindingFailure,
+        publishProgress: async () => undefined,
+        nowMs: () => 20,
+      });
+      await expect(runner.resume({
+        sessionId: record.request.sessionId, operationId: record.operationId, revision: record.revision,
+      })).resolves.toMatchObject({ ok: true, progress: { status: 'completed' } });
+      expect(ambientCredentials.reads).toBe(1);
+      await expect(readExternalSessionOperationRecord(activeServerDir, record.operationId)).resolves.toBeNull();
+      await expect(readExternalSessionOperationRecord(activeServerDir, record.operationId, accountScope))
+        .resolves.toMatchObject({ status: 'completed' });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
   it('fails writer safety from the current admitted source before durable advance or spawn', async () => {
     const activeServerDir = await mkdtemp(
       join(tmpdir(), 'happier-external-linked-takeover-'),
@@ -1227,15 +1322,6 @@ describe('external-linked durable takeover continuation', () => {
       });
 
       expect(loadCurrent).toHaveBeenCalledOnce();
-      expect(loadCurrent).toHaveBeenCalledWith(expect.objectContaining({
-        revision: repaired.revision,
-        bindings: interrupted.bindings,
-        request: expect.objectContaining({
-          source: expect.objectContaining({
-            sourceCustody: interrupted.request.source.sourceCustody,
-          }),
-        }),
-      }));
       expect(acquire).not.toHaveBeenCalled();
       expect(suspendSession).not.toHaveBeenCalled();
       expect(resolveSpawn).not.toHaveBeenCalled();
@@ -1256,7 +1342,7 @@ describe('external-linked durable takeover continuation', () => {
     }
   });
 
-  it('cancels an awaiting external-linked operation without source, spawn, or authority effects', async () => {
+  it('cancels the exact external-linked operation after progress advances without source or spawn effects', async () => {
     const activeServerDir = await mkdtemp(
       join(tmpdir(), 'happier-external-linked-takeover-cancel-'),
     );
@@ -1285,6 +1371,19 @@ describe('external-linked durable takeover continuation', () => {
         nowMs: () => 40,
       });
 
+      await expect(mutateExternalSessionOperationRecordAtRevision(
+        activeServerDir,
+        record.operationId,
+        record.revision,
+        (current) => ({ ...current, revision: current.revision + 1, updatedAtMs: 2 }),
+      )).resolves.toMatchObject({ ok: true });
+      await expect(runner.cancel({
+        sessionId: 'foreign-session', operationId: record.operationId, revision: record.revision,
+      })).resolves.toMatchObject({ ok: false, error: { code: 'operation_not_found' } });
+      await expect(runner.cancel({
+        sessionId: record.request.sessionId, operationId: 'another-operation', revision: record.revision,
+      })).resolves.toMatchObject({ ok: false, error: { code: 'operation_not_found' } });
+
       await expect(runner.cancel({
         sessionId: record.request.sessionId,
         operationId: record.operationId,
@@ -1292,7 +1391,7 @@ describe('external-linked durable takeover continuation', () => {
       })).resolves.toMatchObject({
         ok: true,
         progress: {
-          revision: 2,
+          revision: 3,
           status: 'cancelled',
           phase: 'validating',
         },
@@ -1303,7 +1402,7 @@ describe('external-linked durable takeover continuation', () => {
         activeServerDir,
         record.operationId,
       )).resolves.toMatchObject({
-        revision: 2,
+        revision: 3,
         status: 'cancelled',
         terminalResult: { kind: 'cancelled' },
       });

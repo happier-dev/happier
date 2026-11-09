@@ -15,7 +15,7 @@ const account = { token: 'account-token', accountId: 'alice', serverUrl: 'https:
 
 describe('live CLI approval decision replay', () => {
   afterEach(() => vi.restoreAllMocks());
-  it('publishes an admitted daemon CLI waiter without installing a standalone CLI relay', async () => {
+  it('publishes an admitted daemon cli waiter without installing a standalone relay', async () => {
     // Home authorization is the external boundary; the request schema and
     // publisher remain real. This test exercises transport selection, not signing.
     const target = { kind: 'machine' as const, machineId: 'machine-a' };

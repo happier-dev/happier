@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     archiveSessionOnceInactive: vi.fn(),
-    archiveSessionByIdBestEffort: vi.fn(),
     fetchSessionByIdCompat: vi.fn(),
     callMachineRpc: vi.fn(),
 }));
@@ -10,11 +9,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/session/services/archiveSessionOnceInactive', () => ({
     archiveSessionOnceInactive: (...args: unknown[]) => (
         mocks.archiveSessionOnceInactive(...args)
-    ),
-}));
-vi.mock('@/session/services/setSessionArchivedState', () => ({
-    archiveSessionByIdBestEffort: (...args: unknown[]) => (
-        mocks.archiveSessionByIdBestEffort(...args)
     ),
 }));
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
@@ -93,7 +87,6 @@ describe('fork child failure recovery', () => {
             token: 'token',
             sessionId: 'child',
         });
-        expect(mocks.archiveSessionByIdBestEffort).not.toHaveBeenCalled();
     });
 
     it('does not swallow a terminal archive failure', async () => {

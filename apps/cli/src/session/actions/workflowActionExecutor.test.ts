@@ -187,8 +187,8 @@ describe('workflow Action host', () => {
 
     expect(resolveIngressContext).toHaveBeenCalledTimes(4);
     expect(runExecute).toHaveBeenCalledWith(expect.anything(), ingress);
-    expect(create).toHaveBeenCalledWith(expect.anything(), ingress, { defaultSessionId: 'session-1' });
-    expect(update).toHaveBeenCalledWith(expect.anything(), ingress, { defaultSessionId: 'session-1' });
+    expect(create).toHaveBeenCalledWith(expect.anything(), ingress, { defaultSessionId: 'session-1', callerPermissionMode: 'yolo' });
+    expect(update).toHaveBeenCalledWith(expect.anything(), ingress, { defaultSessionId: 'session-1', callerPermissionMode: 'yolo' });
   });
 
   it('delegates every Session-bound and unbound wait to the Run owner, which alone enforces the caller lifetime', async () => {

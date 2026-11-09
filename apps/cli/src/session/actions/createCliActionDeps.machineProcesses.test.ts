@@ -39,6 +39,7 @@ import { requestSessionInputLiveWork, SessionInputLiveWorkSchema } from '@/agent
 import { createDeferred } from '@/testkit/async/deferred';
 import type { TrackedSession } from '@/daemon/types';
 import { createDaemonStorageRoutes } from '@/rpc/handlers/storage';
+import { createStoragePolicyFixture } from '@/storage/storagePolicy.testkit';
 
 const io = vi.hoisted(() => vi.fn());
 // HTTP and Socket.IO are genuine boundaries; Action routing, exact targeting and codecs stay real.
@@ -78,6 +79,88 @@ describe('CLI machine Processes Action transport', () => {
     } }));
   });
   afterEach(() => { releaseHome(); vi.restoreAllMocks(); });
+
+  it('routes safe service reads and watch intent to the exact Machine through the real CLI factory', async () => {
+    const machine = { serverId: 'home', machineId: 'selected' };
+    const actions = [
+      ['machines.services.list', machine],
+      ['machines.services.discovery', machine],
+      ['machines.services.detail', { ...machine, serviceId: 'service', expectedGeneration: 'generation' }],
+      ['machines.services.watch', { ...machine, candidateId: 'candidate', expectedRevision: 'native', lifecyclePurpose: 'development' }],
+      ['machines.services.unwatch', { ...machine, watchId: 'watch', expectedRevision: 'watches' }],
+    ] as const;
+    const executor = createCliActionExecutor(params);
+    for (const [actionId, input] of actions) {
+      responses.push({ kind: 'unavailable', reason: 'denied' });
+      expect(await executor.execute(actionId, input, context))
+        .toEqual({ ok: true, result: { kind: 'unavailable', reason: 'denied' } });
+    }
+    expect(requests.map(request => request.method)).toEqual(actions.map(([actionId]) => `selected:${actionId}`));
+    expect(await executor.execute('machines.services.list', { ...machine, serverId: 'another-home' }, context))
+      .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    expect(requests).toHaveLength(actions.length);
+  });
+
+  it('consumes the installed service owner locally and retains RPC for a different Machine', async () => {
+    const localInputs: unknown[] = [];
+    const executor = createCliActionExecutor({ ...params,
+      machineActionDirectTargetTransport: Object.assign({ machineId: 'selected', invoke: async () => {
+        throw new Error('A local service Action must not re-enter its Machine RPC dispatcher');
+      } }, { machineServiceAction: async (request: { input: unknown }) => {
+        localInputs.push(request.input);
+        return { kind: 'unavailable', reason: 'denied' };
+      } }),
+    });
+    const local = { serverId: 'home', machineId: 'selected' };
+    expect(await executor.execute('machines.services.list', local, context))
+      .toEqual({ ok: true, result: { kind: 'unavailable', reason: 'denied' } });
+    expect(localInputs).toEqual([local]);
+    expect(requests).toHaveLength(0);
+    responses.push({ kind: 'snapshot', services: [] });
+    expect(await executor.execute('machines.services.list', { ...local, machineId: 'remote' }, context))
+      .toEqual({ ok: true, result: { kind: 'snapshot', services: [] } });
+    expect(localInputs).toEqual([local]);
+    expect(requests.map(request => request.method)).toEqual(['remote:machines.services.list']);
+    const unavailable = createCliActionExecutor({ ...params, machineActionDirectTargetTransport: {
+      machineId: 'selected', invoke: async () => { throw new Error('An unavailable local owner must not dispatch RPC'); },
+    } });
+    expect(await unavailable.execute('machines.services.list', local, context))
+      .toEqual({ ok: true, result: { kind: 'unavailable', reason: 'admission_unavailable' } });
+    expect(requests.map(request => request.method)).toEqual(['remote:machines.services.list']);
+  });
+
+  it('mints Environment read facts only from the captured Account deployment response', async () => {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'environment-reader' })).toString('base64url')}.signature`;
+    const http = vi.spyOn(axios, 'request');
+    const response = { status: 200, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() } };
+    http.mockResolvedValueOnce({ ...response, data: { ok: false, error: 'deployment_access_denied' } });
+    http.mockResolvedValueOnce({ ...response, data: { ok: true, items: [{ environmentId: 'private-environment', read: true, deploy: false }] } });
+    const facts: boolean[] = [];
+    const requesterIds: (string | null | undefined)[] = [];
+    const executor = createCliActionExecutor({ ...params, token, credentials: { token, encryption: null },
+      machineActionDirectTargetTransport: { machineId: 'selected', invoke: async () => {
+        throw new Error('The local service owner must not re-enter RPC');
+      }, machineServiceAction: async (request: { input: unknown; requesterAccountId?: string | null; canReadEnvironments?: (environmentIds: readonly string[]) => Promise<ReadonlySet<string>> }) => {
+        if (!request.canReadEnvironments) throw new Error('Captured Environment read fact is missing');
+        requesterIds.push(request.requesterAccountId);
+        facts.push((await request.canReadEnvironments(['private-environment'])).has('private-environment'));
+        return { kind: 'snapshot', services: [] };
+      } },
+    });
+    for (let index = 0; index < 2; index++) expect(await executor.execute('machines.services.list', {
+      serverId: 'home', machineId: 'selected',
+    }, context)).toEqual({ ok: true, result: { kind: 'snapshot', services: [] } });
+    expect(facts).toEqual([false, true]);
+    expect(requesterIds).toEqual(['environment-reader', 'environment-reader']);
+    expect(http.mock.calls).toHaveLength(2);
+    for (const [request] of http.mock.calls) {
+      expect(new URL(request.url!).origin).toBe('https://home.invalid');
+      expect(request.method).toBe('POST');
+      expect(request.url).toBe('https://home.invalid/v1/deployments/environments/access');
+      expect(request.data).toEqual({ serverId: 'home', environmentIds: ['private-environment'] });
+      expect(request.headers).toMatchObject({ Authorization: `Bearer ${token}` });
+    }
+  });
 
   it.each(['vitals', 'policy', 'guard', 'processes', 'storage'] as const)('admits %s through the real CLI executor and ApiMachine routes despite a local shortcut', async family => {
     const fixture = await createLinuxVitalsFixture();
@@ -154,7 +237,7 @@ describe('CLI machine Processes Action transport', () => {
       requesterForOwner: () => ({ accountId: identity.custodianAccountId, displayName: 'Custodian' }) });
     api.registerMachineProcessesRoutes({ view: processes, target: () => identity });
     const storage = createDaemonStorageRoutes({ target: () => identity,
-      deps: () => ({ catalog: { happyHomeDir: fixture.root, activeServerDir: fixture.root }, readVolumes: () => [] }),
+      deps: async () => ({ resourcesPolicy: await createStoragePolicyFixture(), catalog: { happyHomeDir: fixture.root, activeServerDir: fixture.root }, readVolumes: () => [] }),
       readOwnSessionIds: () => new Set() });
     api.registerStorageRoutes(storage);
     // The canonical heterogeneous transport registry represents authenticated ingress.

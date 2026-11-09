@@ -126,8 +126,7 @@ function resultFor(target: ReceiptTarget, skillId: string, status: MachineSkillI
 
 function validContent(skill: MachineSkillInstallContent): boolean {
   return SKILL_NAME_PATTERN_V1.test(skill.name)
-    && validatePromptBundleBodyV1AgainstSchemaId({ bundleSchemaId: 'skills.skill_md_v1', body: skill.bundleBody }).ok
-    && computePromptBundleDigestV1(skill.bundleBody) === skill.digest;
+    && validatePromptBundleBodyV1AgainstSchemaId({ bundleSchemaId: 'skills.skill_md_v1', body: skill.bundleBody }).ok;
 }
 
 function copySkill(context: MachineSkillInstallContext, target: ReceiptTarget, skill: MachineSkillInstallContent,

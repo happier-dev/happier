@@ -128,27 +128,47 @@ describe('exact remote Voice Agent catalog admission', () => {
     });
     it('enumerates an admitted external Agent for an unset summary model without persisted identity resolution', async () => {
         const admitted = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            // The native preflight reads the plugin's Settings through its
+            // real binding; this fixture has no persisted Account record.
+            runtimeOptions: { accountSettingsRecordAdapter: { bindOperation: async () => ({
+                readRecord: async () => ({ status: 'absent' }), writeRecord: async () => ({ status: 'unavailable' }),
+            }) } },
             plugins: [{ manifest: createPluginManifestV2Fixture({ id: 'acme.summary-catalog', contributes: {
                 agents: [{ id: 'claude', title: 'External Agent', primary: 'executionRuns', runtime: { kind: 'custom' },
                     capabilities: { executionRuns: { open: ['create'], stop: true, checkpoint: false },
                         structuredOutput: { formats: ['json'] } } }],
             } }), files: {
-                'daemon.mjs': `export function createAgent() { throw new Error('Catalog enumeration must not execute an Agent'); }
+                'runner.mjs': `export function createAgent() { throw new Error('Catalog enumeration must not execute an Agent'); }`,
+                'daemon.mjs': `import { createAgent } from './runner.mjs';
                     export function activate(api) {
                         api.agents.register('claude', createAgent, { sessionRunnerFactory: {
-                            module: './daemon.mjs', export: 'createAgent', runtimeApiVersion: 1
+                            module: './runner.mjs', export: 'createAgent', runtimeApiVersion: 1
+                        }, preflightSessionControls: {
+                            probeModels: async () => [{ id: 'external-model', name: 'External model', costTier: 'low',
+                                capabilities: { structuredOutput: 'supported' } }]
                         } });
                     }`,
             } }],
         });
         try {
+            expect(admitted.registry.pluginDiagnosticsByPluginId['acme.summary-catalog'] ?? []).toEqual([]);
             const external = [...readCurrentContributionRegistry().agentDefinitionsById.values()]
                 .find(entry => entry.identity?.pluginId === 'acme.summary-catalog');
             expect(external?.id).toBe('acme.summary-catalog/claude');
             const settings = accountSettingsParse({});
-            const catalog = await createCliSettingsCatalogServices({}).readScmDiffSummaryCatalog!(settings, '');
+            const services = createCliSettingsCatalogServices({});
+            const catalog = await services.readScmDiffSummaryCatalog!(settings, '', { includeConfigured: true });
             expect(catalog).not.toBeNull();
             expect(catalog?.isCurrent(settings)).toBe(true);
+            const targetKey = 'agent:acme.summary-catalog/claude';
+            const selected = await services.readScmDiffSummaryCatalog!(settings, encodeScmDiffSummaryModelOverride({
+                backendTargetKey: targetKey, modelId: 'external-model',
+            }));
+            expect(selected).not.toBeNull();
+            expect(selected?.profiles).toContainEqual(expect.objectContaining({
+                modelSelector: { backendTargetKey: targetKey, modelId: 'external-model' },
+            }));
+            expect(selected?.profiles).toEqual(catalog?.profiles.filter(profile => profile.modelSelector?.backendTargetKey === targetKey));
             expect(settings[SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]).toBe('');
         } finally {
             await admitted.dispose();

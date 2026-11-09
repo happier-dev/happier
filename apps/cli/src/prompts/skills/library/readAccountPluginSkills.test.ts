@@ -9,6 +9,7 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/ma
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { pluginSkillIdV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -66,7 +67,7 @@ describe('Account plugin skill sources', () => {
       const store = { list: async () => ({ coverage: 'complete' as const, items: artifacts.map(artifact => ({ ...artifact, updatedAtMs: 1 })) }),
         read: async (id: string) => artifacts.find(artifact => artifact.id === id) ?? null,
         update: async () => {}, delete: async () => {} };
-      const execute = createSkillActionExecuteV1({ store, readPluginSkills, randomId: () => 'rule', includeInSession: async () => ({ ok: true }),
+      const execute = createSkillActionExecuteV1({ store, readPluginSkills, randomId: () => 'rule', includeInSession: async () => ({ ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } }),
         skillRules: { serverId: 'home', assertCurrent: () => {}, ruleWriteContext: () => ({ nowMs: 1, newId: () => 'rule' }),
           listSkills: async () => [], writeRecord: async () => { throw new Error('Read only'); },
           readCatalog: async () => ({ catalog: { status: 'ready', rows: [{ revision: 1,
@@ -121,21 +122,33 @@ describe('Account plugin skill sources', () => {
       storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER };
     // Only HTTP and Socket.IO transports are substituted. Declarations,
     // current schemas, source selection, packaged reads and P3 remain real.
+    // Every Machine row the Home serializes for a skill read, and whether it was the full private projection.
+    const machineRead = { rows: 0, fullProjectionReads: 0 };
     vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
       expect(String(url).startsWith(base)).toBe(true);
       expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
-      if (String(url).endsWith('/v1/machines')) return { data: [{ ...machine, active: !offline, activeAt: offline ? 0 : machine.activeAt },
-        ...(scaledUnrelated ? unrelatedMachineIds.map(id => ({ ...machine, id })) : [])] };
-      if (String(url).endsWith('/v1/machines/source-A')) return { data: { machine } };
+      const sourceMachine = { ...machine, active: !offline, activeAt: offline ? 0 : machine.activeAt };
+      if (String(url).includes('/v1/machines') && config?.headers?.Accept !== 'application/json;happier-machine-projection=host-facts') {
+        machineRead.fullProjectionReads += 1;
+      }
+      if (String(url).endsWith('/v1/machines')) {
+        const rows = [sourceMachine, ...(scaledUnrelated ? unrelatedMachineIds.map(id => ({ ...machine, id })) : [])];
+        machineRead.rows += rows.length;
+        return { data: rows };
+      }
+      if (String(url).endsWith('/v1/machines/source-A')) { machineRead.rows += 1; return { data: { machine: sourceMachine } }; }
       const unrelatedMachineId = scaledUnrelated ? unrelatedMachineIds.find(id => String(url).endsWith(`/v1/machines/${id}`)) : undefined;
       if (unrelatedMachineId) return { data: { machine: { ...machine, id: unrelatedMachineId } } };
       if (String(url).endsWith('/v1/account/encryption')) return { data: { mode: 'plain', updatedAt: 1 } };
       throw new Error(`Unexpected source read: ${String(url)}`);
     });
+    // Materialization rows the Home serializes; it honours the canonical plugin filter like the server owner.
+    const inventoryRead = { rows: 0 };
     vi.spyOn(axios, 'post').mockImplementation(async (url, input, config) => {
       expect(String(url)).toBe(`${base}/v1/plugins/availability/materializations/read`);
-      expect(input).toEqual({}); expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
-      return { data: { availabilityCursor: 1, inventoryComplete: invalidCensus ? 'invalid' : true, releases: [], snapshots: emptyAccountCensus ? [] : [{
+      const request = PluginAvailabilityMaterializationsReadActionInputV1Schema.parse(input);
+      expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
+      const response = { availabilityCursor: 1, inventoryComplete: invalidCensus ? 'invalid' : true, releases: [], snapshots: emptyAccountCensus ? [] : [{
         serverIdentityId: materialization.serverIdentityId, machineId: 'source-A', materializations: [materialization] },
         ...(unrelatedOffline ? [{ serverIdentityId: materialization.serverIdentityId, machineId: 'offline-unrelated', materializations: [{
           ...materialization, machineId: 'offline-unrelated', pluginId: 'com.acme.unrelated', materializationId: 'offline-installation',
@@ -143,7 +156,11 @@ describe('Account plugin skill sources', () => {
         }] }] : []),
         ...(scaledUnrelated ? unrelatedMachineIds.map(machineId => ({ serverIdentityId: materialization.serverIdentityId,
           machineId, materializations: [{ ...materialization, machineId, pluginId: 'com.acme.unrelated',
-            materializationId: `installation-${machineId}` }] })) : [])] } };
+            materializationId: `installation-${machineId}` }] })) : [])] };
+      const snapshots = response.snapshots.map(snapshot => ({ ...snapshot, materializations: snapshot.materializations
+        .filter(row => !request.pluginIds || request.pluginIds.includes(row.pluginId)) }));
+      inventoryRead.rows += snapshots.reduce((total, snapshot) => total + snapshot.materializations.length, 0);
+      return { data: { ...response, snapshots } };
     });
     bindApiSessionSocketMock(io, createApiSessionSocketStub({ emitWithAck: async (event, raw) => {
       expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
@@ -200,10 +217,17 @@ describe('Account plugin skill sources', () => {
       for (const includeUnrelated of [false, true]) {
         scaledUnrelated = includeUnrelated;
         describedMachines.length = 0;
+        machineRead.rows = 0; machineRead.fullProjectionReads = 0; inventoryRead.rows = 0;
         await expect(runWithServerHttpBaseUrl(base, () => readAccountPluginSkills({ credentials,
           serverHttpBaseUrl: base, skillIds: [skillId, skillId, 'personal-artifact'] })))
           .resolves.toContainEqual(expect.objectContaining({ skillId }));
         expect(describedMachines).toEqual(['source-A']);
+        // Session start reads only the supplying Machine's host facts (no private
+        // Machine metadata to open, no row per unrelated Account Machine), plus the
+        // RPC owner's own exact read of its target for the content codec.
+        expect(machineRead).toEqual({ rows: 2, fullProjectionReads: 1 });
+        // An addressed read needs only the addressed plugins' materializations, not every Account installation.
+        expect(inventoryRead.rows).toBe(1);
       }
       describedMachines.length = 0;
       await expect(readAccountPluginSkills({ credentials, serverHttpBaseUrl: base, skillIds: [] })).resolves.toEqual([]);

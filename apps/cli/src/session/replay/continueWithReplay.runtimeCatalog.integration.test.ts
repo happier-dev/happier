@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
+import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { createCurrentSessionProjectionRecordFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 
 const mocks = vi.hoisted(() => ({
   readCredentials: vi.fn(),
@@ -12,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   validateStoredAuthTokenAgainstActiveServer: vi.fn(),
   fetchAccountEncryptionCurrentness: vi.fn(),
   sendSessionMessage: vi.fn(),
+  fetchSessionByIdCompat: vi.fn(),
 }));
 
 vi.mock('@/persistence', () => ({
@@ -27,6 +30,7 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>(),
   getOrCreateSessionByTag: (...args: unknown[]) => mocks.getOrCreateSessionByTag(...args),
   fetchSessionOrganizationPlacement: (...args: unknown[]) => mocks.fetchSessionOrganizationPlacement(...args),
+  fetchSessionByIdCompat: (...args: unknown[]) => mocks.fetchSessionByIdCompat(...args),
 }));
 
 vi.mock('@/auth/validateStoredAuthTokenAgainstActiveServer', () => ({
@@ -72,6 +76,13 @@ describe('continueSessionWithReplay canonical creation delegation', () => {
     mocks.fetchSessionOrganizationPlacement.mockResolvedValue({ folderId: null, tagIds: [] });
     mocks.validateStoredAuthTokenAgainstActiveServer.mockResolvedValue({ state: 'valid' });
     mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1 });
+    const fields = buildSessionMetadataEnvelopeCreateFields({ credentials: { token: 'token', encryption: null },
+      accountEncryptionMode: 'plain', storedContentMode: 'plain', metadata: { path: '/tmp/project', host: 'fixture-host', flavor: 'codex' }, agentState: null });
+    mocks.fetchSessionByIdCompat.mockResolvedValue(createCurrentSessionProjectionRecordFixture({
+      ...createSessionNotificationContextFixture('parent-session'), encryptionMode: 'plain',
+      metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext,
+      ownerMetadata: fields.ownerMetadata, agentState: fields.agentState,
+    }));
   });
 
   it('uses the same deterministic replay tag and spawn nonce for repeated equivalent requests', async () => {

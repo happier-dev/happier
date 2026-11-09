@@ -14,7 +14,7 @@ const { mockGet, mockPost, mockFetchServerFeaturesSnapshot } = vi.hoisted(() => 
 }));
 
 vi.mock('axios', () => ({
-  default: { get: mockGet, post: mockPost },
+  default: { defaults: {}, get: mockGet, post: mockPost },
 }));
 
 vi.mock('@/configuration', async () => {

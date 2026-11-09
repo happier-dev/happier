@@ -6,6 +6,31 @@ import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1, adm
 import { createCliWidgetAreaActionDepsV1 } from './widgetAreaActionDeps';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createWorkBoardArtifactBoundary } from '../../../../../packages/protocol/src/boards/workBoardArtifactV1.testkit';
+import { resolveProjectAccountReferenceV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
+
+it('allows acknowledged headless deletion only after the private Project owner releases the last anchor', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const scope = { serverId: 'home', accountId: 'actor' };
+    const surface = { ...scope, owner: { kind: 'project' as const, projectId: 'project' } };
+    const transport = { ...boundary.forAccount(scope.accountId), list: boundary.transport.list, delete: boundary.transport.delete };
+    const layout = { v: 1 as const, surface, items: [] };
+    const row = await transport.create({ artifactId: buildWidgetSurfaceArtifactIdV1(surface),
+        header: buildWidgetSurfaceArtifactHeaderV1(layout), body: JSON.stringify(layout) });
+    const ref = { id: 'checkout', serverId: scope.serverId, projectKey: 'project', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+    let workspaceRefs = [ref];
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), widgetAccountScope: () => scope,
+        ...createCliWidgetAreaActionDepsV1({ transport, scope, isCurrent: () => true,
+            readProjectReference: async project => resolveProjectAccountReferenceV1({ workspaceRefs }, project),
+        }) });
+    const args = { surface, expectedRevision: row.revision };
+    const context = { surface: 'mcp' as const, bypassApprovals: true };
+    expect(await executor.execute('widgets.area.layout.delete', args, context))
+        .toMatchObject({ ok: false, errorCode: 'widget_area_layout_default_protected' });
+    workspaceRefs = [];
+    expect(boundary.rows.has(row.artifactId)).toBe(true);
+    expect(await executor.execute('widgets.area.layout.delete', args, context)).toMatchObject({ ok: true });
+    expect(boundary.rows.has(row.artifactId)).toBe(false);
+});
 
 it.each(['cli', 'mcp'] as const)('discovers and personalizes host presets through the headless %s Action executor without a preset injection', async caller => {
     const boundary = createWorkBoardArtifactBoundary();

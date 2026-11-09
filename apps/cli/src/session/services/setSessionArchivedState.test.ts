@@ -51,6 +51,19 @@ describe('setSessionArchivedState', () => {
     expect(boundary.callMachineRpc).not.toHaveBeenCalled();
   });
 
+  it('archives Action-resolved exact identities without a Session selector read and keeps archive authorization', async () => {
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { success: true, archivedAt: 123 } });
+    const { executor } = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId,
+      mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'http://archive.test' });
+    expect(await executor.execute('session.archive', { sessionId }, { surface: 'cli', authority: 'account_automation' }))
+      .toMatchObject({ ok: true, result: { success: true, sessionId, archivedAt: 123 } });
+    const sessionReads = vi.mocked(axios.get).mock.calls.filter(([url]) => /\/v[12]\/sessions(?:\/|\?|$)/u.test(String(url)));
+    expect(sessionReads).toEqual([]);
+    expect(post).toHaveBeenCalledWith(expect.stringContaining(`/v2/sessions/${sessionId}/archive`), expect.anything(),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer token-1' }) }));
+    expect(boundary.callMachineRpc).not.toHaveBeenCalled();
+  });
+
   it('unarchives a session directly', async () => {
     const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { success: true, archivedAt: null } });
     await expect(setSessionArchivedState({ credentials, idOrPrefix: sessionId, archived: false }))

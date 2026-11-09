@@ -5,17 +5,12 @@ import type { ExternalSessionCandidateV1, ExternalSessionsAgentId, ExternalSessi
 import { resolveExternalSessionTagLookupCandidates } from '@/api/session/external/linking/externalSessionTagLookupCandidates';
 import type { StoredCredentials } from '@/persistence';
 import {
-    fetchSessionsPage,
     lookupSessionsByTags,
     type RawSessionListRow,
 } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import { resolveExternalSessionCandidateIdentityKey } from './candidateQuery';
-
-const DEFAULT_ANNOTATION_SCAN_MAX_PAGES = 10;
-const MAX_ANNOTATION_SCAN_MAX_PAGES = 50;
-const ANNOTATION_SCAN_PAGE_SIZE = 200;
 
 type CandidateAnnotation = Readonly<{
     linkedSessionId: string;
@@ -26,9 +21,8 @@ type CandidateAnnotation = Readonly<{
 type CandidateAnnotationResult = Readonly<{
     candidates: readonly ExternalSessionCandidateV1[];
     /**
-     * The bounded Session scan stopped before it proved every served candidate has
-     * no link/import projection. Positive annotations remain authoritative; an
-     * omitted annotation is not a negative fact in this case.
+     * Indexed annotation was unavailable or cancelled before completion.
+     * Positive annotations remain authoritative; omission is not a negative fact.
      */
     annotationsIncomplete: boolean;
 }>;
@@ -46,19 +40,6 @@ function throwIfAnnotationCancelled(signal: AbortSignal | undefined): void {
     const error = new Error('External-session candidate annotation was cancelled');
     error.name = 'AbortError';
     throw error;
-}
-
-function resolveAnnotationScanMaxPages(explicitMaxPages?: number): number {
-    if (explicitMaxPages !== undefined) {
-        return Math.max(1, Math.min(MAX_ANNOTATION_SCAN_MAX_PAGES, Math.trunc(explicitMaxPages)));
-    }
-    const configured = Number.parseInt(
-        (process.env.HAPPIER_EXTERNAL_SESSION_ANNOTATION_SCAN_MAX_PAGES ?? '').trim(),
-        10,
-    );
-    return Number.isFinite(configured) && configured > 0
-        ? Math.min(MAX_ANNOTATION_SCAN_MAX_PAGES, configured)
-        : DEFAULT_ANNOTATION_SCAN_MAX_PAGES;
 }
 
 function readMaterializedThrough(row: RawSessionListRow): number | undefined {
@@ -247,42 +228,6 @@ async function absorbAnnotationRowsThroughIndexedTagLookup(params: Readonly<{
     return true;
 }
 
-/**
- * Compatibility retrieval for a server that does not serve
- * `/v2/sessions/lookup-by-tags`. It walks bounded active and archived Session
- * pages, so it can stop before proving the negative and says so.
- */
-async function absorbAnnotationRowsThroughBoundedScan(params: Readonly<{
-    absorber: CandidateAnnotationAbsorber;
-    token: string;
-    maxPages: number;
-    fetchPage: typeof fetchSessionsPage;
-    signal?: AbortSignal;
-}>): Promise<boolean> {
-    let annotationsIncomplete = false;
-    for (const archivedOnly of [false, true]) {
-        let cursor: string | undefined;
-        for (let pageIndex = 0; pageIndex < params.maxPages; pageIndex += 1) {
-            throwIfAnnotationCancelled(params.signal);
-            const page = await params.fetchPage({
-                token: params.token,
-                cursor,
-                limit: ANNOTATION_SCAN_PAGE_SIZE,
-                archivedOnly,
-                ...(params.signal === undefined ? {} : { signal: params.signal }),
-            });
-            absorbAnnotationRows(params.absorber, page.sessions);
-            if (!page.hasNext) break;
-            if (!page.nextCursor || pageIndex === params.maxPages - 1) {
-                annotationsIncomplete = true;
-                break;
-            }
-            cursor = page.nextCursor;
-        }
-    }
-    return annotationsIncomplete;
-}
-
 export async function annotateExternalSessionCandidates(
     params: Readonly<{
         credentials: StoredCredentials;
@@ -291,16 +236,13 @@ export async function annotateExternalSessionCandidates(
         source: ExternalSessionsSource;
         candidates: readonly ExternalSessionCandidateV1[];
         sourceKeyOwner: CandidateAnnotationSourceKeyOwner;
-        maxPages?: number;
         signal?: AbortSignal;
     }>,
     dependencies: Readonly<{
-        fetchPage: typeof fetchSessionsPage;
         decryptMetadata: typeof tryDecryptSessionOwnerMetadataView;
         getAccountEncryptionCurrentness?: typeof fetchAccountEncryptionCurrentness;
         lookupByTags?: typeof lookupSessionsByTags;
     }> = {
-        fetchPage: fetchSessionsPage,
         decryptMetadata: tryDecryptSessionOwnerMetadataView,
         getAccountEncryptionCurrentness: fetchAccountEncryptionCurrentness,
         lookupByTags: lookupSessionsByTags,
@@ -347,15 +289,7 @@ export async function annotateExternalSessionCandidates(
             lookupByTags: dependencies.lookupByTags ?? lookupSessionsByTags,
             ...(params.signal === undefined ? {} : { signal: params.signal }),
         });
-        annotationsIncomplete = indexedLookupServed
-            ? false
-            : await absorbAnnotationRowsThroughBoundedScan({
-                absorber,
-                token: params.credentials.token,
-                maxPages: resolveAnnotationScanMaxPages(params.maxPages),
-                fetchPage: dependencies.fetchPage,
-                ...(params.signal === undefined ? {} : { signal: params.signal }),
-            });
+        annotationsIncomplete = !indexedLookupServed;
         throwIfAnnotationCancelled(params.signal);
     } catch (error) {
         if (!params.signal?.aborted) throw error;

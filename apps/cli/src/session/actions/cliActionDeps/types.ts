@@ -38,8 +38,6 @@ import type { SessionRoleContext } from '@/session/roles/sessionRoleContext';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 export type ResumeInactiveSessionWhenUsageLimitReady = (input: Readonly<{
   sessionId: string;
-  /** Additional canonical owner (API token) of private exact-operation consent. */
-  readApprovedOperation?: ActionExecutorDeps['readApprovedOperation'];
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
   readiness?: 'provider_ready';
@@ -167,6 +165,8 @@ export type CliActionExactHomeTarget =
   | Readonly<{ serverId: string; serverHttpBaseUrl: string }>;
 export type CliActionDepsParams = Readonly<{
   token: string;
+  /** Additional canonical owner (API token) of private exact-operation consent. */
+  readApprovedOperation?: ActionExecutorDeps['readApprovedOperation'];
   /** Local delivery only; a host without a link consumer refuses creation before HTTP. */
   onPublicLinkIssued?: (link: import('@happier-dev/protocol').ArtifactPublicLinkIssuedV1) => void | Promise<void>;
   consumeArtifactSignedInLinkSecret?: (lookupId: string) => Promise<string | null>;

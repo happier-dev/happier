@@ -21,8 +21,13 @@ const subject = {
   subjectFingerprint: 'a'.repeat(64),
 };
 
+function deliverApproved(artifactId: string, request: ExecutionRunHostActionApprovalRequestV1) {
+  setImmediate(() => { void getSharedBlockingApprovalCoordinator().resolveBlockingDecision({ artifactId, request,
+    decision: 'approve', decisionAuthority: 'present_user' }); });
+}
+
 describe('createExecutionRunHostActionCurrentIntentAdapter', () => {
-  it('accepts the matching approved subject after a durable artifact invalidation', async () => {
+  it('separates durable Artifact observation from the matching authenticated live decision', async () => {
     const stored: { request: ExecutionRunHostActionApprovalRequestV1 | null } = { request: null };
     let onChange = () => {};
     let subscribedArtifactId = '';
@@ -43,6 +48,7 @@ describe('createExecutionRunHostActionCurrentIntentAdapter', () => {
     if (!stored.request) throw new Error('approval_not_created');
     stored.request = { ...stored.request, status: 'approved', updatedAtMs: 11, decision: { kind: 'approve', decidedAtMs: 11 } };
     onChange();
+    deliverApproved('artifact-other-device', stored.request);
     await expect(pending).resolves.toEqual({ status: 'approved', fingerprint: subject.subjectFingerprint });
     expect(dispose).toHaveBeenCalledTimes(1);
   });
@@ -61,7 +67,7 @@ describe('createExecutionRunHostActionCurrentIntentAdapter', () => {
             decision: { kind: 'approve', decidedAtMs: 11 },
           };
           stored = approved;
-          getSharedBlockingApprovalCoordinator().notifyApprovalUpdated({ artifactId: 'artifact-1', request: approved });
+          deliverApproved('artifact-1', approved);
         });
         return { artifactId: 'artifact-1' };
       },
@@ -86,14 +92,10 @@ describe('createExecutionRunHostActionCurrentIntentAdapter', () => {
           stored = {
             ...request,
             runId: 'other-run',
-            status: 'approved',
+            status: 'canceled',
             updatedAtMs: 11,
-            decision: { kind: 'approve', decidedAtMs: 11 },
           };
-          getSharedBlockingApprovalCoordinator().notifyApprovalUpdated({
-            artifactId: 'artifact-2',
-            request: stored,
-          });
+          getSharedBlockingApprovalCoordinator().notifyApprovalUpdated({ artifactId: 'artifact-2', request: stored });
         });
         return { artifactId: 'artifact-2' };
       },
@@ -121,7 +123,7 @@ describe('createExecutionRunHostActionCurrentIntentAdapter', () => {
             decision: { kind: 'approve', decidedAtMs: 11 },
           };
           createdRequests[0] = approved;
-          getSharedBlockingApprovalCoordinator().notifyApprovalUpdated({ artifactId: 'artifact-secret', request: approved });
+          deliverApproved('artifact-secret', approved);
         });
         return { artifactId: 'artifact-secret' };
       },

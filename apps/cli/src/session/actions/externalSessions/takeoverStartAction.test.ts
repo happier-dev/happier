@@ -278,7 +278,7 @@ describe('external-session durable takeover start', () => {
     },
   );
 
-  it('converges concurrent public Starts on one acknowledged successor before removing its selected expired receipt', async () => {
+  it('converges concurrent public Starts on one acknowledged successor while retaining its predecessor receipt', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-takeover-start-expired-receipt-',
@@ -476,7 +476,10 @@ describe('external-session durable takeover start', () => {
       await expect(readExternalSessionOperationStoredEntry(
         activeServerDir,
         expired.operationId,
-      )).resolves.toBeNull();
+      )).resolves.toMatchObject({
+        kind: 'terminal_receipt',
+        receipt: { presentation: predecessorPresentation },
+      });
       const records = await listExternalSessionOperationRecords(
         activeServerDir,
       );
@@ -590,10 +593,7 @@ describe('external-session durable takeover start', () => {
           ownerId: 'takeover-start-test',
           request: operationRequest,
           acquiredAtMs: 1,
-          renewedAtMs: 1,
-          expiresAtMs: 20_001,
         },
-        renew: async () => true,
         release,
       },
     }));
@@ -692,10 +692,7 @@ describe('external-session durable takeover start', () => {
                 ownerId: 'plugin-takeover-start-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -835,10 +832,7 @@ describe('external-session durable takeover start', () => {
                 ownerId: 'takeover-start-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -928,10 +922,7 @@ describe('external-session durable takeover start', () => {
                 ownerId: 'takeover-unknown-predecessor-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -1032,10 +1023,7 @@ describe('external-session durable takeover start', () => {
           ownerId: 'takeover-start-test',
           request: operationRequest,
           acquiredAtMs: 1,
-          renewedAtMs: 1,
-          expiresAtMs: 20_001,
         },
-        renew: async () => true,
         release,
       },
     }));
@@ -1079,10 +1067,7 @@ describe('external-session durable takeover start', () => {
           ownerId: 'takeover-start-test',
           request: operationRequest,
           acquiredAtMs: 1,
-          renewedAtMs: 1,
-          expiresAtMs: 20_001,
         },
-        renew: async () => true,
         release,
       },
     }));
@@ -1150,10 +1135,7 @@ describe('external-session durable takeover start', () => {
           ownerId: 'takeover-start-test',
           request: operationRequest,
           acquiredAtMs: 1,
-          renewedAtMs: 1,
-          expiresAtMs: 20_001,
         },
-        renew: async () => true,
         release,
       },
     }));
@@ -1247,8 +1229,6 @@ describe('external-session durable takeover start', () => {
                 ownerId: 'other-start',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
             };
           }),
@@ -1293,8 +1273,6 @@ describe('external-session durable takeover start', () => {
         ownerId: 'other-start',
         request: operationRequest,
         acquiredAtMs: 1,
-        renewedAtMs: 1,
-        expiresAtMs: 20_001,
       },
       waitForRelease: async () => {
         await compactCompletedExternalLinkedTakeover({
@@ -1357,8 +1335,6 @@ describe('external-session durable takeover start', () => {
         ownerId: 'other-start',
         request: operationRequest,
         acquiredAtMs: 1,
-        renewedAtMs: 1,
-        expiresAtMs: 20_001,
       },
       waitForRelease: async () => {
         await writeExternalSessionOperationRecord(
@@ -1411,8 +1387,6 @@ describe('external-session durable takeover start', () => {
               ownerId: 'other-start',
               request: operationRequest,
               acquiredAtMs: 1,
-              renewedAtMs: 1,
-              expiresAtMs: 20_001,
             },
             waitForRelease: async () => ({
               status: 'failed' as const,
@@ -1443,7 +1417,6 @@ describe('external-session durable takeover start', () => {
     const firstExclusion = createExternalSessionOperationExclusion({
       activeServerDir,
       ownerId: 'first-start',
-      ttlMs: 10_000,
     });
     let notifyClaimChanged!: () => void;
     const claimChanged = new Promise<void>((resolve) => {
@@ -1465,7 +1438,6 @@ describe('external-session durable takeover start', () => {
     const secondExclusion = createExternalSessionOperationExclusion({
       activeServerDir,
       ownerId: 'cancelled-start',
-      ttlMs: 10_000,
       watchClaimChanges: vi.fn(() => watcher) as unknown as
         typeof import('node:fs/promises').watch,
     });
@@ -1539,7 +1511,6 @@ describe('external-session durable takeover start', () => {
     const operationExclusion = createExternalSessionOperationExclusion({
       activeServerDir,
       ownerId: 'barrier-cancelled-start',
-      claimMutationLockAcquisitionTimeoutMs: 10_000,
     });
     let signalRepairStarted!: () => void;
     const repairStarted = new Promise<void>((resolve) => {
@@ -1600,17 +1571,18 @@ describe('external-session durable takeover start', () => {
     }
   }, 3_000);
 
-  it('reaps an expired same-semantic owner with no final write and completes Start', async () => {
-    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-takeover-start-expiry-'));
+  it('reaps a dead same-semantic owner with no final write and completes Start', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-takeover-start-dead-owner-'));
     const firstExclusion = createExternalSessionOperationExclusion({
       activeServerDir,
       ownerId: 'crashed-start',
-      ttlMs: 30,
+      ownerProcess: { pid: 101, processStartTimeMs: 1 },
     });
     const secondExclusion = createExternalSessionOperationExclusion({
       activeServerDir,
       ownerId: 'replacement-start',
-      ttlMs: 10_000,
+      ownerProcess: { pid: 102, processStartTimeMs: 2 },
+      inspectOwnerProcess: async () => 'verified_stopped',
     });
     const orphaned = await firstExclusion.acquire({
       kind: 'takeover',
@@ -1623,9 +1595,6 @@ describe('external-session durable takeover start', () => {
     if (orphaned.status !== 'acquired') {
       throw new Error('expected orphaned owner acquisition');
     }
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 40);
-    });
     const sendHistoricalCommand = vi.fn(inspectMachineOnly);
     try {
       const executor = createExternalSessionTakeoverStartActionExecutor({

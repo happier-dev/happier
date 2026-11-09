@@ -56,7 +56,7 @@ vi.mock('@happier-dev/agents', async (importOriginal) => ({
   ),
 }));
 
-vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
+vi.mock('@/plugins/projection/registry/builtIn/snapshot', () => ({
   getResolvedContributionRegistry: () => ({
     agentDefinitionsById: mocks.declarationSource === 'cold'
       ? buildForkAgentDefinitions()

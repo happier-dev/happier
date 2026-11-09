@@ -14,11 +14,13 @@ import { resolveCliAgentStartContextV1 } from './resolveCliAgentStartContextV1';
 const agentStartContext = resolveCliAgentStartContextV1({
   sessionId: 'origin', machineId: 'machine', directory: '/repo',
   backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+  appliedChildSelection: { status: 'applied',
+    backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }, modelId: null, connectedServices: null },
   metadata: {}, starterDepth: 0, turnDepth: 0, callerPermissionMode: 'default', settings: accountSettingsParse({}),
   accountRoleOverrides: { status: 'ready', overrides: {} },
   roleSourceInventory: await createRoleSourceReaderV1({})(),
 });
-if (!agentStartContext) throw new Error('expected current host authority fixture');
+if (!agentStartContext || 'ok' in agentStartContext) throw new Error('expected current host authority fixture');
 // The machine catalog is a system boundary. Materialization and policy remain real.
 const resolveMaterializer = async () => ({ effects: { resolveTargetAvailability: async () => true } });
 
@@ -33,7 +35,25 @@ const definitionBody = JSON.stringify({
 
 type ArtifactCreateInput = Parameters<ReturnType<typeof createAccountArtifactStore>['create']>[0];
 
+// The workflow CLI passes this present-user host context into the Action owner.
+const presentUserCaller = {
+  surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+  serverId: 'home', actionRequestId: 'definition-create',
+} satisfies NonNullable<Parameters<ReturnType<typeof createWorkflowDefinitionActions>['create']>[2]>;
+
 describe('workflow definition Actions', () => {
+  it('refuses a missing caller before reading or writing Artifacts', async () => {
+    const read = vi.fn();
+    const create = vi.fn();
+    const actions = createWorkflowDefinitionActions({ artifactStore: { read, create } as never });
+    await expect(actions.create({ definitionId: 'definition-1', metadata: { title: 'Review' },
+      definition: JSON.parse(definitionBody).definition }))
+      .rejects.toMatchObject({ code: 'definition_exceeds_authority',
+        details: { cause: { code: 'target_unavailable' } } });
+    expect(read).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('allows an agent to save input-bound loop limits while enforcing the leaf authority', async () => {
     const step = { kind: 'step', id: 'work', document: { text: 'Work', references: [], attachments: [] }, input: [], result: { kind: 'text' } };
     const definition = { version: 1 as const, defaults: JSON.parse(definitionBody).definition.defaults,
@@ -74,7 +94,7 @@ describe('workflow definition Actions', () => {
         throw Object.assign(new Error(scenario), { code: scenario === 'conflict' ? 'conflict' : 'network_error' });
       },
     } as never });
-    await expect(actions.create({ definitionId, definition, metadata: { description: 'Same document', title: 'Review' } }))
+    await expect(actions.create({ definitionId, definition, metadata: { description: 'Same document', title: 'Review' } }, undefined, presentUserCaller))
       .resolves.toMatchObject({ definitionId, metadata: { title: 'Review', description: 'Same document' } });
   });
 
@@ -87,7 +107,7 @@ describe('workflow definition Actions', () => {
         body: definitionBody, revision: { headerVersion: 1, bodyVersion: 1 }, seq: 1, createdAt: 1, updatedAt: 1 } : null,
       create: async () => { saved = true; throw Object.assign(new Error(scenario), { code: scenario === 'conflict' ? 'conflict' : 'network_error' }); },
     } as never });
-    await expect(actions.create({ definitionId, definition: JSON.parse(definitionBody).definition, metadata: { title: 'Review' } }))
+    await expect(actions.create({ definitionId, definition: JSON.parse(definitionBody).definition, metadata: { title: 'Review' } }, undefined, presentUserCaller))
       .rejects.toMatchObject({ code: 'currentness_conflict' });
   });
 
@@ -181,7 +201,7 @@ describe('workflow definition Actions', () => {
       });
     const actions = createWorkflowDefinitionActions({ artifactStore: { create, read } as never });
     await actions.create({ definitionId: 'definition-1', metadata: { title: 'Review' },
-      definition: { version: 1, defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } }, blocks: ['Review this'] } });
+      definition: { version: 1, defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } }, blocks: ['Review this'] } }, undefined, presentUserCaller);
     expect(create).toHaveBeenCalledOnce();
     const storedBody = create.mock.calls[0]![0].body;
     if (typeof storedBody !== 'string') throw new Error('expected a text Workflow definition');
@@ -315,7 +335,7 @@ describe('workflow definition Actions', () => {
       revision: { headerVersion: 2, bodyVersion: 2 }, seq: 1, createdAt: 1, updatedAt: 1,
     });
 
-    it('refuses to delete when the valid header identity or revision disagrees with the Artifact row', async () => {
+    it('deletes the named owned Artifact even when its valid header identity or revision disagrees with the row', async () => {
       for (const header of [
         headerFor('22222222-2222-4222-8222-222222222222', { headerVersion: 2, bodyVersion: 2 }),
         headerFor(definitionId, { headerVersion: 2, bodyVersion: 1 }),
@@ -324,8 +344,8 @@ describe('workflow definition Actions', () => {
         const actions = createWorkflowDefinitionActions({
           artifactStore: { read: vi.fn(async () => artifactWith(header)), delete: remove } as never,
         });
-        await expect(actions.delete({ definitionId })).rejects.toMatchObject({ code: 'content_unavailable' });
-        expect(remove).not.toHaveBeenCalled();
+        await expect(actions.delete({ definitionId })).resolves.toEqual({ deleted: true, definitionId });
+        expect(remove).toHaveBeenCalledWith(definitionId, {});
       }
     });
 
@@ -336,6 +356,21 @@ describe('workflow definition Actions', () => {
       });
       await expect(actions.delete({ definitionId })).resolves.toEqual({ deleted: true, definitionId });
       expect(remove).toHaveBeenCalledWith(definitionId, {});
+    });
+
+    it.each(['invalid_header', 'read', 'edit', 'admin'] as const)('refuses deletion for %s before removing the Artifact', async (scenario) => {
+      const artifact = artifactWith(headerFor(definitionId, { headerVersion: 2, bodyVersion: 2 }));
+      const remove = vi.fn(async () => ({ ok: true as const }));
+      const actions = createWorkflowDefinitionActions({ artifactStore: {
+        read: async () => scenario === 'invalid_header'
+          ? { ...artifact, header: { kind: 'prompt_doc.v2' } }
+          : { ...artifact, access: scenario },
+        delete: remove,
+      } as never });
+      await expect(actions.delete({ definitionId })).rejects.toMatchObject({
+        code: scenario === 'invalid_header' ? 'content_unavailable' : 'artifact_access_forbidden',
+      });
+      expect(remove).not.toHaveBeenCalled();
     });
   });
 });

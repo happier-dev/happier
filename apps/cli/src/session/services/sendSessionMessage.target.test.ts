@@ -10,6 +10,7 @@ import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachi
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { sendSessionMessage, waitForSessionInputResult } from './sendSessionMessage';
+import { resolveSessionUserMessageRequestedAction } from './resolveSessionUserMessageRequestedAction';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
@@ -20,11 +21,13 @@ import { encryptSessionPayload, decryptSessionPayload } from '@/session/transpor
 import * as installationIdentity from '@/daemon/identity/store';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
-import { UserMessageSchema, type UserMessage } from '@/api/types';
+import { SessionMessageContentSchema, UserMessageSchema, type UserMessage } from '@/api/types';
 import { ApiSessionClient } from '@/api/session/sessionClient';
 import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
 import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/permissions/startupSeed';
 import { buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { readSessionInputForgeEvidenceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { configuration } from '@/configuration';
 
 // HTTP and fetch are the real process boundaries; authoring, crypto envelopes,
 // Session resolution, capability parsing and Pending transport stay real.
@@ -39,6 +42,12 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => rpc);
 const sessionId = 'c123456789012345678901234';
 const recipient = { kind: 'execution_run' as const, runId: 'run-a' };
 const cliActionContext = { surface: 'cli' as const, authority: 'present_user' as const, defaultSessionId: null };
+it('preserves explicit Run recovery while bootstrapping its inactive parent', () => {
+  const recovery = { v: 2, kind: 'recover_execution_run' } as const;
+  expect(resolveSessionUserMessageRequestedAction({ deliveryIntent: 'runtime_bootstrap', requestedAction: recovery })).toEqual(recovery);
+  expect(resolveSessionUserMessageRequestedAction({ deliveryIntent: 'runtime_bootstrap', requestedAction: { v: 1, kind: 'enqueue' } }))
+    .toEqual({ v: 1, kind: 'send_now' });
+});
 const credentials = { token: 'target-send-test', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
 const correspondence = {
   v: 1,
@@ -74,10 +83,14 @@ function mockRunReads(inputTurns: readonly unknown[]) {
 }
 
 describe('target Session input authoring through HTTP', () => {
-  it.each(['plain', 'e2ee'] as const)('admits Bob Follow through Account HTTP and rejoins a late accepted original (%s)', async mode => {
+  it.each([{ mode: 'plain', malformed: false }, { mode: 'e2ee', malformed: false }, { mode: 'plain', malformed: true }] as const)(
+    'admits Bob Follow through Account HTTP and rejoins a late accepted original ($mode, malformed forge metadata=$malformed)', async ({ mode, malformed }) => {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.fixture`;
     const secret = new Uint8Array(32).fill(17);
     const ctx = { encryptionKey: secret, encryptionVariant: 'legacy' as const };
+    const forgeEvidence = { v: 1 as const, items: [{ source: { kind: 'localTerminal' as const, label: 'Selected failing output' },
+      author: { kind: 'process' as const }, text: 'Preserve evidence independently from prompt text.' }] };
+    let storedMessageMeta: unknown;
     http.get.mockImplementation(async (url: string) => {
       if (url.endsWith('/currentness')) return { status: 200, data: { mode, version: 1, updatedAt: 1,
         signingKeyFingerprint: null, contentKeyFingerprint: null } };
@@ -94,21 +107,36 @@ describe('target Session input authoring through HTTP', () => {
       expect(config.headers.Authorization).toBe(`Bearer ${token}`);
       expect(body).toMatchObject({ followSources: [{ evaluation: 'receiver', rule: { ruleId: 'bob-private-rule', ruleVersion: 3 } }],
         followRelations: [{ relation: 'follower' }], followDeliveryV1: { original: { sourceSessionId: 'c222222222222222222222222' } } });
+      if (!body || typeof body !== 'object') throw new Error('Expected the real Pending HTTP request');
+      const payload = mode === 'plain' ? (() => {
+        const content = SessionMessageContentSchema.parse(Reflect.get(body, 'content'));
+        if (content.t !== 'plain') throw new Error('Expected plain stored content');
+        return content.v;
+      })() : (() => {
+        const ciphertextBase64 = Reflect.get(body, 'ciphertext');
+        if (typeof ciphertextBase64 !== 'string') throw new Error('Expected encrypted stored content');
+        return decryptSessionPayload({ ctx, ciphertextBase64 });
+      })();
+      if (!payload || typeof payload !== 'object') throw new Error('Expected the complete stored message record');
+      storedMessageMeta = Reflect.get(payload, 'meta');
       return { status: 200, data: { didWrite: false, terminal: true, message: { localId: 'earlier-accepted-input' } } };
     });
     const admission = buildTrustedHostSessionInputAdmissionV1('agent');
     const result = await sendSessionMessage({ credentials: { token, encryption: mode === 'plain' ? null : { type: 'legacy', secret } },
       idOrPrefix: sessionId, localId: 'late-route-attempt', message: 'Read the followed original', wait: false,
+      messageMeta: { forgeEvidence: malformed ? { ...forgeEvidence, authority: 'approved' } : forgeEvidence },
       timeoutMs: 1000, resumeInactiveSession: false, informationDelivery: 'session_follow', executionAuthority: 'account_automation',
       inputAdmission: { ...admission, request: { ...admission.request, followDeliveryV1: {
-        v: 1, delivery: 'next_turn', original: { sourceSessionId: 'c222222222222222222222222', sourceMessage: { localId: 'original', seq: 2 } },
+        v: 1, delivery: 'next_turn', original: { sourceSessionId: 'c222222222222222222222222', sourceTurn: { id: 'host-turn', status: 'failed' } },
         event: { kind: 'failed_or_stopped' },
-      } } }, followSources: [{ evaluation: 'receiver', sourceSessionId: 'c222222222222222222222222', destinationSessionId: sessionId,
-        sourceMessage: { localId: 'original', seq: 2 }, rule: { ruleId: 'bob-private-rule', ruleVersion: 3 } }],
+      } } }, followSources: [{ evaluation: 'receiver', selectedDelivery: 'next_turn', sourceSessionId: 'c222222222222222222222222', destinationSessionId: sessionId,
+        sourceTurn: { id: 'host-turn', status: 'failed' }, rule: { ruleId: 'bob-private-rule', ruleVersion: 3 } }],
       followRelations: [{ relation: 'follower' }],
     });
     expect(result).toMatchObject({ ok: true, localId: 'earlier-accepted-input', terminal: true,
       admissionResult: { status: 'alreadyAccepted', localId: 'earlier-accepted-input' } });
+    if (malformed) expect(storedMessageMeta).not.toHaveProperty('forgeEvidence');
+    else expect(readSessionInputForgeEvidenceV1(storedMessageMeta)).toEqual(forgeEvidence);
   });
   it('keeps the owner baseline across external Send admission, turn intent and subsequent resume', async () => {
     const pending: Array<{ localId: string; content: { t: 'plain'; v: unknown } }> = [];
@@ -647,6 +675,30 @@ describe('target Session input authoring through HTTP', () => {
     expect(http.post.mock.calls[0]?.[0]).toContain('/execution-runs/run-a/pending');
   });
 
+  it('returns the exact target Pending refusal through Session Send without re-polling or resending', async () => {
+    const originalGet = http.get.getMockImplementation()!;
+    const pendingReads: string[] = [];
+    http.get.mockImplementation(async (url: string) => {
+      if (url.includes('/messages/by-local-id/')) return { status: 200, data: { message: null } };
+      if (url.includes('/pending')) {
+        pendingReads.push(url);
+        return { status: 200, data: { recipient, pending: [
+          { localId: 'other-input', status: 'queued', deliveryState: 'blocked', deliveryBlockedReason: 'session_input_invalid' },
+          { localId: 'blocked-run-input', status: 'queued', deliveryState: 'blocked', deliveryBlockedReason: 'session_input_target_unavailable' },
+        ] } };
+      }
+      return originalGet(url);
+    });
+    const deps = createCliActionDeps({ credentials, token: credentials.token, sessionId: 'cli-global', serverId: 'cloud', serverHttpBaseUrl: configuration.serverUrl, mode: 'plain', ctx: null });
+    const result = await deps.sessionSendMessage!({ context: cliActionContext, sessionId, localId: 'blocked-run-input',
+      message: 'Targeted input before the first turn', recipient, wait: true, timeoutSeconds: 1,
+      requestedAction: { v: 1, kind: 'enqueue' } });
+    expect(result).toMatchObject({ status: 'rejected', code: 'session_input_target_unavailable' });
+    expect(pendingReads).toEqual([expect.stringContaining(`/execution-runs/${recipient.runId}/pending?includeDiscarded=true`)]);
+    expect(http.post).toHaveBeenCalledOnce();
+    expect(rpc.callSessionRpc).not.toHaveBeenCalled();
+  });
+
   it('returns outcome-unknown when exact target-turn evidence is unavailable', async () => {
     const result = await sendSessionMessage({
       credentials, idOrPrefix: sessionId, localId: 'input-a', message: 'Wait for this run input',
@@ -841,7 +893,11 @@ describe('target Session input authoring through HTTP', () => {
           role: 'user', content: { type: 'text', text: 'Wait for this run input' },
         } },
       } } };
-      if (url.includes(`/v1/sessions/${sessionId}/messages?`)) return { status: 200, data: { messages: [
+      if (url.includes(`/v1/sessions/${sessionId}/messages?`)) {
+        const query = new URL(url).searchParams;
+        // Home defaults to main-chain reads. A nested result is visible only
+        // when this reader selects its exact admitted sidechain.
+        const messages = [
         {
           id: 'main-terminal', seq: 11, localId: null, createdAt: 11,
           content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', data: { type: 'task_complete', id: 'main-turn' } } } },
@@ -867,6 +923,14 @@ describe('target Session input authoring through HTTP', () => {
           } } } },
         },
         {
+          id: 'exact-active-progress', seq: 14, localId: null, createdAt: 14,
+          content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', data: {
+            type: 'message', message: 'Still working', sidechainId: 'sidechain-a',
+          } }, meta: { happierExecutionRunInputTurnV1: {
+            turnId: 'turn-a', inputIds: ['input-a', 'input-b'], state: 'active',
+          } } } },
+        },
+        {
           id: 'exact-terminal', seq: 15, localId: null, createdAt: 15,
           content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', data: {
             type: terminalType, id: 'turn-a', sidechainId: 'sidechain-a',
@@ -874,7 +938,14 @@ describe('target Session input authoring through HTTP', () => {
             turnId: 'turn-a', inputIds: ['input-a', 'input-b'], state: _state, retiredField: true,
           } } } },
         },
-      ] } };
+        ];
+        return { status: 200, data: { messages: messages.filter(row => {
+          const sidechainId = row.content.v.content.data?.sidechainId;
+          return query.get('scope') === 'sidechain'
+            ? sidechainId === query.get('sidechainId')
+            : sidechainId === undefined;
+        }) } };
+      }
       return originalGet(url);
     });
     mockRunReads([

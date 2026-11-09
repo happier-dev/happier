@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalRequestV2Schema, SessionInputRequestV1Schema, type ApprovalRequest } from '@happier-dev/protocol';
+import { ApprovalRequestV2Schema, ExternalActionExecutionAuthorizationV1Schema, SessionInputRequestV1Schema, type ApprovalRequest } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -25,15 +25,21 @@ vi.mock('@/api/session/sockets', async importOriginal => {
 
 describe('CLI host Message admission', () => {
   beforeEach(() => vi.clearAllMocks());
-  it.each(['reject', 'cancel'] as const)('settles a private Discussion %s at its captured Home without a live publisher', async decision => {
+  it.each([
+    { decision: 'reject', draft: true }, { decision: 'cancel', draft: true }, { decision: 'reject', draft: false },
+  ] as const)('settles a Discussion $decision at its captured Home without a live publisher (draft: $draft)', async ({ decision, draft }) => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'draft-account' })).toString('base64url')}.signature`;
     const sessionId = 'draft-session';
     const requestLocalId = 'discussion:original';
-    const operation = { kind: 'discussion_review' as const, discussionId: 'discussion-1', messageId: 'question-1',
-      acceptedTurnId: 'draft-turn', decision };
+    const correlation = { discussionId: 'discussion-1', messageId: 'question-1', acceptedTurnId: 'draft-turn' };
+    const publication = { kind: 'failed' as const, failure: { code: 'approval_rejected' as const,
+      phase: 'action_admission' as const, retryable: false } };
+    const operation = draft ? { kind: 'discussion_review' as const, ...correlation, decision }
+      : { kind: 'discussion_publication' as const, ...correlation, approvalArtifactId: 'confirmation', publication };
     const progress = { v: 1, mode: 'return', discussion: { discussionId: operation.discussionId,
       messageId: operation.messageId, throughSeq: 1, participantSessionId: sessionId }, acceptedTurnId: operation.acceptedTurnId,
-      disposition: 'released', outcome: { kind: 'declined' } };
+      disposition: 'released', ...(draft ? { outcome: { kind: 'declined' } }
+        : { outcome: { kind: 'answer', result: { sessionId, messageId: 'native-answer' } }, returnPublication: publication }) };
     const writes: unknown[] = [];
     http.post.mockImplementation(async (url: string, body: unknown) => {
       writes.push({ url, body });
@@ -44,7 +50,7 @@ describe('CLI host Message admission', () => {
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'draft-home',
       runtimeAccountId: 'draft-account' };
     expect(await deps.sessionMessageReply!({ sessionId, requestLocalId, reviewDecision: operation, context,
-      serverId: 'draft-home' })).toMatchObject({ v: 1, ok: true, progress: { disposition: 'released', outcome: { kind: 'declined' } } });
+      serverId: 'draft-home' })).toMatchObject({ v: 1, ok: true, progress });
     expect(writes).toEqual([{ url: `https://draft-home.example/v2/sessions/${sessionId}/messages/by-local-id/${encodeURIComponent(requestLocalId)}/reply`,
       body: operation }]);
     expect(await deps.sessionMessageReply!({ sessionId, requestLocalId, reviewDecision: operation,
@@ -401,5 +407,60 @@ describe('CLI host Message admission', () => {
       happierInputRequestV1: { v: 1, producer: 'cli', caller: { kind: 'host' } },
     } } } });
     expect(SessionInputRequestV1Schema.safeParse(write?.[1].content.v.meta.happierInputRequestV1).success).toBe(true);
+  });
+
+  it('protects an API-token Session input so causal permission authority can reach provider dispatch', async () => {
+    const sessionId = 'cmv3apitokenadmissionaaaa';
+    const machineId = 'api-token-machine';
+    const target = { kind: 'session' as const, sessionId };
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, targets: { sessions: [sessionId], machines: [] },
+      permissionModes: ['default' as const] };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1,
+      token: 'requester-proof',
+      binding: {
+        accountId: 'api-account', principalId: 'api-principal', credentialId: 'api-credential', grant,
+        serverIdentityId: 'api-home', machineId, custodianAccountId: 'api-account', installationId: 'api-installation',
+        actionId: 'session.message.send', requestId: 'api-message', target,
+        requestEnvelopeDigest: 'a'.repeat(43), accountEncryptionMode: 'plain',
+      },
+    });
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption/currentness')) {
+        return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      }
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, active: true, encryptionMode: 'plain', machineId,
+        metadata: JSON.stringify({ machineId, permissionMode: 'default', permissionModeUpdatedAt: 1 }),
+      }) } };
+      throw new Error(`Unexpected API-token admission read: ${url}`);
+    });
+    const admitted: unknown[] = [];
+    const machineAdmissionTransport: NonNullable<Parameters<typeof createCliActionDeps>[0]['machineAdmissionTransport']> =
+      async request => { admitted.push(request); return { status: 'accepted', localId: request.localId }; };
+    const deps = createCliActionDeps({
+      token: 'daemon-token', credentials: { token: 'daemon-token', encryption: null },
+      sessionId: 'daemon-global', mode: 'plain', ctx: null, serverIdentityId: 'api-home', machineAdmissionTransport,
+      externalActionMachineInstallationId: 'api-installation',
+      externalActionMachineRequestPrivateKey: new Uint8Array(64),
+    });
+    const result = await deps.sessionSendMessage!({
+      sessionId, message: 'Run a command that requires approval', localId: 'api-input', wait: false,
+      callerInputConstraints: grant, callerSurface: 'api', actionCaller: { kind: 'host' },
+      context: {
+        surface: 'api', authority: 'account_automation', externalActionTarget: target,
+        externalActionCredential: { accountId: 'api-account', principalId: 'api-principal',
+          credentialId: 'api-credential', grant },
+        externalActionExecutionAuthorization: authorization,
+      },
+      requestedAction: { v: 1, kind: 'enqueue' },
+    });
+    expect(result).toEqual({ status: 'accepted', localId: 'api-input' });
+    expect(admitted).toEqual([expect.objectContaining({ content: expect.objectContaining({
+      t: 'plain', v: expect.objectContaining({ meta: expect.objectContaining({
+        happierInputRequestV1: expect.objectContaining({ producer: 'sessionAction', caller: { kind: 'host' } }),
+      }) }),
+    }) })]);
+    expect(http.post).not.toHaveBeenCalled();
   });
 });

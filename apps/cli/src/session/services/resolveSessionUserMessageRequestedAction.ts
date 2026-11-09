@@ -14,6 +14,7 @@ export function resolveSessionUserMessageRequestedAction(params: Readonly<{
   deliveryIntent?: SessionUserMessageDeliveryIntent;
   requestedAction?: PendingRequestedActionV1;
 }>): PendingRequestedActionV1 {
+  if (params.requestedAction?.kind === 'recover_execution_run') return params.requestedAction;
   if (params.deliveryIntent === 'runtime_bootstrap') {
     return { v: 1, kind: 'send_now' };
   }

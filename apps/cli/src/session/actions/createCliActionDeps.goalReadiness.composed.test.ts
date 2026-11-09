@@ -12,7 +12,7 @@ import { createCliActionDeps } from './createCliActionDeps';
 
 const boundary = vi.hoisted(() => ({
   dispatch: null as ((method: string, request: unknown, signal?: AbortSignal) => Promise<unknown>) | null,
-  entered: false,
+  onEnter: null as (() => void) | null,
 }));
 // Replace only socket I/O. Real RPC budgets, capability handlers, initial
 // controls readiness, Action dependencies and trigger admission remain wired.
@@ -23,7 +23,7 @@ vi.mock('@/api/session/sockets', () => ({
       if (event !== SOCKET_RPC_EVENTS.CALL || !raw || typeof raw !== 'object' || !('method' in raw)
         || typeof raw.method !== 'string' || !('params' in raw) || !boundary.dispatch) throw new Error('Unexpected RPC boundary');
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-      boundary.entered = true;
+      boundary.onEnter?.();
       return { ok: true, result: await boundary.dispatch(raw.method.slice(raw.method.indexOf(':') + 1), raw.params, options.signal) };
     } });
     return { socket, transport: { connect: async () => {}, destroy: async () => {},
@@ -46,7 +46,7 @@ describe('Keep going capability discovery during native controls installation', 
     await client?.close();
     client = null;
     boundary.dispatch = null;
-    boundary.entered = false;
+    boundary.onEnter = null;
     vi.restoreAllMocks();
   });
 
@@ -86,12 +86,13 @@ describe('Keep going capability discovery during native controls installation', 
     });
     const controller = new AbortController();
     let settled = false;
+    const entered = new Promise<void>(resolve => { boundary.onEnter = resolve; });
     const outcome = deps.workflowAction!({ actionId: 'session.trigger.add', input: { sessionId, target: { kind: 'workflow', ref: 'builtin:keep-going' },
       trigger: { kind: 'schedule', enabled: true,
         schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } } },
       context: { surface: 'cli', authority: 'present_user', signal: controller.signal } }).catch((error: unknown) => error)
       .then(value => { settled = true; return value; });
-    await vi.waitFor(() => expect(boundary.entered).toBe(true));
+    await Promise.race([entered, outcome.then(() => { throw new Error('Trigger admission settled before capability discovery'); })]);
     // Advance the real transport's omitted-option 20 s deadline; no wall-clock
     // sleep or test-owned replacement timeout is involved.
     await vi.advanceTimersByTimeAsync(20_001);

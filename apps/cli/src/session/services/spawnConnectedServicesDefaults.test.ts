@@ -7,6 +7,7 @@ import {
   createSpawnConnectedServicesTeamResourceCatalogResolver,
   mergeSessionTeamCredentialBindingIntents,
   resolvePurposeTeamCredentialBindingIntents,
+  resolvePurposeTeamCredentialBindingIntentsFromHome,
   resolveSpawnConnectedServicesDefaultDisposition,
   resolveSpawnConnectedServicesDefaults,
 } from './spawnConnectedServicesDefaults';
@@ -20,6 +21,33 @@ const CODEX_CONSUMER = CODEX_SCOPE?.purpose.consumer ?? { pluginId: 'missing', l
 const CODEX_PURPOSE = CODEX_SCOPE?.purpose.purpose ?? 'missing';
 
 describe('resolveSpawnConnectedServicesDefaults', () => {
+  it('classifies a no-longer-offered Team purpose default with the canonical resource refusal', async () => {
+    if (!CODEX_SCOPE) throw new Error('Expected real Codex purpose declaration');
+    let reads = 0;
+    const resolver = createSpawnConnectedServicesTeamResourceCatalogResolver({ serverId: 'home', accountId: 'recipient',
+      homeDomainAction: async () => { reads++; return { resources: [], nextCursor: null }; } });
+    await expect(resolvePurposeTeamCredentialBindingIntentsFromHome({
+      teamResourceSelections: [{ purpose: CODEX_SCOPE.purpose, services: CODEX_SCOPE.serviceRefs,
+        teamId: 'team-a', selection: { source: 'team_resource', resourceId: 'resource-a', deliveryMode: 'brokered' } }],
+      resolveTeamCredentialResourceCatalog: resolver,
+    })).rejects.toMatchObject({ code: 'resource_unavailable', phase: 'purpose_binding',
+      reason: 'connected_services_team_default_requires_current_resource' });
+    expect(reads).toBe(1);
+  });
+  it.each(['resource_forbidden', 'connected_service_credential_reconnect_required'])(
+    'keeps the %s reason when resolving a purpose default through Home', async code => {
+      if (!CODEX_SCOPE) throw new Error('Expected real Codex purpose declaration');
+      let reads = 0;
+      const resolver = createSpawnConnectedServicesTeamResourceCatalogResolver({ serverId: 'home', accountId: 'recipient',
+        homeDomainAction: async () => { reads++; return { ok: false, error: { code } }; } });
+      await expect(resolvePurposeTeamCredentialBindingIntentsFromHome({
+        teamResourceSelections: [{ purpose: CODEX_SCOPE.purpose, services: CODEX_SCOPE.serviceRefs,
+          teamId: 'team-a', selection: { source: 'team_resource', resourceId: 'resource-a', deliveryMode: 'brokered' } }],
+        resolveTeamCredentialResourceCatalog: resolver,
+      })).rejects.toMatchObject({ code, phase: 'resource_catalog' });
+      expect(reads).toBe(1);
+    },
+  );
   it('reads every recipient-catalog continuation before resolving a Team default', async () => {
     const resource = {
       id: 'resource-page-two', teamId: 'team-a', displayName: 'Page two', resourceRevision: 1,
@@ -268,6 +296,31 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       kind: 'connected',
       bindings: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': selection } },
     });
+    expect(resolveSpawnConnectedServicesDefaultDisposition({
+      agentId: 'codex', accountSettings: {}, purposeCatalog,
+      teamCredentialResourceCatalog: { ...catalog, resources: catalog.resources.map(resource => ({ ...resource,
+        readiness: { kind: 'limit_reached' as const, metric: 'inference_requests' as const, resetsAtUtc: '2026-10-26T00:00:00.000Z' },
+      })) },
+    })).toEqual({ kind: 'unavailable', reason: 'team_credential_usage_limit' });
+    expect(resolveSpawnConnectedServicesDefaultDisposition({
+      agentId: 'codex', accountSettings: {}, purposeCatalog,
+      teamCredentialResourceCatalog: { ...catalog, resources: catalog.resources.map(resource => ({ ...resource,
+        readiness: { kind: 'broker_unavailable' as const, reason: 'projection_unavailable' as const },
+        recoveryAction: 'retry' as const, connectedServiceSelections: [],
+      })) },
+    })).toEqual({ kind: 'unavailable', reason: 'broker_unavailable' });
+    const updateCatalog = { ...catalog, resources: catalog.resources.map(resource => ({ ...resource,
+      readiness: { kind: 'update_required' as const }, providerModels: [], connectedServiceSelections: [],
+    })) };
+    expect(resolveSpawnConnectedServicesDefaultDisposition({ agentId: 'codex', accountSettings: {}, purposeCatalog,
+      teamCredentialResourceCatalog: updateCatalog,
+    })).toEqual({ kind: 'unavailable', reason: 'update_required' });
+    expect(() => resolvePurposeTeamCredentialBindingIntents({
+      teamResourceSelections: [{ purpose: { consumer: CODEX_CONSUMER, purpose: CODEX_PURPOSE },
+        teamId: 'team-a', selection: agentPageTeamSelection,
+        services: [{ pluginId: 'happier.agent.codex', localId: 'openai-codex' }] }],
+      teamCredentialResourceCatalog: updateCatalog,
+    })).toThrow(expect.objectContaining({ code: 'update_required', phase: 'purpose_binding' }));
   });
 
   it('turns a durable Team default into the Session slot binding, and an explicit slot choice wins', () => {
@@ -303,6 +356,27 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       deliveryMode: 'brokered',
       teamId: 'team-a',
     }]);
+    let refusal: unknown;
+    try {
+      resolvePurposeTeamCredentialBindingIntents({ teamResourceSelections,
+        teamCredentialResourceCatalog: { ...catalog, resources: catalog.resources.map(resource => ({ ...resource,
+          readiness: { kind: 'limit_reached' as const, metric: 'inference_requests' as const, resetsAtUtc: '2026-10-26T00:00:00.000Z' },
+        })) },
+      });
+    } catch (error) { refusal = error; }
+    expect(refusal).toMatchObject({ code: 'team_credential_usage_limit',
+      details: { v: 1, source: 'team_credential' } });
+    for (const readiness of [
+      { kind: 'broker_unavailable' as const, reason: 'projection_unavailable' as const },
+      { kind: 'broker_unavailable' as const, reason: 'response_invalid' as const },
+      { kind: 'source_unavailable' as const },
+    ]) {
+      expect(() => resolvePurposeTeamCredentialBindingIntents({ teamResourceSelections,
+        teamCredentialResourceCatalog: { ...catalog, resources: catalog.resources.map(resource => ({ ...resource,
+          readiness, connectedServiceSelections: [], recoveryAction: 'retry' as const,
+        })) },
+      })).toThrow(expect.objectContaining({ code: 'broker_unavailable', details: { v: 1, source: 'team_credential' } }));
+    }
     expect(() => resolvePurposeTeamCredentialBindingIntents({
       teamResourceSelections,
       teamCredentialResourceCatalog: { ...catalog, resources: [] },

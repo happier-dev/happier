@@ -44,9 +44,6 @@ import {
   type ExternalSessionFollowProviderOps,
   type ExternalSessionProviderOps,
 } from './providerOps';
-import {
-  EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
-} from './hostOperationOwner';
 import type { HostExternalTranscriptFollowEvent } from './privateContract';
 import type { ContextualExternalSessionTakeoverAdapter } from './contextualTakeoverAdmission';
 import {
@@ -463,11 +460,11 @@ describe('configured external-session source materializer', () => {
       piAgentDir: '/isolated/pi',
       ohMyPiAgentDir: '/isolated/omp',
     })).toEqual([
-      { agentId: 'pi', source: { kind: 'piAgentDir', agentDir: '/isolated/pi' } },
-      { agentId: 'ohmypi', source: { kind: 'ohMyPiAgentDir', agentDir: '/isolated/omp' } },
+      { agentId: 'pi', accountScopeKey: null, source: { kind: 'piAgentDir', agentDir: '/isolated/pi' } },
+      { agentId: 'ohmypi', accountScopeKey: null, source: { kind: 'ohMyPiAgentDir', agentDir: '/isolated/omp' } },
     ]);
     expect(materialize({ piAgentDir: '/changed/pi' })).toEqual([
-      { agentId: 'pi', source: { kind: 'piAgentDir', agentDir: '/changed/pi' } },
+      { agentId: 'pi', accountScopeKey: null, source: { kind: 'piAgentDir', agentDir: '/changed/pi' } },
       { agentId: 'ohmypi', source: { kind: 'ohMyPiAgentDir' } },
     ]);
   });
@@ -497,6 +494,7 @@ describe('configured external-session source materializer', () => {
       { agentId: 'codex', source: { kind: 'codexHome', home: 'user' } },
       {
         agentId: 'codex',
+        accountScopeKey: null,
         source: {
           kind: 'codexHome', home: 'connectedService',
           connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work',
@@ -1710,7 +1708,7 @@ describe('configured external-session source materializer', () => {
     }
   });
 
-  it('does not let a retired in-flight source query recreate its candidate index', async () => {
+  it('finishes an admitted candidate query without reviving its disposed composition', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-retired-candidate-index-'));
     try {
       let enteredResolve!: () => void;
@@ -1754,8 +1752,11 @@ describe('configured external-session source materializer', () => {
       ]);
       adapter.dispose();
       releaseResolve();
-      await expect(listing).rejects.toMatchObject({ code: 'plugin_generation_retired' });
-      await expectCandidateIndexesRetired(activeServerDir);
+      await expect(listing).resolves.toMatchObject({
+        items: [],
+        nextCursor: expect.stringMatching(/^plugin_external_sessions_v1_/),
+      });
+      await expect(adapter.authorService.list()).rejects.toMatchObject({ code: 'plugin_generation_retired' });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }
@@ -2842,15 +2843,9 @@ describe('configured external-session source materializer', () => {
     });
   });
 
-  it('delivers exactly one canonical disposed acknowledgement before closing an explicit public follow', async () => {
+  it('closes explicit public follow demand without a disposed-event delivery exception', async () => {
     let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
-    const dispose = vi.fn(async () => {
-      await privateListener({
-        kind: 'terminated',
-        reason: 'disposed',
-        cursor: 'cursor-0',
-      });
-    });
+    const dispose = vi.fn(async () => undefined);
     const followTranscript = vi.fn(async (input: Readonly<{
       listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
     }>) => {
@@ -2889,12 +2884,7 @@ describe('configured external-session source materializer', () => {
     await result.subscription.dispose();
 
     expect(dispose).toHaveBeenCalledOnce();
-    expect(listener).toHaveBeenCalledOnce();
-    expect(listener).toHaveBeenCalledWith({
-      kind: 'terminated',
-      reason: 'disposed',
-      cursor: 'cursor-0',
-    });
+    expect(listener).not.toHaveBeenCalled();
     await expect(privateListener({
       kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-1',
     })).rejects.toThrow('plugin_external_follow_listener_failed');
@@ -2907,7 +2897,7 @@ describe('configured external-session source materializer', () => {
     await expect(privateListener({
       kind: 'terminated', reason: 'disposed', cursor: 'cursor-0',
     })).rejects.toThrow('plugin_external_follow_listener_failed');
-    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).not.toHaveBeenCalled();
   });
 
   it('strictly projects author follow acquisition results without private fields', async () => {
@@ -3267,11 +3257,12 @@ describe('configured external-session source materializer', () => {
     expect(followTranscript).toHaveBeenCalledOnce();
   });
 
-  it('starts release at the 6s daemon acknowledgement deadline and bounds hanging cleanup to 5s', async () => {
+  it('keeps a held acknowledgement pending until cancellation and joins physical cleanup', async () => {
     vi.useFakeTimers();
     try {
       let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
-      const dispose = vi.fn(() => new Promise<void>(() => undefined));
+      let finishCleanup!: () => void;
+      const dispose = vi.fn(() => new Promise<void>((resolve) => { finishCleanup = resolve; }));
       const followTranscript = vi.fn(async (input: Readonly<{
         listener(event: HostExternalTranscriptFollowEvent): void | Promise<void>;
       }>) => {
@@ -3300,31 +3291,30 @@ describe('configured external-session source materializer', () => {
         resolveProviderOps: async () => ops,
         followTranscript,
       });
+      const cancellation = new AbortController();
       const result = await composition.authorService.followTranscript({
         agentId: 'codex', sourceId: 'codexHome:user:::', remoteSessionId: 'remote-1',
-      }, {}, async () => await new Promise<void>(() => undefined));
+      }, { signal: cancellation.signal }, async () => await new Promise<void>(() => undefined));
       expect(result.status).toBe('following');
       const delivery = Promise.resolve(privateListener({
         kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-1',
       }));
 
-      // The configured owner is awaiting the daemon's acknowledgement, not the
-      // author callback. The runner retains the five-second author deadline;
-      // the outer owner waits one additional transport round trip for its
-      // rejected acknowledgement before starting physical cleanup.
-      await vi.advanceTimersByTimeAsync(
-        EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS - 1,
-      );
+      const deliveryAssertion = expect(delivery).rejects.toThrow('plugin_operation_aborted');
+      await vi.advanceTimersByTimeAsync(12_000);
       expect(dispose).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1);
+      cancellation.abort();
+      await vi.advanceTimersByTimeAsync(0);
       expect(dispose).toHaveBeenCalledOnce();
-      await vi.advanceTimersByTimeAsync(4_999);
+      await deliveryAssertion;
+      if (result.status !== 'following') throw new Error('expected follow');
+      const disposal = result.subscription.dispose();
       let settled = false;
-      void delivery.finally(() => { settled = true; }).catch(() => undefined);
-      await Promise.resolve();
+      void disposal.finally(() => { settled = true; }).catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(6_001);
       expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      await expect(delivery).rejects.toThrow('plugin_external_follow_listener_deadline_exceeded');
+      finishCleanup();
+      await disposal;
       await expect(privateListener({
         kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-2',
       })).rejects.toThrow('plugin_external_follow_listener_failed');
@@ -3334,7 +3324,7 @@ describe('configured external-session source materializer', () => {
     }
   });
 
-  it('keeps a daemon follow delivery open for the author deadline plus acknowledgement transport margin', async () => {
+  it('keeps delivery ordered while a slow author acknowledgement settles', async () => {
     vi.useFakeTimers();
     try {
       let privateListener!: (event: HostExternalTranscriptFollowEvent) => Promise<void> | void;
@@ -3368,10 +3358,8 @@ describe('configured external-session source materializer', () => {
         followTranscript,
       });
       const runnerAuthorListener = vi.fn(async (_event: unknown) => await new Promise<void>((resolve) => {
-        setTimeout(resolve, 4_999);
+        setTimeout(resolve, 6_001);
       }));
-      // This is the daemon-side publisher: author work is complete at 4,999 ms,
-      // then the runner acknowledgement takes a positive transport interval.
       const publishToRunner = vi.fn(async (event: unknown) => {
         await runnerAuthorListener(event);
         await new Promise<void>((resolve) => { setTimeout(resolve, 2); });
@@ -3384,7 +3372,7 @@ describe('configured external-session source materializer', () => {
         kind: 'data', items: [], fromCursor: 'cursor-0', nextCursor: 'cursor-1',
       }));
 
-      await vi.advanceTimersByTimeAsync(4_999);
+      await vi.advanceTimersByTimeAsync(6_001);
       expect(runnerAuthorListener).toHaveBeenCalledOnce();
       expect(dispose).not.toHaveBeenCalled();
 
@@ -3392,7 +3380,6 @@ describe('configured external-session source materializer', () => {
       await expect(delivery).resolves.toBeUndefined();
       expect(publishToRunner).toHaveBeenCalledOnce();
       expect(dispose).not.toHaveBeenCalled();
-      expect(EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS).toBe(6_000);
     } finally {
       vi.useRealTimers();
     }
@@ -3446,20 +3433,13 @@ describe('configured external-session source materializer', () => {
       }, {}, vi.fn(async () => undefined));
       if (result.status !== 'following') throw new Error('expected follow');
 
-      // Cleanup that has not settled by the ceiling is unresolved cleanup, not
-      // finished cleanup: reporting success here is what let every owner above
-      // drop a still-live provider subscription.
       const first = Promise.resolve(result.subscription.dispose());
       const firstSettled = first.catch(() => undefined);
-      await vi.advanceTimersByTimeAsync(4_999);
+      await vi.advanceTimersByTimeAsync(6_001);
       let settled = false;
       void firstSettled.finally(() => { settled = true; });
       await Promise.resolve();
       expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      await expect(first).rejects.toThrow(
-        'plugin_external_follow_cleanup_deadline_exceeded',
-      );
 
       // The follow is still terminal for delivery even though its cleanup hung.
       await expect(privateListener({
@@ -3475,6 +3455,7 @@ describe('configured external-session source materializer', () => {
 
       // The failure that arrives after the ceiling is surfaced, not swallowed.
       failFirstCleanup(new Error('provider cleanup rejected'));
+      await expect(first).rejects.toThrow('provider cleanup rejected');
       await expect(second).rejects.toThrow('provider cleanup rejected');
       await secondSettled;
 
@@ -3718,8 +3699,16 @@ describe('configured external-session source materializer', () => {
     try {
       let revision = 'settings:1';
       let account: ConfiguredExternalSessionSourceAccountProjection = { connectedServicesV2: [] };
+      let holdWorkQuery = false;
+      let workQueryStarted = deferred<void>();
+      let releaseWorkQuery = deferred<void>();
       const listCandidates = vi.fn<ExternalSessionProviderOps['listCandidates']>(async ({ cursor, source }) => {
         const slot = (source as { connectedServiceProfileId?: string }).connectedServiceProfileId ?? 'user';
+        if (holdWorkQuery && slot === 'work') {
+          holdWorkQuery = false;
+          workQueryStarted.resolve();
+          await releaseWorkQuery.promise;
+        }
         return cursor
           ? {
               candidates: [{ remoteSessionId: `${slot}-newest`, title: 'Private title', updatedAtMs: 2 }],
@@ -3810,12 +3799,56 @@ describe('configured external-session source materializer', () => {
       } finally {
         restartedLifecycle.dispose();
       }
+
+      // The live source-set owner also retires a genuinely removed source
+      // while its already-admitted native query is still settling.
+      account = connectedAccount;
+      revision = 'settings:4';
+      const liveRemoval = await createLifecycle();
+      try {
+        const workSourceId = connectedCodexSource(activeServerDir, 'work').sourceId;
+        holdWorkQuery = true;
+        const admittedQuery = liveRemoval.authorService.list({ sourceId: workSourceId });
+        await workQueryStarted.promise;
+        account = { connectedServicesV2: [] };
+        revision = 'settings:5';
+        await liveRemoval.authorService.capabilities();
+        await vi.waitFor(() => expect(liveRemoval.candidateIndexIdentities).toHaveLength(1));
+        releaseWorkQuery.resolve();
+        await expect(admittedQuery).resolves.toMatchObject({ items: [] });
+        await vi.waitFor(async () => {
+          expect(await listCandidateIndexFiles(activeServerDir)).toEqual(retainedSourceIndexes);
+        });
+        await expect(liveRemoval.authorService.list({ sourceId: workSourceId }))
+          .rejects.toMatchObject({ code: 'plugin_external_source_unavailable' });
+
+        // Replacing a composition while retaining the same exact source is
+        // different: its admitted query may still publish the shared index.
+        account = connectedAccount;
+        revision = 'settings:6';
+        await liveRemoval.authorService.capabilities();
+        await vi.waitFor(() => expect(liveRemoval.candidateIndexIdentities).toHaveLength(2));
+        workQueryStarted = deferred<void>();
+        releaseWorkQuery = deferred<void>();
+        holdWorkQuery = true;
+        const retainedQuery = liveRemoval.authorService.list({ sourceId: workSourceId });
+        await workQueryStarted.promise;
+        revision = 'settings:7';
+        await liveRemoval.authorService.capabilities();
+        await vi.waitFor(() => expect(liveRemoval.candidateIndexIdentities).toHaveLength(2));
+        releaseWorkQuery.resolve();
+        await expect(retainedQuery).resolves.toMatchObject({ items: [] });
+        expect(await listCandidateIndexFiles(activeServerDir)).toHaveLength(2);
+      } finally {
+        releaseWorkQuery.resolve();
+        liveRemoval.dispose();
+      }
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }
   });
 
-  it('retires old operations immediately and publishes a new immutable snapshot after account revision changes', async () => {
+  it('finishes admitted source reads and publishes a new immutable snapshot after Account revision changes', async () => {
     let revision = 'settings:1';
     const notifyRevision: {
       current: ((next: string) => void) | null;
@@ -3876,7 +3909,10 @@ describe('configured external-session source materializer', () => {
           code: 'plugin_external_sources_reconfiguring',
         });
         releaseList();
-        await expect(staleList).rejects.toMatchObject({ code: 'plugin_generation_retired' });
+        await expect(staleList).resolves.toMatchObject({
+          items: [{ ref: { remoteSessionId: 'default' } }],
+          nextCursor: null,
+        });
 
         resolveSecondRead({
           connectedServicesV2: [{
@@ -3900,6 +3936,170 @@ describe('configured external-session source materializer', () => {
           status: 'unavailable',
           code: 'plugin_generation_retired',
         });
+      } finally {
+        lifecycle.dispose();
+      }
+    });
+  });
+
+  it.each(['author', 'persisted'] as const)('binds %s takeover source admission to one Account before awaits and selects the next Account only on a new request', async (path) => {
+    let revision = 'account-a';
+    let scopeKey = 'scope-account-a';
+    let notifyRevision: ((revision: string) => void) | null = null;
+    const nativeReadStarted = deferred<void>();
+    const releaseNativeRead = deferred<void>();
+    let holdFirstRead = true;
+    const declaration: PluginAgentContributionV2 = {
+      ...codexContribution,
+      surfaces: {
+        externalSession: {
+          sources: [{
+            ...codexContribution.surfaces.externalSession.sources[0],
+            // A declared stable source key may keep its identity when its
+            // configured physical root changes between Accounts.
+            key: { segments: [{ kind: 'literal', value: 'stable-source' }] },
+            instances: [
+              { kind: 'default', constants: { home: 'user' } },
+              { kind: 'agentSettingOverride', settingId: 'configuredHome', field: 'homePath', normalization: 'configuredPath', constants: { home: 'user' } },
+            ],
+          }],
+        },
+      },
+    };
+    const ops: ExternalSessionProviderOps = {
+      validateSource: async ({ source }) => ({ ok: true, source }),
+      listCandidates: async () => ({ candidates: [{ remoteSessionId: 'remote-1', updatedAtMs: 1 }], nextCursor: null }),
+      resolveLinkIdentity: async ({ source, remoteSessionId }) => {
+        if (holdFirstRead) {
+          holdFirstRead = false;
+          nativeReadStarted.resolve();
+          await releaseNativeRead.promise;
+        }
+        return { source, remoteSessionId };
+      },
+      pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+      readAfterTranscript: async () => ({ outcome: 'already_current' }),
+    };
+    const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
+      agents: [agent(declaration)],
+      readAccount: async () => ({ connectedServicesV2: [] }),
+      readAgentSettings: () => ({ configuredHome: `/${revision}` }),
+      readAccountRevision: () => revision,
+      readAccountScopeKey: () => scopeKey,
+      subscribeAccountRevision: (listener) => {
+        notifyRevision = listener;
+        return () => { notifyRevision = null; };
+      },
+      isCurrent: () => true,
+      resolveProviderOps: async () => ops,
+    });
+    const ref = { agentId: 'codex', sourceId: 'stable-source', remoteSessionId: 'remote-1' };
+    const resolve = async (accountScopeKey: string, homePath: string) => path === 'author'
+      ? lifecycle.resolveAuthorSource(ref, { accountScopeKey })
+      : lifecycle.admitPersistedTakeoverSource({
+        agentId: ref.agentId,
+        remoteSessionId: ref.remoteSessionId,
+        source: { kind: 'codexHome', home: 'user', homePath },
+        accountScopeKey,
+      });
+    try {
+      const admittedA = resolve('scope-account-a', '/account-a');
+      // Attach before retirement so a rejected old implementation is observed.
+      const settledA = Promise.allSettled([admittedA]);
+      await nativeReadStarted.promise;
+      revision = 'account-b';
+      scopeKey = 'scope-account-b';
+      (notifyRevision as ((revision: string) => void) | null)?.(revision);
+      await vi.waitFor(async () => {
+        expect((await lifecycle.authorService.capabilities()).list).toEqual({ status: 'available' });
+      });
+      const staleA = resolve('scope-account-a', '/account-a');
+      const freshB = resolve('scope-account-b', '/account-b');
+      const settledNext = Promise.allSettled([staleA, freshB]);
+      releaseNativeRead.resolve();
+
+      expect([...(await settledA), ...(await settledNext)]).toEqual([
+        { status: 'fulfilled', value: { source: { kind: 'codexHome', home: 'user', homePath: '/account-a' }, externalLinkedTakeoverWriterSafety: 'unsupported' } },
+        path === 'persisted'
+          ? { status: 'fulfilled', value: null }
+          : { status: 'rejected', reason: expect.objectContaining({ code: 'plugin_external_sources_unavailable' }) },
+        { status: 'fulfilled', value: { source: { kind: 'codexHome', home: 'user', homePath: '/account-b' }, externalLinkedTakeoverWriterSafety: 'unsupported' } },
+      ]);
+    } finally {
+      releaseNativeRead.resolve();
+      lifecycle.dispose();
+    }
+  });
+
+  it.each([
+    { name: 'profile B without a settings snapshot', profiles: true, settingsScope: undefined, expectedScope: 'scope-a', allowed: false },
+    { name: 'profile B with settings A', profiles: true, settingsScope: 'scope-a', expectedScope: 'scope-a', allowed: false },
+    { name: 'fresh profile B without a settings snapshot', profiles: true, settingsScope: undefined, expectedScope: 'scope-b', allowed: true },
+    { name: 'independent default without Account projections', profiles: false, settingsScope: undefined, expectedScope: 'scope-a', allowed: true },
+    { name: 'independent default with unrelated Settings B', profiles: false, settingsScope: 'scope-b', expectedScope: 'scope-a', allowed: true },
+    { name: 'independent default beside profile B', profiles: true, settingsScope: undefined, expectedScope: 'scope-a', allowed: true, targetDefault: true },
+  ])('qualifies the captured profile Account separately from Settings: $name', async (row) => {
+    const { profiles, settingsScope, expectedScope, allowed } = row;
+    const targetDefault = 'targetDefault' in row && row.targetDefault;
+    await withTemporaryActiveServerDir(async (activeServerDir) => {
+      const definition: PluginAgentContributionV2 = profiles ? {
+        ...codexContribution,
+        surfaces: {
+          externalSession: {
+            sources: [{
+              ...codexContribution.surfaces.externalSession.sources[0],
+              instances: [
+                ...codexContribution.surfaces.externalSession.sources[0].instances,
+                { kind: 'agentSettingOverride', settingId: 'configuredHome', field: 'homePath', normalization: 'configuredPath', constants: { home: 'user' } },
+              ],
+            }],
+          },
+        },
+      } : {
+        ...codexContribution,
+        surfaces: {
+          externalSession: {
+            sources: [{ ...codexContribution.surfaces.externalSession.sources[0], instances: [{ kind: 'default', constants: { home: 'user' } }] }],
+          },
+        },
+      };
+      const account: ConfiguredExternalSessionSourceAccountProjection = profiles ? {
+        accountScopeKey: 'scope-b',
+        connectedServicesV2: [{
+          serviceId: 'openai-codex',
+          profiles: [{ profileId: 'work', status: 'connected' as const, kind: 'oauth' as const, providerEmail: null,
+            providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null }],
+          groups: [],
+        }],
+      } : { connectedServicesV2: [] };
+      const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
+        agents: [agent(definition)],
+        activeServerDir,
+        readAccount: async () => account,
+        readAgentSettings: () => profiles && settingsScope ? { configuredHome: '/settings-a' } : undefined,
+        readAccountScopeKey: () => settingsScope,
+        readAccountRevision: () => 'stable',
+        subscribeAccountRevision: () => () => {},
+        isCurrent: () => true,
+        resolveProviderOps: async () => ({
+          validateSource: async ({ source }) => ({ ok: true, source }),
+          listCandidates: async () => ({ candidates: [], nextCursor: null }),
+          resolveLinkIdentity: resolveExactLinkIdentity,
+          pageTranscript: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
+          readAfterTranscript: async () => ({ outcome: 'already_current' }),
+        }),
+      });
+      try {
+        const admission = lifecycle.resolveAuthorSource({
+          agentId: 'codex',
+          sourceId: profiles && !targetDefault ? connectedCodexSource(activeServerDir, 'work').sourceId : 'codexHome:user:::',
+          remoteSessionId: 'remote-1',
+        }, { accountScopeKey: expectedScope });
+        if (allowed) {
+          await expect(admission).resolves.toMatchObject({ source: { home: profiles && !targetDefault ? 'connectedService' : 'user' } });
+        } else {
+          await expect(admission).rejects.toMatchObject({ code: 'plugin_external_sources_unavailable' });
+        }
       } finally {
         lifecycle.dispose();
       }

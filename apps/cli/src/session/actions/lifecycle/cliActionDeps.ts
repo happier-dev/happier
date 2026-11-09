@@ -111,6 +111,7 @@ export function createCliSessionLifecycleActionDeps(
       replaySummaryRunner,
       replayMaxSeedChars,
       requestId,
+      approvalProfileId,
       signal,
     }, context) => {
       if (!params.credentials) return notSupported();
@@ -139,6 +140,7 @@ export function createCliSessionLifecycleActionDeps(
           ...(replaySummaryRunner ? { replaySummaryRunner } : {}),
           ...(replayMaxSeedChars !== undefined ? { replayMaxSeedChars } : {}),
           ...(requestId ? { requestId } : {}),
+          ...(approvalProfileId !== undefined ? { approvalProfileId } : {}),
         },
         ...(signal ? { signal } : {}),
       });
@@ -246,6 +248,7 @@ export function createCliSessionLifecycleActionDeps(
       }
       const invocation: Parameters<typeof import('@/session/agentTransition/sessionAgentTransitionCoordinator').runSessionAgentTransition>[0] = {
         credentials: params.credentials, request,
+        ...(context.authority ? { executionAuthority: context.authority } : {}),
         ...(params.savedSecretOperationContext ? { operationContext: params.savedSecretOperationContext } : {}),
         ...(context.signal ? { signal: context.signal } : {}),
         ...(restrictedAdmission ? { inputAdmission: restrictedAdmission } : {}),

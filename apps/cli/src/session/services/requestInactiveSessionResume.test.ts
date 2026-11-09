@@ -147,6 +147,23 @@ describe('requestInactiveSessionResume', () => {
     expect(heldMetadata.sessionExplicitStopV1).toEqual(stop);
   });
 
+  it.each([undefined, 'account_automation'] as const)('fails closed for a held Session when Resume names %s authority', async executionAuthority => {
+    const stop = { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 100 } as const;
+    const heldMetadata = { ...metadata, sessionExplicitStopV1: stop };
+    const result = await requestInactiveSessionResume({ credentials, sessionId: 'session-1', requestId: 'unknown-author',
+      rawSession: rawSession(), metadata: heldMetadata, ...(executionAuthority ? { executionAuthority } : {}) });
+    expect(result).toMatchObject({ ok: false, code: 'held_by_person' });
+    expect(callMachineRpc).not.toHaveBeenCalled();
+    expect(heldMetadata.sessionExplicitStopV1).toEqual(stop);
+  });
+
+  it('does not mint user-request authority when a Resume names no authority', async () => {
+    callMachineRpc.mockResolvedValue({ type: 'success', sessionId: 'session-1' });
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'unknown-author',
+      rawSession: rawSession(), metadata })).resolves.toEqual({ ok: true });
+    expect(callMachineRpc.mock.calls[0]?.[0]?.request).not.toHaveProperty('executionAuthorization');
+  });
+
   it.each([false, true])('keeps malformed Stop authority distinct from archive (archived=%s)', async archived => {
     const result = await requestInactiveSessionResume({ credentials, sessionId: 'session-1', requestId: 'malformed-stop',
       rawSession: rawSession(archived ? { archivedAt: 123 } : {}),
@@ -182,7 +199,7 @@ describe('requestInactiveSessionResume', () => {
       const result = await requestInactiveSessionResume({ credentials: { token: 'plain-owner', encryption: null },
         sessionId: 'session-1', requestId: 'resume-held', rawSession: saved, metadata: heldMetadata,
         ...(outcome === 'automatic' || outcome === 'manager_child' || outcome === 'foreign_manager' || outcome === 'unbound_manager' || outcome === 'person_hold'
-          ? { executionAuthority: 'account_automation' as const } : {}),
+          ? { executionAuthority: 'account_automation' as const } : { executionAuthority: 'present_user' as const }),
         ...(outcome === 'manager_child' || outcome === 'foreign_manager' || outcome === 'unbound_manager' || outcome === 'person_hold' ? { actionContext: {
           surface: 'agent' as const, authority: 'account_automation' as const,
           actionCaller: { kind: 'session' as const, sessionId: outcome === 'foreign_manager' ? 'unrelated-session' : 'direct-manager',
@@ -428,6 +445,7 @@ describe('requestInactiveSessionResume', () => {
 
     await expect(requestInactiveSessionResume({
       credentials, sessionId: 'session-1', localId: 'local-1', rawSession: rawSession(), metadata,
+      executionAuthority: 'present_user',
     })).resolves.toEqual({ ok: true });
 
     expect(callMachineRpc).toHaveBeenCalledWith(expect.objectContaining({

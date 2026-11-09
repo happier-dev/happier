@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 
 const settingsAdministration = vi.hoisted(() => ({
   execute: vi.fn(),
@@ -32,6 +33,51 @@ describe('createCliActionDeps plugin caller forwarding', () => {
     pluginChange.request.mockReset();
     pluginChange.decide.mockReset();
     pluginChange.ensure.mockClear();
+  });
+
+  it.each([
+    { surface: 'agent', actionCaller: { kind: 'host' } },
+    { surface: 'cli', actionCaller: { kind: 'host' } },
+    { surface: 'plugin', actionCaller: { kind: 'plugin', pluginId: 'acme.author', contributionLocalId: 'surface' } },
+  ] as const)('requires ordinary Ask before an independent $surface install can prepare or decide a candidate', async requester => {
+    const executor = createActionExecutor(createCliActionDeps({ token: 'token', sessionId: 'cli-global', mode: 'plain', ctx: null }));
+    const input = { kind: 'archive', path: '/tmp/independent-plugin.tgz' };
+    const context = { ...requester, authority: 'account_automation' as const,
+      serverId: 'home', runtimeAccountId: 'account', actionRequestId: `independent-${requester.surface}`,
+      interactivePresentation: 'unavailable' as const };
+
+    await expect(executor.execute('plugins.install', input, context)).resolves.toMatchObject({
+      ok: false, errorCode: 'action_interactive_review_required',
+    });
+    await expect(executor.prepare('plugins.install', input, context)).resolves.toMatchObject({
+      kind: 'settled', result: { ok: false, errorCode: 'action_interactive_review_required' },
+    });
+    expect(pluginChange.request).not.toHaveBeenCalled();
+    expect(pluginChange.decide).not.toHaveBeenCalled();
+
+  });
+
+  it('does not stage an orphan daemon candidate when preparing an install for review', async () => {
+    const input = { kind: 'archive', path: '/tmp/review-only-plugin.tgz' };
+    pluginChange.request.mockResolvedValue({ kind: 'reviewRequired', reviewKind: 'installation',
+      pendingChangeId: 'review-only-orphan', reason: 'firstInstall', currentVersion: null,
+      authorityExpansion: [], review: createPluginInstallationReviewFixture({
+        source: { kind: 'archive', locator: input.path, integrity: 'sha512-exact', integrityBasis: 'observed' },
+        updateChannel: { kind: 'archive', locator: input.path },
+      }) });
+    const executor = createActionExecutor(createCliActionDeps({ token: 'token', sessionId: 'cli-global', mode: 'plain', ctx: null }));
+    const review = await executor.prepare('plugins.install', input, {
+      surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'review-only-install',
+    }, { reviewOnly: true });
+    expect(review).toMatchObject({ kind: 'ready', operation: { actionId: 'plugins.install', normalizedInput: input } });
+    expect(pluginChange.request).not.toHaveBeenCalled();
+    expect(pluginChange.decide).not.toHaveBeenCalled();
+    if (review.kind !== 'ready') throw new Error('Expected generic operation review');
+    // Running still asks through the ordinary owner; this host has no Artifact credentials.
+    await expect(review.invocation.run()).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(pluginChange.request).not.toHaveBeenCalled();
+    expect(pluginChange.decide).not.toHaveBeenCalled();
   });
 
   it('composes a daemon-evaluated plugin review into the approval Artifact preview', async () => {
@@ -96,7 +142,7 @@ describe('createCliActionDeps plugin caller forwarding', () => {
     const admission = resolveApprovalRequestApproveAdmission(JSON.parse(JSON.stringify(request)));
     expect(admission.status).toBe('available');
     expect(admission.presentation.rows).toContainEqual(expect.objectContaining({
-      path: 'preview.pluginInstall.pendingReview.review',
+      path: 'preview.pluginInstall.pendingReview',
       entries: expect.arrayContaining([expect.objectContaining({ label: 'Display name', value: 'Acme Archive' })]),
     }));
     expect(pluginChange.request).toHaveBeenCalledWith({

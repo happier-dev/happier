@@ -1,4 +1,4 @@
-import { isRuntimeCheckedExperimentalVendorResume } from '@happier-dev/agents';
+import { isRuntimeCheckedExperimentalVendorResume } from '@happier-dev/agents/manifest';
 
 import { readCurrentCatalogHook, readRegistryCatalogHook } from '@/agent/catalog/runtimeEntry';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';

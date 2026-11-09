@@ -79,7 +79,9 @@ export function createCliSessionModelActionDeps(
         return {
           ok: false,
           errorCode,
-          error: errorCode,
+          error: errorCode === 'restart_required'
+            ? 'This model change requires a runner restart. Create a new Session with happier session create using the requested model and Provider.'
+            : errorCode,
           ...('candidates' in res && res.candidates ? { candidates: res.candidates } : {}),
           ...('status' in res
             ? {

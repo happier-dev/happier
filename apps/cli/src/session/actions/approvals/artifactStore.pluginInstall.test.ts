@@ -1,17 +1,40 @@
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol';
+import { ApprovalRequestV2Schema, artifactIdScopeMatchesAccountV1, deriveAccountScopedArtifactIdV1, type ApprovalRequest } from '@happier-dev/protocol';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactBodyEnvelopeV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createDaemonPluginRuntimeOwner } from '@/plugins/daemon/runtimeOwner';
+import { createPackedTestConnectedAccountsRuntime } from '@/plugins/daemon/packedTestConnectedAccounts';
+import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
+import { projectApprovalExecutionFailureV2 } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
+import type { StoredCredentials } from '@/persistence';
+import { PluginAvailabilityIntentReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { createCliActionDeps } from '../createCliActionDeps';
+import tweetnacl from 'tweetnacl';
+import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import { computeExternalActionRequestEnvelopeDigestV1, openExternalActionResponseV2, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { createTestNpmTarball } from '@/plugins/distribution/testkit/npmTarball';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 
 import { createCliApprovalsArtifactStore } from './artifactStore';
 
 // Only the Account HTTP boundary is replaced; the real Artifact codec, header
 // binding, approval parser, and lifecycle transition owner remain in the path.
-const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), defaults: {} }));
 vi.mock('axios', () => ({ default: http }));
 vi.mock('@/configuration', () => ({ configuration: {
   apiServerUrl: 'http://plugin-approval.invalid', activeServerId: 'home-1',
@@ -20,6 +43,15 @@ vi.mock('@/configuration', () => ({ configuration: {
 
 const pendingChangeId = '00000000-0000-4000-8000-000000000051';
 const rows = new Map<string, Record<string, unknown>>();
+let accountMode: 'plain' | 'e2ee' = 'plain';
+const machineKey = new Uint8Array(32).fill(7);
+const token = 'header.eyJzdWIiOiJhY2NvdW50LTEifQ.signature';
+
+function credentials(): StoredCredentials {
+  return { token, encryption: accountMode === 'plain' ? null : {
+    type: 'dataKey', publicKey: libsodiumPublicKeyFromSecretKey(machineKey), machineKey,
+  } };
+}
 
 function installRequest() {
   return ApprovalRequestV2Schema.parse({
@@ -41,26 +73,44 @@ function installRequest() {
 }
 
 function createStore() {
-  return createCliApprovalsArtifactStore({ credentials: { token: 'synthetic-token', encryption: null },
-    getAccountEncryptionMode: async () => 'plain' });
+  const mode = accountMode;
+  return createCliApprovalsArtifactStore({ credentials: credentials(), getAccountEncryptionMode: async () => mode });
 }
 
 function persist(body: Record<string, unknown>) {
-  rows.set(String(body.id), { ...body, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
+  rows.set(String(body.id), { ...body, ownerAccountId: 'account-1', access: 'owner', encryptionMode: accountMode,
     headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
   return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
 }
 
 beforeEach(() => {
+  accountMode = 'plain';
   rows.clear();
   http.get.mockReset();
   http.post.mockReset();
   http.get.mockImplementation(async (url: string) => {
+    if (url.endsWith('/v1/account/encryption')) return { status: 200,
+      data: AccountEncryptionModeResponseSchema.parse({ mode: accountMode, updatedAt: 0 }) };
+    if (url.endsWith('/recipients')) {
+      const artifactId = decodeURIComponent(url.split('/').at(-3)!);
+      const artifact = rows.get(artifactId)!;
+      return { status: 200, data: { artifactId, ownerAccountId: artifact.ownerAccountId, access: artifact.access,
+        encryptionMode: artifact.encryptionMode, dataEncryptionKey: artifact.dataEncryptionKey,
+        callerDataEncryptionKey: artifact.dataEncryptionKey, recipients: [] } };
+    }
     const id = url.split('/').at(-1)!;
     return { status: rows.has(id) ? 200 : 404, data: rows.get(id) };
   });
   http.post.mockImplementation(async (url: string, body: Record<string, unknown>) => {
+    if (url.endsWith('/v1/plugins/availability/intents/read')) {
+      return { status: 200, data: PluginAvailabilityIntentReadActionOutputV1Schema.parse({
+        availabilityCursor: 0, hostingCapability: { enabled: false }, intent: null, release: null,
+        uiArtifacts: [], packageAssets: [], managedResources: [], managedResourcesReviewed: true,
+      }) };
+    }
     if (url.endsWith('/v1/artifacts')) {
+      if (!artifactIdScopeMatchesAccountV1({ artifactId: String(body.id), accountId: 'account-1', idScope: body.idScope }))
+        return { status: 400, data: { error: 'Invalid parameters' } };
       if (rows.has(String(body.id))) return { status: 409, data: { error: 'conflict' } };
       return persist(body);
     }
@@ -74,22 +124,325 @@ beforeEach(() => {
 });
 
 describe('plugin install approval Artifact rejoin', () => {
+  it.each([['install', 'plain'], ['install', 'e2ee'], ['superseded', 'plain'], ['changed_target', 'plain']] as const)(
+    'binds UI-created approval Artifacts to each real Machine candidate: %s in %s', async (outcome, mode) => {
+      accountMode = mode;
+      const root = await mkdtemp(join(tmpdir(), 'happier-plugin-approval-machines-'));
+      const store = createStore();
+      const pluginId = 'acme.machine-review';
+      const serverIdentityId = 'srv_machine_review';
+      const machines = await Promise.all(['machine-a', 'machine-b'].map(async machineId => {
+        const happyHomeDir = join(root, machineId, 'home');
+        const source = join(root, machineId, 'plugin.tgz');
+        await mkdir(happyHomeDir, { recursive: true });
+        const writeCandidate = async (version: string) => writeFile(source, await createTestNpmTarball([
+          { name: 'package/package.json', body: JSON.stringify({ name: '@acme/machine-review', version, keywords: ['happier-plugin'], files: ['.happier-plugin'],
+            happier: { manifest: '.happier-plugin/plugin.json' } }) },
+          { name: 'package/.happier-plugin/plugin.json', body: JSON.stringify(createPluginManifestV2Fixture({
+            id: pluginId, version, entrypoints: undefined, engines: undefined,
+          })) },
+        ]));
+        await writeCandidate('1.0.0');
+        const reloadController = createPluginReloadController({ happyHomeDir });
+        const currentOrigin = { machineId, serverIdentityId };
+        const owner = createDaemonPluginRuntimeOwner({ happyHomeDir, reloadController,
+          staleCandidateCleanup: 'disabled', approvalStore: store,
+          connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
+          managedResourcePreflight: { credentials: credentials(), serverUrl: 'http://plugin-approval.invalid',
+            homeId: serverIdentityId, controller: { machineId, installationId: `installation-${machineId}` } },
+          resolveCurrentMachineExecutionOriginContext: async () => currentOrigin,
+        });
+        const preparation = { calls: 0 };
+        const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(machineId === 'machine-a' ? 31 : 32));
+        const deps = createCliActionDeps({ token, credentials: credentials(), sessionId: 'cli-global',
+          mode: 'plain', ctx: null, serverId: 'home-1', serverHttpBaseUrl: 'http://plugin-approval.invalid', happyHomeDir,
+          pluginChangeService: { ...owner.changeService, requestPluginChange: (...args) => {
+            preparation.calls += 1;
+            return owner.changeService.requestPluginChange(...args);
+          } },
+        });
+        const executor = createActionExecutor({ ...deps, ...store,
+          isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+            accountId: 'account-1', machineId, serverId: 'home-1',
+            resolveCurrentMachineExecutionOriginContext: async () => currentOrigin,
+            resolveTarget: createDaemonExternalActionTargetResolver({ credentials: credentials() }),
+            externalActionMachinePublicKey: installation.publicKey,
+            verifyExternalExecutionAuthorization: async () => true,
+            // Account eligibility and token inventory are remote Home boundaries.
+            isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }),
+          }),
+        });
+        return { machineId, happyHomeDir, source, writeCandidate, reloadController, owner, executor, currentOrigin, preparation, installation };
+      }));
+      try {
+        const reviewed = [];
+        for (const machine of machines) {
+          const input = { kind: 'archive', path: machine.source, machineId: machine.machineId };
+          const target = { kind: 'machine' as const, machineId: machine.machineId };
+          const authentication = { kind: 'account' as const, tokenEpoch: 0 };
+          const binding = { actionId: 'plugins.install' as const, target, authentication,
+            serverIdentityId, accountId: 'account-1', requestId: `install-${machine.machineId}` };
+          const material = { type: 'dataKey' as const, machineKey };
+          const envelope = mode === 'e2ee' ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input, randomBytes: tweetnacl.randomBytes })
+            : { v: 1 as const, requestId: binding.requestId, target, input };
+          const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-install-proof', binding: {
+            ...binding, machineId: machine.machineId, custodianAccountId: 'account-1',
+            installationId: `installation-${machine.machineId}`, accountEncryptionMode: mode,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+          } });
+          const remote = await executeExternalAction({ actionId: 'plugins.install', envelope,
+            principal: { accountId: 'account-1', authentication, authority: 'present_user' },
+            executionAuthorization: authorization, currentAccountId: 'account-1',
+            currentMachineId: machine.machineId, currentServerId: 'home-1',
+            currentInstallationId: `installation-${machine.machineId}`,
+            externalActionMachineRequestPrivateKey: machine.installation.secretKey,
+            verifyExecutionAuthorization: async () => true,
+            resolveEncryption: async () => ({ serverIdentityId, material }),
+            resolveTarget: createDaemonExternalActionTargetResolver({ credentials: credentials() }),
+            executor: machine.executor,
+          });
+          if (remote.kind !== 'response') throw new Error(`Remote install refused: ${JSON.stringify(remote)}`);
+          const result = envelope.v === 2 ? openExternalActionResponseV2({ envelope: remote.response, binding, material, request: envelope })
+            : remote.response.v === 1 ? remote.response.execution : null;
+          if (!result) throw new Error('Missing remote execution result');
+          if (!result.ok) throw new Error(`Install initiation refused: ${result.errorCode}: ${result.error}`);
+          expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+          const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(result.result);
+          const request = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: 'home-1' }));
+          expect(request).toMatchObject({ status: 'open', requestedSurface: 'ui', executionOriginV1: {
+            surface: 'ui', machineId: machine.machineId, target,
+          } });
+          const candidate = readPluginInstallApprovalPendingReview(request?.preview);
+          if (!candidate) throw new Error('Missing daemon-evaluated review');
+          expect(candidate.review.source).toMatchObject({ kind: 'archive', locator: machine.source });
+          expect(await machine.owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId }))
+            .toMatchObject({ kind: 'reviewRequired', pendingChangeId: candidate.pendingChangeId });
+          expect(machine.preparation.calls).toBe(1);
+          expect((await createPluginRegistryStateStore({ happyHomeDir: machine.happyHomeDir }).read()).plugins[pluginId]).toBeUndefined();
+          reviewed.push({ ...machine, artifactId, candidate });
+        }
+        expect(reviewed[0]!.candidate.pendingChangeId).not.toBe(reviewed[1]!.candidate.pendingChangeId);
+        expect(await reviewed[1]!.owner.changeService.statusPluginChange({ pendingChangeId: reviewed[0]!.candidate.pendingChangeId }))
+          .toEqual({ kind: 'expired' });
+        for (const machine of reviewed) {
+          // Source mutation after staging must not substitute new bytes at consent.
+          await machine.writeCandidate('2.0.0');
+          let successorId: string | undefined;
+          if (outcome === 'superseded') {
+            await machine.owner.changeService.decidePluginChange({ pendingChangeId: machine.candidate.pendingChangeId, decision: 'cancel' });
+            const successor = await machine.owner.changeService.requestPluginChange({ kind: 'installArchive', locator: machine.source }, { retainReview: true });
+            if (successor.kind !== 'reviewRequired') throw new Error('Missing successor review');
+            successorId = successor.pendingChangeId;
+            expect(successorId).not.toBe(machine.candidate.pendingChangeId);
+          }
+          if (outcome === 'changed_target') machine.currentOrigin.machineId = 'replacement-machine';
+          const preparationsBeforeDecision = machine.preparation.calls;
+          const decision = await machine.executor.execute('approval.request.decide', {
+            artifactId: machine.artifactId, decision: 'approve',
+          }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: 'home-1', serverIdentityId, runtimeAccountId: 'account-1' });
+          const settled = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: machine.artifactId, serverId: 'home-1' }));
+          expect(machine.preparation.calls).toBe(preparationsBeforeDecision);
+          if (outcome === 'install') {
+            expect(decision, JSON.stringify(settled?.execution)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+            expect((await createPluginRegistryStateStore({ happyHomeDir: machine.happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.0.0');
+          } else {
+            if (outcome === 'changed_target') expect(decision).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+            else expect(settled, JSON.stringify(settled?.execution)).toMatchObject({ status: 'failed', execution: {
+              ok: false, errorCode: 'plugin_change_superseded',
+            } });
+            expect((await createPluginRegistryStateStore({ happyHomeDir: machine.happyHomeDir }).read()).plugins[pluginId]).toBeUndefined();
+            if (successorId) expect(await machine.owner.changeService.statusPluginChange({ pendingChangeId: successorId }))
+              .toMatchObject({ kind: 'reviewRequired', pendingChangeId: successorId });
+          }
+        }
+      } finally {
+        for (const machine of machines) {
+          await machine.owner.changeService.shutdown();
+          await machine.reloadController.shutdown();
+        }
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+  it.each([['rejected', 'plain'], ['canceled', 'plain'], ['withdrawn', 'plain'], ['expired_origin', 'plain'],
+    ['superseded_source', 'plain'], ['approved', 'plain'], ['successor', 'plain'], ['canceled', 'e2ee']] as const)(
+    'settles the exact %s approval candidate in %s through the real daemon and approval lifecycle', async (outcome, mode) => {
+    accountMode = mode;
+    const root = await mkdtemp(join(tmpdir(), 'happier-plugin-approval-retirement-'));
+    const pluginRoot = join(root, 'source');
+    const happyHomeDir = join(root, 'home');
+    const pluginId = 'acme.approval-retirement';
+    const store = createStore();
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const owner = createDaemonPluginRuntimeOwner({ happyHomeDir, staleCandidateCleanup: 'disabled', reloadController,
+      connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
+      approvalStore: store,
+      managedResourcePreflight: { credentials: credentials(), serverUrl: 'http://plugin-approval.invalid',
+        homeId: 'home-identity', controller: { machineId: 'machine-1', installationId: 'installation-1' } },
+      resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine-1', serverIdentityId: 'home-identity' }),
+    });
+    try {
+      const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
+      await mkdir(happyHomeDir, { recursive: true });
+      await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
+      await writeFile(manifestPath, JSON.stringify(createPluginManifestV2Fixture({ id: pluginId, entrypoints: undefined, engines: undefined })));
+      const first = await owner.changeService.requestPluginChange({ kind: 'installPath', locator: pluginRoot });
+      if (first.kind !== 'reviewRequired') throw new Error(`Expected first installation review: ${JSON.stringify(first)}`);
+      expect(await owner.changeService.decidePluginChange({ pendingChangeId: first.pendingChangeId, decision: 'installAndTrust' }))
+        .toMatchObject({ kind: 'committed', pluginId });
+      await writeFile(manifestPath, JSON.stringify({ ...JSON.parse(await readFile(manifestPath, 'utf8')), version: '1.1.0' }));
+      const candidate = await owner.changeService.requestPluginChange({ kind: 'installPath', locator: pluginRoot }, { retainReview: true });
+      if (candidate.kind !== 'reviewRequired') throw new Error(`Expected retained update review: ${candidate.kind}`);
+      const request = ApprovalRequestV2Schema.parse({ ...installRequest(), actionArgs: { kind: 'path', path: pluginRoot },
+        preview: { pluginInstall: { pendingReview: candidate } } });
+      const created = await store.approvalsCreate({ request, serverId: 'home-1' });
+      let terminal = ApprovalRequestV2Schema.parse({ ...request,
+        status: outcome === 'rejected' ? 'rejected' : 'canceled', updatedAtMs: 2,
+        ...(outcome === 'rejected' ? { decision: { kind: 'reject', decidedAtMs: 2 } } : {}) });
+      if (outcome !== 'rejected' && outcome !== 'canceled' && outcome !== 'successor') {
+        const approved = ApprovalRequestV2Schema.parse({ ...request, status: 'approved', updatedAtMs: 2,
+          decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2 } });
+        expect(await store.approvalsUpdate({ ...created, request: approved, serverId: 'home-1' })).toEqual({ ok: true });
+        // Existing approval owners record withdrawal as approval_canceled and
+        // unavailable origin/source authority as approval_stale, not new states.
+        terminal = ApprovalRequestV2Schema.parse({ ...approved, status: 'failed', updatedAtMs: 3,
+          execution: projectApprovalExecutionFailureV2({ request: approved, executedAtMs: 3, effectAttempted: false,
+            failure: outcome === 'withdrawn'
+              ? { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' }
+              : { ok: false, errorCode: 'approval_stale', error: 'approval_stale',
+                  details: { reason: outcome === 'expired_origin' ? 'credential_expired' : 'plugin_source_changed' } } }),
+        });
+        if (outcome === 'approved') {
+          expect(await owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId }))
+            .toMatchObject({ kind: 'reviewRequired', pendingChangeId: candidate.pendingChangeId });
+          const decision = { pendingChangeId: candidate.pendingChangeId, decision: 'installAndTrust' as const };
+          const [applied, duplicate] = await Promise.all([
+            owner.changeService.decidePluginChange(decision), owner.changeService.decidePluginChange(decision),
+          ]);
+          expect(applied).toMatchObject({ kind: 'committed', pluginId });
+          expect(duplicate).toEqual(applied);
+          expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.1.0');
+          return;
+        }
+      }
+      // Another client's real Artifact lifecycle write bypasses cliActionDeps.
+      expect(await createStore().approvalsUpdate({ ...created, request: terminal, serverId: 'home-1' })).toEqual({ ok: true });
+      if (outcome === 'successor') {
+        const nextRequest = ApprovalRequestV2Schema.parse({ ...request,
+          executionOriginV1: { ...request.executionOriginV1, requestId: 'fresh-owner-consent' } });
+        const successor = await createStore().approvalsCreate({ request: nextRequest, serverId: 'home-1' });
+        expect(successor.artifactId).not.toBe(created.artifactId);
+        expect(await owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId }))
+          .toMatchObject({ kind: 'reviewRequired', pendingChangeId: candidate.pendingChangeId });
+        const approved = ApprovalRequestV2Schema.parse({ ...nextRequest, status: 'approved', updatedAtMs: 2,
+          decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2 } });
+        expect(await store.approvalsUpdate({ ...successor, request: approved, serverId: 'home-1' })).toEqual({ ok: true });
+        expect(await owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId }))
+          .toMatchObject({ kind: 'reviewRequired', pendingChangeId: candidate.pendingChangeId });
+        expect(await owner.changeService.decidePluginChange({ pendingChangeId: candidate.pendingChangeId, decision: 'installAndTrust' }))
+          .toMatchObject({ kind: 'committed', pluginId });
+        expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.1.0');
+        return;
+      }
+      if (outcome === 'canceled' && mode === 'plain') {
+        const owned = rows.get(created.artifactId)!;
+        for (const mismatch of ['account', 'home', 'machine', 'review', 'access'] as const) {
+          const foreign = ApprovalRequestV2Schema.parse({ ...terminal,
+            executionOriginV1: { ...terminal.executionOriginV1,
+              ...(mismatch === 'account' ? { accountId: 'another-account' } : {}),
+              ...(mismatch === 'home' ? { serverIdentityId: 'another-home' } : {}),
+              ...(mismatch === 'machine' ? { machineId: 'another-machine', target: { kind: 'machine', machineId: 'another-machine' } } : {}) },
+            ...(mismatch === 'review' ? { preview: { pluginInstall: { pendingReview: { ...candidate,
+              review: { ...candidate.review, version: '9.0.0' } } } } } : {}),
+          });
+          rows.set(created.artifactId, { ...owned,
+            ...(mismatch === 'access' ? { ownerAccountId: 'another-account', access: 'view' } : {}),
+            header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(foreign)),
+            body: encodePlainArtifactStoredContent(ArtifactBodyEnvelopeV1Schema.parse({ body: JSON.stringify(foreign) })) });
+          expect(await owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId }), mismatch)
+            .toMatchObject({ kind: 'reviewRequired', pendingChangeId: candidate.pendingChangeId });
+        }
+        rows.set(created.artifactId, owned);
+      }
+      if (outcome === 'rejected') {
+        // The next mutation must work even if no client opened status first.
+        expect(await owner.changeService.requestPluginChange({ kind: 'uninstall', pluginId }))
+          .toMatchObject({ kind: 'committed', pluginId });
+        expect(await owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId }))
+          .toMatchObject({ kind: 'terminal', result: { kind: 'cancelled' } });
+        expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]).toBeUndefined();
+        return;
+      }
+      if (outcome === 'withdrawn') expect((await owner.changeService.listPendingPluginChanges()).changes).toEqual([]);
+      if (outcome === 'expired_origin') {
+        expect(await owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId }))
+          .toMatchObject({ kind: 'terminal', result: { kind: 'cancelled' } });
+        expect(await owner.changeService.decidePluginChange({ pendingChangeId: candidate.pendingChangeId, decision: 'installAndTrust' }))
+          .toEqual({ kind: 'expired' });
+      }
+      if (outcome === 'superseded_source') {
+        const next = await owner.changeService.requestPluginChange({ kind: 'installPath', locator: pluginRoot }, { retainReview: true });
+        expect(next).toMatchObject({ kind: 'reviewRequired' });
+        if (next.kind !== 'reviewRequired') throw new Error('Expected a fresh candidate for the next install');
+        expect(next.pendingChangeId).not.toBe(candidate.pendingChangeId);
+        await owner.changeService.decidePluginChange({ pendingChangeId: next.pendingChangeId, decision: 'cancel' });
+      }
+      const readsBeforeRetirement = http.get.mock.calls.length;
+      expect(await owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId }))
+        .toMatchObject({ kind: 'terminal', result: { kind: 'cancelled' } });
+      // One terminal row, then the existing scoped/legacy lookup for its absent successor.
+      if (mode === 'plain') expect(http.get.mock.calls.length - readsBeforeRetirement).toBe(outcome === 'canceled' ? 3 : 0);
+      const readsAfterRetirement = http.get.mock.calls.length;
+      await owner.changeService.statusPluginChange({ pendingChangeId: candidate.pendingChangeId });
+      expect(http.get.mock.calls.length).toBe(readsAfterRetirement);
+      expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.0.0');
+      expect(await owner.changeService.decidePluginChange({ pendingChangeId: candidate.pendingChangeId, decision: 'installAndTrust' }))
+        .toEqual({ kind: 'expired' });
+      if (outcome === 'withdrawn') {
+        expect(await owner.changeService.requestPluginChange({ kind: 'update', pluginId }))
+          .toMatchObject({ kind: 'committed', pluginId });
+      }
+      expect(await owner.changeService.requestPluginChange({ kind: 'uninstall', pluginId }))
+        .toMatchObject({ kind: 'committed', pluginId });
+      expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]).toBeUndefined();
+    } finally {
+      await owner.changeService.shutdown();
+      await reloadController.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses changed input and retains the terminal receipt for one install request identity', async () => {
+    const store = createStore();
+    const request = installRequest();
+    const first = await store.approvalsCreate({ request, serverId: 'home-1' });
+    await expect(store.approvalsCreate({ request: { ...request, actionArgs: { kind: 'path', path: '/tmp/other' } }, serverId: 'home-1' }))
+      .rejects.toMatchObject({ code: 'approval_request_conflict' });
+    const rejected = ApprovalRequestV2Schema.parse({ ...request, status: 'rejected', updatedAtMs: 2,
+      decision: { kind: 'reject', decidedAtMs: 2 } });
+    expect(await store.approvalsUpdate({ ...first, request: rejected, serverId: 'home-1' })).toEqual({ ok: true });
+    expect(await store.approvalsCreate({ request, serverId: 'home-1' })).toEqual({ artifactId: first.artifactId, request: rejected });
+    expect(rows.size).toBe(1);
+  });
+
   it('rejoins the retained review across observers without replacing its approved body', async () => {
     const store = createStore();
     const request = installRequest();
     const first = await store.approvalsCreate({ request, serverId: 'home-1' });
-    expect(first.artifactId).toBe(pendingChangeId);
+    expect(first.artifactId).toBe(deriveAccountScopedArtifactIdV1('account-1', pendingChangeId));
     const approved = ApprovalRequestV2Schema.parse({ ...request, status: 'approved', updatedAtMs: 2,
       decision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user' } });
     expect(await store.approvalsUpdate({ ...first, request: approved, serverId: 'home-1' })).toEqual({ ok: true });
-    const retained = { ...rows.get(pendingChangeId) };
+    const retained = { ...rows.get(first.artifactId) };
     const cliRequest = ApprovalRequestV2Schema.parse({ ...request,
       createdBy: { surface: 'cli' }, createdAtMs: 3, updatedAtMs: 3,
       executionOriginV1: { ...request.executionOriginV1, serverId: 'home-alias',
         authority: 'present_user', requestId: 'cli-request' } });
-    expect(await createStore().approvalsCreate({ request: cliRequest, serverId: 'home-alias' })).toEqual(first);
+    expect(await createStore().approvalsCreate({ request: cliRequest, serverId: 'home-alias' }))
+      .toEqual({ artifactId: first.artifactId, request: approved });
     expect(rows.size).toBe(1);
-    expect(rows.get(pendingChangeId)).toEqual(retained);
+    expect(rows.get(first.artifactId)).toEqual(retained);
     expect(await store.approvalsGet({ ...first, serverId: 'home-1' })).toEqual(approved);
   });
 
@@ -100,7 +453,7 @@ describe('plugin install approval Artifact rejoin', () => {
       return { status: 409, data: { error: 'conflict' } };
     });
     expect(await store.approvalsCreate({ request: installRequest(), serverId: 'home-1' }))
-      .toEqual({ artifactId: pendingChangeId });
+      .toEqual({ artifactId: deriveAccountScopedArtifactIdV1('account-1', pendingChangeId), request: installRequest() });
     expect(rows.size).toBe(1);
     expect(http.post).toHaveBeenCalledTimes(1);
   });
@@ -152,12 +505,14 @@ describe('plugin install approval Artifact rejoin', () => {
       decision: { kind: 'reject', decidedAtMs: 2 } });
     expect(await store.approvalsUpdate({ ...first, request: rejected, serverId: 'home-1' })).toEqual({ ok: true });
 
+    const nextRequest = ApprovalRequestV2Schema.parse({ ...request,
+      executionOriginV1: { ...request.executionOriginV1, requestId: 'next-install-intent' } });
     const joined = await Promise.all([createStore(), createStore()].map(observer =>
-      observer.approvalsCreate({ request, serverId: 'home-1' })));
+      observer.approvalsCreate({ request: nextRequest, serverId: 'home-1' })));
     expect(joined[0]).toEqual(joined[1]);
     expect(rows.size).toBe(2);
     expect(await store.approvalsGet({ ...first, serverId: 'home-1' })).toEqual(rejected);
-    expect(await store.approvalsGet({ ...joined[0]!, serverId: 'home-1' })).toEqual(request);
+    expect(await store.approvalsGet({ ...joined[0]!, serverId: 'home-1' })).toEqual(nextRequest);
   });
 
   it('refuses a successor whose retained subject belongs to another Home', async () => {
@@ -167,15 +522,17 @@ describe('plugin install approval Artifact rejoin', () => {
     const rejected = ApprovalRequestV2Schema.parse({ ...request, status: 'rejected', updatedAtMs: 2,
       decision: { kind: 'reject', decidedAtMs: 2 } });
     await store.approvalsUpdate({ ...first, request: rejected, serverId: 'home-1' });
-    const next = await createStore().approvalsCreate({ request, serverId: 'home-1' });
-    const foreign = ApprovalRequestV2Schema.parse({ ...request,
-      executionOriginV1: { ...request.executionOriginV1, serverIdentityId: 'other-home' } });
+    const nextRequest = ApprovalRequestV2Schema.parse({ ...request,
+      executionOriginV1: { ...request.executionOriginV1, requestId: 'next-install-intent' } });
+    const next = await createStore().approvalsCreate({ request: nextRequest, serverId: 'home-1' });
+    const foreign = ApprovalRequestV2Schema.parse({ ...nextRequest,
+      executionOriginV1: { ...nextRequest.executionOriginV1, serverIdentityId: 'other-home' } });
     const row = rows.get(next.artifactId)!;
     rows.set(next.artifactId, { ...row,
       header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(foreign)),
       body: encodePlainArtifactStoredContent(ArtifactBodyEnvelopeV1Schema.parse({ body: JSON.stringify(foreign) })) });
 
-    await expect(createStore().approvalsCreate({ request, serverId: 'home-1' }))
+    await expect(createStore().approvalsCreate({ request: nextRequest, serverId: 'home-1' }))
       .rejects.toThrow('approval_request_subject_mismatch');
     expect(rows.size).toBe(2);
   });

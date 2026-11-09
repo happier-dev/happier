@@ -1,9 +1,12 @@
 import type { CliActionDepsParams, CliActionExactHomeTarget } from './types';
+import { resolveProjectAccountReferenceV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
+import { WidgetAreaMutationErrorV1 } from '@happier-dev/protocol/widgets/widgetSurfaceArtifactV1';
 import { flattenWidgetLayoutWidgetsV1 } from '@happier-dev/protocol/widgets/widgetLayoutItemV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { readProjectAccountRows, ProjectAccountRowsSelection } from '@/workspaces/projectAccountRows';
 import type { readCliWidgetCatalogProjectionV1, cliWidgetCatalogEntryV1 } from '../widgetCatalogProjection';
-import { describeWidgetAreaApprovalSurfaceV1 } from '@happier-dev/protocol/widgets';
+import { describeWidgetAreaApprovalSurfaceV1, readWidgetActionAccountScopeAdmissionV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
+import { createWidgetDefinitionArtifactPortV1 } from '@happier-dev/protocol/widgets/widgetDefinitionArtifactV1';
 import { createCliWidgetInputActionDepsV1 } from '../widgetInputActionDeps';
 import { createCliWidgetAreaActionDepsV1 } from '../widgetAreaActionDeps';
 import { createCliWidgetDefinitionActionDepsV1 } from '../widgetDefinitionActionDeps';
@@ -16,7 +19,7 @@ import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@hap
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { ARTIFACT_ENCRYPTION_MATERIAL_UNAVAILABLE, createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore, type ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { listCurrentAccountAdministrationMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
@@ -25,7 +28,7 @@ import type { resolveSessionTransportContext } from '@/session/services/resolveS
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { RpcError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { fetchAccountProfile } from '@/api/accountProfile';
 import type { createCliConnectedAccountCatalogStore } from '@/settings/connectedAccounts/connectedAccountCatalogStore';
 import type { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
@@ -38,6 +41,8 @@ export type CliWidgetActionDeps = Pick<ActionExecutorDeps, 'widgetAccountScope' 
   definition: ReturnType<typeof createCliWidgetDefinitionActionDepsV1>;
   input: ReturnType<typeof createCliWidgetInputActionDepsV1>;
   readHomeWidgets: NonNullable<Parameters<typeof createHomeHubArtifactPortV1>[1]['readWidgets']>;
+  readWidgetTitles(instances: readonly WidgetInstanceV1[], signal?: AbortSignal, authorizationHeaders?: ArtifactRequestAuthorizationHeaders): Promise<ReadonlyMap<string, string>>;
+  isWidgetScopeCurrent(): boolean;
 }>;
 export function createCliWidgetActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'explicitMachineId' | 'externalActionMachineInstallationId' | 'externalActionMachineRequestPrivateKey' | 'isCredentialCurrent' | 'machineActionDirectTargetTransport' | 'resolveExactSessionEncryptionMaterial' | 'resolveServerFeaturesSnapshot' | 'savedSecretOperationContext' | 'serverHttpBaseUrl' | 'serverId' | 'serverIdentityId' | 'token'>,
@@ -172,6 +177,39 @@ export function createCliWidgetActionDeps(
       definition: { kind: 'artifact' as const, artifactId: summary.artifactId }, sizeDeclaration: summary.sizeDeclaration,
     }))];
   };
+  const readWidgetTitles: CliWidgetActionDeps['readWidgetTitles'] = async (instances, signal, authorizationHeaders) => {
+    const { readCliWidgetInstanceTitlesV1 } = await import('../widgetCatalogProjection');
+    if (!roleArtifactStore || !homeAccountId) return new Map();
+    const definitions = createWidgetDefinitionArtifactPortV1({ ...roleArtifactStore,
+      read: (id, options) => runWithServerHttpBaseUrl(todoHomeBaseUrl, async () => {
+        try {
+          return await roleArtifactStore.read(id, { ...options, authorizationHeaders,
+            prepareRecipients: false, includeSharedAudience: false });
+        } catch (error) {
+          options?.signal?.throwIfAborted();
+          // An unavailable private definition remains an unnamed placement;
+          // title preparation grants no extra content authority or key repair.
+          if (error instanceof Error && 'code' in error
+            && (error.code === 'artifact_read_unavailable' || error.code === ARTIFACT_ENCRYPTION_MATERIAL_UNAVAILABLE)) return null;
+          throw error;
+        }
+      }),
+    }, { accountId: homeAccountId });
+    return readCliWidgetInstanceTitlesV1({ instances, signal,
+      readSummaries: definitions.summaries,
+      // Captured Artifact authority does not grant ambient Machine catalog discovery.
+      readCandidates: authorizationHeaders ? async () => []
+        : async (signal, requiredPluginId) => {
+          try { return await readWidgetCandidates(signal, undefined, requiredPluginId); }
+          catch (error) {
+            signal?.throwIfAborted();
+            const code = readRpcErrorCode(error) ?? (error instanceof Error && 'code' in error ? error.code : undefined);
+            if (code === 'widget_type_unavailable' || code === 'widget_catalog_unavailable'
+              || isMachineRequestReachabilityFailureV1(error)) return [];
+            throw error;
+          }
+        } });
+  };
   const widgetBoardDeps = sessionContentCredentials ? createSessionBoardActionDeps({
     credentials: sessionContentCredentials,
     resolvePublishCaller: async (context, sessionId) => {
@@ -198,6 +236,8 @@ export function createCliWidgetActionDeps(
     ...(params.externalActionMachineRequestPrivateKey ? { externalActionMachineRequestPrivateKey: params.externalActionMachineRequestPrivateKey } : {}),
     ...(params.externalActionMachineInstallationId ? { externalActionMachineInstallationId: params.externalActionMachineInstallationId } : {}),
   }) : null;
+  // Captured CLI invocations keep their explicit Home; ambient invocations follow the active Home.
+  const isWidgetScopeCurrent = () => !!params.serverId || configuration.activeServerId === todoHomeServerId;
   return {
 area: (roleArtifactStore && homeAccountId ? createCliWidgetAreaActionDepsV1({
       transport: createAcknowledgedAccountArtifactTransport({
@@ -207,8 +247,14 @@ area: (roleArtifactStore && homeAccountId ? createCliWidgetAreaActionDepsV1({
         list: args => runWithServerHttpBaseUrl(todoHomeBaseUrl, () => roleArtifactStore.list(args)),
         delete: (id, options) => runWithServerHttpBaseUrl(todoHomeBaseUrl, () => roleArtifactStore.delete(id, options)),
       }), scope: { serverId: widgetHomeId, accountId: homeAccountId },
-      // A CLI invocation captures its credentials and explicit Home; only ambient invocations follow active Home changes.
-      isCurrent: () => !!params.serverId || configuration.activeServerId === todoHomeServerId,
+      isCurrent: isWidgetScopeCurrent,
+      readTitles: readWidgetTitles,
+      readProjectReference: async (project, signal, context) => {
+        const rows = await readAdmittedProjectRows({ kinds: ['workspace-ref'], serverId: await resolveProjectHomeIdentity() },
+          signal, context, 'widgets.area.layout.delete');
+        if (!rows) throw new WidgetAreaMutationErrorV1('project_account_rows_unavailable');
+        return resolveProjectAccountReferenceV1(rows, project, id => isSameActionHomeId(id) ? widgetHomeId : id);
+      },
     }) : {}),
 definition: (roleArtifactStore && homeAccountId ? createCliWidgetDefinitionActionDepsV1({
       transport: roleArtifactStore, accountId: homeAccountId, serverHttpBaseUrl: params.serverHttpBaseUrl,
@@ -262,16 +308,23 @@ widgetAccountScope: () => {
 widgetCatalog: { describeSurface: async (surface, _context, signal) => {
       const projection = await readWidgetProjection(signal, undefined, surface.owner.kind === 'pluginArea' ? surface.owner.pluginId : undefined);
       return describeWidgetAreaApprovalSurfaceV1(surface, Object.values(projection?.familiesById.pluginUi?.entriesById ?? {}));
-    }, readInstalledInputFields: async ({ surface, definition, signal, boundSession }) => {
+    }, readInstalledDescriptor: async ({ surface, definition, context, signal, boundSession }) => {
+      const admission = readWidgetActionAccountScopeAdmissionV1(readEffectiveActionDeps(), surface, context);
+      if (!admission.ok) return admission;
+      const isCurrent = async () => isWidgetScopeCurrent()
+        && (!params.isCredentialCurrent || await params.isCredentialCurrent())
+        && (!params.savedSecretOperationContext || await params.savedSecretOperationContext.isCurrent());
+      if (!await isCurrent()) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };
       const physicalSession = readWidgetActionSessionTargetV1(surface);
       const candidates = await readWidgetCandidates(signal, readWidgetActionSessionTargetV1(surface, boundSession),
-        definition.kind === 'installed' ? definition.surface.pluginId : undefined);
+        definition.surface.pluginId);
       if (physicalSession && boundSession && physicalSession.sessionId !== boundSession.sessionId) {
         await resolveWidgetSessionTransport(physicalSession, signal);
       }
-      const candidate = candidates.find(candidate => candidate.availability === 'available'
-        && isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), definition));
-      return candidate?.fields ?? null;
+      signal?.throwIfAborted();
+      if (!await isCurrent()) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };
+      const candidate = candidates.find(candidate => isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), definition));
+      return candidate ?? null;
     }, list: async (surface, _context, signal, boundSession) => {
       const port = readWidgetActionSurfacePortV1(readBaseActionDeps(), surface);
       if (!port) return { ok: false, errorCode: 'unsupported_widget_surface', error: 'unsupported_widget_surface' };
@@ -296,6 +349,6 @@ widgetCatalog: { describeSurface: async (surface, _context, signal) => {
 sessionBoardAction: widgetBoardDeps?.sessionBoardAction
       ?? (async () => ({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' })),
 sessionBoardPrepareItem: widgetBoardDeps?.sessionBoardPrepareItem,
-readHomeWidgets
+readHomeWidgets, readWidgetTitles, isWidgetScopeCurrent
   };
 }

@@ -6,7 +6,11 @@ import type { ResolvedExternalSessionSourceProjection } from '../../plugins/proj
 import { ExternalSessionProviderFailureError, type ExternalSessionProviderOps } from './providerOps';
 import { isAgentExternalSessionsFailureCode, type AgentExternalSessionsFailureCode } from '@happier-dev/plugin-sdk/sessions/external';
 
-export type ConfiguredExternalSessionSourceCandidate = Readonly<{ agentId: string }> & (
+export type ConfiguredExternalSessionSourceCandidate = Readonly<{
+  agentId: string;
+  /** Private Account provenance of a materialized non-default source. */
+  accountScopeKey?: string | null;
+}> & (
   | Readonly<{ source: unknown; refusal?: never }>
   | Readonly<{ source?: never; refusal: Omit<ConfiguredExternalSessionSourceRefusal, 'agentId'> }>
 );
@@ -15,6 +19,7 @@ export type ConfiguredExternalSessionSourceEntry = Readonly<{
   agentId: ExternalSessionAgentId;
   sourceKey: ExternalSessionSourceId;
   source: ExternalSessionsSource;
+  accountScopeKey?: string | null;
 }>;
 
 export type ConfiguredExternalSessionSourceSnapshotBasis = Readonly<{
@@ -408,6 +413,7 @@ export async function buildConfiguredExternalSessionSourceSnapshot(params: Reado
       agentId,
       sourceKey: admitted.sourceKey,
       source: admitted.source,
+      ...(candidate.accountScopeKey === undefined ? {} : { accountScopeKey: candidate.accountScopeKey }),
     });
     entries.push(entry);
     entriesByIdentity.set(identityKey, entry);

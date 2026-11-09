@@ -2,8 +2,6 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import type {
-  PluginOperationAvailability } from '@happier-dev/plugin-sdk';
-import type {
   SessionEvent,
   SessionSummary,
   SessionWatchEvent,
@@ -16,6 +14,7 @@ import type {
 import type { SubagentsService } from '@happier-dev/plugin-sdk/sessions/subagents';
 import type { AgentSessionSubagentObservationPublisher } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createHash, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import { readAuthenticationStatus } from '@/api/client/httpStatusError';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -37,6 +36,9 @@ import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol
 import { hasPluginSessionAccess, projectPluginSessionAccessIdentity } from '@happier-dev/protocol/sessions/pluginAccess';
 import type { PluginSessionAccess, PluginSessionAccessScope } from '@happier-dev/protocol';
 import { readPluginSessionDestination } from './pluginSessionDestination';
+import { observePluginSessionInventory, pluginSessionRuntimeAvailability as runtimeAvailability,
+  type ObservedPluginSession } from './pluginSessionsInventoryObservation';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 export type { PluginSessionAccess, PluginSessionAccessScope } from '@happier-dev/protocol';
 
 const CURSOR_PREFIX = 'plugin_sessions_v1_';
@@ -45,7 +47,7 @@ const MAX_PAGE_LIMIT = 100;
 const MAX_SCAN_PAGES = 1_000;
 const MAX_INVENTORY_ITEMS = 100_000;
 const MAX_CURSOR_ENTRIES = 128;
-const DEFAULT_WATCH_POLL_INTERVAL_MS = 1_000;
+const SESSION_MESSAGE_WATCH_RETRY_INTERVAL_MS = 1_000;
 const SESSION_MESSAGE_WATCH_PAGE_LIMIT = 100;
 
 type StoragePolicy = SessionSummary['storagePolicy'];
@@ -114,15 +116,17 @@ export type PluginSessionsInventoryParams = Readonly<{
     cursor?: string;
     limit?: number;
     archivedOnly?: boolean;
+    signal?: AbortSignal;
   }>) => Promise<{ sessions: RawSessionListRow[]; nextCursor: string | null; hasNext: boolean }>;
   fetchById?: (params: Readonly<{
     token: string;
     sessionId: string;
     serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
+    signal?: AbortSignal;
   }>) => Promise<RawSessionRecord | null>;
   /** The daemon's already-retained snapshot for this exact Home. */
   resolveServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
-  watchPollIntervalMs?: number;
+  messageWatchRetryIntervalMs?: number;
   executeMessageAction: (params: Readonly<{
     sessionId: string;
     request: SessionSendRequest;
@@ -215,15 +219,6 @@ function readTitle(metadata: Record<string, unknown> | null): string | undefined
   return readMetadataString(summary as Record<string, unknown>, 'text');
 }
 
-function runtimeAvailability(state: SessionSummary['state']): PluginOperationAvailability {
-  return state === 'active' || state === 'idle'
-    ? Object.freeze({ status: 'available' as const })
-    : Object.freeze({
-        status: 'unavailable' as const,
-        code: state === 'archived' ? 'session_archived' : 'session_runtime_inactive',
-      });
-}
-
 function sessionState(raw: RawSessionListRow | RawSessionRecord): SessionSummary['state'] {
   if (typeof raw.archivedAt === 'number') return 'archived';
   return raw.active ? 'active' : 'stopped';
@@ -281,6 +276,50 @@ function hasSessionAccess(
   return hasPluginSessionAccess({ scopes, session: summary, access });
 }
 
+async function scanSessionInventory(input: Readonly<{
+  query: InventoryQuery;
+  credentials: StoredCredentials;
+  storagePolicy: StoragePolicy;
+  accountEncryptionMode: AccountEncryptionCurrentnessResponse['mode'];
+  fetchPage: NonNullable<PluginSessionsInventoryParams['fetchPage']>;
+  accepts: (summary: SessionSummary) => boolean;
+  signal?: AbortSignal;
+  assertCurrent: () => void;
+}>): Promise<readonly ObservedPluginSession[]> {
+  const items: ObservedPluginSession[] = [];
+  const seen = new Set<string>();
+  const phases: readonly InventoryPhase[] = input.query.state === 'archived'
+    ? ['archived'] : input.query.state ? ['unarchived'] : ['unarchived', 'archived'];
+  let pages = 0;
+  for (const phase of phases) {
+    let upstream: string | undefined;
+    do {
+      assertNotAborted(input.signal);
+      input.assertCurrent();
+      if (++pages > MAX_SCAN_PAGES) {
+        throw pluginError('plugin_sessions_inventory_too_large', 'Plugin session inventory scan exceeded its page bound');
+      }
+      const page = await callInventoryBoundary(() => input.fetchPage({ token: input.credentials.token,
+        ...(upstream ? { cursor: upstream } : {}), limit: MAX_PAGE_LIMIT,
+        ...(phase === 'archived' ? { archivedOnly: true } : {}), ...(input.signal ? { signal: input.signal } : {}) }));
+      assertNotAborted(input.signal);
+      input.assertCurrent();
+      for (const raw of page.sessions) {
+        if (seen.has(raw.id)) throw pluginError('plugin_sessions_inventory_invalid', 'Session inventory contained a duplicate identity');
+        seen.add(raw.id);
+        const item = projectSessionSummary({ credentials: input.credentials, raw, storagePolicy: input.storagePolicy,
+          accountEncryptionMode: input.accountEncryptionMode });
+        if (input.accepts(item)) items.push({ item, activeAt: raw.activeAt });
+        if (seen.size > MAX_INVENTORY_ITEMS) {
+          throw pluginError('plugin_sessions_inventory_too_large', 'Plugin session inventory exceeded its item bound');
+        }
+      }
+      upstream = page.hasNext && page.nextCursor ? page.nextCursor : undefined;
+    } while (upstream);
+  }
+  return Object.freeze(items);
+}
+
 function projectSessionMessageEvent(item: SemanticTranscriptItem): Extract<SessionEvent, { kind: 'message' }> | null {
   if (
     typeof item.seq !== 'number'
@@ -331,12 +370,13 @@ export function createPluginSessionsInventory(
 ): SessionsService {
   const fetchPage = params.fetchPage ?? (async (request) => await fetchSessionsPage(request));
   const fetchById = params.fetchById ?? (async (request) => await fetchSessionById({ ...request, reason: 'session-query' }));
+  const resolveServerFeaturesSnapshot = params.resolveServerFeaturesSnapshot;
   const readStoragePolicy = params.readStoragePolicy
-    ?? (async () => readStoragePolicyFromSnapshot(params.resolveServerFeaturesSnapshot?.()));
+    ?? (async () => readStoragePolicyFromSnapshot(resolveServerFeaturesSnapshot?.()));
   const readAccountEncryptionCurrentness = params.readAccountEncryptionCurrentness
     ?? (async (credentials: StoredCredentials) =>
-      await fetchAccountEncryptionCurrentness({ token: credentials.token }));
-  const pollIntervalMs = Math.max(1, Math.floor(params.watchPollIntervalMs ?? DEFAULT_WATCH_POLL_INTERVAL_MS));
+      await fetchAccountEncryptionCurrentness({ credentials: credentials, token: credentials.token }));
+  const messageRetryIntervalMs = Math.max(1, Math.floor(params.messageWatchRetryIntervalMs ?? SESSION_MESSAGE_WATCH_RETRY_INTERVAL_MS));
   const cursors = new Map<string, CursorSnapshot>();
 
   const isOccurrenceCurrent = (): boolean => {
@@ -741,7 +781,7 @@ export function createPluginSessionsInventory(
                 if (readAuthenticationStatus(error) !== null) return;
                 // Keep the frontier and reuse this observation owner's recovery
                 // cadence only after a failed read. Healthy watches stay parked.
-                retryAt = Date.now() + pollIntervalMs;
+                retryAt = Date.now() + messageRetryIntervalMs;
               }
               if (!isWatching()) return;
               const changed = await source.waitForChange(revision, { deadlineMs: retryAt, signal });
@@ -789,52 +829,10 @@ export function createPluginSessionsInventory(
     ]);
     assertNotAborted(signal);
     assertGenerationCurrent();
-    const items: SessionSummary[] = [];
-    const seen = new Set<string>();
-    const phases: readonly InventoryPhase[] = query.state === 'archived'
-      ? ['archived']
-      : query.state
-        ? ['unarchived']
-        : ['unarchived', 'archived'];
-    let pages = 0;
-    for (const phase of phases) {
-      let upstream: string | undefined;
-      do {
-        assertNotAborted(signal);
-        if (++pages > MAX_SCAN_PAGES) {
-          throw pluginError('plugin_sessions_inventory_too_large', 'Plugin session inventory scan exceeded its page bound');
-        }
-        const page = await callInventoryBoundary(async () => await fetchPage({
-          token: credentials.token,
-          ...(upstream ? { cursor: upstream } : {}),
-          limit: MAX_PAGE_LIMIT,
-          ...(phase === 'archived' ? { archivedOnly: true } : {}),
-        }));
-        assertNotAborted(signal);
-        assertGenerationCurrent();
-        for (const raw of page.sessions) {
-          if (seen.has(raw.id)) {
-            throw pluginError('plugin_sessions_inventory_invalid', 'Session inventory contained a duplicate identity');
-          }
-          seen.add(raw.id);
-          const summary = projectSessionSummary({
-            credentials,
-            raw,
-            storagePolicy,
-            accountEncryptionMode: accountEncryptionCurrentness.mode,
-          });
-          if (
-            hasSessionAccess(params.sessionScopes, summary, 'read')
-            && matchesQuery(summary, query)
-          ) items.push(summary);
-          if (seen.size > MAX_INVENTORY_ITEMS) {
-            throw pluginError('plugin_sessions_inventory_too_large', 'Plugin session inventory exceeded its item bound');
-          }
-        }
-        upstream = page.hasNext && page.nextCursor ? page.nextCursor : undefined;
-      } while (upstream);
-    }
-    return Object.freeze(items);
+    const rows = await scanSessionInventory({ query, credentials, storagePolicy,
+      accountEncryptionMode: accountEncryptionCurrentness.mode, fetchPage, signal, assertCurrent: assertGenerationCurrent,
+      accepts: summary => hasSessionAccess(params.sessionScopes, summary, 'read') && matchesQuery(summary, query) });
+    return Object.freeze(rows.map(row => row.item));
   };
 
   const readCursor = (raw: string, query: InventoryQuery, currentCredentialKey: string): CursorSnapshot => {
@@ -898,12 +896,6 @@ export function createPluginSessionsInventory(
     });
   };
 
-  const loadAll = async (query: InventoryQuery): Promise<readonly SessionSummary[]> => {
-    assertDeclaredSessionAccess('read');
-    const credentials = await readCurrentCredentials();
-    return await scanInventory(query, credentials);
-  };
-
   const get = async (id: string, options?: { signal?: AbortSignal }): Promise<SessionHandle | null> => {
     assertNotAborted(options?.signal);
     assertGenerationCurrent();
@@ -920,46 +912,85 @@ export function createPluginSessionsInventory(
     assertDeclaredSessionAccess('read');
     const query = normalizeQuery(rawQuery);
     let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
     let revision = 0;
-    let previous = new Map<string, SessionSummary>();
-    const emit = (event: SessionWatchEventInput) => {
+    let initialized = false;
+    const previous = new Map<string, SessionSummary>();
+    const lifetime = new AbortController();
+    const signal = combineAbortSignals(params.signal, lifetime.signal);
+    const serverBaseUrl = resolveServerHttpBaseUrl();
+    let subscription: Disposable | undefined;
+    let delivery = Promise.resolve();
+    const dispose = () => {
       if (disposed) return;
+      disposed = true;
+      lifetime.abort();
+      params.signal.removeEventListener('abort', dispose);
+      subscription?.dispose();
+      previous.clear();
+    };
+    const emit = (event: SessionWatchEventInput) => {
+      if (disposed || !isOccurrenceCurrent()) return;
       try {
         listener(Object.freeze({ ...event, revision: String(++revision) }) as SessionWatchEvent);
       } catch {
-        // Plugin listeners cannot take down the host-owned watch loop.
+        // Plugin listeners cannot take down the host-owned observation.
       }
     };
-    const poll = async (): Promise<void> => {
-      if (disposed || !isOccurrenceCurrent()) return;
-      try {
-        const items = await loadAll(query);
-        if (disposed || !isOccurrenceCurrent()) return;
-        const next = new Map(items.map((item) => [item.id, item] as const));
-        if (revision === 0) {
-          emit({ kind: 'snapshot', items });
-        } else {
-          for (const item of items) {
-            if (JSON.stringify(previous.get(item.id)) !== JSON.stringify(item)) emit({ kind: 'upserted', item });
-          }
-          for (const id of previous.keys()) {
-            if (!next.has(id)) emit({ kind: 'removed', id });
-          }
-        }
-        previous = next;
-      } catch {
-        if (!disposed && isOccurrenceCurrent()) emit({ kind: 'resyncRequired' });
-      }
-      if (!disposed && isOccurrenceCurrent()) timer = setTimeout(() => void poll(), pollIntervalMs);
+    const accepts = (item: SessionSummary) => hasSessionAccess(params.sessionScopes, item, 'read') && matchesQuery(item, query);
+    const applyUpsert = (item: SessionSummary) => {
+      if (accepts(item)) {
+        previous.set(item.id, item); emit({ kind: 'upserted', item });
+      } else if (previous.delete(item.id)) emit({ kind: 'removed', id: item.id });
     };
-    void poll();
-    return Object.freeze({
-      dispose() {
-        disposed = true;
-        if (timer) clearTimeout(timer);
-      },
-    });
+    params.signal.addEventListener('abort', dispose, { once: true });
+    void (async () => {
+      const credentials = await readCurrentCredentials(signal);
+      if (disposed) return;
+      subscription = observePluginSessionInventory({ credentials, serverBaseUrl,
+        async loadSnapshot(accountEncryptionMode, signal) {
+          const storagePolicy = await callInventoryBoundary(readStoragePolicy);
+          return await scanSessionInventory({ query: {}, credentials, storagePolicy, accountEncryptionMode,
+            fetchPage, signal, assertCurrent: () => assertNotAborted(signal), accepts: () => true });
+        },
+        async loadOne(sessionId, accountEncryptionMode, signal) {
+          const serverFeaturesSnapshot = resolveServerFeaturesSnapshot?.();
+          const [raw, storagePolicy] = await Promise.all([
+            callInventoryBoundary(() => fetchById({ token: credentials.token, sessionId, signal,
+              ...(serverFeaturesSnapshot ? { serverFeaturesSnapshot } : {}) })), callInventoryBoundary(readStoragePolicy),
+          ]);
+          assertNotAborted(signal);
+          return raw ? { item: projectSessionSummary({ credentials, raw, storagePolicy, accountEncryptionMode }), activeAt: raw.activeAt } : null;
+        },
+      }, (event, isCurrent) => {
+        delivery = delivery.then(async () => {
+          if (disposed) return;
+          if (!isOccurrenceCurrent()) { dispose(); return; }
+          if (event.kind === 'resyncRequired') { emit(event); return; }
+          const current = await readCurrentCredentials(signal);
+          if (current.token !== credentials.token || !isDeepStrictEqual(current.encryption, credentials.encryption)) {
+            emit({ kind: 'resyncRequired' }); dispose(); return;
+          }
+          if (!isCurrent() || disposed) return;
+          if (event.kind === 'snapshot') {
+            const items = event.items.filter(accepts);
+            if (!initialized) {
+              for (const item of items) previous.set(item.id, item);
+              initialized = true;
+              emit({ kind: 'snapshot', items: Object.freeze(items) });
+            } else {
+              // Only real recovery snapshots need membership reconciliation. The
+              // producer keeps equal row identities, so this needs no signatures.
+              const present = new Set(items.map(item => item.id));
+              for (const item of items) if (previous.get(item.id) !== item) applyUpsert(item);
+              for (const id of previous.keys()) if (!present.has(id)) { previous.delete(id); emit({ kind: 'removed', id }); }
+            }
+          } else if (event.kind === 'upserted') applyUpsert(event.item);
+          else if (previous.delete(event.id)) emit(event);
+        }).catch(() => { if (!disposed) { emit({ kind: 'resyncRequired' }); dispose(); } });
+      });
+      if (disposed) subscription.dispose();
+    })().catch(() => { if (!disposed) { emit({ kind: 'resyncRequired' }); dispose(); } });
+    return Object.freeze({ dispose });
   };
 
   const currentService = params.currentSessionId === null || params.sessionScopes.length === 0

@@ -4,30 +4,25 @@ import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happie
 import type { ExternalSessionOperationActionResponseV1, ExternalSessionOperationAuthorIntentV1, ExternalSessionOperationRecordV1, ExternalSessionOperationReferenceV1, ExternalSessionOperationSharedPresentationV1, ExternalSessionOperationSemanticRequestV1, ExternalSessionOperationSocketCommandV1, ExternalSessionOperationSocketResponseV1, ExternalSessionPriorStableStorageV1, ExternalSessionTakeoverStartInputV1 } from '@happier-dev/protocol';
 
 import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import { readStoredCredentials } from '@/persistence';
-import {
-  ExternalSessionOperationClaimLostError,
-  maintainExternalSessionOperationClaim,
-  type ExternalSessionOperationExclusion,
-} from '@/session/external/operationExclusion';
+import type { StoredCredentials } from '@/persistence';
+import type { ExternalSessionMaterializeAccountAdmission, ExternalSessionMaterializeSourceAdmission } from './materializeAction';
+import type { ExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
 
 import {
   ExternalSessionOperationRecordReadError,
   ExternalSessionOperationRecordAdmissionError,
   projectExternalSessionTakeoverIdempotencyIntent,
-  resolveExternalSessionOperationAdmissionAccountScope,
+  captureExternalSessionOperationAccountAdmission,
   resolveExternalSessionOperationStartAdmission,
   readExternalSessionOperationRecord,
   type ExternalSessionOperationAccountScope,
   type ExternalSessionOperationPriorTerminalReceiptEvidence,
-  type ExternalSessionOperationSelectedPresentationReader,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 import {
   assertExternalSessionOperationProgressCanBeSelected,
   convergeExternalSessionOperationProgressProjection,
   publishExternalSessionOperationProgress,
-  readExternalSessionOperationSharedPresentation,
   settlePriorTerminalExternalSessionOperationProgressProjections,
 } from './operationProgressPublisher';
 import {
@@ -74,6 +69,8 @@ type TakeoverStartDependencies = Readonly<{
   operationExclusion: ExternalSessionOperationExclusion;
   describeSession(
     request: TakeoverStartIntent,
+    sourceAdmission?: ExternalSessionMaterializeSourceAdmission,
+    credentials?: StoredCredentials,
   ): Promise<Readonly<{
     request: TakeoverSemanticRequest;
     sourceSnapshotEvidenceRef: string;
@@ -83,6 +80,8 @@ type TakeoverStartDependencies = Readonly<{
     command: ExternalSessionOperationSocketCommandV1,
   ): Promise<ExternalSessionOperationSocketResponseV1>;
   validateProgressSelection(input: Readonly<{
+    credentials?: StoredCredentials;
+    accountScope?: ExternalSessionOperationAccountScope;
     sessionId: string;
     progress: ReturnType<typeof projectExternalSessionOperationProgressV1>;
     priorTerminalRecords: readonly ExternalSessionOperationRecordV1[];
@@ -90,6 +89,8 @@ type TakeoverStartDependencies = Readonly<{
       readonly ExternalSessionOperationPriorTerminalReceiptEvidence[];
   }>): Promise<ExternalSessionOperationSharedPresentationV1 | undefined>;
   publishProgress(input: Readonly<{
+    credentials?: StoredCredentials;
+    accountScope?: ExternalSessionOperationAccountScope;
     sessionId: string;
     progress: ReturnType<typeof projectExternalSessionOperationProgressV1>;
     allowDifferentTerminalReplacement?: boolean;
@@ -98,14 +99,14 @@ type TakeoverStartDependencies = Readonly<{
   }>): Promise<ExternalSessionOperationRecordV1 | void>;
   convergeProgress?(
     record: ExternalSessionOperationRecordV1,
+    admission?: ExternalSessionMaterializeAccountAdmission,
   ): Promise<ExternalSessionOperationRecordV1>;
   settlePriorTerminalProgressProjection?(
     priorTerminalRecords: readonly ExternalSessionOperationRecordV1[],
     incoming: ExternalSessionOperationRecordV1,
+    admission?: ExternalSessionMaterializeAccountAdmission,
   ): Promise<void>;
   nowMs?: () => number;
-  readSelectedPresentation?:
-    ExternalSessionOperationSelectedPresentationReader;
 }>;
 
 export type ExternalSessionTakeoverStartActionExecutor = Readonly<{
@@ -119,10 +120,12 @@ export type ExternalSessionTakeoverStartActionExecutor = Readonly<{
        * Pinned authenticated Account scope captured at admission. When the
        * caller supplies it, every admission re-read, exclusion acquisition,
        * and record write of this call resolves inside the pinned Account's
-       * partition and verifies the ambient Account still matches; otherwise
+       * partition even if the ambient Account changes; otherwise
        * the executor captures the scope itself at its admission boundary.
        */
       accountScope?: ExternalSessionOperationAccountScope;
+      credentials?: StoredCredentials;
+      sourceAdmission?: ExternalSessionMaterializeSourceAdmission;
     }>,
   ): Promise<ExternalSessionOperationActionResponseV1>;
 }>;
@@ -138,6 +141,8 @@ export type ExternalSessionPluginTakeoverStartActionExecutor =
       >;
       signal?: AbortSignal;
       accountScope?: ExternalSessionOperationAccountScope;
+      credentials?: StoredCredentials;
+      sourceAdmission?: ExternalSessionMaterializeSourceAdmission;
     }>,
   ): Promise<
     | Readonly<{
@@ -158,17 +163,19 @@ export function createDefaultExternalSessionTakeoverStartActionExecutor(
 ): ExternalSessionPluginTakeoverStartActionExecutor {
   return createExternalSessionTakeoverStartActionExecutor({
     ...input,
-    convergeProgress: async (record) => {
+    convergeProgress: async (record, admission) => {
       await convergeExternalSessionOperationProgressProjection(
         input.activeServerDir,
         record,
         {
+          ...admission,
           allowSettledTerminalPredecessorReplacement: true,
         },
       );
       const converged = await readExternalSessionOperationRecord(
         input.activeServerDir,
         record.operationId,
+        admission?.accountScope,
       );
       if (!converged) {
         throw new Error(
@@ -177,11 +184,12 @@ export function createDefaultExternalSessionTakeoverStartActionExecutor(
       }
       return converged;
     },
-    settlePriorTerminalProgressProjection: async (priorTerminalRecords) => {
+    settlePriorTerminalProgressProjection: async (priorTerminalRecords, _incoming, admission) => {
       await settlePriorTerminalExternalSessionOperationProgressProjections(
         input.activeServerDir,
         priorTerminalRecords,
         {
+          ...admission,
           sessionAdmissionLockHeld: true,
           publish: async (publishInput) =>
             await publishExternalSessionOperationProgress({
@@ -193,10 +201,12 @@ export function createDefaultExternalSessionTakeoverStartActionExecutor(
     },
     validateProgressSelection:
       assertExternalSessionOperationProgressCanBeSelected,
-    describeSession: async (intent) => {
-      const credentials = await readStoredCredentials();
+    describeSession: async (intent, sourceAdmission, admittedCredentials) => {
+      const credentials = sourceAdmission?.credentials ?? admittedCredentials;
       if (!credentials) throw new Error('external_session_takeover_start_unauthenticated');
-      const loaded = await loadLinkedExternalSession({
+      const loaded = sourceAdmission
+        ? { ok: true as const, session: sourceAdmission.linked }
+        : await loadLinkedExternalSession({
         credentials,
         sessionId: intent.sessionId,
         machineId: intent.source.machineId,
@@ -236,9 +246,6 @@ export function createDefaultExternalSessionTakeoverStartActionExecutor(
           maxItems: TAKEOVER_SOURCE_CAPTURE_MAX_ITEMS,
         }),
       );
-      if (resolved.resource.retirementSignal?.aborted) {
-        throw new Error('external_session_takeover_start_source_unavailable');
-      }
       return {
         request: {
           ...intent,
@@ -319,10 +326,9 @@ function success(
 async function readConvergedTakeoverOperation(
   dependencies: Pick<
     TakeoverStartDependencies,
-    'activeServerDir' | 'readSelectedPresentation'
+    'activeServerDir'
   >,
   intent: TakeoverStartIntent,
-  nowMs: () => number,
   waitForRelease?: Extract<
     Awaited<ReturnType<ExternalSessionOperationExclusion['acquire']>>,
     { status: 'converged' }
@@ -344,10 +350,6 @@ async function readConvergedTakeoverOperation(
       intent,
       ...(authorIntent ? { authorIntent } : {}),
       ...(accountScope ? { accountScope } : {}),
-      nowMs: nowMs(),
-      readSelectedPresentation:
-        dependencies.readSelectedPresentation
-        ?? readExternalSessionOperationSharedPresentation,
     });
   const published = await resolveDurableAdmission();
   if (published.kind === 'existing_record') {
@@ -390,14 +392,10 @@ export function createExternalSessionTakeoverStartActionExecutor(
         return failure('invalid_state', 'Invalid takeover operation request.');
       }
       const intent = parsed.data.request;
-      // One pinned scope per public Start call, captured at the admission
-      // boundary (or carried in by the plugin wrapper's capture). Admission
-      // re-reads, exclusion acquisition, and the durable record write all
-      // resolve inside the pinned partition and fail closed on rotation.
-      const admissionAccountScope = context?.accountScope
-        ?? await resolveExternalSessionOperationAdmissionAccountScope(
-          dependencies.activeServerDir,
-        );
+      const accountAdmission = context?.sourceAdmission
+        ?? await captureExternalSessionOperationAccountAdmission(dependencies.activeServerDir, context?.credentials);
+      const credentials = accountAdmission?.credentials;
+      const admissionAccountScope = accountAdmission?.accountScope ?? context?.accountScope;
       let admission: Awaited<ReturnType<
         typeof resolveExternalSessionOperationStartAdmission
       >>;
@@ -412,10 +410,6 @@ export function createExternalSessionTakeoverStartActionExecutor(
           ...(admissionAccountScope
             ? { accountScope: admissionAccountScope }
             : {}),
-          nowMs: nowMs(),
-          readSelectedPresentation:
-            dependencies.readSelectedPresentation
-            ?? readExternalSessionOperationSharedPresentation,
         });
       } catch (error) {
         if (
@@ -461,8 +455,9 @@ export function createExternalSessionTakeoverStartActionExecutor(
         }
         try {
           const converged = dependencies.convergeProgress
-            ? await dependencies.convergeProgress(existing)
+            ? await dependencies.convergeProgress(existing, accountAdmission)
             : await dependencies.publishProgress({
+              ...accountAdmission,
               sessionId: existing.request.sessionId,
               progress: projectExternalSessionOperationProgressV1(existing),
             }) ?? existing;
@@ -474,7 +469,7 @@ export function createExternalSessionTakeoverStartActionExecutor(
       const operationId = admission.operationId;
       let described: Awaited<ReturnType<TakeoverStartDependencies['describeSession']>>;
       try {
-        described = await dependencies.describeSession(intent);
+        described = await dependencies.describeSession(intent, context?.sourceAdmission, credentials ?? undefined);
       } catch (error) {
         return classifyStartFailure(error);
       }
@@ -524,7 +519,6 @@ export function createExternalSessionTakeoverStartActionExecutor(
           converged = await readConvergedTakeoverOperation(
             dependencies,
             intent,
-            nowMs,
             acquired.waitForRelease,
             context?.signal ? { signal: context.signal } : undefined,
             context?.authorIntent,
@@ -579,8 +573,9 @@ export function createExternalSessionTakeoverStartActionExecutor(
           }
           try {
             const published = dependencies.convergeProgress
-              ? await dependencies.convergeProgress(convergedRecord)
+              ? await dependencies.convergeProgress(convergedRecord, accountAdmission)
               : await dependencies.publishProgress({
+                ...accountAdmission,
                 sessionId: convergedRecord.request.sessionId,
                 progress: projectExternalSessionOperationProgressV1(
                   convergedRecord,
@@ -604,22 +599,17 @@ export function createExternalSessionTakeoverStartActionExecutor(
         return failure('operation_conflict', 'Takeover operation is already active.');
       }
 
-      const maintenance = maintainExternalSessionOperationClaim({
-        claim: acquired.claim,
-      });
       try {
-        const authority = await maintenance.race(
-          () => dependencies.sendHistoricalCommand({
-            v: 1,
-            kind: 'inspect',
-            claim: {
-              sessionId: request.sessionId,
-              operationId,
-              operationClaimId: acquired.claim.record.claimId,
-            },
-            expectedRevision: 0,
-          }),
-        );
+        const authority = await dependencies.sendHistoricalCommand({
+          v: 1,
+          kind: 'inspect',
+          claim: {
+            sessionId: request.sessionId,
+            operationId,
+            operationClaimId: acquired.claim.record.claimId,
+          },
+          expectedRevision: 0,
+        });
         if (
           authority.kind !== 'authority'
           || authority.claim.sessionId !== request.sessionId
@@ -634,101 +624,95 @@ export function createExternalSessionTakeoverStartActionExecutor(
         const createdAtMs = nowMs();
         let expectedDifferentTerminalPresentation:
           ExternalSessionOperationSharedPresentationV1 | undefined;
-        let record = await maintenance.race(
-          () => writeExternalSessionOperationRecord(
-            dependencies.activeServerDir,
-            {
-              v: 1,
-              operationId,
-              revision: 0,
-              request,
-              status: 'awaiting_user_resume',
-              phase: 'validating',
-              timeline: resolveExternalSessionOperationTimelineV1(request),
-              createdAtMs,
-              updatedAtMs: createdAtMs,
-              priorStableStorage,
-              currentStorageState: priorStableStorage.state,
-              ...(priorStableStorage.state === 'snapshot_complete'
-                ? { publication: priorStableStorage.publication }
-                : {}),
-              checkpoint: emptyCheckpoint(),
-              bindings: {
-                operationClaimId: acquired.claim.record.claimId,
-              },
-              progressProjection: {
-                acknowledgedRevision: null,
-              },
-              ...(context?.authorIntent
-                ? { authorIntent: context.authorIntent }
-                : {}),
-              canonicalOwnerEvidence: {
-                linkedSessionRevision: described.linkedSessionRevision,
-                sourceSnapshotEvidenceRef:
-                  described.sourceSnapshotEvidenceRef,
-              },
-              fence: { kind: 'none' },
-              retryTargetPhase: 'validating',
+        let record = await writeExternalSessionOperationRecord(
+          dependencies.activeServerDir,
+          {
+            v: 1,
+            operationId,
+            revision: 0,
+            request,
+            status: 'awaiting_user_resume',
+            phase: 'validating',
+            timeline: resolveExternalSessionOperationTimelineV1(request),
+            createdAtMs,
+            updatedAtMs: createdAtMs,
+            priorStableStorage,
+            currentStorageState: priorStableStorage.state,
+            ...(priorStableStorage.state === 'snapshot_complete'
+              ? { publication: priorStableStorage.publication }
+              : {}),
+            checkpoint: emptyCheckpoint(),
+            bindings: {
+              operationClaimId: acquired.claim.record.claimId,
             },
-            {
-              ...(admissionAccountScope
-                ? { accountScope: admissionAccountScope }
-                : {}),
-              ...(dependencies.settlePriorTerminalProgressProjection
-                ? {
-                  settlePriorTerminalProgressProjection:
-                    dependencies.settlePriorTerminalProgressProjection,
-                }
-                : {}),
-              validateSessionAdmission: async (
-                _current,
-                incoming,
-                priorTerminalRecords,
-                priorTerminalReceiptEvidence,
-              ) => {
-                expectedDifferentTerminalPresentation =
-                  await dependencies.validateProgressSelection({
-                    sessionId: incoming.request.sessionId,
-                    progress:
-                      projectExternalSessionOperationProgressV1(incoming),
-                    priorTerminalRecords,
-                    priorTerminalReceiptEvidence,
-                  });
-                return expectedDifferentTerminalPresentation;
-              },
-              nowMs,
+            progressProjection: {
+              acknowledgedRevision: null,
             },
-          ),
+            ...(context?.authorIntent
+              ? { authorIntent: context.authorIntent }
+              : {}),
+            canonicalOwnerEvidence: {
+              linkedSessionRevision: described.linkedSessionRevision,
+              sourceSnapshotEvidenceRef:
+                described.sourceSnapshotEvidenceRef,
+            },
+            fence: { kind: 'none' },
+            retryTargetPhase: 'validating',
+          },
+          {
+            ...(admissionAccountScope
+              ? { accountScope: admissionAccountScope }
+              : {}),
+            ...(dependencies.settlePriorTerminalProgressProjection
+              ? {
+                settlePriorTerminalProgressProjection:
+                  async (prior, incoming) => await dependencies.settlePriorTerminalProgressProjection!(prior, incoming, accountAdmission),
+              }
+              : {}),
+            validateSessionAdmission: async (
+              _current,
+              incoming,
+              priorTerminalRecords,
+              priorTerminalReceiptEvidence,
+            ) => {
+              expectedDifferentTerminalPresentation =
+                await dependencies.validateProgressSelection({
+                  ...accountAdmission,
+                  sessionId: incoming.request.sessionId,
+                  progress:
+                    projectExternalSessionOperationProgressV1(incoming),
+                  priorTerminalRecords,
+                  priorTerminalReceiptEvidence,
+                });
+              return expectedDifferentTerminalPresentation;
+            },
+          },
         );
         if (record.operationId !== operationId) {
           const convergedRecord = dependencies.convergeProgress
-            ? await dependencies.convergeProgress(record)
+            ? await dependencies.convergeProgress(record, accountAdmission)
             : await dependencies.publishProgress({
+              ...accountAdmission,
               sessionId: record.request.sessionId,
               progress: projectExternalSessionOperationProgressV1(record),
             }) ?? record;
           return success(convergedRecord);
         }
-        record = await maintenance.race(async () =>
-          await dependencies.publishProgress({
-            sessionId: request.sessionId,
-            progress: projectExternalSessionOperationProgressV1(record),
-            ...(expectedDifferentTerminalPresentation
-              ? {
-                allowDifferentTerminalReplacement: true,
-                expectedDifferentTerminalPresentation,
-              }
-              : {}),
-          }) ?? record
-        );
+        record = await dependencies.publishProgress({
+          ...accountAdmission,
+          sessionId: request.sessionId,
+          progress: projectExternalSessionOperationProgressV1(record),
+          ...(expectedDifferentTerminalPresentation
+            ? {
+              allowDifferentTerminalReplacement: true,
+              expectedDifferentTerminalPresentation,
+            }
+            : {}),
+        }) ?? record;
         return success(record);
       } catch (error) {
-        if (error instanceof ExternalSessionOperationClaimLostError) {
-          return failure('operation_conflict', error.code);
-        }
         return classifyStartFailure(error);
       } finally {
-        maintenance.stop();
         await acquired.claim.release().catch(() => undefined);
       }
     },
@@ -741,11 +725,13 @@ export function createExternalSessionTakeoverStartActionExecutor(
       // call: the wrapped Start consumes the pin, and the post-failure
       // follow-up re-read below reuses the same pin so both observe the same
       // Account partition.
-      const admissionAccountScope = context?.accountScope
-        ?? await resolveExternalSessionOperationAdmissionAccountScope(
-          dependencies.activeServerDir,
-        );
+      const accountAdmission = context.sourceAdmission
+        ?? await captureExternalSessionOperationAccountAdmission(dependencies.activeServerDir, context.credentials);
+      const credentials = accountAdmission?.credentials;
+      const admissionAccountScope = accountAdmission?.accountScope ?? context.accountScope;
       const result = await executor.start(raw, {
+        ...(credentials ? { credentials } : {}),
+        ...(context.sourceAdmission ? { sourceAdmission: context.sourceAdmission } : {}),
         ...(context?.signal ? { signal: context.signal } : {}),
         authorIntent: context.authorIntent,
         ...(admissionAccountScope
@@ -776,10 +762,6 @@ export function createExternalSessionTakeoverStartActionExecutor(
           ...(admissionAccountScope
             ? { accountScope: admissionAccountScope }
             : {}),
-          nowMs: nowMs(),
-          readSelectedPresentation:
-            dependencies.readSelectedPresentation
-            ?? readExternalSessionOperationSharedPresentation,
         });
         if (admitted.kind === 'existing_record') {
           return {

@@ -8,6 +8,8 @@ import { readSessionModesMetadata, projectSessionModesV1Compatibility } from '@h
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import { readPersistedProviderResumeState } from '@/providers/lifecycle/readPersistedResumeSelection';
+import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
+import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions';
 import { readSessionMetadataConnectedServiceBindings } from '@happier-dev/agents/runtime/identity/session-metadata';
 import {
   readAcpSessionModeIntentFromMetadata,
@@ -23,6 +25,7 @@ import {
 } from '@happier-dev/agents/session/state/metadataWriters';
 
 type ForkInheritedSpawnOverrides = {
+  approvalProfileId?: string | null;
   permissionMode?: PermissionMode;
   permissionModeUpdatedAt?: number;
   agentModeId?: string;
@@ -38,6 +41,7 @@ type ForkInheritedSpawnOverrides = {
 type ForkInheritedMetadataOverrides = Pick<
   Metadata,
   | 'permissionMode'
+  | 'approvalProfileId'
   | 'permissionModeUpdatedAt'
   | 'sessionModesV1'
   | 'sessionModesV2'
@@ -295,12 +299,19 @@ function resolveInheritedConnectedServices(
 export function resolveForkInheritedOverridesFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
   agentTarget: BackendTargetRefV2 | null,
+  requestedApprovalProfileId?: string | null,
 ): {
   spawn: ForkInheritedSpawnOverrides;
   metadata: ForkInheritedMetadataOverrides;
 } {
   const spawn: ForkInheritedSpawnOverrides = {};
   const metadataOverrides: ForkInheritedMetadataOverrides = {};
+  const sourceApprovalProfileId = readSessionStateFieldFromMetadata(metadata ?? {}, 'intent.approvalProfileId');
+  if (requestedApprovalProfileId !== undefined || sourceApprovalProfileId !== undefined) {
+    const approvalProfileId = resolveInheritedApprovalProfileIdV1(requestedApprovalProfileId, sourceApprovalProfileId);
+    spawn.approvalProfileId = approvalProfileId;
+    metadataOverrides.approvalProfileId = approvalProfileId;
+  }
 
   const displayTitle = resolveInheritedDisplayTitle(metadata);
   if (displayTitle?.value) {
@@ -389,7 +400,10 @@ export function resolveForkInheritedOverridesFromMetadata(
 
   const configOptionOverrides = readAcpConfigOptionOverrides(metadata);
   const spawnConfigOptionOverrides = buildAcpConfigOptionOverrides(configOptionOverrides);
-  if (spawnConfigOptionOverrides) {
+  // Provider forks commit inherited options in the replay row before launch.
+  // Keep the launch carrier reserved for explicit requests; native/ACP forks
+  // still need their seed because they publish child metadata after opening.
+  if (spawnConfigOptionOverrides && model?.selection?.providerConnectionId == null) {
     spawn.sessionConfigOptionOverrides = spawnConfigOptionOverrides;
   }
   for (const entry of configOptionOverrides) {

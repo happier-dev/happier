@@ -117,11 +117,10 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
   const accountArtifactStore = { ...rawAccountArtifactStore,
     read: (...args: Parameters<typeof rawAccountArtifactStore.read>) => timeWebLatencyPhase('approval.artifact.read', () => rawAccountArtifactStore.read(...args)),
     update: (...args: Parameters<typeof rawAccountArtifactStore.update>) => timeWebLatencyPhase('approval.artifact.update', () => rawAccountArtifactStore.update(...args)),
-    readForUpdate: async (artifactId: string, authorizationHeaders?: ArtifactRequestAuthorizationHeaders) => {
+    readForUpdate: async (artifactId: string, options?: Parameters<typeof rawAccountArtifactStore.readForUpdate>[1]) => {
       const current = await timeWebLatencyPhase('approval.artifact.read', () =>
-        rawAccountArtifactStore.readForUpdate(artifactId, { prepareRecipients: false,
-          ...(authorizationHeaders ? { authorizationHeaders } : {}) }));
-      return current ? { artifact: current.artifact,
+        rawAccountArtifactStore.readForUpdate(artifactId, { ...options, prepareRecipients: false }));
+      return current ? { ...current,
         update: (content: Parameters<typeof current.update>[0]) => timeWebLatencyPhase('approval.artifact.update', () => current.update(content)) } : null;
     },
   };
@@ -300,7 +299,7 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
     } }),
     approvalsClassifyListFacts: () => classifyOpenApprovalListFacts({ accountArtifactStore: {
       list: options => accountArtifactStore.list(options),
-      readForUpdate: artifactId => accountArtifactStore.readForUpdate(artifactId, params.approvalAuthorizationHeaders),
+      readForUpdate: artifactId => accountArtifactStore.readForUpdate(artifactId, { authorizationHeaders: params.approvalAuthorizationHeaders }),
     } }),
     approvalsList: args => listApprovalArtifactsV1({ ...args,
       readPage: options => accountArtifactStore.list(options),
@@ -328,7 +327,7 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
 
     approvalsUpdate: async ({ artifactId, request, serverId, expectedStatus }) => {
       setApprovalTraceArtifactId(artifactId);
-      const current = await accountArtifactStore.readForUpdate(artifactId, params.approvalAuthorizationHeaders);
+      const current = await accountArtifactStore.readForUpdate(artifactId, { authorizationHeaders: params.approvalAuthorizationHeaders });
       if (!current) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false as const };
       const { artifact } = current;
       const existingHeader = artifact.header;

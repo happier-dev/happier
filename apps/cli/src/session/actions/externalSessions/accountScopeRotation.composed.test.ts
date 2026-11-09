@@ -171,7 +171,7 @@ function configureDefaultLinkedSource(): void {
 }
 
 describe('external-session operation account-scope propagation', () => {
-  it('keeps an A-admitted materialization in A\u2019s partition after an A\u2192B rotation: late record effects fail closed and deletion cleanup discharges A\u2019s private state without creating a B row', async () => {
+  it('settles an A-admitted materialization in A\u2019s partition after an A\u2192B rotation and cleans only A\u2019s private state', async () => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-account-scope-rotation-',
@@ -285,9 +285,8 @@ describe('external-session operation account-scope propagation', () => {
       useAccount('account-rotation-b', 'b');
       releaseInterruptedPages();
 
-      // The in-flight drive settles: its pinned interruption write must fail
-      // closed against the rotated ambient Account, never land in B's
-      // partition. The exclusion claim's release proves the drive settled.
+      // The in-flight drive settles under its captured Account. The durable
+      // interruption fact and released claim prove the admitted work finished.
       await vi.waitFor(
         async () => {
           const probe = await exclusion.acquire({
@@ -309,7 +308,7 @@ describe('external-session operation account-scope propagation', () => {
       expect(interruptedStored?.kind).toBe('full_record');
       expect(
         interruptedStored?.kind === 'full_record' && interruptedStored.record,
-      ).toMatchObject({ revision: 0 });
+      ).toMatchObject({ status: 'awaiting_user_resume' });
 
       // No B partition state exists at all: the late pinned record effect
       // created no B row, and the staged capture stayed in A's partition.

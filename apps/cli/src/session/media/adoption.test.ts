@@ -33,6 +33,21 @@ const durableVideoItem = {
 } as const;
 
 describe('adoptSessionMediaMetadataForManagedSession', () => {
+  it.each(['user', 'agent'])('adopts transient imported %s images into the existing media store and removes inline bytes', async role => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-imported-inline-'));
+    roots.push(workingDirectory);
+    const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jP0cAAAAASUVORK5CYII=';
+    const raw = { role, content: { type: 'text', text: 'inspect' }, media: [{ type: 'image', mimeType: 'image/png', data }] };
+    const staged = await stageSessionMediaMetadataForHistoricalImport({ raw, workingDirectory, sourceReadRoots: [] });
+    await expect(stat(join(workingDirectory, '.happier', 'uploads'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const adopted = await adoptSessionMediaMetadataForManagedSession({ raw: staged, workingDirectory, sessionId: 'session-1', messageLocalId: 'import-1' });
+    expect(adopted).not.toHaveProperty('media');
+    expect(JSON.stringify(adopted)).not.toContain(data);
+    const envelope = (adopted.meta as { happier: { payload: { media: { path: string; role: string }[] } } }).happier;
+    expect(envelope.payload.media[0]?.role).toBe(role === 'user' ? 'input' : 'output');
+    expect(await readFile(join(workingDirectory, envelope.payload.media[0]!.path))).toEqual(Buffer.from(data, 'base64'));
+  });
+
   it('preserves existing durable video session media references without coercing them to images', async () => {
     const raw = {
       meta: {

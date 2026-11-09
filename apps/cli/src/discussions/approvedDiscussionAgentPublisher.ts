@@ -5,6 +5,9 @@ import type { StoredCredentials } from '@/persistence';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { ApprovedDiscussionSourceActionExecute } from './approvedDiscussionPublication';
 import { createDiscussionAgentPublisher } from './discussionAgentPublisher';
+import type { RpcAdmissionPredicate } from '@/api/rpc/types';
+import { logger } from '@/ui/logger';
+import { withApprovalActionTrace } from '@/daemon/externalActions/webLatencyTrace';
 
 /** The daemon's recorded approval replay, independent of an invoking Agent turn. */
 export function createApprovedDiscussionAgentPublisher(params: Readonly<{
@@ -21,10 +24,20 @@ export function createApprovedDiscussionAgentPublisher(params: Readonly<{
     callerAuthority?: ActionExecutorContext['authority'];
     requesterApprovalDecision?: ActionExecutorContext['requesterApprovalDecision'];
     signal?: AbortSignal;
-  }>): Promise<DiscussionAgentPublisherResponseV1> => {
+  }>): Promise<DiscussionAgentPublisherResponseV1> => withApprovalActionTrace('approval.request.decide', async () => {
+    const reportAdmissionDenial = (admissionPredicate: RpcAdmissionPredicate) => {
+      logger.warnLocalFile('[Discussion approval replay] Publication refused', {
+        artifactId: options.approvedActionReplay.artifactId,
+        ...('operation' in request ? {} : { discussionId: request.discussionId }),
+        sessionId: request.sessionId, admissionPredicate,
+      });
+    };
     const denied = () => ({ v: 1 as const, ok: false as const, error: 'discussion_post_denied' as const });
     const accountId = readAccountIdFromToken(params.credentials.token);
-    if ('operation' in request || options.callerAuthority !== 'present_user' || !accountId) return denied();
+    if ('operation' in request || options.callerAuthority !== 'present_user' || !accountId) {
+      reportAdmissionDenial('session_authorization');
+      return denied();
+    }
     const sessionId = request.sessionId;
     const publish = createDiscussionAgentPublisher({
       serverId: params.serverId, serverUrl: params.serverUrl,
@@ -44,7 +57,8 @@ export function createApprovedDiscussionAgentPublisher(params: Readonly<{
     return DiscussionAgentPublisherResponseV1Schema.parse(await publish({ request,
       approvedActionReplay: options.approvedActionReplay }, {
       signal: options.signal ?? new AbortController().signal, callerAuthority: options.callerAuthority,
+      reportAdmissionDenial,
       ...(options.requesterApprovalDecision ? { requesterApprovalDecision: options.requesterApprovalDecision } : {}),
     }));
-  };
+  }, options.approvedActionReplay.artifactId);
 }

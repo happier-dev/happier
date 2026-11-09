@@ -1,4 +1,5 @@
 import axios from '@/api/client/credentialAxios';
+import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -63,8 +64,7 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
       try { output = schema.parse(response.data); }
       catch {
         if (response.status === 404 || response.status === 405 || response.status === 501) return failure('unsupported_action');
-        if (response.status === 401) return failure('action_home_signed_out');
-        if (response.status === 403) return failure('action_forbidden');
+        if (response.status === 401 || response.status === 403) return projectHomeAuthorizationHttpFailure(response.status, headers, response.data);
         return failure(method === 'GET' ? 'invalid_action_output' : 'outcome_unknown');
       }
       if (method === 'GET') {

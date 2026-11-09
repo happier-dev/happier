@@ -147,15 +147,15 @@ describe('CLI Board Actions through the Artifact owner', () => {
                 } }),
             machineActionDirectTargetTransport: { machineId: 'widget-machine', invoke: async () => ({ protocolVersion: 1, projection }) } });
         const context = { surface: 'cli', bypassApprovals: true } as const;
-        const created = await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: 'new-board', name: 'Board title' } } }, context);
+        const created = await executor.execute('boards.apply', { intent: { kind: 'create', board: { id: '22222222-2222-4222-8222-222222222228', name: 'Board title' } } }, context);
         expect(created, JSON.stringify(created))
-            .toMatchObject({ ok: true, result: { board: { id: 'new-board', name: 'Board title' } } });
-        expect(rows.get('new-board')?.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER).toBe(mode === 'plain');
-        const updated = await executor.execute('boards.apply', { intent: { kind: 'update', boardId: 'new-board', patch: { pinnedInSessions: true, mode: 'by_status' } } }, context);
+            .toMatchObject({ ok: true, result: { board: { id: '22222222-2222-4222-8222-222222222228', name: 'Board title' } } });
+        expect(rows.get('22222222-2222-4222-8222-222222222228')?.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER).toBe(mode === 'plain');
+        const updated = await executor.execute('boards.apply', { intent: { kind: 'update', boardId: '22222222-2222-4222-8222-222222222228', patch: { pinnedInSessions: true, mode: 'by_status' } } }, context);
         expect(updated, JSON.stringify(updated))
             .toMatchObject({ ok: true, result: { board: { pinnedInSessions: true, mode: 'by_status' } } });
-        expect(await executor.execute('boards.list', {}, context)).toMatchObject({ ok: true, result: { boards: [{ id: 'new-board', name: 'Board title', pinnedInSessions: true }] } });
-        const surface = { serverId: 'board-home', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'new-board' } } as const;
+        expect(await executor.execute('boards.list', {}, context)).toMatchObject({ ok: true, result: { boards: [{ id: '22222222-2222-4222-8222-222222222228', name: 'Board title', pinnedInSessions: true }] } });
+        const surface = { serverId: 'board-home', accountId: 'owner', owner: { kind: 'workBoard', boardId: '22222222-2222-4222-8222-222222222228' } } as const;
         const typedDefinition = { name: 'Directory count',
             sizeDeclaration: { sizes: ['small'], defaultSize: 'small' },
             body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Count' } } },
@@ -163,8 +163,8 @@ describe('CLI Board Actions through the Artifact owner', () => {
             inputSchema: { type: 'object', properties: { filter: { type: 'string' } }, required: ['filter'], additionalProperties: false },
         } as const;
         expect(await executor.execute('widgets.definition.create', { account: { serverId: 'board-home', accountId: 'owner' },
-            artifactId: 'count-definition', definition: typedDefinition }, context)).toMatchObject({ ok: true });
-        const typedInstance = { v: 1, id: 'typed-counter', definition: { kind: 'artifact', artifactId: 'count-definition' },
+            artifactId: 'e5e9fe52-0e70-405a-840d-febd148824dc', definition: typedDefinition }, context)).toMatchObject({ ok: true });
+        const typedInstance = { v: 1, id: 'typed-counter', definition: { kind: 'artifact', artifactId: 'e5e9fe52-0e70-405a-840d-febd148824dc' },
             bindings: { filter: { kind: 'value', value: 'files' } } } as const;
         const typedRef = { surface, instanceId: typedInstance.id };
         const typedAdd = await executor.execute('widgets.item.add', { surface, instance: typedInstance }, context);
@@ -182,15 +182,15 @@ describe('CLI Board Actions through the Artifact owner', () => {
         projection = availableProjection;
         expect(await executor.execute('widgets.item.remove', { ref: typedRef }, context)).toMatchObject({ ok: true });
         expect(await executor.execute('widgets.definition.delete', { account: { serverId: 'board-home', accountId: 'owner' },
-            artifactId: 'count-definition' }, context)).toMatchObject({ ok: true });
+            artifactId: 'e5e9fe52-0e70-405a-840d-febd148824dc' }, context)).toMatchObject({ ok: true });
         const authoredInputs = { fields: [{ path: 'repo', title: 'Repository', widget: 'text' },
             { path: 'filter', title: 'Count', widget: 'select', inputType }] } as const;
         for (const [artifactId, body] of [
-            ['checks-definition', { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Checks' } } }],
-            ['html-definition', { kind: 'html', source: { v: 1, entrypoint: 'index.html', files: {
+            ['6679b75f-64af-4a8c-865d-a2dfb6a6e081', { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Checks' } } }],
+            ['871ea8fd-5f1e-4cba-884e-c21029fb9173', { kind: 'html', source: { v: 1, entrypoint: 'index.html', files: {
                 'index.html': { mime: 'text/html', contentBase64: 'PGgxPkNvcHk8L2gxPg==' },
             } } }],
-            ['removed-definition', { kind: 'installed', surface: { pluginId: 'com.acme.removed', localId: 'checks' } }],
+            ['4fe1998b-c5c2-497e-8e3c-8610d7e9ef6c', { kind: 'installed', surface: { pluginId: 'com.acme.removed', localId: 'checks' } }],
         ] as const) {
             expect(await executor.execute('widgets.definition.create', { account: { serverId: 'board-home', accountId: 'owner' }, artifactId,
                 definition: { name: artifactId, sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' }, inputs: authoredInputs,
@@ -202,14 +202,14 @@ describe('CLI Board Actions through the Artifact owner', () => {
         expect(catalog, JSON.stringify(catalog)).toMatchObject({ ok: true, result: { entries: expect.any(Array) } });
         if (!catalog.ok) throw new Error('Expected catalog');
         expect(catalog.result).toMatchObject({ entries: expect.arrayContaining([
-            expect.objectContaining({ definition: { kind: 'artifact', artifactId: 'checks-definition' }, fields: authoredInputs.fields, availability: 'available' }),
-            expect.objectContaining({ definition: { kind: 'artifact', artifactId: 'html-definition' }, fields: authoredInputs.fields, availability: 'available' }),
-            expect.objectContaining({ definition: { kind: 'artifact', artifactId: 'removed-definition' }, fields: authoredInputs.fields, availability: 'unavailable' }),
+            expect.objectContaining({ definition: { kind: 'artifact', artifactId: '6679b75f-64af-4a8c-865d-a2dfb6a6e081' }, fields: authoredInputs.fields, availability: 'available' }),
+            expect.objectContaining({ definition: { kind: 'artifact', artifactId: '871ea8fd-5f1e-4cba-884e-c21029fb9173' }, fields: authoredInputs.fields, availability: 'available' }),
+            expect.objectContaining({ definition: { kind: 'artifact', artifactId: '4fe1998b-c5c2-497e-8e3c-8610d7e9ef6c' }, fields: authoredInputs.fields, availability: 'unavailable' }),
         ]) });
         expect(get.mock.calls.slice(beforeCatalog).some(call => ['/v1/artifacts/checks-definition', '/v1/artifacts/removed-definition'].includes(new URL(call[0]).pathname))).toBe(false);
-        const instance = { v: 1, id: 'widget-copy', definition: { kind: 'artifact', artifactId: 'checks-definition' }, bindings: {} } as const;
+        const instance = { v: 1, id: 'widget-copy', definition: { kind: 'artifact', artifactId: '6679b75f-64af-4a8c-865d-a2dfb6a6e081' }, bindings: {} } as const;
         const ref = { surface, instanceId: instance.id };
-        expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'new-board', ref, instance } }, context))
+        expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: '22222222-2222-4222-8222-222222222228', ref, instance } }, context))
             .toMatchObject({ ok: true, result: { board: { mode: 'by_status', widgets: [{ instance, size: 'medium' }] } } });
         expect(await executor.execute('widgets.item.list', { surface }, context))
             .toMatchObject({ ok: true, result: { instances: [{ instance, size: 'medium' }] } });
@@ -218,7 +218,7 @@ describe('CLI Board Actions through the Artifact owner', () => {
             .toMatchObject({ ok: true, result: { instances: [{ instance, size: 'full' }] } });
         const home = { ...surface, owner: { kind: 'home' } } as const;
         const homeInstance = { v: 1, id: 'home-copy', displayName: 'Named Home copy',
-            definition: { kind: 'artifact', artifactId: 'checks-definition' }, bindings: {
+            definition: { kind: 'artifact', artifactId: '6679b75f-64af-4a8c-865d-a2dfb6a6e081' }, bindings: {
                 repo: { kind: 'value', value: 'my/repo' }, filter: { kind: 'value', value: 'files' },
             } } as const;
         const homeRef = { surface: home, instanceId: homeInstance.id };
@@ -249,7 +249,7 @@ describe('CLI Board Actions through the Artifact owner', () => {
         ] } });
         expect(await executor.execute('widgets.catalog.list', { surface }, context)).toMatchObject({ ok: true, result: { entries: expect.arrayContaining([
             expect.objectContaining({ definition: homeInstance.definition, instanceCount: 2 }),
-            expect.objectContaining({ definition: { kind: 'artifact', artifactId: 'removed-definition' }, instanceCount: 0 }),
+            expect.objectContaining({ definition: { kind: 'artifact', artifactId: '4fe1998b-c5c2-497e-8e3c-8610d7e9ef6c' }, instanceCount: 0 }),
         ]) } });
         const areaInstance = { ...homeInstance, id: 'area-copy', bindings: { ...homeInstance.bindings,
             filter: { kind: 'context', slot: 'filter' },
@@ -275,8 +275,8 @@ describe('CLI Board Actions through the Artifact owner', () => {
         expect(await executor.execute('widgets.item.remove', { ref: { surface, instanceId: homeInstance.id } }, context)).toMatchObject({ ok: true });
         expect(await executor.execute('widgets.item.remove', { ref }, context)).toMatchObject({ ok: true });
         expect(await executor.execute('widgets.item.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [] } });
-        expect(await executor.execute('boards.apply', { intent: { kind: 'delete', boardId: 'new-board' } }, context)).toMatchObject({ ok: true, result: { board: null } });
-        expect(rows.has('new-board')).toBe(false);
+        expect(await executor.execute('boards.apply', { intent: { kind: 'delete', boardId: '22222222-2222-4222-8222-222222222228' } }, context)).toMatchObject({ ok: true, result: { board: null } });
+        expect(rows.has('22222222-2222-4222-8222-222222222228')).toBe(false);
     });
     it('writes one Board, replays a position conflict, and leaves another Board and settings untouched', async () => {
         advertiseKindIndexing();

@@ -184,9 +184,8 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
         capturedSource: ExternalSessionStagingSourceCapture;
         /**
          * Pinned authenticated Account scope carried from operation admission.
-         * Live semantics: the ambient Account must still match the pin, so a
-         * rotation fails closed before any staging effect. The first staging
-         * capture for the operation then seeds its process-local partition.
+         * The first staging access seeds this operation's process-local
+         * partition. Admitted work keeps the pin after ambient Account changes.
          */
         accountScope?: ExternalSessionOperationAccountScope;
     }>): Promise<
@@ -196,6 +195,7 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
     >;
     readCapturedSource(input: Readonly<{
         operationId: string;
+        accountScope?: ExternalSessionOperationAccountScope;
     }>): Promise<
         | Readonly<{ status: 'missing' }>
         | Readonly<{
@@ -215,7 +215,7 @@ export type ExternalSessionOperationPrivateStagingStore = Readonly<{
             capturedThroughSourceRevision: string | null;
         }>
     >;
-    readReplayState(operationId: string): Promise<ExternalSessionStagingReplayState>;
+    readReplayState(operationId: string, accountScope?: ExternalSessionOperationAccountScope): Promise<ExternalSessionStagingReplayState>;
     streamReplayGroups(operationId: string): AsyncIterable<ExternalSessionStagingReplayGroup>;
     streamAllGroupsForTerminalCleanup(
         operationId: string,
@@ -582,8 +582,8 @@ function stagingPathsInRoot(rootDirectory: string, operationId: string): Staging
  * process-local and deliberately outlives an Account switch for an operation
  * already in flight; reaching staging at all requires the caller to have first
  * resolved that operation's Account-scoped record. A live caller may pin the
- * capture explicitly by passing the admission scope to beginOperation, which
- * verifies the ambient Account before the first staging effect; the deletion
+ * capture explicitly by passing the admission scope to its first access;
+ * the deletion
  * retirement path instead addresses the pinned partition directly through
  * forRetirement and never consults ambient credentials.
  */
@@ -1484,7 +1484,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
 
         async readCapturedSource(readInput) {
             const operationId = readNonemptyString(readInput.operationId, 'operationId');
-            const paths = await resolveStagingPaths(operationId);
+            const paths = await resolveStagingPaths(operationId, readInput.accountScope);
             const manifest = await readHeader(paths.manifestPath);
             if (!manifest || manifest.operationId !== operationId) {
                 return Object.freeze({ status: 'missing' as const });
@@ -1702,7 +1702,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
             });
         },
 
-        async readReplayState(operationIdInput) {
+        async readReplayState(operationIdInput, accountScope) {
             const operationId = readNonemptyString(operationIdInput, 'operationId');
             return await withCapacityLock(operationId, async (paths) => {
                 const header = await readHeader(paths.manifestPath);
@@ -1713,7 +1713,7 @@ export function createExternalSessionOperationPrivateStagingStore(input: Readonl
                     await repairHeaderSummaryFromGroupRows(paths, header, atomicWrite),
                     operationId,
                 );
-            });
+            }, accountScope ? resolveStagingPaths(operationId, accountScope) : undefined);
         },
 
         async *streamReplayGroups(operationIdInput) {

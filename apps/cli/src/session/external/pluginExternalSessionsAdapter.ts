@@ -152,9 +152,6 @@ function serviceFailure(error: unknown, fallbackCode: string): PluginError {
     error instanceof Error ? { cause: error } : undefined,
   );
 }
-function assertAvailable(value: PluginOperationAvailability): void {
-  if (value.status !== 'available') fail(value.code);
-}
 function positiveInteger(value: number | undefined, fallback: number, code: string): number {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || value <= 0) fail(code);
@@ -289,8 +286,10 @@ async function resolvePluginExternalSessionSourceIdentity(params: Readonly<{
       return false;
     }
   };
-  const signal = params.signal ?? new AbortController().signal;
   const retirementSignal = params.retirementSignal ?? new AbortController().signal;
+  const signal = params.purpose === 'follow'
+    ? AbortSignal.any([retirementSignal, ...(params.signal ? [params.signal] : [])])
+    : params.signal ?? new AbortController().signal;
   let operationFailure: HostExternalSessionFollowDiagnostic = { reason: 'operation_failed' };
   const outcome = await invokeBoundedExternalSessionsOperation({
     signal,
@@ -302,7 +301,7 @@ async function resolvePluginExternalSessionSourceIdentity(params: Readonly<{
     operation: async (operationSignal) => {
       try {
         const checkCurrent = (): void => {
-          if (!isCurrent() || retirementSignal.aborted) {
+          if (params.purpose === 'follow' && (!isCurrent() || retirementSignal.aborted)) {
             fail('plugin_generation_retired');
           }
           if (signal.aborted) fail('plugin_operation_aborted');
@@ -390,12 +389,12 @@ async function resolvePluginExternalSessionSourceIdentity(params: Readonly<{
         const outcomes = await Promise.all(entries.map(async (entry) => {
           try {
             checkCurrent();
-            if (!sourceEntryIsCurrent(entry)) {
+            if (params.purpose === 'follow' && !sourceEntryIsCurrent(entry)) {
               return Object.freeze({ kind: 'unavailable' as const, diagnostic: { reason: 'source_retired' as const } });
             }
             const ops = boundOps ?? await params.resolveProviderOps(entry.agentId);
             checkCurrent();
-            if (!sourceEntryIsCurrent(entry)) {
+            if (params.purpose === 'follow' && !sourceEntryIsCurrent(entry)) {
               return Object.freeze({ kind: 'unavailable' as const, diagnostic: { reason: 'source_retired' as const } });
             }
             if (!ops?.resolveLinkIdentity) {
@@ -409,7 +408,7 @@ async function resolvePluginExternalSessionSourceIdentity(params: Readonly<{
                     signal: operationSignal,
                   });
                   checkCurrent();
-                  if (!sourceEntryIsCurrent(entry)) return null;
+                  if (params.purpose === 'follow' && !sourceEntryIsCurrent(entry)) return null;
                   return configured.ok
                     && preservesExternalSessionSourceIdentity(entry.source, configured.source)
                     ? configured.source
@@ -424,7 +423,7 @@ async function resolvePluginExternalSessionSourceIdentity(params: Readonly<{
               signal: operationSignal,
             });
             checkCurrent();
-            if (!sourceEntryIsCurrent(entry)) {
+            if (params.purpose === 'follow' && !sourceEntryIsCurrent(entry)) {
               return Object.freeze({ kind: 'unavailable' as const, diagnostic: { reason: 'source_retired' as const } });
             }
             if (
@@ -499,7 +498,9 @@ async function resolvePluginExternalSessionSourceIdentity(params: Readonly<{
     return unavailableFollowTarget('plugin_generation_retired');
   }
   if (outcome.status === 'cancelled') {
-    return unavailableFollowTarget('plugin_operation_aborted');
+    return unavailableFollowTarget(params.purpose === 'follow' && retirementSignal.aborted
+      ? 'plugin_generation_retired'
+      : 'plugin_operation_aborted');
   }
   if (outcome.status === 'timeout') {
     return unavailableFollowTarget('plugin_operation_deadline_exceeded');
@@ -729,7 +730,13 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     demand.controller.abort();
   };
   const clearDemands = (): void => {
-    for (const id of demands.keys()) releaseDemand(id);
+    // Withdrawal releases retained cursor demand, not the finite page already
+    // admitted through it. Explicit close/caller Stop still aborts its controller.
+    for (const [id, demand] of demands) {
+      // A consumed cursor has a finite page in flight. Keep its close handle
+      // until settlement so explicit Stop can still cancel that admitted page.
+      if (demand.cursor) releaseDemand(id);
+    }
   };
   const isCurrent = () => {
     let current = false;
@@ -739,6 +746,9 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
   };
   params.retirementSignal?.addEventListener('abort', clearDemands, { once: true });
   if (params.retirementSignal?.aborted) clearDemands();
+  const assertCurrent = (): void => {
+    if (!isCurrent() || params.retirementSignal?.aborted) fail('plugin_generation_retired');
+  };
   const runBoundedOperation = async <T>(
     callerSignal: AbortSignal | undefined,
     failureCode: string,
@@ -748,7 +758,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       deadlineAtMs?: number;
     }> = {},
   ): Promise<T> => {
-    if (!isCurrent() || params.retirementSignal?.aborted) fail('plugin_generation_retired');
     assertNotAborted(callerSignal);
     const nowMs = Date.now();
     const deadlineAtMs = options.deadlineAtMs;
@@ -762,17 +771,12 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     );
     const operationSignal = AbortSignal.any([
       deadline.signal,
-      ...(params.retirementSignal ? [params.retirementSignal] : []),
       ...(callerSignal ? [callerSignal] : []),
     ]);
     const settlementSignal = options.settleAfterCallerAbort
-      ? AbortSignal.any([
-          deadline.signal,
-          ...(params.retirementSignal ? [params.retirementSignal] : []),
-        ])
+      ? deadline.signal
       : operationSignal;
     const abortFailure = (): PluginError => {
-      if (!isCurrent() || params.retirementSignal?.aborted) return failure('plugin_generation_retired');
       if (callerSignal?.aborted) return failure('plugin_operation_aborted');
       return failure('plugin_operation_deadline_exceeded');
     };
@@ -785,15 +789,12 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
             return;
           }
           settlementSignal.addEventListener('abort', onAbort, { once: true });
-          Promise.resolve().then(() => operation(operationSignal)).then(resolve, reject).finally(() => {
+          operation(operationSignal).then(resolve, reject).finally(() => {
             settlementSignal.removeEventListener('abort', onAbort);
           });
         });
       } catch (error) {
         if (options.settleAfterCallerAbort) {
-          if (!isCurrent() || params.retirementSignal?.aborted) {
-            throw failure('plugin_generation_retired');
-          }
           if (callerSignal?.aborted) throw failure('plugin_operation_aborted');
           if (deadline.signal.aborted) {
             throw failure('plugin_operation_deadline_exceeded');
@@ -806,7 +807,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     }
   };
   const sourceFor = (ref: HostExternalSessionRef): SourceEntry => {
-    if (!isCurrent()) fail('plugin_generation_retired');
     const parsedRef = ExternalSessionRefSchema.safeParse(ref);
     if (!parsedRef.success) {
       fail('plugin_external_source_unavailable');
@@ -824,15 +824,12 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     sourceValidationUnavailableIsLocal = false,
   ): Promise<Readonly<{ ops: PluginExternalSessionsProviderOps; source: ExternalSessionsSource }>> => {
     assertNotAborted(signal);
-    if (!isCurrent() || !sourceEntryIsCurrent(entry)) fail('plugin_generation_retired');
     const ops = await params.resolveProviderOps(entry.agentId);
     assertNotAborted(signal);
-    if (!isCurrent() || !sourceEntryIsCurrent(entry)) fail('plugin_generation_retired');
     if (!ops) fail('plugin_external_agent_unavailable');
     if (!entry.validatedAtAdmission) {
       const validation = await ops.validateSource({ source: entry.source, ...(signal ? { signal } : {}) });
       assertNotAborted(signal);
-      if (!isCurrent() || !sourceEntryIsCurrent(entry)) fail('plugin_generation_retired');
       if (!validation.ok) {
         if (sourceValidationUnavailableIsLocal) {
           throw new ExternalSessionSourceValidationUnavailableError();
@@ -860,9 +857,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       signal: paramsForRef.signal,
     }, paramsForRef.ops);
     assertNotAborted(paramsForRef.signal);
-    if (!isCurrent() || params.retirementSignal?.aborted) {
-      fail('plugin_generation_retired');
-    }
     return identity.source;
   };
   /**
@@ -902,7 +896,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     & ExternalSessionsCompositionPort = {
     capabilities: caps,
     async list(query: NonNullable<Parameters<PluginExternalSessionsDomainAuthorService['list']>[0]> = {}) {
-      if (!isCurrent() || params.retirementSignal?.aborted) fail('plugin_generation_retired');
+      assertCurrent();
       assertNotAborted(query.signal);
       const demandId = query.cursor
         ? demandIdForCursor(query.cursor) ?? fail('plugin_external_cursor_invalid')
@@ -929,7 +923,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         demand.controller.signal,
         ...(query.signal ? [query.signal] : []),
       ]), 'plugin_external_list_failed', async (operationSignal) => {
-        assertAvailable(caps().list);
         const queryKey = JSON.stringify([query.agentId ?? null, query.sourceId ?? null]);
         const listPolicy = EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates;
         const limit = positiveInteger(
@@ -946,12 +939,19 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         if (query.cursor) {
           snapshot = snapshotForContinuation ?? fail('plugin_external_cursor_invalid');
           if (snapshot.queryKey !== queryKey) fail('plugin_external_cursor_invalid');
+          if (snapshot.sources.some(({ entry }) => !sourceEntryIsCurrent(entry))) {
+            fail('plugin_external_source_unavailable');
+          }
         } else {
-          const entries = params.sources
-            .filter(sourceEntryIsCurrent)
+          const currentSources = params.sources.filter(sourceEntryIsCurrent);
+          const entries = currentSources
             .filter((entry) => !query.agentId || entry.agentId === query.agentId)
             .filter((entry) => !query.sourceId || entry.sourceId === query.sourceId);
-          if (entries.length === 0) fail('plugin_external_source_unavailable');
+          if (entries.length === 0) {
+            fail(currentSources.length === 0
+              ? 'plugin_external_list_unavailable'
+              : 'plugin_external_source_unavailable');
+          }
           if (entries.length > MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION) {
             fail('plugin_external_inventory_capacity_exceeded');
           }
@@ -1051,7 +1051,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           throw new MalformedExternalSessionCandidatePageError();
         }
         assertNotAborted(sourceSignal);
-        if (!isCurrent()) fail('plugin_generation_retired');
         if (page.preparation && !params.queryCandidates) {
           fail('plugin_external_candidate_index_owner_unavailable');
         }
@@ -1143,9 +1142,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       };
 
       const throwOperationAbort = (): never => {
-        if (!isCurrent() || params.retirementSignal?.aborted) {
-          fail('plugin_generation_retired');
-        }
         if (query.signal?.aborted) fail('plugin_operation_aborted');
         fail('plugin_operation_deadline_exceeded');
       };
@@ -1293,14 +1289,13 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       });
       assertSerializedBytes(result, maxBytes);
       assertNotAborted(operationSignal);
-      if (!isCurrent()) fail('plugin_generation_retired');
       if (nextCursor) {
         demand.cursor = nextCursor;
         demand.snapshot = snapshot;
       }
       return result;
       }).finally(() => {
-        if (!demand.cursor) releaseDemand(demandId);
+        if (!demand.cursor || params.retirementSignal?.aborted) releaseDemand(demandId);
       });
     },
     async closeList(cursor: string) {
@@ -1308,8 +1303,9 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       if (id) releaseDemand(id);
     },
     async attach(ref: HostExternalSessionRef, options?: Parameters<PluginExternalSessionsDomainAuthorService['attach']>[1]) {
+      assertCurrent();
       return await runBoundedOperation(options?.signal, 'plugin_external_attach_failed', async (operationSignal) => {
-        assertAvailable(caps().attach);
+        if (!params.attach) fail('plugin_external_attach_unavailable');
         const entry = sourceFor(ref);
         const { ops, source } = await providerFor(entry, operationSignal);
         const resolvedSource = await publicRefSourceFor({
@@ -1321,7 +1317,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
         });
         assertNotAborted(operationSignal);
         const result = await params.attach!(ref, resolvedSource, { signal: operationSignal });
-        if (!isCurrent()) fail('plugin_generation_retired');
         return projectExternalSessionAttachResult(result);
       }, { settleAfterCallerAbort: true });
     },
@@ -1356,8 +1351,8 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       });
     },
     async readTranscript(ref: HostExternalSessionRef, query: NonNullable<Parameters<PluginExternalSessionsDomainAuthorService['readTranscript']>[1]> = {}) {
+      assertCurrent();
       return await runBoundedOperation(query.signal, 'plugin_external_transcript_read_failed', async (operationSignal) => {
-        assertAvailable(caps().transcript);
         const entry = sourceFor(ref);
         const { ops, source } = await providerFor(entry, operationSignal);
         const resolvedSource = await publicRefSourceFor({
@@ -1397,7 +1392,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
             signal: operationSignal,
           });
           assertNotAborted(operationSignal);
-          if (!isCurrent()) fail('plugin_generation_retired');
           if (readAfter.outcome !== 'advanced') {
             const result = Object.freeze({
               mode: 'readAfter' as const,
@@ -1434,7 +1428,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           signal: operationSignal,
         });
         assertNotAborted(operationSignal);
-        if (!isCurrent()) fail('plugin_generation_retired');
         if (page.items.length > maxItems) {
           fail('plugin_external_inventory_capacity_exceeded');
         }
@@ -1467,6 +1460,7 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       }
       let entry: SourceEntry;
       try {
+        assertCurrent();
         entry = sourceFor(target.ref);
       } catch (error) {
         return unavailableResult(
@@ -1478,7 +1472,10 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
       }
       try {
         return await runBoundedOperation(
-          options.signal,
+          AbortSignal.any([
+            ...(options.signal ? [options.signal] : []),
+            ...(params.retirementSignal ? [params.retirementSignal] : []),
+          ]),
           'plugin_external_follow_acquisition_failed',
           async (operationSignal) => {
             if (target.source.kind !== entry.source.kind) {
@@ -1558,13 +1555,13 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
           },
         );
       } catch (error) {
-        const code = isPluginError(error)
-          ? error.code
-          : options.signal?.aborted
+        const code = params.retirementSignal?.aborted || !isCurrent()
+          ? 'plugin_generation_retired'
+          : isPluginError(error)
+            ? error.code
+            : options.signal?.aborted
             ? 'plugin_operation_aborted'
-            : params.retirementSignal?.aborted || !isCurrent()
-              ? 'plugin_generation_retired'
-              : 'plugin_external_follow_acquisition_failed';
+            : 'plugin_external_follow_acquisition_failed';
         return unavailableResult(code);
       }
     },
@@ -1603,9 +1600,6 @@ export function createPluginExternalSessionsAdapter(params: Readonly<{
     const id = demandIdForCursor(cursor);
     if (!id) {
       return null;
-    }
-    if (!isCurrent() || params.retirementSignal?.aborted) {
-      fail('plugin_generation_retired');
     }
     return cursor;
   };

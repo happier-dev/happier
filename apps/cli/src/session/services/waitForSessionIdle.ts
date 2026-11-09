@@ -89,11 +89,7 @@ export async function waitForSessionIdle(params: Readonly<{
             };
     const initialTurnActivityRequiresTranscriptIdleEvidence =
       initialTranscriptActivityUnavailable
-      || (
-        initialProjectedActivity !== null
-        && !initialProjectedActivity.turnInFlight
-        && initialTranscriptActivity?.turnInFlight === true
-      );
+      || initialTranscriptActivity?.turnInFlight === true;
     const initialProjectedPendingRequestCount = readSessionProjectedPendingRequestCount(sessionTarget.rawSession);
 
     try {
@@ -108,27 +104,16 @@ export async function waitForSessionIdle(params: Readonly<{
         initialTurnActivity,
         initialTurnActivityRequiresTranscriptIdleEvidence,
         recheckTurnActivity: async () =>
-          initialProjectedActivity
-            ? detectLatestSessionTurnActivity({
-              token: params.credentials.token,
-              sessionId: sessionTarget.sessionId,
-              encryptionMode: sessionTarget.mode,
-              encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
-              encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
-              transcriptFetchTimeoutMs: remainingTimeoutMs(),
-              ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-              signal,
-            })
-            : detectSessionTurnActivity({
-              token: params.credentials.token,
-              sessionId: sessionTarget.sessionId,
-              encryptionMode: sessionTarget.mode,
-              encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
-              encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
-              transcriptFetchTimeoutMs: remainingTimeoutMs(),
-              ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-              signal,
-            }),
+          detectLatestSessionTurnActivity({
+            token: params.credentials.token,
+            sessionId: sessionTarget.sessionId,
+            encryptionMode: sessionTarget.mode,
+            encryptionKey: sessionTarget.ctx?.encryptionKey ?? null,
+            encryptionVariant: sessionTarget.ctx?.encryptionVariant ?? null,
+            transcriptFetchTimeoutMs: remainingTimeoutMs(),
+            ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
+            signal,
+          }),
         ...(initialProjectedPendingRequestCount !== null
           ? { initialAgentStateSummary: { pendingRequestsCount: initialProjectedPendingRequestCount } }
           : {}),

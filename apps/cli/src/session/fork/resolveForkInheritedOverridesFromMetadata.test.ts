@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildTestCodexRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor } from '@/testkit/runtimeDescriptorFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { mergeSessionMetadataForStartup } from '@/agent/runtime/mergeSessionMetadataForStartup';
+import { resolveSessionConfigOptionOverridesFromMetadataSnapshot } from '@/agent/runtime/sessionConfigOptionOverrideSync';
+import { applyAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 import { resolveForkInheritedOverridesFromMetadata } from './resolveForkInheritedOverridesFromMetadata';
 
@@ -154,6 +158,27 @@ describe('resolveForkInheritedOverridesFromMetadata', () => {
     expect(result.metadata.sessionModesV2).toEqual(state);
     expect(result.metadata.sessionModesV1).toBeUndefined();
     expect(result.spawn.agentModeId).toBeUndefined();
+  });
+
+  it('keeps inherited Provider effort in seeded metadata without making it an explicit launch request', () => {
+    const parent = applyAcpConfigOptionIntentSessionMetadata({
+      ...createTestMetadata(), providerBindingV1: providerBinding,
+      modelSelectionIntentV1: { v: 1, updatedAt: 1, selection: {
+        agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_gateway', modelId: 'model-a',
+      } },
+    }, { v: 1, configId: 'reasoning_effort', value: 'ultra', updatedAt: 2 });
+    const inherited = resolveForkInheritedOverridesFromMetadata(parent, codexTarget);
+
+    expect(inherited.spawn.sessionConfigOptionOverrides).toBeUndefined();
+    // Replay commits this metadata before attaching its runner. The real
+    // startup merge and reader must retain the inherited runtime intent.
+    const startup = mergeSessionMetadataForStartup({
+      current: { ...createTestMetadata(), ...inherited.metadata },
+      next: createTestMetadata(), mode: 'attach', nowMs: 3,
+    });
+    expect(resolveSessionConfigOptionOverridesFromMetadataSnapshot({ metadata: startup })).toEqual([
+      { configId: 'reasoning_effort', valueId: 'ultra', updatedAt: 2 },
+    ]);
   });
 
   it('retains config override intent despite retired parent fields', () => {

@@ -111,7 +111,11 @@ export function createCliAgentStartContext(
         ?? (params.credentials ? (await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking' })).settings : null);
       });
       const availableAgents = scopeOnly ? undefined : await measureActionStartPhaseV1(context, 'agent_inventory',
-        () => readEffectiveDeps().agentsBackendsList({ includeDisabled: false }));
+        async () => readEffectiveDeps().agentsBackendsList?.({ includeDisabled: false }));
+      if (!scopeOnly && !availableAgents) {
+        return { roleSources, settings, appliedChildSelection, availableAgents, roles: undefined,
+          effectiveSnapshotUnavailable: true };
+      }
       // Prompt reads stay selected-only. Complete child snapshots additionally
       // require the native owner's applied baseline and real enabled inventory.
       const roles = sessionRoleContext && session.backendTarget ? await measureActionStartPhaseV1(context, 'role_sources', () =>

@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { Server } from 'socket.io';
 import { io } from 'socket.io-client';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { ExternalSessionsCandidatesListRequestSchema, ExternalSessionsCandidatesListResponseSchema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -15,7 +14,7 @@ import { resolveBuiltInContributions } from '@/plugins/projection/registry/resol
 import { machineExternalSessionsCandidatesList } from '../../../../../ui/sources/sync/ops/machineExternalSessions';
 import { upsertServerProfile } from '../../../../../ui/sources/sync/domains/server/serverProfiles';
 import { getStorage } from '../../../../../ui/sources/sync/domains/state/storageStore';
-import { createMachineFixture } from '../../../../../ui/sources/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineReadHttpResponseFixture } from '../../../../../ui/sources/dev/testkit/fixtures/machineFixtures';
 import { serverScopedRpcSocketPool } from '../../../../../ui/sources/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 import { resetScopedMachineTransportCacheForTests } from '../../../../../ui/sources/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
 
@@ -34,22 +33,22 @@ vi.mock('../../../../../ui/sources/dev/reactNativeStub.ts', async () => {
     const { createReactNativeWebRuntime } = await import(factoryPath);
     return createReactNativeWebRuntime(undefined, () => vi.importActual(stubPath));
 });
-// UI resolves its own installed native package, not the CLI's duplicate.
-vi.mock('../../../../../ui/node_modules/react-native-unistyles/lib/module/index.js', async () => {
+// Match the package boundary; its installed export path changes with the toolchain.
+vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('../../../../../ui/sources/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
-vi.mock('../../../../../ui/node_modules/expo-updates/build/index.js', async () => {
+vi.mock('expo-updates', async () => {
     const { createExpoUpdatesMock } = await import('../../../../../ui/sources/dev/testkit/mocks/expoUpdates');
     return createExpoUpdatesMock();
 });
-vi.mock('../../../../../ui/node_modules/@shopify/react-native-skia/lib/module/index.js', async () => {
+vi.mock('@shopify/react-native-skia', async () => {
     const { createReactNativeSkiaMock } = await import('../../../../../ui/sources/dev/testkit/mocks/reactNativeSkia');
     return createReactNativeSkiaMock();
 });
 // This transport composition renders no native images or filesystem views.
-vi.mock('../../../../../ui/node_modules/expo-image/src/index.ts', () => ({ Image: 'Image' }));
-vi.mock('../../../../../ui/node_modules/expo-file-system/src/index.ts', async () => {
+vi.mock('expo-image', () => ({ Image: 'Image' }));
+vi.mock('expo-file-system', async () => {
     const { createExpoFileSystemFileMock } = await import('../../../../../ui/sources/dev/testkit/mocks/expoFileSystem');
     return createExpoFileSystemFileMock().module;
 });
@@ -155,11 +154,22 @@ async function createCandidateHome(schedule: Readonly<{ ingressMs: number; retur
     disposeRuntimes.push(() => runtime.dispose());
     const manager = new RpcHandlerManager({ scopePrefix: 'machine-1', encryptionMode: 'plain' });
     const registration = registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager: manager });
-    const http = createServer((request, response) => {
+    const http = createServer(async (request, response) => {
         response.setHeader('content-type', 'application/json');
+        if (request.url?.startsWith('/v1/machines/')) {
+            const chunks: Buffer[] = [];
+            for await (const chunk of request) chunks.push(Buffer.from(chunk));
+            const machineResponse = createPlainMachineReadHttpResponseFixture(request.url, {
+                method: request.method, ...(chunks.length ? { body: Buffer.concat(chunks).toString('utf8') } : {}),
+            }, 'account-a');
+            if (machineResponse) {
+                response.statusCode = machineResponse.status;
+                response.end(await machineResponse.text());
+                return;
+            }
+        }
         if (request.url === '/health' || request.url === '/v1/auth/ping') response.end('{}');
         else if (request.url === '/v1/account/encryption') response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
-        else if (request.url === '/v1/machines/machine-1') response.end(JSON.stringify({ machine: { id: 'machine-1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } }));
         else { response.statusCode = 404; response.end('{}'); }
     });
     const relay = new Server(http, { path: '/v1/updates/' });

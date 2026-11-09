@@ -364,6 +364,10 @@ describe('getSessionStatus awareness acquisition', () => {
       session: { id: sessionId },
       awareness: { v: 1, sessionId, runtime: 'working', freshness: 'live', operational: { primary: 'working' } },
     });
+    expect(axios.get).toHaveBeenCalledWith(expect.stringContaining(`/v2/sessions/${sessionId}`),
+      expect.objectContaining({ headers: expect.objectContaining({
+        'X-Happier-Request-Purpose': 'session-detail:session-query',
+      }) }));
   });
 
   function serveE2ee(row: Record<string, unknown>) {

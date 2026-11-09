@@ -16,9 +16,12 @@ const { mockAxiosGet, mockAxiosPost } = vi.hoisted(() => ({
   mockAxiosPost: vi.fn(),
 }));
 
-vi.mock('axios', async () => {
+vi.mock('axios', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('axios')>();
   return {
+    ...actual,
     default: {
+      ...actual.default,
       get: mockAxiosGet,
       post: mockAxiosPost,
     },
@@ -357,7 +360,6 @@ describe('resolveSessionIdOrPrefix', () => {
           encryption: { type: 'legacy', secret },
         },
         idOrPrefix: tag,
-        accountEncryptionMode: 'plain',
       });
 
       expect(res).toMatchObject({
@@ -442,7 +444,6 @@ describe('resolveSessionIdOrPrefix', () => {
           encryption: { type: 'legacy', secret },
         },
         idOrPrefix: tag,
-        accountEncryptionMode: 'plain',
       });
 
       expect(res).toEqual({ ok: false, code: 'unsupported' });

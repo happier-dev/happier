@@ -3,7 +3,9 @@ import axios from 'axios';
 import { AxiosError, AxiosHeaders } from 'axios';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { registerDiscussionAgentPublisher } from './discussionAgentPublisher';
+import { registerDiscussionAgentPublisher, prepareApprovedDiscussionAgentPublication,
+  DiscussionAgentPublisherRequestV1Schema as PrivatePublicationSchema } from './discussionAgentPublisher';
+import { DiscussionAgentPublisherRequestV1Schema } from '@happier-dev/protocol/discussions/api';
 import { createWorkflowAccountRunActionOwner, materializeWorkflowAcceptedSnapshotV1,
   sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1,
   serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol';
@@ -26,6 +28,26 @@ import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protoco
 vi.mock('axios', async original => {
   const actual = await original<typeof import('axios')>();
   return { ...actual, default: { ...actual.default, get: vi.fn() } };
+});
+
+describe('approved Discussion private carrier', () => {
+  const request = DiscussionAgentPublisherRequestV1Schema.parse({
+    v: 1, operation: 'create', sessionId: 'session',
+    request: { creationLocalId: 'created-discussion', titleContent: { t: 'plain', v: { v: 1, title: 'Review' } },
+      firstMessage: { localId: 'first-message', mentionedAccountIds: [],
+        content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Review this' }] } } } },
+  });
+
+  it('refuses a replay without a recorded artifact before the private RPC transport', () => {
+    expect(prepareApprovedDiscussionAgentPublication({ request, replay: {} })).toBeNull();
+  });
+
+  it('projects the recorded artifact into the strict private RPC contract', () => {
+    const publication = prepareApprovedDiscussionAgentPublication({ request,
+      replay: { artifactId: 'approval', deploymentReview: {} } });
+    expect(PrivatePublicationSchema.parse(publication)).toEqual({ request,
+      approvedActionReplay: { artifactId: 'approval' } });
+  });
 });
 
 describe('trusted Discussion reply publisher', () => {
@@ -176,6 +198,7 @@ describe('trusted Discussion reply publisher', () => {
     const deliveryHome = binding === 'profile_delivery' ? serverId : binding === 'foreign_delivery' ? 'srv_foreign'
       : binding === 'unknown_delivery' ? 'unknown-profile' : serverIdentityId;
     const lifecycle = binding === 'failed_delivery' ? 'failed' : binding === 'cancelled_delivery' ? 'cancelled' : 'completed';
+    const publishable = bound && lifecycle === 'completed';
     const resultValue = binding === 'typed_delivery' ? { checked: true } : 'accepted answer';
     const throughSeq = binding === 'other_delivery' ? 3 : 2;
     const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
@@ -274,8 +297,7 @@ describe('trusted Discussion reply publisher', () => {
         workflow: { runId, invocationRecordId: recordId, invocationAttempt: attempt } },
       request: { localId: deriveSessionMessageReplyReturnLocalIdV1({ sessionId: 'receiver', localId, acceptedTurnId: 'turn' }),
         content: { t: 'plain', v: text !== 'accepted answer' ? { v: 1, parts: [{ t: 'text', text }] }
-          : binding === 'typed_delivery' ? { kind: 'workflow_result', value: resultValue, summary: 'Workflow result',
-            source: { runId, invocationRecordId: recordId, invocationAttempt: '0' } }
+          : binding === 'typed_delivery' ? { v: 1, parts: [{ t: 'text', text: 'The requested work finished.' }] }
             : { v: 1, parts: [{ t: 'text', text: lifecycle === 'failed' ? 'The requested session failed.'
               : lifecycle === 'cancelled' ? 'The requested work was cancelled.' : text }] } }, mentionedAccountIds: [], mentionedSessionIds: [],
         replyTarget: { kind: 'message', messageId: 'question' } },
@@ -291,9 +313,9 @@ describe('trusted Discussion reply publisher', () => {
     await handler(publication('accepted answer', '1'));
     expect(posts).toEqual([]);
     await handler(publication('accepted answer'));
-    expect(posts).toHaveLength(bound ? 1 : 0);
+    expect(posts).toHaveLength(publishable ? 1 : 0);
     await handler(publication('accepted answer'));
-    expect(posts).toHaveLength(bound ? 2 : 0);
-    if (bound) expect(posts[1]).toEqual(posts[0]);
+    expect(posts).toHaveLength(publishable ? 2 : 0);
+    if (publishable) expect(posts[1]).toEqual(posts[0]);
   });
 });

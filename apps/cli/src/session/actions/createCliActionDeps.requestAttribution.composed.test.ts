@@ -1,8 +1,10 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import type { AgentSessionRuntime, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import * as daemonControl from '@/daemon/controlHttp';
+import { createCliBrowserRuntimeActionExecutor } from '@/daemon/browser/actions/controlTransport';
 import {
   ApprovalRequestV2Schema, SessionInputRequestV1Schema, ActionsSettingsV1Schema, FeaturesResponseSchema,
   buildTrustedHostSessionInputAdmissionV1, settleSessionInputRequestV1, withSessionInputAuthorityV1,
@@ -26,12 +28,20 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/discussions/actions';
+import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
+import { resolveSessionRoleRpcOrigin } from './sessionRoleRpcOrigin';
+import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
+import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { sealExternalActionRequestV2, openExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import tweetnacl from 'tweetnacl';
 
 const accountId = 'cli-sender';
-const serverId = 'request-attribution-home';
-const sessionId = 'cmv3requestattributionaaaa';
+const serverId = 'srv_request_attribution';
+const sessionId = 'cmv3requestattributionaaa';
 const machineId = 'shared-machine';
 const localId = 'cli-original-input';
 const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
@@ -88,13 +98,16 @@ function installHomeBoundary(mode: 'e2ee' | 'plain') {
   });
   const accepted: ReturnType<typeof UserMessageSchema.parse>[] = [];
   const acceptedLocalIds: string[] = [];
+  const acceptedIssuers: Array<SessionInputAdmissionReceiptV1['issuer']> = [];
   vi.stubGlobal('fetch', vi.fn<typeof fetch>(async url => String(url).endsWith('/v1/account/profile')
     ? Response.json({ id: accountId }) : Response.json(FeaturesResponseSchema.parse({
     features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_request_attribution' },
       encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } },
   }))));
-  const accept = (content: Parameters<typeof openSessionStoredContent>[0]['content'], admittedLocalId: string) => {
+  const accept = (content: Parameters<typeof openSessionStoredContent>[0]['content'], admittedLocalId: string,
+    issuer: SessionInputAdmissionReceiptV1['issuer'] = 'authenticatedMachine') => {
     acceptedLocalIds.push(admittedLocalId);
+    acceptedIssuers.push(issuer);
     accepted.push(UserMessageSchema.parse(mode === 'plain'
       ? openSessionStoredContent({ mode: 'plain', ctx: null, content })
       : openSessionStoredContent({ mode: 'e2ee', ctx: { encryptionKey: secret, encryptionVariant: 'legacy' }, content })));
@@ -105,10 +118,10 @@ function installHomeBoundary(mode: 'e2ee' | 'plain') {
     const pendingLocalId: unknown = Reflect.get(body, 'localId');
     if (typeof pendingLocalId !== 'string') throw new Error('Missing Pending local id');
     accept(SessionMessageContentSchema.parse(Reflect.get(body, 'content')
-      ?? { t: 'encrypted', c: Reflect.get(body, 'ciphertext') }), pendingLocalId);
+      ?? { t: 'encrypted', c: Reflect.get(body, 'ciphertext') }), pendingLocalId, 'authenticatedAccount');
     return { status: 200, data: { didWrite: true, terminal: false, suppressed: false } };
   });
-  return { credentials, reads, accept, accepted, acceptedLocalIds, spawned: (options: Parameters<typeof buildCommittedLaunchMetadata>[0]['options']) => {
+  return { credentials, reads, accept, accepted, acceptedLocalIds, acceptedIssuers, spawned: (options: Parameters<typeof buildCommittedLaunchMetadata>[0]['options']) => {
     const launched = buildCommittedLaunchMetadata({ options, directory: options.directory ?? '/workspace' });
     rawSession = { ...rawSession, active: true, metadata: mode === 'plain' ? JSON.stringify(launched)
       : encryptSessionPayload({ ctx: { encryptionKey: secret, encryptionVariant: 'legacy' }, payload: launched }) };
@@ -116,10 +129,13 @@ function installHomeBoundary(mode: 'e2ee' | 'plain') {
 }
 
 describe('CLI input requester through protected custody and danger approval', () => {
-  it.each(['plain', 'e2ee'] as const)('allows a same-turn Doc retry after a failed proposal and an approved invitation (%s)', async mode => {
-    const { credentials, accept, accepted, acceptedLocalIds } = installHomeBoundary(mode);
+  it.each(['plain', 'e2ee'] as const)('retains the requester when an approval result resumes the agent before Browser navigation (%s)', async mode => {
+    const { credentials, accept, accepted, acceptedLocalIds, acceptedIssuers, reads } = installHomeBoundary(mode);
     await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force' });
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(69));
     const cli = createCliActionDeps({ token, credentials, sessionId, mode: 'plain', ctx: null, serverId,
+      serverIdentityId: serverId, externalActionMachineRequestPrivateKey: installation.secretKey,
+      externalActionMachineInstallationId: 'installed-machine',
       machineAdmissionTransport: async request => {
         accept(request.content, request.localId);
         return { status: 'accepted', localId: request.localId };
@@ -127,7 +143,49 @@ describe('CLI input requester through protected custody and danger approval', ()
     const requests = new Map<string, ApprovalRequest>();
     let postAllowed = false;
     let publications = 0;
-    const executor = createActionExecutor({ sessionSendMessage: cli.sessionSendMessage,
+    const navigated: unknown[] = [];
+    // Authenticated daemon IPC is the Browser process boundary; Action admission remains real.
+    vi.spyOn(daemonControl, 'daemonPost').mockImplementation(async (_path, body) => {
+      navigated.push(body);
+      return { result: { v: 1, commandId: 'continued-navigation', status: 'dispatched',
+        adapterKind: 'chromiumSidecar', events: [] } };
+    });
+    const receiver = createActionExecutor({ sessionSendMessage: cli.sessionSendMessage });
+    const executor = createActionExecutor({ sessionSendMessage: async args => {
+      // The UI projection is tested at its real Account transport. This closed
+      // private wire and receiver preserve the same approved origin to Pending.
+      const invocation = ExternalActionRequesterInvocationV1Schema.parse(JSON.parse(JSON.stringify({
+        caller: { kind: 'host' }, surface: args.context.surface, authority: args.context.authority,
+        actionRequestAttributionV1: args.context.actionRequestAttributionV1,
+      })));
+      const target = { kind: 'machine' as const, machineId };
+      const input = args.authoredInput ?? { sessionId: args.sessionId, message: args.message };
+      const authentication = { kind: 'account' as const, tokenEpoch: 0 };
+      const binding = { serverIdentityId: serverId, accountId, authentication, actionId: 'session.message.send',
+        requestId: `continuation-${args.localId}`, target };
+      const material = { type: 'dataKey' as const, machineKey: secret };
+      const envelope = mode === 'plain' ? { v: 1 as const, requestId: binding.requestId, target, input }
+        : sealExternalActionRequestV2({ binding, material, input, randomBytes: tweetnacl.randomBytes,
+          projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+      const result = await executeExternalAction({ actionId: 'session.message.send', envelope,
+        principal: { accountId, authority: 'account_automation', authentication }, localRootInvocation: invocation,
+        currentMachineId: machineId, currentServerId: serverId, currentInstallationId: 'installed-machine',
+        executionAuthorization: { v: 1, token: 'continuation-authorization', binding: {
+          accountId, authentication, custodianAccountId: accountId, serverIdentityId: serverId,
+          machineId, installationId: 'installed-machine', actionId: 'session.message.send', requestId: envelope.requestId,
+          target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), accountEncryptionMode: mode,
+        } }, externalActionMachineRequestPrivateKey: installation.secretKey,
+        resolveEncryption: async () => ({ serverIdentityId: serverId, material }),
+        verifyExecutionAuthorization: async () => true, resolveTarget: async () => target, executor: receiver,
+      });
+      if (result.kind !== 'response') throw new Error(`Missing private continuation receipt: ${result.kind}`);
+      const execution = envelope.v === 2
+        ? openExternalActionResponseV2({ envelope: result.response, binding, material, request: envelope })
+        : result.response.v === 1 ? result.response.execution : null;
+      if (!execution) throw new Error('Invalid private continuation response');
+      return execution.ok ? execution.result : execution;
+    },
+      runtimeActionExecute: createCliBrowserRuntimeActionExecutor({ sessionId }),
       approvalsCreate: async ({ request }) => {
         const artifactId = `doc-review-${requests.size + 1}`;
         requests.set(artifactId, ApprovalRequestV2Schema.parse(request));
@@ -142,7 +200,11 @@ describe('CLI input requester through protected custody and danger approval', ()
         requests.set(artifactId, ApprovalRequestV2Schema.parse(request));
         return { ok: true };
       },
-      isApprovalExecutionOriginCurrent: async () => true,
+      isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
+        credentials, machineId, serverId, serverApiUrl: resolveServerHttpBaseUrl(),
+        isSessionCallerCurrent: ({ caller }) => caller.sessionId === sessionId
+          && native.readActiveTurnAdmissionWitness?.() !== null,
+      }),
       discussionAction: async ({ actionId, input }) => {
         if (actionId === 'discussion.invite') {
           postAllowed = true;
@@ -158,9 +220,29 @@ describe('CLI input requester through protected custody and danger approval', ()
           messageRef: { kind: 'discussion', discussion: { serverId, discussionId: 'doc-thread' }, messageId: 'proposal-message' } } };
       },
     });
-    const original = { requestRef: 'person-request', requester: { serverId, accountId }, persona, origin: null };
+    const crypto = mode === 'plain' ? { mode, ctx: null }
+      : { mode, ctx: { encryptionKey: secret, encryptionVariant: 'legacy' as const } };
+    const humanReceipt = { v: 1, issuer: 'authenticatedAccount', actorAccountId: accountId, sessionRelationship: 'owner' } as const;
+    const humanRequest = buildTrustedHostSessionInputAdmissionV1('ui').request;
+    const humanAuthority = settleSessionInputRequestV1({ request: humanRequest,
+      currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: humanReceipt });
+    expect(humanAuthority.actionRequestAttributionV1).toBeUndefined();
+    const humanInputs: ReturnType<typeof UserMessageSchema.parse>[] = [];
+    handleSessionNewMessageUpdate({ ...crypto, sessionId, serverId,
+      update: { id: 'fresh-person-update', seq: 1, createdAt: 1, body: { t: 'new-message', delivery: 'full', sid: sessionId, message: {
+        id: 'fresh-person-input', seq: 1, localId: 'person-request', messageRole: 'user', inputAdmissionReceipt: humanReceipt,
+        content: sealSessionStoredContent({ ...crypto, payload: { role: 'user', content: { type: 'text', text: 'Propose the Doc correction' },
+          meta: withSessionInputAuthorityV1({}, humanAuthority) } }), createdAt: 1, updatedAt: 1,
+      } } }, receivedMessageIds: new Set(), lastObservedMessageSeq: 0, lastObservedUserMessageSeq: 0,
+      emit: (event, message) => { if (event === 'user-message') humanInputs.push(UserMessageSchema.parse(message)); },
+      debug: () => {}, debugLargeJson: () => {},
+    });
+    const original = humanInputs[0]?.actionRequestAttributionV1;
+    if (!original) throw new Error('Fresh authenticated Account input has no requester');
+    expect(original.requester).toEqual({ serverId, accountId });
+    let publish: ((event: AgentSessionRuntimeEvent) => void) | undefined;
     const provider: AgentSessionRuntime = { async send() { return { status: 'admitted' }; },
-      watch: () => ({ dispose() {} }), dispose() {} };
+      watch: listener => { publish = listener; return { dispose() {} }; }, dispose() {} };
     const native = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined,
       { context: {} as AgentSessionRuntimeContext, // The external provider never calls SDK services.
         cwd: '/workspace', connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
@@ -169,12 +251,24 @@ describe('CLI input requester through protected custody and danger approval', ()
     await native.sendTurnPrompt('Propose the Doc correction', { localId: original.requestRef, turnId: 'doc-turn',
       actionRequestAttributionV1: original,
       agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } });
+    publish?.({ kind: 'input-accepted', sequence: 0, sessionId, emittedAtMs: 0,
+      inputIds: [original.requestRef], delivery: { kind: 'newTurn', turnId: 'doc-turn' } });
+    publish?.({ kind: 'turn-start', sequence: 1, sessionId, emittedAtMs: 1, turnId: 'doc-turn', startedBy: 'host' });
     const agent = { surface: 'agent' as const, authority: 'account_automation' as const, runtimeAccountId: accountId,
       serverId, serverIdentityId: 'srv_request_attribution', defaultSessionId: sessionId, defaultSessionMachineId: machineId,
       actionCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: 0 } };
     const bridge = createActionToolExecutorBridge({ surface: 'agent',
+      resolveCallerPermissionMode: () => 'default',
       resolveActiveTurnPermissionWitness: () => native.readActiveTurnAdmissionWitness?.(),
-      executor: { execute: (id, input, context) => executor.execute(id, input, { ...agent, ...context }) },
+      executor: { execute: (id, input, context) => {
+        // The authenticated socket is the boundary: retain the real producer,
+        // closed wire parser and receiving projection beneath it.
+        const origin = SessionActionRpcOriginV1Schema.parse(JSON.parse(JSON.stringify(
+          resolveSessionRoleRpcOrigin({ ...agent, ...context }))));
+        const received = buildActionExecutorContextForRpc({ sessionActionOrigin: origin,
+          serverId, defaultSessionId: sessionId });
+        return executor.execute(id, input, { ...agent, ...received });
+      } },
     });
     const proposal = { target: { ref: { kind: 'doc', artifactId: 'doc', serverId }, revision: { headerVersion: 1, bodyVersion: 1 },
       range: { start: 0, end: 4 }, quote: 'Read' }, discussionRef: { serverId, discussionId: 'doc-thread' },
@@ -187,7 +281,8 @@ describe('CLI input requester through protected custody and danger approval', ()
         serverIdentityId: 'srv_request_attribution', actionCaller: { kind: 'host' } });
     const firstProposal = await invoke('doc.edit.propose', proposal);
     expect(firstProposal, JSON.stringify(firstProposal)).toMatchObject({ ok: true, result: { artifactId: 'doc-review-1' } });
-    expect(await approve('doc-review-1')).toMatchObject({ ok: true,
+    const firstDecision = await approve('doc-review-1');
+    expect(firstDecision, JSON.stringify({ firstDecision, reads })).toMatchObject({ ok: true,
       result: { status: 'failed', execution: { ok: false, errorCode: 'discussion_post_denied' } } });
     expect(await invoke('discussion.invite', { discussionId: 'doc-thread', participant: { kind: 'session', sessionId } }))
       .toMatchObject({ ok: true, result: { artifactId: 'doc-review-2' } });
@@ -199,14 +294,12 @@ describe('CLI input requester through protected custody and danger approval', ()
     const continued = accepted.at(-1);
     if (!continued) throw new Error('Missing approval-result Session input');
     const request = SessionInputRequestV1Schema.parse(continued.meta?.happierInputRequestV1);
-    const receipt: SessionInputAdmissionReceiptV1 = mode === 'plain'
+    const receipt: SessionInputAdmissionReceiptV1 = acceptedIssuers.at(-1) === 'authenticatedAccount'
       ? { v: 1, issuer: 'authenticatedAccount', actorAccountId: accountId, sessionRelationship: 'owner' }
       : { v: 1, issuer: 'authenticatedMachine' };
     const authority = settleSessionInputRequestV1({ request, currentSessionPermissionCeiling: 'default', inputAdmissionReceipt: receipt });
     const continuedLocalId = acceptedLocalIds.at(-1);
     if (!continuedLocalId) throw new Error('Missing continuation identity');
-    const crypto = mode === 'plain' ? { mode, ctx: null }
-      : { mode, ctx: { encryptionKey: secret, encryptionVariant: 'legacy' as const } };
     const delivered: ReturnType<typeof UserMessageSchema.parse>[] = [];
     handleSessionNewMessageUpdate({ ...crypto, sessionId, serverId,
       update: { id: 'approval-update', seq: 1, createdAt: 1, body: { t: 'new-message', delivery: 'full', sid: sessionId, message: {
@@ -218,13 +311,31 @@ describe('CLI input requester through protected custody and danger approval', ()
       debug: () => {}, debugLargeJson: () => {},
     });
     expect(delivered).toHaveLength(1);
-    expect(delivered[0]!.actionRequestAttributionV1).toMatchObject({ requestRef: continuedLocalId,
-      requester: mode === 'plain' ? { serverId, accountId } : null });
     expect(native.readActiveTurnAdmissionWitness?.()).toMatchObject({ turnId: 'doc-turn', actionRequestAttributionV1: original });
     const retry = await invoke('doc.edit.propose', { ...proposal, localId: 'retry-proposal' });
     expect(retry, JSON.stringify(retry)).toMatchObject({ ok: true, result: { artifactId: 'doc-review-3' } });
     expect(await approve('doc-review-3')).toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(publications).toBe(1);
+    publish?.({ kind: 'turn-complete', sequence: 2, sessionId, emittedAtMs: 2, turnId: 'doc-turn' });
+    await vi.waitFor(() => expect(native.readActiveTurnAdmissionWitness?.()).toBeNull());
+    await native.sendTurnPrompt('Continue after the approved invitation', {
+      localId: continuedLocalId, turnId: 'approval-result-turn',
+      actionRequestAttributionV1: delivered[0]!.actionRequestAttributionV1,
+      agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+    });
+    publish?.({ kind: 'input-accepted', sequence: 3, sessionId, emittedAtMs: 3,
+      inputIds: [continuedLocalId], delivery: { kind: 'newTurn', turnId: 'approval-result-turn' } });
+    publish?.({ kind: 'turn-start', sequence: 4, sessionId, emittedAtMs: 4, turnId: 'approval-result-turn', startedBy: 'host' });
+    await vi.waitFor(() => expect(native.readActiveTurnAdmissionWitness?.()).toMatchObject({ turnId: 'approval-result-turn',
+      actionRequestAttributionV1: delivered[0]!.actionRequestAttributionV1 }));
+    const navigation = await invoke('browser.navigate', { commandId: 'continued-navigation', kind: 'navigate',
+      browserSessionId: sessionId, viewId: 'own-browser-view', url: 'https://example.com' });
+    expect(navigation, JSON.stringify(navigation)).toMatchObject({ ok: true, result: { artifactId: 'doc-review-4' } });
+    expect(navigated).toEqual([]);
+    expect(await approve('doc-review-4')).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(navigated).toMatchObject([{ actionId: 'browser.navigate', sessionId,
+      input: { commandId: 'continued-navigation', viewId: 'own-browser-view' } }]);
+    expect(delivered[0]!.actionRequestAttributionV1).toEqual(original);
   });
   it.each([...([
     { mode: 'e2ee', surface: 'cli', toolSurface: 'agent', senderKind: 'account' },

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as fsPromises from 'node:fs/promises';
-import { arch, cpus, platform, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
 import {
@@ -20,11 +20,9 @@ import {
   acknowledgeExternalSessionOperationProgressProjection,
   assertExternalSessionOperationRecordAdmission,
   compactExternalSessionOperationRecordToTerminalReceipt,
-  deleteExpiredExternalSessionOperationTerminalReceipt,
   listExternalSessionOperationRecords,
   mutateExternalSessionOperationRecordAtRevision,
   projectExternalSessionTakeoverIdempotencyIntent,
-  pruneExpiredExternalSessionOperationTerminalReceipts,
   readExternalSessionOperationRecord,
   readExternalSessionOperationStoredEntry,
   resolveExternalSessionOperationAccountScope,
@@ -36,10 +34,14 @@ import {
 
 const accountCredentials = vi.hoisted(() => ({
   current: null as Readonly<{ token: string; encryption: null }> | null,
+  reads: 0,
 }));
 
 vi.mock('@/persistence', () => ({
-  readStoredCredentials: async () => accountCredentials.current,
+  readStoredCredentials: async () => {
+    accountCredentials.reads += 1;
+    return accountCredentials.current;
+  },
 }));
 
 const readFileBoundary = vi.hoisted(() => ({
@@ -654,7 +656,7 @@ describe('external session operation record store integrity', () => {
     )).resolves.toBeNull();
   });
 
-  it('leaves already-compacted terminal receipts on their bounded expiry when the Session is deleted', async () => {
+  it('retains compact terminal outcomes when their Session is deleted', async () => {
     const activeServerDir = await createRoot();
     const terminal = ExternalSessionOperationRecordV1Schema.parse({
       ...terminalOperationRecord(),
@@ -702,7 +704,7 @@ describe('external session operation record store integrity', () => {
     )).resolves.toMatchObject({ kind: 'terminal_receipt' });
   });
 
-  it('fails closed on an A→B account rotation before any pinned-scope effect', async () => {
+  it('finishes admitted effects in the captured A partition after an A→B account rotation', async () => {
     const activeServerDir = await createRoot();
     useAccount('account-rotation-a', 'a');
     const pinnedScope = resolveExternalSessionOperationAccountScope(
@@ -725,18 +727,15 @@ describe('external session operation record store integrity', () => {
 
     // Credentials rotate from Account A to Account B mid-operation.
     useAccount('account-rotation-b', 'b');
+    accountCredentials.reads = 0;
 
-    // A pinned-scope write for A's operation must refuse before any effect:
-    // no B-partition copy, no B record content, and the stale pin cannot
-    // silently land A's private request/source/claim state into B.
+    // Admitted work keeps its Account partition while the ambient Account
+    // changes. Later requests without this pin resolve the new Account.
     await expect(writeExternalSessionOperationRecord(
       activeServerDir,
       record,
       { accountScope: pinnedScope },
-    )).rejects.toMatchObject({
-      name: 'ExternalSessionOperationRecordReadError',
-      reason: 'account_scope_unavailable',
-    });
+    )).resolves.toEqual(record);
 
     const accountBDirectory = join(
       activeServerDir,
@@ -747,12 +746,17 @@ describe('external session operation record store integrity', () => {
     await expect(fsPromises.stat(accountBDirectory))
       .rejects.toMatchObject({ code: 'ENOENT' });
 
-    // Pinned reads fail closed under the rotated ambient Account too.
+    // The admitted operation can still read its own retained record.
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       record.operationId,
       pinnedScope,
-    )).rejects.toMatchObject({ reason: 'account_scope_unavailable' });
+    )).resolves.toEqual({ kind: 'full_record', record });
+    expect(accountCredentials.reads).toBe(0);
+    await expect(readExternalSessionOperationStoredEntry(
+      activeServerDir,
+      record.operationId,
+    )).resolves.toBeNull();
 
     // Token refresh with the same subject keeps the pinned scope usable.
     useAccount('account-rotation-a', 'refreshed');
@@ -1009,7 +1013,7 @@ describe('external session operation record store integrity', () => {
       owningScope,
     )).resolves.toBeNull();
     // The unacknowledged terminal full record is deleted with the Session;
-    // compacted receipts (when present) retain their normal bounded expiry.
+    // compacted receipts (when present) retain their exact replay outcome.
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       terminalRecord.operationId,
@@ -1092,7 +1096,6 @@ describe('external session operation record store integrity', () => {
       activeServerDir,
       durableIdempotencyKey: completed.request.idempotencyKey,
       authorIntent: completed.authorIntent,
-      nowMs: completed.updatedAtMs,
     })).resolves.toMatchObject({
       kind: 'terminal_receipt',
       receipt: { reference: { operationId: completed.operationId } },
@@ -1104,7 +1107,6 @@ describe('external session operation record store integrity', () => {
       activeServerDir,
       durableIdempotencyKey: completed.request.idempotencyKey,
       authorIntent: completed.authorIntent,
-      nowMs: completed.updatedAtMs,
     })).resolves.toMatchObject({ kind: 'terminal_receipt' });
 
     // A second Account sharing this server may reuse the opaque key without
@@ -1114,13 +1116,11 @@ describe('external session operation record store integrity', () => {
       activeServerDir,
       durableIdempotencyKey: completed.request.idempotencyKey,
       authorIntent: completed.authorIntent,
-      nowMs: completed.updatedAtMs,
     })).resolves.toEqual({ kind: 'miss' });
     await expect(resolveExternalSessionPluginOperationPreflightAdmission({
       activeServerDir,
       durableIdempotencyKey: completed.request.idempotencyKey,
       authorIntent: pluginTakeoverAuthorIntent('remote-other', 'external-linked'),
-      nowMs: completed.updatedAtMs,
     })).resolves.toEqual({ kind: 'miss' });
   });
 
@@ -1157,7 +1157,6 @@ describe('external session operation record store integrity', () => {
         ...request,
         idempotencyKey: 'account-b-capacity-key',
       },
-      nowMs: 10,
     })).resolves.toMatchObject({ kind: 'new_operation' });
   });
 
@@ -1180,7 +1179,6 @@ describe('external session operation record store integrity', () => {
       durableIdempotencyKey: legacy.request.idempotencyKey,
       intent: legacy.request,
       authorIntent: legacy.authorIntent,
-      nowMs: 10,
     })).resolves.toEqual({ kind: 'legacy_unavailable' });
   });
 
@@ -1209,7 +1207,6 @@ describe('external session operation record store integrity', () => {
       durableIdempotencyKey: legacy.request.idempotencyKey,
       intent: legacy.request,
       authorIntent: legacy.authorIntent,
-      nowMs: 10,
     })).resolves.toEqual({ kind: 'legacy_unavailable' });
   });
 
@@ -1301,7 +1298,6 @@ describe('external session operation record store integrity', () => {
         },
         durableIdempotencyKey: completed.request.idempotencyKey,
         terminalAtMs: completed.updatedAtMs,
-        expiresAtMs: completed.updatedAtMs + 86_400_000,
       },
     });
     if (compacted.status === 'not_eligible') {
@@ -1333,6 +1329,7 @@ describe('external session operation record store integrity', () => {
       'publication',
       'progressProjection',
       'terminalResult',
+      'expiresAtMs',
     ]) {
       expect(persisted).not.toHaveProperty(forbidden);
     }
@@ -1474,16 +1471,18 @@ describe('external session operation record store integrity', () => {
       throw new Error('Expected plugin-authored operation to compact.');
     }
     expect(compacted.receipt.authorIntent).toEqual(authorIntent);
+    expect(compacted.receipt).not.toHaveProperty('idempotencyIntentDigest');
+    const { idempotencyIntentDigest: _redundantDigest, ...authorOnlyReceipt } = compacted.receipt;
+    await writeRawRecord(activeServerDir, completed.operationId, JSON.stringify(authorOnlyReceipt));
 
     await expect(resolveExternalSessionOperationStartAdmission({
       activeServerDir,
       durableIdempotencyKey: completed.request.idempotencyKey,
       intent: completed.request,
       authorIntent,
-      nowMs: completed.updatedAtMs,
     })).resolves.toEqual({
       kind: 'terminal_receipt',
-      receipt: compacted.receipt,
+      receipt: authorOnlyReceipt,
     });
     await expect(resolveExternalSessionOperationStartAdmission({
       activeServerDir,
@@ -1493,7 +1492,6 @@ describe('external session operation record store integrity', () => {
         ...authorIntent,
         sourceId: 'codexHome:other',
       },
-      nowMs: completed.updatedAtMs,
     })).resolves.toEqual({ kind: 'conflict' });
   });
 
@@ -1681,7 +1679,7 @@ describe('external session operation record store integrity', () => {
     await expect(readExternalSessionOperationRecord(activeServerDir, record.operationId)).resolves.toEqual(record);
   });
 
-  it('resolves full records and live receipts by durable key plus stable intent, then mints a non-aliasing id at expiry', async () => {
+  it('replays the exact terminal outcome after the former receipt expiry', async () => {
     const activeServerDir = await createRoot();
     const completed = completedExternalLinkedOperationRecord();
     if (completed.request.plan !== 'takeover') {
@@ -1697,7 +1695,6 @@ describe('external session operation record store integrity', () => {
       activeServerDir,
       durableIdempotencyKey: completed.request.idempotencyKey,
       intent: completed.request,
-      nowMs: completed.updatedAtMs,
     })).resolves.toEqual({
       kind: 'existing_record',
       record: completed,
@@ -1712,6 +1709,11 @@ describe('external session operation record store integrity', () => {
     if (compacted.status === 'not_eligible') {
       throw new Error('Expected completed operation to compact.');
     }
+    // Historical receipts carried an expiry. It is no longer execution authority.
+    await writeRawRecord(activeServerDir, completed.operationId, JSON.stringify({
+      ...compacted.receipt,
+      expiresAtMs: completed.updatedAtMs + 86_400_000,
+    }));
     const {
       sourceGeneration: _sourceGeneration,
       sourceCustody: _sourceCustody,
@@ -1722,11 +1724,11 @@ describe('external session operation record store integrity', () => {
       source: publicSource,
     };
 
+    vi.spyOn(Date, 'now').mockReturnValue(completed.updatedAtMs + 86_400_000);
     await expect(resolveExternalSessionOperationStartAdmission({
       activeServerDir,
       durableIdempotencyKey: completed.request.idempotencyKey,
       intent: publicRetryIntent,
-      nowMs: compacted.receipt.expiresAtMs - 1,
     })).resolves.toEqual({
       kind: 'terminal_receipt',
       receipt: compacted.receipt,
@@ -1738,7 +1740,6 @@ describe('external session operation record store integrity', () => {
         ...publicRetryIntent,
         terminal: { mode: 'tmux', tmux: { sessionName: 'takeover', isolated: true, tmpDir: null } },
       },
-      nowMs: compacted.receipt.expiresAtMs - 1,
     })).resolves.toEqual({ kind: 'conflict' });
     await expect(resolveExternalSessionOperationStartAdmission({
       activeServerDir,
@@ -1748,86 +1749,17 @@ describe('external session operation record store integrity', () => {
         plan: 'takeover' as const,
         targetStorageMode: 'persisted' as const,
       },
-      nowMs: compacted.receipt.expiresAtMs - 1,
     })).resolves.toEqual({ kind: 'conflict' });
 
-    const expired = await resolveExternalSessionOperationStartAdmission({
+    await expect(resolveExternalSessionOperationStartAdmission({
       activeServerDir,
       durableIdempotencyKey: completed.request.idempotencyKey,
       intent: publicRetryIntent,
-      nowMs: compacted.receipt.expiresAtMs,
-    });
-    expect(expired).toMatchObject({
-      kind: 'new_operation',
-    });
-    if (expired.kind !== 'new_operation') {
-      throw new Error('Expected expired receipt to become a new admission.');
-    }
-    expect(expired.operationId).not.toBe(completed.operationId);
-    expect(expired.operationId).toMatch(/^external-takeover:/u);
+    })).resolves.toEqual({ kind: 'terminal_receipt', receipt: compacted.receipt });
     await expect(readExternalSessionOperationStoredEntry(
       activeServerDir,
       completed.operationId,
-    )).resolves.toEqual({
-      kind: 'terminal_receipt',
-      receipt: compacted.receipt,
-    });
-
-    const successor = ExternalSessionOperationRecordV1Schema.parse({
-      ...operationRecord(),
-      operationId: expired.operationId,
-      request: completed.request,
-      timeline: resolveExternalSessionOperationTimelineV1(completed.request),
-    });
-    const validateSessionAdmission = vi.fn((
-      _current: ExternalSessionOperationRecordV1 | null,
-      _incoming: ExternalSessionOperationRecordV1,
-      _priorTerminalRecords: readonly ExternalSessionOperationRecordV1[],
-      priorTerminalReceiptEvidence: readonly unknown[],
-    ) => {
-      expect(priorTerminalReceiptEvidence).toEqual([
-        {
-          reference: compacted.receipt.reference,
-          presentation: compacted.receipt.presentation,
-        },
-      ]);
-      return compacted.receipt.presentation;
-    });
-    await expect(writeExternalSessionOperationRecord(
-      activeServerDir,
-      successor,
-      {
-        nowMs: () => compacted.receipt.expiresAtMs,
-        validateSessionAdmission,
-      },
-    )).resolves.toEqual(successor);
-    expect(validateSessionAdmission).toHaveBeenCalledOnce();
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      completed.operationId,
-    )).resolves.toEqual({
-      kind: 'terminal_receipt',
-      receipt: compacted.receipt,
-    });
-
-    await expect(deleteExpiredExternalSessionOperationTerminalReceipt({
-      activeServerDir,
-      sessionId: completed.request.sessionId,
-      operationId: completed.operationId,
-      expectedPresentation: compacted.receipt.presentation,
-      nowMs: compacted.receipt.expiresAtMs - 1,
-    })).resolves.toBe('retained');
-    await expect(deleteExpiredExternalSessionOperationTerminalReceipt({
-      activeServerDir,
-      sessionId: completed.request.sessionId,
-      operationId: completed.operationId,
-      expectedPresentation: compacted.receipt.presentation,
-      nowMs: compacted.receipt.expiresAtMs,
-    })).resolves.toBe('deleted');
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      completed.operationId,
-    )).resolves.toBeNull();
+    )).resolves.toEqual({ kind: 'terminal_receipt', receipt: compacted.receipt });
   });
 
   it('fails closed on malformed or future receipt rows instead of treating them as absent or expired', async () => {
@@ -1929,244 +1861,6 @@ describe('external session operation record store integrity', () => {
     });
   });
 
-  it('prunes an expired receipt only after canonical selection proves it unselected', async () => {
-    const activeServerDir = await createRoot();
-    const completed = completedExternalLinkedOperationRecord();
-    await writeRawRecord(
-      activeServerDir,
-      completed.operationId,
-      JSON.stringify(completed),
-    );
-    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
-      activeServerDir,
-      operationId: completed.operationId,
-      expectedRevision: completed.revision,
-      stagingDisposition: 'not_applicable',
-    });
-    if (compacted.status === 'not_eligible') {
-      throw new Error('Expected completed operation to compact.');
-    }
-    const otherSessionIntent = {
-      ...completed.request,
-      sessionId: 'session-after-expired-receipt',
-      idempotencyKey: 'new-intent-after-expired-receipt',
-    };
-
-    await expect(resolveExternalSessionOperationStartAdmission({
-      activeServerDir,
-      durableIdempotencyKey: otherSessionIntent.idempotencyKey,
-      intent: otherSessionIntent,
-      nowMs: compacted.receipt.expiresAtMs,
-      readSelectedPresentation: async (sessionId) => {
-        expect(sessionId).toBe(completed.request.sessionId);
-        return { kind: 'absent' };
-      },
-    })).resolves.toMatchObject({ kind: 'new_operation' });
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      completed.operationId,
-    )).resolves.toBeNull();
-  });
-
-  it('keeps opportunistic receipt cleanup to one eight-session batch below capacity', async () => {
-    const activeServerDir = await createRoot();
-    const completed = completedExternalLinkedOperationRecord();
-    await writeRawRecord(
-      activeServerDir,
-      completed.operationId,
-      JSON.stringify(completed),
-    );
-    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
-      activeServerDir,
-      operationId: completed.operationId,
-      expectedRevision: completed.revision,
-      stagingDisposition: 'not_applicable',
-    });
-    if (compacted.status === 'not_eligible') {
-      throw new Error('Expected completed operation to compact.');
-    }
-    await fsPromises.rm(
-      pathForRecord(activeServerDir, completed.operationId),
-      { force: true },
-    );
-
-    const incomingSessionId = 'bounded-cleanup-incoming-session';
-    const receipts = Array.from({ length: 9 }, (_, index) => {
-      const operationId = `external-takeover:bounded-expired-${index}`;
-      return {
-        ...compacted.receipt,
-        reference: {
-          ...compacted.receipt.reference,
-          sessionId: index === 0
-            ? incomingSessionId
-            : `bounded-expired-session-${index}`,
-          operationId,
-        },
-        presentation: {
-          ...compacted.receipt.presentation,
-          operationId,
-        },
-        durableIdempotencyKey: `bounded-expired-key-${index}`,
-      };
-    });
-    for (const receipt of receipts) {
-      await writeRawRecord(
-        activeServerDir,
-        receipt.reference.operationId,
-        JSON.stringify(receipt),
-      );
-    }
-    const selectedBySession = new Map(receipts.slice(0, 8).map(
-      (receipt) => [receipt.reference.sessionId, receipt.presentation],
-    ));
-    const selectedPresentationReads: string[] = [];
-
-    await expect(resolveExternalSessionOperationStartAdmission({
-      activeServerDir,
-      durableIdempotencyKey: 'bounded-cleanup-new-key',
-      intent: {
-        ...request,
-        sessionId: incomingSessionId,
-        idempotencyKey: 'bounded-cleanup-new-key',
-      },
-      nowMs: compacted.receipt.expiresAtMs,
-      readSelectedPresentation: async (sessionId) => {
-        selectedPresentationReads.push(sessionId);
-        const presentation = selectedBySession.get(sessionId);
-        return presentation
-          ? { kind: 'valid' as const, presentation }
-          : { kind: 'absent' as const };
-      },
-    })).resolves.toMatchObject({ kind: 'new_operation' });
-    expect(selectedPresentationReads).toHaveLength(8);
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      receipts[8].reference.operationId,
-    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
-  });
-
-  it('fails receipt pruning closed and exact-rechecks the immutable receipt before deletion', async () => {
-    const activeServerDir = await createRoot();
-    const completed = completedExternalLinkedOperationRecord();
-    await writeRawRecord(
-      activeServerDir,
-      completed.operationId,
-      JSON.stringify(completed),
-    );
-    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
-      activeServerDir,
-      operationId: completed.operationId,
-      expectedRevision: completed.revision,
-      stagingDisposition: 'not_applicable',
-    });
-    if (compacted.status === 'not_eligible') {
-      throw new Error('Expected completed operation to compact.');
-    }
-    const input = {
-      activeServerDir,
-      nowMs: compacted.receipt.expiresAtMs,
-      sessionIds: [completed.request.sessionId],
-    };
-
-    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
-      ...input,
-      readSelectedPresentation: async () => ({
-        kind: 'valid',
-        presentation: compacted.receipt.presentation,
-      }),
-    })).resolves.toEqual({ deleted: 0, retained: 1 });
-    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
-      ...input,
-      readSelectedPresentation: async () => ({ kind: 'malformed' }),
-    })).resolves.toEqual({ deleted: 0, retained: 1 });
-    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
-      ...input,
-      readSelectedPresentation: async () => {
-        throw new Error('selection unavailable');
-      },
-    })).resolves.toEqual({ deleted: 0, retained: 1 });
-
-    const changedReceipt = {
-      ...compacted.receipt,
-      durableIdempotencyKey: 'receipt-replaced-after-selection-read',
-    };
-    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
-      ...input,
-      readSelectedPresentation: async () => {
-        await writeRawRecord(
-          activeServerDir,
-          completed.operationId,
-          JSON.stringify(changedReceipt),
-        );
-        return { kind: 'absent' };
-      },
-    })).resolves.toEqual({ deleted: 0, retained: 1 });
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      completed.operationId,
-    )).resolves.toEqual({
-      kind: 'terminal_receipt',
-      receipt: changedReceipt,
-    });
-
-    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
-      ...input,
-      readSelectedPresentation: async () => ({ kind: 'gone' }),
-    })).resolves.toEqual({ deleted: 1, retained: 0 });
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      completed.operationId,
-    )).resolves.toBeNull();
-  });
-
-  it('does not give multiple expired same-key receipts replay or conflict authority', async () => {
-    const activeServerDir = await createRoot();
-    const completed = completedExternalLinkedOperationRecord();
-    await writeRawRecord(
-      activeServerDir,
-      completed.operationId,
-      JSON.stringify(completed),
-    );
-    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
-      activeServerDir,
-      operationId: completed.operationId,
-      expectedRevision: completed.revision,
-      stagingDisposition: 'not_applicable',
-    });
-    if (compacted.status === 'not_eligible') {
-      throw new Error('Expected completed operation to compact.');
-    }
-    const secondOperationId = 'external-takeover:second-expired-same-key';
-    const secondReceipt = {
-      ...compacted.receipt,
-      reference: {
-        ...compacted.receipt.reference,
-        operationId: secondOperationId,
-      },
-      presentation: {
-        ...compacted.receipt.presentation,
-        operationId: secondOperationId,
-      },
-    };
-    await writeRawRecord(
-      activeServerDir,
-      secondOperationId,
-      JSON.stringify(secondReceipt),
-    );
-
-    const admission = await resolveExternalSessionOperationStartAdmission({
-      activeServerDir,
-      durableIdempotencyKey: completed.request.idempotencyKey,
-      intent: completed.request,
-      nowMs: compacted.receipt.expiresAtMs,
-    });
-    expect(admission).toMatchObject({ kind: 'new_operation' });
-    if (admission.kind !== 'new_operation') {
-      throw new Error('Expected expired receipts to lose authority.');
-    }
-    expect(admission.operationId).not.toBe(completed.operationId);
-    expect(admission.operationId).not.toBe(secondOperationId);
-  });
 
   it('acknowledges a committed projection revision without changing semantic state', async () => {
     const activeServerDir = await createRoot();
@@ -2694,7 +2388,6 @@ describe('external session operation record store integrity', () => {
       durableIdempotencyKey: pluginIntent.request.idempotencyKey,
       intent: pluginIntent.request,
       authorIntent: pluginIntent.authorIntent,
-      nowMs: compacted.receipt.expiresAtMs - 1,
     })).resolves.toMatchObject({ kind: 'new_operation' });
   });
 
@@ -3091,7 +2784,6 @@ describe('external session operation record store integrity', () => {
         sessionId: 'concurrency-incoming-session',
         idempotencyKey: 'concurrency-incoming-key',
       },
-      nowMs: 10_000,
     });
 
     expect(admission.kind).toBe('new_operation');
@@ -3108,7 +2800,7 @@ describe('external session operation record store integrity', () => {
       );
   });
 
-  it('refuses a new 10,001st record while the full inventory remains readable and existing operations remain writable', async () => {
+  it('admits a new 10,001st record while retained operations remain readable and writable', async () => {
     const activeServerDir = await createRoot();
     const base = terminalOperationRecord();
     const syntheticInventory = new Map<string, string>();
@@ -3145,14 +2837,10 @@ describe('external session operation record store integrity', () => {
     await expect(writeExternalSessionOperationRecord(
       activeServerDir,
       incoming,
-    )).rejects.toMatchObject({
-      name: 'ExternalSessionOperationRecordAdmissionError',
-      reason: 'inventory_too_large',
-    });
-    expect(readFileBoundary.recordReads).toBe(10_000);
+    )).resolves.toEqual(incoming);
     await expect(fsPromises.stat(
       pathForRecord(activeServerDir, incoming.operationId),
-    )).rejects.toMatchObject({ code: 'ENOENT' });
+    )).resolves.toBeDefined();
 
     const existingOperationId = 'external-takeover:inventory-00000';
     const current = {
@@ -3180,416 +2868,13 @@ describe('external session operation record store integrity', () => {
     );
     await expect(listExternalSessionOperationRecords(
       activeServerDir,
-    )).resolves.toHaveLength(10_000);
+    )).resolves.toHaveLength(10_001);
     await expect(readExternalSessionOperationRecord(
       activeServerDir,
       existingOperationId,
     )).resolves.toEqual(next);
   });
 
-  it('continues bounded receipt cleanup past eight sessions at capacity until it frees a slot', async () => {
-    const activeServerDir = await createRoot();
-    const base = terminalOperationRecord();
-    const completed = completedExternalLinkedOperationRecord();
-    await writeRawRecord(
-      activeServerDir,
-      completed.operationId,
-      JSON.stringify(completed),
-    );
-    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
-      activeServerDir,
-      operationId: completed.operationId,
-      expectedRevision: completed.revision,
-      stagingDisposition: 'not_applicable',
-    });
-    if (compacted.status === 'not_eligible') {
-      throw new Error('Expected completed operation to compact.');
-    }
-    await fsPromises.rm(
-      pathForRecord(activeServerDir, completed.operationId),
-      { force: true },
-    );
-
-    const syntheticInventory = new Map<string, string>();
-    for (let index = 0; index < 9_991; index += 1) {
-      const operationId =
-        `external-takeover:logical-capacity-${String(index).padStart(5, '0')}`;
-      syntheticInventory.set(
-        basename(pathForRecord(activeServerDir, operationId)),
-        JSON.stringify({
-          ...base,
-          operationId,
-          request: {
-            ...base.request,
-            sessionId: `logical-capacity-session-${index}`,
-            idempotencyKey: `logical-capacity-key-${index}`,
-          },
-        } satisfies ExternalSessionOperationRecordV1),
-      );
-    }
-    const incomingSessionId = 'logical-capacity-incoming-session';
-    const selectedReceipts = Array.from({ length: 9 }, (_, index) => {
-      const operationId = `external-takeover:selected-expired-${index}`;
-      const sessionId = index === 0
-        ? incomingSessionId
-        : `selected-expired-session-${index}`;
-      const receipt = {
-        ...compacted.receipt,
-        reference: {
-          ...compacted.receipt.reference,
-          sessionId,
-          operationId,
-        },
-        presentation: {
-          ...compacted.receipt.presentation,
-          operationId,
-        },
-        durableIdempotencyKey: `selected-expired-key-${index}`,
-      };
-      return receipt;
-    });
-    readFileBoundary.syntheticInventory = syntheticInventory;
-    readFileBoundary.observeRecordReads = true;
-    for (const receipt of selectedReceipts) {
-      await writeRawRecord(
-        activeServerDir,
-        receipt.reference.operationId,
-        JSON.stringify(receipt),
-      );
-    }
-    const selectedBySession = new Map(selectedReceipts.slice(0, 8).map(
-      (receipt) => [
-        receipt.reference.sessionId,
-        receipt.presentation,
-      ],
-    ));
-    const incomingIntent = {
-      ...request,
-      sessionId: incomingSessionId,
-      idempotencyKey: 'logical-capacity-incoming-key',
-    } satisfies ExternalSessionOperationSemanticRequestV1;
-    const selectedPresentationReads: string[] = [];
-
-    const resolveAdmission = () => resolveExternalSessionOperationStartAdmission({
-      activeServerDir,
-      durableIdempotencyKey: incomingIntent.idempotencyKey,
-      intent: incomingIntent,
-      nowMs: compacted.receipt.expiresAtMs,
-      readSelectedPresentation: async (sessionId) => {
-        selectedPresentationReads.push(sessionId);
-        const presentation = selectedBySession.get(sessionId);
-        return presentation
-          ? { kind: 'valid' as const, presentation }
-          : { kind: 'absent' as const };
-      },
-    });
-
-    await expect(resolveAdmission()).resolves.toMatchObject({
-      kind: 'new_operation',
-    });
-    expect(selectedPresentationReads).toHaveLength(9);
-    expect(selectedPresentationReads[0]).toBe(incomingSessionId);
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      selectedReceipts[8].reference.operationId,
-    )).resolves.toBeNull();
-    expect(readFileBoundary.recordReads).toBeGreaterThanOrEqual(20_000);
-
-    // Replacing an existing key keeps its insertion position, so the malformed
-    // row stays the 101st entry the inventory walk reaches.
-    const malformedRowIndex = 100;
-    syntheticInventory.set(
-      basename(pathForRecord(
-        activeServerDir,
-        `external-takeover:logical-capacity-${
-          String(malformedRowIndex).padStart(5, '0')
-        }`,
-      )),
-      '{"v":',
-    );
-    readFileBoundary.recordReads = 0;
-    await expect(resolveExternalSessionOperationStartAdmission({
-      activeServerDir,
-      durableIdempotencyKey: incomingIntent.idempotencyKey,
-      intent: incomingIntent,
-      nowMs: compacted.receipt.expiresAtMs,
-      readSelectedPresentation: async () => ({ kind: 'absent' }),
-    })).rejects.toMatchObject({
-      name: 'ExternalSessionOperationRecordAdmissionError',
-      reason: 'inventory_unreadable',
-    });
-    // The malformed row must actually be reached, and the reader must abandon
-    // the remaining ~9,900 rows within one bounded read window rather than
-    // draining the whole inventory it has already decided to reject.
-    expect(readFileBoundary.recordReads)
-      .toBeGreaterThanOrEqual(malformedRowIndex + 1);
-    expect(readFileBoundary.recordReads)
-      .toBeLessThanOrEqual(malformedRowIndex + 16);
-  });
-
-  it('fails a 10,001-row physical inventory before expired-receipt cleanup can repair it', async () => {
-    const activeServerDir = await createRoot();
-    const base = terminalOperationRecord();
-    const completed = completedExternalLinkedOperationRecord();
-    await writeRawRecord(
-      activeServerDir,
-      completed.operationId,
-      JSON.stringify(completed),
-    );
-    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
-      activeServerDir,
-      operationId: completed.operationId,
-      expectedRevision: completed.revision,
-      stagingDisposition: 'not_applicable',
-    });
-    if (compacted.status === 'not_eligible') {
-      throw new Error('Expected completed operation to compact.');
-    }
-    await fsPromises.rm(
-      pathForRecord(activeServerDir, completed.operationId),
-      { force: true },
-    );
-
-    const syntheticInventory = new Map<string, string>();
-    for (let index = 0; index < 9_992; index += 1) {
-      const operationId =
-        `external-takeover:overflow-capacity-${String(index).padStart(5, '0')}`;
-      syntheticInventory.set(
-        basename(pathForRecord(activeServerDir, operationId)),
-        JSON.stringify({
-          ...base,
-          operationId,
-          request: {
-            ...base.request,
-            sessionId: `overflow-capacity-session-${index}`,
-            idempotencyKey: `overflow-capacity-key-${index}`,
-          },
-        } satisfies ExternalSessionOperationRecordV1),
-      );
-    }
-    const receipts = Array.from({ length: 9 }, (_, index) => {
-      const operationId = `external-takeover:overflow-expired-${index}`;
-      return {
-        ...compacted.receipt,
-        reference: {
-          ...compacted.receipt.reference,
-          sessionId: `overflow-expired-session-${index}`,
-          operationId,
-        },
-        presentation: {
-          ...compacted.receipt.presentation,
-          operationId,
-        },
-        durableIdempotencyKey: `overflow-expired-key-${index}`,
-      };
-    });
-    for (const receipt of receipts) {
-      await writeRawRecord(
-        activeServerDir,
-        receipt.reference.operationId,
-        JSON.stringify(receipt),
-      );
-    }
-    readFileBoundary.syntheticInventory = syntheticInventory;
-    const selectedPresentationReads: string[] = [];
-
-    await expect(resolveExternalSessionOperationStartAdmission({
-      activeServerDir,
-      durableIdempotencyKey: 'overflow-capacity-new-key',
-      intent: {
-        ...request,
-        sessionId: 'overflow-capacity-new-session',
-        idempotencyKey: 'overflow-capacity-new-key',
-      },
-      nowMs: compacted.receipt.expiresAtMs,
-      readSelectedPresentation: async (sessionId) => {
-        selectedPresentationReads.push(sessionId);
-        return { kind: 'absent' };
-      },
-    })).rejects.toMatchObject({
-      name: 'ExternalSessionOperationRecordAdmissionError',
-      reason: 'inventory_too_large',
-    });
-    expect(selectedPresentationReads).toEqual([]);
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      receipts[0].reference.operationId,
-    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
-  });
-
-  it('stops capacity cleanup when another Start already removed a first-batch receipt', async () => {
-    const activeServerDir = await createRoot();
-    const base = terminalOperationRecord();
-    const completed = completedExternalLinkedOperationRecord();
-    await writeRawRecord(
-      activeServerDir,
-      completed.operationId,
-      JSON.stringify(completed),
-    );
-    const compacted = await compactExternalSessionOperationRecordToTerminalReceipt({
-      activeServerDir,
-      operationId: completed.operationId,
-      expectedRevision: completed.revision,
-      stagingDisposition: 'not_applicable',
-    });
-    if (compacted.status === 'not_eligible') {
-      throw new Error('Expected completed operation to compact.');
-    }
-    await fsPromises.rm(
-      pathForRecord(activeServerDir, completed.operationId),
-      { force: true },
-    );
-
-    const syntheticInventory = new Map<string, string>();
-    for (let index = 0; index < 9_991; index += 1) {
-      const operationId =
-        `external-takeover:concurrent-cleanup-${String(index).padStart(5, '0')}`;
-      syntheticInventory.set(
-        basename(pathForRecord(activeServerDir, operationId)),
-        JSON.stringify({
-          ...base,
-          operationId,
-          request: {
-            ...base.request,
-            sessionId: `concurrent-cleanup-session-${index}`,
-            idempotencyKey: `concurrent-cleanup-key-${index}`,
-          },
-        } satisfies ExternalSessionOperationRecordV1),
-      );
-    }
-    const incomingSessionId = 'concurrent-cleanup-incoming-session';
-    const receipts = Array.from({ length: 9 }, (_, index) => {
-      const operationId = `external-takeover:concurrent-expired-${index}`;
-      return {
-        ...compacted.receipt,
-        reference: {
-          ...compacted.receipt.reference,
-          sessionId: index === 0
-            ? incomingSessionId
-            : `concurrent-expired-session-${index}`,
-          operationId,
-        },
-        presentation: {
-          ...compacted.receipt.presentation,
-          operationId,
-        },
-        durableIdempotencyKey: `concurrent-expired-key-${index}`,
-      };
-    });
-    for (const receipt of receipts) {
-      await writeRawRecord(
-        activeServerDir,
-        receipt.reference.operationId,
-        JSON.stringify(receipt),
-      );
-    }
-    readFileBoundary.syntheticInventory = syntheticInventory;
-    const selectedBySession = new Map(receipts.slice(0, 7).map(
-      (receipt) => [receipt.reference.sessionId, receipt.presentation],
-    ));
-    const removedByOtherStart = receipts[7];
-    const laterSentinel = receipts[8];
-    const selectedPresentationReads: string[] = [];
-
-    await expect(resolveExternalSessionOperationStartAdmission({
-      activeServerDir,
-      durableIdempotencyKey: 'concurrent-cleanup-new-key',
-      intent: {
-        ...request,
-        sessionId: incomingSessionId,
-        idempotencyKey: 'concurrent-cleanup-new-key',
-      },
-      nowMs: compacted.receipt.expiresAtMs,
-      readSelectedPresentation: async (sessionId) => {
-        selectedPresentationReads.push(sessionId);
-        if (sessionId === removedByOtherStart.reference.sessionId) {
-          await fsPromises.rm(pathForRecord(
-            activeServerDir,
-            removedByOtherStart.reference.operationId,
-          ));
-          return { kind: 'absent' };
-        }
-        const presentation = selectedBySession.get(sessionId);
-        return presentation
-          ? { kind: 'valid' as const, presentation }
-          : { kind: 'absent' as const };
-      },
-    })).resolves.toMatchObject({ kind: 'new_operation' });
-    expect(selectedPresentationReads).not.toContain(
-      laterSentinel.reference.sessionId,
-    );
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      removedByOtherStart.reference.operationId,
-    )).resolves.toBeNull();
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      laterSentinel.reference.operationId,
-    )).resolves.toMatchObject({ kind: 'terminal_receipt' });
-  });
-
-  it('serializes different-session admission at the global inventory ceiling', async () => {
-    const activeServerDir = await createRoot();
-    const base = terminalOperationRecord();
-    const syntheticInventory = new Map<string, string>();
-    for (let index = 0; index < 9_999; index += 1) {
-      const operationId =
-        `external-takeover:concurrent-inventory-${String(index).padStart(5, '0')}`;
-      syntheticInventory.set(
-        basename(pathForRecord(activeServerDir, operationId)),
-        JSON.stringify({
-          ...base,
-          operationId,
-        } satisfies ExternalSessionOperationRecordV1),
-      );
-    }
-    readFileBoundary.syntheticInventory = syntheticInventory;
-
-    const incomingRecords = ['a', 'b'].map((suffix) => {
-      const incomingRequest = {
-        ...request,
-        sessionId: `concurrent-session-${suffix}`,
-        idempotencyKey: `concurrent-key-${suffix}`,
-      } satisfies ExternalSessionOperationSemanticRequestV1;
-      return {
-        ...operationRecord(),
-        operationId: `external-takeover:concurrent-incoming-${suffix}`,
-        request: incomingRequest,
-      } satisfies ExternalSessionOperationRecordV1;
-    });
-
-    const results = await Promise.allSettled(
-      incomingRecords.map(
-        (record) => writeExternalSessionOperationRecord(
-          activeServerDir,
-          record,
-        ),
-      ),
-    );
-    expect(results.filter(
-      (result) => result.status === 'fulfilled',
-    )).toHaveLength(1);
-    const rejected = results.filter(
-      (result): result is PromiseRejectedResult =>
-        result.status === 'rejected',
-    );
-    expect(rejected).toHaveLength(1);
-    expect(rejected[0]?.reason).toMatchObject({
-      name: 'ExternalSessionOperationRecordAdmissionError',
-      reason: 'inventory_too_large',
-    });
-
-    const records = await listExternalSessionOperationRecords(activeServerDir);
-    expect(records).toHaveLength(10_000);
-    const admitted = incomingRecords.filter((incoming) =>
-      records.some((record) => record.operationId === incoming.operationId)
-    );
-    expect(admitted).toHaveLength(1);
-    await expect(readExternalSessionOperationRecord(
-      activeServerDir,
-      admitted[0]!.operationId,
-    )).resolves.toEqual(admitted[0]);
-  }, 120_000);
 
   it('retains replaced terminal idempotency identity and rejects its later semantic reuse', async () => {
     const activeServerDir = await createRoot();
@@ -3678,557 +2963,4 @@ describe('external session operation record store integrity', () => {
     )).resolves.toBeNull();
   });
 
-  it('reclaims cleaned cancelled and discarded inventory while retaining the selected receipt', async () => {
-    const activeServerDir = await createRoot();
-    useAccount('vitest');
-    const settledAtMs = 5_000;
-    const cycles = 6;
-    const settledCycleRecord = (
-      cycle: number,
-    ): ExternalSessionOperationRecordV1 => {
-      const settledStatus = cycle % 2 === 0
-        ? 'cancelled' as const
-        : 'discarded' as const;
-      const settledRequest = {
-        ...request,
-        idempotencyKey: `record-store-capacity-cycle-${cycle}`,
-        targetStorageMode: 'external-linked' as const,
-      } satisfies ExternalSessionOperationSemanticRequestV1;
-      return ExternalSessionOperationRecordV1Schema.parse({
-        ...operationRecord(),
-        operationId: `external-takeover:capacity-cycle-${cycle}`,
-        request: settledRequest,
-        timeline: resolveExternalSessionOperationTimelineV1(settledRequest),
-        revision: 1,
-        status: settledStatus,
-        updatedAtMs: settledAtMs,
-        retryTargetPhase: undefined,
-        progressProjection: { acknowledgedRevision: 1 },
-        ...(settledStatus === 'cancelled'
-          ? {
-            cancellation: {
-              requestedAtMs: settledAtMs,
-              requestedAtRevision: 0,
-            },
-          }
-          : {}),
-        terminalResult: { kind: settledStatus },
-      });
-    };
-
-    const recordsDirectory = join(
-      activeServerDir,
-      'external-session-operations',
-      'by-account',
-      `sub-${createHash('sha256').update('vitest', 'utf8').digest('hex')
-        .slice(0, 32)}`,
-      'records',
-    );
-    const physicalInventorySize = async (): Promise<number> => {
-      const entries = await fsPromises.readdir(recordsDirectory);
-      return entries.filter((name) => name.endsWith('.json')).length;
-    };
-
-    const receipts: ExternalSessionOperationTerminalReceiptV1[] = [];
-    for (let cycle = 0; cycle < cycles; cycle += 1) {
-      const settled = settledCycleRecord(cycle);
-      await writeRawRecord(
-        activeServerDir,
-        settled.operationId,
-        `${JSON.stringify(settled, null, 2)}\n`,
-      );
-      const compacted =
-        await compactExternalSessionOperationRecordToTerminalReceipt({
-          activeServerDir,
-          operationId: settled.operationId,
-          expectedRevision: settled.revision,
-          // These are external-linked takeover rows: private staging is
-          // structurally absent, so the canonical compactor requires the
-          // corresponding disposition rather than a fabricated cleanup fact.
-          stagingDisposition: 'not_applicable',
-        });
-      if (compacted.status !== 'compacted') {
-        throw new Error(`Expected cycle ${cycle} to compact, got ${compacted.status}`);
-      }
-      receipts.push(compacted.receipt);
-    }
-
-    expect(await physicalInventorySize()).toBe(cycles);
-    const selected = receipts[0];
-    if (!selected) throw new Error('Expected a selected receipt.');
-    const protectedPrune = await pruneExpiredExternalSessionOperationTerminalReceipts(
-      {
-        activeServerDir,
-        nowMs: selected.expiresAtMs,
-        sessionIds: [request.sessionId],
-        readSelectedPresentation: async () => ({
-          kind: 'valid' as const,
-          presentation: selected.presentation,
-        }),
-      },
-    );
-    expect(protectedPrune).toEqual({ deleted: cycles - 1, retained: 1 });
-    expect(await physicalInventorySize()).toBe(1);
-    await expect(readExternalSessionOperationStoredEntry(
-      activeServerDir,
-      selected.reference.operationId,
-    )).resolves.toEqual({ kind: 'terminal_receipt', receipt: selected });
-
-    await expect(pruneExpiredExternalSessionOperationTerminalReceipts({
-      activeServerDir,
-      nowMs: selected.expiresAtMs,
-      sessionIds: [request.sessionId],
-      readSelectedPresentation: async () => ({ kind: 'absent' as const }),
-    })).resolves.toEqual({ deleted: 1, retained: 0 });
-    expect(await physicalInventorySize()).toBe(0);
-  });
 });
-
-describe.runIf(process.env.HAPPIER_RUN_EXTERNAL_SESSION_BENCHMARK === '1')(
-  'External Sessions operation-record inventory benchmark',
-  () => {
-    type PhaseMeasurement = Readonly<{
-      elapsedMs: number;
-      recordReads: number;
-      recordBytes: number;
-      heapUsedBeforeBytes: number;
-      heapUsedAfterBytes: number;
-      heapUsedDeltaBytes: number;
-      rssBeforeBytes: number;
-      rssAfterBytes: number;
-      rssDeltaBytes: number;
-    }>;
-
-    function roundMilliseconds(value: number): number {
-      return Math.round(value * 100) / 100;
-    }
-
-    async function measurePhase<T>(
-      operation: () => Promise<T> | T,
-    ): Promise<Readonly<{ value: T; measurement: PhaseMeasurement }>> {
-      readFileBoundary.recordReads = 0;
-      readFileBoundary.recordBytes = 0;
-      const memoryBefore = process.memoryUsage();
-      const startedAt = performance.now();
-      const value = await operation();
-      const elapsedMs = performance.now() - startedAt;
-      const memoryAfter = process.memoryUsage();
-      return {
-        value,
-        measurement: {
-          elapsedMs: roundMilliseconds(elapsedMs),
-          recordReads: readFileBoundary.recordReads,
-          recordBytes: readFileBoundary.recordBytes,
-          heapUsedBeforeBytes: memoryBefore.heapUsed,
-          heapUsedAfterBytes: memoryAfter.heapUsed,
-          heapUsedDeltaBytes: memoryAfter.heapUsed - memoryBefore.heapUsed,
-          rssBeforeBytes: memoryBefore.rss,
-          rssAfterBytes: memoryAfter.rss,
-          rssDeltaBytes: memoryAfter.rss - memoryBefore.rss,
-        },
-      };
-    }
-
-    function fullBenchmarkRecord(
-      index: number,
-    ): ExternalSessionOperationRecordV1 {
-      const base = terminalOperationRecord();
-      const suffix = String(index).padStart(5, '0');
-      return {
-        ...base,
-        progressProjection: {
-          acknowledgedRevision: base.revision,
-        },
-        operationId: `external-takeover:benchmark-${suffix}`,
-        request: {
-          ...base.request,
-          sessionId: index === 9_999
-            ? 'benchmark-late-conflict-session'
-            : `benchmark-session-${suffix}`,
-          idempotencyKey: index === 9_999
-            ? 'benchmark-late-conflict-key'
-            : `benchmark-key-${suffix}`,
-        },
-      };
-    }
-
-    function receiptBenchmarkEntry(
-      index: number,
-      expiry: 'unexpired' | 'expired',
-      nowMs: number,
-    ): Readonly<{
-      receipt: ExternalSessionOperationTerminalReceiptV1;
-      request: ExternalSessionOperationSemanticRequestV1;
-    }> {
-      const suffix = String(index).padStart(5, '0');
-      const operationId =
-        `external-takeover:benchmark-${expiry}-receipt-${suffix}`;
-      const benchmarkRequest = {
-        ...request,
-        sessionId: `benchmark-${expiry}-session-${suffix}`,
-        idempotencyKey: `benchmark-${expiry}-key-${suffix}`,
-      } satisfies ExternalSessionOperationSemanticRequestV1;
-      const terminalAtMs = expiry === 'expired'
-        ? nowMs - 86_400_000
-        : nowMs - 3_600_000;
-      const idempotencyIntentDigest = createHash('sha256')
-        .update(JSON.stringify(
-          projectExternalSessionTakeoverIdempotencyIntent(benchmarkRequest),
-        ), 'utf8')
-        .digest('hex');
-      return {
-        request: benchmarkRequest,
-        receipt: {
-          v: 1,
-          recordKind: 'terminal_receipt',
-          reference: {
-            sessionId: benchmarkRequest.sessionId,
-            operationId,
-            revision: 6,
-          },
-          presentation: {
-            v: 1,
-            operationId,
-            revision: 6,
-            kind: 'takeover_persisted',
-            status: 'completed',
-            phase: 'finalizing',
-          },
-          durableIdempotencyKey: benchmarkRequest.idempotencyKey,
-          idempotencyIntentDigest,
-          terminalAtMs,
-          expiresAtMs: terminalAtMs + 86_400_000,
-        },
-      };
-    }
-
-    it('measures a receipt-aware mixed 10,000-entry inventory without timing thresholds', async () => {
-      const activeServerDir = await createRoot();
-      const directoryPath = join(
-        activeServerDir,
-        'external-session-operations',
-        'by-account',
-        `sub-${createHash('sha256').update('vitest', 'utf8').digest('hex').slice(0, 32)}`,
-        'records',
-      );
-      await fsPromises.mkdir(directoryPath, { recursive: true, mode: 0o700 });
-
-      const benchmarkNowMs = 2_000_000_000_000;
-      const fullRecords = Array.from(
-        { length: 4_000 },
-        (_, index) => fullBenchmarkRecord(index),
-      );
-      const unexpiredReceiptEntries = Array.from(
-        { length: 3_000 },
-        (_, index) => receiptBenchmarkEntry(
-          index,
-          'unexpired',
-          benchmarkNowMs,
-        ),
-      );
-      const expiredReceiptEntries = Array.from(
-        { length: 3_000 },
-        (_, index) => receiptBenchmarkEntry(
-          index,
-          'expired',
-          benchmarkNowMs,
-        ),
-      );
-      const serializedEntries = [
-        ...fullRecords.map((record) => ({
-          operationId: record.operationId,
-          serialized: JSON.stringify(record),
-          storedKind: 'full_record' as const,
-        })),
-        ...unexpiredReceiptEntries.map(({ receipt }) => ({
-          operationId: receipt.reference.operationId,
-          serialized: JSON.stringify(receipt),
-          storedKind: 'unexpired_receipt' as const,
-        })),
-        ...expiredReceiptEntries.map(({ receipt }) => ({
-          operationId: receipt.reference.operationId,
-          serialized: JSON.stringify(receipt),
-          storedKind: 'expired_receipt' as const,
-        })),
-      ].map((entry) => {
-        return {
-          ...entry,
-          path: pathForRecord(activeServerDir, entry.operationId),
-        };
-      });
-      expect(serializedEntries).toHaveLength(10_000);
-      for (let offset = 0; offset < serializedEntries.length; offset += 250) {
-        await Promise.all(
-          serializedEntries.slice(offset, offset + 250).map(
-            async ({ path, serialized }) => {
-              await fsPromises.writeFile(path, serialized, {
-                encoding: 'utf8',
-                mode: 0o600,
-              });
-            },
-          ),
-        );
-      }
-      const aggregateInventoryBytes = serializedEntries.reduce(
-        (sum, { serialized }) => sum + Buffer.byteLength(serialized, 'utf8'),
-        0,
-      );
-      const aggregateBytesByKind = Object.fromEntries(
-        [
-          'full_record',
-          'unexpired_receipt',
-          'expired_receipt',
-        ].map((storedKind) => [
-          storedKind,
-          serializedEntries
-            .filter((entry) => entry.storedKind === storedKind)
-            .reduce(
-              (sum, { serialized }) =>
-                sum + Buffer.byteLength(serialized, 'utf8'),
-              0,
-            ),
-        ]),
-      );
-      readFileBoundary.observeRecordReads = true;
-
-      const coldList = await measurePhase(
-        () => listExternalSessionOperationRecords(activeServerDir),
-      );
-      expect(coldList.value).toHaveLength(fullRecords.length);
-
-      const warmList = await measurePhase(async () => (
-        await listExternalSessionOperationRecords(activeServerDir)
-      ).length);
-      expect(warmList.value).toBe(fullRecords.length);
-
-      const fullLookupRecord = fullRecords[0]!;
-      const fullLookup = await measurePhase(async () => {
-        const result = await resolveExternalSessionOperationStartAdmission({
-          activeServerDir,
-          durableIdempotencyKey:
-            fullLookupRecord.request.idempotencyKey,
-          intent: fullLookupRecord.request,
-          nowMs: benchmarkNowMs,
-        });
-        expect(result).toMatchObject({
-          kind: 'existing_record',
-          record: { operationId: fullLookupRecord.operationId },
-        });
-      });
-
-      const replayEntry = unexpiredReceiptEntries[0]!;
-      const receiptReplay = await measurePhase(async () => {
-        const result = await resolveExternalSessionOperationStartAdmission({
-          activeServerDir,
-          durableIdempotencyKey: replayEntry.request.idempotencyKey,
-          intent: replayEntry.request,
-          nowMs: benchmarkNowMs,
-        });
-        expect(result).toMatchObject({
-          kind: 'terminal_receipt',
-          receipt: {
-            reference: replayEntry.receipt.reference,
-          },
-        });
-      });
-
-      const receiptConflict = await measurePhase(async () => {
-        const result = await resolveExternalSessionOperationStartAdmission({
-          activeServerDir,
-          durableIdempotencyKey: replayEntry.request.idempotencyKey,
-          intent: {
-            ...replayEntry.request,
-            targetStorageMode: 'external-linked',
-          },
-          nowMs: benchmarkNowMs,
-        });
-        expect(result).toEqual({ kind: 'conflict' });
-      });
-
-      const expiredReceiptsBySession = new Map(
-        expiredReceiptEntries.map(({ receipt }) => [
-          receipt.reference.sessionId,
-          receipt,
-        ]),
-      );
-      const orderedExpiredSessionIds = [
-        ...expiredReceiptsBySession.keys(),
-      ].sort();
-      const removedForBelowCapacity = serializedEntries.find(
-        (entry) => entry.operationId === fullRecords.at(-1)!.operationId,
-      )!;
-      await fsPromises.rm(removedForBelowCapacity.path);
-      let normalCleanupFactReads = 0;
-      const normalCleanup = await measurePhase(async () => {
-        const result = await resolveExternalSessionOperationStartAdmission({
-          activeServerDir,
-          durableIdempotencyKey: 'benchmark-normal-cleanup-key',
-          intent: {
-            ...request,
-            sessionId: 'benchmark-normal-cleanup-incoming-session',
-            idempotencyKey: 'benchmark-normal-cleanup-key',
-          },
-          nowMs: benchmarkNowMs,
-          readSelectedPresentation: async (sessionId) => {
-            normalCleanupFactReads += 1;
-            const receipt = expiredReceiptsBySession.get(sessionId);
-            if (!receipt) return { kind: 'absent' as const };
-            return {
-              kind: 'valid' as const,
-              presentation: receipt.presentation,
-            };
-          },
-        });
-        expect(result).toMatchObject({ kind: 'new_operation' });
-      });
-      expect(normalCleanupFactReads).toBe(8);
-      await fsPromises.writeFile(
-        removedForBelowCapacity.path,
-        removedForBelowCapacity.serialized,
-        { encoding: 'utf8', mode: 0o600 },
-      );
-
-      const deletableSessionId = orderedExpiredSessionIds[8]!;
-      const deletableReceipt = expiredReceiptsBySession.get(
-        deletableSessionId,
-      )!;
-      let exactCapacityFactReads = 0;
-      const exactCapacityCleanup = await measurePhase(async () => {
-        const result = await resolveExternalSessionOperationStartAdmission({
-          activeServerDir,
-          durableIdempotencyKey: 'benchmark-exact-capacity-key',
-          intent: {
-            ...request,
-            sessionId: 'benchmark-exact-capacity-incoming-session',
-            idempotencyKey: 'benchmark-exact-capacity-key',
-          },
-          nowMs: benchmarkNowMs,
-          readSelectedPresentation: async (sessionId) => {
-            exactCapacityFactReads += 1;
-            const receipt = expiredReceiptsBySession.get(sessionId);
-            if (!receipt || sessionId === deletableSessionId) {
-              return { kind: 'absent' as const };
-            }
-            return {
-              kind: 'valid' as const,
-              presentation: receipt.presentation,
-            };
-          },
-        });
-        expect(result).toMatchObject({ kind: 'new_operation' });
-      });
-      expect(exactCapacityFactReads).toBe(16);
-      await expect(readExternalSessionOperationStoredEntry(
-        activeServerDir,
-        deletableReceipt.reference.operationId,
-      )).resolves.toBeNull();
-
-      const deletedReceiptSerialized = JSON.stringify(deletableReceipt);
-      const deletedReceiptPath = pathForRecord(
-        activeServerDir,
-        deletableReceipt.reference.operationId,
-      );
-      await fsPromises.writeFile(
-        deletedReceiptPath,
-        deletedReceiptSerialized,
-        { encoding: 'utf8', mode: 0o600 },
-      );
-      const overLimit = fullBenchmarkRecord(10_000);
-      const overLimitSerialized = JSON.stringify(overLimit);
-      const overLimitPath = pathForRecord(
-        activeServerDir,
-        overLimit.operationId,
-      );
-      await fsPromises.writeFile(
-        overLimitPath,
-        overLimitSerialized,
-        { encoding: 'utf8', mode: 0o600 },
-      );
-      let overCapacityFactReads = 0;
-      const failClosed = await measurePhase(async () => {
-        await expect(resolveExternalSessionOperationStartAdmission({
-          activeServerDir,
-          durableIdempotencyKey: 'benchmark-over-capacity-key',
-          intent: {
-            ...request,
-            sessionId: 'benchmark-over-capacity-incoming-session',
-            idempotencyKey: 'benchmark-over-capacity-key',
-          },
-          nowMs: benchmarkNowMs,
-          readSelectedPresentation: async () => {
-            overCapacityFactReads += 1;
-            return { kind: 'absent' as const };
-          },
-        })).rejects.toMatchObject({
-          name: 'ExternalSessionOperationRecordAdmissionError',
-          reason: 'inventory_too_large',
-        });
-      });
-      expect(overCapacityFactReads).toBe(0);
-      await expect(fsPromises.readFile(
-        deletedReceiptPath,
-        'utf8',
-      )).resolves.toBe(deletedReceiptSerialized);
-      await expect(fsPromises.readFile(
-        overLimitPath,
-        'utf8',
-      )).resolves.toBe(overLimitSerialized);
-
-      process.stdout.write(
-        `EXTERNAL_SESSION_OPERATION_INVENTORY_J14 ${JSON.stringify({
-          environment: {
-            node: process.versions.node,
-            platform: platform(),
-            arch: arch(),
-            cpuModel: cpus()[0]?.model ?? 'unknown',
-            logicalCpuCount: cpus().length,
-            gcExposed: typeof globalThis.gc === 'function',
-          },
-          corpus: {
-            physicalEntryCount: serializedEntries.length,
-            fullRecordCount: fullRecords.length,
-            unexpiredReceiptCount: unexpiredReceiptEntries.length,
-            expiredReceiptCount: expiredReceiptEntries.length,
-            aggregateInventoryBytes,
-            aggregateBytesByKind,
-            averageEntryBytes: Math.round(
-              aggregateInventoryBytes / serializedEntries.length,
-            ),
-          },
-          phases: {
-            coldList: coldList.measurement,
-            warmList: warmList.measurement,
-            fullRecordLookup: fullLookup.measurement,
-            unexpiredReceiptReplay: receiptReplay.measurement,
-            changedReceiptIntentConflict: receiptConflict.measurement,
-            normalBoundedCleanupBatchBelowCapacity: {
-              ...normalCleanup.measurement,
-              selectedPresentationReads: normalCleanupFactReads,
-              physicalEntriesDeleted: 0,
-            },
-            exactCapacitySequentialCleanupUntilSlot: {
-              ...exactCapacityCleanup.measurement,
-              selectedPresentationReads: exactCapacityFactReads,
-              physicalEntriesDeleted: 1,
-            },
-            overCapacityFailBeforeEffects: {
-              ...failClosed.measurement,
-              selectedPresentationReads: overCapacityFactReads,
-              physicalEntriesDeleted: 0,
-            },
-          },
-          notes: {
-            coldList:
-              'first store scan in this process after direct writes; kernel file cache was not purged',
-            memory:
-              'endpoint process.memoryUsage samples without forced GC; deltas are directional, not retained-heap proofs',
-            cleanup:
-              'normal admission was measured at 9,999 entries; exact-capacity admission completed two bounded eight-Session batches and stopped after the second batch freed one slot',
-            overCapacity:
-              '10,001 physical entries fail during strict inventory admission before selected-presentation fact reads or mutation',
-          },
-        })}\n`,
-      );
-    }, 300_000);
-  },
-);

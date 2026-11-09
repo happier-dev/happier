@@ -74,11 +74,8 @@ import {
   createExternalSessionFollowCleanupCustody,
 } from './followCleanupSettlement';
 import {
-  settleFollowListenerBounded,
+  settleFollowListener,
 } from './followListenerSettlement';
-import {
-  EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
-} from './hostOperationOwner';
 
 export type ConfiguredExternalSessionSourceAgentContribution = Readonly<{
   id: string;
@@ -88,7 +85,10 @@ export type ConfiguredExternalSessionSourceAgentContribution = Readonly<{
   catalogEntry?: AgentCatalogEntry | null;
 }>;
 
-export type ConfiguredExternalSessionSourceAccountProjection = Pick<AccountProfile, 'connectedServicesV2'>;
+export type ConfiguredExternalSessionSourceAccountProjection = Pick<AccountProfile, 'connectedServicesV2'> & Readonly<{
+  /** Private provenance from the credentials that read this profile projection. */
+  accountScopeKey?: string;
+}>;
 
 export class ConfiguredExternalSessionSourceMaterializationError extends Error {
   readonly code: 'malformed_profile_id' | 'source_capacity_exceeded';
@@ -151,6 +151,7 @@ export function materializeConfiguredExternalSessionSourceCandidates(params: Rea
   agents: readonly ConfiguredExternalSessionSourceAgentContribution[];
   account: ConfiguredExternalSessionSourceAccountProjection;
   agentSettings?: unknown;
+  accountSettingsScopeKey?: string;
   activeServerId?: string | null;
 }>): readonly ConfiguredExternalSessionSourceCandidate[] {
   const candidates: ConfiguredExternalSessionSourceCandidate[] = [];
@@ -188,6 +189,11 @@ export function materializeConfiguredExternalSessionSourceCandidates(params: Rea
         appendCandidate(Object.freeze({
           agentId: agent.id,
           source: instance.source,
+          ...(instance.origin.kind === 'connectedServiceProfile'
+            ? { accountScopeKey: params.account.accountScopeKey ?? null }
+            : instance.origin.kind === 'agentSetting'
+              ? { accountScopeKey: params.accountSettingsScopeKey ?? null }
+              : {}),
         }));
       }
     }
@@ -502,12 +508,13 @@ export type ConfiguredPluginExternalSessionsComposition = Readonly<{
   ): HostExternalSessionsAuthorService;
   resolveAuthorSource(
     ref: AuthorTakeoverRef,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: Readonly<{ signal?: AbortSignal; accountScopeKey?: string }>,
   ): Promise<ContextualExternalSessionTakeoverResolution>;
   admitPersistedTakeoverSource(input: Readonly<{
     agentId: string;
     remoteSessionId: string;
     source: ExternalSessionsSource;
+    accountScopeKey?: string;
   }>): Promise<ContextualExternalSessionTakeoverResolution | null>;
   compositionPort: ExternalSessionsCompositionPort;
   dispose: () => void;
@@ -533,7 +540,6 @@ type CompositionFollowOptions = Parameters<ExternalSessionsCompositionPort['foll
 type CompositionFollowListener = Parameters<ExternalSessionsCompositionPort['followTranscript']>[2];
 type CompositionFollowResult = Awaited<ReturnType<ExternalSessionsCompositionPort['followTranscript']>>;
 
-const AUTHOR_FOLLOW_CLEANUP_TIMEOUT_MS = 5_000;
 const HOST_ADAPTER_CURSOR_MAX_CODE_UNITS = 4_096;
 
 function isCanonicalAuthorBoundedString(
@@ -822,6 +828,7 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
   resolveCatalogEntry: (agentId: string) => Promise<AgentCatalogEntry | null>;
   account: ConfiguredExternalSessionSourceAccountProjection;
   agentSettings?: unknown;
+  accountSettingsScopeKey?: string;
   activeServerId?: string | null;
   basis: ConfiguredExternalSessionSourceSnapshotBasis;
   readCurrentBasis: () => ConfiguredExternalSessionSourceSnapshotBasis;
@@ -845,6 +852,7 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
   >;
   canFollowNow?: () => boolean;
   retirementSignal?: AbortSignal;
+  readRetainedCandidateIndexIdentities?: () => readonly ConfiguredExternalSessionCandidateIndexIdentity[];
 }>): Promise<ConfiguredPluginExternalSessionsComposition> {
   const providerOpsByAgentId = new Map<string, PluginExternalSessionsProviderOps>();
   const resolveProviderOps = async (agentId: string): Promise<PluginExternalSessionsProviderOps | null> => {
@@ -854,16 +862,18 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
     if (resolved) providerOpsByAgentId.set(agentId, resolved);
     return resolved;
   };
+  const candidates = materializeConfiguredExternalSessionSourceCandidates({
+    agents: params.agents,
+    account: params.account,
+    agentSettings: params.agentSettings,
+    accountSettingsScopeKey: params.accountSettingsScopeKey,
+    activeServerId: params.activeServerId ?? null,
+  });
   const snapshot = await buildConfiguredExternalSessionSourceSnapshot({
     basis: params.basis,
     readCurrentBasis: params.readCurrentBasis,
     resolveAgentOccurrence: params.resolveAgentOccurrence,
-    candidates: materializeConfiguredExternalSessionSourceCandidates({
-      agents: params.agents,
-      account: params.account,
-      agentSettings: params.agentSettings,
-      activeServerId: params.activeServerId ?? null,
-    }),
+    candidates,
     resolveSource: async (agentId, source) => resolveConfiguredExternalSessionSourceAtAdmission({
       agents: params.agents,
       ...(params.activeServerDir ? { activeServerDir: params.activeServerDir } : {}),
@@ -966,6 +976,9 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
           activeServerDir: candidateIndexServerDir,
           agentIdentity: entry.agentIdentity,
           agentSourceCustody: sourceCustody,
+          ...(params.readRetainedCandidateIndexIdentities
+            ? { readRetainedIndexIdentities: params.readRetainedCandidateIndexIdentities }
+            : {}),
           source,
           ...(cursor ? { cursor } : {}),
           limit,
@@ -1194,37 +1207,25 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
       let releaseRequested = false;
       let subscription: Disposable | null = null;
       let releaseStarted = false;
-      const cleanupCustody = createExternalSessionFollowCleanupCustody(
-        AUTHOR_FOLLOW_CLEANUP_TIMEOUT_MS,
-      );
+      const cleanupCustody = createExternalSessionFollowCleanupCustody();
       let diagnosedFailure = false;
       let onOperationAbort: (() => void) | null = null;
-      let explicitDisposePending = false;
-      let disposedAcknowledgementSeen = false;
       const diagnoseFailure = (): void => {
         if (diagnosedFailure) return;
         diagnosedFailure = true;
         logger.debug('[ExternalSessions] author follow listener or cleanup failed');
       };
       const release = async (
-        admitDisposedAcknowledgement = false,
+        reportCleanupFailure = false,
       ): Promise<void> => {
         releaseRequested = true;
-        if (!releaseStarted && admitDisposedAcknowledgement) {
-          explicitDisposePending = true;
-        } else if (!admitDisposedAcknowledgement) {
-          active = false;
-          explicitDisposePending = false;
-          listenerAbort.abort();
-        }
+        active = false;
         if (onOperationAbort) {
           operationSignal.removeEventListener('abort', onOperationAbort);
           onOperationAbort = null;
         }
+        listenerAbort.abort();
         if (!subscription) {
-          active = false;
-          explicitDisposePending = false;
-          listenerAbort.abort();
           return;
         }
         releaseStarted = true;
@@ -1235,18 +1236,9 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
           );
         } catch (error) {
           diagnoseFailure();
-          // Custody of the failed or unsettled cleanup stays with the shared
-          // owner above. Neither outcome is reported as disposal here: the
-          // explicit disposer owns it, while owner-driven releases (abort,
-          // listener failure, unavailable acquisition) are already reporting a
-          // failure of their own and discard it.
-          if (admitDisposedAcknowledgement) throw error;
-        } finally {
-          // Terminal fencing runs whatever cleanup did, so a hung provider
-          // disposer still ends the follow.
-          active = false;
-          explicitDisposePending = false;
-          listenerAbort.abort();
+          // The caller owns explicit disposal failure; background retirement
+          // retains the exact cleanup for a later owner retry.
+          if (reportCleanupFailure) throw error;
         }
       };
       onOperationAbort = () => {
@@ -1261,19 +1253,9 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
         event: Parameters<CompositionFollowListener>[0],
       ): Promise<void> => {
         const deliver = async (): Promise<void> => {
-          const isDisposedAcknowledgement = explicitDisposePending
-            && !disposedAcknowledgementSeen
-            && event.kind === 'terminated'
-            && event.reason === 'disposed';
-          if (explicitDisposePending && !isDisposedAcknowledgement) {
-            throw new Error('plugin_external_follow_listener_failed');
-          }
           if (!active || operationSignal.aborted || !isCurrent()) {
             if (!releaseStarted) await release();
             throw new Error('plugin_external_follow_listener_failed');
-          }
-          if (isDisposedAcknowledgement) {
-            disposedAcknowledgementSeen = true;
           }
           let projected: unknown;
           if (event.kind === 'data') {
@@ -1309,14 +1291,8 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
           }
           try {
             const publicEvent = readAuthorFollowEvent(projected);
-            // This callback is the daemon's publisher into the author process,
-            // not the author callback itself. The runner owns the five-second
-            // author ceiling; this outer acknowledgement needs its one
-            // transport-round-trip margin or a listener settling at the
-            // ceiling can still lose its cursor acknowledgement in transit.
-            await settleFollowListenerBounded(
+            await settleFollowListener(
               Promise.resolve().then(async () => await listener(publicEvent)),
-              EXTERNAL_SESSION_FOLLOW_CLOSE_TRANSPORT_TIMEOUT_MS,
               operationSignal,
             );
           } catch (error) {
@@ -1332,7 +1308,7 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
               followEventValidationError = error;
             }
             diagnoseFailure();
-            if (!explicitDisposePending) await release();
+            if (!releaseStarted) await release();
             throw error;
           }
         };
@@ -1438,18 +1414,29 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
     },
   });
   const authorService = bindAuthorService(params.contextualTakeover);
+  const qualifySourceAccount = (sourceScope: string | null | undefined, expectedScope?: string): void => {
+    // A static default has no Account input. An Account-derived source must
+    // match the credentials captured for this admission, including when its
+    // profile was read before any active Settings snapshot existed.
+    if (expectedScope && sourceScope !== undefined && sourceScope !== expectedScope) {
+      throw new PluginError({ code: 'plugin_external_sources_unavailable', message: 'plugin_external_sources_unavailable' });
+    }
+  };
   const resolveAuthorSource = async (
     rawRef: AuthorTakeoverRef,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: Readonly<{ signal?: AbortSignal; accountScopeKey?: string }>,
   ): Promise<ContextualExternalSessionTakeoverResolution> => {
     const ref = readAuthorRef(rawRef);
-    const assertAuthorSourceCurrent = (): void => {
+    const assertNotStopped = (): void => {
       if (options?.signal?.aborted) {
         throw new PluginError({
           code: 'plugin_operation_aborted',
           message: 'plugin_operation_aborted',
         });
       }
+    };
+    const assertAuthorSourceCurrent = (): void => {
+      assertNotStopped();
       if (!isCurrent() || retirementSignal.aborted) {
         throw new PluginError({
           code: 'plugin_generation_retired',
@@ -1469,8 +1456,9 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
         message: 'plugin_external_source_unavailable',
       });
     }
+    qualifySourceAccount(entry.accountScopeKey, options?.accountScopeKey);
     const ops = await resolveProviderOps(entry.agentId);
-    assertAuthorSourceCurrent();
+    assertNotStopped();
     if (!ops) {
       throw new PluginError({
         code: 'plugin_external_agent_unavailable',
@@ -1483,7 +1471,7 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
       source: entry.source,
       ...(options?.signal ? { signal: options.signal } : {}),
     }, ops);
-    assertAuthorSourceCurrent();
+    assertNotStopped();
     return Object.freeze({
       source: identity.source,
       externalLinkedTakeoverWriterSafety:
@@ -1494,6 +1482,7 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
     agentId: string;
     remoteSessionId: string;
     source: ExternalSessionsSource;
+    accountScopeKey?: string;
   }>): Promise<ContextualExternalSessionTakeoverResolution | null> => {
     if (!isCurrent() || retirementSignal.aborted) return null;
     const agentId = ExternalSessionAgentIdSchema.safeParse(input.agentId);
@@ -1506,15 +1495,15 @@ export async function createConfiguredPluginExternalSessionsAdapter(params: Read
       remoteSessionId: input.remoteSessionId,
       boundSource: input.source,
       purpose: 'takeover',
-      signal: retirementSignal,
     });
-    if (target.status !== 'resolved' || !isCurrent() || retirementSignal.aborted) return null;
+    if (target.status !== 'resolved') return null;
     const entry = snapshot.resolve(
       agentId.data,
       target.ref.sourceId,
       params.readCurrentBasis(),
     );
     if (!entry || !preservesExternalSessionSourceIdentity(entry.source, target.source)) return null;
+    qualifySourceAccount(entry.accountScopeKey, input.accountScopeKey);
     const declaration = params.agents.find((agent) => agent.id === agentId.data)
       ?.richDefinition?.definition.surfaces?.externalSession;
     return Object.freeze({
@@ -1580,6 +1569,7 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
   readAgentSettings?: () => unknown;
   activeServerId?: string | null;
   readAccountRevision: () => string;
+  readAccountScopeKey?: () => string | undefined;
   subscribeAccountRevision: (listener: (revision: string) => void) => () => void;
   isCurrent: () => boolean;
   resolveAgentOccurrence: (
@@ -1646,6 +1636,7 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
       resolveCatalogEntry: params.resolveCatalogEntry,
       account,
       agentSettings: params.readAgentSettings?.(),
+      accountSettingsScopeKey: params.readAccountScopeKey?.(),
       activeServerId: params.activeServerId ?? null,
       basis,
       readCurrentBasis: () => basis,
@@ -1657,6 +1648,7 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
         ? { resolveAgentSourceCustody: params.resolveAgentSourceCustody }
         : {}),
       retirementSignal: retirement.signal,
+      readRetainedCandidateIndexIdentities: () => active?.candidateIndexIdentities ?? EMPTY_CANDIDATE_INDEX_IDENTITIES,
       ...(params.attach ? { attach: params.attach } : {}),
       ...(params.contextualTakeover ? { contextualTakeover: params.contextualTakeover } : {}),
       ...(params.followTranscript ? { followTranscript: params.followTranscript } : {}),
@@ -1924,7 +1916,7 @@ export async function createLiveConfiguredPluginExternalSessionsAdapter(params: 
   const authorService = bindAuthorService(params.contextualTakeover);
   const resolveAuthorSource = async (
     ref: AuthorTakeoverRef,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: Readonly<{ signal?: AbortSignal; accountScopeKey?: string }>,
   ): Promise<ContextualExternalSessionTakeoverResolution> => (
     await current().resolveAuthorSource(ref, options)
   );

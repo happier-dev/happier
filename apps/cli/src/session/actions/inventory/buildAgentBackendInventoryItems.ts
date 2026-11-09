@@ -9,8 +9,9 @@ import { readAgentContributionDisplayTitle } from '@/agent/catalog/agentDisplayT
 
 function buildCatalogBackendInventoryItems(
   accountSettings: AccountSettings | null,
+  catalog: ReturnType<typeof readAgentCatalogSnapshot>,
 ): AgentBackendInventoryItem[] {
-  const { agentDefinitionsById, catalogEntriesById } = readAgentCatalogSnapshot()
+  const { agentDefinitionsById, catalogEntriesById } = catalog
   return Object.keys(catalogEntriesById)
     .flatMap((agentId) => {
       const contribution = agentDefinitionsById.get(agentId)
@@ -25,6 +26,7 @@ function buildCatalogBackendInventoryItems(
         enabled: !isBackendTargetDisabledByAccountSettings(accountSettings, target),
         agentId,
         ...(contribution?.identity ? { identity: contribution.identity } : {}),
+        ...(target.kind === 'agent' ? { agentTarget: target } : {}),
       }))
     })
 }
@@ -32,6 +34,7 @@ function buildCatalogBackendInventoryItems(
 export async function buildConfiguredAcpBackendInventoryItems(
   accountSettings: AccountSettings | null,
   acpCatalogSnapshot?: AcpCatalogSnapshotV1,
+  catalog = readAgentCatalogSnapshot(),
 ): Promise<AgentBackendInventoryItem[]> {
   // Optional discovery cannot withdraw built-in choices. Configured launch
   // admission still requires ready, current authority at its runtime owner.
@@ -39,7 +42,6 @@ export async function buildConfiguredAcpBackendInventoryItems(
   const definitions = acpCatalogSnapshot.record.definitions
   const definitionById = new Map(definitions.map((definition) => [definition.id, definition]))
   const definitionIds = definitions.map((definition) => definition.id)
-  const catalog = readAgentCatalogSnapshot()
   return [...catalog.agentDefinitionsById.values()].flatMap((contribution) => (
     contribution.identity ? listAgentExecutionTargetsV1(contribution.identity, definitionIds)
       .filter((target): target is typeof target & { definitionId: string } => target.definitionId !== undefined)
@@ -53,6 +55,7 @@ export async function buildConfiguredAcpBackendInventoryItems(
           backendId: backend.id,
           agentId: contribution.id,
           identity: target.identity,
+          agentTarget: target,
         }
       }) : []
   ))
@@ -63,15 +66,19 @@ export async function buildAgentBackendInventoryItems(params: Readonly<{
   includeDisabled?: boolean;
   accountSettings?: AccountSettings | null;
   acpCatalogSnapshot?: AcpCatalogSnapshotV1;
+  /** A live runner's existing admitted projection, not the cold global catalog. */
+  agentCatalogSnapshot?: ReturnType<typeof readAgentCatalogSnapshot>;
 }>): Promise<AgentBackendInventoryItem[]> {
   const accountSettings = params.accountSettings ?? null
   const includeDisabled = params.includeDisabled === true
+  const catalog = params.agentCatalogSnapshot ?? readAgentCatalogSnapshot()
   const configuredAcpBackends = await buildConfiguredAcpBackendInventoryItems(
     accountSettings,
     params.acpCatalogSnapshot,
+    catalog,
   )
   const items = [
-    ...buildCatalogBackendInventoryItems(accountSettings),
+    ...buildCatalogBackendInventoryItems(accountSettings, catalog),
     ...configuredAcpBackends,
   ].filter((item) => includeDisabled || item.enabled !== false)
 

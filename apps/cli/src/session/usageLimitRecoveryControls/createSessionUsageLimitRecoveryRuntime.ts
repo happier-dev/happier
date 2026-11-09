@@ -19,11 +19,11 @@ import { continueSessionAfterUsageLimitReset } from '@/daemon/connectedServices/
 import { resolveRoutedUsageLimitRecoveryResumePromptMode } from './resolveRoutedUsageLimitRecoveryResumePromptMode';
 import { updateAccountSettingsV2WithRetry } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { logger } from '@/ui/logger';
-import { buildRecoveryIntentFromLatestUsageLimitIssue, buildRecoveryIntentFromUsageLimitIssue, routeSessionUsageLimitRecoveryCheckNow } from './sessionUsageLimitRecoveryControlRouter';
+import { routeSessionUsageLimitRecoveryCheckNow } from './sessionUsageLimitRecoveryControlRouter';
+import { buildRecoveryIntentFromLatestUsageLimitIssue, buildRecoveryIntentFromUsageLimitIssue } from './buildUsageLimitRecoveryIntent';
 import { readLatestUsageLimitFailureIssue } from './readLatestUsageLimitFailureIssue';
 import { hasSameUsageLimitRecoveryIdentity, isPendingUsageLimitRecoveryStatus, mergeUsageLimitRecoveryExplicitRearm } from './mergeUsageLimitRecoveryIntent';
 import { mergeUsageLimitRecoveryFieldIntoMetadata } from './mergeUsageLimitRecoveryFieldIntoMetadata';
-import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from './createBackoffSessionUsageLimitRecoveryControlAdapter';
 
 const storedUsageLimitRecoverySchema = createStoredReadSchema(SessionUsageLimitRecoveryV1Schema);
 
@@ -55,25 +55,23 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
     const parsed = storedUsageLimitRecoverySchema.safeParse(deps.getMetadata()?.[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
     return parsed.success ? parsed.data : null;
   };
-  const persist = async (intent: SessionUsageLimitRecoveryV1) => {
-    const baseMetadata = deps.getMetadata() ?? {};
+  const persist = async (intent: SessionUsageLimitRecoveryV1, expectedCurrent?: SessionUsageLimitRecoveryV1 | null) => {
     await deps.updateMetadata((metadata) => {
       return mergeUsageLimitRecoveryFieldIntoMetadata({ latestMetadata: metadata,
-        baseMetadata, candidateMetadata: { [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: intent } }) as Metadata;
+        ...(expectedCurrent === undefined ? {} : { baseMetadata: { [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: expectedCurrent } }),
+        candidateMetadata: { [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: intent } }) as Metadata;
     });
   };
   const scheduler = new UsageLimitRecoveryScheduler({ nowMs,
     store: {
       read,
-      write: async (_sessionId, intent) => await persist(intent),
-
+      readAuthoritative: read,
+      write: async (_sessionId, intent, expectedCurrent) => await persist(intent, expectedCurrent),
     },
     recover: async (intent) => {
       if (disposed || intent.runtimeAuthRecoveryAttemptId) return { status: 'superseded' };
-      if (!await (deps.isFeatureEnabled ?? resolveUsageLimitRecoveryEnabled)()) return { status: 'wait',
-        nextCheckAtMs: nowMs() + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS, lastProbeError: 'feature_disabled' };
       const context = await readContext();
-      if (!context) return { status: 'wait', nextCheckAtMs: nowMs() + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
+      if (!context) return { status: 'wait', nextCheckAtMs: null,
         lastProbeError: 'usage_limit_recovery_session_unavailable' };
       const latest = readLatestUsageLimitFailureIssue(context.rawSession);
       const current = read();
@@ -82,11 +80,11 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
         const awaitingAcceptedFailure = acceptedFailure && buildUsageLimitIssueFingerprint(acceptedFailure) === intent.issueFingerprint
           && (latest?.occurredAt ?? 0) < acceptedFailure.occurredAt
           && (context.rawSession.latestTurnStatusObservedAt ?? 0) < acceptedFailure.occurredAt;
-        return awaitingAcceptedFailure ? { status: 'wait', nextCheckAtMs: nowMs() + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
+        return awaitingAcceptedFailure ? { status: 'wait', nextCheckAtMs: null,
           lastProbeError: 'usage_limit_recovery_terminal_mutation_pending' } : { status: 'superseded' };
       }
       const result = await runRoutedCheck(context, intent);
-      return resolveInactiveUsageLimitRecoverySchedulerResult({ result, nowMs: nowMs(), fallbackRetryDelayMs: DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS });
+      return resolveInactiveUsageLimitRecoverySchedulerResult({ result });
     },
   });
 
@@ -96,7 +94,7 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
     return { ...context, token: context.credentials.token, sessionId: deps.sessionId,
       currentMachineId: deps.currentMachineId,
       stageUsageLimitRecoveryMutation: async (mutation: Parameters<typeof applyRegisteredSessionStateFieldMutationToMetadata>[1]) => {
-        await deps.updateMetadata(metadata => applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation));
+        await deps.updateMetadata(metadata => applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation, context.metadata));
       } };
   }
 
@@ -106,7 +104,7 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
         request: { sessionId: deps.sessionId },
         readCurrentUsageLimitRecovery: () => read(),
         callLiveSessionRpc: async () => {
-          const dueAtMs = intent.nextCheckAtMs ?? intent.resetAtMs;
+          const dueAtMs = intent.nextCheckAtMs;
           return typeof dueAtMs === 'number' && dueAtMs <= nowMs()
             ? { ok: false, errorCode: 'unsupported_session_runtime_method' }
             : deps.readNativeReadiness
@@ -132,7 +130,7 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
       const nextMetadata = record?.metadata;
       if (nextMetadata && typeof nextMetadata === 'object') {
         const next = storedUsageLimitRecoverySchema.safeParse((nextMetadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
-        if (next.success) await persist(next.data);
+        if (next.success) await persist(next.data, intent);
       }
       return result;
       });
@@ -204,7 +202,7 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
         current = read();
       }
       if (current && request.resumePromptMode && current.resumePromptMode !== request.resumePromptMode) {
-        await persist({ ...current, resumePromptMode: request.resumePromptMode });
+        await persist({ ...current, resumePromptMode: request.resumePromptMode }, current);
       }
       return { ok: true, ...await scheduler.checkNow({ sessionId: deps.sessionId }) };
     },
@@ -216,16 +214,26 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
       const intent = read();
       if (!intent || intent.runtimeAuthRecoveryAttemptId
         || !isPendingUsageLimitRecoveryStatus(intent.status)) return;
-      if (!await (deps.isFeatureEnabled ?? resolveUsageLimitRecoveryEnabled)() || disposed) return;
+      if (disposed) return;
       await scheduler.upsertScheduled({ sessionId: deps.sessionId, intent });
+      if (intent.nextCheckAtMs === null) await scheduler.checkNow({ sessionId: deps.sessionId });
     },
     observeFailure: async (issue: SessionRuntimeIssueV1) => {
       acceptedFailure = issue.source === 'usage_limit' ? issue : null;
-      if (disposed || issue.source !== 'usage_limit' || !issue.usageLimit
+      if (disposed) return;
+      const existing = read();
+      if (existing?.issueFingerprint === buildUsageLimitIssueFingerprint(issue)) {
+        if (!existing.runtimeAuthRecoveryAttemptId && isPendingUsageLimitRecoveryStatus(existing.status)) {
+          await scheduler.upsertScheduled({ sessionId: deps.sessionId, intent: existing });
+          if (existing.nextCheckAtMs === null || existing.nextCheckAtMs <= nowMs()) {
+            await scheduler.checkNow({ sessionId: deps.sessionId });
+          }
+        }
+        return;
+      }
+      if (issue.source !== 'usage_limit' || !issue.usageLimit
         || issue.usageLimit.recoverability !== 'wait' || deps.getAccountSettings()?.usageLimitRecoverySettingsV1?.mode !== 'auto_wait') return;
       if (!await (deps.isFeatureEnabled ?? resolveUsageLimitRecoveryEnabled)() || disposed || acceptedFailure !== issue) return;
-      const existing = read();
-      if (existing?.issueFingerprint === buildUsageLimitIssueFingerprint(issue)) return;
       const resumePromptMode = await resolveRoutedUsageLimitRecoveryResumePromptMode({ existingIntent: existing,
         accountSettings: deps.getAccountSettings() });
       const intent = buildRecoveryIntentFromUsageLimitIssue({ issue, resumePromptMode,

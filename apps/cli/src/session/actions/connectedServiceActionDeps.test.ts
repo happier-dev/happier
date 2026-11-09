@@ -1,30 +1,33 @@
-import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
-import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
-import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { homeDomainActionTransportV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
-import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
-import { openQualifiedConnectedAccountContentEnvelope, resolveQualifiedConnectedAccountCredentialValuesV1 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
-import { activate as activateGemini, manifest as geminiManifest } from '@happier-dev/plugins-gemini';
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { AxiosRequestConfig, AxiosResponse } from 'axios';
+import { createPortableConnectedAccountAuthenticationHttpFixture } from '@/testkit/connectedAccountAuthentication';
+import { createConnectedAccountAttemptTransactionApi } from '@/api/client/connectedAccountAttemptTransactionApi';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import nacl from 'tweetnacl';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import Fastify from 'fastify';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { activate as activateGemini, manifest as geminiManifest } from '@happier-dev/plugins-gemini';
 import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { openQualifiedConnectedAccountContentEnvelope, resolveQualifiedConnectedAccountCredentialValuesV1 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { homeDomainActionTransportV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { parseQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
+import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { API_TOKEN_FULL_GRANT_V1, AccountSettingsV2UpdateRequestSchema, ConnectedServiceCredentialRevisionV1Schema, accountSettingsParse, buildRecoveryCreditConsumeIdempotencyKey, createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps, type ApprovalRequest } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, ConnectedAccountAuthenticationCommandRequestSchema, ConnectedAccountControlCommandRequestSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
-import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowMutationV1Schema, type ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowMutationV1Schema, openConnectedAccountCatalogContentV1, sealConnectedAccountCatalogContentV1, type ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability/compatibilityProjectionV1';
+import { createPackageAssetArchiveV1 } from '@happier-dev/protocol/plugins/availability/packageAssetV1';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionInputV1Schema, PluginAvailabilityIntentReadActionOutputV1Schema, normalizePluginReleaseFactsV1 } from '@happier-dev/protocol/plugins/availability';
 import type { ConnectedPresentationRecordV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
   ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -43,6 +46,9 @@ import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/cat
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
 // History admission also reads independent catalog authorities. This HTTP
 // fixture represents an absent Profile control and unsupported unrelated rows.
@@ -297,30 +303,40 @@ describe('native connected-service Action adapter', () => {
     } finally { await server.close(); }
   });
 
-  it('uses exact captured Home, machine and attempt operands for authentication and refuses retired credentials before RPC', async () => {
-    const credentials: StoredCredentials = { token: 'authentication-boundary', encryption: null };
+  it('resolves the native continuation on its captured Home and refuses retired credentials before RPC', async () => {
+    const home = 'https://home-work.test';
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(home, { includeBundledPluginIds: ['happier.agent.codex'] });
     let current = true;
     let issued: unknown = null;
-    const action = createCliConnectedServiceAction({ credentials, serverId: 'home-work', serverHttpBaseUrl: 'https://home-work.test',
-      isCredentialCurrent: () => current, resolveHeaders: () => ({ Authorization: 'Bearer authentication-boundary' }),
-      // The machine RPC is the only substituted boundary; command parsing and the Action semantic adapter are real.
-      async callMachineAction(request) {
-        expect(request.method).toBe(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD);
-        expect(request.serverId).toBe('home-work');
-        expect(request).toMatchObject({ authority: 'present_user', effectActionId: 'connectedServices.authentication.resumeDevice', exactMachine: true });
-        expect(ConnectedAccountAuthenticationCommandRequestSchema.parse(request.request)).toEqual({ v: 1, machineId: 'controller',
-          command: { operation: 'resumeDevice', attemptId: 'attempt-work' } });
-        issued = request;
-        return { status: 'pending', attemptId: 'attempt-work', retryAfterMs: 500 };
-      },
-    });
-    const execute = () => action({ actionId: 'connectedServices.authentication.resumeDevice',
-      input: { machineId: 'controller', attemptId: 'attempt-work' }, context: { surface: 'cli', authority: 'present_user' } });
-    expect(await execute()).toEqual({ status: 'pending', attemptId: 'attempt-work', retryAfterMs: 500 });
-    expect(issued).not.toBeNull();
-    issued = null; current = false;
-    await expect(execute()).rejects.toMatchObject({ code: 'scope-retired' });
-    expect(issued).toBeNull();
+    try {
+      await runWithServerHttpBaseUrl(home, () => createConnectedAccountAttemptTransactionApi({ token: fixture.credentials.token }).create({
+        attemptId: 'attempt-work', kind: 'device', content: { t: 'plain', v: {} },
+        scope: { machineId: 'controller', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          modeId: 'native-import', intent: 'connect', phase: 'awaitingDeviceAuthorization', createdAtMs: Date.now() },
+      }));
+      const action = createCliConnectedServiceAction({ credentials: fixture.credentials, serverId: 'home-work', serverHttpBaseUrl: home,
+        isCredentialCurrent: () => current, resolveHeaders: () => ({ Authorization: `Bearer ${fixture.credentials.token}` }),
+        // Machine RPC and Home HTTP/database are the substituted system boundaries.
+        async callMachineAction(request) {
+          expect(request.method).toBe(CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD);
+          expect(request.serverId).toBe('home-work');
+          expect(request).toMatchObject({ authority: 'present_user', effectActionId: 'connectedServices.authentication.resumeDevice', exactMachine: true });
+          expect(ConnectedAccountAuthenticationCommandRequestSchema.parse(request.request)).toEqual({ v: 1, machineId: 'controller',
+            command: { operation: 'resumeDevice', attemptId: 'attempt-work' } });
+          issued = request;
+          return { status: 'pending', attemptId: 'attempt-work', retryAfterMs: 500 };
+        },
+      });
+      const execute = () => runWithServerHttpBaseUrl('https://outer-home.test', () => action({
+        actionId: 'connectedServices.authentication.resumeDevice', input: { attemptId: 'attempt-work' },
+        context: { surface: 'cli', authority: 'present_user' },
+      }));
+      expect(await execute()).toEqual({ status: 'pending', attemptId: 'attempt-work', retryAfterMs: 500 });
+      expect(issued).not.toBeNull();
+      issued = null; current = false;
+      await expect(execute()).rejects.toMatchObject({ code: 'scope-retired' });
+      expect(issued).toBeNull();
+    } finally { await fixture.close(); }
   });
 
   it.each(['signed', 'refused'] as const)('uses genuine requester signing for metadata and fails closed when real authority is %s', async admission => {
@@ -790,6 +806,132 @@ describe('native connected-service Action adapter', () => {
       connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} } });
   });
 
+  it.each(['plain', 'e2ee'] as const)('persists an Account-origin resource default in a %s Account without a Machine and refuses foreign authority', async mode => {
+    const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(29) };
+    const credentials: StoredCredentials = { token: 'account-purpose-owner', encryption: mode === 'e2ee' ? material : null };
+    const storage = { mode, material: mode === 'e2ee' ? material : null };
+    const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material });
+    const service = { pluginId: 'com.acme.account-purpose', localId: 'cloud-account' };
+    const externalService = { pluginId: 'com.acme.external-service', localId: service.localId };
+    const purpose = { consumer: { pluginId: service.pluginId, localId: 'read-cloud' }, purpose: 'cloud-api' };
+    const target = { kind: 'account' as const, account: { service, accountId: 'owner-profile' } };
+    const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: service.pluginId, version: '1.0.0',
+      displayName: 'Account purpose', engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+      hostAccess: { required: [{ id: 'cloud-api', capability: 'connectedAccounts', reason: 'Read cloud data',
+        scope: { serviceRefs: ['cloud-account', externalService], operations: ['use'] } }], optional: [] },
+      contributes: { actions: [{ id: 'read-cloud', title: 'Read cloud', scopes: ['global'], surfaces: ['plugin'], dangerLevel: 'safe',
+        hostAccess: ['cloud-api'], execution: { target: 'account', account: { artifactId: 'account-main', exportName: 'activate' } } }],
+        connectedAccountDescriptors: [{ id: service.localId, title: 'Cloud account', authentication: {
+          defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+            fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }] }],
+        } }] } });
+    const packageAssets = createPackageAssetArchiveV1({ manifest, files: [] });
+    if (!packageAssets) throw new Error('Account purpose fixture must have a valid empty Package Asset archive');
+    const release = normalizePluginReleaseFactsV1({ ref: { pluginId: manifest.id, version: manifest.version },
+      archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest, collectionContracts: [], uiSlots: [],
+      packageAssetArchive: packageAssets.descriptor });
+    const externalManifest = PluginPortableReleaseManifestV1Schema.parse({ ...manifest, id: externalService.pluginId,
+      hostAccess: { required: [], optional: [] }, contributes: { connectedAccountDescriptors: manifest.contributes.connectedAccountDescriptors } });
+    const externalRelease = normalizePluginReleaseFactsV1({ ...release, ref: { pluginId: externalManifest.id, version: externalManifest.version },
+      normalizedManifest: externalManifest });
+    let enabled = true;
+    let externalEnabled = true;
+    let current = true;
+    let writes = 0;
+    let machineCalls = 0;
+    let declarationReads = 0;
+    let stored: ConnectedPurposeCatalogV1 = { v: 1, bindings: [] };
+    const readIntentResponse = (selected = release) => PluginAvailabilityIntentReadActionOutputV1Schema.parse({ availabilityCursor: 1, hostingCapability: { enabled: false },
+      intent: { pluginId: selected.ref.pluginId, desiredVersion: selected.ref.version,
+        enabled: selected === release ? enabled : externalEnabled, offlineUiHosting: 'disabled', writableCollections: [], revision: '1' },
+      release: selected, uiArtifacts: [], packageAssets: [] });
+    readIntentResponse();
+    readIntentResponse(externalRelease);
+    const requests: Array<{ path: string; status: number }> = [];
+    const server = Fastify();
+    server.addHook('onResponse', async (request, reply) => { requests.push({ path: request.url, status: reply.statusCode }); });
+    server.addHook('onRequest', async request => { expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`); });
+    server.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async request => {
+      const { pluginId } = PluginAvailabilityIntentReadActionInputV1Schema.parse(request.body);
+      expect([manifest.id, externalManifest.id]).toContain(pluginId);
+      declarationReads += 1;
+      return readIntentResponse(pluginId === manifest.id ? release : externalRelease);
+    });
+    server.get('/v1/account/profile', async () => AccountProfileSchema.parse({ id: 'owner', connectedAccountsV4: [service, externalService].map(service => ({
+      ref: { ...target.account, service }, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuv', configurationReady: true, configurationRevision: null, scopes: [] })),
+      connectedAccountGroupsV4: [service, externalService].map(service => QualifiedConnectedAccountGroupV4Schema.parse({ v: 1,
+        ref: { service, groupId: 'owner-group' }, incarnation: 'group-lifetime', displayName: null, policy: {},
+        activeConnectedAccountId: target.account.accountId, generation: 1, runtimeStateRevision: 1, state: {}, createdAt: 1, updatedAt: 1,
+        members: [{ v: 1, connectedAccountId: target.account.accountId, enabled: true, priority: 1, state: {}, createdAt: 1, updatedAt: 1 }] })) }));
+    server.get('/v1/account/encryption/currentness', async () => ({ mode, version: 1, signingKeyFingerprint: mode === 'plain' ? null : 'signing',
+      contentKeyFingerprint: mode === 'plain' ? null : convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(snapshot.contentPublicKeyFingerprint), updatedAt: 1 }));
+    server.get('/v1/account/encryption', async () => ({ mode, updatedAt: 1 }));
+    server.get('/v2/account/settings', async () => ({ version: 1, content: mode === 'plain' ? { t: 'plain', v: {} }
+      : { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material, payload: {}, randomBytes: nacl.randomBytes }) } }));
+    server.get('/v2/account/settings/history', async () => ({ snapshots: [] }));
+    server.get(`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`, async () => ({ status: 'present', revision: writes + 1,
+      content: sealConnectedAccountCatalogContentV1({ ...storage, record: { key: 'purposes', value: stored } }) }));
+    server.post(`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`, async request => {
+      const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(request.body);
+      expect(mutation.expectedRevision).toBe(writes + 1);
+      if (mutation.content === null) throw new Error('Purpose default mutation must retain its catalog row');
+      expect(mutation.content.t).toBe(mode === 'plain' ? 'plain' : 'encrypted');
+      const opened = openConnectedAccountCatalogContentV1({ ...storage, key: 'purposes', content: mutation.content });
+      if (opened.status !== 'opened' || opened.record.key !== 'purposes') throw new Error('Purpose row must open for its owning Account');
+      stored = opened.record.value;
+      writes += 1;
+      return { status: 'updated', revision: writes + 1, cursor: writes + 1 };
+    });
+    const home = await server.listen({ host: '127.0.0.1', port: 0 });
+    const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: home, isCurrent: async () => current,
+      snapshot: { source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1,
+        loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) } });
+    const action = createCliConnectedServiceAction({ credentials, serverHttpBaseUrl: home, operationContext,
+      resolveHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }),
+      callMachineAction: async request => { expect(request).toMatchObject({ machineId: 'unavailable-machine', exactMachine: true });
+        machineCalls += 1; throw new Error('Named Machine is unavailable'); } });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), connectedServiceAction: action });
+    const execute = (input: unknown) => executor.execute('connectedServices.purposes.default.set', input,
+      { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+        presentUserConfirmation: { actionId: 'connectedServices.purposes.default.set' } });
+    try {
+      const admitted = await execute({ purpose, target });
+      expect(admitted, JSON.stringify({ admitted, declarationReads, writes, machineCalls, requests })).toMatchObject({ ok: true, result: { applied: true } });
+      expect(stored.bindings).toEqual([{ purpose, target }]);
+      expect(writes).toBe(1);
+      expect(machineCalls).toBe(0);
+      expect(declarationReads).toBe(1);
+      expect(await execute({ machineId: 'unavailable-machine', purpose, target }))
+        .toMatchObject({ ok: false, errorCode: 'connected_account_purpose_unavailable' });
+      expect(machineCalls).toBe(1);
+      expect(declarationReads).toBe(1);
+      const localGroup = { kind: 'group' as const, service, groupId: 'owner-group' };
+      expect(await execute({ purpose, target: localGroup })).toMatchObject({ ok: true, result: { applied: true } });
+      expect(stored.bindings).toEqual([{ purpose, target: localGroup }]);
+      // A local descriptor reuses the consumer's selection; a foreign service
+      // acquires exactly its own Account declaration without a registry scan.
+      expect(declarationReads).toBe(2);
+      const externalGroup = { ...localGroup, service: externalService };
+      expect(await execute({ purpose, target: externalGroup })).toMatchObject({ ok: true, result: { applied: true } });
+      expect(stored.bindings).toEqual([{ purpose, target: externalGroup }]);
+      expect(declarationReads).toBe(4);
+      externalEnabled = false;
+      expect(await execute({ purpose, target: externalGroup })).toMatchObject({ ok: false, errorCode: 'connected_account_purpose_unavailable' });
+      externalEnabled = true;
+      enabled = false;
+      expect(await execute({ purpose, target })).toMatchObject({ ok: false, errorCode: 'connected_account_purpose_unavailable' });
+      enabled = true;
+      expect(await execute({ purpose: { ...purpose, purpose: 'undeclared' }, target }))
+        .toMatchObject({ ok: false, errorCode: 'connected_account_purpose_unavailable' });
+      expect(await execute({ purpose, target: { kind: 'account', account: { ...target.account, accountId: 'other-person-profile' } } }))
+        .toMatchObject({ ok: false, errorCode: 'connected_account_purpose_unavailable' });
+      current = false;
+      expect(await execute({ purpose, target })).toMatchObject({ ok: false });
+      expect(writes).toBe(3);
+    } finally { await server.close(); }
+  });
+
   it.each(['resource', 'action'] as const)('admits %s purpose preferences only from the exact target daemon and active captured Account profile', async consumerKind => {
     const credentials: StoredCredentials = { token: 'resource-purpose', encryption: null };
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
@@ -1009,7 +1151,7 @@ describe('native connected-service Action adapter', () => {
       async approvalsUpdate({ request }) { storedApproval = request; return { ok: true }; },
       async isApprovalExecutionOriginCurrent() { return true; },
     };
-    const executor = createActionExecutor(deps as ActionExecutorDeps);
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
     const input = { account, machineId: 'work-machine', cleanupGroupReferences: false };
     const context = { surface: 'cli' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
       serverId: 'work-home', actionRequestId: 'credential-review:1' };

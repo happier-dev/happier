@@ -1610,7 +1610,7 @@ export async function sendSessionMessage(
     && (protectedAdmission.request.producer === 'cli' || protectedAdmission.request.producer === 'happierApp'
       || protectedAdmission.request.producer === 'voiceInput'
       || (protectedAdmission.request.producer === 'sessionAction' && params.executionAuthority === 'present_user'
-        && protectedAdmission.request.caller.kind === 'host' && !protectedAdmission.request.sourceSession
+        && protectedAdmission.request.caller?.kind === 'host' && !protectedAdmission.request.sourceSession
         && !protectedAdmission.request.actionRequestAttributionV1))) {
     // The preceding Home reads authenticate this credential. A routed send also
     // retains Home's admitted Account binding; the Machine custodian is never

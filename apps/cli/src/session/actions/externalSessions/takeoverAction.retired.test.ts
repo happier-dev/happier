@@ -58,7 +58,6 @@ describe('executeExternalSessionTakeoverAction retired route', () => {
             acquire: async () => ({
                 status: 'acquired',
                 claim: {
-                    renew: async () => true,
                     release,
                     record: { claimId: 'claim-linked-1' },
                 },

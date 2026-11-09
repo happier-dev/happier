@@ -20,14 +20,10 @@ import type {
   ResolveSessionUsageLimitRecoveryControlAdapter,
   SessionUsageLimitRecoveryControlAdapterParams,
 } from './sessionUsageLimitRecoveryControlTypes';
-import { deriveUsageLimitRecoveryTiming } from './deriveUsageLimitRecoveryTiming';
 import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { readLatestUsageLimitFailureIssue } from './readLatestUsageLimitFailureIssue';
-import { resolveUsageLimitRecoverySelectedAuthFromIssue } from './usageLimitRecoverySelectedAuth';
-import {
-  UsageLimitCheckNowRateLimiter,
-  USAGE_LIMIT_CHECK_NOW_RATE_LIMITED_CODE,
-} from './usageLimitCheckNowRateLimiter';
+import { buildRecoveryIntentFromLatestUsageLimitIssue } from './buildUsageLimitRecoveryIntent';
+export { buildRecoveryIntentFromLatestUsageLimitIssue, buildRecoveryIntentFromUsageLimitIssue } from './buildUsageLimitRecoveryIntent';
 import {
   buildUsageLimitRecoveryOperationError,
   buildUsageLimitRecoveryOperationSuccess,
@@ -39,7 +35,7 @@ import {
 } from './persistUsageLimitRecoveryFieldDurably';
 import { resolveRoutedUsageLimitRecoveryResumePromptMode } from './resolveRoutedUsageLimitRecoveryResumePromptMode';
 import { hasSameUsageLimitRecoveryIdentity } from './mergeUsageLimitRecoveryIntent';
-import { createBackoffSessionUsageLimitRecoveryControlAdapter, DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from './createBackoffSessionUsageLimitRecoveryControlAdapter';
+import { createBackoffSessionUsageLimitRecoveryControlAdapter } from './createBackoffSessionUsageLimitRecoveryControlAdapter';
 import type { UsageLimitContinuationResult } from '@/daemon/connectedServices/continuation/continueSessionAfterUsageLimitReset';
 import { readRuntimeAuthUsageLimitRecoveryAttemptId, routeRuntimeAuthUsageLimitRecoveryCheckNow, type CheckRuntimeAuthUsageLimitRecovery } from './runtimeAuthUsageLimitRecoveryControl';
 
@@ -126,23 +122,6 @@ function stableError(
   );
 }
 
-const inactiveCheckNowRateLimiter = new UsageLimitCheckNowRateLimiter({ nowMs: () => Date.now() });
-
-function stableRateLimitedError(
-  retryAfterMs: number,
-  sessionId: string,
-): ReturnType<typeof normalizeUsageLimitRecoveryOperationResult> {
-  return normalizeUsageLimitRecoveryOperationResult(
-    {
-      ok: false,
-      errorCode: USAGE_LIMIT_CHECK_NOW_RATE_LIMITED_CODE,
-      error: USAGE_LIMIT_CHECK_NOW_RATE_LIMITED_CODE,
-      retryAfterMs,
-    },
-    { sessionId },
-  );
-}
-
 function readString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -179,11 +158,9 @@ function shouldFallbackFromLiveSessionUsageLimitRpc(result: unknown): boolean {
   return errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
     || errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
     || errorCode === 'unsupported_session_runtime_method'
-    || errorCode === 'session_rpc_failed'
     || error === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
     || error === RPC_ERROR_CODES.METHOD_NOT_FOUND
-    || error === 'unsupported_session_runtime_method'
-    || error === 'session_rpc_failed';
+    || error === 'unsupported_session_runtime_method';
 }
 
 function buildAdapterParams(
@@ -296,36 +273,6 @@ function isRetryableTemporaryThrottleIssue(rawSession: RawSessionRecord): boolea
   return issueParsed.success
     && issueParsed.data.temporaryThrottle?.v === 1
     && issueParsed.data.temporaryThrottle.recoverability === 'retry';
-}
-
-export function buildRecoveryIntentFromLatestUsageLimitIssue(params: Readonly<{
-  rawSession: RawSessionRecord;
-  issueFingerprint?: string;
-  connectedServices?: unknown;
-  resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
-}>): SessionUsageLimitRecoveryV1 | null {
-  if (params.rawSession.latestTurnStatus != null && params.rawSession.latestTurnStatus !== 'failed') return null;
-  const issue = readLatestUsageLimitFailureIssue(params.rawSession);
-  return issue ? buildRecoveryIntentFromUsageLimitIssue({ ...params, issue }) : null;
-}
-
-export function buildRecoveryIntentFromUsageLimitIssue(params: Readonly<{
-  issue: SessionRuntimeIssueV1;
-  issueFingerprint?: string;
-  connectedServices?: unknown;
-  resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
-}>): SessionUsageLimitRecoveryV1 | null {
-  const issue = params.issue;
-  if (issue.source !== 'usage_limit' || !issue.usageLimit) return null;
-  const selectedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({ issue,
-    connectedServices: params.connectedServices ?? null }) ?? { kind: 'native' as const };
-  const timing = deriveUsageLimitRecoveryTiming({ occurredAtMs: issue.occurredAt,
-    resetAtMs: issue.usageLimit.resetAtMs, retryAfterMs: issue.usageLimit.retryAfterMs });
-  return { v: 1, status: 'waiting', resumePromptMode: params.resumePromptMode ?? 'standard',
-    issueFingerprint: params.issueFingerprint ?? buildUsageLimitIssueFingerprint(issue),
-    armedAtMs: issue.occurredAt, resetAtMs: timing.resetAtMs,
-    nextCheckAtMs: timing.nextCheckAtMs ?? issue.occurredAt + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
-    attemptCount: 0, maxAttempts: 3, lastProbeError: null, selectedAuth };
 }
 
 async function buildEnabledRecoveryIntent(
@@ -620,7 +567,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
     ?? resolveAgentIdFromSessionMetadata(adapterMetadata);
   const adapter = liveProbeResult ? null : await (params.resolveAdapter ?? resolveInactiveSessionUsageLimitRecoveryControls)(adapterAgentId);
   const recovery = parseRecoveryIntent(adapterMetadata, params.rawSession);
-  const dueAtMs = recovery?.nextCheckAtMs ?? recovery?.resetAtMs;
+  const dueAtMs = recovery?.nextCheckAtMs;
   const timedAdapter = operation === 'check_now' && (!adapter?.checkNow
     || (typeof dueAtMs === 'number' && dueAtMs <= Date.now()))
     ? createBackoffSessionUsageLimitRecoveryControlAdapter({
@@ -632,11 +579,6 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
   if (!liveProbeResult && !control) {
     return stableError('session_usage_limit_recovery_control_provider_unsupported', params.sessionId);
   }
-  if (!liveProbeResult) {
-    const rateLimit = inactiveCheckNowRateLimiter.check(`${params.sessionId}\0${adapterAgentId ?? 'unknown'}\0${operation}`);
-    if (!rateLimit.allowed) return stableRateLimitedError(rateLimit.retryAfterMs, params.sessionId);
-  }
-
   const intendedIntent = parseRecoveryIntent(adapterMetadata);
   const probeResult = liveProbeResult ?? await control!(buildAdapterParams(
     params, adapterMetadata, context.sessionMachineId, resumePromptMode, requestIssueFingerprint ?? undefined,
@@ -663,7 +605,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
         nextCheckAtMs: normalizedProbe.status === 'ready'
           ? resumePromptMode === 'off' ? null : Date.now()
           : retryAfterMs !== null ? Date.now() + retryAfterMs
-            : probeRecovery.nextCheckAtMs ?? probeRecovery.resetAtMs ?? Date.now() + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
+            : probeRecovery.nextCheckAtMs,
       } } }
     : { ...normalizedProbe, ...(readMetadataResult(probeResult) ? { metadata: readMetadataResult(probeResult) } : {}) };
   const result = await persistAdapterMetadataResult(params, preparedResult);
@@ -692,7 +634,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
       const current = parseRecoveryIntent(currentMetadata);
       return !current || current.status === 'cancelled' || current.status === 'exhausted' ? currentMetadata : {
         ...currentMetadata, [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: { ...current, status: 'waiting',
-          nextCheckAtMs: Date.now() + DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS,
+          nextCheckAtMs: null,
           lastProbeError: 'session_usage_limit_recovery_resume_failed' } };
     });
     return { ...stableError('session_usage_limit_recovery_resume_failed', params.sessionId), metadata: retryMetadata };

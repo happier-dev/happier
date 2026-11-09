@@ -252,7 +252,7 @@ describe('runner skill resolution', () => {
         writeRecord: async () => { throw new Error('No reach write requested'); } },
       readRegistryItem: registry.readRegistryItem, readRegistrySource: registry.readRegistrySource,
       fetchRegistrySkillFiles: registry.filesForPointer, readLinkSkills: registry.readLinkSkills, fetchLinkSkillFiles: registry.fetchLinkSkillFiles,
-      includeInSession: async () => ({ ok: true }) });
+      includeInSession: async () => ({ ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } }) });
     const imported = kind === 'upload' ? { kind, files: sourceFiles.map(file => ({ path: file.path, contentKind: 'utf8', contentBase64: file.bytes.toString('base64') })) }
       : kind === 'link' || kind === 'folder-link' ? { kind: 'link', url: kind === 'folder-link' ? `${source.url}/tree/${commit}/skills/a` : source.url }
         : { kind, sourceId: source.id, itemId: 'a', version: commit };
@@ -552,7 +552,7 @@ describe('runner skill resolution', () => {
         ruleWriteContext: () => ({ nowMs: 1, newId: () => 'unused' }),
         readCatalog: async () => ({ catalog: input.accountSnapshot!.promptLibraryCatalog! }),
         writeRecord: async () => { throw new Error('Rules write unavailable'); } },
-      includeInSession: async () => ({ ok: true }),
+      includeInSession: async () => ({ ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } }),
     });
     const selectedInput = { ...input, sessionMetadata: { skillSelectionV1: {
       v: 1, forceIncludeSkillIds: ['library'], forceExcludeSkillIds: [], excludeNativeSkillNames: [],

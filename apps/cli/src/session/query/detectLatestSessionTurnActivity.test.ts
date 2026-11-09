@@ -61,10 +61,12 @@ describe('detectLatestSessionTurnActivity', () => {
       turnInFlight: false,
     });
 
-    expect(fetchSessionById).toHaveBeenCalledWith({
+    expect(fetchSessionById).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'session-query',
       token: 'token',
       sessionId: 'sess-1',
-    });
+      signal: expect.any(AbortSignal),
+    }));
     expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
     expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
   });
@@ -100,10 +102,12 @@ describe('detectLatestSessionTurnActivity', () => {
       turnInFlight: true,
     });
 
-    expect(fetchSessionById).toHaveBeenCalledWith({
+    expect(fetchSessionById).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'session-query',
       token: 'token',
       sessionId: 'sess-1',
-    });
+      signal: expect.any(AbortSignal),
+    }));
     expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
     expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
   });

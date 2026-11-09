@@ -18,6 +18,38 @@ import {
 } from '@happier-dev/protocol';
 
 describe('sendSessionMessage', () => {
+    it('admits causal Session input without an optional caller through its source Machine', async () => {
+        const { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture } = await import('@/testkit/backends/sessionFixtures');
+        const { runWithServerHttpBaseUrl } = await import('@/api/client/serverHttpBaseUrl');
+        const { sendSessionMessage } = await import('./sendSessionMessage');
+        const sessionId = 'c111111111111111111111111';
+        const sourceSessionId = 'c222222222222222222222222';
+        const serverUrl = 'https://causal-admission.test';
+        const session = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain', metadataLayoutVersion: 1,
+            metadata: JSON.stringify({ v: 1 }), share: null,
+            ownerMetadata: { t: 'plain', v: { v: 1, workspace: { path: '/repo', machineId: 'machine-session' } } } });
+        // Home HTTP and authenticated Machine admission are the system boundaries.
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (String(url) === `${serverUrl}/v2/sessions/${sessionId}`) return { status: 200, data: { session } };
+            if (String(url).endsWith('/messages/reply-capability')) return { status: 200, data: { v: 1, protocolVersions: [1] } };
+            throw new Error('Unexpected Home read');
+        });
+        const localId = 'causal-session-input';
+        const result = await runWithServerHttpBaseUrl(serverUrl, () => sendSessionMessage({
+            credentials: { token: 'token', encryption: null }, idOrPrefix: sessionId,
+            message: 'Session input', localId, wait: false, timeoutMs: 10_000, executionAuthority: 'present_user',
+            inputAdmission: {
+                request: { v: 1, producer: 'sessionAction',
+                    sourceSession: { sourceSessionId, sourceTurnId: 'source-turn', via: 'action' }, permission: {} },
+                provenance: { v: 1, kind: 'happierSession', sourceSessionId, via: 'action' },
+            },
+            machineAdmissionTransport: async () => ({ status: 'accepted', localId }),
+        }));
+        expect(result).toEqual(expect.objectContaining({ ok: true,
+            admissionResult: expect.objectContaining({ status: 'accepted', localId }) }));
+    });
+
     it('carries a protected Workflow binding through Machine admission without a Discussion destination', async () => {
         const { createSessionRecordFixture, createAccountEncryptionCurrentnessFixture } = await import('@/testkit/backends/sessionFixtures');
         const { runWithServerHttpBaseUrl } = await import('@/api/client/serverHttpBaseUrl');

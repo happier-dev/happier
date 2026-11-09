@@ -224,7 +224,8 @@ export function createCliApprovalCreation(params: Readonly<{
           if (!artifact) return null;
           const existing = readBuiltInApprovalArtifact(artifact.header, artifact.body);
           const subject = existing ? readDiscussionReplyApprovalSubject(existing) : null;
-          if (artifact.access !== 'owner' || existing?.v !== 2 || !subject || !sameStrictJsonValue(subject, discussionReply)) {
+          if (artifact.access !== 'owner' || existing?.v !== 2 || existing.actionId !== 'discussion.reply'
+            || !subject || !sameStrictJsonValue(subject, discussionReply)) {
             throw Object.assign(new Error('approval_request_subject_mismatch'), { code: 'subject_mismatch' });
           }
           if (existing?.v === 2 && request.v === 2

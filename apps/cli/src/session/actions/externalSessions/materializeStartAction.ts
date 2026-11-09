@@ -9,20 +9,18 @@ import {
 import {
   resolveCurrentExternalSessionAgentIdentity,
 } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
-import { readStoredCredentials } from '@/persistence';
 
 import type {
   ExternalSessionMaterializeActionExecutor,
+  ExternalSessionMaterializeAccountAdmission,
+  ExternalSessionMaterializeSourceAdmission,
 } from './materializeAction';
 import {
   ExternalSessionOperationRecordReadError,
-  resolveExternalSessionOperationAdmissionAccountScope,
+  captureExternalSessionOperationAccountAdmission,
   resolveExternalSessionOperationStartAdmission,
   type ExternalSessionOperationAccountScope,
 } from './operationRecordStore';
-import {
-  readExternalSessionOperationSharedPresentation,
-} from './operationProgressPublisher';
 import {
   resolveOccurrenceBoundExternalSessionFollowSurface,
 } from './providerOpsResolution';
@@ -67,18 +65,15 @@ type MaterializeStartDependencies = Readonly<{
      * Pinned authenticated Account scope captured at admission. When the
      * provider supplies it, admission resolves inside that Account's
      * partition, and the pin is carried into the materialize executor so
-     * every record/staging effect verifies the ambient Account still
-     * matches (A→B rotation fails closed).
+     * every admitted record/staging effect stays in the captured partition.
      */
     accountScope?: ExternalSessionOperationAccountScope | null,
   ): ReturnType<typeof resolveExternalSessionOperationStartAdmission>;
-  /**
-   * Captures the exact authenticated Account scope at the admission boundary.
-   * Captured once per Start call and shared by admission resolution and the
-   * carried executor effects.
-   */
-  resolveAdmissionAccountScope?(): Promise<ExternalSessionOperationAccountScope | null>;
-  describeSession(intent: MaterializeStartIntent): Promise<MaterializeSemanticRequest>;
+  describeSession(intent: MaterializeStartIntent, accountAdmission?: ExternalSessionMaterializeAccountAdmission): Promise<Readonly<{
+    request: MaterializeSemanticRequest;
+    accountScope?: ExternalSessionOperationAccountScope;
+    sourceAdmission?: ExternalSessionMaterializeSourceAdmission;
+  }>>;
   startSemanticRequest:
     ExternalSessionMaterializeActionExecutor['start'];
 }>;
@@ -88,6 +83,7 @@ export type ExternalSessionMaterializeStartActionExecutor = Readonly<{
     input: unknown,
     context?: Readonly<{
       signal?: AbortSignal;
+      accountAdmission?: ExternalSessionMaterializeAccountAdmission;
       authorIntent?: Extract<
         ExternalSessionOperationAuthorIntentV1,
         { kind: 'materialize' }
@@ -128,18 +124,22 @@ export function createExternalSessionMaterializeStartActionExecutor(
     request: MaterializeSemanticRequest,
     context?: Readonly<{
       signal?: AbortSignal;
+      accountAdmission?: ExternalSessionMaterializeAccountAdmission;
       authorIntent?: Extract<
         ExternalSessionOperationAuthorIntentV1,
         { kind: 'materialize' }
       >;
     }>,
     accountScope?: ExternalSessionOperationAccountScope | null,
+    sourceAdmission?: ExternalSessionMaterializeSourceAdmission,
   ): Promise<ExternalSessionOperationActionResponseV1> => {
     return await acknowledgeExternalSessionOperationAdmission((onAdmitted) =>
       dependencies.startSemanticRequest({ request }, {
         ...(context?.signal ? { signal: context.signal } : {}),
         ...(context?.authorIntent ? { authorIntent: context.authorIntent } : {}),
+        ...(context?.accountAdmission ? { accountAdmission: context.accountAdmission } : {}),
         ...(accountScope ? { accountScope } : {}),
+        ...(sourceAdmission ? { sourceAdmission } : {}),
         onAdmitted,
       }), 'materialize.start');
   };
@@ -152,11 +152,14 @@ export function createExternalSessionMaterializeStartActionExecutor(
       }
       const intent = parsed.data.request as unknown as MaterializeStartIntent;
       let request: MaterializeSemanticRequest;
+      let admissionAccountScope: ExternalSessionOperationAccountScope | undefined;
+      let sourceAdmission: ExternalSessionMaterializeSourceAdmission | undefined;
       try {
         // Source authorization intentionally precedes receipt/conflict lookup:
         // receipt identity is Account-private and must not be observable to a
         // caller that cannot currently read this linked Session.
-        request = await dependencies.describeSession(intent);
+        ({ request, accountScope: admissionAccountScope, sourceAdmission } =
+          await dependencies.describeSession(intent, context?.accountAdmission));
       } catch (error) {
         if (
           error instanceof Error
@@ -178,13 +181,6 @@ export function createExternalSessionMaterializeStartActionExecutor(
           'Linked external session identity changed.',
         );
       }
-      // Capture the exact authenticated Account at the admission boundary, once
-      // per Start call. Both the admission resolution below and the carried
-      // executor effects use this pin, so a rotation after admission can never
-      // let one call resolve into two different Account partitions.
-      const admissionAccountScope = dependencies.resolveAdmissionAccountScope
-        ? await dependencies.resolveAdmissionAccountScope()
-        : null;
       let admission: Awaited<ReturnType<
         MaterializeStartDependencies['resolveAdmission']
       >>;
@@ -241,10 +237,10 @@ export function createExternalSessionMaterializeStartActionExecutor(
             'Materialization idempotency request changed.',
           );
         }
-        return await admitDurableOperation(existing, context, admissionAccountScope);
+        return await admitDurableOperation(existing, context, admissionAccountScope, sourceAdmission);
       }
 
-      return await admitDurableOperation(request, context, admissionAccountScope);
+      return await admitDurableOperation(request, context, admissionAccountScope, sourceAdmission);
     };
 
   return Object.freeze({
@@ -272,15 +268,9 @@ export function createDefaultExternalSessionMaterializeStartActionExecutor(
     activeServerDir: string;
     machineId?: string;
     materialize: ExternalSessionMaterializeActionExecutor;
-    nowMs?: () => number;
   }>,
 ): ExternalSessionMaterializeStartActionExecutor {
-  const nowMs = input.nowMs ?? Date.now;
   return createExternalSessionMaterializeStartActionExecutor({
-    resolveAdmissionAccountScope: async () =>
-      await resolveExternalSessionOperationAdmissionAccountScope(
-        input.activeServerDir,
-      ),
     resolveAdmission: async (intent, authorIntent, accountScope) =>
       await resolveExternalSessionOperationStartAdmission({
         activeServerDir: input.activeServerDir,
@@ -288,15 +278,13 @@ export function createDefaultExternalSessionMaterializeStartActionExecutor(
         intent,
         ...(authorIntent ? { authorIntent } : {}),
         ...(accountScope ? { accountScope } : {}),
-        nowMs: nowMs(),
-        readSelectedPresentation:
-          readExternalSessionOperationSharedPresentation,
       }),
-    describeSession: async (intent) => {
-      const credentials = await readStoredCredentials();
-      if (!credentials) {
+    describeSession: async (intent, accountAdmission) => {
+      const admission = accountAdmission ?? await captureExternalSessionOperationAccountAdmission(input.activeServerDir);
+      if (!admission) {
         throw new Error('external_session_materialize_start_unauthenticated');
       }
+      const { credentials, accountScope } = admission;
       const loaded = await loadLinkedExternalSession({
         credentials,
         sessionId: intent.sessionId,
@@ -343,23 +331,24 @@ export function createDefaultExternalSessionMaterializeStartActionExecutor(
         maxBytes: 512 * 1024,
         maxItems: 1,
       });
-      if (resolved.resource.retirementSignal?.aborted) {
-        throw new Error('external_session_materialize_start_source_changed');
-      }
       const sourceSnapshotEvidenceRef = JSON.stringify({
         qualifiedIdentity,
         tailCursor: firstPage.tailCursor,
       });
       return {
-        ...intent,
-        source: {
-          machineId: linked.machineId,
-          remoteSessionId: linked.remoteSessionId,
-          qualifiedIdentity,
-          linkGeneration: linked.linkGeneration,
-          sourceGeneration:
-            createExternalSessionSourceGenerationAnchor(sourceSnapshotEvidenceRef),
-          sourceCustody: resolved.sourceCustody,
+        ...(accountScope ? { accountScope } : {}),
+        sourceAdmission: { credentials, linked, ...(accountScope ? { accountScope } : {}) },
+        request: {
+          ...intent,
+          source: {
+            machineId: linked.machineId,
+            remoteSessionId: linked.remoteSessionId,
+            qualifiedIdentity,
+            linkGeneration: linked.linkGeneration,
+            sourceGeneration:
+              createExternalSessionSourceGenerationAnchor(sourceSnapshotEvidenceRef),
+            sourceCustody: resolved.sourceCustody,
+          },
         },
       };
     },

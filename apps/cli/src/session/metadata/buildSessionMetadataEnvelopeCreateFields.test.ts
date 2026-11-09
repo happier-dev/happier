@@ -47,6 +47,21 @@ const metadata = {
 };
 
 describe('buildSessionMetadataEnvelopeCreateFields', () => {
+  it.each(['plain', 'e2ee'] as const)('publishes only non-content timing beside a %s create tuple', storedContentMode => {
+    const fields = buildSessionMetadataEnvelopeCreateFields({
+      credentials, accountEncryptionMode: 'e2ee', metadata,
+      agentState: { requests: { privateRequestId: { tool: 'Private tool', turnId: 'turn-private', arguments: { secret: 'Private arguments' }, createdAt: 120 } },
+        completedRequests: { privateCompletionId: { tool: 'Private tool', arguments: {}, createdAt: 10, completedAt: 80, status: 'approved' } } },
+      ...(storedContentMode === 'plain' ? { storedContentMode } : { storedContentMode,
+        encryptionKey: new Uint8Array(32).fill(19), encryptionVariant: 'dataKey' as const }),
+    });
+    expect(Reflect.get(fields, 'usageTimingV1')).toEqual({ v: 1,
+      metadata: { v: 1, minMs: null, maxMs: null }, agentState: { v: 1, minMs: 10, maxMs: null } });
+    expect(JSON.stringify(Reflect.get(fields, 'usageTimingV1'))).not.toContain('Private');
+    expect(JSON.stringify(Reflect.get(fields, 'usageTimingV1'))).not.toContain('privateRequestId');
+    expect(fields.ownerMetadata.t).toBe('encrypted');
+  });
+
   it('creates the authoritative full tuple with withdrawn display when display sealing fails', () => {
     const warning = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     vi.mocked(randomBytes).mockImplementationOnce(() => { throw new Error('display randomness unavailable'); });

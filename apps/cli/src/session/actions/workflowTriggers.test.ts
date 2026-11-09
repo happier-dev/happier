@@ -7,7 +7,7 @@ import { AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPT
 const network = vi.hoisted(() => ({ currentness: vi.fn(), session: vi.fn(), list: vi.fn(), get: vi.fn(), create: vi.fn(), reconcile: vi.fn(), remove: vi.fn() }));
 // These are network transport adapters; Workflow semantics and the Account codec remain real.
 vi.mock('@/api/client/connectedServiceCredentialApi', () => ({ fetchAccountEncryptionCurrentness: network.currentness }));
-vi.mock('@/api/automations', () => ({ listAutomationDefinitions: network.list, getAutomationDefinition: network.get,
+vi.mock('@/api/automations', () => ({ listAutomationDefinitions: network.list, listAutomationDefinitionDetails: network.list, getAutomationDefinition: network.get,
   createAutomationDefinition: network.create, reconcileAutomationDefinition: network.reconcile, deleteAutomationDefinition: network.remove }));
 vi.mock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionById: network.session }));
 
@@ -51,7 +51,7 @@ describe('CLI workflow trigger Account codec', () => {
     });
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
     const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) } },
-      resolveWorkflow: async () => definition,
+      resolveWorkflow: async () => ({ definition }),
       resolveSession: async () => ({ project: { machineId: 'machine', directory: '/repo' }, nativeGoalOwner: false,
         executionSelection: { agentTarget: definition.defaults!.agentTarget! } }) });
     expect((await actions.list({ scope: 'account_all' })).sets[0]).toMatchObject({ enabled: false, health: 'source_unavailable',
@@ -64,7 +64,7 @@ describe('CLI workflow trigger Account codec', () => {
     expect(reviewed).toMatchObject({ health: 'available', legacy: { lockedReason: 'review_required' },
       target: { definition: { defaults: { conversation: { sessionId: 'session-old' } } } } });
     expect(stored.executionRecipe).toBeUndefined();
-    const keyless = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition });
+    const keyless = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => ({ definition }) });
     await expect(keyless.list({ review: true, automationId: stored.id }, caller))
       .rejects.toMatchObject({ code: 'session_key_required' });
     if (!reviewed.target || !reviewed.project) throw new Error('review_did_not_open_source');
@@ -86,7 +86,7 @@ describe('CLI workflow trigger Account codec', () => {
       return stored;
     });
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
-    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition });
+    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => ({ definition }) });
     expect((await actions.list({ scope: 'account_all' })).sets[0]).toMatchObject({ automationId: 'automation-old',
       revision: 2, health: 'available', context: { workspace: { directory: '/repo' } } });
     expect(stored.id).toBe('automation-old');
@@ -95,7 +95,7 @@ describe('CLI workflow trigger Account codec', () => {
   it('writes a keyless plain Account inline payload through the Automation owner', async () => {
     network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
-    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition });
+    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => ({ definition }) });
     const written = await actions.add({ target: { kind: 'inline', definition }, project: { machineId: 'machine', directory: '/work' }, trigger });
     expect(written.set.health).toBe('available');
     expect(written.set.context).toMatchObject({ inlineDefinition: definition, executionTarget: { kind: 'session' } });
@@ -108,7 +108,7 @@ describe('CLI workflow trigger Account codec', () => {
       contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint), updatedAt: 1 });
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
     const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: { type: 'legacy', secret } },
-      resolveWorkflow: async () => definition });
+      resolveWorkflow: async () => ({ definition }) });
     const written = await actions.add({ target: { kind: 'inline', definition }, project: { machineId: 'machine', directory: '/work' }, trigger });
     expect(stored.executionRecipe?.v === 2 && stored.executionRecipe.workflow.t).toBe('encrypted');
     expect(written.set.context?.inlineDefinition).toEqual(definition);
@@ -124,7 +124,7 @@ describe('CLI workflow trigger Account codec', () => {
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
     const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token',
       encryption: mode === 'plain' ? null : { type: 'legacy', secret } },
-      resolveWorkflow: async () => definition, resolveWorkflowTeamIds: async () => ['team-one', 'team-two'] });
+      resolveWorkflow: async () => ({ definition }), resolveWorkflowTeamIds: async () => ['team-one', 'team-two'] });
     const input = { workflow: '11111111-1111-4111-8111-111111111111', project: { machineId: 'machine', directory: '/work' }, trigger };
     await expect(actions.add(input)).rejects.toMatchObject({ code: 'visible_team_not_granted' });
     expect(network.create).not.toHaveBeenCalled();
@@ -135,7 +135,7 @@ describe('CLI workflow trigger Account codec', () => {
   it('keeps scoped trigger writes in the authorized Session and the keyless Account codec', async () => {
     network.currentness.mockResolvedValue({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
-    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => definition,
+    const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => ({ definition }),
       resolveSession: async () => ({ project: { machineId: 'session-machine', directory: '/session-work' }, nativeGoalOwner: false }) });
     const written = await actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition }, trigger,
       onComplete: { kind: 'originating_session' } });

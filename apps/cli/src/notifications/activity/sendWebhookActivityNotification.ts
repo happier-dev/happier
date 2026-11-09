@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { assertCredentialRequestRedirectAllowed } from '@happier-dev/cli-common/homeTarget';
 import { lookup } from 'node:dns/promises';
 
 import { assessEndpointHostLocality, ProviderEndpointSafetyError } from '@happier-dev/protocol/providers/safety/url';
@@ -174,7 +175,7 @@ export async function postWebhookJsonAsync(params: Readonly<{
 
 export async function sendWebhookActivityNotificationAsync(params: Readonly<{
   channel: WebhookNotificationChannelRecordV1;
-  event: ActivityNotificationEvent;
+  event: Exclude<ActivityNotificationEvent, { topic: 'plugin_notification' }>;
   savedSecretMaterializer?: SavedSecretMaterializerV1;
   assertCurrent?: () => void | Promise<void>;
   nowMs?: () => number;
@@ -242,12 +243,7 @@ export async function sendWebhookActivityNotificationAsync(params: Readonly<{
     },
     signal: params.signal, wallTimeMs: WEBHOOK_REQUEST_WALL_TIME_MS, ...(params.network ? { network: params.network } : {}) });
   response.cancel();
-  if (response.status >= 300 && response.status < 400) {
-    // Following the hop would dispatch the signed payload to a destination this
-    // admission never saw. A next hop is the destination operator's request, so
-    // it must be reconfigured as the channel URL rather than followed here.
-    throw new Error('Webhook notification destination returned a redirect');
-  }
+  assertCredentialRequestRedirectAllowed(response.status);
   if (response.status < 200 || response.status >= 300) {
     throw createHttpStatusError(response.status, `Webhook notification failed with status ${response.status}`);
   }

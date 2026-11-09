@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { stageSessionMediaMetadataForHistoricalImport } from '@/session/media/adoption';
 import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
+import { resolveExternalSessionOperationAccountScope } from '@/session/actions/externalSessions/operationRecordStore';
 
 import {
     classifyExternalSessionStagingSourceRead,
@@ -1413,6 +1414,24 @@ describe('operation-private External Sessions staging', () => {
         expect(await restarted.readCapturedSource({
             operationId: 'operation-account-a',
         })).toEqual({ status: 'missing' });
+        const admittedScope = resolveExternalSessionOperationAccountScope(activeServerDir, accountToken('account-a'))!;
+        const admittedRead = () => createExternalSessionOperationPrivateStagingStore({
+            activeServerDir,
+            limits: {
+                perOperation: { maxItems: 10, maxBytes: 10_000 },
+                aggregate: { maxItems: 1, maxBytes: bytes },
+            },
+        });
+        // A retained operation already admitted under A keeps A's staging even
+        // when B becomes ambient before its first read in a restarted process.
+        expect(await admittedRead().readCapturedSource({
+            operationId: 'operation-account-a',
+            accountScope: admittedScope,
+        })).toEqual({ status: 'ready', capturedSource });
+        expect(await admittedRead().readReplayState('operation-account-a', admittedScope)).toMatchObject({
+            status: 'capture_incomplete',
+            acknowledgedItemCount: 0,
+        });
         useAccount('account-a');
         expect(await createExternalSessionOperationPrivateStagingStore({
             activeServerDir,

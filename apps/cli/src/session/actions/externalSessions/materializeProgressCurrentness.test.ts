@@ -252,8 +252,8 @@ function installMetadataMigrationCas(
         rawSession.metadata = patch.sharedMetadata.ciphertext;
         rawSession.metadataVersion += 1;
         rawSession.ownerMetadata = patch.ownerMetadata;
+        if (rawSession.agentState !== patch.agentState.ciphertext) rawSession.agentStateVersion += 1;
         rawSession.agentState = patch.agentState.ciphertext;
-        rawSession.agentStateVersion += 1;
         return {
           success: true as const,
           metadataLayoutVersion: 1 as const,
@@ -560,7 +560,10 @@ describe('materialize semantic currentness after operation progress publication'
       v: 1,
       progress: expectedProgress,
     });
-    expect(boundaryMocks.patchSessionMetadataEnvelopeTuple).toHaveBeenCalledOnce();
+    expect(boundaryMocks.patchSessionMetadataEnvelopeTuple.mock.calls.map(([input]) => input.patch)).toMatchObject([
+      { mode: 'owner_migration', source: { metadata: { version: 7 } } },
+      { mode: 'owner', sharedMetadata: { expectedVersion: 8 } },
+    ]);
     expect(boundaryMocks.patchSessionMetadata).not.toHaveBeenCalled();
     await expect(readExternalSessionOperationRecord(
       activeServerDir,
@@ -614,13 +617,12 @@ describe('materialize semantic currentness after operation progress publication'
       publishProgress,
     });
 
-    const publicActions = [
+    const revisionBoundActions = [
       executor.resume,
       executor.retry,
-      executor.cancel,
       executor.discard,
     ] as const;
-    for (const action of publicActions) {
+    for (const action of revisionBoundActions) {
       await expect(action({
         ...publicReference,
         revision: publicReference.revision + 1,
@@ -636,6 +638,15 @@ describe('materialize semantic currentness after operation progress publication'
         error: { code: 'operation_not_found' },
       });
     }
+    // Stop targets the current exact operation; only its Session identity is
+    // a precondition, unlike revision-bound resume/retry/discard updates.
+    await expect(executor.cancel({
+      ...publicReference,
+      sessionId: 'session-other',
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'operation_not_found' },
+    });
     expect(acquire).not.toHaveBeenCalled();
     expect(describeSource).not.toHaveBeenCalled();
     expect(sendHistoricalCommand).not.toHaveBeenCalled();
@@ -699,7 +710,7 @@ describe('materialize semantic currentness after operation progress publication'
       sessionId: initial.request.sessionId,
       progress: projectExternalSessionOperationProgressV1(initial),
     });
-    expect(rawSession.metadataVersion).toBe(8);
+    expect(rawSession.metadataVersion).toBe(9);
 
     const commands: ExternalSessionOperationSocketCommandV1[] = [];
     const executor = createExternalSessionMaterializeActionExecutor({

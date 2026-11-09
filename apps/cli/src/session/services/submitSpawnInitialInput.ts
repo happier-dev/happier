@@ -25,6 +25,7 @@ export async function submitSpawnInitialInput(params: Readonly<{
   localId: string;
   initialInputHandoff?: ReturnType<NonNullable<CreateSpawnedSessionParams['buildInitialInputHandoff']>>;
   machineAdmissionTransport?: CreateSpawnedSessionParams['machineAdmissionTransport'];
+  authorizeRequest?: CreateSpawnedSessionParams['authorizeRequest'];
   callerInputAuthorization?: ExternalActionExecutionAuthorizationV1;
   resumeInactiveSession?: false;
   rejoinSession?: RawSessionRecord;
@@ -106,6 +107,7 @@ export async function submitSpawnInitialInput(params: Readonly<{
       ...(params.machineAdmissionTransport
         ? { machineAdmissionTransport: params.machineAdmissionTransport }
         : {}),
+      ...(params.authorizeRequest ? { resolveAuthorizationHeaders: params.authorizeRequest } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
     });
     const disposition = sent.admissionResult;
@@ -137,3 +139,4 @@ export async function submitSpawnInitialInput(params: Readonly<{
     };
   }
 }
+

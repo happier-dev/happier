@@ -9,11 +9,12 @@ import {
   resolveExternalSessionOperationTimelineV1,
   type ExternalSessionOperationRecordV1,
 } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   mutateExternalSessionOperationRecordAtRevision,
   readExternalSessionOperationRecord,
+  resolveExternalSessionOperationAccountScope,
   writeExternalSessionOperationRecord,
 } from './operationRecordStore';
 import {
@@ -31,6 +32,7 @@ import { createPersistedTakeoverAdmissionWaiter } from '@/daemon/spawn/persisted
 import type {
   ExternalSessionOperationExclusion,
 } from '@/session/external/operationExclusion';
+import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
 import type {
   ResolvedExternalTakeoverSpawn,
 } from '@/api/session/external/takeover/resolveExternalTakeoverSpawnOptions';
@@ -40,6 +42,15 @@ import type {
 } from '@/session/shared/spawnSessionContract';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { logger } from '@/ui/logger';
+
+const ambientCredentials = vi.hoisted(() => ({
+  current: null as Readonly<{ token: string; encryption: null }> | null,
+}));
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/persistence')>(),
+  readStoredCredentials: async () => ambientCredentials.current,
+}));
+afterEach(() => { ambientCredentials.current = null; });
 
 /**
  * The durable record store owns its own on-disk layout, so locate the Account
@@ -283,6 +294,43 @@ function externalLinkedAdmissionReadyRecord(): ExternalSessionOperationRecordV1 
 }
 
 describe('external-session persisted takeover admission action', () => {
+  it('settles the admitted A attempt in A after ambient Account selection changes', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-persisted-admission-account-'));
+    const credentialsFor = (sub: string) => ({
+      token: `e30.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`,
+      encryption: null,
+    });
+    ambientCredentials.current = credentialsFor('account-a');
+    const accountScope = resolveExternalSessionOperationAccountScope(activeServerDir, ambientCredentials.current.token);
+    if (!accountScope) throw new Error('expected Account A scope');
+    const record = admissionReadyRecord();
+    try {
+      await writeExternalSessionOperationRecord(activeServerDir, record, { accountScope });
+      const executor = createExternalSessionTakeoverAdmissionActionExecutor({
+        activeServerDir,
+        operationExclusion: createExternalSessionOperationExclusion({ activeServerDir, ownerId: 'account-admission-owner' }),
+        prepareSpawn: async () => {
+          ambientCredentials.current = credentialsFor('account-b');
+          return resolvedSpawn({ directory: '/workspace' });
+        },
+        spawnSession: async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'native launch refused' }),
+        spawnResolvedTakeoverSession,
+        admissionWaiter: createPersistedTakeoverAdmissionWaiter(),
+        isHostedAdmissionAvailable: () => true,
+        publishProgress: async () => undefined,
+      });
+      await expect(executor.resume({
+        sessionId: record.request.sessionId, operationId: record.operationId, revision: record.revision,
+      })).resolves.toMatchObject({
+        ok: true, progress: { status: 'failed', error: { code: 'admission_failed' } },
+      });
+      await expect(readExternalSessionOperationRecord(activeServerDir, record.operationId)).resolves.toBeNull();
+      await expect(readExternalSessionOperationRecord(activeServerDir, record.operationId, accountScope))
+        .resolves.toMatchObject({ status: 'failed', phase: 'admitting' });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
   it('writes the canonical agentId-only conversion tombstone', () => {
     expect(buildPersistedTakeoverRetiredMetadata({
       metadata: {
@@ -652,10 +700,7 @@ describe('external-session persisted takeover admission action', () => {
                 ownerId: 'takeover-admission-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -787,10 +832,7 @@ describe('external-session persisted takeover admission action', () => {
                 ownerId: 'takeover-admission-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -915,10 +957,7 @@ describe('external-session persisted takeover admission action', () => {
                 ownerId: 'takeover-admission-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -1064,10 +1103,7 @@ describe('external-session persisted takeover admission action', () => {
                 ownerId: 'takeover-admission-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -1310,10 +1346,7 @@ describe('external-session persisted takeover admission action', () => {
                 ownerId: 'takeover-admission-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -1457,10 +1490,7 @@ describe('external-session persisted takeover admission action', () => {
                 ownerId: 'takeover-admission-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -1555,10 +1585,7 @@ describe('external-session persisted takeover admission action', () => {
                 ownerId: 'takeover-admission-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -1659,10 +1686,7 @@ describe('external-session persisted takeover admission action', () => {
                 ownerId: 'takeover-admission-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -1754,10 +1778,7 @@ describe('external-session persisted takeover admission action', () => {
                 ownerId: 'takeover-admission-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -1839,10 +1860,7 @@ describe('external-session persisted takeover admission action', () => {
                 ownerId: 'takeover-admission-test',
                 request: operationRequest,
                 acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),
@@ -1906,89 +1924,7 @@ describe('external-session persisted takeover admission action', () => {
     }
   });
 
-  it('revokes exact admission and recovers precommit state when the local claim is lost', async () => {
-    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-takeover-admission-'));
-    const waiter = createPersistedTakeoverAdmissionWaiter();
-    const release = vi.fn(async () => undefined);
-    let spawnStarted = false;
-    const renew = vi.fn(async () => !spawnStarted);
-    const spawnSession = vi.fn(async () => {
-      spawnStarted = true;
-      return {
-        type: 'success' as const,
-        sessionId: 'session-1',
-      };
-    });
-    try {
-      const initial = admissionReadyRecord();
-      await writeExternalSessionOperationRecord(activeServerDir, initial);
-      const executor = createExternalSessionTakeoverAdmissionActionExecutor({
-        activeServerDir,
-        operationExclusion: {
-          acquire: vi.fn(async (operationRequest) => ({
-            status: 'acquired' as const,
-            claim: {
-              record: {
-                schemaVersion: 2 as const,
-                claimId: 'resume-claim-1',
-                ownerId: 'takeover-admission-test',
-                request: operationRequest,
-                acquiredAtMs: 1,
-                renewedAtMs: 1,
-                expiresAtMs: 20_001,
-              },
-              renew,
-              release,
-            },
-          })),
-        },
-        prepareSpawn: async () => resolvedSpawn({
-          directory: '/workspace',
-          existingSessionId: 'session-1',
-        }),
-        spawnResolvedTakeoverSession,
-        spawnSession,
-        admissionWaiter: waiter,
-        isHostedAdmissionAvailable: () => true,
-        createAttemptId: () => 'attempt-1',
-        nowMs: () => 100,
-        claimRenewalIntervalMs: 1,
-      });
-      const resultPromise = executor.resume({
-        sessionId: 'session-1',
-        operationId: initial.operationId,
-        revision: initial.revision,
-      });
 
-      await vi.waitFor(() => expect(spawnSession).toHaveBeenCalledOnce());
-      await vi.waitFor(() => expect(renew).toHaveBeenCalled());
-      await expect(resultPromise).resolves.toMatchObject({
-        ok: true,
-        progress: {
-          status: 'failed',
-          phase: 'admitting',
-          currentStorageState: 'snapshot_complete',
-          retryTargetPhase: 'admitting',
-          error: { code: 'admission_failed', retryable: true },
-        },
-      });
-      const correlation = persistedAdmissionWaiterCorrelation({
-        operationId: initial.operationId,
-        attemptId: 'attempt-1',
-      });
-      expect(waiter.isPending(correlation)).toBe(false);
-      expect(waiter.settle(correlation, { status: 'committed' })).toBe(false);
-      expect(waiter.reserveRuntimeBound(correlation).status).toBe('unavailable');
-      await expect(readExternalSessionOperationRecord(activeServerDir, initial.operationId)).resolves.toMatchObject({
-        status: 'failed',
-        phase: 'admitting',
-        bindings: { targetRuntimeAttemptId: 'attempt-1' },
-      });
-      expect(release).toHaveBeenCalledOnce();
-    } finally {
-      await rm(activeServerDir, { recursive: true, force: true });
-    }
-  });
 
   it.each([
     'publish',
@@ -2052,10 +1988,7 @@ describe('external-session persisted takeover admission action', () => {
                   ownerId: 'takeover-admission-test',
                   request: operationRequest,
                   acquiredAtMs: 1,
-                  renewedAtMs: 1,
-                  expiresAtMs: 20_001,
               },
-              renew: async () => true,
               release,
             },
           })),

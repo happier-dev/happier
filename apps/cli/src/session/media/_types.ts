@@ -1,4 +1,5 @@
 import type { SupportedSessionMediaMimeType } from './mime';
+import type { SessionMediaItemV1 as ProtocolSessionMediaItemV1 } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 
 export type SessionMediaIngestionSource =
   | Readonly<{
@@ -49,4 +50,5 @@ export type SessionMediaItemV1 = Readonly<{
   height?: number;
   createdAtMs?: number;
   origin: SessionMediaOrigin;
+  browserRecording?: ProtocolSessionMediaItemV1['browserRecording'];
 }>;

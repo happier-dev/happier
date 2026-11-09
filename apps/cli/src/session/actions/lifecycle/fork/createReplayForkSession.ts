@@ -130,6 +130,8 @@ export async function createReplayForkSession(params: Readonly<{
             ...(parentMachineId ? { machineId: parentMachineId } : {}),
             approvedNewDirectoryCreation: true,
             spawnNonce: params.spawnNonce,
+            ...(params.inheritedForkOverrides.spawn.approvalProfileId !== undefined
+                ? { approvalProfileId: params.inheritedForkOverrides.spawn.approvalProfileId } : {}),
             replaySeededCreation: {
                 tag: managedForkDirectory?.sessionCreationTag ?? params.spawnNonce,
                 flavor: params.forkBackendResolution.replayFlavor,

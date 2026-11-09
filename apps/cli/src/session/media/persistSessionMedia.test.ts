@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { SessionMediaItemV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { createOneBitGrayscalePng } from '@/testkit/media/pngFixtures';
@@ -279,15 +280,17 @@ describe('persistSessionMedia', () => {
     }
   });
 
-  it('persists file-backed video artifacts by safe MIME metadata without image dimensions', async () => {
+  it.each(['webm', 'mp4'] as const)('persists file-backed %s artifacts by safe MIME metadata without image dimensions', async (format) => {
+    const bytes = format === 'webm' ? webmBytes : Buffer.from('000000186674797069736f6d0000020069736f6d61766331', 'hex');
+    const mimeType = `video/${format}`;
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-video-'));
     const providerDirectory = await mkdtemp(join(tmpdir(), 'happier-provider-video-'));
 
     try {
-      const localFilePath = join(providerDirectory, 'recording.webm');
-      const localUriPath = join(providerDirectory, 'recording-uri.webm');
-      await writeFile(localFilePath, webmBytes);
-      await writeFile(localUriPath, webmBytes);
+      const localFilePath = join(providerDirectory, `recording.${format}`);
+      const localUriPath = join(providerDirectory, `recording-uri.${format}`);
+      await writeFile(localFilePath, bytes);
+      await writeFile(localUriPath, bytes);
 
       const sources = [
         {
@@ -296,11 +299,11 @@ describe('persistSessionMedia', () => {
         },
         {
           label: 'local-uri',
-          source: { kind: 'local-uri' as const, uri: pathToFileURL(localUriPath).toString(), mimeType: 'video/webm' },
+          source: { kind: 'local-uri' as const, uri: pathToFileURL(localUriPath).toString(), mimeType },
         },
         {
           label: 'provider-file',
-          source: { kind: 'provider-file' as const, providerFileId: 'recording-file-1', mimeType: 'video/webm' },
+          source: { kind: 'provider-file' as const, providerFileId: 'recording-file-1', mimeType },
         },
       ];
 
@@ -308,12 +311,12 @@ describe('persistSessionMedia', () => {
         const result = await persistSessionMedia({
           workingDirectory,
           pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
-          maxBytes: webmBytes.byteLength,
+          maxBytes: bytes.byteLength,
           providerFileDownloader: async () => ({
             success: true,
-            bytes: webmBytes,
-            mimeType: 'video/webm',
-            fileNameHint: 'provider-recording.webm',
+            bytes,
+            mimeType,
+            fileNameHint: `provider-recording.${format}`,
           }),
           input: {
             sessionId: `session-video-${label}`,
@@ -331,18 +334,19 @@ describe('persistSessionMedia', () => {
             role: 'output',
             category: 'tool-artifact',
             mediaKind: 'video',
-            mimeType: 'video/webm',
-            sizeBytes: webmBytes.byteLength,
-            sha256: sha256Hex(webmBytes),
+            mimeType,
+            sizeBytes: bytes.byteLength,
+            sha256: sha256Hex(bytes),
             origin: { source: 'tool-output', toolCallId: `recording-${label}` },
           },
         });
         if (!result.success) throw new Error(`expected ${label} video persistence to succeed`);
-        expect(result.item.path).toMatch(new RegExp(`^\\.happier/uploads/artifacts/session-video-${label}/message-1/[0-9a-f-]+-.+\\.webm$`));
+        expect(SessionMediaItemV1Schema.parse(result.item)).toEqual(result.item);
+        expect(result.item.path).toMatch(new RegExp(`^\\.happier/uploads/artifacts/session-video-${label}/message-1/[0-9a-f-]+-.+\\.${format}$`));
         expect(result.item.width).toBeUndefined();
         expect(result.item.height).toBeUndefined();
-        expect(JSON.stringify(result.item)).not.toContain(webmBytes.toString('base64'));
-        await expect(readFile(resolve(workingDirectory, result.item.path))).resolves.toEqual(webmBytes);
+        expect(JSON.stringify(result.item)).not.toContain(bytes.toString('base64'));
+        await expect(readFile(resolve(workingDirectory, result.item.path))).resolves.toEqual(bytes);
       }
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });

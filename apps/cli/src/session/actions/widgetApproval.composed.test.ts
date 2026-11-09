@@ -89,6 +89,80 @@ it('replays approved installed Board inputs on the hosting Session without an am
     } finally { restore(); vi.restoreAllMocks(); await app.close(); }
 });
 
+it.each([
+    { kind: 'declarative', usesResources: false },
+    { kind: 'html', usesResources: false },
+    { kind: 'html', usesResources: true },
+] as const)('replays an approved $kind Board definition with Resource use $usesResources', async ({ kind, usesResources }) => {
+    const app = fastify();
+    const home = 'http://widget-approval.test';
+    const restore = installAxiosFastifyAdapter({ app, origin: home });
+    const accountId = 'widget-owner';
+    const serverId = 'srv_widget_approval';
+    const machineId = 'counter-machine';
+    const sessionId = 'c000000000000000000000066';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null };
+    // Refuse ambient Machine discovery at the network boundary: self-contained
+    // definitions still execute, while actual Resource consumers retain denial.
+    const registryRpc = vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new RpcError('Forbidden', 'RPC_FORBIDDEN'));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(registerAccountHomeHttp(app, { accountId, serverId })));
+    app.get(`/v2/sessions/${sessionId}`, async () => ({ session: { id: sessionId, seq: 1, createdAt: 1, updatedAt: 1,
+        active: false, activeAt: 1, encryptionMode: 'plain', metadata: JSON.stringify({ machineId }), metadataVersion: 1,
+        dataEncryptionKey: null, agentState: null, agentStateVersion: 0, responsibleAccountId: null, responsibleAccount: null,
+        effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
+    } }));
+    app.get(`/v2/sessions/${sessionId}/system-records/record`, async () => ({ record: null }));
+    app.get(`/v2/sessions/${sessionId}/system-records`, async () => ({ records: [], hasNext: false, nextCursor: null }));
+    const body = kind === 'declarative' ? { kind, document: { version: 1, root: { kind: 'markdown', text: 'Restored chart' } } }
+        : { kind, source: { v: 1, entrypoint: 'index.html', files: { 'index.html': { mime: 'text/html', contentBase64: 'PGgxPkNvcHk8L2gxPg==' } } },
+            ...(usesResources ? { requestedCapabilities: { resources: [{ pluginId: 'example.widgets', localId: 'count' }],
+                actions: [], network: 'none', networkOrigins: [] } } : {}) };
+    const instance = { v: 1, id: 'restored-copy', definition: { kind: 'inline', definition: {
+        v: 1, id: '80101031-0000-4000-8000-000000000080', name: 'Restored copy', body,
+        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' }, inputs: { fields: [] },
+        inputSchema: { type: 'object', additionalProperties: false }, provenance: { source: { kind: 'authored' } },
+    } }, bindings: {}, displayName: 'Restored copy' };
+    const surface = { serverId, accountId, owner: { kind: 'sessionBoard', sessionId } };
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'cli', sessionId }, requestedSurface: 'cli', approval: { flow: 'deferred', result: 'required' },
+        actionId: 'widgets.item.add', actionArgs: { surface, instance, placement: { tabId: 'restored', tabTitle: 'Restored' } }, summary: 'Restore copy',
+        executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+            serverId, serverIdentityId: serverId, accountId, sessionId, machineId, target: { kind: 'machine', machineId },
+            actionId: 'widgets.item.add', requestId: 'restored-copy' },
+    });
+    const artifacts = registerPlainArtifactRoutes(app, accountId);
+    artifacts.seed('restored-approval', encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
+        encodePlainArtifactStoredContent({ body: JSON.stringify(request) }));
+    const writes: unknown[] = [];
+    app.put(`/v2/sessions/${sessionId}/board`, async request => {
+        writes.push(request.body);
+        return { operation: 'upsert_item', itemId: instance.id, outcome: 'created',
+            itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ', layoutRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ' };
+    });
+    try {
+        const currentness = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials, machineId, serverId,
+            serverApiUrl: home, resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: serverId, machineId }) });
+        const { executor } = createCliActionExecutorHarness({ token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
+            serverId, serverIdentityId: serverId, serverHttpBaseUrl: home }, { isApprovalExecutionOriginCurrent: currentness });
+        const result = await runWithServerHttpBaseUrl(home, () => executor.execute('approval.request.decide',
+            { artifactId: 'restored-approval', decision: 'approve' }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+                serverId, serverIdentityId: serverId, runtimeAccountId: accountId, actionRequestId: 'decide-restored' }));
+        if (usesResources) {
+            expect(result).toMatchObject({ ok: true, result: { status: 'failed', execution: { errorCode: 'RPC_FORBIDDEN' } } });
+            expect(writes).toEqual([]);
+            expect(registryRpc).toHaveBeenCalled();
+            return;
+        }
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+        expect(writes).toEqual([expect.objectContaining({ operation: 'upsert_item', itemId: instance.id,
+            itemContent: { t: 'plain', v: expect.objectContaining({ source: { kind: 'widget', instance: expect.objectContaining(instance) } }) },
+            placement: expect.objectContaining({ layoutContent: { t: 'plain', v: { v: 1, tabs: [expect.objectContaining({ id: 'restored', items: [expect.objectContaining({ itemId: instance.id })] })] } } }),
+        })]);
+        expect(registryRpc).not.toHaveBeenCalled();
+    } finally { restore(); vi.restoreAllMocks(); await app.close(); }
+});
+
 /** One approved Home add replayed by a standalone CLI that knows the Account's Machine inventory and nothing else. */
 async function replayApprovedHomeCounter(input: Readonly<{
     machines: readonly Readonly<{ id: string; connected: boolean; hasPlugin?: boolean }>[];

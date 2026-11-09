@@ -14,6 +14,7 @@ type WithoutPublisher<T> = T extends unknown ? Omit<T, 'sourcePublisher'> : neve
 
 export type PersonalFollowOccurrenceDispatch = Readonly<({
   sourceSessionId: string; occurrence: WithoutPublisher<SessionFollowRuleSourceOccurrenceV1>;
+  acceptDelivery?: () => Promise<boolean>;
 } | { sourceSessionId?: never; occurrence: SessionFollowRunOccurrence
     | { discussion: DiscussionFollowUpdateNotificationV1['follow'] & { seq: number } }; acceptDelivery: () => Promise<boolean> }) & {
   /** The Account's authorized private evaluator has already selected this route and applied receiver mute. */
@@ -52,6 +53,19 @@ export function createPersonalFollowOccurrenceDispatcher(params: Readonly<{
     if (input.sourceSessionId !== input.occurrence.sourceSessionId) throw new Error('personal_follow_source_mismatch');
     const occurrence = input.occurrence;
     const sourceSessionId = occurrence.sourceSessionId;
+    if ('sourceTurn' in occurrence) {
+      return await dispatchActivityNotificationAsync({ ...params, operationContext: params.operationContext,
+        settings: params.operationContext.readSnapshot()?.settings, isCurrent,
+        fetchSessionNotificationContext: params.fetchSessionNotificationContext ?? (sessionId => fetchSessionById({
+          reason: 'session-notification',
+          token: params.operationContext.credentials.token, serverUrl: params.operationContext.serverHttpBaseUrl,
+          sessionId, signal: input.signal,
+        })),
+        admittedRulePolicies: input.policies, acceptSourceFollowDelivery: input.acceptDelivery,
+        event: SessionFollowUpdateNotificationV1Schema.parse({ topic: 'follow_update', sessionId: sourceSessionId,
+          follow: { sourceTurn: occurrence.sourceTurn, event: occurrence.evidence.event } }),
+      });
+    }
     // Requests and successful terminal updates already have an original rich
     // notification owner. Return the selected contribution to that owner before
     // its one send; the daemon must not race it with a second outward effect.

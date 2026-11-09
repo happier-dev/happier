@@ -323,6 +323,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
         transport,
         localId: `execution.run.start:${randomUUID()}`,
         effectActionId: 'execution.run.start',
+        ...(opts?.authority ? { executionAuthority: opts.authority } : {}),
         ...(opts?.signal ? { signal: opts.signal } : {}),
         waitForReady: true,
       });

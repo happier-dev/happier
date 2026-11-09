@@ -15,6 +15,61 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 
 describe('original CLI Session Action delivery', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+    it.each([
+        { actionId: 'session.archive', mode: 'plain' },
+        { actionId: 'session.archive', mode: 'e2ee' },
+        { actionId: 'session.unarchive', mode: 'plain' },
+        { actionId: 'session.unarchive', mode: 'e2ee' },
+    ] as const)('changes its own inactive record without worker admission ($actionId, $mode)', async ({ actionId, mode }) => {
+        await withConfiguredDaemonTestHome({ prefix: 'happier-cli-archive-withdrawn-worker-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'recipient', tokenEpoch: 4,
+                provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+            const secret = new Uint8Array(32).fill(17);
+            const credentials = { token, credentialProvenance: 'stored_session' as const,
+                encryption: mode === 'e2ee' ? { type: 'legacy' as const, secret } : null };
+            const sessionId = 'c123456789012345678901234';
+            const machineId = 'withdrawn-foreign-worker';
+            const metadata = { machineId, path: '/workspace', flavor: 'claude' };
+            const session = createSessionRecordFixture({ id: sessionId, active: false, encryptionMode: mode, share: null,
+                metadata: mode === 'e2ee' ? encryptSessionPayload({ ctx: { encryptionKey: secret, encryptionVariant: 'legacy' }, payload: metadata })
+                    : JSON.stringify(metadata) });
+            const requests: string[] = [];
+            // Only HTTP is substituted. Real CLI routing, policy, Session resolution,
+            // archive service and transport must reach Home without the withdrawn worker.
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                requests.push(url);
+                if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session } };
+                if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode, version: 1,
+                    signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+                if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode, updatedAt: 1 } };
+                if (url.endsWith('/v1/machines')) return { status: 200, data: [] };
+                throw new Error(`Unexpected Home read: ${url}`);
+            });
+            let archivedAt: number | null = actionId === 'session.archive' ? null : 123;
+            vi.spyOn(axios, 'post').mockImplementation(async url => {
+                requests.push(url);
+                if (url.endsWith(`/v2/sessions/${sessionId}/${actionId === 'session.archive' ? 'archive' : 'unarchive'}`)) {
+                    archivedAt = actionId === 'session.archive' ? 456 : null;
+                    return { status: 200, data: { success: true, archivedAt } };
+                }
+                return { status: 503, data: { error: 'admission_unavailable' } };
+            });
+            const daemonRequests: string[] = [];
+            vi.stubGlobal('fetch', async (url: string | URL | Request) => {
+                daemonRequests.push(String(url));
+                return Response.json({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
+            });
+            const executor = createCliActionExecutorFromCredentials({ credentials, serverId: configuration.activeServerId,
+                serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test', externalActionClient: true,
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+            const result = await executor.execute(actionId, { sessionId }, { surface: 'cli' });
+            expect(result, JSON.stringify(result))
+                .toMatchObject({ ok: true, result: { sessionId, archivedAt: actionId === 'session.archive' ? 456 : null } });
+            expect(archivedAt).toBe(actionId === 'session.archive' ? 456 : null);
+            expect(daemonRequests).toEqual([]);
+            expect(requests.filter(url => /\/v1\/(?:machines|actions)(?:\/|$)/.test(url))).toEqual([]);
+        });
+    });
 
     it.each([
         { mode: 'e2ee', method: 'execute', offline: false, selector: 'id' },

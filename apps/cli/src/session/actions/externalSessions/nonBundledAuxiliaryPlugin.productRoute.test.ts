@@ -59,7 +59,10 @@ import {
 import { createExternalSessionHostOperationOwner } from '@/session/external/hostOperationOwner';
 import { deriveExternalSessionPluginOperationDurableKey } from '@/session/external/pluginOperationDurableKey';
 import { createPersistedTakeoverAdmissionWaiter } from '@/daemon/spawn/persistedTakeoverAdmission';
+import { createExternalSessionOperationExclusion } from '@/session/external/operationExclusion';
 import { createExternalSessionPersistedTakeoverAdmissionOwner } from './persistedTakeoverAdmission';
+import { createDefaultExternalSessionTakeoverStartActionExecutor } from './takeoverStartAction';
+import { readExternalSessionOperationRecord, resolveExternalSessionOperationAccountScope } from './operationRecordStore';
 
 const fetchSessionByIdMock = vi.fn();
 const fetchSessionsPageMock = vi.fn();
@@ -735,6 +738,10 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-external-source-key-plugin-'));
     let unownedRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
     try {
+      // The current-global configured-source owner captures its authenticated
+      // Home when the registry is built, before demand activation.
+      readCredentialsMock.mockResolvedValue({ token: 'token', encryption: null });
+      fetchAccountProfileMock.mockResolvedValue({ connectedServicesV2: [] });
       await materializeAuxiliaryOnlyPlugin(pluginRoot, '1.0.0', PLUGIN_ID, true);
       await seedCurrentLocalPathPluginFixture({
         happyHomeDir,
@@ -800,6 +807,8 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         encryptionMode: 'plain',
         metadata: JSON.stringify(linkedMetadata),
         metadataVersion: 4,
+        agentState: null,
+        agentStateVersion: 0,
         active: false,
         thinking: false,
       };
@@ -815,6 +824,7 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
         updatedAt: 1,
       });
       fetchSessionByIdMock.mockImplementation(async () => currentRawSession);
+      fetchAccountProfileMock.mockResolvedValue({ connectedServicesV2: [] });
       listSessionMarkersMock.mockResolvedValue([]);
 
       const persistedRecord = await productionTakeoverRecord({
@@ -838,6 +848,70 @@ describe('non-bundled auxiliary-only Agent ordinary External Sessions routes', (
       expect(externalLinked.permitsAdmission).toBe(false);
       expect(listSessionMarkersMock).toHaveBeenCalled();
       listSessionMarkersMock.mockClear();
+
+      // Bounded continuation keeps its admitted Account/source. Physical
+      // quiescence is still observed, without reopening the ambient Home.
+      readCredentialsMock.mockResolvedValueOnce(null);
+      const admissionReadCount = fetchSessionByIdMock.mock.calls.length;
+      const credentialReadCount = readCredentialsMock.mock.calls.length;
+      await expect(loadCurrentExternalSessionExternalLinkedTakeoverSource(
+        externalLinkedRecord,
+        externalLinked,
+      )).resolves.toMatchObject({
+        linked: externalLinked.linked,
+        permitsAdmission: false,
+      });
+      expect(fetchSessionByIdMock).toHaveBeenCalledTimes(admissionReadCount);
+      expect(readCredentialsMock).toHaveBeenCalledTimes(credentialReadCount);
+      expect(listSessionMarkersMock).toHaveBeenCalled();
+      readCredentialsMock.mockReset().mockResolvedValue({
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      });
+      listSessionMarkersMock.mockClear();
+
+      const credentialFor = (sub: string) => ({
+        token: `e30.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`,
+        encryption: null,
+      });
+      const admittedCredentials = credentialFor('takeover-account-a');
+      readCredentialsMock.mockReset()
+        .mockResolvedValueOnce(admittedCredentials)
+        .mockResolvedValue(credentialFor('takeover-account-b'));
+      fetchSessionByIdMock.mockImplementation(async ({ token }: { token: string }) => {
+        if (token !== admittedCredentials.token) throw new Error('wrong_account_source_read');
+        return currentRawSession;
+      });
+      const start = createDefaultExternalSessionTakeoverStartActionExecutor({
+        activeServerDir: happyHomeDir,
+        operationExclusion: createExternalSessionOperationExclusion({
+          activeServerDir: happyHomeDir, ownerId: 'takeover-admission-account-owner',
+        }),
+        publishProgress: async () => undefined,
+        sendHistoricalCommand: async (command) => ({
+          v: 1,
+          kind: 'authority',
+          claim: command.claim,
+          revision: command.expectedRevision,
+          priorStableStorage: { state: 'machine_only' },
+        }),
+      });
+      const { sourceGeneration: _generation, sourceCustody: _custody, ...publicSource } = externalLinkedRecord.request.source;
+      const started = await start.start({
+        request: { ...externalLinkedRecord.request, source: publicSource },
+      });
+      expect(started, JSON.stringify(started)).toMatchObject({ ok: true, progress: { status: 'awaiting_user_resume' } });
+      if (!started.ok) throw new Error('expected captured Account A takeover admission');
+      const admittedScope = resolveExternalSessionOperationAccountScope(happyHomeDir, admittedCredentials.token);
+      if (!admittedScope) throw new Error('expected Account A scope');
+      await expect(readExternalSessionOperationRecord(
+        happyHomeDir, started.progress.operationId, admittedScope,
+      )).resolves.toMatchObject({ request: { sessionId: externalLinkedRecord.request.sessionId } });
+      await expect(readExternalSessionOperationRecord(happyHomeDir, started.progress.operationId)).resolves.toBeNull();
+      readCredentialsMock.mockReset().mockResolvedValue({
+        token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      });
+      fetchSessionByIdMock.mockImplementation(async () => currentRawSession);
 
       await expect(loadCurrentExternalSessionPersistedTakeoverSource(
         persistedRecord,

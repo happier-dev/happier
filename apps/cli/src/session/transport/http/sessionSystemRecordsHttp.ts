@@ -31,7 +31,7 @@ function throwUnexpectedHttpStatusError(status: number, message: string): never 
 function parseOrThrow<T>(schema: { safeParse: (value: unknown) => { success: boolean; data?: T } }, payload: unknown, message: string): T {
   const parsed = schema.safeParse(payload);
   if (!parsed.success || !parsed.data) {
-    throw new Error(message);
+    throw Object.assign(new Error(message), { code: 'plugin_session_record_invalid_response' as const });
   }
   return parsed.data;
 }

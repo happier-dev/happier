@@ -23,7 +23,7 @@ type ExtractionOptions = Readonly<{
   includeRaw?: boolean;
   includeStructuredPayload?: boolean;
   maxTextChars?: number | null;
-  maxPayloadChars?: number;
+  maxPayloadChars?: number | null;
 }>;
 
 export type SemanticTranscriptExtraction = Readonly<{
@@ -61,7 +61,9 @@ function shouldIncludeClassifiedPayload(classified: DecodedTranscriptBody, optio
   return false;
 }
 
-function shapeRawPayload(value: unknown, maxPayloadChars: number | undefined): Readonly<{ raw?: unknown; bytes: number; truncated: boolean }> {
+function shapeRawPayload(value: unknown, maxPayloadChars: number | null | undefined): Readonly<{ raw?: unknown; bytes: number; truncated: boolean }> {
+  // Complete reads are measured once by the enclosing Action transport.
+  if (maxPayloadChars === null) return { raw: value, bytes: 0, truncated: false };
   const max = Math.max(1, Math.floor(maxPayloadChars ?? 8192));
   let serialized: string;
   try {

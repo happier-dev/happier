@@ -60,7 +60,7 @@ it.each(['current', 'retired', 'mode-denied', 'first-row'] as const)('writes ent
   const result = action({ actionId: 'connectedServices.subscription.price.set', input: { account, price: { amount: 17, currency: 'EUR' } }, context });
   if (lifetime === 'retired') { await expect(result).rejects.toMatchObject({ code: 'scope-retired' }); expect(written).toBeUndefined(); }
   else if (lifetime === 'mode-denied') await expect(result).rejects.toMatchObject({ code: 'account-mode-mismatch' });
-  else { await expect(result).resolves.toEqual({ applied: true }); expect(written).toMatchObject({ expectedRevision: 1,
+  else { await expect(result).resolves.toEqual({ applied: true }); expect(written).toMatchObject({ expectedRevision: lifetime === 'first-row' ? 'absent' : 1,
     content: { t: 'plain', v: { entries: [{ subject: { kind: 'account', account }, subscriptionMonthlyPrice: { amount: 17, currency: 'EUR' } }] } } }); }
 });
 

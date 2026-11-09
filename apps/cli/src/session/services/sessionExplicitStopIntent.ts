@@ -1,11 +1,11 @@
-import { type SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
-import { buildSessionStopHoldV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { randomUUID } from 'node:crypto';
 import {
+  buildSessionStopHoldV1,
   clearSessionExplicitStopV1FromMetadata,
   readSessionExplicitStopV1FromMetadata,
   resolveSessionExplicitControlIntent,
   writeSessionExplicitStopV1ToMetadata,
+  type SessionStopIntent,
 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 
 import type { StoredCredentials } from '@/persistence';
@@ -30,80 +30,12 @@ export function resolveSessionResumeControlIntent(input: Parameters<typeof resol
   if (caller?.kind === 'session' && readSessionManagerSessionIdV1(input.rawSession) !== caller.sessionId) return 'authority_unavailable';
   const intent = resolveSessionExplicitControlIntent(input);
   if (intent === 'unauthorized' || intent === 'self_stop_forbidden') return 'authority_unavailable';
-  if (stop && (intent === 'automatic' || intent === 'manager' && !stop.managerSessionId)) return 'held_by_person';
-  return intent;
-}
-
-export async function recordSessionExplicitStopIntent(input: Readonly<{
-  credentials: StoredCredentials;
-  rawSession: RawSessionRecord;
-  sessionId: string;
-  requestId?: string;
-  actionContext?: ActionExecutorContext;
-  resolveAuthorizationHeaders?: Parameters<typeof updateSessionMetadataWithRetry>[0]['resolveAuthorizationHeaders'];
-  accountEncryptionCurrentness?: Parameters<typeof updateSessionMetadataWithRetry>[0]['accountEncryptionCurrentness'];
-  currentness?: Parameters<typeof updateSessionMetadataWithRetry>[0]['currentness'];
-  signal?: AbortSignal;
-}>): Promise<void> {
-  const intent = resolveSessionExplicitControlIntent(input);
-  if (intent === 'automatic' || intent === 'unauthorized' || intent === 'self_stop_forbidden') throw new Error('Explicit Stop caller unavailable');
-  const stop = { v: 1, cause: 'explicit_stop', requestId: input.requestId ?? randomUUID(), requestedAtMs: Date.now(),
-    ...(intent === 'manager' && input.actionContext?.actionCaller?.kind === 'session'
-      ? { managerSessionId: input.actionContext.actionCaller.sessionId } : {}),
-  } as const;
-  await updateSessionMetadataWithRetry({
-    token: input.credentials.token,
-    credentials: input.credentials,
-    sessionId: input.sessionId,
-    rawSession: input.rawSession,
-    ...(input.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: (
-      request: Parameters<NonNullable<Parameters<typeof updateSessionMetadataWithRetry>[0]['resolveAuthorizationHeaders']>>[0],
-    ) => {
-      const headers = input.resolveAuthorizationHeaders?.(request);
-      if (!headers) throw new Error('Explicit Stop metadata authorization unavailable');
-      return headers;
-    } } : {}),
-    ...(input.accountEncryptionCurrentness ? { accountEncryptionCurrentness: input.accountEncryptionCurrentness } : {}),
-    ...(input.currentness || input.signal ? { currentness: { ...input.currentness,
-      ...(input.signal ? { signal: input.signal } : {}),
-    } } : {}),
-    updater: metadata => writeSessionExplicitStopV1ToMetadata(metadata, stop),
-  });
-}
-
-export async function clearSessionExplicitStopIntentAfterResume(input: Readonly<{
-  credentials: StoredCredentials;
-  rawSession?: RawSessionRecord;
-  sessionId: string;
-  metadata: Record<string, unknown>;
-  resolveAuthorizationHeaders?: Parameters<typeof updateSessionMetadataWithRetry>[0]['resolveAuthorizationHeaders'];
-  currentness?: Parameters<typeof updateSessionMetadataWithRetry>[0]['currentness'];
-}>): Promise<void> {
-  const stop = readSessionExplicitStopV1FromMetadata(input.metadata);
-  if (!stop || 'status' in stop) return;
-  const rawSession = input.rawSession ?? await fetchSessionByIdCompat({
-    reason: 'session-control',
-    token: input.credentials.token,
-    sessionId: input.sessionId,
-    ...(input.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: input.resolveAuthorizationHeaders } : {}),
-    ...(input.currentness?.signal ? { signal: input.currentness.signal } : {}),
-  });
-  if (!rawSession || rawSession.id !== input.sessionId) throw new Error('Exact resumed Session metadata is unavailable');
-  await updateSessionMetadataWithRetry({
-    token: input.credentials.token,
-    credentials: input.credentials,
-    sessionId: input.sessionId,
-    rawSession,
-    ...(input.currentness ? { currentness: input.currentness } : {}),
-    ...(input.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: (
-      request: Parameters<NonNullable<Parameters<typeof updateSessionMetadataWithRetry>[0]['resolveAuthorizationHeaders']>>[0],
-    ) => {
-      const headers = input.resolveAuthorizationHeaders?.(request);
-      if (!headers) throw new Error('Explicit Stop metadata authorization unavailable');
-      return headers;
-    } } : {}),
-    updater: metadata => clearSessionExplicitStopV1FromMetadata(metadata, stop.requestId),
-  });
+  // Only a named present user authors a Resume. Stop keeps its own default,
+  // where an unnamed author errs toward recording the hold.
+  const resumeIntent = intent === 'person' && (input.actionContext?.authority ?? input.executionAuthority) !== 'present_user'
+    ? 'automatic' : intent;
+  if (stop && (resumeIntent === 'automatic' || resumeIntent === 'manager' && !stop.managerSessionId)) return 'held_by_person';
+  return resumeIntent;
 }
 
 export async function recordSessionStopIntent(input: Readonly<{
@@ -140,5 +72,40 @@ export async function recordSessionStopIntent(input: Readonly<{
       ...(input.signal ? { signal: input.signal } : {}),
     } } : {}),
     updater: metadata => writeSessionExplicitStopV1ToMetadata(metadata, hold.stop),
+  });
+}
+
+export async function clearSessionExplicitStopIntentAfterResume(input: Readonly<{
+  credentials: StoredCredentials;
+  rawSession?: RawSessionRecord;
+  sessionId: string;
+  metadata: Record<string, unknown>;
+  resolveAuthorizationHeaders?: Parameters<typeof updateSessionMetadataWithRetry>[0]['resolveAuthorizationHeaders'];
+  currentness?: Parameters<typeof updateSessionMetadataWithRetry>[0]['currentness'];
+}>): Promise<void> {
+  const stop = readSessionExplicitStopV1FromMetadata(input.metadata);
+  if (!stop || 'status' in stop) return;
+  const rawSession = input.rawSession ?? await fetchSessionByIdCompat({
+    reason: 'session-control',
+    token: input.credentials.token,
+    sessionId: input.sessionId,
+    ...(input.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: input.resolveAuthorizationHeaders } : {}),
+    ...(input.currentness?.signal ? { signal: input.currentness.signal } : {}),
+  });
+  if (!rawSession || rawSession.id !== input.sessionId) throw new Error('Exact resumed Session metadata is unavailable');
+  await updateSessionMetadataWithRetry({
+    token: input.credentials.token,
+    credentials: input.credentials,
+    sessionId: input.sessionId,
+    rawSession,
+    ...(input.currentness ? { currentness: input.currentness } : {}),
+    ...(input.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: (
+      request: Parameters<NonNullable<Parameters<typeof updateSessionMetadataWithRetry>[0]['resolveAuthorizationHeaders']>>[0],
+    ) => {
+      const headers = input.resolveAuthorizationHeaders?.(request);
+      if (!headers) throw new Error('Explicit Stop metadata authorization unavailable');
+      return headers;
+    } } : {}),
+    updater: metadata => clearSessionExplicitStopV1FromMetadata(metadata, stop.requestId),
   });
 }

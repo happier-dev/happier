@@ -1,5 +1,6 @@
 // Keep the real UI Account/Sync owners below their canonical native boundaries.
 import '../../../../ui/sources/dev/vitestSetup';
+import axios, { AxiosHeaders } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, RPC_METHODS,
   SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema,
@@ -53,6 +54,15 @@ beforeEach(async () => {
   serverId = await homes.addHome({ name: 'Session parity', serverUrl: 'https://session-parity.test', accountId });
   connection = await restoreServerAccountForTest({ serverUrl: 'https://session-parity.test', accountId, request: homes.request });
   installHomeGovernanceBoundaries(homes);
+  // The CLI's Axios HTTP leaf shares the same Home fixtures as the UI fetch leaf.
+  vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(AxiosHeaders.from(config?.headers).toJSON())) {
+      if (value != null) headers.set(key, Array.isArray(value) ? value.join(', ') : String(value));
+    }
+    const response = await homes.request(String(url), { method: 'GET', headers });
+    return { status: response.status, data: await response.json() };
+  });
   const settings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1,
     approvalWaivedSurfaces: Object.fromEntries(controls.map(id => [id, ['agent', 'mcp']])) } });
   storage.setState({ settings });
@@ -70,8 +80,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-describe('CLI current-Session controls through the installed answering-client transport', () => {
-  it.each(['agent', 'mcp'] as const)('writes provider configuration and connected-account routing through their real UI owners on %s', async surface => {
+describe('CLI current-Session control owners', () => {
+  it.each(['agent', 'mcp'] as const)('writes client configuration and applies connected-account routing without a connected client on %s', async surface => {
     const metadata = { path: '/checkout', host: 'test', flavor: 'opencode', machineId,
       sessionConfigOptionsV1: { v: 1 as const, agentId: 'opencode', updatedAt: 1, configOptions: [{ id: 'effort',
         name: 'Thinking', type: 'select' as const, currentValue: 'medium', options: [{ value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' }] }] } };
@@ -140,12 +150,13 @@ describe('CLI current-Session controls through the installed answering-client tr
         .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
       current = false;
       expect(await executor.execute('session.connected_services_auth.set', auth, context))
-        .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        .toEqual({ ok: true, result: { ok: true, action: 'metadata_updated' } });
       connected = false;
-      for (const [id, input] of [['session.config_option.set', config], ['session.connected_services_auth.set', auth]] as const) {
-        expect(await executor.execute(id, input, context)).toMatchObject({ ok: false, errorCode: 'unavailable', error: 'noClient' });
-      }
-      expect(applied).toHaveLength(1);
+      expect(await executor.execute('session.config_option.set', config, context))
+        .toMatchObject({ ok: false, errorCode: 'unavailable', error: 'noClient' });
+      expect(await executor.execute('session.connected_services_auth.set', auth, context))
+        .toEqual({ ok: true, result: { ok: true, action: 'metadata_updated' } });
+      expect(applied).toHaveLength(3);
     } finally { release(); }
   });
 });

@@ -1,6 +1,7 @@
 import { buildTrustedHostSessionInputAdmissionV1, PluginSessionInputSourceV1Schema, SessionInputCausalPermissionAuthorityV1Schema, SessionInputRequestV1Schema, SessionInputRequestV2Schema, SessionInputWorkflowV2Schema, SessionInputSourceSessionV1Schema, SessionMessageProvenanceV2Schema, requiresAuthenticatedMachineAdmissionForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { PluginContributionLocalIdSchema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { SessionMessageProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
@@ -29,12 +30,13 @@ export function resolveSessionInputTargetMachineId(params: Readonly<{
   const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(
     params.decryptedMetadata?.sessionCreationCorrespondenceV1,
   );
-  const observedMachineId = correspondence.success
-    ? correspondence.data.recipe.execution.machineId
-    : typeof params.rawSession.machineId === 'string'
-      ? params.rawSession.machineId.trim()
-      : typeof params.decryptedMetadata?.machineId === 'string'
-        ? params.decryptedMetadata.machineId.trim()
+  // Creation correspondence describes birth, not the Machine serving a resumed Session.
+  const observedMachineId = typeof params.rawSession.machineId === 'string'
+    ? params.rawSession.machineId.trim()
+    : typeof params.decryptedMetadata?.machineId === 'string'
+      ? params.decryptedMetadata.machineId.trim()
+      : correspondence.success
+        ? correspondence.data.recipe.execution.machineId
         : '';
   const suppliedMachineId = params.targetMachineId?.trim() ?? '';
   if (observedMachineId && suppliedMachineId && observedMachineId !== suppliedMachineId) return null;
@@ -320,10 +322,12 @@ export function buildAgentRuntimeFirstInputAdmissionV1(): Readonly<{
 export function buildSessionSpawnInitialInputAdmissionForLocalIdV1(params: Readonly<{
   actionCaller: ActionCaller;
   callerSurface?: keyof ActionSurfaces | null;
+  callerAuthority?: ActionExecutorContext['authority'];
   localId: string;
   actionRequestAttributionV1?: ActionRequestAttributionV1;
 }>): Readonly<{
   localId: string;
+  executionAuthority?: 'present_user';
   inputAdmission: Readonly<{
     provenance: SessionMessageProvenanceV1;
     request: SessionInputRequestV1;
@@ -341,6 +345,10 @@ export function buildSessionSpawnInitialInputAdmissionForLocalIdV1(params: Reado
       : buildTrustedHostSessionInputAdmissionV1(params.callerSurface);
   return Object.freeze({
     localId,
+    // Only an original human host invocation may establish a new requester.
+    // Descendant input retains its admitted cause, never the host credential.
+    ...(params.actionCaller.kind === 'host' && params.callerAuthority === 'present_user'
+      && !params.actionRequestAttributionV1 ? { executionAuthority: 'present_user' as const } : {}),
     inputAdmission: params.actionRequestAttributionV1
       ? { ...inputAdmission, request: { ...inputAdmission.request,
           actionRequestAttributionV1: materializeActionRequestAttributionV1(params.actionRequestAttributionV1) } }

@@ -87,7 +87,7 @@ describe('plugin library skills', () => {
         create: async () => { throw new Error('Unexpected Artifact write'); },
         update: async () => { throw new Error('Unexpected Artifact write'); }, delete: async () => { throw new Error('Unexpected Artifact write'); } };
       const actions = createSkillActionExecuteV1({ store: actionStore, skillRules: active.port,
-        readPluginSkills: async () => active.skills, randomId: () => 'unused', includeInSession: async () => ({ ok: true }) });
+        readPluginSkills: async () => active.skills, randomId: () => 'unused', includeInSession: async () => ({ ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } }) });
       expect(SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.list'].parse(await actions('skills.list', {}, { surface: 'ui' })).items)
         .toContainEqual(expect.objectContaining({ skillId, name: 'check', provenance: active.skills[0]!.provenance, userInvocable: false }));
       expect(SkillReadResultV1Schema.parse(await readSkillInLibrary({ store: actionStore, pluginSkills: active.skills,

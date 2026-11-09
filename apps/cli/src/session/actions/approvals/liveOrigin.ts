@@ -41,7 +41,7 @@ export function createLiveCliApprovalOrigin(params: Readonly<{
       const target = isTargetApproval(original.request) ? TargetActionApprovalRequestV1Schema.safeParse(request) : null;
       const valid = target
         ? target.success && isTargetApproval(original.request) && targetActionApprovalSubjectsEqual(original.request, target.data)
-        : !isTargetApproval(original.request) && !isTargetApproval(request) && decideApprovalRequestTransition(original.request, request).ok;
+        : !isTargetApproval(original.request) && request.v === 2 && decideApprovalRequestTransition(original.request, request).ok;
       if (!valid) throw new ApprovalRequestConflict();
     }
     return request;
@@ -75,7 +75,7 @@ export function createLiveCliApprovalOrigin(params: Readonly<{
     if (!originScope) return await create();
     const context = invocation?.context;
     const origin = request.v === 2 || isTargetApproval(request) ? request.executionOriginV1 : undefined;
-    if (!origin || !invocation || !context || context.surface !== 'cli'
+    if (!origin || !invocation || !context || context.surface !== origin.surface
       || context.actionCaller && context.actionCaller.kind !== 'host'
       || context.externalActionCredential || context.externalActionExecutionAuthorization || context.rpcSessionAuthorization
       || context.causalPermissionAuthority || context.callerInputConstraints

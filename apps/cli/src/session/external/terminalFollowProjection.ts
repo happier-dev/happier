@@ -40,7 +40,6 @@ function parseRuntimeTranscriptEvent(value: unknown): AgentSessionRuntimeEvent {
 
 function toRuntimeTranscriptEvent(params: Readonly<{
   sessionId: string;
-  agentId: string;
   item: HostExternalTranscriptItem;
   phase?: 'initial_replay';
   sequence: number;
@@ -214,7 +213,6 @@ export function createExternalSessionTerminalFollowProjector(params: Readonly<{
       }
       const runtimeEvent = toRuntimeTranscriptEvent({
         sessionId: params.sessionId,
-        agentId: params.agentId,
         item,
         sequence: sequence + 1,
         ...(event.phase ? { phase: event.phase } : {}),

@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 
 import {
   createSessionHandoffPrepareTargetJobStore,
@@ -11,6 +12,82 @@ import {
 } from './sessionHandoffPrepareTargetJobStore';
 
 describe('sessionHandoffPrepareTargetJobStore', () => {
+  it('settles its local waiter only when the observed job status changes, without polling', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-job-status-wait-'));
+    const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+    const status = { handoffId: 'handoff', jobId: 'prepare_handoff', status: 'pending' as const,
+      phase: 'staging_target' as const, recoveryActions: [] };
+    const record = { jobId: status.jobId, handoffId: status.handoffId, createdAtMs: 1, updatedAtMs: 1, status };
+    const controller = new AbortController();
+    let waiting: Promise<void> | undefined;
+    try {
+      await store.write(record);
+      vi.useFakeTimers();
+      let settled = false;
+      waiting = store.waitForChange({ jobId: status.jobId, observedStatus: status, signal: controller.signal })
+        .then(() => { settled = true; });
+      await store.update(status.jobId, current => current);
+      await store.write({ ...record, jobId: 'unrelated', handoffId: 'other', status: { ...status, handoffId: 'other', jobId: 'unrelated' } });
+      expect(settled).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+      const changedStatus = { ...status, status: 'awaiting_recovery' as const };
+      await store.write({ ...record, updatedAtMs: 2, status: changedStatus });
+      await waiting;
+      expect(settled).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+      await expect(store.waitForChange({ jobId: status.jobId, observedStatus: status, signal: controller.signal })).resolves.toBeUndefined();
+    } finally {
+      controller.abort();
+      await waiting?.catch(() => undefined);
+      vi.useRealTimers();
+      await rm(activeServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('cancels an unchanged local job waiter and can observe a later write', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-job-status-cancel-'));
+    const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+    const status = { handoffId: 'handoff', jobId: 'prepare_handoff', status: 'pending' as const,
+      phase: 'staging_target' as const, recoveryActions: [] };
+    const record = { jobId: status.jobId, handoffId: status.handoffId, createdAtMs: 1, updatedAtMs: 1, status };
+    try {
+      await store.write(record);
+      const controller = new AbortController();
+      const cancelled = store.waitForChange({ jobId: status.jobId, observedStatus: status, signal: controller.signal });
+      const rejection = expect(cancelled).rejects.toThrow('stop waiting');
+      controller.abort(new Error('stop waiting'));
+      await rejection;
+      const next = store.waitForChange({ jobId: status.jobId, observedStatus: status, signal: new AbortController().signal });
+      await store.update(status.jobId, current => ({ ...current, status: { ...status, status: 'awaiting_user_resume' } }));
+      await expect(next).resolves.toBeUndefined();
+    } finally { await rm(activeServerDir, { recursive: true, force: true }); }
+  });
+  it('waits for the current mutation owner beyond the former five-second phase deadline', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-job-lock-lifetime-'));
+    const jobId = 'held_job';
+    const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+    let enterOwner!: () => void;
+    const entered = new Promise<void>(resolve => { enterOwner = resolve; });
+    let releaseOwner!: () => void;
+    const held = new Promise<void>(resolve => { releaseOwner = resolve; });
+    const owner = withJsonOwnerFileLock({
+      lockPath: join(activeServerDir, 'session-handoff', 'prepare-target-jobs', `${jobId}.json.lock`),
+      timeoutMs: Infinity, errorCode: 'fixture_owner_lock',
+    }, async () => { enterOwner(); await held; });
+    await entered;
+    try {
+      const mutation = store.write({ jobId, handoffId: 'handoff', createdAtMs: 1, updatedAtMs: 1,
+        status: { handoffId: 'handoff', jobId, status: 'pending', phase: 'preparing', recoveryActions: [] } });
+      // Retain the real filesystem owner past the removed phase-local limit.
+      // Catch immediately so an obsolete timeout is asserted, not unhandled.
+      const settled = mutation.then(() => ({ ok: true as const }), error => ({ ok: false as const, error }));
+      await new Promise(resolve => setTimeout(resolve, 5_100));
+      releaseOwner();
+      await owner;
+      expect(await settled).toEqual({ ok: true });
+      expect((await store.read(jobId))?.status.status).toBe('pending');
+    } finally { releaseOwner(); await owner; await rm(activeServerDir, { recursive: true, force: true }); }
+  });
   it.each([
     ['target_identity_conflict', 'reconciliation_required'],
     ['agent_version_unsupported', 'failed'],

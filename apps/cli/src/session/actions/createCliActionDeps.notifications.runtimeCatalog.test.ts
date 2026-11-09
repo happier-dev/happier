@@ -41,9 +41,10 @@ import { bindAutomationWorkflowInputs } from '@/daemon/workflows/input';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { notificationSettingsFixture as accountSettingsParse, notificationCatalogFixture } from '@/notifications/activity/activityNotification.testkit';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { configuration } from '@/configuration';
-
+import * as persistenceBoundary from '@/persistence';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -92,7 +93,10 @@ describe('CLI Notify me host composition', () => {
     vi.clearAllMocks();
     boundary.send.mockResolvedValue([{ status: 'ok', id: 'push-ticket' }]);
     boundary.get.mockImplementation(async (url: string) => ({ status: 200,
-      data: new URL(url).pathname.startsWith('/v2/sessions/') ? { session: createSessionNotificationContextFixture('session-1') }
+      data: new URL(url).pathname.startsWith('/v2/sessions/') ? { session: {
+        ...createSessionNotificationContextFixture('session-1'), encryptionMode: 'plain', metadata: JSON.stringify(createTestMetadata()),
+      } }
+        : url.endsWith('/v1/account/encryption/currentness') ? createAccountEncryptionCurrentnessFixture()
         : url.endsWith('/v1/push-tokens')
           ? { tokens: [{ id: 'device-1', token: 'ExponentPushToken[test]', createdAt: 1, updatedAt: 1 }] }
           : { badgeCount: 0 } }));
@@ -222,6 +226,8 @@ describe('CLI Notify me host composition', () => {
       .resolves.toMatchObject({ ok: false, errorCode: 'notification_channel_catalog_unavailable', details: { reason: 'forbidden' } });
     await expect(deps.notificationsNotifyMe?.({ message: 'ready', channels: ['builtin:expo_push'] }, { surface: 'cli' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'notification_channel_catalog_unavailable', details: { reason: 'forbidden' } });
+    await expect(deps.notificationConfigurationAction?.({ actionId: 'notifications.webhooks.test', input: { channelId: 'daemon-only' },
+      context: { surface: 'cli' } })).resolves.toEqual({ status: 'refused', reason: 'catalog_unavailable' });
     expect(boundary.send).not.toHaveBeenCalled();
     expect(getActiveAccountSettingsSnapshot()?.notificationChannelCatalog).toMatchObject({ status: 'ready', revision: 9 });
     expect(operationContext.readSnapshot()?.notificationChannelCatalog).toMatchObject({ status: 'unavailable', reason: 'forbidden' });
@@ -268,6 +274,8 @@ describe('CLI Notify me host composition', () => {
 
   it('delivers a retained Workflow channel identity to the destination webhook after settings root removal', async () => {
     const observed: { body: Buffer; signature: string | undefined }[] = [];
+    const storedCredentials = vi.spyOn(persistenceBoundary, 'readStoredCredentials')
+      .mockResolvedValue({ token: 'account-token', encryption: null });
     const receiver = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -303,6 +311,17 @@ describe('CLI Notify me host composition', () => {
           displayName: 'Signing', kind: 'other', revision: 2, encryptionMode: 'plain', materialStatus: 'ready',
           storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
             content: { v: 1, name: 'Signing', kind: 'other', value: signingBytes } }) }] });
+      const materials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{ resourceId,
+        encryptionMode: 'plain', recipientEnvelope: null,
+        entry: { ref: `happier:shared-secret:v1:${resourceId}`, source: 'shared_resource', relationship: 'owner',
+          ownerAccountId: 'account', name: 'Signing', kind: 'other', revision: 2, materialStatus: 'ready',
+          capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+        storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+          content: { v: 1, name: 'Signing', kind: 'other', value: signingBytes } }) }] });
+      boundary.get.mockImplementation(async (url: string) => {
+        expect(url).toBe(`${resolveServerHttpBaseUrl()}/v1/account/saved-secrets/resources/materials`);
+        return { status: 200, data: materials };
+      });
       const deps = host(settings);
       await expect(deps.notificationChannelsList?.({ surface: 'cli' }))
         .resolves.toEqual({ items: [{ value: channelId, label: channelId, disabled: false }] });
@@ -313,7 +332,10 @@ describe('CLI Notify me host composition', () => {
       expect(observed[0]!.signature).toBe(`sha256=${createHmac('sha256', signingBytes).update(observed[0]!.body).digest('hex')}`);
       expect(observed[0]!.body.toString('utf8')).not.toContain('Private Workflow content');
       expect(boundary.send).not.toHaveBeenCalled();
-    } finally { await new Promise<void>((resolve, reject) => receiver.close(error => error ? reject(error) : resolve())); }
+    } finally {
+      storedCredentials.mockRestore();
+      await new Promise<void>((resolve, reject) => receiver.close(error => error ? reject(error) : resolve()));
+    }
   });
 
   it('dispatches through policy and suppresses a replay with the same Action request id', async () => {
@@ -337,23 +359,28 @@ describe('CLI Notify me host composition', () => {
   });
 
   it('runs authenticated Session notifications through agent policy and refuses non-Account placement', async () => {
+    const sessionId = 'c000000000000000000000001';
+    const get = boundary.get.getMockImplementation()!;
+    boundary.get.mockImplementation(async (url: string) => new URL(url).pathname === `/v2/sessions/${sessionId}`
+      ? { status: 200, data: { session: { ...createSessionNotificationContextFixture(sessionId),
+        encryptionMode: 'plain', metadata: JSON.stringify(createTestMetadata()) } } } : get(url));
     const sessionHome = { serverId: 'home', serverHttpBaseUrl: resolveServerHttpBaseUrl(), token: 'account-token' };
     const execute = createDaemonSessionAccountActionExecutor({ ...sessionHome,
-      createExecutor: () => createCliActionExecutor(hostParams(accountSettingsParse({ actionsSettingsV1: {
+      createExecutor: () => createCliActionExecutor({ ...hostParams(accountSettingsParse({ actionsSettingsV1: {
         v: 1, actions: { 'notifications.notify_me': { disabledSurfaces: ['agent'] } },
-      } }))) });
-    const authority = { sessionId: 'session-1', isCurrent: async () => true };
+      } })), sessionId }) });
+    const authority = { sessionId, isCurrent: async () => true };
     const witness = { turnId: 'turn-1', inputId: 'input-1', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0,
-      agentStartCaller: { kind: 'session' as const, sessionId: 'session-1', starterDepth: 0, turnDepth: 0 } };
+      agentStartCaller: { kind: 'session' as const, sessionId, starterDepth: 0, turnDepth: 0 } };
     await expect(execute({ kind: 'action.execute', requestId: 'session-notify',
       actionId: 'notifications.notify_me', input: { message: 'ready', channels: ['builtin:expo_push'] }, witness }, authority))
       .resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
     await expect(execute({ kind: 'action.execute', requestId: 'foreign-placement',
-      actionId: 'session.message.send', input: { sessionId: 'session-1', message: 'hello' }, witness }, authority))
+      actionId: 'session.message.send', input: { sessionId, message: 'hello' }, witness }, authority))
       .resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
     expect(boundary.send).not.toHaveBeenCalled();
     const allowed = createDaemonSessionAccountActionExecutor({ ...sessionHome,
-      createExecutor: () => createCliActionExecutor(hostParams()) });
+      createExecutor: () => createCliActionExecutor({ ...hostParams(), sessionId }) });
     await expect(allowed({ kind: 'action.execute', requestId: 'session-notify-allowed',
       actionId: 'notifications.notify_me', input: { message: 'ready', channels: ['builtin:expo_push'] }, witness }, authority))
       .resolves.toEqual({ ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } });

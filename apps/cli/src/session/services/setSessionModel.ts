@@ -358,7 +358,7 @@ export async function setSessionModel(params: Readonly<{
   const request = resolveRequestedSelection({
     sessionTarget,
     credentials: params.credentials,
-    modelId: modelId.trim(),
+    modelId,
     hasExplicitProviderConnectionId,
     explicitProviderConnectionId,
   });
@@ -445,7 +445,7 @@ export async function setSessionModel(params: Readonly<{
       const refreshedRequest = resolveRequestedSelection({
         sessionTarget: refreshedTarget,
         credentials: params.credentials,
-        modelId: modelId.trim(),
+        modelId,
         hasExplicitProviderConnectionId,
         explicitProviderConnectionId,
       });

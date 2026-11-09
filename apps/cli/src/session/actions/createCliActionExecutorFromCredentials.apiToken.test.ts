@@ -17,6 +17,7 @@ import { SIGNED_ROOT_ACTION_EXECUTE_PATH } from '@/daemon/externalActions/signed
 import { createAccountEncryptionCurrentnessFixture, createCurrentSessionProjectionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { DiscussionSecondOpinionPreviewV1Schema } from '@happier-dev/protocol/discussions/secondOpinion';
@@ -453,6 +454,28 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       { surface: 'cli', authority, presentUserConfirmation: { actionId: confirmed ? 'account.apiTokens.create' : 'account.apiTokens.revoke' } }))
       .resolves.toMatchObject({ ok: false, ...(nativeRequests ? { errorCode: 'present_user_required' } : {}) });
     expect(request.mock.calls).toHaveLength(nativeRequests);
+  });
+
+  it('resumes its own deferred root approval and returns the decision-held live result', async () => {
+    const actual = await vi.importActual<typeof import('./createCliActionExecutor')>('./createCliActionExecutor');
+    createCliActionExecutor.mockImplementation(actual.createCliActionExecutor);
+    const pending = { ok: true, result: { kind: 'approval_request_created',
+      actionId: 'connectedServices.authentication.beginConnect', artifactId: 'root-connect-approval' } };
+    daemonPost.mockResolvedValue(pending);
+    const raw = { status: 'awaitingManual', attemptId: 'attempt-connect' };
+    // This callback is the terminal's human/--yes boundary. The daemon HTTP
+    // boundary supplies the receipt; real CLI placement consumes its decision.
+    const onApprovalRequested = vi.fn(async () => ({ ok: true as const,
+      result: { ok: true, status: 'executed', liveExecution: { ok: true, result: raw } } }));
+    await withPublishedAccountDaemon(async ({ credentials, serverId, serverApiUrl, daemonTarget }) => {
+      const executor = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl,
+        serverIdentityId: 'srv_home', machineId: daemonTarget.machineId, externalActionClient: true,
+        onApprovalRequested });
+      await expect(executor.execute('connectedServices.authentication.beginConnect', {
+        machineId: daemonTarget.machineId, service: { pluginId: 'example.accounts', localId: 'service' }, modeId: 'manual',
+      }, { surface: 'cli', authority: 'present_user' })).resolves.toEqual({ ok: true, result: raw });
+      expect(onApprovalRequested).toHaveBeenCalledWith('root-connect-approval', expect.any(AbortSignal));
+    });
   });
 
   it('routes only ordinary attested stored-session CLI root clients through their captured Account daemon', async () => {
@@ -1551,7 +1574,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       disposition: 'created',
       sessionId: exactSessionId,
       executionTarget: { serverId: 'daemon-profile-only', machineId: 'machine-selected' },
-      organizationPlacement: { folderId: null, tagIds: [] },
+      organizationPlacement: { sectionId: null, tagIds: [] },
       initialInput: { status: 'accepted', localId: 'initial-input-1' },
     } as const;
     const fetch = vi.fn<FetchLike>(() => apiSuccess('session.spawn_new', spawnResult));
@@ -1571,7 +1594,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         creationKey: 'manual:pat-spawn-1',
         executionTarget: { serverId: 'daemon-profile-only', machineId: 'machine-selected' },
         directory: { kind: 'path', path: '/workspace/pat-project' },
-        organizationPlacement: { folderId: null, tagIds: [] },
+        organizationPlacement: { sectionId: null, tagIds: [] },
         agentTarget: {
           kind: 'agent',
           identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
@@ -1589,13 +1612,47 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
       input: {
         creationKey: 'manual:pat-spawn-1',
         directory: { kind: 'path', path: '/workspace/pat-project' },
-        organizationPlacement: { folderId: null, tagIds: [] },
+        organizationPlacement: { sectionId: null, tagIds: [] },
         agentTarget: {
           kind: 'agent',
           identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
         },
       },
     });
+  });
+
+  it('sends ordinary Machine setup children with the verified PAT through public Actions', async () => {
+    if (!patActionEndpoint) throw new Error('Expected PAT Action test endpoint.');
+    resolveCurrentAccountMachineTarget.mockResolvedValue({ kind: 'selected',
+      target: { machineId: 'machine-selected', machineLabel: 'Selected machine' } });
+    const setup = { homeId: 'home', machineId: 'machine-selected', targets: [{ homeId: 'home',
+      machineId: 'machine-selected', sources: [{ kind: 'direct' as const, setup: {} }], desiredRevision: 0, recipePlans: [] }] };
+    const requests: Array<{ actionId: string; authorization: string | undefined; body: unknown }> = [];
+    installPatActionTransportMock((url, init) => {
+      const actionId = url.pathname.split('/').at(-1)!;
+      requests.push({ actionId, authorization: new Headers(init?.headers).get('authorization') ?? undefined,
+        body: JSON.parse(String(init?.body)) });
+      return apiSuccess(actionId, actionId === 'machines.setup.plan'
+        ? { desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], exclusions: [], support: [] }
+        : { operationId: 'pat-owned-setup' });
+    });
+    const executor = createCliActionExecutorFromCredentials({ credentials: {
+      token: SYNTHETIC_API_TOKEN, encryption: null, credentialProvenance: 'api_token',
+    }, serverId: 'home', serverApiUrl: patActionEndpoint, machineId: 'machine-selected' });
+    const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+      externalActionTarget: { kind: 'machine' as const, machineId: 'machine-selected' } };
+    await expect(executor.execute('machines.setup.plan', { homeId: 'home', machineId: 'machine-selected' }, context))
+      .resolves.toMatchObject({ ok: true, result: { desiredRevision: 0 } });
+    await expect(executor.execute('machines.setup.apply', setup, context))
+      .resolves.toEqual({ ok: true, result: { operationId: 'pat-owned-setup' } });
+    expect(requests).toEqual([
+      { actionId: 'machines.setup.plan', authorization: `Bearer ${SYNTHETIC_API_TOKEN}`,
+        body: expect.objectContaining({ target: { kind: 'machine', machineId: 'machine-selected' },
+          input: { homeId: 'home', machineId: 'machine-selected' } }) },
+      { actionId: 'machines.setup.apply', authorization: `Bearer ${SYNTHETIC_API_TOKEN}`,
+        body: expect.objectContaining({ target: { kind: 'machine', machineId: 'machine-selected' }, input: setup }) },
+    ]);
+    expect(createCliActionExecutor).not.toHaveBeenCalled();
   });
 
   it('surfaces transport failure instead of retrying through a local executor', async () => {
