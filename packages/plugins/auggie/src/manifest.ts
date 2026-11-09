@@ -54,6 +54,7 @@ export const AUGGIE_PLUGIN = definePlugin({
         },
         primary: 'sessions',
         catalog: {
+          agentCliSystemTool: { toolId: 'auggie-cli' },
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },

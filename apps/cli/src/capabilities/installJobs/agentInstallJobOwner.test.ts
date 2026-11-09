@@ -68,17 +68,13 @@ async function stopFixture(owner: AgentInstallJobOwner | undefined, allowTermina
   }
 }
 
-const httpsFixture = vi.hoisted(() => ({ origin: '', pnpmOrigin: '' }));
+const httpsFixture = vi.hoisted(() => ({ origin: '' }));
 vi.mock('node:https', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:https')>();
   const http = await import('node:http');
   return { ...actual, request: (url: URL, options: RequestOptions, callback: (response: IncomingMessage) => void) => {
     // Only the external HTTPS transport is substituted; schema, download,
     // digest verification, extraction and promotion remain real.
-    const target = new URL(String(url));
-    if (httpsFixture.pnpmOrigin && target.hostname === 'api.github.com' && target.pathname === '/repos/pnpm/pnpm/releases/latest') {
-      return http.request(new URL(target.pathname, httpsFixture.pnpmOrigin), options, callback);
-    }
     if (url.hostname !== 'agent-job-fixture.invalid') return actual.request(url, options, callback);
     if (!httpsFixture.origin) throw new Error('Missing isolated HTTPS fixture transport');
     return http.request(new URL(url.pathname, httpsFixture.origin), options, callback);
@@ -103,41 +99,17 @@ function registryWith(runtimeSpec: AgentCliRuntimeDescriptor) {
   return { agents: [{ id: runtimeSpec.id, runtimeSpec, pluginId: 'fixture.plugin' }], managedDependencies: [] };
 }
 
-test('managed pnpm bootstrap retains a typed rate-limit cause in the install job', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agent-job-pnpm-ratelimit-'));
-  const spec: AgentCliRuntimeDescriptor = {
-    id: 'fixture-pnpm', title: 'Fixture pnpm', binaryName: 'fixture-pnpm',
-    sourcePreferenceDefault: 'managed-first', acceptsJavaScriptFileOverride: false,
-    manualInstallKind: 'none', manualInstallRecipes: null,
-    managedInstall: { kind: 'managed_package', packageName: '@fixture/agent@1.2.3', binaryName: 'fixture-pnpm' },
-  };
-  // Only HTTP is substituted. Bootstrap, release parsing, install failure
-  // classification, job settlement and the daemon response schema remain real.
-  const server = createServer((_request, response) => {
-    response.writeHead(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1792364400' });
-    response.end();
-  });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Missing fixture address');
-  httpsFixture.pnpmOrigin = `http://127.0.0.1:${address.port}`;
-  const owner = createAgentInstallJobOwner({
-    env: { HOME: root, HAPPIER_HOME_DIR: root, PATH: '' }, readRegistry: () => registryWith(spec),
-  });
+test('admits the documented lowercase Oh My Pi name using its canonical runtime identity', async () => {
+  const spec: AgentCliRuntimeDescriptor = { id: 'ohMyPi', title: 'Oh My Pi', binaryName: 'omp',
+    sourcePreferenceDefault: 'system-first', manualInstallKind: 'none', manualInstallRecipes: {},
+    acceptsJavaScriptFileOverride: false, managedInstall: null };
+  const owner = createAgentInstallJobOwner({ env: { PATH: '' }, readRegistry: () => registryWith(spec) });
   try {
-    const started = owner.start({ agentId: spec.id, intent: 'install', consent: { vendorRecipe: false } });
-    if (!started.ok) throw new Error('Expected install admission');
-    expect(await outcome(owner, started.jobId)).toMatchObject({ kind: 'failed', code: 'rate_limited',
-      message: expect.stringContaining('2026-10-18T23:00:00.000Z'),
-    });
-    expect(DaemonAgentInstallReadResponseSchema.parse(owner.read({ jobId: started.jobId, cursor: 0 }))).toMatchObject({
-      ok: true, done: true, outcome: { kind: 'failed', code: 'rate_limited' },
-    });
-  } finally {
-    await owner.shutdown(); httpsFixture.pnpmOrigin = ''; server.closeAllConnections();
-    await new Promise<void>(resolve => server.close(() => resolve()));
-    await rm(root, { recursive: true, force: true });
-  }
+    const started = owner.start({ agentId: 'ohmypi', intent: 'install', consent: { vendorRecipe: false } });
+    expect(started).toMatchObject({ ok: true });
+    if (!started.ok) return;
+    expect(owner.list()).toMatchObject({ ok: true, jobs: [expect.objectContaining({ agentId: 'ohMyPi' })] });
+  } finally { await owner.shutdown(); }
 });
 
 test('an exhausted GitHub REST install retains a typed rate-limit outcome and reset time', async () => {

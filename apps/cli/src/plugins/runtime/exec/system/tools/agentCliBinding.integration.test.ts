@@ -7,7 +7,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { create as createTar } from 'tar';
 
 import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
-import { resolvePlatformFromNodePlatform } from '@happier-dev/cli-common/agents';
+import { resolveAgentCliManagedCommandPathForRuntime, resolvePlatformFromNodePlatform } from '@happier-dev/cli-common/agents';
 import { describe, expect, it, vi } from 'vitest';
 
 import { bindAgentCliLaunchSpec, buildAgentCliLaunchSpecFromResolution } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
@@ -74,6 +74,38 @@ const fixtures: readonly AgentCliBindingFixture[] = Object.freeze([
 ]);
 
 describe('Agent CLI system-tool binding (integration)', () => {
+    it('resolves managed Oh My Pi through its declared tool when omp is absent from PATH', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-omp-managed-binding-'));
+        const spec = getAgentCliRuntimeSpec('ohMyPi');
+        const command = resolveAgentCliManagedCommandPathForRuntime(spec, { happyHomeDir });
+        await mkdir(dirname(command), { recursive: true });
+        await writeFile(command, process.platform === 'win32' ? 'managed-fixture' : '#!/bin/sh\nexit 0\n');
+        await chmod(command, 0o755);
+        const previousPath = process.env.PATH;
+        const previousOverride = process.env.HAPPIER_OHMYPI_PATH;
+        process.env.PATH = '';
+        delete process.env.HAPPIER_OHMYPI_PATH;
+        let admitted: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
+        try {
+            admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir,
+                runtimeOptions: { pluginIds: ['happier.agent.ohmypi'] } });
+            await admitted.registry.activateContributionsOnDemand([{ pluginId: 'happier.agent.ohmypi', family: 'agents', localId: 'ohmypi' }]);
+            const occurrenceId = admitted.registry.readPluginOccurrenceId?.('happier.agent.ohmypi');
+            if (!occurrenceId) throw new Error('Expected admitted Oh My Pi occurrence');
+            const services = await admitted.registry.createAgentInvocationServices({ pluginId: 'happier.agent.ohmypi',
+                pluginVersion: '0.0.0', agentId: 'ohMyPi', occurrenceId, correlationId: 'omp-managed-binding',
+                cwd: happyHomeDir, signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+            await expect(services.exec.systemTools.resolve({ toolId: 'ohmypi-cli', purpose: 'Open managed Oh My Pi' }))
+                .resolves.toMatchObject({ executablePath: command });
+        } finally {
+            await admitted?.dispose();
+            if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+            if (previousOverride === undefined) delete process.env.HAPPIER_OHMYPI_PATH;
+            else process.env.HAPPIER_OHMYPI_PATH = previousOverride;
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    });
+
     it.each(['direct', 'wrapped'] as const)('qualifies the actual provider exit through SDK binding (%s)', async mode => {
         if (process.platform === 'win32') return; // Windows shell creation is adapted at the OS boundary on this host.
         const directory = await mkdtemp(join(tmpdir(), 'happier-sdk-exit-qualification-'));

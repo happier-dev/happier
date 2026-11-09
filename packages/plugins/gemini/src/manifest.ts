@@ -10,7 +10,9 @@ import { createGeminiConnectedServiceRuntimeAuthAdapter } from './agent/connecte
 import { resolveGeminiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 import { createGeminiAgentRuntime } from './agent/runtime/factory.js';
 import { geminiConnectedAccountRuntime } from './connectedAccounts/runtime.js';
-import { GEMINI_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+import { geminiPortableAuthentication } from './connectedAccounts/portableAuthentication.js';
+import { GEMINI_PROVIDER_BINDING_ADAPTER_V1, GEMINI_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
+
 import { geminiExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
 
 const resolveGeminiDaemonSpawnPrerequisitesHook: HookHandler =
@@ -21,7 +23,6 @@ export const GEMINI_PLUGIN = definePlugin({
   id: 'happier.agent.gemini',
   version: '0.0.0',
   displayName: 'Gemini',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -55,10 +56,17 @@ export const GEMINI_PLUGIN = definePlugin({
       declaration: {
         title: 'Gemini',
         authentication: {
+          account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           defaultModeId: 'api-key',
           modes: [{
             id: 'api-key',
             kind: 'manual',
+            setup: {
+              url: 'https://aistudio.google.com/apikey',
+              checklist: ['Create a Gemini API key in Google AI Studio for the project you want to use.', 'Copy the key and paste it here.'],
+              createKeyTitle: 'Open Google AI Studio API keys',
+            },
+            accountDirectSave: { fieldKeys: { token: 'apiKey' } },
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             outcomeReconciliation: 'none',
             fields: [{
@@ -70,6 +78,11 @@ export const GEMINI_PLUGIN = definePlugin({
           }, {
             id: 'service-account',
             kind: 'manual',
+            setup: {
+              url: 'https://console.cloud.google.com/iam-admin/serviceaccounts',
+              checklist: ['Select your Google Cloud project and a service account with the Vertex AI access you need.', 'Open its Keys tab, choose Add key > Create new key, and select JSON.', 'Paste the full downloaded JSON file here.'],
+              createKeyTitle: 'Open Google Cloud service accounts',
+            },
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             title: 'Google service account',
             outcomeReconciliation: 'none',
@@ -83,6 +96,7 @@ export const GEMINI_PLUGIN = definePlugin({
         },
       },
       runtime: geminiConnectedAccountRuntime,
+      accountRuntime: geminiPortableAuthentication,
     },
   },
   agents: {
@@ -90,6 +104,14 @@ export const GEMINI_PLUGIN = definePlugin({
       declaration: {
         title: 'Gemini',
         runtime: { kind: 'custom' },
+        providerRequirements: {
+          acceptsProtocols: ['gemini'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: { supportsNoAuth: false, apiKeyTransports: [{ protocol: 'gemini',
+            destination: { kind: 'httpHeader', names: ['x-goog-api-key'], formats: ['raw'] } }] },
+          authIsolation: { suppressConnectedServiceIds: ['gemini'], ownedEnvKeys: [...GEMINI_PROVIDER_OWNED_ENV_KEYS] },
+          materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        },
         cli: {
           displayName: 'Google Gemini CLI',
           executable: {
@@ -122,6 +144,7 @@ export const GEMINI_PLUGIN = definePlugin({
         },
         primary: 'sessions',
         catalog: {
+          agentCliSystemTool: { toolId: 'gemini-cli' },
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
@@ -164,6 +187,7 @@ export const GEMINI_PLUGIN = definePlugin({
       },
       externalSessions: geminiExternalSessionsContribution,
       factory: createGeminiAgentRuntime,
+      providerBinding: GEMINI_PROVIDER_BINDING_ADAPTER_V1,
       preflightSessionControls: GEMINI_PREFLIGHT_SESSION_CONTROLS,
       connectedAccountLaunch: {
         switchContinuity: {
@@ -207,17 +231,40 @@ export const GEMINI_PLUGIN = definePlugin({
     'resolve-prerequisites': {
       declaration: {
         on: 'agent.resolvePrerequisites',
-        hookApiVersion: 1,
-        category: 'decision',
-        scope: 'agent',
         filters: { agentId: 'gemini' },
-        executionKind: 'decide',
       },
       handler: resolveGeminiDaemonSpawnPrerequisitesHook,
     },
   },
   ui: {
-    translations: GEMINI_UI_TRANSLATION_BUNDLES,
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ],
+  },
+  resources: {
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
 });
 

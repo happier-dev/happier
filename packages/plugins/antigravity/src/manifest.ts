@@ -1,5 +1,6 @@
-import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
-import { antigravityConnectedAccountRuntime } from './connectedAccounts/antigravityConnectedAccountRuntime.js';
+import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigravity/oauth-profile';
+import { antigravityConnectedAccountRuntime } from './connectedAccounts/antigravityNativeRuntime.js';
+import { antigravityAccountAuthentication } from './connectedAccounts/account.js';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
@@ -7,7 +8,7 @@ import { antigravityExternalSessionsContribution } from './agent/cliPrint/extern
 import { antigravityExternalSessionObservationContribution } from './agent/cliPrint/observation.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { antigravityConnectedAccountLaunch } from './agent/connectedServices/continuity.js';
-import { ANTIGRAVITY_ACP_SERVER_INSTALL_ID, ANTIGRAVITY_BACKEND_ID } from './agent/install/cliRuntime.js';
+import { ANTIGRAVITY_ACP_SERVER_INSTALL_ID, ANTIGRAVITY_ACP_SERVER_VERSION, ANTIGRAVITY_BACKEND_ID } from './agent/install/cliRuntime.js';
 import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from './agent/systemTool.js';
 import { createAntigravityNativeTerminalSurface } from './agent/terminal/nativeSurface.js';
 
@@ -15,7 +16,6 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
   id: 'happier.agent.antigravity',
   version: '0.0.0',
   displayName: 'Antigravity',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -56,6 +56,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
       declaration: {
         title: 'Google Antigravity',
         authentication: {
+          account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           defaultModeId: 'oauth-personal',
           modes: [{
             id: 'oauth-personal', kind: 'oauthAuthorizationCode', title: 'Sign in with Google',
@@ -64,6 +65,12 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
             allowRawAuthorizationCode: ANTIGRAVITY_OAUTH_PROFILE.allowRawAuthorizationCode,
           }, {
             id: 'native-import', kind: 'manual', title: 'Import native login', outcomeReconciliation: 'none',
+            setup: {
+              url: 'https://antigravity.google/docs/cli/install/',
+              checklist: ['Sign in to Antigravity on the computer you will import from.', 'Choose the matching native login source and that computer in Happier.'],
+              createKeyTitle: 'Read Antigravity sign-in instructions',
+            },
+            credentialOrigin: 'native_import',
             fields: [{ id: 'source', title: 'Native login source', secret: false,
               description: 'Importing shares this native login with Happier. The native app may ask you to sign in again when Happier renews it. On macOS, ACP import reads the Keychain without testing write availability.',
               schema: { type: 'string', enum: ['acp', 'cli', 'cli-file'] }, default: 'acp',
@@ -77,6 +84,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
         },
       },
       runtime: antigravityConnectedAccountRuntime,
+      accountRuntime: antigravityAccountAuthentication,
     },
   },
   agents: {
@@ -139,6 +147,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
         },
         primary: 'sessions',
         catalog: {
+          agentCliSystemTool: { toolId: ANTIGRAVITY_CLI_SYSTEM_TOOL_ID },
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
@@ -198,7 +207,7 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
       sources: [{
         kind: 'pinnedArchive',
         installId: ANTIGRAVITY_ACP_SERVER_INSTALL_ID,
-        version: '1.3.0',
+        version: ANTIGRAVITY_ACP_SERVER_VERSION,
         // All six official 1.3.0 archives were downloaded and SHA-256 reviewed
         // on 2026-10-08. Largest archive: 333,727,150 bytes; largest file:
         // 930,848,992 bytes; largest expanded payload: 1,056,922,005 bytes.

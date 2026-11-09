@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { resolveCanonicalAgentIdFromFlavor } from '@happier-dev/agents';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { ExecFileTerminationError } from '@happier-dev/cli-common/process';
 import { hasAgentCliManagedInstallForRuntime, installAgentCliForRuntime, removeAgentCliManagedInstallForRuntime, resolvePlatformFromNodePlatform, type AgentInstallProgressCallback } from '@happier-dev/cli-common/agents';
@@ -414,7 +415,10 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
       const identity = parseQualifiedPluginContributionKey(input.agentId)
         ?? (input.agentId === CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId ? CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 : null);
       const routingId = identity ? readAgentRoutingIdForContributionIdentity(indexAgentRoutingIdsByContributionIdentity(registry.agents), identity) : null;
-      const agent = registry.agents.find(candidate => candidate.id === (routingId ?? input.agentId));
+      const requestedId = routingId ?? input.agentId;
+      const canonicalId = resolveCanonicalAgentIdFromFlavor(requestedId);
+      const agent = registry.agents.find(candidate => candidate.id === requestedId)
+        ?? (canonicalId ? registry.agents.find(candidate => candidate.id === canonicalId) : undefined);
       if (!agent || input.definitionId !== undefined && !isCustomAcpAgentContributionIdentityV1(agent.identity)
         || input.definitionId === undefined && !agent.runtimeSpec) return { ok: false, errorCode: 'install_unavailable', error: 'The agent has no registered CLI runtime.' };
       const request = { ...parsed.data, agentId: agent.id };

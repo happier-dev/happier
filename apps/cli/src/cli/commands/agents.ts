@@ -2,6 +2,7 @@ import { usage } from './agents/help';
 import { readResolvedAgentTitle as readAgentTitle } from '@/plugins/projection/registry/agentCommandTitle';
 import {
     getAgentCliSetupRecommendedIds,
+    resolveCanonicalAgentIdFromFlavor,
 } from '@happier-dev/agents';
 import {
     installAgentCliForRuntime,
@@ -211,7 +212,8 @@ async function resolveAgentsSetupSelection(args: readonly string[], rows: readon
             .map((value) => value.trim())
             .filter(Boolean);
     })();
-    const combined = Array.from(new Set([...explicit, ...csv]));
+    const combined = Array.from(new Set([...explicit, ...csv].map(value => supportedById.has(value)
+        ? value : resolveCanonicalAgentIdFromFlavor(value) ?? value)));
     if (combined.length > 0) {
         const invalid = combined.filter((value) => !supportedById.has(value));
         if (invalid.length > 0) {
@@ -304,21 +306,24 @@ export async function handleAgentsCommand(args: string[], options: Readonly<{ si
         ? listAgentStatus(mergedRegistry!, process.env)
         : [];
     const agentRowsById = new Map(agentRows.map((row) => [row.id, row] as const));
+    const readAgentRow = (requestedId: string) => agentRowsById.get(requestedId)
+        ?? agentRowsById.get(resolveCanonicalAgentIdFromFlavor(requestedId) ?? requestedId);
 
     if (subcommand === 'probe') {
-        const agentId = String(args[1] ?? '').trim();
-        if (!agentId || agentId === 'help' || agentId === '--help' || agentId === '-h') {
+        const requestedId = String(args[1] ?? '').trim();
+        if (!requestedId || requestedId === 'help' || requestedId === '--help' || requestedId === '-h') {
             console.log(usage(agentRows));
             return;
         }
-        const agentRow = agentRowsById.get(agentId);
+        const agentRow = readAgentRow(requestedId);
         if (!agentRow) {
             if (json) {
-                await printUnknownAgentJsonEnvelope(kind, agentId);
+                await printUnknownAgentJsonEnvelope(kind, requestedId);
                 return;
             }
-            throw new Error(`Unknown agent id: ${agentId}`);
+            throw new Error(`Unknown agent id: ${requestedId}`);
         }
+        const agentId = agentRow.id;
 
         const probeArgs = args.slice(2);
         const methods = parseAgentProbeMethods(probeArgs);
@@ -381,19 +386,20 @@ export async function handleAgentsCommand(args: string[], options: Readonly<{ si
 
     if (subcommand === 'auth') {
         const action = String(args[1] ?? '').trim();
-        const agentId = String(args[2] ?? '').trim();
-        if (action !== 'login' || !agentId || args.includes('--help') || args.includes('-h')) {
+        const requestedId = String(args[2] ?? '').trim();
+        if (action !== 'login' || !requestedId || args.includes('--help') || args.includes('-h')) {
             console.log(usage(agentRows));
             return;
         }
-        const agentRow = agentRowsById.get(agentId);
+        const agentRow = readAgentRow(requestedId);
         if (!agentRow || !mergedRegistry) {
             if (json) {
-                await printUnknownAgentJsonEnvelope(kind, agentId);
+                await printUnknownAgentJsonEnvelope(kind, requestedId);
                 return;
             }
-            throw new Error(`Unknown agent id: ${agentId}`);
+            throw new Error(`Unknown agent id: ${requestedId}`);
         }
+        const agentId = agentRow.id;
         const controller = new AbortController();
         const onInterrupt = () => controller.abort(new DOMException('Agent login cancelled', 'AbortError'));
         process.once('SIGINT', onInterrupt);
@@ -423,7 +429,7 @@ export async function handleAgentsCommand(args: string[], options: Readonly<{ si
             console.log(usage());
             return;
         }
-        const agentRow = agentRowsById.get(agentIdRaw);
+        const agentRow = readAgentRow(agentIdRaw);
         if (!agentRow) {
             if (json) {
                 await printUnknownAgentJsonEnvelope(kind, agentIdRaw);
@@ -452,7 +458,7 @@ export async function handleAgentsCommand(args: string[], options: Readonly<{ si
                         ok: true,
                         kind,
                         data: {
-                            agentId: agentIdRaw,
+                            agentId: agentRow.id,
                             alreadyInstalled: result.alreadyInstalled ?? false,
                             plan: result.plan,
                             logPath: result.logPath ?? null,

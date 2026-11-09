@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod/mini';
+import { resolveCanonicalAgentIdFromFlavor } from '@happier-dev/agents';
 import { DaemonAgentInstallStartResponseSchema, DaemonAgentInstallReadResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import type {
   AgentInstallJobOutcome,
@@ -129,8 +130,11 @@ export async function tryHandleAgentCliCommand(params: AgentCliOptions): Promise
       signal: params.signal, deps: scopedDeps, consumeSuccess: payload => { consume(payload); return true; } });
   };
   let caller = parsed.callerOverlay;
+  const canonicalAgentId = typeof caller.agentId === 'string' ? resolveCanonicalAgentIdFromFlavor(caller.agentId) : null;
+  if (!parsed.canonicalBase && machineAction && typeof caller.agentId === 'string' && !caller.definitionId
+    && canonicalAgentId && !findCatalogEntry(caller.agentId)) caller = { ...caller, agentId: canonicalAgentId };
   if (!parsed.canonicalBase && (definitionDelete || machineAction && typeof caller.agentId === 'string'
-    && !caller.definitionId && !findCatalogEntry(caller.agentId))) {
+    && !caller.definitionId && !canonicalAgentId && !findCatalogEntry(caller.agentId))) {
     let inventory: ReturnType<typeof AgentsBackendsListOutputSchema.parse> | undefined;
     await runRead(['agents', 'backends', 'list'], { includeDisabled: true }, value => { inventory = AgentsBackendsListOutputSchema.parse(value); });
     if (!inventory) return true;

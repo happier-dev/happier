@@ -1,7 +1,7 @@
 import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigravity/oauth-profile';
-import type { ConnectedAccountAuthenticationContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountAuthenticationContext, ConnectedAccountAuthenticationModeRuntime, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readAntigravityQuota } from './quota.js';
-import { readAgyNativeCredential } from './nativeCredentials.js';
+import type { readAgyNativeCredential } from './nativeCredentials.js';
 
 type CredentialReader = Parameters<ConnectedAccountRuntime['status']>[0]['credentials'];
 type CredentialStore = ConnectedAccountAuthenticationContext['attemptCredentials'];
@@ -87,17 +87,17 @@ async function identity(accessToken: string, context: Pick<ConnectedAccountAuthe
       if (providerAccountId || providerEmail) return { status: 'success' as const, providerAccountId, providerEmail };
     }
   } catch (error) { if (signal.aborted) throw error; }
-  context.services.logger.warn('Google Antigravity account identity is unavailable.', { code: 'antigravity_identity_unavailable' });
+  context.services.logger?.warn('Google Antigravity account identity is unavailable.', { code: 'antigravity_identity_unavailable' });
   return { status: 'success' as const, ...missing };
 }
 
-async function importNativeCredentials(source: unknown, context: ConnectedAccountAuthenticationContext, options?: Readonly<{ signal?: AbortSignal }>) {
+async function importNativeCredentials(readNativeCredential: typeof readAgyNativeCredential, source: unknown, context: ConnectedAccountAuthenticationContext, options?: Readonly<{ signal?: AbortSignal }>) {
   const signal = options?.signal ?? context.signal;
   signal.throwIfAborted();
   if (source !== 'acp' && source !== 'cli' && source !== 'cli-file') return { status: 'rejected' as const, diagnostic: diagnostic('antigravity_native_source_unsupported', 'Choose a supported Antigravity native login source.') };
   let native: Awaited<ReturnType<typeof readAgyNativeCredential>>;
   try {
-    native = await readAgyNativeCredential(source, message => context.services.logger.warn(message, { code: 'antigravity_native_storage_fallback' }), signal);
+    native = await readNativeCredential(source, message => context.services.logger?.warn(message, { code: 'antigravity_native_storage_fallback' }), signal);
   } catch (error) {
     if (signal.aborted) throw error;
     return { status: 'rejected' as const, diagnostic: diagnostic('antigravity_native_credentials_unavailable', 'The selected Antigravity native login is unavailable.') };
@@ -136,7 +136,12 @@ async function importNativeCredentials(source: unknown, context: ConnectedAccoun
   return outcome;
 }
 
-export const antigravityConnectedAccountRuntime: ConnectedAccountRuntime = {
+export function createAntigravityConnectedAccountRuntime(readNativeCredential?: typeof readAgyNativeCredential): ConnectedAccountRuntime {
+  const nativeImportMode: Extract<ConnectedAccountAuthenticationModeRuntime, { kind: 'manual' }> | undefined = readNativeCredential ? {
+    kind: 'manual',
+    async complete(input, context, options) { return await importNativeCredentials(readNativeCredential, input.fields.source, context, options); },
+  } : undefined;
+  return {
   authentication: { modes: { 'oauth-personal': {
     kind: 'oauthAuthorizationCode',
     async begin(input) {
@@ -156,10 +161,7 @@ export const antigravityConnectedAccountRuntime: ConnectedAccountRuntime = {
       return outcome;
     },
     async cancel() {},
-  }, 'native-import': {
-    kind: 'manual',
-    async complete(input, context, options) { return await importNativeCredentials(input.fields.source, context, options); },
-  } } },
+  }, ...(nativeImportMode ? { 'native-import': nativeImportMode } : {}) } },
   async refresh(context, options) {
     const refreshToken = await read(context.credentials, 'refreshToken', options);
     if (!refreshToken) return { status: 'reconnectRequired', diagnostic: diagnostic('antigravity_refresh_token_unavailable', 'Reconnect the Antigravity account to restore its refresh token.') };
@@ -203,4 +205,7 @@ export const antigravityConnectedAccountRuntime: ConnectedAccountRuntime = {
     if (request.fileIds.includes(settingsFileId)) files[settingsFileId] = new TextEncoder().encode(JSON.stringify({ auth: { type: 'oauth-personal' } }));
     return { kind: 'files', files };
   },
-};
+  };
+}
+
+export const antigravityConnectedAccountRuntime = createAntigravityConnectedAccountRuntime();

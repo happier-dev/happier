@@ -65,6 +65,7 @@ export const KIRO_PLUGIN = definePlugin({
         },
         primary: 'sessions',
         catalog: {
+          agentCliSystemTool: { toolId: KIRO_ACP_COMMAND.toolId },
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {

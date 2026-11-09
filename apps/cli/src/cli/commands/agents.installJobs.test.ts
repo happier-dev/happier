@@ -1,13 +1,16 @@
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadResponseSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { getAgentCliRuntimeSpec, getAgentCliSetupRecommendedIds } from '@happier-dev/agents';
+import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents';
+import { createAgentInstallJobOwner, type AgentInstallJobOwner } from '@/capabilities/installJobs/agentInstallJobOwner';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { updateSettings } from '@/persistence';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -17,6 +20,7 @@ import type { ActionCliExecutionDeps } from '@/cli/actions/executeCommand';
 import { handleAgentsCommand } from './agents';
 import { tryHandleAgentCliCommand } from '@/cli/actions/adapters/agentsArgv';
 import { listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
+import { createCliMachineActionDeps } from '@/session/actions/cliActionDeps/machine';
 
 // Initialize the real, immutable command projection during source collection;
 // invocation budgets should not include its first cold source construction.
@@ -45,37 +49,51 @@ describe('Agent CLI compiled install jobs', () => {
     envScope.restore(); reloadConfiguration(); await removeTempDir(home);
   });
 
-  function fixture(requireApproval = false, fail = false, interrupted = false) {
+  function fixture(requireApproval = false, fail = false, interrupted = false, installOwner?: AgentInstallJobOwner) {
     const controller = new AbortController(); controllers.add(controller);
     const requests: unknown[] = [];
     let readCount = 0;
+    const credentials = { token: 'header.eyJzdWIiOiJhY2NvdW50In0.signature', encryption: null };
+    const machineDeps = createCliMachineActionDeps({ credentials, token: credentials.token }, {
+      isMachineActionServerScopeCurrent: async () => true,
+      callMachineAction: async ({ machineId, method, request }) => {
+        if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START) {
+          const job = DaemonAgentInstallStartRequestSchema.parse(request);
+          requests.push({ machineId, ...job });
+          return installOwner ? installOwner.start(job) : { ok: true, jobId: `job-${job.agentId}` };
+        }
+        if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_READ) {
+          const job = DaemonAgentInstallReadRequestSchema.parse(request);
+          requests.push({ machineId, jobId: job.jobId, cursor: job.cursor });
+          if (installOwner) return installOwner.read(job);
+          if (interrupted && readCount++ === 0) {
+            process.emit('SIGINT');
+            return DaemonAgentInstallReadResponseSchema.parse({ ok: true, events: [], steps: [], progress: [], nextCursor: 1,
+              done: false, outcome: null });
+          }
+          return DaemonAgentInstallReadResponseSchema.parse({ ok: true, events: [], steps: [], progress: [], nextCursor: 0,
+            done: true, outcome: fail ? { kind: 'failed', code: 'consent_required', stepId: 'cli.claude', message: 'Vendor consent required' }
+              : { kind: 'succeeded', version: '1.2.3' } });
+        }
+        if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_CANCEL) {
+          const job = DaemonAgentInstallCancelRequestSchema.parse(request);
+          requests.push({ machineId, cancelledJobId: job.jobId });
+          return installOwner ? installOwner.cancel(job) : { ok: true };
+        }
+        throw new Error(`Unexpected machine method: ${method}`);
+      },
+    });
     // Only machine transport and credential storage are replaced; the CLI
-    // compiler, strict schemas, approval policy and Action executor stay real.
+    // compiler, machine request writer, schemas, approval and executor stay real.
     const executor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
+      ...machineDeps,
       isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, normalizeActionsSettingsV1({ v: 1,
         approvalWaivedSurfaces: requireApproval ? {} : { 'machines.agents.install': ['cli'], 'machines.agents.uninstall': ['cli'], 'machines.agents.install.cancel': ['cli'] },
       }), context),
-      machineAgentInstallStart: async request => {
-        const { machineId, serverId: _serverId, signal: _signal, ...job } = request;
-        requests.push({ machineId, ...DaemonAgentInstallStartRequestSchema.parse(job) });
-        return { ok: true, jobId: `job-${job.agentId}` };
-      },
-      machineAgentInstallRead: async request => {
-        requests.push({ machineId: request.machineId, jobId: request.jobId, cursor: request.cursor });
-        if (interrupted && readCount++ === 0) {
-          process.emit('SIGINT');
-          return DaemonAgentInstallReadResponseSchema.parse({ ok: true, events: [], steps: [], progress: [], nextCursor: 1,
-            done: false, outcome: null });
-        }
-        return DaemonAgentInstallReadResponseSchema.parse({ ok: true, events: [], steps: [], progress: [], nextCursor: 0,
-          done: true, outcome: fail ? { kind: 'failed', code: 'consent_required', stepId: 'cli.claude', message: 'Vendor consent required' }
-            : { kind: 'succeeded', version: '1.2.3' } });
-      },
-      machineAgentInstallCancel: async request => { requests.push({ machineId: request.machineId, cancelledJobId: request.jobId }); return { ok: true }; },
     });
     const deps: Partial<ActionCliExecutionDeps> = {
-      readCredentialsFn: async () => ({ token: 'header.eyJzdWIiOiJhY2NvdW50In0.signature', encryption: null }),
+      readCredentialsFn: async () => credentials,
       getServerProfileFn: async () => ({ id: 'cloud', name: 'Home', serverUrl: 'https://api.example.test',
         webappUrl: 'https://app.example.test', createdAt: 1, updatedAt: 1, lastUsedAt: 1 }),
       createExecutorFn: async () => ({ ...executor, async resolveSessionTarget() { throw new Error('Unexpected Session'); } }),
@@ -97,6 +115,23 @@ describe('Agent CLI compiled install jobs', () => {
         { machineId: 'current-machine', jobId: 'job-codex', cursor: 0 },
       ]);
     } finally { output.restore(); }
+  });
+
+  it.skipIf(process.platform === 'win32')('normalizes the documented lowercase Oh My Pi name before admitting an install Action', async () => {
+    const spec = getAgentCliRuntimeSpec('ohMyPi');
+    const command = resolveAgentCliManagedCommandPathForRuntime(spec, { happyHomeDir: home });
+    await mkdir(dirname(command), { recursive: true });
+    await writeFile(command, '#!/bin/sh\nprintf "omp 1.2.3\\n"\n');
+    await chmod(command, 0o755);
+    const installOwner = createAgentInstallJobOwner({ env: { HAPPIER_HOME_DIR: home, PATH: '' },
+      readTrackedSessions: () => [], readRegistry: () => ({ agents: [{ id: spec.id, runtimeSpec: spec,
+        pluginId: 'happier.agent.ohmypi', identity: { pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' } }] }) });
+    const owner = fixture(false, false, false, installOwner); const output = captureConsoleLogAndMuteStdout();
+    try {
+      await owner.run(['install', 'ohmypi', '--json']);
+      expect(owner.requests[0], output.logs.join('\n')).toMatchObject({ agentId: 'ohMyPi', intent: 'install' });
+      expect(JSON.parse(output.logs.join('\n'))).toMatchObject({ ok: true, data: { agentId: 'ohMyPi' } });
+    } finally { await installOwner.shutdown(); output.restore(); }
   });
 
   it('retains consent, force, explicit targeting and definition identity', async () => {

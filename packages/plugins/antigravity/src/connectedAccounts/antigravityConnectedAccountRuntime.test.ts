@@ -98,9 +98,8 @@ describe('Antigravity qualified Connected Account', () => {
     const mode = accountRuntime.authentication.modes['oauth-personal'];
     if (!mode || mode.kind !== 'oauthAuthorizationCode') throw new Error('Antigravity OAuth is unavailable');
     const attempted = store();
-    const warnings: unknown[] = [];
     const context = { attempt: { kind: 'connect', attemptId: 'connect-identity' }, service, attemptCredentials: attempted, signal: new AbortController().signal,
-      services: { logger: { warn(_message: string, fields: unknown) { warnings.push(fields); } }, http: { async request(request: { url: string }) {
+      services: { http: { async request(request: { url: string }) {
         return request.url.includes('/userinfo') ? response(status, {}, request.url) : response(200, { access_token: 'access', refresh_token: 'refresh' });
       } } },
     } as Parameters<typeof mode.complete>[1];
@@ -110,7 +109,6 @@ describe('Antigravity qualified Connected Account', () => {
     else {
       expect(result).not.toHaveProperty('providerIdentity');
       expect(result).not.toHaveProperty('accountId');
-      expect(warnings).toEqual([{ code: 'antigravity_identity_unavailable' }]);
     }
   });
 

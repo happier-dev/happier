@@ -1,4 +1,8 @@
 import { QuotaFetchError, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { ANTIGRAVITY_ACP_SERVER_VERSION } from '../agent/install/cliRuntime.js';
+
+// ACP's product identity is required for entitlement and quota reads.
+const userAgent = `antigravity/acp/${ANTIGRAVITY_ACP_SERVER_VERSION} (aidev_client; host_path=happier; proxy_client=antigravity/sdk)`;
 
 type Context = Parameters<NonNullable<ConnectedAccountRuntime['quota']>>[0];
 type Limit = Awaited<ReturnType<NonNullable<ConnectedAccountRuntime['quota']>>>['limits'][number];
@@ -16,7 +20,7 @@ async function request(context: Context, accessToken: string, endpoint: string, 
   let response: Awaited<ReturnType<Context['services']['http']['request']>>;
   try {
     response = await context.services.http.request({ url: `${endpoint}/v1internal:${method}`, method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', 'User-Agent': userAgent },
       body: new TextEncoder().encode(JSON.stringify(body)), redirect: 'error' }, { signal: context.signal });
   } catch (error) {
     if (context.signal.aborted) throw error;

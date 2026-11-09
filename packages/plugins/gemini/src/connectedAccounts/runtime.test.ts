@@ -5,6 +5,12 @@ import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@
 
 import { activate } from '../activate.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
+import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
+import type { ConnectedAccountAuthenticationContext } from '@happier-dev/plugin-sdk/connected-accounts';
+import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
+import { derivePluginAccountContributionRegistrationRights } from '../../../../protocol/src/plugins/contributions/catalog.js';
+import { createPluginRegistrationScope } from '../../../../plugin-sdk/src/registration/scope.js';
+import { invokeConnectedAccountAuthenticationRuntime } from '../../../../cli-common/src/connectedAccounts/authenticationRuntimeDispatcher.js';
 
 function credentialStore(values = new Map<string, string>()) {
   return {
@@ -29,14 +35,52 @@ async function activateConnectedAccountRuntime(): Promise<PluginConnectedAccount
 }
 
 describe('Gemini Connected Account modes', () => {
+  it('activates both manual modes in the Account realm and validates through the shared dispatcher without HTTP', async () => {
+    const target = { artifactId: 'connected-account-authentication', exportName: 'activate' };
+    const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors![0]!;
+    expect(descriptor.authentication.account).toEqual(target);
+    const artifactPath = './portableAuthentication.js';
+    const artifact = await import(artifactPath) as { activate(api: PluginAccountApi): void };
+    const scope = createPluginRegistrationScope({ pluginId: PLUGIN_MANIFEST.id, target: { realm: 'account', ...target },
+      rights: derivePluginAccountContributionRegistrationRights(PLUGIN_MANIFEST.contributes, target) });
+    artifact.activate(scope.api);
+    const [registration] = scope.commit();
+    if (registration?.family !== 'connectedAccountDescriptors') throw new Error('Gemini Account runtime was not registered');
+    expect(Object.keys(registration.value.authentication.modes).sort()).toEqual(['api-key', 'service-account']);
+    const staged = credentialStore();
+    const service = { pluginId: PLUGIN_MANIFEST.id, localId: 'gemini-account' };
+    const controller = new AbortController();
+    const context = {
+      plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, contribution: { id: service.localId, qualifiedId: `${service.pluginId}/${service.localId}` },
+      surface: 'ui', invokedAtMs: 1, service, attempt: { kind: 'connect', attemptId: 'portable-gemini' },
+      configuration: { target: { kind: 'attempt', attemptId: 'portable-gemini', service, modeId: 'api-key' }, revision: '1', values: {}, async getSecret() { return null; } },
+      signal: controller.signal, attemptCredentials: staged.store,
+      services: { http: createPluginHttpFixture({ async request() { throw new Error('Gemini manual save must not use HTTP'); } }) },
+    } satisfies ConnectedAccountAuthenticationContext;
+    const invoke = (modeId: string, fields: Readonly<Record<string, string>>) =>
+      invokeConnectedAccountAuthenticationRuntime({ mode: registration.value.authentication.modes[modeId], descriptor: descriptor.authentication.modes.find(mode => mode.id === modeId)!,
+        operation: { kind: 'submitManual', fields }, context: { ...context,
+          configuration: { ...context.configuration, target: { ...context.configuration.target, modeId } } },
+        registerRawForRedaction() {}, async invokeCallback(work) { return work(); } });
+    expect(await invoke('api-key', { token: ' gemini-private ' })).toMatchObject({ status: 'connected' });
+    expect(staged.values.get('apiKey')).toBe('gemini-private');
+    staged.values.clear();
+    expect(await invoke('service-account', { credentialsJson: '{' })).toMatchObject({ status: 'rejected', diagnostic: { code: 'gemini_service_account_invalid' } });
+    expect(staged.values.size).toBe(0);
+    const credentialsJson = JSON.stringify({ type: 'service_account', client_id: '123456789012345678901', client_email: 'worker@example.iam.gserviceaccount.com', project_id: 'project-one', private_key: 'fixture-private-key' });
+    expect(await invoke('service-account', { credentialsJson })).toMatchObject({ status: 'connected', accountId: '123456789012345678901' });
+    expect(JSON.parse(staged.values.get('serviceAccountJson')!)).toMatchObject({ project_id: 'project-one' });
+  });
+
   it('declares and registers API-key plus service-account modes', async () => {
     expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toContainEqual({
       id: 'gemini-account',
       title: 'Gemini',
       authentication: {
+        account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
         defaultModeId: 'api-key',
         modes: [
-          expect.objectContaining({ id: 'api-key', kind: 'manual' }),
+          expect.objectContaining({ id: 'api-key', kind: 'manual', accountDirectSave: { fieldKeys: { token: 'apiKey' } } }),
           expect.objectContaining({ id: 'service-account', kind: 'manual' }),
         ],
       },

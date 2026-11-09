@@ -62,6 +62,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         },
         primary: 'sessions',
         catalog: {
+          agentCliSystemTool: { toolId: QWEN_ACP_COMMAND.toolId },
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },

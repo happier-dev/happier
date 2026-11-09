@@ -16,7 +16,6 @@ export const CODERABBIT_PLUGIN = definePlugin({
   version: '0.0.0',
   displayName: 'CodeRabbit review engine',
   description: 'Runs CodeRabbit as a review-only execution engine.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -69,6 +68,7 @@ export const CODERABBIT_PLUGIN = definePlugin({
         },
         primary: 'executionRuns',
         catalog: {
+          agentCliSystemTool: { toolId: CODERABBIT_SYSTEM_TOOL_ID },
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, { skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' }, executionRuns: { open: ['create'], checkpoint: false, stop: true } }),

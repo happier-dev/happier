@@ -15,6 +15,14 @@ function context(request: Context['services']['http']['request'], projectId?: st
 function response(status: number, body: unknown) {
   return { status, finalUrl: 'https://cloudcode-pa.googleapis.com', headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
 }
+// ACP 1.3.0 requires its product identity even when the OAuth token is valid.
+function unsupportedClientResponse(headers: Readonly<Record<string, string>> | undefined) {
+  if (new Headers(headers).get('user-agent')?.startsWith('antigravity/')) return null;
+  return response(200, {
+    allowedTiers: [{ id: 'standard-tier', userDefinedCloudaicompanionProject: true }],
+    ineligibleTiers: [{ reasonCode: 'UNSUPPORTED_CLIENT' }],
+  });
+}
 // Antigravity ACP 1.3.0 onboard.py and bundled CCPA discovery schema; synthetic response evidence.
 describe('Antigravity qualified quota', () => {
   it('reads wrapped summaries and project objects while preserving provider windows', async () => {
@@ -27,6 +35,8 @@ describe('Antigravity qualified quota', () => {
     const requests: string[] = [];
     const quota = await readAntigravityQuota(context(async request => {
       requests.push(request.url);
+      const unsupported = unsupportedClientResponse(request.headers);
+      if (unsupported) return unsupported;
       return response(200, request.url.endsWith(':loadCodeAssist') ? { currentTier: { id: 'free' }, cloudaicompanionProject: 'project' }
         : request.url.endsWith(':retrieveUserQuotaSummary') ? { groups: [] }
         : { buckets: [{ modelId: 'gemini-2.5-flash', remainingFraction: 0.2 }, { modelId: 'gemini-3-flash', tokenType: 'REQUESTS', remainingFraction: 0.8, remainingAmount: '80' }, { modelId: 'gemini-3-flash', tokenType: 'WTUS', remainingFraction: 0.4, remainingAmount: '40' }] });
@@ -43,6 +53,8 @@ describe('Antigravity qualified quota', () => {
     const requests: Array<{ url: string; headers?: Readonly<Record<string, string>>; body?: Uint8Array }> = [];
     const quota = await readAntigravityQuota(context(async request => {
       requests.push(request);
+      const unsupported = unsupportedClientResponse(request.headers);
+      if (unsupported) return unsupported;
       return response(200, request.url.endsWith(':loadCodeAssist')
         ? { currentTier: { id: 'tier' }, paidTier: { usesGcpTos }, cloudaicompanionProject: 'provider-project' }
         : { groups: [{ displayName: 'Provider group', buckets: [

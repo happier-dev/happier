@@ -15,10 +15,10 @@ import { projectManifestAgentContribution } from '../projectManifestAgentContrib
 import { PLUGIN_MANIFEST as CUSTOM_ACP_MANIFEST } from '../../../../../../../packages/plugins/custom-acp/src/manifest';
 import { PLUGIN_MANIFEST as QWEN_MANIFEST } from '../../../../../../../packages/plugins/qwen/src/manifest';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../sources/generatedBundledPluginManifests';
-import { readBundledPluginManifest } from './locators';
+import { loadBundledPluginLocatorResult } from './locators';
 import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from '../sources/generatedBundledPlugins';
-import { ingestCanonicalPluginManifest } from '../../../manifest/ingest';
 import { normalizePluginManifestV2 } from '../../../manifest/normalize';
+import { projectLoadedPluginContributes } from '../fullProjection';
 
 function manifestAgents(): readonly ResolvedAgentContribution[] {
     return getAllAgentDefinitionContracts().map((definition) => {
@@ -66,18 +66,25 @@ function manifestAgents(): readonly ResolvedAgentContribution[] {
 }
 
 describe('built-in Agent projection overlays', () => {
-    it('projects current generated manifest Agents against every generated registration binding', () => {
-        const manifests = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.flatMap((locator) => {
-            const ingestion = ingestCanonicalPluginManifest(readBundledPluginManifest(locator), {
-                manifestAuthority: 'bundled_first_party',
-                sourceProvenance: 'localSource',
-            });
-            if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
-            return (ingestion.manifest.contributes.agents ?? []).map((definition) => projectManifestAgentContribution({
-                definition, pluginId: locator.pluginId,
-                provenance: 'first_party', source: { kind: 'bundled' },
-            }));
-        });
+    it('binds declared native Agent CLIs to their system tools rather than a separate PATH lookup', () => {
+        const bundled = loadBundledPluginLocatorResult(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS, [], BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS);
+        const missingBindings = bundled.loadedPlugins.flatMap(plugin => plugin.manifest.contributes.agents.flatMap(agent => {
+            const binaryName = agent.cli?.executable.binaryName;
+            if (!binaryName) return [];
+            const tools = plugin.manifest.contributes.systemTools.filter(tool => tool.executableNames.includes(binaryName));
+            if (tools.length === 0) return [];
+            return tools.some(tool => tool.id === agent.catalog?.agentCliSystemTool?.toolId)
+                ? [] : [`${plugin.pluginId}/${agent.id}`];
+        }));
+        expect(missingBindings).toEqual([]);
+    });
+
+    it('projects admitted generated manifest Agents against their generated registration bindings', () => {
+        const bundled = loadBundledPluginLocatorResult(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS, [], BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS);
+        const manifests = projectLoadedPluginContributes({
+            loadResult: { loadedPlugins: bundled.loadedPlugins, diagnosticsByPluginId: {} },
+            provenance: 'first_party', admittedGraph: bundled.admittedGraph,
+        }).agents ?? [];
         const projected = projectBuiltInAgents({
             manifestAgents: manifests,
             registrationBindings: BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS,
@@ -88,7 +95,8 @@ describe('built-in Agent projection overlays', () => {
         });
         expect(projected.map((agent) => agent.id)).toEqual(
             BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS
-                .filter((binding) => binding.registrationFamily === 'agents')
+                .filter((binding) => binding.registrationFamily === 'agents'
+                    && bundled.loadedPlugins.some(plugin => plugin.pluginId === binding.identity.pluginId))
                 .map((binding) => binding.implementationOwnerId),
         );
     });
@@ -244,10 +252,10 @@ describe('built-in Agent projection overlays', () => {
         }).map((agent) => agent.id)).toEqual(manifests.map((agent) => agent.id));
     });
 
-    it('fails closed when an executable bundled registration lacks its public manifest owner', () => {
+    it('does not resurrect an excluded manifest from its executable bundled registration', () => {
         const manifests = manifestAgents();
         const missing = manifests[0]!;
-        expect(() => projectBuiltInAgents({
+        expect(projectBuiltInAgents({
             manifestAgents: manifests.slice(1),
             registrationBindings: [{
                 identity: createPluginContributionIdentity({
@@ -257,7 +265,7 @@ describe('built-in Agent projection overlays', () => {
                 implementationOwnerId: missing.id,
                 registrationFamily: 'agents',
             }],
-        })).toThrow(/Missing bundled manifest/);
+        }).map(agent => agent.id)).toEqual(manifests.slice(1).map(agent => agent.id));
     });
 
     it('fails closed when a bundled manifest owner lacks projected CLI metadata', () => {
