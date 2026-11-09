@@ -13,7 +13,7 @@ import { createCliActionDeps, type MachineActionDirectTargetTransport } from '@/
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse, createActionExecutor } from '@happier-dev/protocol';
 import { createMachineSessionDirectTargetTransport } from '@/rpc/handlers/sessionServerStartLifecycleAdapter';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { logger } from '@/ui/logger';
@@ -130,9 +130,9 @@ describe('fresh native Session directory preflight', () => {
       const executor = createCliActionExecutor(params);
       const result = await executor.execute('session.spawn_new', projectSessionSpawnNewActionInputV2(request),
         { surface: 'cli', authority: 'present_user' });
-      expect(launched, JSON.stringify({ result, preflight, checkedPaths })).toEqual([root]);
       expect(directoryPreflights - preflightsBeforeCreate).toBe(1);
-      expect(preflight).toEqual({ type: 'not_required' });
+      expect(launched, JSON.stringify({ result, preflight, checkedPaths })).toEqual([root]);
+      expect(preflight).toMatchObject({ type: 'not_required', preparedTarget: { directory: root } });
       const beforeNextExecution = directoryPreflights;
       await executor.execute('session.spawn_new', projectSessionSpawnNewActionInputV2({
         ...request, creationKey: 'fresh-native-home-next-execution',
@@ -145,6 +145,32 @@ describe('fresh native Session directory preflight', () => {
       expect(denied).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false,
         launchError: { code: 'invalid_directory' } } });
       expect(launched).toEqual([root, root]);
+
+      // Approval Artifact persistence and Home currentness are the boundaries;
+      // deferred replay, target preparation and native launch stay real.
+      const approvals = new Map<string, Parameters<NonNullable<typeof deps.approvalsUpdate>>[0]['request']>();
+      const approvalExecutor = createActionExecutor({ ...deps,
+        approvalsCreate: async ({ request }) => { approvals.set('directory-approval', request); return { artifactId: 'directory-approval' }; },
+        approvalsGet: async ({ artifactId }) => approvals.get(artifactId) ?? null,
+        approvalsUpdate: async ({ artifactId, request }) => { approvals.set(artifactId, request); return { ok: true }; },
+        isApprovalExecutionOriginCurrent: async () => true,
+      });
+      const beforeDeferred = directoryPreflights;
+      const deferred = await approvalExecutor.execute('session.spawn_new', projectSessionSpawnNewActionInputV2({
+        ...request, creationKey: 'native-home-deferred', directory: { kind: 'path', path: join(root, 'approved-child') },
+      }), { surface: 'cli', authority: 'present_user' });
+      expect(deferred).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'directory-approval' } });
+      expect(directoryPreflights - beforeDeferred).toBe(1);
+      expect(launched).toEqual([root, root]);
+      const persistedApproval = approvals.get('directory-approval');
+      expect(persistedApproval).not.toHaveProperty('sessionCreationPreparedTarget');
+      expect(persistedApproval).not.toHaveProperty('actionArgs.sessionCreationPreparedTarget');
+      expect(persistedApproval).not.toHaveProperty('executionOriginV1.sessionCreationPreparedTarget');
+      const beforeReplay = directoryPreflights;
+      await approvalExecutor.execute('approval.request.decide', { artifactId: 'directory-approval', decision: 'approve' },
+        { surface: 'cli', authority: 'present_user' });
+      expect(directoryPreflights - beforeReplay).toBe(1);
+      expect(launched).toEqual([root, root, join(root, 'approved-child')]);
     } finally {
       homeGet.mockRestore(); homePost.mockRestore(); homeRpc.mockRestore(); ordinaryHomeRpc.mockRestore();
       nativeAccess.mockRestore(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true });

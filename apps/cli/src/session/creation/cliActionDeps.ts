@@ -309,7 +309,9 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         return { type: 'error' as const, result: preparation.result };
       }
       const approval = projectSessionCreationDirectoryApprovalV1(input.executionTarget, preparation.preparedTarget);
-      return approval ? { type: 'approval_required' as const, approval } : { type: 'not_required' as const };
+      const preparedTarget = preparation.preparedTarget;
+      return approval ? { type: 'approval_required' as const, approval, preparedTarget }
+        : { type: 'not_required' as const, preparedTarget };
     },
     sessionSpawnNew: async (input, continuation) => {
       const reviewedOpinionSpawn = input.context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start';
@@ -735,14 +737,16 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             revision: agentSessionStartupInstructionsV1.revision,
           }
         : null;
-      const targetPreparation = await prepareSessionSpawnTarget({
-        executionTarget,
-        directory,
-        sessionCreationTag,
-        ...(context ? { context } : {}),
-        ...(checkoutCreationDraft !== undefined ? { checkoutCreationDraft } : {}),
-        ...(signal ? { signal } : {}),
-      });
+      const targetPreparation: SessionSpawnTargetPreparation = context?.sessionCreationPreparedTarget
+        ? { ok: true, preparedTarget: context.sessionCreationPreparedTarget }
+        : await prepareSessionSpawnTarget({
+          executionTarget,
+          directory,
+          sessionCreationTag,
+          ...(context ? { context } : {}),
+          ...(checkoutCreationDraft !== undefined ? { checkoutCreationDraft } : {}),
+          ...(signal ? { signal } : {}),
+        });
       if (!targetPreparation.ok) return targetPreparation.result;
       const preparedTarget = targetPreparation.preparedTarget;
       // A created receipt is not current exclusive custody. Pre-spawn failures

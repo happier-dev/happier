@@ -30,6 +30,7 @@ import { configuration } from '@/configuration';
 import { createMutagenChangeWaitBoundary } from '@/workspaces/sync/transport/workspaceSyncBrokerClient.testkit';
 import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { MachinesAgentsListOutputSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawnErrorResult';
@@ -2047,6 +2048,8 @@ describe('createCliActionDeps hook dispatch', () => {
       directoryKind: 'path' as const, directoryCreationRequired: true,
       checkout: null,
     }));
+    callExactMachineRpc.mockResolvedValue(await prepare());
+    prepare.mockClear();
     const input = {
       creationKey: SessionCreationKeyV1Schema.parse('portable-directory-approval'),
       executionTarget: {
@@ -2084,7 +2087,7 @@ describe('createCliActionDeps hook dispatch', () => {
       },
     });
 
-    await expect(deps.sessionSpawnNewDirectoryApprovalPreflight?.({ input })).resolves.toEqual({
+    await expect(deps.sessionSpawnNewDirectoryApprovalPreflight?.({ input })).resolves.toMatchObject({
       type: 'approval_required',
       approval: {
         v: 1,
@@ -2092,10 +2095,10 @@ describe('createCliActionDeps hook dispatch', () => {
         directory: '/repo/new-directory',
       },
     });
-    expect(prepare).toHaveBeenCalledWith(
-      { directory: { kind: 'path', path: '/repo/new-directory' } },
-      undefined,
-    );
+    expect(prepare).not.toHaveBeenCalled();
+    expect(callExactMachineRpc).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-exact', method: RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+    }));
     expect(callMachineRpc).not.toHaveBeenCalled();
   });
 
@@ -2144,7 +2147,7 @@ describe('createCliActionDeps hook dispatch', () => {
     });
 
     const preflight = await deps.sessionSpawnNewDirectoryApprovalPreflight?.({ input: v2Input });
-    expect(preflight).toEqual({
+    expect(preflight).toMatchObject({
       type: 'approval_required',
       approval: {
         v: 1,
@@ -2188,13 +2191,22 @@ describe('createCliActionDeps hook dispatch', () => {
     if (!preflight || preflight.type !== 'approval_required') {
       throw new Error('expected target-owned directory approval preflight');
     }
-    await expect(deps.sessionSpawnNew({
+    const approved = await deps.sessionSpawnNew({
       connectedServices: { v: 2, bindingsByServiceId: {} },
       ...v2Input,
       sessionCreationTag,
       actionCaller: { kind: 'host' },
       sessionCreationDirectoryApproval: preflight.approval,
-    })).resolves.toMatchObject({
+      // This direct bridge caller supplies the Home Action transport boundary.
+      // Directory admission and readiness parsing remain real beneath it.
+      invokeAgentReadinessAction: async () => ({ ok: true, result: MachinesAgentsListOutputSchema.parse({ items: [{
+        agentId: 'codex', title: 'Codex', installed: true, version: '1.2.3', latestVersion: null,
+        update: { supported: false, command: null },
+        signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+        install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+      }] }) }),
+    });
+    expect(approved, JSON.stringify(approved)).toMatchObject({
       type: 'success',
       sessionId: 'sess-directory-approved',
     });

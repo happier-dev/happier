@@ -47,7 +47,7 @@ describe('Session spawn Home admission', () => {
       externalActionTarget: { kind: 'machine', machineId: 'target-machine' },
       machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'owner', machineId: 'target-machine',
         installationId: 'installation', role: 'use', encryptionMode: 'plain' },
-    } })).resolves.toEqual({ type: 'not_required' });
+    } })).resolves.toMatchObject({ type: 'not_required' });
     expect(home).not.toHaveBeenCalled();
   });
   it.each(['controller', 'native_rpc'] as const)('preflights an owner Workflow Session through receiving Machine admission (%s)', async boundary => {
@@ -93,7 +93,7 @@ describe('Session spawn Home admission', () => {
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'owner-workflow-session',
       executionTarget: { serverId: 'portable-home', machineId: 'target-machine' }, directory: { kind: 'path', path: tmpdir() },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
-    await expect(deps.sessionSpawnNewDirectoryApprovalPreflight!({ input, context, signal })).resolves.toEqual({ type: 'not_required' });
+    await expect(deps.sessionSpawnNewDirectoryApprovalPreflight!({ input, context, signal })).resolves.toMatchObject({ type: 'not_required' });
   });
   it.each(['checkout_failed', 'checkout_unavailable', 'agent_isolation_unavailable'] as const)('preserves %s from target preparation at the CLI preflight sink', async code => {
     const input = SessionSpawnNewInputV2Schema.parse({
@@ -177,9 +177,9 @@ describe('Session spawn Home admission', () => {
     });
     const preflight = deps.sessionSpawnNewDirectoryApprovalPreflight;
     if (!preflight) throw new Error('Missing Session directory preflight');
-    await expect(preflight({ input, signal: lifetime.signal })).resolves.toEqual({ type: 'not_required' });
+    await expect(preflight({ input, signal: lifetime.signal })).resolves.toMatchObject({ type: 'not_required' });
     await expect(preflight({ input: { ...input, executionTarget: { ...input.executionTarget, serverId: 'local-profile' } },
-      signal: lifetime.signal })).resolves.toEqual({ type: 'not_required' });
+      signal: lifetime.signal })).resolves.toMatchObject({ type: 'not_required' });
     await expect(preflight({ input: { ...input, executionTarget: { ...input.executionTarget, serverId: 'other-home' } },
       signal: lifetime.signal })).resolves.toEqual({ type: 'error',
       result: { type: 'error', code: 'target_unavailable', retryable: false } });
