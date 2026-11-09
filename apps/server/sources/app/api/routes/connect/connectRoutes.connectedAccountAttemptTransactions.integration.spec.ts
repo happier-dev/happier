@@ -1,7 +1,16 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import {
+    CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS,
+    createConnectedAccountAttemptTransactionAdapters,
+    createConnectedAccountAttemptTransactionApi,
+    generatePkceCodes,
+    type ConnectedAccountDeviceTransactionSnapshot,
+    type ConnectedAccountOAuthTransactionSnapshot,
+} from "@happier-dev/cli-common/connectedAccounts";
+import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from "@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope";
 
 import Fastify from "fastify";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
     serializerCompiler,
     validatorCompiler,
@@ -10,6 +19,7 @@ import {
 
 import { db } from "@/storage/db";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import {
     createLightSqliteHarness,
     type LightSqliteHarness,
@@ -34,6 +44,10 @@ const deviceScope = {
     modeId: "device",
     phase: "awaitingDeviceAuthorization",
 } as const;
+
+function transactionReadUrl(mutationUrl: string): string {
+    return mutationUrl.replace(/\/(?:oauth|device)\//u, "/");
+}
 
 async function createE2eeAccount(): Promise<Readonly<{ id: string }>> {
     return await db.account.create({
@@ -65,6 +79,22 @@ function createTestApp() {
     return trackApp(typed);
 }
 
+function createHttpApi(app: ReturnType<typeof createTestApp>, accountId: string) {
+    return createConnectedAccountAttemptTransactionApi({
+        token: "test-account-token", baseUrl: "https://test.example",
+        headers: { "x-test-user-id": accountId },
+        http: { async request(input) {
+            const url = new URL(input.url);
+            const response = await app.inject({
+                method: input.method ?? "GET", url: `${url.pathname}${url.search}`,
+                headers: { ...input.headers },
+                ...(input.body === undefined ? {} : { payload: new TextDecoder().decode(input.body) }),
+            });
+            return { status: response.statusCode, finalUrl: input.url, headers: {}, body: new TextEncoder().encode(response.body) };
+        } },
+    });
+}
+
 describe("Connected Account attempt transaction routes", () => {
     let harness: LightSqliteHarness;
 
@@ -84,6 +114,229 @@ describe("Connected Account attempt transaction routes", () => {
     });
 
     afterAll(async () => await harness.close());
+
+    it.each(["plain", "e2ee"] as const)("uses the portable durable owner through real HTTP/CAS above half-MiB with a %s Account", async accountMode => {
+        const account = accountMode === "plain" ? await createPlainAccount() : await createE2eeAccount();
+        const app = createTestApp();
+        await app.ready();
+        const material = { type: "dataKey" as const, machineKey: new Uint8Array(32).fill(13) };
+        const api = createHttpApi(app, account.id);
+        const createOwner = () => createConnectedAccountAttemptTransactionAdapters({
+            api, randomBytes,
+            generatePkceCodes: () => generatePkceCodes({ randomBytes, sha256: value => new Uint8Array(createHash("sha256").update(value).digest()) }),
+            async seal(payload) {
+                return accountMode === "plain"
+                    ? sealQualifiedConnectedAccountContentEnvelope({ kind: "attempt", accountMode, payload, randomBytes })
+                    : sealQualifiedConnectedAccountContentEnvelope({ kind: "attempt", accountMode, material, payload, randomBytes });
+            },
+            async open(record) {
+                return accountMode === "plain"
+                    ? openQualifiedConnectedAccountContentEnvelope({ kind: "attempt", accountMode, envelope: record.content })
+                    : openQualifiedConnectedAccountContentEnvelope({ kind: "attempt", accountMode, material, envelope: record.content });
+            },
+        });
+        const owner = createOwner();
+        const snapshot: ConnectedAccountOAuthTransactionSnapshot = {
+            attemptId: "portable-attempt", createdAtMs: Date.now(), intent: "connect", service: oauthScope.service,
+            modeId: "oauth", sourceCustody: { kind: "managed", immutableGenerationId: "artifact-sha256", installSource: "npm" },
+            expectedCredentialRevision: null, expectedCredentialConfigurationRevision: null,
+            expectedConfigurationRevision: "configuration-1", phase: "starting", stagedCredentials: {},
+            stagedAccountConfigurationContent: { configuration: "x".repeat(524_288 + 1) },
+            expiresAtMs: Date.now() + 60_000,
+        };
+        await owner.address.acknowledge({ attemptId: snapshot.attemptId, kind: "oauth", phase: "configurationRequired",
+            createdAtMs: snapshot.createdAtMs, intent: snapshot.intent, service: snapshot.service, modeId: snapshot.modeId });
+        const started = await owner.oauth.create({ attemptId: snapshot.attemptId, service: snapshot.service, snapshot, callbackUrl: "https://app.example/callback" });
+        await started.acknowledge({ ...snapshot, phase: "awaitingOAuth" });
+        const first = await owner.oauth.read(snapshot.attemptId);
+        const second = await owner.oauth.read(snapshot.attemptId);
+        expect(first?.request).toEqual(started.request);
+        expect(first?.snapshot.stagedAccountConfigurationContent).toEqual(snapshot.stagedAccountConfigurationContent);
+        const completion = { code: "returned-code", state: started.request.state, callbackUrl: started.request.callbackUrl };
+        await expect(first!.acceptCompletion({ ...completion, state: "foreign-state" })).rejects.toThrow();
+        const settled = await Promise.allSettled([first!.acceptCompletion(completion), second!.acceptCompletion(completion)]);
+        const accepted = settled.filter(result => result.status === "fulfilled");
+        expect(accepted).toHaveLength(1);
+        expect(settled.filter(result => result.status === "rejected")).toHaveLength(1);
+        const challenge = createHash("sha256").update(accepted[0]!.value.pkceVerifier).digest("base64url");
+        expect(challenge).toBe(started.request.pkce.challenge);
+        const restored = await owner.oauth.read(snapshot.attemptId);
+        await expect(restored!.acceptCompletion(completion)).rejects.toThrow();
+
+        const preparedSettlement = {
+            intent: snapshot.intent, service: snapshot.service, accountId: "connected-account",
+            authenticationModeId: snapshot.modeId, directExportContract: null,
+            expectedCredentialRevision: snapshot.expectedCredentialRevision,
+            expectedCredentialConfigurationRevision: snapshot.expectedCredentialConfigurationRevision,
+            expectedConfigurationRevision: snapshot.expectedConfigurationRevision,
+            sourceCustody: snapshot.sourceCustody,
+            stagedCredentials: { accessToken: "prepared-token-sentinel" },
+            displayName: "Connected account", scopes: [],
+        } as const;
+        const winner = [first, second][settled.findIndex(result => result.status === "fulfilled")]!;
+        await winner.acknowledge({ ...snapshot, phase: "outcomeUnknown", preparedSettlement });
+        const { phase: _phase, ...deviceBase } = snapshot;
+        const deviceSnapshot: ConnectedAccountDeviceTransactionSnapshot = {
+            ...deviceBase, attemptId: "portable-device-attempt", modeId: "device",
+            expiresAtMs: snapshot.expiresAtMs!, pollIntervalMs: 5_000,
+            nextPollAtMs: Date.now(), verificationUri: "https://provider.example/device", userCode: "device-code",
+        };
+        const preparedDevice = { ...deviceSnapshot, preparedSettlement: { ...preparedSettlement, authenticationModeId: "device" } };
+        await owner.address.acknowledge({ attemptId: deviceSnapshot.attemptId, kind: "device", phase: "configurationRequired",
+            createdAtMs: deviceSnapshot.createdAtMs, intent: deviceSnapshot.intent, service: deviceSnapshot.service, modeId: deviceSnapshot.modeId });
+        await owner.device.acknowledge(deviceSnapshot);
+        await owner.device.acknowledge(preparedDevice);
+        const afterRestart = createOwner();
+        const clock = vi.spyOn(Date, "now").mockReturnValue(snapshot.expiresAtMs! - 1);
+        try {
+            const withinLifetime = await afterRestart.oauth.read(snapshot.attemptId);
+            expect(withinLifetime?.snapshot.preparedSettlement).toEqual(preparedSettlement);
+            expect(await afterRestart.device.read(deviceSnapshot.attemptId)).toEqual(preparedDevice);
+            clock.mockReturnValue(snapshot.expiresAtMs! + 1);
+            expect(await afterRestart.oauth.read(snapshot.attemptId)).toBeNull();
+            expect(await afterRestart.device.read(deviceSnapshot.attemptId)).toBeNull();
+        } finally { clock.mockRestore(); }
+    });
+
+    it("reads one authenticated Account attempt by attemptId without knowing its kind", async () => {
+        const [account, other] = await Promise.all([createPlainAccount(), createPlainAccount()]);
+        const app = createTestApp();
+        await app.ready();
+        const attemptId = "opaque-addressed-attempt";
+        const content = { t: "plain", v: null } as const;
+        const expiresAtMs = Date.now() + 60_000;
+        const created = await app.inject({
+            method: "POST", url: `/v2/connect/connected-account-attempt-transactions/device/${attemptId}`,
+            headers: { "x-test-user-id": account.id }, payload: { content, expiresAtMs, scope: deviceScope },
+        });
+        expect(created.statusCode, created.body).toBe(200);
+        let transactionReads = 0;
+        const stop = observeSqliteRequests({ before: request => {
+            if (request.model === "RepeatKey" && request.action.startsWith("find")) transactionReads++;
+        } });
+        const read = await (async () => {
+            try {
+                return await app.inject({ method: "GET", url: `/v2/connect/connected-account-attempt-transactions/${attemptId}`,
+                    headers: { "x-test-user-id": account.id } });
+            } finally { stop(); }
+        })();
+        expect(read.statusCode, read.body).toBe(200);
+        expect(read.json()).toMatchObject({ kind: "device", scope: deviceScope });
+        expect(transactionReads).toBe(1);
+        const foreign = await app.inject({ method: "GET", url: `/v2/connect/connected-account-attempt-transactions/${attemptId}`,
+            headers: { "x-test-user-id": other.id } });
+        expect(foreign.statusCode).toBe(404);
+    });
+
+    it("uses the existing server lifetime for an address when the client clock is ahead", async () => {
+        const account = await createPlainAccount();
+        const app = createTestApp();
+        await app.ready();
+        const owner = createConnectedAccountAttemptTransactionAdapters({
+            api: createHttpApi(app, account.id), randomBytes,
+            now: () => Date.now() + 5_000,
+            generatePkceCodes: () => generatePkceCodes({ randomBytes, sha256: value => new Uint8Array(createHash("sha256").update(value).digest()) }),
+            async seal(payload) {
+                return sealQualifiedConnectedAccountContentEnvelope({ kind: "attempt", accountMode: "plain", payload, randomBytes });
+            },
+            async open(record) {
+                return openQualifiedConnectedAccountContentEnvelope({ kind: "attempt", accountMode: "plain", envelope: record.content });
+            },
+        });
+        const serverBefore = Date.now();
+        const acknowledged = await owner.address.acknowledge({ attemptId: "client-clock-address", kind: "manual", phase: "awaitingManual",
+            createdAtMs: Date.now() + 5_000, intent: "connect", service: oauthScope.service, modeId: "manual" });
+        const serverAfter = Date.now();
+        expect(acknowledged.expiresAtMs).toBeGreaterThanOrEqual(serverBefore + CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS);
+        expect(acknowledged.expiresAtMs).toBeLessThanOrEqual(serverAfter + CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS);
+        expect((await owner.address.read("client-clock-address"))?.expiresAtMs).toBe(acknowledged.expiresAtMs);
+    });
+
+    it("leaves earlier short-lived attempt rows untouched and asks the caller to start again", async () => {
+        const account = await createPlainAccount();
+        const app = createTestApp();
+        await app.ready();
+        const attemptId = "upgrade-in-flight";
+        const headers = { "x-test-user-id": account.id };
+        const created = await app.inject({ method: "POST", url: `/v2/connect/connected-account-attempt-transactions/oauth/${attemptId}`,
+            headers, payload: { content: { t: "plain", v: null }, scope: oauthScope, expiresAtMs: Date.now() + 60_000 } });
+        expect(created.statusCode, created.body).toBe(200);
+        const readUrl = `/v2/connect/connected-account-attempt-transactions/${attemptId}`;
+        expect((await app.inject({ method: "GET", url: readUrl, headers })).statusCode).toBe(200);
+        const row = await db.repeatKey.findFirstOrThrow();
+        const accountDigest = createHash("sha256").update(JSON.stringify(["connected-account-attempt-account-v2", account.id])).digest("base64url");
+        const oldKey = `caat_v2_${accountDigest}_${createHash("sha256").update(JSON.stringify(["connected-account-attempt-transaction-v2", "oauth", attemptId])).digest("base64url")}`;
+        await db.repeatKey.update({ where: { key: row.key }, data: { key: oldKey } });
+        const missing = await app.inject({ method: "GET", url: readUrl, headers });
+        expect(missing.statusCode).toBe(404);
+        expect(missing.json()).toEqual({ error: "connected_account_attempt_transaction_not_found" });
+        const pending = await app.inject({ method: "GET", headers,
+            url: "/v2/connect/connected-account-attempt-transactions/pending?machineId=machine-a&pluginId=acme.accounts&localId=work" });
+        expect(pending.json()).toEqual({ attempts: [] });
+        expect(await db.repeatKey.findUnique({ where: { key: oldKey } })).toEqual({ ...row, key: oldKey });
+    });
+
+    it.each([
+        { kind: "manual", modeId: "manual", phase: "awaitingManual" },
+        { kind: "oauth", modeId: "oauth", phase: "configurationRequired" },
+    ] as const)("retains the $phase host address within its existing lifetime and then asks to start again", async ({ kind, modeId, phase }) => {
+        const account = await createPlainAccount();
+        const app = createTestApp();
+        await app.ready();
+        const attemptId = "native-manual-or-configuration-attempt";
+        const scope = { ...oauthScope, modeId, phase };
+        const expiresAtMs = Date.now() + 60_000;
+        const created = await app.inject({
+            method: "POST", url: `/v2/connect/connected-account-attempt-transactions/${kind}/${attemptId}`,
+            headers: { "x-test-user-id": account.id },
+            payload: { content: { t: "plain", v: null }, expiresAtMs, scope },
+        });
+        expect(created.statusCode, created.body).toBe(200);
+        const clock = vi.spyOn(Date, "now").mockReturnValue(expiresAtMs - 1);
+        try {
+            const read = await app.inject({ method: "GET", url: `/v2/connect/connected-account-attempt-transactions/${attemptId}`,
+                headers: { "x-test-user-id": account.id } });
+            expect(read.statusCode, read.body).toBe(200);
+            expect(read.json()).toMatchObject({ kind, expiresAtMs, scope });
+            expect(await db.repeatKey.count()).toBe(1);
+            const api = createHttpApi(app, account.id);
+            expect(await api.read({ attemptId })).toMatchObject({ kind, expiresAtMs, scope });
+            expect(await api.listPending({ machineId: scope.machineId, service: scope.service }))
+                .toEqual([expect.objectContaining({ attemptId, kind, phase, expiresAtMs })]);
+            clock.mockReturnValue(expiresAtMs + 1);
+            const expired = await app.inject({ method: "GET", url: `/v2/connect/connected-account-attempt-transactions/${attemptId}`,
+                headers: { "x-test-user-id": account.id } });
+            expect(expired.statusCode).toBe(404);
+            expect(expired.json()).toEqual({ error: "connected_account_attempt_transaction_not_found" });
+        } finally { clock.mockRestore(); }
+    });
+
+    it("restores Account attempts without a Machine and projects the stored routing scope from the addressed read", async () => {
+        const [owner, other] = await Promise.all([createPlainAccount(), createPlainAccount()]);
+        const app = createTestApp();
+        await app.ready();
+        const { machineId: _machineId, ...accountScope } = oauthScope;
+        const expiresAtMs = Date.now() + 60_000;
+        const content = { t: "plain", v: { pending: true } } as const;
+        for (const [attemptId, scope] of [["account-attempt", accountScope], ["machine-attempt", oauthScope]] as const) {
+            const url = `/v2/connect/connected-account-attempt-transactions/oauth/${attemptId}`;
+            const headers = { "x-test-user-id": owner.id };
+            const created = await app.inject({ method: "POST", url, headers, payload: { content, expiresAtMs, scope } });
+            expect(created.statusCode, created.body).toBe(200);
+            const read = await app.inject({ method: "GET", url: transactionReadUrl(url), headers });
+            expect(read.statusCode, read.body).toBe(200);
+            expect(read.json()).toMatchObject({ revision: 1, content, expiresAtMs, scope });
+            const foreign = await app.inject({ method: "GET", url: transactionReadUrl(url), headers: { "x-test-user-id": other.id } });
+            expect(foreign.statusCode).toBe(404);
+        }
+        const pending = await app.inject({
+            method: "GET",
+            url: "/v2/connect/connected-account-attempt-transactions/pending?pluginId=acme.accounts&localId=work",
+            headers: { "x-test-user-id": owner.id },
+        });
+        expect(pending.statusCode, pending.body).toBe(200);
+        expect(pending.json().attempts.map((attempt: { attemptId: string }) => attempt.attemptId)).toEqual(["account-attempt"]);
+    });
 
     it("discovers only resumable attempts for the authenticated account, machine, and service without content", async () => {
         const [accountA, accountB] = await Promise.all([
@@ -120,12 +373,17 @@ describe("Connected Account attempt transaction routes", () => {
         await create("not-resumable", { phase: "starting" });
 
         const url = "/v2/connect/connected-account-attempt-transactions/pending?machineId=machine-a&pluginId=acme.accounts&localId=work";
-        const discovered = await app.inject({
-            method: "GET",
-            url,
-            headers: { "x-test-user-id": accountA.id },
-        });
+        let accountModeReads = 0;
+        const stopObserving = observeSqliteRequests({ before: request => {
+            if (request.model === "Account" && request.action === "findUnique") accountModeReads++;
+        } });
+        const discovered = await (async () => {
+            try {
+                return await app.inject({ method: "GET", url: transactionReadUrl(url), headers: { "x-test-user-id": accountA.id } });
+            } finally { stopObserving(); }
+        })();
         expect(discovered.statusCode).toBe(200);
+        expect(accountModeReads).toBe(1);
         expect(discovered.json()).toEqual({ attempts: [{
             attemptId: "matching",
             kind: "oauth",
@@ -139,7 +397,7 @@ describe("Connected Account attempt transaction routes", () => {
 
         const anotherAccount = await app.inject({
             method: "GET",
-            url,
+            url: transactionReadUrl(url),
             headers: { "x-test-user-id": accountB.id },
         });
         expect(anotherAccount.json()).toEqual({ attempts: [] });
@@ -168,10 +426,11 @@ describe("Connected Account attempt transaction routes", () => {
             payload: { content, expiresAtMs, scope: oauthScope },
         });
         expect(created.statusCode).toBe(200);
-        expect(created.json()).toEqual({
+        expect(created.json()).toMatchObject({
             revision: 1,
             content,
             expiresAtMs,
+            scope: oauthScope,
         });
 
         const rows = await db.repeatKey.findMany();
@@ -179,10 +438,9 @@ describe("Connected Account attempt transaction routes", () => {
         const accountDigest = createHash("sha256")
             .update(JSON.stringify(["connected-account-attempt-account-v2", accountA.id]))
             .digest("base64url");
-        const canonicalKey = `caat_v2_${accountDigest}_${createHash("sha256")
+        const canonicalKey = `caat_v3_${accountDigest}_${createHash("sha256")
             .update(JSON.stringify([
-                "connected-account-attempt-transaction-v2",
-                "oauth",
+                "connected-account-attempt-transaction-v3",
                 "attempt_01HZX4T3Q7",
             ]))
             .digest("base64url")}`;
@@ -195,7 +453,7 @@ describe("Connected Account attempt transaction routes", () => {
 
         const sameAccount = await app.inject({
             method: "GET",
-            url,
+            url: transactionReadUrl(url),
             headers: { "x-test-user-id": accountA.id },
         });
         expect(sameAccount.statusCode).toBe(200);
@@ -203,7 +461,7 @@ describe("Connected Account attempt transaction routes", () => {
 
         const crossAccount = await app.inject({
             method: "GET",
-            url,
+            url: transactionReadUrl(url),
             headers: { "x-test-user-id": accountB.id },
         });
         expect(crossAccount.statusCode).toBe(404);
@@ -248,10 +506,11 @@ describe("Connected Account attempt transaction routes", () => {
             },
         });
         expect(replaced.statusCode).toBe(200);
-        expect(replaced.json()).toEqual({
+        expect(replaced.json()).toMatchObject({
             revision: 2,
             content: { t: "encrypted", c: "opaque-second" },
             expiresAtMs: secondExpiry,
+            scope: deviceScope,
         });
 
         const staleReplace = await app.inject({
@@ -297,12 +556,12 @@ describe("Connected Account attempt transaction routes", () => {
         expect(deleted.json()).toEqual({ status: "deleted" });
         expect((await app.inject({
             method: "GET",
-            url,
+            url: transactionReadUrl(url),
             headers: { "x-test-user-id": account.id },
         })).statusCode).toBe(404);
     });
 
-    it("rejects traversal, oversized opaque payloads, and plaintext-bearing bodies", async () => {
+    it("rejects traversal and plaintext-bearing bodies", async () => {
         const account = await createE2eeAccount();
         const app = createTestApp();
         await app.ready();
@@ -334,17 +593,6 @@ describe("Connected Account attempt transaction routes", () => {
         });
         expect(plaintext.statusCode).toBe(400);
 
-        const oversized = await app.inject({
-            method: "POST",
-            url: "/v2/connect/connected-account-attempt-transactions/oauth/attempt-2",
-            headers,
-            payload: {
-                content: { t: "encrypted", c: "x".repeat(524_289) },
-                expiresAtMs: Date.now() + 60_000,
-                scope: oauthScope,
-            },
-        });
-        expect(oversized.statusCode).toBe(400);
         expect(await db.repeatKey.count()).toBe(0);
     });
 
@@ -382,7 +630,7 @@ describe("Connected Account attempt transaction routes", () => {
             payload: { content, expiresAtMs, scope: oauthScope },
         });
         expect(created.statusCode).toBe(200);
-        expect(created.json()).toEqual({ revision: 1, content, expiresAtMs });
+        expect(created.json()).toMatchObject({ revision: 1, content, expiresAtMs, scope: oauthScope });
 
         const stored = await db.repeatKey.findMany();
         expect(stored).toHaveLength(1);
@@ -393,11 +641,11 @@ describe("Connected Account attempt transaction routes", () => {
         // the read path and through a later replace.
         const opened = await app.inject({
             method: "GET",
-            url,
+            url: transactionReadUrl(url),
             headers: { "x-test-user-id": account.id },
         });
         expect(opened.statusCode).toBe(200);
-        expect(opened.json()).toEqual({ revision: 1, content, expiresAtMs });
+        expect(opened.json()).toMatchObject({ revision: 1, content, expiresAtMs, scope: oauthScope });
 
         const nextContent = {
             t: "plain",
@@ -418,10 +666,11 @@ describe("Connected Account attempt transaction routes", () => {
             },
         });
         expect(replaced.statusCode).toBe(200);
-        expect(replaced.json()).toEqual({
+        expect(replaced.json()).toMatchObject({
             revision: 2,
             content: nextContent,
             expiresAtMs,
+            scope: oauthScope,
         });
         const afterReplace = await db.repeatKey.findMany();
         expect(afterReplace[0]?.value).not.toContain(verifier);
@@ -448,10 +697,11 @@ describe("Connected Account attempt transaction routes", () => {
             payload: { content: plainContent, expiresAtMs, scope: deviceScope },
         });
         expect(storedPlain.statusCode).toBe(200);
-        expect(storedPlain.json()).toEqual({
+        expect(storedPlain.json()).toMatchObject({
             revision: 1,
             content: plainContent,
             expiresAtMs,
+            scope: deviceScope,
         });
 
         const plainAccountEncrypted = await app.inject({
@@ -528,7 +778,7 @@ describe("Connected Account attempt transaction routes", () => {
         }]) {
             const response = await app.inject({
                 method: request.method,
-                url,
+                url: request.method === "GET" ? transactionReadUrl(url) : url,
                 headers,
                 ...(request.payload ? { payload: request.payload } : {}),
             });
@@ -582,7 +832,7 @@ describe("Connected Account attempt transaction routes", () => {
         }]) {
             const response = await app.inject({
                 method: request.method,
-                url,
+                url: request.method === "GET" ? transactionReadUrl(url) : url,
                 headers,
                 ...(request.payload ? { payload: request.payload } : {}),
             });
@@ -626,7 +876,7 @@ describe("Connected Account attempt transaction routes", () => {
         // retention worker remains a separately configured operator policy.
         const expired = await app.inject({
             method: "GET",
-            url: urlFor("abandoned-attempt"),
+            url: transactionReadUrl(urlFor("abandoned-attempt")),
             headers: headers(accountA),
         });
         expect(expired.statusCode).toBe(404);

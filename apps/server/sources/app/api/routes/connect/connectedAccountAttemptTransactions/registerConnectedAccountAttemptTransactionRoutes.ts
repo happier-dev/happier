@@ -1,7 +1,6 @@
-import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS } from '@happier-dev/cli-common/connectedAccounts';
 import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import { z } from "zod/mini";
-import { superRefine } from "zod/mini";
 import type { FastifyReply } from "fastify";
 
 import type { Fastify } from "../../../types";
@@ -15,43 +14,29 @@ import {
     replaceConnectedAccountAttemptTransaction,
 } from "./connectedAccountAttemptTransactionStore";
 
-const MAX_TRANSACTION_LIFETIME_MS = 24 * 60 * 60_000;
-
 const TransactionParamsSchema = z.strictObject({
-    kind: z.enum(["oauth", "device"]),
+    kind: z.enum(["manual", "oauth", "device"]),
     attemptId: z.string().check(z.minLength(1), z.maxLength(160), z.regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u)),
 });
 
-const MAX_TRANSACTION_CONTENT_UTF8_BYTES = 524_288;
-
 /**
- * One explicit Account stored-content envelope, bounded by its serialized size. The
+ * One explicit Account stored-content envelope. The API server owns the request-body
+ * transport boundary; attempts add no smaller content ceiling. The
  * kind is never inferred: a plain Account sends `{ t: 'plain', v }` and an E2EE
  * Account `{ t: 'encrypted', c }`, and the store admits it against the persisted
  * Account mode.
  */
-const TransactionEnvelopeSchema = lazyZodSchema(() => StoredJsonContentEnvelopeSchema
-    .check(superRefine((value, context) => {
-        if (
-            new TextEncoder().encode(JSON.stringify(value)).byteLength
-            > MAX_TRANSACTION_CONTENT_UTF8_BYTES
-        ) {
-            context.addIssue({
-                code: "custom",
-                message: "Connected-account attempt transaction content exceeds its byte limit",
-            });
-        }
-    })));
+const TransactionEnvelopeSchema = StoredJsonContentEnvelopeSchema;
 
 const TransactionScopeSchema = z.strictObject({
-    machineId: z.string().check(z.minLength(1), z.maxLength(256)),
+    machineId: z.optional(z.string().check(z.minLength(1), z.maxLength(256))),
     service: z.strictObject({
         pluginId: z.string().check(z.minLength(1), z.maxLength(256)),
         localId: z.string().check(z.minLength(1), z.maxLength(256)),
     }),
     modeId: z.string().check(z.minLength(1), z.maxLength(256)),
     intent: z.enum(["connect", "reconnect"]),
-    phase: z.enum(["starting", "awaitingOAuth", "awaitingDeviceAuthorization", "outcomeUnknown"]),
+    phase: z.enum(["starting", "configurationRequired", "awaitingManual", "awaitingOAuth", "awaitingDeviceAuthorization", "outcomeUnknown"]),
     createdAtMs: z.number().check(z.int(), z.nonnegative()),
 });
 
@@ -59,6 +44,11 @@ const TransactionContentSchema = z.strictObject({
     content: TransactionEnvelopeSchema,
     expiresAtMs: z.number().check(z.int(), z.positive()),
     scope: TransactionScopeSchema,
+});
+
+const TransactionCreateSchema = z.strictObject({
+    ...TransactionContentSchema.shape,
+    expiresAtMs: z.optional(TransactionContentSchema.shape.expiresAtMs),
 });
 
 const TransactionMutationSchema = (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(TransactionContentSchema, {
@@ -70,9 +60,11 @@ const TransactionDeleteSchema = z.strictObject({
 });
 
 const TransactionRecordSchema = z.strictObject({
+    kind: TransactionParamsSchema.shape.kind,
     revision: z.number().check(z.int(), z.minimum(1)),
     content: TransactionEnvelopeSchema,
     expiresAtMs: z.number().check(z.int(), z.positive()),
+    scope: TransactionScopeSchema,
 });
 
 const TransactionErrorSchema = z.strictObject({
@@ -87,7 +79,7 @@ const TransactionErrorSchema = z.strictObject({
 
 function expiryIsValid(expiresAtMs: number, nowMs: number): boolean {
     return expiresAtMs > nowMs
-        && expiresAtMs - nowMs <= MAX_TRANSACTION_LIFETIME_MS;
+        && expiresAtMs - nowMs <= CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS;
 }
 
 function sendMutationError(
@@ -133,7 +125,7 @@ export function registerConnectedAccountAttemptTransactionRoutes(
         },
         schema: {
             querystring: z.strictObject({
-                machineId: z.string().check(z.minLength(1), z.maxLength(256)),
+                machineId: z.optional(z.string().check(z.minLength(1), z.maxLength(256))),
                 pluginId: z.string().check(z.minLength(1), z.maxLength(256)),
                 localId: z.string().check(z.minLength(1), z.maxLength(256)),
             }),
@@ -176,7 +168,7 @@ export function registerConnectedAccountAttemptTransactionRoutes(
         },
         schema: {
             params: paramsSchema,
-            body: TransactionContentSchema,
+            body: TransactionCreateSchema,
             response: {
                 200: TransactionRecordSchema,
                 ...errorResponses,
@@ -184,7 +176,9 @@ export function registerConnectedAccountAttemptTransactionRoutes(
         },
     }, async (request, reply) => {
         const nowMs = Date.now();
-        if (!expiryIsValid(request.body.expiresAtMs, nowMs)) {
+        const expiresAtMs = request.body.expiresAtMs
+            ?? nowMs + CONNECTED_ACCOUNT_ATTEMPT_TRANSACTION_LIFETIME_MS;
+        if (!expiryIsValid(expiresAtMs, nowMs)) {
             return reply.code(409).send({
                 error: "connected_account_attempt_transaction_expiry_invalid",
             });
@@ -193,6 +187,7 @@ export function registerConnectedAccountAttemptTransactionRoutes(
             accountId: request.userId,
             ...request.params,
             ...request.body,
+            expiresAtMs,
         });
         if (result.status !== "ok") {
             return sendMutationError(reply, result.status);
@@ -200,7 +195,7 @@ export function registerConnectedAccountAttemptTransactionRoutes(
         return reply.send(result.record);
     });
 
-    app.get("/v2/connect/connected-account-attempt-transactions/:kind/:attemptId", {
+    app.get("/v2/connect/connected-account-attempt-transactions/:attemptId", {
         preHandler: app.authenticate,
         config: {
             rateLimit: resolveApiHotEndpointRateLimit(
@@ -209,7 +204,7 @@ export function registerConnectedAccountAttemptTransactionRoutes(
             ),
         },
         schema: {
-            params: paramsSchema,
+            params: z.strictObject({ attemptId: TransactionParamsSchema.shape.attemptId }),
             response: {
                 200: TransactionRecordSchema,
                 404: TransactionErrorSchema,
