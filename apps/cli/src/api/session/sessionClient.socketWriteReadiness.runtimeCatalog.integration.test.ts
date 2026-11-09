@@ -1439,6 +1439,55 @@ describe('ApiSessionClient socket write readiness', () => {
     } finally { publisher.dispose(); }
   });
 
+  it('completes a held model publication after its HTTP commit despite a Session socket disconnect', async () => {
+    const session = createEncryptedOwnerSession('s-model-publication-disconnect');
+    const socket = createSocket({ disconnectReason: 'transport close' });
+    const client = createClient(session, [socket, createSocket()], {
+      durableMutationDeliveryInitiallyActive: false,
+      metadataAuthority: { kind: 'owner', credentials: ownerCredentials },
+    });
+    await client.claimCurrentSessionPublisherAuthorityForStartup();
+    await client.refreshSessionSnapshotFromServerRequired({ reason: 'startup-drain' });
+    const commitEntered = createDeferred();
+    const releaseCommit = createDeferred();
+    const commit = vi.mocked(axios.patch).getMockImplementation();
+    if (!commit) throw new Error('Expected the Home tuple HTTP boundary');
+    // Hold only the HTTP commit; publisher sequencing, authority and codecs stay real.
+    vi.mocked(axios.patch).mockImplementation(async (...args) => {
+      commitEntered.resolve();
+      await releaseCommit.promise;
+      return await commit(...args);
+    });
+    const target = { selection: { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null, modelId: 'chosen' },
+      policy: 'live', providerBinding: null, sessionBindingMetadata: null, runtimeBindingBasis: null,
+      revalidateBeforeEffect: async () => true,
+    } satisfies AuthorizedSessionModelTransitionTarget;
+    const snapshot = { observedAt: 1, currentModelId: 'chosen', models: [{ id: 'chosen', name: 'Chosen model' }] };
+    const publisher = createSessionRuntimeModelsPublisher({ agentId: 'qwen', agentTargetKey: target.selection.agentTargetKey,
+      runnerProcessIdentity: { pid: 123, processStartTimeMs: 1_000 }, initialActiveTarget: target, session: client,
+      source: { read: () => snapshot, subscribe: listener => { listener(snapshot); return { dispose() {} }; } },
+    });
+    let flushed = false;
+    const flushing = publisher.flush().then(() => { flushed = true; });
+    try {
+      await commitEntered.promise;
+      expect(flushed).toBe(false);
+      socket.disconnect();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(flushed).toBe(false);
+      releaseCommit.resolve();
+      await flushing;
+      expect(client.getMetadataSnapshot()?.sessionModelsV1).toMatchObject({
+        currentModelId: 'chosen', availableModels: [{ id: 'chosen', name: 'Chosen model' }],
+      });
+      expect(axios.patch).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseCommit.resolve();
+      await flushing;
+      publisher.dispose();
+    }
+  });
+
   it.each([false, true])('drains a fenced publisher metadata write while connected (close prepared: %s)', async closing => {
     const session = createEncryptedOwnerSession(`s-publisher-close-${closing}`);
     const socket = createSocket();
