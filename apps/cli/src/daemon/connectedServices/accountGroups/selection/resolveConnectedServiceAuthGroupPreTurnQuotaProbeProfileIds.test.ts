@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds } from './resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from './selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from './selectConnectedServiceAuthGroupCandidate';
 
 describe('resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds', () => {
   it('keeps source-valid quota without a probe and probes source-expired quota despite a later probe preference', () => {
@@ -15,7 +15,7 @@ describe('resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds', () => {
         effectiveRemainingPercent: 80,
       } }]]),
       policy: {
-        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
         preTurnProbeMode: 'when_stale',
         probeIfSnapshotOlderThanMs: 10 * 60_000,
       },
@@ -38,7 +38,7 @@ describe('resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds', () => {
         ['retryable', { credentialHealthStatus: 'refresh_failed_retryable' as const }],
         ['refreshing', { credentialHealthStatus: 'refreshing' as const }],
       ]),
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, preTurnProbeMode: 'always_for_group' },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, preTurnProbeMode: 'always_for_group' },
       nowMs: 1_000,
       allowCurrentProfileRetry: true,
     })).toEqual(['active', 'healthy', 'retryable', 'refreshing', 'unknown']);
@@ -53,7 +53,7 @@ describe('resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds', () => {
         { quotaSnapshot: { staleAfterMs: 60_000, capturedAtMs: 10_000, effectiveMeterId: 'weekly', effectiveRemainingPercent: 0 } },
       ]]),
       policy: {
-        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
         preTurnProbeMode: 'when_stale',
       },
       nowMs: 1_000,

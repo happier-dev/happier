@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod/mini';
-import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 import {
     ConnectedServiceAuthGroupIdSchema,
@@ -642,6 +642,40 @@ export const ConnectedServiceAuthGroupPolicyPatchV1Schema = lazyZodSchema(() => 
     }));
 
 export type ConnectedServiceAuthGroupPolicyPatchV1 = z.infer<typeof ConnectedServiceAuthGroupPolicyPatchV1Schema>;
+
+/** Current pool policy. V1 remains frozen for predecessor records and DTOs. */
+export const ConnectedServiceAuthGroupPolicyV2Schema = lazyZodSchema(() => z.extend(
+    z.omit(ConnectedServiceAuthGroupPolicyV1Schema, { v: true, claudeCodeAutoContinueAtUsageLimit: true }),
+    { v: z._default(z.literal(2), 2), nativeUsageLimitContinuation: z.optional(z.boolean()) },
+));
+
+export type ConnectedServiceAuthGroupPolicyV2 = z.infer<typeof ConnectedServiceAuthGroupPolicyV2Schema>;
+
+export const ConnectedServiceAuthGroupPolicyPatchV2Schema = lazyZodSchema(() => z.extend(
+    z.omit(ConnectedServiceAuthGroupPolicyPatchV1Schema, { v: true, claudeCodeAutoContinueAtUsageLimit: true }),
+    { v: z.optional(z.literal(2)), nativeUsageLimitContinuation: z.optional(z.boolean()) },
+));
+
+export type ConnectedServiceAuthGroupPolicyPatchV2 = z.infer<typeof ConnectedServiceAuthGroupPolicyPatchV2Schema>;
+
+// The current clone avoids recursively selecting this custom stored projection.
+// Only stored ingress drops retired fields; current mutation schemas stay strict.
+const ConnectedServiceAuthGroupPolicyStoredSchema = lazyZodSchema(() => z.pipe(z.union([
+    createStoredReadSchema(z.strictObject({ ...ConnectedServiceAuthGroupPolicyV2Schema.shape, v: z.literal(2) })),
+    createStoredReadSchema(ConnectedServiceAuthGroupPolicyV1Schema),
+]), z.transform((policy): ConnectedServiceAuthGroupPolicyV2 => {
+    if (policy.v === 2) return policy;
+    const { v: _version, claudeCodeAutoContinueAtUsageLimit, ...current } = policy;
+    return { ...current, v: 2, ...(claudeCodeAutoContinueAtUsageLimit === undefined
+        ? {} : { nativeUsageLimitContinuation: claudeCodeAutoContinueAtUsageLimit }) };
+})));
+
+defineStoredReadProjection(ConnectedServiceAuthGroupPolicyV2Schema, () => ConnectedServiceAuthGroupPolicyStoredSchema);
+
+/** Normalize stored V1 or V2 once, preserving absent, false and true preferences. */
+export function parseConnectedServiceAuthGroupPolicy(value: unknown): ConnectedServiceAuthGroupPolicyV2 {
+    return ConnectedServiceAuthGroupPolicyStoredSchema.parse(value);
+}
 
 export const ConnectedServiceAuthGroupMemberStateV1Schema = lazyZodSchema(() => z._default(z.looseObject({
         cooldownUntilMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),

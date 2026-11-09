@@ -26,7 +26,7 @@ import {
   ConnectedServiceProfileIdSchema,
 } from '../connect/connectedServiceBindings.js';
 import {
-  ConnectedServiceAuthGroupPolicyV1Schema,
+  ConnectedServiceAuthGroupPolicyV2Schema,
   ConnectedServiceCredentialRevisionV1Schema,
 } from '../connect/connectedServiceSchemas.js';
 import { TeamCredentialDirectMaterialUseV1Schema } from '../teams/credentials/directMaterialUseV1.js';
@@ -197,7 +197,7 @@ const PersistedConnectedServiceChildSelectionV1Schema = lazyZodSchema(() => z.di
     activeProfileId: ConnectedServiceProfileIdSchema,
     fallbackProfileId: ConnectedServiceProfileIdSchema,
     generation: z.number().check(z.int(), z.nonnegative()),
-    policy: ConnectedServiceAuthGroupPolicyV1Schema,
+    policy: ConnectedServiceAuthGroupPolicyV2Schema,
     credentialRevision: z.optional(ConnectedServiceCredentialRevisionV1Schema),
   }),
 ]));

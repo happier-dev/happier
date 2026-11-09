@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installConnectedServicesCommonModuleMocks } from '@/components/settings/connectedServices/connectedServicesTestHelpers';
 import { createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountGroupRequestsV4';
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
@@ -98,7 +98,7 @@ describe('pool deletion through its shared Action owner', () => {
             accountId: 'adoption-owner', currentAccount: true });
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
         const group = { v: 1, ref: { service, groupId: 'work' }, displayName: 'Work', incarnation: 'work:1', generation: 2,
-            runtimeStateRevision: 3, policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'least_limited',
+            runtimeStateRevision: 3, policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({ v: 2, strategy: 'least_limited',
                 autoSwitch: true, switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: false } }),
             activeConnectedAccountId: null, state: {}, members: [], createdAt: 0, updatedAt: 0 };
         home.answer(serverId, 'GET /v1/account/profile', { body: { ...profileDefaults, id: 'adoption-owner', connectedAccountGroupsV4: [group] } });
@@ -350,7 +350,7 @@ describe('pool deletion through its shared Action owner', () => {
         const admittedCredentials = auth.credentials;
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
         const group = { v: 1, ref: { service, groupId: 'work' }, displayName: 'Work', incarnation: 'work:1', generation: 2,
-            runtimeStateRevision: 3, policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null,
+            runtimeStateRevision: 3, policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null,
             state: {}, createdAt: 0, updatedAt: 0, members: [] };
         const encodedService = encodeURIComponent(encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountServiceRefSchema, service));
         let currentGroup = group;
@@ -444,7 +444,7 @@ describe('pool deletion through its shared Action owner', () => {
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
         const ref = { service, groupId: 'primary' };
         const group = { v: 1, ref, displayName: 'Primary', incarnation: 'primary:1', generation: 2, runtimeStateRevision: 3,
-            policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'least_limited', autoSwitch: true,
+            policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({ v: 2, strategy: 'least_limited', autoSwitch: true,
                 switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: false } }),
             activeConnectedAccountId: null, state: { status: 'ready' }, createdAt: 0, updatedAt: 0,
             members: [{ v: 1, connectedAccountId: 'work', priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0 }] };

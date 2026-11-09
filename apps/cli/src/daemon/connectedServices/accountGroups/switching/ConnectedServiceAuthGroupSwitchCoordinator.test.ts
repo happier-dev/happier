@@ -8,7 +8,7 @@ import { logger } from '@/utils/logger';
 import { observeConnectedServiceMaterializationPhase } from '../../materialize/materializationPhase';
 import { RuntimeAuthRecoveryScheduler } from '../../runtimeAuth/RuntimeAuthRecoveryScheduler';
 
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, type ConnectedServiceAuthGroupMemberRuntimeState } from '../selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, type ConnectedServiceAuthGroupMemberRuntimeState } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import {
   ConnectedServiceAuthGroupSwitchCoordinator,
   InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
@@ -23,7 +23,7 @@ function state(activeProfileId: string, generation: number): ConnectedServiceAut
     groupId: 'main',
     activeProfileId,
     generation,
-    policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+    policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'priority', autoSwitch: true },
     members: [
       { profileId: 'primary', priority: 1, createdAtMs: 1, enabled: true },
       { profileId: 'backup', priority: 2, createdAtMs: 2, enabled: true },
@@ -1445,7 +1445,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
   it('reports the adopted generation as superseded when authoritative truth advances during apply', async () => {
     const withQuota = (activeProfileId: string, generation: number): ConnectedServiceAuthGroupSwitchState => ({
       ...state(activeProfileId, generation),
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'least_limited', autoSwitch: true },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'least_limited', autoSwitch: true },
       memberStatesByProfileId: new Map([
         ['primary', { quotaSnapshot: { staleAfterMs: 60_000, capturedAtMs: 1_000, effectiveRemainingPercent: 5 } }],
         ['backup', { quotaSnapshot: { staleAfterMs: 60_000, capturedAtMs: 1_000, effectiveRemainingPercent: 80 } }],
@@ -1523,7 +1523,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       emitEvent: (event) => events.push(event),
       loadState: async () => ({
         ...state('primary', 1),
-        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: false },
+        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, autoSwitch: false },
       }),
       commitSwitch: async () => {
         didCommit = true;
@@ -1557,7 +1557,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       nowMs: () => 1_000,
       loadState: async () => ({
         ...state('primary', 1),
-        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: false },
+        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, autoSwitch: false },
       }),
       commitSwitch: async () => state('backup', 2),
       applyGeneration: async () => ({ ok: true }),
@@ -1580,7 +1580,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       loadState: async () => ({
         ...state('primary', 1),
         policy: {
-          ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+          ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
           autoSwitch: true,
           recoveryMode: 'off',
         },
@@ -1607,10 +1607,10 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       loadState: async () => ({
         ...state('primary', 1),
         policy: {
-          ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+          ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
           autoSwitch: true,
           switchOn: {
-            ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1.switchOn,
+            ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2.switchOn,
             usageLimit: true,
           },
         },
@@ -1648,7 +1648,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       loadState: async () => ({
         ...state('primary', 1),
         policy: {
-          ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+          ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
           autoSwitch: true,
           recoveryMode: 'wait_until_reset',
         },
@@ -1729,7 +1729,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
         return {
           ...state('primary', 1),
-          policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: false },
+          policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, autoSwitch: false },
         };
       },
       commitSwitch: async () => state('backup', 2),
@@ -2736,7 +2736,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       nowMs: () => now,
       loadState: async () => ({
         ...state('backup', 2),
-        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'least_limited', autoSwitch: true },
+        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'least_limited', autoSwitch: true },
         members,
         memberStatesByProfileId: new Map([
           ['primary', {
@@ -2799,7 +2799,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
   it.each(['soft_threshold', 'usage_limit'] as const)('applies a coalesced generation using the recipient reason when the owner reason is %s', async ownerReason => {
     const quotaReadyState = (activeProfileId: string, generation: number): ConnectedServiceAuthGroupSwitchState => ({
       ...state(activeProfileId, generation),
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'least_limited', autoSwitch: true },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'least_limited', autoSwitch: true },
       memberStatesByProfileId: new Map([
         ['primary', { quotaSnapshot: { staleAfterMs: 60_000, capturedAtMs: 1_000, effectiveRemainingPercent: 5 } }],
         ['backup', { quotaSnapshot: { staleAfterMs: 60_000, capturedAtMs: 1_000, effectiveRemainingPercent: 80 } }],
@@ -3396,7 +3396,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
         if (!conflicted) {
           return {
             ...state('primary', 1),
-            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'least_limited', autoSwitch: true },
+            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'least_limited', autoSwitch: true },
             members,
             memberStatesByProfileId: new Map([
               ['primary', {
@@ -3418,7 +3418,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
         }
         return {
           ...state('backup', 2),
-          policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'least_limited', autoSwitch: true },
+          policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'least_limited', autoSwitch: true },
           members,
           memberStatesByProfileId: new Map([
             ['primary', {
@@ -3448,7 +3448,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
         if (expectedGeneration === 1) { conflicted = true; throw generationConflict; }
         return {
           ...state(toProfileId, 3),
-          policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'least_limited', autoSwitch: true },
+          policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'least_limited', autoSwitch: true },
           members,
         };
       },
@@ -3623,7 +3623,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
     const preflightApplyGeneration = vi.fn(async () => ({ ok: true as const, mode: 'restart_resume' as const }));
     const current: ConnectedServiceAuthGroupSwitchState = {
       ...state('primary', 1),
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'least_limited', autoSwitch: true },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'least_limited', autoSwitch: true },
       memberStatesByProfileId: new Map([
         ['primary', {
           quotaSnapshot: {
@@ -3692,7 +3692,7 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
     const now = 1_000;
     let current: ConnectedServiceAuthGroupSwitchState = {
       ...state('primary', 1),
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'least_limited', autoSwitch: true },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'least_limited', autoSwitch: true },
       memberStatesByProfileId: new Map([
         ['primary', {
           quotaSnapshot: {

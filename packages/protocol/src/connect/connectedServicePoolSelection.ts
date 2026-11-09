@@ -4,7 +4,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { QualifiedConnectedAccountIdSchema, QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
 import { QualifiedConnectedAccountGroupRefSchema } from './qualifiedConnectedAccountProjectionsV4.js';
-import { ConnectedServiceAuthGroupPolicyV1Schema, ConnectedServiceAuthGroupStateV1Schema } from './connectedServiceSchemas.js';
+import { ConnectedServiceAuthGroupPolicyV2Schema, ConnectedServiceAuthGroupStateV1Schema } from './connectedServiceSchemas.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 
 export const CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD = RPC_METHODS.DAEMON_CONNECTED_SERVICE_POOL_SELECTION_GET;
@@ -49,7 +49,7 @@ export const ConnectedServicePoolSelectionV1Schema = lazyZodSchema(() => z.stric
   decisionTrace: z.strictObject({
     activeProfileId: zMini.nullable(ProfileIdSchema),
     reason: SelectionReasonSchema,
-    strategy: ConnectedServiceAuthGroupPolicyV1Schema.shape.strategy,
+    strategy: ConnectedServiceAuthGroupPolicyV2Schema.shape.strategy,
     selectionBasis: z.enum(['manual_strategy', 'no_eligible_members', 'preference', 'primary_restore', 'active_stickiness', 'soft_switch']),
     sticky: z.boolean(),
     orderedEligibleCandidates: z.array(CandidateSchema),
@@ -63,7 +63,7 @@ export const ConnectedServicePoolSelectionGetRequestV1Schema = lazyZodSchema(() 
   providerLimitId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Evaluates retained facts only; it neither switches accounts nor predicts a refreshed quota. */
   hypothetical: z.optional(z.strictObject({
-    strategy: zMini.optional(ConnectedServiceAuthGroupPolicyV1Schema.shape.strategy),
+    strategy: zMini.optional(ConnectedServiceAuthGroupPolicyV2Schema.shape.strategy),
     atMs: z.optional(z.number().check(z.nonnegative())),
   })),
 }));
@@ -74,7 +74,7 @@ export const ConnectedServicePoolSelectionGetResponseV1Schema = lazyZodSchema(()
     observedAtMs: FiniteNumberSchema,
     selection: ConnectedServicePoolSelectionV1Schema,
     hypothetical: z.optional(z.strictObject({
-      strategy: ConnectedServiceAuthGroupPolicyV1Schema.shape.strategy,
+      strategy: ConnectedServiceAuthGroupPolicyV2Schema.shape.strategy,
       atMs: z.number().check(z.nonnegative()),
     })),
     activeAccountRef: z.optional(z.nullable(asProtocolZod(QualifiedConnectedAccountRefSchema))),

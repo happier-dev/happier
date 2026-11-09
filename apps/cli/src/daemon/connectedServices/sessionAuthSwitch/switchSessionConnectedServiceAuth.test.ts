@@ -54,7 +54,7 @@ import { canResumeFromMaterializedState } from '../stateSharing/canResumeFromMat
 import { materializeSessionConnectedServiceRuntimeAuthSelection } from './materializeSessionConnectedServiceRuntimeAuthSelection';
 import { resolveTrackedConnectedServiceSwitchContinuityContext } from './resolveTrackedConnectedServiceSwitchContinuityContext';
 import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry, type ConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { handleConnectedServiceRuntimeAuthFailureForSession } from '../runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
 import { RuntimeAuthRecoveryScheduler, type RuntimeAuthRecoveryIntent } from '../runtimeAuth/RuntimeAuthRecoveryScheduler';
 import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
@@ -451,7 +451,7 @@ describe('switchSessionConnectedServiceAuth', () => {
       spawnOptions: { directory, backendTarget: { kind: 'backend', backendId: agentId }, connectedServices: makeBindings(mode === 'restart_unchanged' ? 'B' : 'A') } });
     let current: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'work', activeProfileId: 'A', generation: 1,
       credentialRevision: revision,
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: true, strategy: 'priority' },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, autoSwitch: true, strategy: 'priority' },
       members: ['A', 'B'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
       memberStatesByProfileId: new Map([['B', { quotaSnapshot: { capturedAtMs: 1_000, staleAfterMs: 60_000, effectiveRemainingPercent: 60 } }]]),
     };
@@ -1830,7 +1830,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         diagnostics: {
           failurePhase: 'materialization',
           uxDiagnostic: expect.objectContaining({
-            code: 'claude_subscription_missing_claude_code_scope',
+            code: 'connected_service_credential_scope_missing',
             failurePhase: 'materialization',
             source: expectedSource,
             serviceId: 'happier.agent.claude/claude-subscription',
@@ -1852,7 +1852,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         action: 'restart_requested',
         errorCode: 'post_switch_verification_failed',
         diagnostic: expect.objectContaining({
-          code: 'claude_subscription_missing_claude_code_scope',
+          code: 'connected_service_credential_scope_missing',
           source: expectedSource,
         }),
       }));

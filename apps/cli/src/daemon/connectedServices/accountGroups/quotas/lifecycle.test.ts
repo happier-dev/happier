@@ -1,12 +1,12 @@
 import {
   buildProviderAccountUsageRecordId,
-  type ConnectedServiceAuthGroupV1,
   type ProviderAccountUsageRecordKeyV1,
   type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../selection/selectConnectedServiceAuthGroupCandidate';
+import type { ConnectedServiceAuthGroupAccountUsageView } from '../switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
 import {
   canDisplayAccountUsageForQuota,
   canDriveQuotaLifecycleEdge,
@@ -14,22 +14,18 @@ import {
   type ConnectedServiceAuthGroupQuotaLifecycleState,
 } from './lifecycle';
 
-function createGroup(): ConnectedServiceAuthGroupV1 {
+function createGroup(): ConnectedServiceAuthGroupAccountUsageView {
   return {
-    v: 1,
     serviceId: 'openai-codex',
     groupId: 'team',
-    displayName: 'Team',
     activeProfileId: 'primary',
     generation: 4,
-    runtimeStateRevision: 0,
     policy: {
-      ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
       autoSwitch: true,
       strategy: 'priority',
       cooldownMs: 500,
     },
-    state: { v: 1 },
     members: ['primary', 'backup'].map((profileId, index) => ({
       v: 1,
       serviceId: 'openai-codex',
@@ -41,8 +37,6 @@ function createGroup(): ConnectedServiceAuthGroupV1 {
       createdAt: index + 1,
       updatedAt: index + 1,
     })),
-    createdAt: 1,
-    updatedAt: 2,
   };
 }
 

@@ -16,8 +16,8 @@ import { presentConnectedAccountIdentity } from '@/sync/domains/connectedService
 import { t } from '@/text';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import {
-    ConnectedServiceAuthGroupPolicyV1Schema,
-    type ConnectedServiceAuthGroupPolicyV1,
+    ConnectedServiceAuthGroupPolicyV2Schema,
+    type ConnectedServiceAuthGroupPolicyV2,
     type ConnectedServiceQuotaSnapshotV1} from '@happier-dev/protocol/connect/connected-service-schemas';
 import {
     type QualifiedConnectedAccountRef,
@@ -98,9 +98,9 @@ function accountRef(accountId: string): QualifiedConnectedAccountRef {
 }
 
 function policy(
-    overrides: Partial<ConnectedServiceAuthGroupPolicyV1> = {},
-): ConnectedServiceAuthGroupPolicyV1 {
-    return { ...ConnectedServiceAuthGroupPolicyV1Schema.parse({}), ...overrides };
+    overrides: Partial<ConnectedServiceAuthGroupPolicyV2> = {},
+): ConnectedServiceAuthGroupPolicyV2 {
+    return { ...ConnectedServiceAuthGroupPolicyV2Schema.parse({}), ...overrides };
 }
 
 /** Members intentionally out of priority order so ordering is proven, not luck. */
@@ -200,13 +200,13 @@ it.each(['claude-subscription', 'anthropic'].flatMap((localId) =>
     const service = { pluginId: 'happier.agent.claude', localId };
     const { screen, group } = await renderPoolDetail({
         ref: { service, groupId: 'primary' },
-        policy: policy(currentValue === undefined ? {} : { claudeCodeAutoContinueAtUsageLimit: currentValue }),
+        policy: policy(currentValue === undefined ? {} : { nativeUsageLimitContinuation: currentValue }),
     }, { poolSettings: resolveAgentUiBehavior('claude').connectedServices?.poolSettings });
     const toggle = screen.findByTestId('connected-services-pool-detail:claude-auto-continue:toggle');
     expect(toggle).not.toBeNull();
     expect(toggle?.props.value).toBe(currentValue === true);
     await act(async () => { toggle?.props.onValueChange(currentValue !== true); });
-    expect(patch).toHaveBeenCalledWith({ group, policy: { claudeCodeAutoContinueAtUsageLimit: currentValue !== true } });
+    expect(patch).toHaveBeenCalledWith({ group, policy: { nativeUsageLimitContinuation: currentValue !== true } });
 });
 
 it('keeps native usage-limit waiting disabled when fallback controls are unavailable', async () => {

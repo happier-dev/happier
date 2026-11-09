@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { ConnectedServicePoolSelectionV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol';
 import { buildConnectedServiceAuthGroupRuntimeStateFromMeters } from '../quotas/projection';
 
 import {
-  DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+  DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
   hasConnectedServiceAuthGroupCandidateEvidenceForSwitchReason,
   isConnectedServiceAuthGroupProviderLimitSelected,
   isConnectedServiceAuthGroupSoftSwitchCandidateMeaningfullyBetter,
@@ -17,7 +17,7 @@ import {
   type ConnectedServiceAuthGroupMemberRuntimeState,
 } from './selectConnectedServiceAuthGroupCandidate';
 
-const basePolicy = DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1;
+const basePolicy = DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2;
 
 describe('expiry-first selection', () => {
   function state(left: number, reset: number | null, subscription?: ProviderAccountSubscriptionV1) {
@@ -251,16 +251,16 @@ function member(profileId: string, priority: number, createdAtMs: number) {
   };
 }
 
-describe('DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1', () => {
+describe('DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2', () => {
   it('is derived from the protocol schema default and stays in lockstep with it', () => {
     // Split-brain hygiene: the daemon default must not diverge from the protocol schema default.
     // Deriving from the schema means a schema-default change (e.g. strategy flip) flows through
     // automatically, with no hand-copied literal to drift.
-    expect(DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1.strategy).toBe(
-      ConnectedServiceAuthGroupPolicyV1Schema.parse({}).strategy,
+    expect(DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2.strategy).toBe(
+      ConnectedServiceAuthGroupPolicyV2Schema.parse({}).strategy,
     );
-    expect(DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1).toEqual(
-      ConnectedServiceAuthGroupPolicyV1Schema.parse({}),
+    expect(DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2).toEqual(
+      ConnectedServiceAuthGroupPolicyV2Schema.parse({}),
     );
   });
 });

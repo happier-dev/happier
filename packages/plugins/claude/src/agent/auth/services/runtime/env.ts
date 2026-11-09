@@ -140,7 +140,7 @@ export function readClaudePoolNativeWaitingPreferenceFromEnv(
   for (const item of parseJsonArray(env?.[CONNECTED_SERVICE_SELECTIONS_ENV_KEY])) {
     if (!isRecord(item) || item.kind !== 'group') continue;
     if (readClaudeConnectedServiceRuntimeServiceId(readString(item.serviceId)) === null) continue;
-    return isRecord(item.policy) && item.policy.claudeCodeAutoContinueAtUsageLimit === true;
+    return isRecord(item.policy) && item.policy.nativeUsageLimitContinuation === true;
   }
   return undefined;
 }

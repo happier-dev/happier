@@ -1,4 +1,5 @@
 import { ConnectedServiceBindingsV2IngressSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { ConnectedAccountServiceKey, ConnectedServiceBindingSelectionV1, ConnectedServiceProfileId, ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 
@@ -107,6 +108,7 @@ function parseSelection(value: unknown): SerializedConnectedServiceSelection | n
     ? Math.trunc(value.generation)
     : 0;
   if (!groupId || !activeProfileId || !fallbackProfileId) return null;
+  const policy = createStoredReadSchema(ConnectedServiceAuthGroupPolicyV2Schema).safeParse(value.policy);
   return {
     kind,
     serviceId,
@@ -114,7 +116,7 @@ function parseSelection(value: unknown): SerializedConnectedServiceSelection | n
     activeProfileId,
     fallbackProfileId,
     generation,
-    policy: value.policy ?? null,
+    policy: policy.success ? policy.data : value.policy ?? null,
     ...(credentialRevision ? { credentialRevision } : {}),
   };
 }

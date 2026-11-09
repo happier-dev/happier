@@ -42,7 +42,7 @@ import {
 } from './ConnectedServiceRefreshCoordinator';
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/builtIn/snapshot';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '../requestAuth/prepareConnectedAccountRequestAuthForSpawn';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID, type BuiltInLegacyConnectedAccountCompatibility } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import { ConnectedServiceCredentialRecordV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
@@ -2241,7 +2241,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       incarnation: 'qualified-group-row-pool',
       displayName: 'Pool',
       policy: {
-        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
         autoSwitch: false,
       },
       activeConnectedAccountId: 'workA',
@@ -2852,7 +2852,7 @@ describe('ConnectedServiceRefreshCoordinator', () => {
       incarnation: 'qualified-group-row-team',
       displayName: 'Team',
       policy: {
-        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
         autoSwitch: false,
       },
       activeConnectedAccountId: 'primary',

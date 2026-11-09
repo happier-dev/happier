@@ -1,8 +1,8 @@
-import type { ConnectedServiceAuthGroupPolicyV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceAuthGroupPolicyV2 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { t } from '@/text';
 
 /** Shared copy for pool details and collection summaries; selection remains daemon-owned. */
-export function getPoolStrategyPresentation(strategy: ConnectedServiceAuthGroupPolicyV1['strategy']) {
+export function getPoolStrategyPresentation(strategy: ConnectedServiceAuthGroupPolicyV2['strategy']) {
     switch (strategy) {
         case 'expiry_first': return {
             label: t('connectedServicesPool.strategyExpiryFirst'),
@@ -32,6 +32,6 @@ export function getPoolStrategyPresentation(strategy: ConnectedServiceAuthGroupP
 }
 
 /** Whether a pool's policy permits automatic movement when an account runs out. */
-export function isPoolUsageLimitSwitchEnabled(policy: ConnectedServiceAuthGroupPolicyV1): boolean {
+export function isPoolUsageLimitSwitchEnabled(policy: ConnectedServiceAuthGroupPolicyV2): boolean {
     return policy.strategy !== 'manual' && policy.autoSwitch && policy.switchOn.usageLimit;
 }

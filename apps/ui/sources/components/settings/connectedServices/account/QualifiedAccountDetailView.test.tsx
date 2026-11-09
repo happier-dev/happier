@@ -14,7 +14,7 @@ import { PopoverPortalTargetContextProvider } from '@/components/ui/popover/Popo
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import {
-    ConnectedServiceAuthGroupPolicyV1Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
+    ConnectedServiceAuthGroupPolicyV2Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
 import {
     BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID} from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
 import {
@@ -65,7 +65,7 @@ function makeGroup(params: Readonly<{
     return {
         ref: { service: SERVICE, groupId: params.groupId },
         displayName: params.displayName,
-        policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}),
+        policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}),
         activeAccountId: params.memberAccountIds[0] ?? null,
         revision: {
             protocol: 'v4',
@@ -264,6 +264,37 @@ describe('QualifiedAccountDetailView', () => {
         expect(screen.findByTestId('qualified-account-detail:sign-in:account-id')).toBeNull();
         // Identity lives in the header; there is no separate "Account details" list.
         expect(screen.findByTestId('qualified-account-detail:row:email')).toBeNull();
+    });
+
+    it('says the recorded mode once in the header: the plan or "Subscription", or the key with its last characters (lab muse-accounts A1)', async () => {
+        const unnamedPlan = await renderDetail({ status: 'connected', accessMode: { kind: 'subscription' } });
+        expect(metaTextOf(unnamedPlan.root, 'qualified-account-detail:meta:plan')).toBe('Subscription');
+        const namedPlan = await renderDetail({ status: 'connected', planLabel: 'Pro', accessMode: { kind: 'subscription' } });
+        expect(metaTextOf(namedPlan.root, 'qualified-account-detail:meta:plan')).toBe('Codex Pro');
+        const key = await renderDetail({ status: 'connected', planLabel: 'Pro', accessMode: { kind: 'apiKey', keySuffix: '7Qa2' } });
+        expect(metaTextOf(key.root, 'qualified-account-detail:meta:plan')).toBe('API key · ends 7Qa2');
+        const keyWithoutSuffix = await renderDetail({ status: 'connected', accessMode: { kind: 'apiKey', keySuffix: null } });
+        expect(metaTextOf(keyWithoutSuffix.root, 'qualified-account-detail:meta:plan')).toBe('API key');
+    });
+
+    it('states an included API key as a Sign-in fact with its suffix and no control, only when the record holds one', async () => {
+        const withKey = await renderDetail({
+            status: 'connected',
+            authenticationModeTitle: 'Signed in with a code',
+            includedApiKey: { keySuffix: '4f9c' },
+        });
+        const row = withKey.root.findAll((node) => node.props?.testID === 'qualified-account-detail:included-api-key' && typeof node.props?.title === 'string')[0];
+        expect(row?.props.title).toBe('Includes an API key');
+        expect(row?.props.subtitle).toBe('Created when you connected · ends 4f9c');
+        expect(row?.props.rightElement).toBeUndefined();
+        expect(row?.props.onPress).toBeUndefined();
+
+        const unknownSuffix = await renderDetail({ status: 'connected', includedApiKey: { keySuffix: null } });
+        expect(unknownSuffix.root.findAll((node) => node.props?.testID === 'qualified-account-detail:included-api-key' && typeof node.props?.title === 'string')[0]?.props.subtitle)
+            .toBe('Created when you connected');
+
+        const without = await renderDetail({ status: 'connected', authenticationModeTitle: 'Signed in with a code' });
+        expect(without.findByTestId('qualified-account-detail:included-api-key')).toBeNull();
     });
 
     it('keeps the provider account id reachable from the ⋯ menu, copying it to the clipboard', async () => {

@@ -2,7 +2,8 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 
 import { SpawnConfigOptionValueSchema } from '../../actions/sessionSpawnConfigOptions.js';
-import { ConnectedServiceAuthGroupPolicyV1Schema } from '../../connect/connectedServiceSchemas.js';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from '../../connect/connectedServiceSchemas.js';
+import { PluginLocalizedStringV2Schema } from './publicTypes.js';
 
 /**
  * The PUBLIC Agent UI authoring grammar (`contributes.agents[].ui`).
@@ -270,7 +271,7 @@ const AgentUiAskUserQuestionSchema = lazyZodSchema(() => z.strictObject({
 export const AgentUiConnectedServicePoolSettingV1Schema = lazyZodSchema(() => z.strictObject({
   id: AgentUiIdSchema,
   kind: z.literal('boolean'),
-  policyKey: z.keyof(z.pick(ConnectedServiceAuthGroupPolicyV1Schema, { claudeCodeAutoContinueAtUsageLimit: true })),
+  policyKey: z.keyof(z.pick(ConnectedServiceAuthGroupPolicyV2Schema, { nativeUsageLimitContinuation: true })),
   serviceLocalIds: AgentUiIdArraySchema.check(z.minLength(1)),
   titleKey: AgentUiTranslationKeySchema,
   subtitleKey: AgentUiTranslationKeySchema,
@@ -280,9 +281,17 @@ export const AgentUiConnectedServicesV1Schema = lazyZodSchema(() => z.strictObje
   poolSettings: z.array(AgentUiConnectedServicePoolSettingV1Schema),
 }));
 
+/** Historical accounting IDs retain their identity; only presentation belongs to the Agent. */
+export const AgentUiAccountingSourcePresentationV1Schema = lazyZodSchema(() => z.array(z.strictObject({
+  sourceId: AgentUiIdSchema,
+  title: PluginLocalizedStringV2Schema,
+})));
+export type AgentUiAccountingSourcePresentationV1 = z.infer<typeof AgentUiAccountingSourcePresentationV1Schema>;
+
 export const AgentUiBehaviorDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   /** Author-owned identity for this declaration, surfaced in diagnostics. */
   descriptorId: z.optional(AgentUiIdSchema),
+  accountingSourcePresentation: z.optional(AgentUiAccountingSourcePresentationV1Schema),
   connectedServices: z.optional(AgentUiConnectedServicesV1Schema),
   attachedSessionTerminal: z.optional(z.strictObject({ supported: z.optional(z.boolean()) })),
   pendingDelivery: z.optional(z.strictObject({

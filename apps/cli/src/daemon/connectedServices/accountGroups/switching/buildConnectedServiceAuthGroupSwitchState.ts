@@ -5,27 +5,11 @@ import type {
     QualifiedConnectedAccountProfileV4,
     QualifiedConnectedAccountServiceRef,
 } from '@happier-dev/protocol';
+import { parseConnectedServiceAuthGroupPolicy } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import type { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
-import {
-    DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
-    type ConnectedServiceAuthGroupMemberRuntimeState,
-    type ConnectedServiceAuthGroupPolicyV1,
-} from '../selection/selectConnectedServiceAuthGroupCandidate';
+import type { ConnectedServiceAuthGroupMemberRuntimeState } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import type { ConnectedServiceAuthGroupSwitchState } from './ConnectedServiceAuthGroupSwitchCoordinator';
-
-export function normalizeConnectedServiceAuthGroupPolicy(
-    value: ConnectedServiceAuthGroupPolicyV1,
-): ConnectedServiceAuthGroupPolicyV1 {
-    return {
-        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
-        ...value,
-        switchOn: {
-            ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1.switchOn,
-            ...value.switchOn,
-        },
-    };
-}
 
 function readNumberState(value: unknown): number | null | undefined {
     if (value === null || value === undefined) return value;
@@ -128,7 +112,7 @@ export function buildQualifiedConnectedAccountAuthGroupSwitchState(input: Readon
         credentialRevision: activeProfile?.credentialRevision ?? null,
         configurationRevision:
             activeProfile?.configurationRevision ?? null,
-        policy: normalizeConnectedServiceAuthGroupPolicy(input.group.policy),
+        policy: input.group.policy,
         members: input.group.members.map((member) => ({
             profileId: member.connectedAccountId,
             priority: member.priority,
@@ -182,7 +166,7 @@ function buildConnectedServiceAuthGroupSwitchStateFromMemberRuntimeStates(input:
         lastSwitchAt: input.group.state.lastSwitchAt,
         activeSince: input.group.state.activeSince,
         generation: input.group.generation,
-        policy: normalizeConnectedServiceAuthGroupPolicy(input.group.policy),
+        policy: parseConnectedServiceAuthGroupPolicy(input.group.policy),
         members: input.group.members.map((member) => ({
             profileId: member.profileId,
             priority: member.priority,

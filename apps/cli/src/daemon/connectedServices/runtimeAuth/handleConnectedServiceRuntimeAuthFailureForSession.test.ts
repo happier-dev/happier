@@ -12,7 +12,7 @@ import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServic
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { readConnectedServiceRuntimeAuthFailureSourceBinding, applyConnectedServiceRuntimeAuthFailureSourceBinding } from './handleConnectedServiceRuntimeAuthFailure';
 import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry, type ConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { ConnectedServiceAuthGroupGenerationConsumer } from '../accountGroups/generation/ConnectedServiceAuthGroupGenerationConsumer';
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import { settleSupersedingRuntimeAuthGenerationForSource } from './supersedingGeneration';
@@ -61,7 +61,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             ]) } });
         let current: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'pool', activeProfileId: 'B', generation: 2,
             credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
-            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'priority', autoSwitch: true },
             members: ['A', 'B', 'C'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
             memberStatesByProfileId: new Map(['A', 'B', 'C'].map(profileId => [profileId, {
                 quotaSnapshot: { capturedAtMs: 1_000, staleAfterMs: 60_000, effectiveRemainingPercent: profileId === 'A' ? 0 : 60 },
@@ -105,7 +105,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         const serviceId = 'happier.agent.codex/openai-codex';
         const effects: string[] = [];
         let current: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'pool', activeProfileId: 'A', generation: 1,
-            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'priority', autoSwitch: true },
             members: ['A', 'B'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
             memberStatesByProfileId: new Map(['A', 'B'].map(profileId => [profileId, {
                 quotaSnapshot: { capturedAtMs: 1_000, staleAfterMs: 60_000, effectiveRemainingPercent: profileId === 'A' ? 0 : 60 },
@@ -143,7 +143,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         let current: ConnectedServiceAuthGroupSwitchState = {
             serviceId, groupId: 'team', activeProfileId: ordinary ? 'A' : 'C', generation: ordinary ? 1 : 3,
             credentialRevision: ordinary ? revisionA : revisionC,
-            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'priority', autoSwitch: true },
             members: ['A', 'B', 'C', 'D'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
             memberStatesByProfileId: new Map(['B', 'C', 'D'].map(profileId => [profileId, scenario === 'unknown' ? {} : {
                 quotaSnapshot: { capturedAtMs: 1_000, staleAfterMs: 60_000, effectiveRemainingPercent: scenario === 'exhausted' ? 0 : 60 },

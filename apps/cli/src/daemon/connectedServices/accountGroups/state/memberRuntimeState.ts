@@ -5,7 +5,7 @@ import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
 import { buildConnectedServiceAuthGroupRuntimeStateFromMeters } from '../quotas/projection';
 import type {
   ConnectedServiceAuthGroupMemberRuntimeState,
-  ConnectedServiceAuthGroupPolicyV1,
+  ConnectedServiceAuthGroupPolicyV2,
   ConnectedServiceAuthGroupQuotaMeterSnapshot,
   ConnectedServiceAuthGroupQuotaSnapshot,
 } from '../selection/selectConnectedServiceAuthGroupCandidate';
@@ -100,7 +100,7 @@ export function projectConnectedServiceQuotaSnapshotToAuthGroupQuotaEvidence(
 export function reconcileMemberRuntimeStateWithFreshQuotaEvidence(params: Readonly<{
   state: ConnectedServiceAuthGroupMemberRuntimeState | null;
   quotaSnapshot: ConnectedServiceAuthGroupQuotaSnapshot | null;
-  policy: ConnectedServiceAuthGroupPolicyV1;
+  policy: ConnectedServiceAuthGroupPolicyV2;
   nowMs: number;
   authenticatedProbe?: boolean;
 }>): ConnectedServiceAuthGroupMemberRuntimeState | null {

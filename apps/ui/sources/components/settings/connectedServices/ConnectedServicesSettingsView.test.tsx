@@ -28,6 +28,8 @@ import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@h
 import { ServerIdentityCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { PluginSourceCustodyV1Schema, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -149,7 +151,7 @@ let daemonReadFails = false;
 let daemonReadUnsupported = false;
 let preparedScope = '';
 let purposeBoundary: ReturnType<typeof createConnectedPurposeCatalogHttpBoundary> | undefined;
-installSessionActionRpcBoundary(request => {
+const machineRpcRequests = installSessionActionRpcBoundary(request => {
     if (request.method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)) {
         projectionReloadSpy();
         if (daemonReadUnsupported) return { error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
@@ -349,6 +351,28 @@ describe('ConnectedServicesSettingsView', () => {
     afterEach(async () => {
         await standardCleanup();
         try { await account.reset(); } finally { browser?.restore(); }
+    });
+
+    it('muse.experience.pc14 keeps settled Credentials idle for 60 seconds without timers or requests', async () => {
+        const { ConnectedServicesSettingsView } = await import('./ConnectedServicesSettingsView');
+        await prepareAccountFixture();
+        vi.useFakeTimers();
+        const census = installTimerCensus();
+        let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
+        try {
+            screen = await renderScreen(<ConnectedServicesSettingsView />);
+            expect(screen.findAllByType(Item).length).toBeGreaterThan(0);
+            await flushHookEffects({ cycles: 3, turns: 3, advanceTimersMs: 20 });
+            const fires = census.readFires();
+            const requests = { http: homes.requests.length, machine: machineRpcRequests.length };
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect(census.readFires()).toEqual(fires);
+            expect({ http: homes.requests.length, machine: machineRpcRequests.length }).toEqual(requests);
+        } finally {
+            await screen?.unmount();
+            census.stop();
+            vi.useRealTimers();
+        }
     });
 
     it('opens a Team-shared Connected Service resource on its exact Home route', async () => {
@@ -816,7 +840,7 @@ describe('ConnectedServicesSettingsView', () => {
         const { QualifiedPoolDetail } = await import('./pools/QualifiedPoolDetail');
         const { QualifiedPoolDetailView } = await import('./pools/QualifiedPoolDetailView');
         const { ConnectedAccountSettled } = await import('./setup/ConnectedAccountSettled');
-        const { ConnectedServiceAuthGroupPolicyV1Schema } = await import('@happier-dev/protocol/connect/connected-service-schemas');
+        const { ConnectedServiceAuthGroupPolicyV2Schema } = await import('@happier-dev/protocol/connect/connected-service-schemas');
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
         const connected = { service, accountId: 'work' };
         const mutations = { mutating: false, patch: vi.fn(), patchMember: vi.fn(), addMember: vi.fn(),
@@ -825,7 +849,7 @@ describe('ConnectedServicesSettingsView', () => {
             : surface === 'agent' ? <ConnectedServicesAgentSignInView />
             : <><ConnectedServicesAgentSignInView /><QualifiedPoolDetail serviceLabel="Codex" accounts={[]} mutations={mutations} group={{
                 ref: { service, groupId: 'primary' }, displayName: 'Work pool',
-                policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeAccountId: null,
+                policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeAccountId: null,
                 revision: { protocol: 'v4', incarnation: 'pool-fixture', generation: 1, runtimeStateRevision: 1 },
                 state: { status: 'ready' }, members: [],
             }} /></>);

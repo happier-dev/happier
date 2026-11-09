@@ -1,8 +1,11 @@
 import * as React from 'react';
+import * as purposeChoices from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
+import * as metadataEngine from '@/sync/engine/settings/connectedMetadataCatalogEngine';
+import { SelectionList } from '@/components/ui/selectionList';
 import { Item } from '@/components/ui/lists/Item';
 import { act } from 'react-test-renderer';
 import { View } from 'react-native';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen as renderBaseScreen } from '@/dev/testkit';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
@@ -23,12 +26,41 @@ const featureRuntimeState = vi.hoisted(() => ({
 const connectedAccountState = vi.hoisted(() => ({
   additionalAccounts: [] as Array<Record<string, unknown>>,
   profileId: 'account-a' as string,
+  serverId: 'server-a',
+}));
+type ModalBoundaryConfig = Readonly<{
+  component: React.ComponentType<Record<string, unknown>>;
+  props: Record<string, unknown>;
+}>;
+const modalBoundary = vi.hoisted(() => ({
+  config: null as ModalBoundaryConfig | null,
+  listeners: new Set<() => void>(),
 }));
 const modalSpies = vi.hoisted(() => ({
-  show: vi.fn((_config: unknown) => 'purpose-target-modal'),
-  hide: vi.fn(),
-  update: vi.fn((_id: string, _props: Record<string, unknown>) => undefined),
+  show: vi.fn((config: unknown) => {
+    modalBoundary.config = config as ModalBoundaryConfig;
+    for (const listener of modalBoundary.listeners) listener();
+    return 'purpose-target-modal';
+  }),
+  hide: vi.fn(() => {
+    modalBoundary.config = null;
+    for (const listener of modalBoundary.listeners) listener();
+  }),
+  update: vi.fn((_id: string, props: Record<string, unknown>) => {
+    if (modalBoundary.config) modalBoundary.config = { ...modalBoundary.config, props };
+    for (const listener of modalBoundary.listeners) listener();
+  }),
 }));
+function ModalBoundaryHost() {
+  const config = React.useSyncExternalStore(
+    React.useCallback((listener: () => void) => { modalBoundary.listeners.add(listener); return () => { modalBoundary.listeners.delete(listener); }; }, []),
+    () => modalBoundary.config,
+    () => modalBoundary.config,
+  );
+  return config ? React.createElement(config.component, { ...config.props, onClose: () => modalSpies.hide() }) : null;
+}
+let modalScreen: Awaited<ReturnType<typeof renderBaseScreen>>;
+beforeEach(async () => { modalScreen = await renderBaseScreen(<ModalBoundaryHost />); });
 const localizationSpies = vi.hoisted(() => ({ resolve: vi.fn((_pluginId: string, value: string | { key: string; fallback: string }) => (
   typeof value === 'string' ? value : `localized:${value.key}`
 )) }));
@@ -64,7 +96,7 @@ vi.mock('@expo/vector-icons', () => ({
 
 function seedAccountProfile() {
   storage.setState({
-    profileScope: { serverId: 'server-a', accountId: 'account-a' },
+    profileScope: { serverId: connectedAccountState.serverId, accountId: 'account-a' },
     profile: AccountProfileSchema.parse({
       ...profileDefaults,
       id: connectedAccountState.profileId,
@@ -129,13 +161,16 @@ vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
   }),
 }));
 
-afterEach(() => {
+afterEach(async () => {
+  await modalScreen.unmount();
+  modalBoundary.config = null;
   storage.setState(initialStorageState, true);
   featureRuntimeState.status = 'ready';
   featureRuntimeState.qualifiedAccounts = true;
   routeState.pathname = '/settings/providers/cpx-moving';
   connectedAccountState.additionalAccounts = [];
   connectedAccountState.profileId = 'account-a';
+  connectedAccountState.serverId = 'server-a';
   modalSpies.show.mockClear();
   modalSpies.hide.mockClear();
   modalSpies.update.mockClear();
@@ -165,7 +200,8 @@ type CapturedPurposeTargetModalConfig = Readonly<{
 function latestPurposeTargetModalConfig(): CapturedPurposeTargetModalConfig {
   const config = modalSpies.show.mock.calls.at(-1)?.[0];
   if (!config) throw new Error('Expected the purpose-target modal to be shown');
-  return config as CapturedPurposeTargetModalConfig;
+  const captured = config as ModalBoundaryConfig;
+  return { ...captured, props: { ...captured.props, ...modalScreen.findByType(SelectionList).props } } as CapturedPurposeTargetModalConfig;
 }
 
 function findItemByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
@@ -173,6 +209,73 @@ function findItemByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, test
 }
 
 describe('ConnectedAccountPurposeTargetChooser', () => {
+  it('keeps eight closed slots free of option builds and label demand across a 200-account update', async () => {
+    const choices = vi.spyOn(purposeChoices, 'buildConnectedAccountPurposeTargetChoices');
+    const demand = vi.spyOn(metadataEngine, 'observeConnectedMetadataCatalog');
+    const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const previousApplied = runtime.getAppliedActiveServerSnapshot();
+    const previousAvailable = runtime.isAppliedActiveServerRuntimeAvailable();
+    const activeServer = getActiveServerSnapshot();
+    connectedAccountState.serverId = activeServer.serverId;
+    runtime.publishAppliedActiveServerSnapshot(activeServer);
+    connectedAccountState.additionalAccounts = Array.from({ length: 199 }, (_, index) => ({
+      ref: { service: { pluginId: 'acme.managed.provider', localId: 'gateway' }, accountId: `account-${index}` },
+      status: 'connected', authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa', configurationReady: true,
+      configurationRevision: null, displayName: `Other ${index}`, scopes: [],
+    }));
+    const commits = vi.fn();
+    const screen = await renderScreen(<View>{Array.from({ length: 8 }, (_, index) => (
+      <React.Profiler key={index} id={`slot-${index}`} onRender={commits}>
+        <ConnectedAccountPurposeTargetChooser testID={`slot-${index}`} localizedTextPluginId="acme.provider.author"
+          declaration={{ purpose: `slot-${index}`, service: { pluginId: 'acme.managed.provider', localId: 'gateway' } }}
+          value={{ kind: 'account', account: {
+            service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
+            accountId: '35f1d8ec-633c-4bda-9e0d-7055ac95b8af',
+          } }} onChange={() => undefined} />
+      </React.Profiler>
+    ))}</View>);
+    try {
+      expect(choices).toHaveBeenCalledTimes(0);
+      expect(demand).toHaveBeenCalledTimes(0);
+      commits.mockClear();
+      await act(async () => {
+        const profile = storage.getState().profile;
+        storage.setState({ profile: { ...profile, connectedAccountsV4: (profile.connectedAccountsV4 ?? []).map((account, index) =>
+          index === 199 ? { ...account, displayName: 'Changed unrelated account' } : account) } });
+      });
+      expect(commits).toHaveBeenCalledTimes(0);
+      expect(choices).toHaveBeenCalledTimes(0);
+      expect(demand).toHaveBeenCalledTimes(0);
+      await act(async () => { findItemByTestId(screen, 'slot-0')?.props.onPress(); });
+      expect(choices).toHaveBeenCalledTimes(1);
+      expect(demand).toHaveBeenCalledTimes(1);
+      expect(latestPurposeTargetModalConfig().props.rootStep.sections[0].options).toHaveLength(201);
+      await act(async () => {
+        const profile = storage.getState().profile;
+        storage.setState({ profile: { ...profile, connectedAccountsV4: (profile.connectedAccountsV4 ?? []).map((account, index) =>
+          index === 0 ? { ...account, displayName: 'Current personal account' } : account) } });
+      });
+      expect(latestPurposeTargetModalConfig().props.rootStep.sections[0].options.some(option => option.label === 'Current personal account')).toBe(true);
+      expect(findItemByTestId(screen, 'slot-0')?.props.detail).toBe('Current personal account');
+      await act(async () => { modalScreen.findByType(SelectionList).props.onRequestClose(); });
+      expect(modalScreen.findAllByType(SelectionList)).toHaveLength(0);
+      choices.mockClear();
+      await act(async () => {
+        const profile = storage.getState().profile;
+        storage.setState({ profile: { ...profile, connectedAccountsV4: [...(profile.connectedAccountsV4 ?? [])] } });
+      });
+      expect(choices).toHaveBeenCalledTimes(0);
+      expect(demand).toHaveBeenCalledTimes(1);
+    } finally {
+      await screen.unmount();
+      choices.mockRestore(); demand.mockRestore();
+      runtime.publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+    }
+  });
+
   it('keeps an Account-scoped purpose target inert when its enclosing Administration target is foreign', async () => {
     const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
     const onChange = vi.fn();
@@ -306,7 +409,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
     await act(async () => {
       findItemByTestId(screen, props.testID)?.props.onPress();
     });
-    const config = modalSpies.show.mock.calls.at(-1)?.[0] as Readonly<{
+    const config = latestPurposeTargetModalConfig() as Readonly<{
       props: Readonly<{
         rootStep: CapturedPurposeTargetModalConfig['props']['rootStep'];
         onSelect: (id: string) => void;
@@ -484,7 +587,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       findItemByTestId(screen, testID)?.props.onPress();
     });
     type RefreshProps = Readonly<{ refresh?: Readonly<{ status?: string; refreshing: boolean; onRefresh: () => void }> | null }>;
-    const shown = (modalSpies.show.mock.calls.at(-1)?.[0] as { props: RefreshProps }).props.refresh;
+    const shown = (latestPurposeTargetModalConfig() as { props: RefreshProps }).props.refresh;
     expect(shown).toEqual(expect.objectContaining({ status: 'Ready', refreshing: false }));
 
     await act(async () => {
@@ -514,7 +617,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       onReload={onReload}
     />);
     await act(async () => { findItemByTestId(screen, testID)?.props.onPress(); });
-    const shown = (modalSpies.show.mock.calls.at(-1)?.[0] as { props: { refresh: { onRefresh: () => void } } }).props.refresh;
+    const shown = (latestPurposeTargetModalConfig() as { props: { refresh: { onRefresh: () => void } } }).props.refresh;
     await act(async () => { shown.onRefresh(); });
     expect(onReload).toHaveBeenCalledTimes(1);
     expect(descriptorReload).toHaveBeenCalledTimes(1);
@@ -537,12 +640,12 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
     type Opts = Readonly<{ rootStep: { sections: ReadonlyArray<{ options: ReadonlyArray<{ id: string; subtitle?: string; disabled?: boolean }> }> };
       refresh: { onRefresh: () => void } }>;
     const account = (props: Opts) => props.rootStep.sections[0]!.options.find((option) => option.subtitle?.includes('Personal OpenAI') || option.id.includes('35f1d8ec'))!;
-    const opened = modalSpies.show.mock.calls.at(-1)?.[0] as { props: Opts };
+    const opened = latestPurposeTargetModalConfig() as { props: Opts };
     expect(account(opened.props).disabled).toBe(true);
     expect(account(opened.props).subtitle).toContain(t('connectedServices.purposeTargets.serviceLookupFailed'));
     await act(async () => { opened.props.refresh.onRefresh(); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
-    const refreshed = modalSpies.update.mock.calls.at(-1)?.[1] as Opts;
+    const refreshed = latestPurposeTargetModalConfig().props as Opts;
     expect(account(refreshed).disabled).toBe(false);
     expect(modalSpies.show).toHaveBeenCalledTimes(1);
   });
@@ -560,7 +663,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       onChange={vi.fn()}
     />);
     await act(async () => { findItemByTestId(screen, testID)?.props.onPress(); });
-    const opened = modalSpies.show.mock.calls.at(-1)?.[0] as { props: { rootStep: { sections: ReadonlyArray<{ options: ReadonlyArray<{ subtitle?: string }> }> } } };
+    const opened = latestPurposeTargetModalConfig() as { props: { rootStep: { sections: ReadonlyArray<{ options: ReadonlyArray<{ subtitle?: string }> }> } } };
     const subtitles = opened.props.rootStep.sections[0]!.options.map((option) => option.subtitle ?? '').join('|');
     expect(subtitles).toContain(t('common.loading'));
     expect(subtitles).not.toContain(t('connectedServices.purposeTargets.serviceLookupFailed'));
@@ -579,7 +682,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       registry={{ scopeKey: 'other', status: 'ready', errorReason: null, entries: [] }}
     />);
     await act(async () => { findItemByTestId(screen, testID)?.props.onPress(); });
-    const shown = (modalSpies.show.mock.calls.at(-1)?.[0] as { props: { refresh: { onRefresh: () => void } } }).props.refresh;
+    const shown = (latestPurposeTargetModalConfig() as { props: { refresh: { onRefresh: () => void } } }).props.refresh;
     await act(async () => { shown.onRefresh(); });
     expect(descriptorReload).not.toHaveBeenCalled();
   });
@@ -590,7 +693,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
     const service = { pluginId: 'acme.managed.provider', localId: 'gateway' };
     const pool = (groupId: string, displayName: string, members: string[]) => ({
       v: 1, ref: { service, groupId }, incarnation: `row-${groupId}`, displayName,
-      policy: { v: 1, strategy: 'expiry_first', autoSwitch: true },
+      policy: { v: 2, strategy: 'expiry_first', autoSwitch: true },
       activeConnectedAccountId: members[0] ?? null, generation: 1, runtimeStateRevision: 1, state: { status: 'ready' },
       createdAt: 1, updatedAt: 1,
       members: members.map((connectedAccountId) => ({ v: 1, connectedAccountId, priority: 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 })),
@@ -638,7 +741,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       storage.setState({ profile: { ...storage.getState().profile,
         connectedAccountGroupsV4: [{
           v: 1, ref: { service, groupId: 'work' }, incarnation: 'row-work', displayName: 'Work pool',
-          policy: { v: 1, strategy: 'expiry_first', autoSwitch: true },
+          policy: { v: 2, strategy: 'expiry_first', autoSwitch: true },
           activeConnectedAccountId: '35f1d8ec-633c-4bda-9e0d-7055ac95b8af', generation: 1, runtimeStateRevision: 1,
           state: { status: 'ready' }, createdAt: 1, updatedAt: 1,
           members: [{ v: 1, connectedAccountId: '35f1d8ec-633c-4bda-9e0d-7055ac95b8af', priority: 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 }],

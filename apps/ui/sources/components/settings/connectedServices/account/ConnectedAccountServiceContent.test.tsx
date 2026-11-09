@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { ConnectedServiceAuthGroupPolicyV1Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupPolicyV2Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
 import { type PluginConnectedAccountAuthenticationModeV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { type QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ConnectedAccountServiceContent } from './ConnectedAccountServiceContent';
@@ -75,7 +75,7 @@ const account = {
 function makeGroup(): QualifiedConnectedAccountUiGroup {
     return {
         ref: { service, groupId: 'team' }, displayName: 'Team', activeAccountId: 'work',
-        policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), state: {},
+        policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), state: {},
         revision: { protocol: 'v4', incarnation: 'group-team', generation: 1, runtimeStateRevision: 1 },
         members: ['work', 'other'].map((accountId, priority) => ({
             ref: { service, accountId }, priority, enabled: true, state: {},

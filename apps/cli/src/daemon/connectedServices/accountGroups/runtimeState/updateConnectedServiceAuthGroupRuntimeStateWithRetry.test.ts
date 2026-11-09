@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectedServiceAuthGroupV1 } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { updateConnectedServiceAuthGroupRuntimeStateWithRetry } from './updateConnectedServiceAuthGroupRuntimeStateWithRetry';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../selection/selectConnectedServiceAuthGroupCandidate';
 
 function group(runtimeStateRevision: number, state: Readonly<Record<string, unknown>>): ConnectedServiceAuthGroupV1 {
   return {
@@ -10,7 +10,7 @@ function group(runtimeStateRevision: number, state: Readonly<Record<string, unkn
     serviceId: 'openai-codex',
     groupId: 'main',
     displayName: null,
-    policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+    policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}),
     activeProfileId: 'work',
     generation: 3,
     runtimeStateRevision,

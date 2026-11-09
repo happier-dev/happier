@@ -16,7 +16,6 @@ import {
 } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import {
   mergePersistedMemberRuntimeState,
-  normalizeConnectedServiceAuthGroupPolicy,
 } from '../switching/buildConnectedServiceAuthGroupSwitchState';
 import type {
   ConnectedServiceAuthGroupAccountUsageView,
@@ -143,7 +142,7 @@ export function evaluateConnectedServiceAuthGroupQuotaLifecycle(input: Readonly<
   });
   if (evidence.status !== 'ready') return noEdge(input.previousState);
 
-  const policy = normalizeConnectedServiceAuthGroupPolicy(input.group.policy);
+  const policy = input.group.policy;
   if (policy.strategy === 'manual') return noEdge({ status: 'unblocked' });
 
   const selection = selectConnectedServiceAuthGroupCandidate({

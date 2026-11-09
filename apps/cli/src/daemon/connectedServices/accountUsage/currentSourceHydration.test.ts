@@ -1,6 +1,6 @@
 import {
   buildProviderAccountUsageRecordId,
-  ConnectedServiceAuthGroupPolicyV1Schema,
+  ConnectedServiceAuthGroupPolicyV2Schema,
   type QualifiedConnectedAccountServiceRef,
   type QualifiedConnectedAccountGroupV4,
   type QualifiedConnectedAccountProfileV4,
@@ -42,7 +42,7 @@ function createGroup(accountId = 'work'): QualifiedConnectedAccountGroupV4 {
     ref: { service: qualifiedService, groupId: 'team' },
     incarnation: 'qualified-group-team',
     displayName: 'Team',
-    policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}),
+    policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}),
     activeConnectedAccountId: accountId,
     generation: 4,
     runtimeStateRevision: 0,

@@ -299,7 +299,7 @@ fi
     const observedAtMs = now - 120_000;
     const group = QualifiedConnectedAccountGroupV4Schema.parse({
       v: 1, ref: { service, groupId: retryableMember ? 'happier' : 'launch-freshness' }, incarnation: 'launch-freshness-1',
-      displayName: 'Launch freshness', policy: { v: 1, autoSwitch: true, preTurnProbeMode: 'when_stale' },
+      displayName: 'Launch freshness', policy: { v: 2, autoSwitch: true, preTurnProbeMode: 'when_stale' },
       activeConnectedAccountId: account.accountId, generation: 1, runtimeStateRevision: 0,
       state: {}, createdAt: now, updatedAt: now,
       members: members.map((ref, index) => ({
@@ -598,7 +598,7 @@ fi
       expect(prepared.isInvalidated()).toBe(false);
       const requestAuth = await connectedAccounts.materialize(purpose, {
         kind: 'httpHeaders',
-        origin: provider === 'anthropic' ? 'https://api.anthropic.com' : 'https://chatgpt.com',
+        origins: [provider === 'anthropic' ? 'https://api.anthropic.com' : 'https://chatgpt.com'],
         headerNames: provider === 'anthropic' ? ['authorization'] : ['authorization', 'chatgpt-account-id'],
       }, { expectedAccount: account });
       expect(requestAuth.kind).toBe('httpHeaders');
@@ -924,7 +924,7 @@ fi
     let activeAccountId = account.accountId;
     let group = QualifiedConnectedAccountGroupV4Schema.parse({
       v: 1, ref: { service, groupId: 'recovery' }, incarnation: 'recovery-1', displayName: 'Recovery',
-      policy: { v: 1, autoSwitch: true }, activeConnectedAccountId: activeAccountId,
+      policy: { v: 2, autoSwitch: true }, activeConnectedAccountId: activeAccountId,
       generation: 1, runtimeStateRevision: 0, state: {}, createdAt: 1, updatedAt: 1,
       members: [account, backup].map((ref, index) => ({ v: 1, connectedAccountId: ref.accountId, priority: index + 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 })),
     });

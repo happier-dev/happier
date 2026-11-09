@@ -87,7 +87,7 @@ import {
 import {
     parseQualifiedConnectedAccountV4StructuredQueryValue} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import {
-    ConnectedServiceAuthGroupPolicyV1Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
+    ConnectedServiceAuthGroupPolicyV2Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
 import {
     ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
 import {
@@ -4158,7 +4158,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
     it.each(['cancelled', 'deleted', 'failed'] as const)('clears exact pool purpose defaults only after confirmed successful deletion (%s)', async (outcome) => {
         const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1,
             ref: { service, groupId: 'work-pool' }, incarnation: 'pool-life', displayName: 'Work pool',
-            policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null,
+            policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null,
             generation: 1, runtimeStateRevision: 0, state: {}, createdAt: 0, updatedAt: 0, members: [],
         });
         const bindings = await seedPurposeDefaults({ kind: 'group', ...group.ref });

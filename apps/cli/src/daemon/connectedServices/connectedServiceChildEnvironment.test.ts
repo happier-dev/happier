@@ -16,6 +16,21 @@ import {
 } from './connectedServiceChildEnvironment';
 
 describe('connectedServiceChildEnvironment', () => {
+  it.each([undefined, false, true])('upgrades a saved V1 pool preference (%s) before replaying child selections', (preference) => {
+    const selections = readConnectedServiceChildSelectionsFromEnv({
+      [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+        kind: 'group', serviceId: 'happier.agent.claude/claude-subscription',
+        groupId: 'work', activeProfileId: 'primary', fallbackProfileId: 'primary', generation: 3,
+        policy: { v: 1, ...(preference === undefined ? {} : { claudeCodeAutoContinueAtUsageLimit: preference }) },
+      }]),
+    });
+    const replayed = JSON.parse(serializeConnectedServiceChildSelections(selections ?? undefined) ?? '[]');
+    expect(replayed[0].policy.v).toBe(2);
+    expect(replayed[0].policy).not.toHaveProperty('claudeCodeAutoContinueAtUsageLimit');
+    if (preference === undefined) expect(replayed[0].policy).not.toHaveProperty('nativeUsageLimitContinuation');
+    else expect(replayed[0].policy).toHaveProperty('nativeUsageLimitContinuation', preference);
+  });
+
   it('serializes connected-service selections without credential records', () => {
     const serialized = serializeConnectedServiceChildSelections(new Map([
       ['happier.agent.codex/openai-codex', {
@@ -25,7 +40,7 @@ describe('connectedServiceChildEnvironment', () => {
         activeProfileId: 'work',
         fallbackProfileId: 'work',
         generation: 3,
-        policy: { v: 1 },
+        policy: { v: 2 },
         // Persist only the explicit non-secret selection projection even if a
         // predecessor/in-memory producer supplies an extra credential-shaped
         // property at this serialization boundary.
@@ -55,7 +70,7 @@ describe('connectedServiceChildEnvironment', () => {
       activeProfileId: 'bot',
       fallbackProfileId: 'leeroy',
       generation: 3,
-      policy: { v: 1 },
+      policy: { v: 2 },
     }, 'happier.agent.codex/openai-codex')).toEqual({
       serviceId: 'happier.agent.codex/openai-codex',
       profileId: 'bot',

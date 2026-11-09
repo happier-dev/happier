@@ -15,7 +15,7 @@ import { SealedProviderAccountUsageRecoveryCreditDetailsV1Schema } from './provi
 import {
   ConnectedServiceAuthGroupIdSchema,
   ConnectedServiceAuthGroupMemberStateV1Schema,
-  ConnectedServiceAuthGroupPolicyV1Schema,
+  ConnectedServiceAuthGroupPolicyV2Schema,
   ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema,
   ConnectedServiceAuthGroupStateV1Schema,
   ConnectedServiceCredentialRevisionV1Schema,
@@ -87,6 +87,9 @@ const QualifiedConnectedAccountServiceRefZodSchema = asProtocolZod(
 );
 export const QualifiedConnectedAccountServiceListV4Schema = lazyZodSchema(() => z.array(
   QualifiedConnectedAccountServiceRefZodSchema,
+));
+export const QualifiedConnectedAccountRefListV4Schema = lazyZodSchema(() => z.array(
+  asProtocolZod(QualifiedConnectedAccountRefSchema),
 ));
 
 export const QualifiedConnectedAccountGroupRefSchema = lazyZodSchema(() => z.strictObject({
@@ -182,6 +185,11 @@ export const QualifiedConnectedAccountMultiServiceListResponseV4Schema = lazyZod
   accounts: z.array(QualifiedConnectedAccountProfileV4Schema),
 }));
 
+/** Nonsecret profiles for the exact requested refs held by the authenticated Account. */
+export const QualifiedConnectedAccountSummaryListResponseV4Schema = lazyZodSchema(() => z.strictObject({
+  accounts: z.array(QualifiedConnectedAccountProfileV4Schema),
+}));
+
 export const QualifiedConnectedAccountConfigurationTargetV4Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('account'),
   ref: asProtocolZod(QualifiedConnectedAccountRefSchema),
@@ -232,7 +240,7 @@ export const QualifiedConnectedAccountGroupV4Schema = lazyZodSchema(() => z.stri
   incarnation: QualifiedConnectedAccountGroupIncarnationV4Schema,
   displayName: z.nullable(z.string().check(z.trim(), z.minLength(1))),
   // Older Home snapshots retain retired policy fields; only this stored-data read drops them.
-  policy: createStoredReadSchema(ConnectedServiceAuthGroupPolicyV1Schema),
+  policy: createStoredReadSchema(ConnectedServiceAuthGroupPolicyV2Schema),
   activeConnectedAccountId: zMini.nullable(asProtocolZod(QualifiedConnectedAccountIdSchema)),
   generation: z.number().check(z.int(), z.nonnegative()),
   runtimeStateRevision: ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema,
@@ -252,7 +260,7 @@ export const QualifiedConnectedAccountGroupCreateV4Schema = lazyZodSchema(() => 
     groupId: ConnectedServiceAuthGroupIdSchema,
     displayName: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(512)))),
     state: zMini.optional(ConnectedServiceAuthGroupStateV1Schema),
-    policy: zMini.optional(ConnectedServiceAuthGroupPolicyV1Schema),
+    policy: zMini.optional(ConnectedServiceAuthGroupPolicyV2Schema),
   }),
 }));
 
@@ -270,7 +278,7 @@ export const QualifiedConnectedAccountGroupPatchV4Schema = lazyZodSchema(() => z
     z.optional(QualifiedConnectedAccountGroupIncarnationV4Schema),
   displayName: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(512)))),
   state: zMini.optional(ConnectedServiceAuthGroupStateV1Schema._zod.def.innerType),
-  policy: zMini.optional(ConnectedServiceAuthGroupPolicyV1Schema),
+  policy: zMini.optional(ConnectedServiceAuthGroupPolicyV2Schema),
   expectedRuntimeStateRevision: zMini.optional(ConnectedServiceAuthGroupRuntimeStateRevisionV1Schema),
   overrideRuntimeCooldown: z.optional(z.boolean()),
 }));

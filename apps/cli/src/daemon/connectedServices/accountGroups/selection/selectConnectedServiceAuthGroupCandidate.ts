@@ -1,22 +1,22 @@
-import { ConnectedServiceAuthGroupPolicyV1Schema, isConnectedServiceCredentialHealthStatusUsable } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupPolicyV2Schema, isConnectedServiceCredentialHealthStatusUsable } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
 import type { ConnectedServicePoolSelectionV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
-import type { ConnectedServiceAuthGroupPolicyV1, ConnectedServiceCredentialHealthStatusV1, ConnectedServiceLimitCategoryV1, ProviderAccountSubscriptionV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceAuthGroupPolicyV2, ConnectedServiceCredentialHealthStatusV1, ConnectedServiceLimitCategoryV1, ProviderAccountSubscriptionV1 } from '@happier-dev/protocol';
 
 import {
   reconcileMemberRuntimeStateWithFreshQuotaEvidence,
 } from '../state/memberRuntimeState';
 
-export type { ConnectedServiceAuthGroupPolicyV1 } from '@happier-dev/protocol';
+export type { ConnectedServiceAuthGroupPolicyV2 } from '@happier-dev/protocol';
 
 /**
  * Derived from the protocol schema default so the daemon default never drifts from the canonical
- * `ConnectedServiceAuthGroupPolicyV1Schema` (single source of truth for policy defaults, including
+ * `ConnectedServiceAuthGroupPolicyV2Schema` (single source of truth for policy defaults, including
  * the `strategy` default). A hardcoded literal here was a latent split-brain against the schema.
  * The daemon never writes policy back, so no migration is required.
  */
-export const DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1: ConnectedServiceAuthGroupPolicyV1 =
-  ConnectedServiceAuthGroupPolicyV1Schema.parse({});
+export const DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2: ConnectedServiceAuthGroupPolicyV2 =
+  ConnectedServiceAuthGroupPolicyV2Schema.parse({});
 
 export type ConnectedServiceAuthGroupMember = Readonly<{
   profileId: string;
@@ -88,7 +88,7 @@ export type ConnectedServiceAuthGroupCandidateSelection = Readonly<{
   reason: 'selected' | 'manual_strategy' | 'no_eligible_members';
   excluded: ReadonlyArray<ConnectedServiceAuthGroupCandidateExclusion>;
   decisionTrace: ConnectedServiceAuthGroupCandidateDecisionTrace & Readonly<{
-    strategy: ConnectedServiceAuthGroupPolicyV1['strategy'];
+    strategy: ConnectedServiceAuthGroupPolicyV2['strategy'];
     selectionBasis: 'manual_strategy' | 'no_eligible_members' | 'preference' | 'primary_restore' | 'active_stickiness' | 'soft_switch';
     sticky: boolean;
     orderedEligibleCandidates: ReadonlyArray<ConnectedServiceAuthGroupCandidate>;
@@ -117,7 +117,7 @@ export type ConnectedServiceAuthGroupCandidateDecisionTraceEntry = Readonly<{
 export type ConnectedServiceAuthGroupSwitchReasonEvidenceInput = Readonly<{
   modelId?: string | null;
   reason: string;
-  policy?: ConnectedServiceAuthGroupPolicyV1;
+  policy?: ConnectedServiceAuthGroupPolicyV2;
   providerLimitId?: string | null;
   profileId: string;
   nowMs: number;
@@ -146,7 +146,7 @@ export function resolveConnectedServiceAuthGroupPriorityPrimaryProfileId(
 }
 
 function resolveCooldownRetryAtMs(params: Readonly<{
-  policy: ConnectedServiceAuthGroupPolicyV1;
+  policy: ConnectedServiceAuthGroupPolicyV2;
   state: ConnectedServiceAuthGroupMemberRuntimeState | null;
   nowMs: number;
 }>): number | null {
@@ -238,7 +238,7 @@ function resolveQuotaRuntimeExhaustion(
 
 function resolveRecentLimiterRetry(params: Readonly<{
   state: ConnectedServiceAuthGroupMemberRuntimeState | null;
-  policy: ConnectedServiceAuthGroupPolicyV1;
+  policy: ConnectedServiceAuthGroupPolicyV2;
   nowMs: number;
 }>): Readonly<{ reason: 'quota_exhausted' | 'capacity_limited'; retryAtMs: number }> | null {
   const state = params.state;
@@ -294,7 +294,7 @@ function isRateLimitMeter(meter: ConnectedServiceAuthGroupQuotaMeterSnapshot): b
 }
 
 function selectedProviderLimitIds(
-  policy: ConnectedServiceAuthGroupPolicyV1,
+  policy: ConnectedServiceAuthGroupPolicyV2,
 ): ReadonlySet<string> | null {
   const selection = policy.quotaLimitSelection;
   if (!selection || selection.mode === 'all') return null;
@@ -303,7 +303,7 @@ function selectedProviderLimitIds(
 
 /** One policy decision reused by periodic, pre-turn, and classified-failure switching. */
 export function isConnectedServiceAuthGroupProviderLimitSelected(input: Readonly<{
-  policy: ConnectedServiceAuthGroupPolicyV1;
+  policy: ConnectedServiceAuthGroupPolicyV2;
   providerLimitId: string | null | undefined;
 }>): boolean {
   const selected = selectedProviderLimitIds(input.policy);
@@ -319,7 +319,7 @@ export function isConnectedServiceAuthGroupProviderLimitSelected(input: Readonly
  */
 export function projectConnectedServiceAuthGroupQuotaSnapshot(
   snapshot: ConnectedServiceAuthGroupQuotaSnapshot | null,
-  policy: ConnectedServiceAuthGroupPolicyV1,
+  policy: ConnectedServiceAuthGroupPolicyV2,
   modelId?: string | null,
 ): ConnectedServiceAuthGroupQuotaSnapshot | null {
   if (!snapshot) return null;
@@ -405,7 +405,7 @@ function resolveQuotaSnapshotExhaustionRetryAtMs(
   snapshot: ConnectedServiceAuthGroupQuotaSnapshot,
   state: ConnectedServiceAuthGroupMemberRuntimeState | null,
   nowMs: number,
-  policy: ConnectedServiceAuthGroupPolicyV1,
+  policy: ConnectedServiceAuthGroupPolicyV2,
 ): number | null {
   const meterRetryAtMs = (snapshot.meters ?? [])
     .filter((meter) => (isQuotaMeter(meter) || isRateLimitMeter(meter)) && meterIsExhausted(meter))
@@ -466,7 +466,7 @@ export function hasConnectedServiceAuthGroupCandidateEvidenceForSwitchReason(
     return true;
   }
   const state = params.memberStatesByProfileId.get(params.profileId) ?? null;
-  const policy = params.policy ?? DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1;
+  const policy = params.policy ?? DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2;
   const projectedSnapshot = projectConnectedServiceAuthGroupQuotaSnapshot(state?.quotaSnapshot ?? null, policy, params.modelId);
   const quotaSnapshot = isFreshQuotaSnapshot(projectedSnapshot, params.nowMs)
     ? projectedSnapshot
@@ -477,7 +477,7 @@ export function hasConnectedServiceAuthGroupCandidateEvidenceForSwitchReason(
   return !isQuotaExhausted(quotaSnapshot);
 }
 
-function resolveSoftSwitchRemainingPercent(policy: ConnectedServiceAuthGroupPolicyV1): number | null {
+function resolveSoftSwitchRemainingPercent(policy: ConnectedServiceAuthGroupPolicyV2): number | null {
   const value = numberOrNull(policy.softSwitchRemainingPercent);
   return value === null ? null : Math.max(0, Math.min(100, value));
 }
@@ -485,7 +485,7 @@ function resolveSoftSwitchRemainingPercent(policy: ConnectedServiceAuthGroupPoli
 export function isConnectedServiceAuthGroupSoftSwitchCandidateMeaningfullyBetter(input: Readonly<{
   activeProfileId: string | null;
   candidate: ConnectedServiceAuthGroupCandidate;
-  policy: ConnectedServiceAuthGroupPolicyV1;
+  policy: ConnectedServiceAuthGroupPolicyV2;
 }>): boolean {
   if (input.activeProfileId && input.candidate.profileId === input.activeProfileId) return false;
   const threshold = resolveSoftSwitchRemainingPercent(input.policy);
@@ -503,7 +503,7 @@ export type ConnectedServiceAuthGroupSoftSwitchSourceEvidence = Readonly<
 export function resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence(input: Readonly<{
   modelId?: string | null;
   activeProfileId: string | null;
-  policy: ConnectedServiceAuthGroupPolicyV1;
+  policy: ConnectedServiceAuthGroupPolicyV2;
   memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
   nowMs: number;
 }>): ConnectedServiceAuthGroupSoftSwitchSourceEvidence {
@@ -588,7 +588,7 @@ function resolvePrimaryRestorePreferredCandidate(params: Readonly<{
   activeProfileId: string | null;
   lastSwitchReason?: string | null;
   lastSwitchAt?: number | null;
-  policy: ConnectedServiceAuthGroupPolicyV1;
+  policy: ConnectedServiceAuthGroupPolicyV2;
   memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
   nowMs: number;
 }>): ConnectedServiceAuthGroupCandidate | null {
@@ -619,7 +619,7 @@ function resolvePrimaryRestorePreferredCandidate(params: Readonly<{
 function resolveSoftSwitchPreferredCandidate(params: Readonly<{
   candidates: ReadonlyArray<ConnectedServiceAuthGroupCandidate>;
   activeProfileId: string | null;
-  policy: ConnectedServiceAuthGroupPolicyV1;
+  policy: ConnectedServiceAuthGroupPolicyV2;
   allowCurrentProfileRetry?: boolean;
 }>): ConnectedServiceAuthGroupCandidate | null {
   if (!params.allowCurrentProfileRetry) return null;
@@ -678,7 +678,7 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
   activeProfileId: string | null;
   lastSwitchReason?: string | null;
   lastSwitchAt?: number | null;
-  policy: ConnectedServiceAuthGroupPolicyV1;
+  policy: ConnectedServiceAuthGroupPolicyV2;
   members: ReadonlyArray<ConnectedServiceAuthGroupMember>;
   memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
   allowCurrentProfileRetry?: boolean;

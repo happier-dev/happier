@@ -22,7 +22,7 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createConnectedServiceRuntimeAuthNativeHome } from '../runtimeAuth/createRuntimeAuthNativeHome';
 import { createSessionConnectedServiceAuthHotApply } from './sessionConnectedServiceAuthHotApply';
 import { validateConnectedServiceGroupMutationCurrentness } from '../accountGroups/generation/validateGroupMutationCurrentness';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { ApiClient } from '@/api/api';
 import { readQualifiedConnectedAccountGroupV4, resolveQualifiedConnectedAccountAtomicV4Negotiation,
   resolveQualifiedConnectedAccountPeerClass } from '@/api/client/qualifiedConnectedAccountApi';
@@ -93,7 +93,7 @@ describe('requester native subscription hot apply', () => {
     const identity = { bot: { kind: 'bot' }, createdAsBot: true } as const;
     let group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'bob-group' },
       incarnation: 'bob-group-incarnation', displayName: 'Bob subscription',
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: true },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, autoSwitch: true },
       activeConnectedAccountId: 'primary', generation: 7, runtimeStateRevision: 1, state: {}, createdAt: 1, updatedAt: 1,
       members: ['primary', 'backup'].map((connectedAccountId, index) => ({ v: 1, connectedAccountId,
         priority: index + 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 })),
@@ -419,7 +419,7 @@ describe('requester native subscription hot apply', () => {
       const scopes = ['user:inference', 'user:profile', 'user:sessions:claude_code'];
       const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'bob-group' },
         incarnation: 'bob-group-incarnation', displayName: 'Bob subscription',
-        policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, activeConnectedAccountId: 'bob-subscription',
+        policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, activeConnectedAccountId: 'bob-subscription',
         generation: 7, runtimeStateRevision: 1, state: {}, createdAt: 1, updatedAt: 1,
         members: [{ v: 1, connectedAccountId: 'bob-subscription', priority: 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 }],
       });

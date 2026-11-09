@@ -204,7 +204,7 @@ const CODEX_V4_GROUP: AccountProfile['connectedAccountGroupsV4'][number] = {
     ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'primary' },
     incarnation: 'primary:1',
     displayName: 'Primary pool',
-    policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: true } },
+    policy: { v: 2, strategy: 'least_limited', autoSwitch: true, switchOn: { usageLimit: true, authExpired: true, accountChanged: false, refreshFailure: true } },
     activeConnectedAccountId: 'fresh',
     generation: 0,
     runtimeStateRevision: 1,

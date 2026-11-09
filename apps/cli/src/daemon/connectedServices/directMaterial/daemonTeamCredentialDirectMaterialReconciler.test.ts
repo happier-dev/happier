@@ -92,7 +92,7 @@ const teamsPage = TeamsPageV1Schema.parse({
     archivedAt: null,
     recovery: null,
     policy: {
-      v: 1,
+      v: 2,
       sessionCreationPolicy: 'private_default',
       externalSharingPolicy: 'allowed',
       defaultSessionHistoryAccess: 'from_membership',

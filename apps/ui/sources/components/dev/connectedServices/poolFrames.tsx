@@ -13,7 +13,7 @@ import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccou
 import { getQualifiedConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import type { QualifiedConnectedAccountUiGroup } from '@/sync/domains/connectedServices/qualifiedConnectedAccountUiSource';
 import {
-    ConnectedServiceAuthGroupPolicyV1Schema,
+    ConnectedServiceAuthGroupPolicyV2Schema,
     type ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
@@ -73,7 +73,7 @@ function workPool(now: number, overrides: Partial<QualifiedConnectedAccountUiGro
         ref: { service: CLAUDE, groupId: 'work-pool' },
         displayName: 'Work pool',
         policy: {
-            ...ConnectedServiceAuthGroupPolicyV1Schema.parse({}),
+            ...ConnectedServiceAuthGroupPolicyV2Schema.parse({}),
             strategy: 'least_limited',
             autoSwitch: true,
             autoDisablePlanInvalidAccounts: true,

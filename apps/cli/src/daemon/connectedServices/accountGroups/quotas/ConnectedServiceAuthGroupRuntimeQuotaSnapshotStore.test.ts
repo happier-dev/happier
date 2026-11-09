@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from './ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import {
-  DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+  DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
   selectConnectedServiceAuthGroupCandidate,
 } from '../selection/selectConnectedServiceAuthGroupCandidate';
 
@@ -359,7 +359,7 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
       nowMs: 2_500,
       activeProfileId: null,
       policy: {
-        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
         strategy: 'least_limited',
         autoSwitch: true,
       },

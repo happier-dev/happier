@@ -1,6 +1,6 @@
 import type { ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { ConnectedPresentationRecordV1Schema } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import type { ConnectedMetadataCatalogV1 } from '@happier-dev/protocol/connect/connectedMetadataCatalogV1';
 import { CANONICAL_AGENTS_CORE } from '@happier-dev/agents';
@@ -238,8 +238,8 @@ function buildDemoQualifiedAccounts(): { accounts: DemoAccountV4[]; groups: Demo
     ];
     // The canonical policy schema owns every default; the demo world only states
     // the fields it deliberately differs on.
-    const demoPolicy = ConnectedServiceAuthGroupPolicyV1Schema.parse({
-        v: 1,
+    const demoPolicy = ConnectedServiceAuthGroupPolicyV2Schema.parse({
+        v: 2,
         strategy: 'least_limited',
         autoSwitch: true,
         switchOn: {

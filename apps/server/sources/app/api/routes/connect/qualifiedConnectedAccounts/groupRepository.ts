@@ -1,9 +1,8 @@
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
-import { ConnectedServiceAuthGroupMemberStateV1Schema, ConnectedServiceAuthGroupPolicyV1Schema, ConnectedServiceAuthGroupStateV1Schema, type ConnectedServiceAuthGroupStateV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupMemberStateV1Schema, ConnectedServiceAuthGroupPolicyV2Schema, ConnectedServiceAuthGroupStateV1Schema, parseConnectedServiceAuthGroupPolicy, type ConnectedServiceAuthGroupStateV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupPatchV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { clearConnectedServiceAuthGroupMemberRuntimeBlockers, readConnectedServiceManualActiveProfileRuntimeBlocker } from '@happier-dev/protocol/connect/connectedServiceAuthGroupMemberRuntimeStatePolicy';
 import { type QualifiedConnectedAccountGroupV4, type QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
-import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { Prisma } from "@prisma/client";
 import { isDeepStrictEqual } from "node:util";
 
@@ -157,10 +156,7 @@ export function toQualifiedConnectedAccountGroup(
         ref: groupRef,
         incarnation: row.id,
         displayName: row.displayName,
-        policy: parseStoredJson(
-            createStoredReadSchema(ConnectedServiceAuthGroupPolicyV1Schema),
-            row.policyJson,
-        ),
+        policy: parseConnectedServiceAuthGroupPolicy(JSON.parse(row.policyJson)),
         activeConnectedAccountId: row.activeConnectedAccountId,
         generation: row.generation,
         runtimeStateRevision: row.runtimeStateRevision,
@@ -787,7 +783,7 @@ export async function createQualifiedConnectedAccountGroup(
                 groupId: parsed.group.groupId,
                 displayName: parsed.group.displayName ?? null,
                 policyJson: encodeStoredState(
-                    ConnectedServiceAuthGroupPolicyV1Schema,
+                    ConnectedServiceAuthGroupPolicyV2Schema,
                     parsed.group.policy ?? {},
                 ),
                 stateJson: encodeQualifiedGroupStateForActiveAccount({
@@ -893,11 +889,11 @@ export async function patchQualifiedConnectedAccountGroup(
         const nextPolicyJson = patch.policy === undefined
             ? null
             : encodeStoredState(
-                ConnectedServiceAuthGroupPolicyV1Schema,
+                ConnectedServiceAuthGroupPolicyV2Schema,
                 {
                     // Feature-masked readers omit the reset opt-in; an unrelated
                     // policy edit must preserve that saved choice.
-                    ...parseStoredJson(createStoredReadSchema(ConnectedServiceAuthGroupPolicyV1Schema), current.policyJson),
+                    ...parseConnectedServiceAuthGroupPolicy(JSON.parse(current.policyJson)),
                     ...patch.policy,
                 },
             );

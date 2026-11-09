@@ -17,7 +17,7 @@ import {
   type QualifiedConnectedAccountCredentialSnapshotV4,
   type ConnectedServiceCredentialHealthV1,
   QualifiedConnectedAccountCredentialHealthPatchV4Schema,
-  type ConnectedServiceAuthGroupPolicyV1,
+  type ConnectedServiceAuthGroupPolicyV2,
   type QualifiedConnectedAccountRef,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
   ConnectedServiceCredentialRevisionV1Schema,
@@ -31,7 +31,7 @@ import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../quali
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '../requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from '../purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { ConnectedServiceRefreshCoordinator } from './ConnectedServiceRefreshCoordinator';
 
 const service = Object.freeze({ pluginId: 'happier.agent.codex', localId: 'openai-codex' });
@@ -307,12 +307,12 @@ export async function createBuiltInQualifiedRefreshHarness(input: Readonly<{
 export async function createBuiltInQualifiedNativeRefreshHarness(
   resources: Pick<NonNullable<Parameters<typeof createBuiltInQualifiedRefreshHarness>[0]>, 'controller' | 'happyHomeDir' | 'runtimeRegistry' | 'onQualifiedConnectedAccountCredentialUpdated' | 'onReauthRequired' | 'backupNeedsReauth' | 'additionalPluginIds'> & Readonly<{
     groupBinding?: boolean;
-    groupPolicy?: ConnectedServiceAuthGroupPolicyV1;
+    groupPolicy?: ConnectedServiceAuthGroupPolicyV2;
   }> = {},
 ) {
   let group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1,
     ref: { service, groupId: 'pool' }, incarnation: 'pool-lifetime', displayName: 'Pool',
-    policy: resources.groupPolicy ?? DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, activeConnectedAccountId: 'work', generation: 7,
+    policy: resources.groupPolicy ?? DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, activeConnectedAccountId: 'work', generation: 7,
     runtimeStateRevision: 0, state: {}, createdAt: 0, updatedAt: 0,
     members: ['work', 'backup'].map((connectedAccountId) => ({ v: 1, connectedAccountId,
       priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0 })) });

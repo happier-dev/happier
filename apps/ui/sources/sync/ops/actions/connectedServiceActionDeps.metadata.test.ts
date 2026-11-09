@@ -4,7 +4,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountGroupRequestsV4';
 import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountGroupRefSchema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
-import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
@@ -379,7 +379,7 @@ describe('Connected metadata deletion receipt admission', () => {
         const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
         const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' },
             incarnation: 'history-life', generation: 1, runtimeStateRevision: 0, displayName: 'Work',
-            policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null,
+            policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null,
             state: {}, createdAt: 0, updatedAt: 0, members: [] });
         const input = { group: group.ref, expectedIncarnation: group.incarnation, expectedGeneration: group.generation,
             expectedRuntimeStateRevision: group.runtimeStateRevision };
@@ -455,7 +455,7 @@ describe('Connected metadata deletion receipt admission', () => {
             const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
             const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' },
                 incarnation: 'work-life', generation: 1, runtimeStateRevision: 0, displayName: 'Work',
-                policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null,
+                policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null,
                 state: {}, createdAt: 0, updatedAt: 0, members: [] });
             const revision = { expectedIncarnation: group.incarnation, expectedGeneration: group.generation,
                 expectedRuntimeStateRevision: group.runtimeStateRevision };

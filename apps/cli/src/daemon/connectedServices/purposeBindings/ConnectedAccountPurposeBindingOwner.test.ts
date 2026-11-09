@@ -10,7 +10,7 @@ import type {
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { PluginConnectedAccountAuthenticationV2Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
 import { createPurposeTargetResolver } from '@happier-dev/cli-common/connectedAccounts';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 
 import {
   composeConnectedAccountSessionPurposeBindingSnapshot,
@@ -149,6 +149,79 @@ const authorized = {
 } as const;
 
 describe('ConnectedAccountPurposeBindingOwner', () => {
+  it('reads the recorded group and profile revisions without selecting or materializing credentials', async () => {
+    const profiles = accountProfiles(['alpha', 'beta']);
+    profiles[1] = { ...profiles[1], credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS',
+      configurationRevision: 'configuration-beta' };
+    const group: QualifiedConnectedAccountGroupV4 = { v: 1, ref: { service, groupId: 'observed' },
+      incarnation: 'group-row', displayName: 'Observed', policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
+      activeConnectedAccountId: 'beta', generation: 7, runtimeStateRevision: 0, state: {}, createdAt: 1, updatedAt: 1,
+      members: ['alpha', 'beta'].map(connectedAccountId => ({ v: 1 as const, connectedAccountId,
+        priority: 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 })),
+    };
+    const listAccounts = vi.fn(async () => profiles);
+    const readGroup = vi.fn(async () => group);
+    const selectTarget = vi.fn(async () => ({ kind: 'account' as const, account: profiles[0].ref }));
+    const resolveCredentialRevision = vi.fn(async () => profiles[0].credentialRevision);
+    const { owner, store, materializeAccount } = createOwner({ selectTarget, resolveCredentialRevision,
+      resolveTarget: createPurposeTargetResolver({ available: true,
+        resolveService: async () => ({ service, authentication: testAuthentication }), listAccounts, readGroup }),
+    });
+    await store.update(() => ({ v: 1, bindings: [{ purpose, target: { kind: 'group', service, groupId: 'observed' } }] }));
+    const observed = await owner.readBindingObservation({ ...authorized, signal: new AbortController().signal });
+    expect(observed).toMatchObject({ account: profiles[1].ref, group: { groupId: 'observed', generation: 7 },
+      credentialRevision: profiles[1].credentialRevision, configurationRevision: 'configuration-beta' });
+    expect(listAccounts).toHaveBeenCalledOnce();
+    expect(readGroup).toHaveBeenCalledOnce();
+    expect(selectTarget).not.toHaveBeenCalled();
+    expect(materializeAccount).not.toHaveBeenCalled();
+    expect(resolveCredentialRevision).not.toHaveBeenCalled();
+  });
+
+  it('returns absent for a pool with no recorded usable member in one metadata observation', async () => {
+    const profiles = accountProfiles(['alpha']);
+    const listAccounts = vi.fn(async () => profiles);
+    const readGroup = vi.fn(async (): Promise<QualifiedConnectedAccountGroupV4> => ({
+      v: 1, ref: { service, groupId: 'unselected' }, incarnation: 'group-row', displayName: 'Unselected',
+      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, activeConnectedAccountId: null,
+      generation: 0, runtimeStateRevision: 0, state: {}, createdAt: 1, updatedAt: 1,
+      members: [{ v: 1, connectedAccountId: 'alpha', priority: 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 }],
+    }));
+    const { owner, store, materializeAccount } = createOwner({
+      resolveTarget: createPurposeTargetResolver({ available: true,
+        resolveService: async () => ({ service, authentication: testAuthentication }), listAccounts, readGroup }),
+    });
+    await store.update(() => ({ v: 1, bindings: [{ purpose, target: { kind: 'group', service, groupId: 'unselected' } }] }));
+    await expect(owner.readBindingObservation({ ...authorized, signal: new AbortController().signal })).resolves.toBeNull();
+    expect(listAccounts).toHaveBeenCalledOnce();
+    expect(readGroup).toHaveBeenCalledOnce();
+    expect(materializeAccount).not.toHaveBeenCalled();
+  });
+
+  it('observes the explicit binding instead of durable defaults only on demand', async () => {
+    const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const resolveCredentialRevision = vi.fn(async () => revision);
+    const { owner, store, materializeAccount } = createOwner({ resolveCredentialRevision,
+      resolveTarget: accountTargetResolver(['default', 'explicit']) });
+    await store.update(() => ({ v: 1, bindings: [{ purpose, target: { kind: 'account', account: { service, accountId: 'default' } } }] }));
+    const lease = owner.activatePurposeBindings({
+      subject: { kind: 'agent_catalog_observation', operationId: 'observe', consumer: purpose.consumer, isCurrent: () => true },
+      purposes: [purpose], bindings: [{ purpose, target: { kind: 'account', account: { service, accountId: 'explicit' } } }],
+    });
+    const input = { ...authorized, exactPurposeBindingSubjectId: lease.subjectId, signal: new AbortController().signal };
+    try {
+      const ordinary = await owner.getBinding(input);
+      expect(ordinary).toMatchObject({ account: { accountId: 'explicit' } });
+      expect(ordinary).not.toHaveProperty('credentialRevision');
+      expect(resolveCredentialRevision).not.toHaveBeenCalled();
+      await expect(owner.getBinding({ ...input, observation: true })).resolves.toMatchObject({
+        account: { accountId: 'explicit' }, credentialRevision: revision,
+      });
+      expect(resolveCredentialRevision).not.toHaveBeenCalled();
+      expect(materializeAccount).not.toHaveBeenCalled();
+    } finally { lease.dispose(); }
+  });
+
   it.each(['selection', 'reconciliation'] as const)(
     'reads published bindings without waiting for an in-flight %s writer', async (writerKind) => {
       const store = memoryStore();
@@ -463,7 +536,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
       materializeNative,
       materializeAccount: async ({ account }) => ({ kind: 'httpHeaders', headers: { authorization: `Bearer ${account.accountId}` } }),
     });
-    const input = { ...authorized, nativeService: service, request: { kind: 'httpHeaders' as const, origin: 'https://api.example.test', headerNames: ['authorization'] }, signal: new AbortController().signal };
+    const input = { ...authorized, nativeService: service, request: { kind: 'httpHeaders' as const, origins: ['https://api.example.test'], headerNames: ['authorization'] }, signal: new AbortController().signal };
     await expect(owner.materialize(input)).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer native-secret' } });
     expect(store.current()).toEqual({ v: 1, bindings: [] });
     await owner.requestSelection({ ...authorized, reason: 'explicit', signal: input.signal });
@@ -486,7 +559,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
       },
     });
     const input = { ...authorized, nativeService: service,
-      request: { kind: 'httpHeaders' as const, origin: 'https://api.example.test', headerNames: ['authorization'] },
+      request: { kind: 'httpHeaders' as const, origins: ['https://api.example.test'], headerNames: ['authorization'] },
       signal: new AbortController().signal };
     const listener = vi.fn();
     const subscription = owner.watch({ ...authorized, listener });
@@ -899,7 +972,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
       resolved: resolved!,
       materialization: {
         kind: 'httpHeaders',
-        origin: 'https://api.example.test',
+        origins: ['https://api.example.test'],
         headerNames: ['authorization', 'x-account'],
       },
       signal,
@@ -936,7 +1009,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     const resolved = await owner.resolveCurrentRequestAuthBinding({ subjectId: lease.subjectId, binding, signal });
     expect(resolved).not.toBeNull();
     const pending = owner.materializeRequestAuthBearer({ subjectId: lease.subjectId, binding, resolved: resolved!,
-      materialization: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] }, signal });
+      materialization: { kind: 'httpHeaders', origins: ['https://api.example.test'], headerNames: ['authorization'] }, signal });
     if (outcome === 'current') {
       await expect(pending).resolves.toMatchObject({ accessToken: 'private-token' });
       expect(recordOperationCredentialUse.mock.calls).toEqual([[{
@@ -1694,7 +1767,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
   it('opens the admitted group Account and observes a switched member at the next acquisition', async () => {
     const profiles = accountProfiles(['alpha', 'beta']);
     let group: QualifiedConnectedAccountGroupV4 = { v: 1, ref: { service, groupId: 'fallbacks' },
-      incarnation: 'group-row', displayName: 'Fallbacks', policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      incarnation: 'group-row', displayName: 'Fallbacks', policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
       activeConnectedAccountId: 'alpha', generation: 1, runtimeStateRevision: 0, state: {}, createdAt: 1, updatedAt: 1,
       members: ['alpha', 'beta'].map((connectedAccountId, index) => ({ v: 1 as const, connectedAccountId,
         priority: index + 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 })),

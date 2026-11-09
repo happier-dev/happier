@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConnectedAccountDescriptorProjectionState } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -20,7 +20,7 @@ function group(policy: Record<string, unknown>) {
     return {
         ref: { service: SERVICE, groupId: 'work' },
         displayName: 'Work pool',
-        policy: ConnectedServiceAuthGroupPolicyV1Schema.parse(policy),
+        policy: ConnectedServiceAuthGroupPolicyV2Schema.parse(policy),
         activeConnectedAccountId: 'personal',
     } as never;
 }

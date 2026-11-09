@@ -1,7 +1,7 @@
 import type {
     ConnectedServiceAuthGroupMember,
     ConnectedServiceAuthGroupMemberRuntimeState,
-    ConnectedServiceAuthGroupPolicyV1,
+    ConnectedServiceAuthGroupPolicyV2,
 } from './selectConnectedServiceAuthGroupCandidate';
 import { credentialHealthAllowsSelection } from './selectConnectedServiceAuthGroupCandidate';
 import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
@@ -12,7 +12,7 @@ function normalizeProfileId(value: string | null | undefined): string | null {
 
 function isQuotaSnapshotStale(input: Readonly<{
     state: ConnectedServiceAuthGroupMemberRuntimeState | null;
-    policy: ConnectedServiceAuthGroupPolicyV1;
+    policy: ConnectedServiceAuthGroupPolicyV2;
     nowMs: number;
 }>): boolean {
     const snapshot = input.state?.quotaSnapshot;
@@ -34,7 +34,7 @@ export function resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds(inpu
     activeProfileId: string | null;
     members: ReadonlyArray<ConnectedServiceAuthGroupMember>;
     memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
-    policy: ConnectedServiceAuthGroupPolicyV1;
+    policy: ConnectedServiceAuthGroupPolicyV2;
     nowMs: number;
     allowCurrentProfileRetry: boolean;
 }>): ReadonlyArray<string> {

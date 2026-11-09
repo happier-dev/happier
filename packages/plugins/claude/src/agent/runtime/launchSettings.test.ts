@@ -105,7 +105,7 @@ describe('resolveClaudeNativeLaunchSettings', () => {
             launchEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
               kind: 'group', serviceId, groupId: 'pool', activeProfileId: 'first', fallbackProfileId: 'first',
               generation: 1, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-              policy: preference === undefined ? {} : { claudeCodeAutoContinueAtUsageLimit: preference },
+              policy: preference === undefined ? { v: 2 } : { v: 2, nativeUsageLimitContinuation: preference },
             }]) },
           });
           expect(args.filter(arg => arg === '--settings')).toHaveLength(1);

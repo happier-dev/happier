@@ -30,7 +30,7 @@ import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture }
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { logger } from '@/utils/logger';
 import { readQualifiedConnectedAccountGroupV4 } from '@/api/client/qualifiedConnectedAccountApi';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { createExecutionRunConnectedServicesBridge } from '../runs/executionRunMaterialization';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '../requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { resolveExecutionRunConnectedServicesEnv } from '@/agent/runtime/bridges/executionRun/runtime/connectedServicesEnv';
@@ -228,7 +228,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
           if (promoting && change === 'group-read') throw new Error('Home group read failed');
           if (promoting && change === 'missing') return { status: 404, data: {} };
           return { status: 200, data: { group: { v: 1, ref: { service, groupId: 'pool' }, incarnation: 'pool-incarnation',
-            displayName: 'Pool', policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+            displayName: 'Pool', policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
             activeConnectedAccountId: promoting && change === 'member' ? 'replacement' : 'backup',
             generation: promoting && change === 'generation' ? 4 : 3, runtimeStateRevision: 1,
             state: {}, members: [], createdAt: 1, updatedAt: 1 } } };

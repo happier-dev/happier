@@ -350,7 +350,7 @@ it('repairs a shared mounted viewer purpose through the Account catalog without 
         const connected = AccountProfileSchema.parse({ id: 'viewer', connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'token',
             configurationReady: true, configurationRevision: null, revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [] }],
             connectedAccountGroupsV4: [{ v: 1, ref: { service, groupId: 'work' }, incarnation: 'row-work', displayName: 'Work pool',
-                policy: { v: 1, strategy: 'expiry_first', autoSwitch: true }, activeConnectedAccountId: ref.accountId,
+                policy: { v: 2, strategy: 'expiry_first', autoSwitch: true }, activeConnectedAccountId: ref.accountId,
                 generation: 1, runtimeStateRevision: 1, state: { status: 'ready' }, createdAt: 1, updatedAt: 1,
                 members: [{ v: 1, connectedAccountId: ref.accountId, priority: 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 }] }] });
         storage.setState({ profile, profileScope: { serverId: connection.home.id, accountId: 'viewer' } });

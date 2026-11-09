@@ -57,6 +57,27 @@ const service = {
 const credentialRevision = 'csr_abcdefghijklmnopqrstuvwxyz';
 
 describe('qualified connected-account V4 wire contract', () => {
+  // 01E preserves the predecessor pool preference while current policy writers use V2.
+  it.each([undefined, false, true])('normalizes a stored V1 pool preference (%s) before a current edit and reload', (preference) => {
+    const stored = {
+      v: 1, ref: { service, groupId: 'pool' }, incarnation: 'pool-incarnation',
+      displayName: null, activeConnectedAccountId: null, generation: 0,
+      runtimeStateRevision: 0, state: {}, createdAt: 1, updatedAt: 1, members: [],
+      policy: { v: 1, ...(preference === undefined ? {} : { claudeCodeAutoContinueAtUsageLimit: preference }) },
+    };
+    const group = QualifiedConnectedAccountGroupV4Schema.parse(stored);
+    expect(group.policy.v).toBe(2);
+    expect(group.policy).not.toHaveProperty('claudeCodeAutoContinueAtUsageLimit');
+    if (preference === undefined) expect(group.policy).not.toHaveProperty('nativeUsageLimitContinuation');
+    else expect(group.policy).toHaveProperty('nativeUsageLimitContinuation', preference);
+    const patch = QualifiedConnectedAccountGroupPatchV4Schema.parse({
+      service, groupId: 'pool', expectedGeneration: 0,
+      policy: { ...group.policy, autoSwitch: true },
+    });
+    const reloaded = QualifiedConnectedAccountGroupV4Schema.parse({ ...stored, policy: patch.policy });
+    expect(reloaded.policy).toEqual({ ...group.policy, autoSwitch: true });
+  });
+
   it('reads prior credential metadata and preserves only closed provider kind facts', () => {
     const snapshot = { ref: { service, accountId: 'kind-account' }, authenticationModeId: 'device',
       revisionSemantics: 'revisioned', credentialRevision, configurationRevision: null,

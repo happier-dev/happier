@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH, ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema, PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH, ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
 import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
@@ -50,7 +50,7 @@ import {
   handleConnectedServiceRuntimeAuthFailureForSession,
 } from '../../../../../../../../apps/cli/src/daemon/connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession.js';
 import {
-  DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+  DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
 } from '../../../../../../../../apps/cli/src/daemon/connectedServices/accountGroups/selection/selectConnectedServiceAuthGroupCandidate.js';
 import {
   buildPiRequestAuthExtensionAssetSource,
@@ -209,7 +209,7 @@ function makeGroup(
     incarnation: 'qualified-group-row-fallbacks',
     displayName: 'Fallbacks',
     policy: {
-      ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
       autoSwitch: true,
     },
     activeConnectedAccountId: input.activeConnectedAccountId,
@@ -820,24 +820,13 @@ function expectedReportFailure(
     || scenario.id.includes('account-exhaustion')
     || scenario.id === 'ambiguous-report-settlement-next-independent'
   ) {
-    const provider = scenario.providerId;
     return {
       class: 'quota',
       evidence: {
         httpStatus: 429,
         limitCategory: 'usage_limit',
         quotaScope: 'account',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: version,
-          provider,
-          signatureId: provider === 'anthropic'
-            ? PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1
-              .anthropicAccountExhaustion
-            : PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1
-              .openAiCodexChatgptUsageLimit,
-        },
+        evidenceSource: { kind: 'structured' },
       },
     };
   }
@@ -848,15 +837,7 @@ function expectedReportFailure(
         httpStatus: 401,
         limitCategory: 'auth_invalid',
         quotaScope: 'unknown',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: version,
-          provider: 'anthropic',
-          signatureId:
-            PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1
-              .anthropicAuthentication,
-        },
+        evidenceSource: { kind: 'structured' },
       },
     };
   }
@@ -871,15 +852,7 @@ function expectedReportFailure(
         httpStatus: 529,
         limitCategory: 'capacity',
         quotaScope: 'unknown',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: version,
-          provider: 'anthropic',
-          signatureId:
-            PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1
-              .anthropicOverloaded,
-        },
+        evidenceSource: { kind: 'structured' },
       },
     };
   }
@@ -890,15 +863,7 @@ function expectedReportFailure(
         httpStatus: 503,
         limitCategory: 'capacity',
         quotaScope: 'unknown',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: version,
-          provider: 'anthropic',
-          signatureId:
-            PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1
-              .anthropicApiError503,
-        },
+        evidenceSource: { kind: 'structured' },
       },
     };
   }
@@ -909,15 +874,7 @@ function expectedReportFailure(
         httpStatus: 429,
         limitCategory: 'rate_limit',
         quotaScope: 'unknown',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: version,
-          provider: 'anthropic',
-          signatureId:
-            PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1
-              .anthropicRateLimit,
-        },
+        evidenceSource: { kind: 'structured' },
       },
     };
   }
@@ -1203,23 +1160,24 @@ async function runRealOwnerScenario(
 
   const requestAuthService = createConnectedAccountRequestAuthService({
     resolveCurrentBinding,
-    materializeBearer: async ({ resolved }) => {
+    materializeHeaders: async ({ resolved }) => {
       state.materializedAccounts.push(
         resolved.account.accountId as 'primary' | 'backup',
       );
       return {
-        accessToken: tokenFor(
-          scenario.providerId,
-          resolved.account.accountId,
-          resolved.credentialRevision,
-        ),
-        ...(scenario.providerId === 'openai-codex'
-          ? {
-            requiredHeaders: {
+        headers: {
+          authorization: `Bearer ${tokenFor(
+            scenario.providerId,
+            resolved.account.accountId,
+            resolved.credentialRevision,
+          )}`,
+          ...(scenario.providerId === 'openai-codex'
+            ? {
               'ChatGPT-Account-ID': resolved.account.accountId,
-            },
-          }
-          : {}),
+            }
+            : {}),
+        },
+        facts: {},
       };
     },
     refreshAfterAuthFailure: async ({ resolved, failure }) => (

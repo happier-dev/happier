@@ -17,6 +17,9 @@ import {
     ConnectedServiceAuthGroupPatchRequestV1Schema,
     ConnectedServiceAuthGroupPolicyPatchV1Schema,
     ConnectedServiceAuthGroupPolicyV1Schema,
+    ConnectedServiceAuthGroupPolicyV2Schema,
+    ConnectedServiceAuthGroupPolicyPatchV2Schema,
+    parseConnectedServiceAuthGroupPolicy,
     ConnectedServiceAuthGroupRuntimeStatePatchRequestV1Schema,
     ConnectedServiceAuthGroupV1Schema,
     ConnectedServiceBindingSelectionV1Schema,
@@ -43,6 +46,31 @@ import {
 import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from './sessionConnectedServiceAuthSwitch.js';
 
 describe('connectedServiceSchemas', () => {
+    it.each([undefined, false, true])('preserves predecessor native waiting (%s) with and without its default version', (preference) => {
+        const legacy = preference === undefined ? {} : { claudeCodeAutoContinueAtUsageLimit: preference };
+        for (const value of [legacy, { v: 1, ...legacy }]) {
+            const policy = parseConnectedServiceAuthGroupPolicy(value);
+            expect(policy.v).toBe(2);
+            expect(policy).not.toHaveProperty('claudeCodeAutoContinueAtUsageLimit');
+            expect(policy.nativeUsageLimitContinuation).toBe(preference);
+            if (preference === undefined) expect(policy).not.toHaveProperty('nativeUsageLimitContinuation');
+            expect(parseConnectedServiceAuthGroupPolicy(policy)).toEqual(policy);
+        }
+    });
+
+    it('keeps current policy mutations strict while stored reads normalize V1', () => {
+        expect(ConnectedServiceAuthGroupPolicyV2Schema.parse({ nativeUsageLimitContinuation: true }))
+            .toMatchObject({ v: 2, nativeUsageLimitContinuation: true });
+        expect(ConnectedServiceAuthGroupPolicyPatchV2Schema.parse({ nativeUsageLimitContinuation: false }))
+            .toEqual({ nativeUsageLimitContinuation: false });
+        for (const policy of [{ v: 1 }, { claudeCodeAutoContinueAtUsageLimit: true }, { nativeUsageLimitContinuation: 'true' }]) {
+            expect(ConnectedServiceAuthGroupPolicyV2Schema.safeParse(policy).success).toBe(false);
+            expect(ConnectedServiceAuthGroupPolicyPatchV2Schema.safeParse(policy).success).toBe(false);
+        }
+        expect(createStoredReadSchema(ConnectedServiceAuthGroupPolicyV2Schema).parse({ v: 1, claudeCodeAutoContinueAtUsageLimit: true }))
+            .toEqual(parseConnectedServiceAuthGroupPolicy({ v: 1, claudeCodeAutoContinueAtUsageLimit: true }));
+    });
+
     it('keeps Claude native waiting optional and accepts an explicit pool preference', () => {
         expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({})).not.toHaveProperty('claudeCodeAutoContinueAtUsageLimit');
         expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ claudeCodeAutoContinueAtUsageLimit: true }))

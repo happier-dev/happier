@@ -67,7 +67,7 @@ it.each(['plain', 'e2ee'] as const)('persists an admitted %s Account purpose def
     expect(catalog.writes).toHaveLength(1);
     storage.getState().applyProfile(AccountProfileSchema.parse({ ...ownedProfile, connectedAccountGroupsV4: [{ v: 1,
         ref: { service: connected.ref.service, groupId: 'work' }, incarnation: 'row-work', displayName: 'Work',
-        policy: { v: 1, strategy: 'expiry_first', autoSwitch: true }, activeConnectedAccountId: connected.ref.accountId,
+        policy: { v: 2, strategy: 'expiry_first', autoSwitch: true }, activeConnectedAccountId: connected.ref.accountId,
         generation: 1, runtimeStateRevision: 1, state: { status: 'ready' }, createdAt: 1, updatedAt: 1,
         members: [{ v: 1, connectedAccountId: connected.ref.accountId, priority: 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 }] }] }));
     const groupTarget = { kind: 'group' as const, service: connected.ref.service, groupId: 'work' };

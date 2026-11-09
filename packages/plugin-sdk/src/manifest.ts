@@ -181,7 +181,7 @@ export type AgentUiBehaviorDeclarationV1 = {
     poolSettings: {
       id: string;
       kind: 'boolean';
-      policyKey: 'claudeCodeAutoContinueAtUsageLimit';
+      policyKey: 'nativeUsageLimitContinuation';
       serviceLocalIds: string[];
       titleKey: string;
       subtitleKey: string;

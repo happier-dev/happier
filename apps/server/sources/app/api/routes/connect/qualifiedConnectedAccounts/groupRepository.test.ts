@@ -141,6 +141,17 @@ vi.mock("@/storage/db", async () => {
 });
 
 describe("qualified Connected Account group repository", () => {
+    it.each([undefined, false, true])("projects the saved V1 native-wait preference (%s) as current V2", (preference) => {
+        const current = row();
+        current.policyJson = JSON.stringify({ v: 1, ...(preference === undefined
+            ? {} : { claudeCodeAutoContinueAtUsageLimit: preference }) });
+        const policy = toQualifiedConnectedAccountGroup(current).policy;
+        expect(policy.v).toBe(2);
+        expect(policy).not.toHaveProperty("claudeCodeAutoContinueAtUsageLimit");
+        if (preference === undefined) expect(policy).not.toHaveProperty("nativeUsageLimitContinuation");
+        else expect(policy).toHaveProperty("nativeUsageLimitContinuation", preference);
+    });
+
     it("projects one strict structured service identity", () => {
         expect(toQualifiedConnectedAccountGroup(row())).toMatchObject({
             ref: groupRef,

@@ -7,7 +7,7 @@ import { authorizeConnectedServiceRuntimeAuthFailureSource, handleConnectedServi
 import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
 import type { RuntimeAuthRecoveryIntent } from '../runtimeAuth/RuntimeAuthRecoveryScheduler';
 import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry, type ConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { buildConnectedServiceAuthGroupObservedFailureMemberState } from '../accountGroups/runtimeState/buildConnectedServiceAuthGroupObservedFailureMemberState';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionRuntimeIssueV1, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
@@ -95,7 +95,7 @@ describe('continueSessionAfterUsageLimitReset', () => {
     let runtime = { serviceId, groupId: 'pool', profileId: 'A', generation: 1, credentialRevision: revisionA };
     let state: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'pool', activeProfileId: 'A', generation: 1,
       credentialRevision: revisionA, runtimeStateRevision: 0,
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: true, strategy: 'priority', softSwitchRemainingPercent: 15 },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, autoSwitch: true, strategy: 'priority', softSwitchRemainingPercent: 15 },
       members: ['A', 'B'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
       memberStatesByProfileId: new Map(['A', 'B'].map(profileId => [profileId, {
         quotaSnapshot: { capturedAtMs: now, staleAfterMs: 60_000, effectiveRemainingPercent: profileId === 'A' ? 10 : 80 },

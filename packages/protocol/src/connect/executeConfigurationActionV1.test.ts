@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createActionExecutorBoundaryFixture } from '../../../tests/src/testkit/actionExecutorBoundary.js';
 import { executeConnectedServiceConfigurationActionV1, type ConnectedServiceConfigurationActionHostV1 } from './executeConfigurationActionV1.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1, CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1, reorderConnectedServicePoolMembersV1 } from './configurationActionsV1.js';
 import { buildAgentDefaultChoices } from './agentDefaultChoices.js';
@@ -6,7 +7,7 @@ import { accountSettingsParse } from '../account/settings/accountSettings.js';
 import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupRefSchema } from './qualifiedConnectedAccountsV4.js';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from './qualifiedConnectedAccountsV4QueryCodec.js';
 import { QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
-import { ConnectedServiceAuthGroupPolicyV1Schema } from './connectedServiceSchemas.js';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from './connectedServiceSchemas.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
 import { getActionSpec, PublicActionIdSchema, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '../actions/actionSpecs.js';
@@ -37,6 +38,57 @@ function purposeCatalogBoundary(read: () => Record<string, unknown>, apply: (del
 }
 
 describe('connected-service configuration Action owner', () => {
+    it('reads one selected pool through the public Account Action without inventory, secrets or approval', async () => {
+        const id = 'connectedServices.pools.get';
+        const ref = { service, groupId: 'selected' };
+        const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref, incarnation: 'selected-incarnation',
+            displayName: 'Selected pool', policy: { strategy: 'manual' }, activeConnectedAccountId: 'second',
+            generation: 4, runtimeStateRevision: 2, state: {}, createdAt: 1, updatedAt: 2,
+            members: [{ v: 1, connectedAccountId: 'second', priority: 100, enabled: true, state: {}, createdAt: 1, updatedAt: 1 },
+                { v: 1, connectedAccountId: 'first', priority: 200, enabled: false, state: {}, createdAt: 1, updatedAt: 1 }] });
+        const requests: string[] = [];
+        const host: ConnectedServiceConfigurationActionHostV1 = {
+            assertCurrent() {},
+            async request(request) {
+                expect(request.method).toBe('GET');
+                const url = new URL(request.path, 'https://home.test');
+                expect(url.pathname).toBe('/v4/connect/qualified/group');
+                expect(parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountGroupRefSchema, url.searchParams.get('group'))).toEqual(ref);
+                requests.push(request.path);
+                return { group };
+            },
+            async mutatePurposeBindings() { throw new Error('read_must_not_write'); },
+            async resolveAgent() { throw new Error('read_must_not_probe'); },
+            async resetQuota() { throw new Error('read_must_not_refresh'); },
+        };
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input) }));
+        expect(ActionIdSchema.safeParse(id).success).toBe(true);
+        expect(await executor.execute(id, { group: ref }, { surface: 'agent', authority: 'account_automation' }))
+            .toEqual({ ok: true, result: { group } });
+        expect(requests).toHaveLength(1);
+        expect(getActionSpec(id)).toMatchObject({ safety: 'safe', sideEffectClass: 'read', executionPlacement: 'account',
+            requiredAuthority: 'account_automation', approval: { result: 'none' } });
+        expect(isApprovalRequiredByActionsSettings(id, ActionsSettingsV1Schema.parse({ v: 1 }), { surface: 'agent', authority: 'account_automation' })).toBe(false);
+        expect(getActionSpec(id).inputSchema.safeParse({ group: ref, machineId: 'unrelated-machine' }).success).toBe(false);
+        expect(await executor.execute(id, { group: ref }, { surface: 'mcp', authority: 'account_automation' }))
+            .toEqual({ ok: true, result: { group } });
+    });
+
+    it('preserves selected-pool refusals and rejects a mismatched qualified pool projection', async () => {
+        const ref = { service, groupId: 'selected' };
+        const host: ConnectedServiceConfigurationActionHostV1 = { assertCurrent() {},
+            async request() { throw Object.assign(new Error('connect_group_not_found'), { code: 'connect_group_not_found' }); },
+            async mutatePurposeBindings() {}, async resolveAgent() { return null; }, async resetQuota() {} };
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input) }));
+        expect(await executor.execute('connectedServices.pools.get', { group: ref }, { surface: 'cli', authority: 'present_user' }))
+            .toMatchObject({ ok: false, errorCode: 'connect_group_not_found' });
+        const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { ...ref, service: { ...service, pluginId: 'another.person' } },
+            incarnation: 'foreign', displayName: null, policy: {}, activeConnectedAccountId: null,
+            generation: 1, runtimeStateRevision: 1, state: {}, createdAt: 1, updatedAt: 1 });
+        expect(await executeConnectedServiceConfigurationActionV1({ ...host, async request() { return { group }; } },
+            'connectedServices.pools.get', { group: ref })).toMatchObject({ ok: false, errorCode: 'qualified_connected_accounts_inconsistent_peer' });
+    });
+
     it('admits Account authentication inputs and keeps continuation routing exclusively attempt-addressed', async () => {
         const commands = [
             ['beginConnect', { service, modeId: 'device' }],
@@ -1022,7 +1074,7 @@ describe('connected-service configuration Action owner', () => {
         let settings: Record<string, unknown> = { other: 'retained' };
         const catalog = purposeCatalogBoundary(() => settings, delta => { settings = { ...settings, ...delta }; });
         const pool = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' }, incarnation: 'pool-life', displayName: 'Team',
-            policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null, generation: 1, runtimeStateRevision: 0,
+            policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null, generation: 1, runtimeStateRevision: 0,
             state: {}, createdAt: 0, updatedAt: 0, members: [],
         });
         const requests: Array<{ method: string; path: string; body?: unknown }> = [];
@@ -1083,7 +1135,7 @@ describe('connected-service configuration Action owner', () => {
         let settings: Record<string, unknown> = {};
         const catalog = purposeCatalogBoundary(() => settings, delta => { settings = { ...settings, ...delta }; });
         const replacement = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' }, incarnation: 'replacement-life', displayName: 'Replacement',
-            policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null, generation: 1, runtimeStateRevision: 0,
+            policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null, generation: 1, runtimeStateRevision: 0,
             state: {}, createdAt: 1, updatedAt: 1, members: [],
         });
         let acknowledge: (value: unknown) => void = () => { throw new Error('delete_not_started'); };
@@ -1163,7 +1215,7 @@ describe('connected-service configuration Action owner', () => {
     });
     it('refuses a switch response for another pool rather than reporting success', async () => {
         const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'foreign' }, incarnation: 'life', displayName: null,
-            policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null, generation: 1, runtimeStateRevision: 0,
+            policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null, generation: 1, runtimeStateRevision: 0,
             state: {}, createdAt: 0, updatedAt: 0, members: [],
         });
         const host: ConnectedServiceConfigurationActionHostV1 = {
@@ -1224,7 +1276,7 @@ describe('connected-service configuration Action owner', () => {
 
     it('accepts a semantic member move against current pool membership and preserves revision fences', async () => {
         const pool = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' },
-            incarnation: 'pool-life', displayName: 'Work', policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}),
+            incarnation: 'pool-life', displayName: 'Work', policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}),
             activeConnectedAccountId: null, generation: 7, runtimeStateRevision: 2, state: {}, createdAt: 0, updatedAt: 0,
             members: ['a', 'new', 'b'].map((connectedAccountId, index) => ({ v: 1, connectedAccountId, priority: (index + 1) * 100, enabled: true, createdAt: 0, updatedAt: 0 })),
         });

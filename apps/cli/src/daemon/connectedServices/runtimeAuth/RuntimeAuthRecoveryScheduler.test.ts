@@ -7,7 +7,7 @@ import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAut
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { createSessionConnectedServiceRuntimeAuthRefreshHandler } from '../sessionRuntimeAuthRefresh';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from './resolveRuntimeAuthRecoveryResultDisposition';
 import type { RuntimeAuthRecoveryIntent } from './RuntimeAuthRecoveryScheduler';
 import type { RecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
@@ -207,7 +207,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     let current: ConnectedServiceAuthGroupSwitchState = {
       serviceId, groupId: 'claude-pool', activeProfileId: 'ai1', generation: 1,
       runtimeStateRevision: 0, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'priority', autoSwitch: true },
       members: ['ai1', 'batiplus_ai'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
       memberStatesByProfileId: new Map([['batiplus_ai', {
         quotaSnapshot: { capturedAtMs: 1_000, staleAfterMs: 60_000, effectiveRemainingPercent: 98,
@@ -353,7 +353,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     let current: ConnectedServiceAuthGroupSwitchState = {
       serviceId, groupId: 'team', activeProfileId: 'backup', generation: 2,
       runtimeStateRevision: 0, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'priority', autoSwitch: true },
       members: ['primary', 'backup'].map((profileId, priority) => ({ profileId, priority, enabled: true, createdAtMs: 1 })),
       memberStatesByProfileId: new Map(),
     };
@@ -458,7 +458,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     let current: ConnectedServiceAuthGroupSwitchState = {
       serviceId: 'happier.agent.codex/openai-codex', groupId: 'team', activeProfileId: 'primary', generation: 1,
       runtimeStateRevision: 0,
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'priority', autoSwitch: true },
       members: [
         { profileId: 'primary', priority: 1, createdAtMs: 1, enabled: true },
         { profileId: 'backup', priority: 2, createdAtMs: 2, enabled: true },

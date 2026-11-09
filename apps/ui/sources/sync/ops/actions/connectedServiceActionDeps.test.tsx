@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import { ConnectedServiceAuthGroupPolicyV1Schema, ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupPolicyV2Schema, ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import * as machineRpc from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -283,7 +283,7 @@ it.each([
 ] as const)('preserves the %s disposition of a semantic pool move', async (disposition, errorCode) => {
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const group = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' }, incarnation: 'life', displayName: null,
-        policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({}), activeConnectedAccountId: null, generation: 2, runtimeStateRevision: 1,
+        policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null, generation: 2, runtimeStateRevision: 1,
         state: {}, createdAt: 0, updatedAt: 0, members: [
             { v: 1, connectedAccountId: 'personal', priority: 100, enabled: true, state: {}, createdAt: 0, updatedAt: 0 },
             { v: 1, connectedAccountId: 'work', priority: 200, enabled: true, state: {}, createdAt: 0, updatedAt: 0 },

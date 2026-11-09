@@ -22,7 +22,7 @@ import { resolveConnectedServiceMaterializedRootDir } from '../materialize/resol
 import { ensurePrivateConnectedServiceMaterializedRoot } from '../materialize/privateMaterializedRoot';
 import { createAdoptedExecutionRunRootCleanup } from './createAdoptedExecutionRunRootCleanup';
 import { createExecutionRunConnectedServicesBridge } from './executionRunMaterialization';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from '../runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
 
 describe('requester execution-run materialization', () => {
@@ -63,7 +63,7 @@ describe('requester execution-run materialization', () => {
       const revision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
       const groups = new Map(['alice', 'bob'].map(accountId => [accountId, QualifiedConnectedAccountGroupV4Schema.parse({
         v: 1, ref: { service, groupId: 'main' }, incarnation: `${accountId}-main`, displayName: 'Main',
-        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: true },
+        policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, autoSwitch: true },
         activeConnectedAccountId: 'work', generation: 7, runtimeStateRevision: 1, state: {}, createdAt: 1, updatedAt: 1,
         members: ['work', 'backup'].map((connectedAccountId, index) => ({ v: 1, connectedAccountId,
           priority: index + 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 })),

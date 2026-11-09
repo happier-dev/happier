@@ -20,7 +20,7 @@ import {
     type ConnectedServiceAuthGroupCandidateSelection,
     type ConnectedServiceAuthGroupMember,
     type ConnectedServiceAuthGroupMemberRuntimeState,
-    type ConnectedServiceAuthGroupPolicyV1,
+    type ConnectedServiceAuthGroupPolicyV2,
     type ConnectedServiceAuthGroupQuotaSnapshot,
 } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import { resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds } from '../selection/resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds';
@@ -69,7 +69,7 @@ function isRejectedStartModelEntitlementFailure(input: Readonly<{
 
 function shouldWaitForClassifiedFailure(input: Readonly<{
     reason: string;
-    recoveryMode: ConnectedServiceAuthGroupPolicyV1['recoveryMode'];
+    recoveryMode: ConnectedServiceAuthGroupPolicyV2['recoveryMode'];
 }>): boolean {
     return WAITABLE_CLASSIFIED_FAILURE_REASONS.has(input.reason)
         && (input.recoveryMode === 'wait_until_reset' || input.recoveryMode === 'switch_or_wait');
@@ -121,7 +121,7 @@ export type ConnectedServiceAuthGroupSwitchState<
     runtimeStateRevision?: number;
     credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
     configurationRevision?: string | null;
-    policy: ConnectedServiceAuthGroupPolicyV1;
+    policy: ConnectedServiceAuthGroupPolicyV2;
     members: ReadonlyArray<ConnectedServiceAuthGroupMember>;
     memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
     requiredModelIds?: ReadonlyArray<string>;
@@ -452,7 +452,7 @@ export type ConnectedServiceAuthGroupSwitchEvent<
     decisionTrace?: ConnectedServiceAuthGroupCandidateDecisionTrace;
 }>;
 
-function isReasonEnabled(policy: ConnectedServiceAuthGroupPolicyV1, reason: string): boolean {
+function isReasonEnabled(policy: ConnectedServiceAuthGroupPolicyV2, reason: string): boolean {
     switch (reason) {
         case 'usage_limit':
         case 'rate_limit':
@@ -578,7 +578,7 @@ function isProfileEligibleForObservedGeneration(input: Readonly<{
     nowMs: number;
     memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
     selected: ReturnType<typeof selectConnectedServiceAuthGroupCandidate>;
-    policy: ConnectedServiceAuthGroupPolicyV1;
+    policy: ConnectedServiceAuthGroupPolicyV2;
     providerLimitId?: string | null;
 }>): boolean {
     return input.selected.selected?.profileId === input.profileId
@@ -745,7 +745,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
     }>): Promise<Readonly<{
         observedAtMs: number;
         selection: ReturnType<typeof selectConnectedServiceAuthGroupCandidate>;
-        hypothetical?: Readonly<{ strategy: ConnectedServiceAuthGroupPolicyV1['strategy']; atMs: number }>;
+        hypothetical?: Readonly<{ strategy: ConnectedServiceAuthGroupPolicyV2['strategy']; atMs: number }>;
         activeAccountRef: Readonly<{ service: TServiceIdentity; accountId: string }> | null;
         activeSince: NonNullable<ConnectedServiceAuthGroupStateV1['activeSince']> | null;
     }>> {

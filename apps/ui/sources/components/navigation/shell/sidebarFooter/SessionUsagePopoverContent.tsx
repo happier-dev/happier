@@ -18,7 +18,7 @@ import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/component
 import { t } from '@/text';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { AccountProfile } from '@happier-dev/protocol/account/profile';
-import type { ConnectedServiceAuthGroupPolicyV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceAuthGroupPolicyV2 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import {
     SidebarUsagePopoverView,
@@ -34,7 +34,7 @@ type ConnectedAccountGroupV4 = AccountProfile['connectedAccountGroupsV4'][number
  * names the rule, never a predicted member: the daemon's selection owner picks the member at switch time.
  */
 export function describePoolNextMove(params: Readonly<{
-    policy: ConnectedServiceAuthGroupPolicyV1;
+    policy: ConnectedServiceAuthGroupPolicyV2;
     pool: string;
     account: string;
 }>): string {

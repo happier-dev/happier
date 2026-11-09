@@ -1,9 +1,10 @@
 import type { ConnectedServiceAuthGroupV1 } from '@happier-dev/protocol';
 import { buildProviderAccountUsageRecordId, buildQualifiedPluginContributionKey, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
+import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, selectConnectedServiceAuthGroupCandidate } from '../selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, selectConnectedServiceAuthGroupCandidate } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import { createProviderAccountUsageStore } from '../../accountUsage/store';
 import { buildConnectedServiceAuthGroupSwitchStateFromAccountUsage } from './buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
 import {
@@ -31,7 +32,7 @@ describe('buildConnectedServiceAuthGroupSwitchState', () => {
     }
     const result = buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({ accountUsageStore: store,
       group: { serviceId, groupId: 'team', activeProfileId: null, generation: 4,
-        policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
         members: ['early', 'fresh'].map((profileId, priority) => ({ profileId, priority, enabled: true,
           createdAt: priority, state: { credentialHealthStatus: 'connected' } })),
       },
@@ -67,7 +68,7 @@ describe('buildConnectedServiceAuthGroupSwitchState', () => {
       serviceId: 'openai-codex',
       groupId: 'main',
       displayName: null,
-      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({ claudeCodeAutoContinueAtUsageLimit: true }),
       activeProfileId: 'primary',
       generation: 2,
       runtimeStateRevision: 0,
@@ -100,6 +101,8 @@ describe('buildConnectedServiceAuthGroupSwitchState', () => {
       runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       nowMs: 9_000,
     });
+
+    expect(state.policy).toMatchObject({ v: 2, nativeUsageLimitContinuation: true });
 
     expect(state.memberStatesByProfileId.get('primary')).toMatchObject({
       quotaExhaustedUntilMs: 10_000,

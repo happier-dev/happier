@@ -58,7 +58,7 @@ import type { AgentUiPoolSetting } from '@/agents/registry/registryUiBehavior';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
 import { resolveConnectedServiceQuotaMeterLimitIdentity } from '@happier-dev/protocol/connect/connectedServiceQuotaLimitSelection';
-import type { ConnectedServiceAuthGroupPolicyV1, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceAuthGroupPolicyV2, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { QualifiedConnectedAccountQuotaSnapshotV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
@@ -79,9 +79,9 @@ import type { TeamCredentialSourceHint } from '@/components/settings/teams/teams
 import { PoolGatewaySection, type PoolGatewaySectionProps } from './PoolGatewaySection';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
-type GroupStrategy = ConnectedServiceAuthGroupPolicyV1['strategy'];
-type GroupRecoveryMode = ConnectedServiceAuthGroupPolicyV1['recoveryMode'];
-type SwitchOnKey = keyof ConnectedServiceAuthGroupPolicyV1['switchOn'];
+type GroupStrategy = ConnectedServiceAuthGroupPolicyV2['strategy'];
+type GroupRecoveryMode = ConnectedServiceAuthGroupPolicyV2['recoveryMode'];
+type SwitchOnKey = keyof ConnectedServiceAuthGroupPolicyV2['switchOn'];
 type QuotaSnapshot = ConnectedServiceQuotaSnapshotV1 | QualifiedConnectedAccountQuotaSnapshotV4;
 
 const SWITCH_ON_KEYS: ReadonlyArray<SwitchOnKey> = ['usageLimit', 'authExpired', 'accountChanged', 'refreshFailure'];
@@ -417,7 +417,7 @@ export const QualifiedPoolDetailView = React.memo(function QualifiedPoolDetailVi
         },
     };
 
-    const patchPolicy = React.useCallback(async (policy: Partial<ConnectedServiceAuthGroupPolicyV1>) => {
+    const patchPolicy = React.useCallback(async (policy: Partial<ConnectedServiceAuthGroupPolicyV2>) => {
         if (!fallbackControlsEnabled) return;
         await mutations.patch({ group, policy });
     }, [fallbackControlsEnabled, group, mutations]);

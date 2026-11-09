@@ -12,7 +12,7 @@ import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/p
 
 import { QualifiedConnectedAccountGroupConflictError } from '@/api/client/qualifiedConnectedAccountApi';
 import { applyConnectedAccountRequestAuthRecovery } from '../requestAuth/ConnectedAccountRequestAuthRecovery';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator } from './createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator';
 import { createProviderAccountUsageStore } from '../accountUsage/store';
 import { acknowledgeConnectedServiceLaunchGeneration } from '../resolveConnectedServiceAuthForLaunch';
@@ -38,7 +38,7 @@ function group(input: Readonly<{
         incarnation: 'qualified-group-row-fallbacks',
         displayName: 'Fallbacks',
         policy: {
-            ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+            ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
             autoSwitch: true,
         },
         activeConnectedAccountId: input.activeConnectedAccountId,
@@ -432,7 +432,7 @@ describe('createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator', () =
     it.each([true, false])('PORT-PS-AB selects before disabling the active model-ineligible member (replacement %s)', async usable => {
         let currentGroup = QualifiedConnectedAccountGroupV4Schema.parse({
             ...group({ activeConnectedAccountId: 'primary', generation: 7, runtimeStateRevision: 3 }),
-            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: true, autoDisablePlanInvalidAccounts: true },
+            policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, autoSwitch: true, autoDisablePlanInvalidAccounts: true },
         });
         if (!usable) currentGroup = { ...currentGroup, members: currentGroup.members.map(member => member.connectedAccountId === 'backup'
             ? { ...member, state: { authInvalidUntilMs: 100_000 } } : member) };

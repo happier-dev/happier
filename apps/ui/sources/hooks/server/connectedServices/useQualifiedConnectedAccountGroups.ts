@@ -26,7 +26,7 @@ import {
 import { sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ConnectedServiceAuthGroupPolicyV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import type { ConnectedServiceAuthGroupPolicyV2 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
@@ -56,7 +56,7 @@ export type UseQualifiedConnectedAccountGroupsResult = Readonly<{
     patch(params: Readonly<{
         group: QualifiedConnectedAccountUiGroup;
         displayName?: string | null;
-        policy?: Partial<ConnectedServiceAuthGroupPolicyV1>;
+        policy?: Partial<ConnectedServiceAuthGroupPolicyV2>;
     }>): Promise<QualifiedConnectedAccountUiGroup | null>;
     delete(group: QualifiedConnectedAccountUiGroup): Promise<QualifiedConnectedAccountGroupDeleteReceipt | false>;
     addMember(params: Readonly<{

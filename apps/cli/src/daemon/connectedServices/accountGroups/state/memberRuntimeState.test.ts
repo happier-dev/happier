@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import type { ConnectedServiceAuthGroupQuotaSnapshot } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import { reconcileMemberRuntimeStateWithFreshQuotaEvidence } from './memberRuntimeState';
 
@@ -11,7 +11,7 @@ describe('reconcileMemberRuntimeStateWithFreshQuotaEvidence', () => {
     expect(reconcileMemberRuntimeStateWithFreshQuotaEvidence({ state,
       quotaSnapshot: { capturedAtMs: 31_000, staleAfterMs: 60_000, meters: [{ meterId: 'weekly',
         providerLimitId: 'weekly', limitCategory: 'usage_limit', remainingPct: 80, resetAtMs: null }] },
-      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, nowMs: 31_000, authenticatedProbe,
+      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, nowMs: 31_000, authenticatedProbe,
     })).toEqual({});
   });
 
@@ -30,11 +30,11 @@ describe('reconcileMemberRuntimeStateWithFreshQuotaEvidence', () => {
       { ...snapshot, meters: [] },
     ]) {
       expect(reconcileMemberRuntimeStateWithFreshQuotaEvidence({ state, quotaSnapshot,
-        policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, nowMs: 31_000, authenticatedProbe,
+        policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, nowMs: 31_000, authenticatedProbe,
       })).toBe(state);
     }
     expect(reconcileMemberRuntimeStateWithFreshQuotaEvidence({ state, quotaSnapshot: snapshot,
-      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, nowMs: 91_000, authenticatedProbe,
+      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, nowMs: 91_000, authenticatedProbe,
     })).toBe(state);
   });
 
@@ -44,7 +44,7 @@ describe('reconcileMemberRuntimeStateWithFreshQuotaEvidence', () => {
         autoDisabledReason: 'model_not_entitled', modelUnavailableUntilMsByModelId: { 'restricted-model': 100_000 } },
       quotaSnapshot: { capturedAtMs: 1_000, staleAfterMs: 60_000, effectiveRemainingPercent: 80, exhausted: false },
       nowMs: 1_000, authenticatedProbe: true,
-      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
     })).toMatchObject({ autoDisabledReason: 'model_not_entitled',
       modelUnavailableUntilMsByModelId: { 'restricted-model': 100_000 } });
   });
@@ -69,7 +69,7 @@ describe('reconcileMemberRuntimeStateWithFreshQuotaEvidence', () => {
           providerLimitId: 'weekly',
         }],
       },
-      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
       nowMs: 10_000,
     })).toEqual({});
   });

@@ -1,5 +1,5 @@
 import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID, type BuiltInLegacyConnectedAccountOperation } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
-import { ConnectedServiceAuthGroupPolicyV1Schema, type ConnectedServiceAuthGroupMemberStateV1, type ConnectedServiceAuthGroupPolicyV1, type ConnectedServiceAuthGroupStateV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupPolicyV2Schema, type ConnectedServiceAuthGroupMemberStateV1, type ConnectedServiceAuthGroupPolicyV2, type ConnectedServiceAuthGroupStateV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { CONNECTED_SERVICE_POOL_MEMBER_PRIORITY_STEP, type ConnectedServiceConfigurationActionIdV1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import { QualifiedConnectedAccountGroupResponseV4Schema, sameQualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -51,7 +51,7 @@ export type QualifiedConnectedAccountUiGroup = Readonly<{
         groupId: string;
     }>;
     displayName: string | null;
-    policy: ConnectedServiceAuthGroupPolicyV1;
+    policy: ConnectedServiceAuthGroupPolicyV2;
     activeAccountId: string | null;
     activeSince?: Readonly<{ accountId: string; atMs: number }> | null;
     revision: QualifiedConnectedAccountUiGroupRevision;
@@ -132,10 +132,10 @@ export function fromQualifiedGroup(
 }
 
 function mergePolicy(
-    current: ConnectedServiceAuthGroupPolicyV1,
-    patch: Partial<ConnectedServiceAuthGroupPolicyV1>,
-): ConnectedServiceAuthGroupPolicyV1 {
-    return ConnectedServiceAuthGroupPolicyV1Schema.parse({
+    current: ConnectedServiceAuthGroupPolicyV2,
+    patch: Partial<ConnectedServiceAuthGroupPolicyV2>,
+): ConnectedServiceAuthGroupPolicyV2 {
+    return ConnectedServiceAuthGroupPolicyV2Schema.parse({
         ...current,
         ...patch,
         ...(patch.switchOn
@@ -189,7 +189,7 @@ export type QualifiedConnectedAccountGroupsClient = Readonly<{
     patch(params: Readonly<{
         group: QualifiedConnectedAccountUiGroup;
         displayName?: string | null;
-        policy?: Partial<ConnectedServiceAuthGroupPolicyV1>;
+        policy?: Partial<ConnectedServiceAuthGroupPolicyV2>;
     }>): Promise<QualifiedConnectedAccountUiGroup>;
     addMember(params: Readonly<{
         group: QualifiedConnectedAccountUiGroup;

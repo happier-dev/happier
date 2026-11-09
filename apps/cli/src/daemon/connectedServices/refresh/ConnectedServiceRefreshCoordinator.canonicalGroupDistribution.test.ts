@@ -10,7 +10,7 @@ import {
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
   type ConnectedServiceChildSelection,
 } from '../connectedServiceChildEnvironment';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import {
   ConnectedServiceRefreshCoordinator,
@@ -48,7 +48,7 @@ function qualifiedGroupForCanonicalRefresh(input: Readonly<{
     incarnation: 'qualified-group-row-pool',
     displayName: 'Pool',
     policy: {
-      ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+      ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
       autoSwitch: false,
     },
     activeConnectedAccountId: input.activeAccountId,

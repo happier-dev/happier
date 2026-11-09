@@ -9,7 +9,7 @@ import {
   ConnectedServiceAuthGroupSwitchCoordinator,
   InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
 } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 
 const credentialRevision = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
 
@@ -238,7 +238,7 @@ describe('applyConnectedServiceAuthGroupGenerationToSessions', () => {
       activeProfileId: 'backup-c',
       generation: 3,
       credentialRevision,
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority' as const },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'priority' as const },
       members: [],
       memberStatesByProfileId: new Map(),
     };

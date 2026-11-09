@@ -23,7 +23,7 @@ const SUPPORTED_DECLARATION = {
       poolSettings: [{
         id: 'native-limit-waiting',
         kind: 'boolean',
-        policyKey: 'claudeCodeAutoContinueAtUsageLimit',
+        policyKey: 'nativeUsageLimitContinuation',
         serviceLocalIds: ['subscription', 'api'],
         titleKey: 'acme.pool.nativeWaiting',
         subtitleKey: 'acme.pool.nativeWaitingDescription',

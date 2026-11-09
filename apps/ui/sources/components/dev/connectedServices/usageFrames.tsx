@@ -12,7 +12,7 @@ import { RAIL_POPOVER_WIDE_WIDTH_PX } from '@/components/navigation/shell/sideba
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceAuthGroupPolicyV2Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { CHATGPT, CLAUDE, DAY, GROUPS, HOUR, MIN, type Svc } from './connectedServicesFixtures';
 
@@ -109,7 +109,7 @@ function useFixture(scope: 'rail' | 'session') {
         agentId: 'claude',
         viewModel: null,
         // The Work pool picks the account with the most left and switches on its own.
-        groups: GROUPS.map((group) => ({ ...group, policy: ConnectedServiceAuthGroupPolicyV1Schema.parse(group.policy) })),
+        groups: GROUPS.map((group) => ({ ...group, policy: ConnectedServiceAuthGroupPolicyV2Schema.parse(group.policy) })),
         usage,
         present: privacy.present,
         resetAction: null,

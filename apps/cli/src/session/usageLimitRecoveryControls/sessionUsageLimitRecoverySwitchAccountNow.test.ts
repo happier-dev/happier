@@ -10,7 +10,7 @@ import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/c
 import { resolveRuntimeAuthFailureSourceProfile } from '@/daemon/connectedServices/runtimeAuth/resolveRuntimeAuthFailureSourceProfile';
 import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry,
   type ConnectedServiceAuthGroupSwitchState } from '@/daemon/connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '@/daemon/connectedServices/accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '@/daemon/connectedServices/accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 
 
 function createUsageLimitIssue(
@@ -52,7 +52,7 @@ describe('routeSessionUsageLimitRecoverySwitchAccountNow', () => {
     const serviceId = 'happier.agent.claude/claude-subscription';
     let state: ConnectedServiceAuthGroupSwitchState = {
       serviceId, groupId: 'happier', activeProfileId: 'primary', generation: 7, runtimeStateRevision: 0,
-      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, strategy: 'priority', autoSwitch: true },
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, strategy: 'priority', autoSwitch: true },
       members: [{ profileId: 'primary', priority: 1, createdAtMs: 1, enabled: true },
         { profileId: 'backup', priority: 2, createdAtMs: 2, enabled: true }],
       memberStatesByProfileId: new Map([['backup', { quotaSnapshot: { capturedAtMs: 1000, staleAfterMs: 60_000, effectiveRemainingPercent: 99 } }]]),

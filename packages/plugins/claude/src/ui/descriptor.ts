@@ -16,10 +16,6 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
       connectRoute: '/(app)/settings/connect/claude',
     },
     flavorAliases: ['claude'],
-    permissions: {
-      modeGroup: 'claude',
-      promptProtocol: 'claude',
-    },
     sessionModes: {
       staticOptions: [
         {
@@ -56,15 +52,31 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'claude' },
   },
   behavior: {
+    accountingSourcePresentation: [
+      {
+        sourceId: 'claude-assistant-usage',
+        title: {
+          key: 'usage.board.page.sourceClaudeResponses',
+          fallback: 'Claude responses'
+        }
+      },
+      {
+        sourceId: 'claude-sdk-result',
+        title: {
+          key: 'usage.board.page.sourceClaudeSessionSummaries',
+          fallback: 'Claude session summaries'
+        }
+      }
+    ],
     descriptorId: 'claude.uiBehavior.v1',
     connectedServices: {
       poolSettings: [{
         id: 'claude-auto-continue',
         kind: 'boolean',
-        policyKey: 'claudeCodeAutoContinueAtUsageLimit',
+        policyKey: 'nativeUsageLimitContinuation',
         serviceLocalIds: ['claude-subscription', 'anthropic'],
-        titleKey: 'connectedServicesPool.claudeCodeAutoContinueAtUsageLimitTitle',
-        subtitleKey: 'connectedServicesPool.claudeCodeAutoContinueAtUsageLimitSubtitle',
+        titleKey: 'connectedServicesPool.nativeUsageLimitContinuationTitle',
+        subtitleKey: 'connectedServicesPool.nativeUsageLimitContinuationSubtitle',
       }],
     },
     payload: {
@@ -302,6 +314,6 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
     ],
   },
   assets: {
-    svgIcon: { assetId: 'claude' },
+    svgIcon: { path: 'assets/agent-mark.svg' },
   },
 });

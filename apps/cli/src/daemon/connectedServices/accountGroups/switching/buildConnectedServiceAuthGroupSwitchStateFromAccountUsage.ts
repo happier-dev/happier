@@ -2,7 +2,7 @@ import type {
     QualifiedConnectedAccountGroupV4,
     ConnectedAccountServiceKey,
     ConnectedServiceAuthGroupMemberStateV1,
-    ConnectedServiceAuthGroupPolicyV1,
+    ConnectedServiceAuthGroupPolicyV2,
     ConnectedServiceUsageSourceV1,
     ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
@@ -14,7 +14,6 @@ import type { ConnectedServiceAuthGroupMemberRuntimeState } from '../selection/s
 import type { ConnectedServiceAuthGroupSwitchState } from './ConnectedServiceAuthGroupSwitchCoordinator';
 import {
     mergePersistedMemberRuntimeState,
-    normalizeConnectedServiceAuthGroupPolicy,
 } from './buildConnectedServiceAuthGroupSwitchState';
 
 export type ConnectedServiceUsageSourceRecordRef = Readonly<{
@@ -45,7 +44,7 @@ export type ConnectedServiceAuthGroupAccountUsageView = Readonly<{
     lastSwitchReason?: string | null;
     lastSwitchAt?: number | null;
     generation: number;
-    policy: ConnectedServiceAuthGroupPolicyV1;
+    policy: ConnectedServiceAuthGroupPolicyV2;
     members: readonly Readonly<{
         profileId: string;
         priority: number;
@@ -164,7 +163,7 @@ export function buildConnectedServiceAuthGroupSwitchStateFromAccountUsage(input:
             lastSwitchReason: input.group.lastSwitchReason,
             lastSwitchAt: input.group.lastSwitchAt,
             generation: input.group.generation,
-            policy: normalizeConnectedServiceAuthGroupPolicy(input.group.policy),
+            policy: input.group.policy,
             members: input.group.members.map((member) => ({
                 profileId: member.profileId,
                 priority: member.priority,

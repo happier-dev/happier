@@ -41,7 +41,7 @@ import { createLegacyProfileMigrationRpcServices } from '@/providers/migrations/
 import type { RpcOperationDiagnostics } from '@/api/rpc/types';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
-import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '@/daemon/connectedServices/accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '@/daemon/connectedServices/accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 import { createRuntimeProviderProbeAuthorizationPort } from '@/providers/spawn/probePort';
 import { createProviderOperationLifetime } from '@/providers/operationLifetime';
@@ -290,7 +290,7 @@ it.each(['deadline', 'caller cancellation'] as const)('aborts the pre-effect Hom
       if (account.kind !== 'account') throw new Error('Expected fixture Account');
       const service = account.account.service;
       const group: QualifiedConnectedAccountGroupV4 = { v: 1, ref: { service, groupId: 'pool' }, incarnation: 'group-pool',
-        displayName: 'Pool', policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, activeConnectedAccountId: account.account.accountId,
+        displayName: 'Pool', policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, activeConnectedAccountId: account.account.accountId,
         generation: 1, runtimeStateRevision: 0, state: {}, createdAt: 1, updatedAt: 1,
         members: [{ v: 1, connectedAccountId: account.account.accountId, priority: 1, enabled: true, state: {}, createdAt: 1, updatedAt: 1 }] };
       const profile: QualifiedConnectedAccountProfileV4 = { ref: account.account, status: 'connected', authenticationModeId: 'manual',
