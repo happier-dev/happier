@@ -74,6 +74,14 @@ function createServerProfilesModuleMockBase(options: ServerProfilesModuleMockOpt
             const rightProfile = findProfileByIdentifier(options, rightId);
             return Boolean(leftProfile && rightProfile && leftProfile.id === rightProfile.id);
         },
+        // Mock profiles carry no separate connection address: the saved snapshot is the descriptor alone.
+        getSavedHomeConnectionSnapshot: (target: Readonly<{ canonicalServerUrl: string; serverIdentityId?: string | null }>) => {
+            const profile = target.serverIdentityId
+                ? findProfileByIdentifier(options, target.serverIdentityId)
+                : readProfiles(options).find(candidate => candidate.serverUrl === target.canonicalServerUrl) ?? null;
+            return profile && profile.serverUrl === target.canonicalServerUrl
+                ? { homeConnectionDescriptor: profile.homeConnectionDescriptor } : null;
+        },
     };
 }
 

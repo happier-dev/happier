@@ -1,4 +1,4 @@
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
     v: 2,
@@ -33,8 +33,6 @@ export const PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE = {
     },
     actionsById: {},
     familiesById: {},
-
-
     resourcesById: {},
     settingsById: {},
     diagnostics: [

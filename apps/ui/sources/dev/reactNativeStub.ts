@@ -4,6 +4,10 @@
 import * as React from 'react';
 import type { AppStateStatus, StatusBarProps } from 'react-native';
 
+// Match native ARGB normalization at the OS color boundary instead of passing
+// authored strings through to consumers that receive packed colors on device.
+export { processColor } from 'react-native-web';
+
 // Provide basic host components so tests that rely on `react-test-renderer` can render trees
 // without having to mock `react-native` in every file.
 export const View = 'View' as any;
@@ -102,6 +106,7 @@ export const InteractionManager = {
 } as const;
 export const Keyboard = {
     addListener: () => ({ remove: () => {} }),
+    dismiss: () => {},
 } as const;
 export const BackHandler = {
     addEventListener: (_eventName: 'hardwareBackPress', _handler: () => boolean) => ({ remove: () => {} }),
@@ -238,7 +243,3 @@ export function useWindowDimensions() {
 }
 
 export const findNodeHandle = () => null;
-
-export function processColor(value: any) {
-    return value as any;
-}

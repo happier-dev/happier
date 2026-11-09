@@ -24,7 +24,7 @@ installSessionRouteCommonModuleMocks({
         .createReactNavigationNativeMock({ renderInitialNavigatorScreen: true }),
 });
 async function sessionResponse() {
-    const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol');
+    const { SessionCurrentProjectionRecordV1Schema} = await import('@happier-dev/protocol/sessions/listing/response');
     const session = createSessionFixture({ id: 'session-123', serverId: runtime.serverId });
     if (!session.access) throw new Error('Expected owner access fixture');
     return Response.json({ session: SessionCurrentProjectionRecordV1Schema.parse({

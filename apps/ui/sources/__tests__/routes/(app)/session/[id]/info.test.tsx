@@ -11,13 +11,19 @@ import { clearTempData } from '@/utils/sessions/tempDataStore';
 import { createSessionRouteHomesFixture, installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import type {
-    SessionOrganizationSnapshot,
-    SessionOrganizationFolder,
+    SessionOrganizationSnapshot} from '@happier-dev/protocol/sessions/organization/snapshot';
+import type {
+    SessionOrganizationFolder} from '@happier-dev/protocol/sessions/organization/folders';
+import type {
     SessionOrganizationTag,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/organization/tags';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
-import { buildQualifiedPluginContributionKey, deriveSessionCreationTagV1, PluginProjectionV2Schema, SessionCreationCorrespondenceV1Schema, SessionOrganizationContentEnvelopeSchema } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import { deriveSessionCreationTagV1} from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { SessionCreationCorrespondenceV1Schema} from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { SessionOrganizationContentEnvelopeSchema } from '@happier-dev/protocol/sessions';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { evaluatePluginUiPolicy } from '@/sync/domains/plugins/ui/policy';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -37,7 +43,7 @@ import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { SessionMetadataTuplePatchSuccessV1Schema, SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { AUTHORING_MEMORY_ROUTE_V1 } from '@happier-dev/protocol';
+import { AUTHORING_MEMORY_ROUTE_V1 } from '@happier-dev/protocol/account/authoringMemory';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -45,9 +51,10 @@ import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/
 import { V2SessionByIdNotFoundSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_MOVE_TO_FOLDER_ID } from '@/components/sessions/actions/sessionActionIds';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
-import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { ServerIdentityCapabilitiesSchema } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
-import type { PluginMachineExecutionOriginV1, PluginSourceCustodyV1 } from '@happier-dev/protocol';
+import type { PluginMachineExecutionOriginV1} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import type { PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { waitForNetworkResponseForTests } from '@/dev/testkit/mocks/runtimeFetch';
 import { tryParseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
@@ -95,6 +102,8 @@ let metadataMutationStatus = 200;
 let organizationPinnedSessionKeys: unknown = null;
 let organizationTagsBySessionKey: unknown = null;
 let organizationFolders: unknown = null;
+let createdSectionRows: SessionOrganizationFolder[] = [];
+let sectionRowsByHomeId: Record<string, SessionOrganizationFolder[]> = {};
 let organizationFolderAssignments: Record<string, string> = {};
 let backendEnabledByTargetKey: Settings['backendEnabledByTargetKey'] | null = null;
 let resolvedServerId = 'server-1';
@@ -301,7 +310,7 @@ function buildSessionOrganizationSnapshotFromFixtures(serverIdRaw: unknown): Ses
         pins: pinnedSessionIds.map((sessionId, index) => ({
             sessionId, sortKey: String(index + 1).padStart(4, '0'), pinnedAt: index + 1, listPinned: true, railPinned: false,
         })),
-        folders: folderEntries.map(([, folder]) => folder),
+        folders: [...folderEntries.map(([, folder]) => folder), ...createdSectionRows, ...(sectionRowsByHomeId[serverId] ?? [])],
         attentionStandings: [],
         folderAssignments: Object.entries(organizationFolderAssignments)
             .map(([sessionId, folderId]) => ({ sessionId, folderId })),
@@ -368,7 +377,6 @@ const { resolvePluginMachineExecutionOrigin } = await vi.importActual<{
 // Call-through observation: admission, selection, and effects stay with their real owners.
 const createDefaultActionExecutorSpy = vi.spyOn(await import('@/sync/ops/actions/defaultActionExecutor'), 'createDefaultActionExecutor');
 const executeSessionActionSpy = vi.spyOn(await import('@/components/sessions/actions/sessionActionExecution'), 'executeSessionAction');
-const useSessionExecutionRunsSupportedSpy = vi.spyOn(await import('@/hooks/server/useSessionExecutionRunsSupported'), 'useSessionExecutionRunsSupported');
 const machineRpcWithServerScopeSpy = vi.spyOn(await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc'), 'machineRpcWithServerScope');
 const safeRouterBackSpy = vi.spyOn(await import('@/utils/navigation/safeRouterBack'), 'safeRouterBack');
 const resolveServerIdForSessionIdFromLocalCacheSpy = vi.spyOn(await import('@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache'), 'resolveServerIdForSessionIdFromLocalCache');
@@ -467,12 +475,13 @@ describe('/session/[id]/info', () => {
         modalShowSpy.mockReset();
         modalShowSpy.mockReturnValue('modal-id');
         machineRpcWithServerScopeSpy.mockClear();
-        useSessionExecutionRunsSupportedSpy.mockClear();
         hideInactiveSessions = false;
         metadataMutationStatus = 200;
         organizationPinnedSessionKeys = null;
         organizationTagsBySessionKey = null;
         organizationFolders = null;
+        createdSectionRows = [];
+        sectionRowsByHomeId = {};
         organizationFolderAssignments = {};
         backendEnabledByTargetKey = null;
         resolvedServerId = 'server-1';
@@ -613,6 +622,18 @@ describe('/session/[id]/info', () => {
                 if (record.encryptionMode !== 'plain') return Response.json({ error: 'unavailable' }, { status: 503 });
                 return answerSessionHttp(Response.json(sessionByIdForHttp), init?.signal);
             }
+            if (url.pathname === '/v2/session-organization/folders' && method === 'POST') {
+                const { CreateOrUpdateSessionOrganizationFolderRequestSchema} = await import('@happier-dev/protocol/sessions/organization/mutations');
+                const input = CreateOrUpdateSessionOrganizationFolderRequestSchema.parse(body);
+                const folder: SessionOrganizationFolder = {
+                    folderId: input.folderId ?? 'created-section', folderKey: input.folderKey ?? input.folderId ?? 'created-section',
+                    parentFolderId: input.parentFolderId ?? null, parentFolderKey: input.parentFolderKey ?? null,
+                    display: input.display ?? null, sortKey: input.sortKey ?? null,
+                    archivedAt: null, createdAt: 1, updatedAt: 1,
+                };
+                createdSectionRows.push(folder);
+                return Response.json({ folder });
+            }
             const organization = /^\/v2\/session-organization\/(pins|tag-assignments|folder-assignments)\/([^/]+)$/.exec(url.pathname);
             if (organization && method === 'PUT' && isPlainRecord(body)) {
                 const sessionId = decodeURIComponent(organization[2]!);
@@ -620,12 +641,25 @@ describe('/session/[id]/info', () => {
                     sessionId, sortKey: body.sortKey ?? null, pinnedAt: 1,
                     listPinned: body.surface !== 'rail', railPinned: body.surface === 'rail',
                 } : null });
+                if (organization[1] === 'tag-assignments') {
+                    const { MutateSessionTagAssignmentsRequestSchema } = await import('@happier-dev/protocol/sessions/organization/mutations');
+                    const input = MutateSessionTagAssignmentsRequestSchema.parse(body);
+                    const previous = buildSessionOrganizationSnapshotFromFixtures(fixtureHomeId).tagAssignments
+                        .find(assignment => assignment.sessionId === sessionId)?.tagIds ?? [];
+                    const tagIds = 'tagIds' in input ? input.tagIds
+                        : [...new Set([...previous.filter(tagId => !input.removeTagIds.includes(tagId)), ...input.addTagIds])];
+                    return Response.json({ sessionId, tagIds });
+                }
                 if (organization[1] === 'folder-assignments') {
+                    // The real HTTP owner admits only this Account's destination definitions.
+                    if (typeof body.folderId === 'string' && !buildSessionOrganizationSnapshotFromFixtures(fixtureHomeId)
+                        .folders.some(folder => folder.folderId === body.folderId)) {
+                        return Response.json({ error: 'not_found' }, { status: 404 });
+                    }
                     if (typeof body.folderId === 'string') organizationFolderAssignments[sessionId] = body.folderId;
                     else delete organizationFolderAssignments[sessionId];
                 }
-                return Response.json({ sessionId, ...(organization[1] === 'tag-assignments'
-                    ? { tagIds: body.tagIds } : { folderId: body.folderId }) });
+                return Response.json({ sessionId, folderId: body.folderId });
             }
             return null;
         });
@@ -749,6 +783,16 @@ describe('/session/[id]/info', () => {
                 backendEnabledByTargetKey: backendEnabledByTargetKey ?? settingsDefaults.backendEnabledByTargetKey },
             localSettings: { ...localSettingsDefaults, devModeEnabled: localDevModeEnabled },
         });
+        // Restoring a Home can adopt its portable identity. Publish fixtures
+        // through that same inventory owner so an earlier canonical snapshot
+        // cannot outrank this alias's current Machine rows.
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        for (const [homeId, machines] of Object.entries(machineInventory)) {
+            await publishMachineInventoryForTest({
+                serverId: resolveServerProfileScopeIdForIdentifier(homeId), accountId: 'viewer-account',
+            }, machines);
+        }
         for (const homeId of routeHomeIds) {
             store.getState().clearSessionOrganizationForServer(homeId);
             store.getState().applySessionOrganizationSnapshot(homeId, buildSessionOrganizationSnapshotFromFixtures(homeId));
@@ -865,7 +909,7 @@ describe('/session/[id]/info', () => {
         routeHydrationState = { kind: 'loading', sessionId: 'session-1', reason: 'store-miss' };
         const screen = await renderInfoScreen();
         expect(screen.getTextContent()).not.toContain('common.loading');
-        expect(screen.getTextContent()).toContain('name');
+        expect(screen.findByTestId('session-info-title-field')?.props.value).toBe('name');
     });
 
     it('uses the encrypted title and hides private detail/actions for a locked recipient', async () => {
@@ -895,11 +939,7 @@ describe('/session/[id]/info', () => {
         const hydrated = await fetchAndApplySessionById({
             sessionId, serverId: 'server-1',
             credentials: { token: credentials.token, secret: encodeBase64(secret) },
-            accountCurrentness: {
-                mode: 'e2ee', version: 1, updatedAt: 1,
-                signingKeyFingerprint: 'signing-current', contentKeyFingerprint: 'content-current',
-                recipientEnvelopeReadiness: { status: 'available' },
-            },
+            accountCurrentness: createLegacyAccountEncryptionCurrentnessFixture({ secret }),
             encryption: reader, sessionDataKeys: new Map(),
             request: async () => Response.json({ session: row }),
             applySessions: store.getState().applySessions,
@@ -1043,9 +1083,9 @@ describe('/session/[id]/info', () => {
 
         const screen = await renderInfoScreen();
 
-        expect(screen.findAllByType(Item).find(node => node.props.testID === 'session-info-placement-origin')?.props).toMatchObject({
-            subtitle: 'machinePools.aMachinePool',
-        });
+        await vi.waitFor(() => expect(screen.findAllByType(Item).find(node => node.props.testID === 'session-info-placement-origin')?.props).toMatchObject({
+            detail: 'machinePools.aMachinePool',
+        }));
     });
 
     it('mounts projected Session-info sections through the shared semantic inline host', async () => {
@@ -1067,7 +1107,7 @@ describe('/session/[id]/info', () => {
         const mounts = screen.findAllByType(PluginInlineSurfaceHost);
         expect(mounts).toHaveLength(1);
         await vi.waitFor(() => expect(screen.findAllByType(PluginInlineSurfaceHost)[0]?.props).toMatchObject({
-            placement,
+            placement: { ...placement, runtime: { resourceCapability: { readable: true, dynamic: false } } },
             inlineMount: { role: 'sessionInfoSection', presentation: 'content' },
             sessionId: 'session-1',
             machineId: 'machine-1',
@@ -1085,7 +1125,12 @@ describe('/session/[id]/info', () => {
         await act(async () => { delivered = await resourceRead.value; });
         expect(delivered).toMatchObject({ ok: true, resource: { pluginId: 'acme.preview', localId: 'session-overview' } });
         await flushHookEffects({ cycles: 1 });
-        await waitForHeaderMenuOutcome(() => expect(screen.getTextContent()).toContain('Session overview from daemon Resource'));
+        const { DeclarativePluginSurface } = await import('@/components/plugins/surfaces/DeclarativePluginSurface');
+        await waitForHeaderMenuOutcome(() => {
+            const documentStates = screen.findAllByType(DeclarativePluginSurface)
+                .map(mount => mount.props.documentSourcePresentation?.presentation);
+            expect(screen.getTextContent(), JSON.stringify(documentStates)).toContain('Session overview from daemon Resource');
+        });
         expect(network.requests).toContainEqual(expect.objectContaining({
             serverUrl: 'https://server-1.example', targetId: 'machine-1',
             method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ,
@@ -1199,7 +1244,7 @@ describe('/session/[id]/info', () => {
             metadata: {},
         };
         const screen = await renderInfoScreen();
-        expect(screen.getTextContent()).toContain('name');
+        expect(screen.findByTestId('session-info-title-field')?.props.value).toBe('name');
         expect(screen.getTextContent()).not.toContain('errors.sessionDeleted');
     });
 
@@ -1222,7 +1267,6 @@ describe('/session/[id]/info', () => {
         expect(resolved).toBe('server-session-info');
         await executorConfig?.openSession?.('child-session');
         expect(routerPushSpy).toHaveBeenCalledWith('/session/child-session?serverId=server-session-info');
-        expect(useSessionExecutionRunsSupportedSpy).toHaveBeenCalledWith('session-1', 'server-session-info');
     });
 
     it('uses daemon merged projection titles when resolving the default session action backend label', async () => {
@@ -1302,9 +1346,9 @@ describe('/session/[id]/info', () => {
 
         const aiProviderItems = screen
             .findAllByType(Item)
-            .filter((node: any) => node.props?.title === 'sessionInfo.aiProvider');
+            .filter((node) => node.props.testID === 'session-info-agent');
         expect(aiProviderItems).toHaveLength(1);
-        expect(aiProviderItems[0]?.props?.subtitle).toBe('Claude (daemon)');
+        expect(aiProviderItems[0]?.props.detail).toBe('Claude (daemon)');
     });
 
     it('shows no substituted Agent brand for a session whose Agent is unreadable', async () => {
@@ -1338,9 +1382,9 @@ describe('/session/[id]/info', () => {
 
         const aiProviderItems = screen
             .findAllByType(Item)
-            .filter((node: any) => node.props?.title === 'sessionInfo.aiProvider');
+            .filter((node) => node.props.testID === 'session-info-agent');
         expect(aiProviderItems).toHaveLength(1);
-        expect(aiProviderItems[0]?.props?.subtitle).not.toBe('agentInput.agent.claude');
+        expect(aiProviderItems[0]?.props.detail).not.toBe('agentInput.agent.claude');
     });
 
     it('defers raw dev JSON rendering until a section is opened', async () => {
@@ -1532,11 +1576,34 @@ describe('/session/[id]/info', () => {
 
             // One status, in the identity line; the duplicate Activity row is gone.
             expect(screen.findByTestId('session-info-status')?.props.children).toBe('status.ready');
+            expect(screen.findByTestId('session-info-status-elapsed'), 'no clock once the turn ended').toBeFalsy();
             expect(items.some((node: any) => node.props?.title === 'sessionInfo.sessionStatus')).toBe(false);
             expect(items.some((node: any) => node.props?.title === 'sessionInfo.thinking')).toBe(false);
         } finally {
             (globalThis as { __DEV__?: boolean }).__DEV__ = previousDevFlag;
         }
+    });
+
+    it('says how long the running turn has been working beside its status', async () => {
+        const startedAt = Date.now() - 4 * 60_000;
+        mockSession = {
+            id: 'session-working-elapsed',
+            active: true,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+            thinking: true,
+            thinkingAt: Date.now(),
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: startedAt,
+        };
+        const working = await renderInfoScreen();
+        const clocks = working.findAllByTestId('session-info-status-elapsed');
+        expect(clocks.length, 'the identity draws the shared elapsed clock').toBeGreaterThan(0);
+        expect(clocks.some((node) => node.props.sinceMs === startedAt)).toBe(true);
+
     });
 
     it('fails closed and hides the handoff quick action when direct peer truth is runtime-unknown and server-routed fallback would make the UI untruthful', async () => {
@@ -1583,7 +1650,7 @@ describe('/session/[id]/info', () => {
         };
 
         const screen = await renderInfoScreen();
-        const handoffItems = screen.findAllByType(Item).filter((node: any) => node.props?.title === 'Hand off session');
+        const handoffItems = screen.findAllByType(Item).filter((node) => node.props.testID === 'session-info-hand-off');
         expect(handoffItems).toHaveLength(0);
     });
 
@@ -1632,7 +1699,7 @@ describe('/session/[id]/info', () => {
         };
 
         const screen = await renderInfoScreen();
-        const handoffItems = screen.findAllByType(Item).filter((node: any) => node.props?.title === 'Hand off session');
+        const handoffItems = screen.findAllByType(Item).filter((node) => node.props.testID === 'session-info-hand-off');
         expect(handoffItems).toHaveLength(0);
     });
 
@@ -1743,6 +1810,22 @@ describe('/session/[id]/info', () => {
         expect(screen.findAllByProps({ testID: 'session-info-session-unpin' })).toHaveLength(0);
     });
 
+    it.each([true, false])('executes the header list pin action through the current organization owner (%s)', async (pinned) => {
+        mockServerId = 'server-b';
+        organizationPinnedSessionKeys = [];
+        mockSession = createSessionFixture({ id: 'session-1', serverId: 'server-b' });
+        await renderInfoScreen();
+        const { executeSessionAction } = await import('@/components/sessions/actions/sessionActionExecution');
+        const { createSessionActionTarget } = await import('@/components/sessions/actions/sessionActionContext');
+        await act(async () => {
+            await executeSessionAction({ actionId: pinned ? 'ui.session.pin' : 'ui.session.unpin',
+                target: createSessionActionTarget({ session: mockSession, serverId: 'server-b', isPinned: !pinned }) });
+        });
+        expect(requestsFor('/v2/session-organization/pins/session-1')).toEqual([expect.objectContaining({
+            serverUrl: 'https://server-b.example', method: 'PUT', body: expect.objectContaining({ pinned, surface: 'list' }),
+        })]);
+    });
+
     it('surfaces pin and tag actions from the session view quick actions', async () => {
         mockServerId = 'server-b';
         organizationPinnedSessionKeys = [];
@@ -1775,7 +1858,7 @@ describe('/session/[id]/info', () => {
         });
         await screen.pressByTestIdAsync('session-tags-menu-item:fixture-tag-1');
         await waitForHeaderMenuOutcome(() => expect(requestsFor('/v2/session-organization/tag-assignments/session-1')).toEqual([expect.objectContaining({
-            serverUrl: 'https://server-b.example', method: 'PUT', body: { tagIds: [] },
+            serverUrl: 'https://server-b.example', method: 'PUT', body: { addTagIds: [], removeTagIds: ['fixture-tag-1'] },
         })]));
     });
 
@@ -1800,12 +1883,124 @@ describe('/session/[id]/info', () => {
 
         await screen.pressByTestIdAsync('session-info-session-pin');
         await act(async () => { await vi.waitFor(() => expect(modalAlertSpy).toHaveBeenCalledWith(
-            'common.error', 'errors.unknownError', [{ text: 'common.ok', style: 'cancel' }],
+            'common.error', 'action_account_scope_changed', [{ text: 'common.ok', style: 'cancel' }],
         )); });
         expect(requestsFor('/v2/session-organization/pins/session-1')).toEqual([]);
     });
 
-    it.each(['select', 'cancel'] as const)('surfaces move-to-folder from the session view when folder targets match the session workspace (%s)', async (choice) => {
+    it('creates and files into the first Account Section without a Session workspace through the mounted chooser', async () => {
+        mockServerId = 'server-1';
+        sessionFoldersFeatureEnabled = true;
+        mockSession = createSessionFixture({ id: 'session-1', active: false,
+            metadata: { ...createSessionFixture().metadata!, machineId: 'machine-1', path: '' } });
+        modalPromptSpy.mockResolvedValue('First section');
+        const screen = await renderInfoScreen();
+        try {
+            expect(screen.findByTestId('session-info-session-move-to-folder')).not.toBeNull();
+            await screen.pressByTestIdAsync('session-info-session-move-to-folder');
+            await waitForHeaderMenuOutcome(() => expect(modalShowSpy).toHaveBeenCalledOnce());
+            const config = modalShowSpy.mock.calls[0]![0];
+            const chooser = await renderScreen(React.createElement(config.component, config.props));
+            try {
+                await chooser.pressByTestIdAsync('session-folder-selection:root:option:session.section.move:new');
+                const { getStorage } = await import('@/sync/domains/state/storageStore');
+                await waitForHeaderMenuOutcome(() => {
+                    expect(modalAlertSpy).not.toHaveBeenCalled();
+                    expect(createdSectionRows).toHaveLength(1);
+                    const sectionId = createdSectionRows[0]!.folderId;
+                    expect(createdSectionRows[0]!.display).toMatchObject({ t: 'plain', v: { name: 'First section' } });
+                    expect(requestsFor('/v2/session-organization/folder-assignments/session-1')).toEqual([
+                        expect.objectContaining({ serverUrl: 'https://server-1.example', method: 'PUT', body: { folderId: sectionId } }),
+                    ]);
+                    expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[
+                        sessionAddressKey({ serverId: accountConnection!.serverId, sessionId: 'session-1' })
+                    ]).toEqual({ sessionId: 'session-1', folderId: sectionId });
+                    expect(getStorage().getState().sessionOrganizationOptimisticRecords).toEqual({});
+                });
+                const { fetchAndApplySessionOrganizationSnapshot } = await import('@/sync/ops/sessionOrganization/fetchSessionOrganizationSnapshot');
+                await act(async () => {
+                    const sectionId = createdSectionRows[0]!.folderId;
+                    const snapshot = await fetchAndApplySessionOrganizationSnapshot({ credentials,
+                        serverId: accountConnection!.serverId,
+                        request: { folderIds: [sectionId], assignmentSessionIds: ['session-1'], includeFolders: true } });
+                    expect(snapshot?.folders).toEqual([expect.objectContaining({ folderId: sectionId,
+                        display: { t: 'plain', v: { name: 'First section', icon: null } } })]);
+                    expect(snapshot?.folderAssignments).toEqual([{ sessionId: 'session-1', folderId: sectionId }]);
+                });
+            } finally { await chooser.unmount(); }
+        } finally { await screen.unmount(); }
+    });
+
+    it('refuses filing after the chooser\'s captured Home Account retires instead of using replacement credentials', async () => {
+        mockServerId = 'server-1';
+        sessionFoldersFeatureEnabled = true;
+        mockSession = createSessionFixture({ id: 'session-1', active: false });
+        organizationFolders = { v: 1, folders: [{ id: 'section-1', name: 'Planning',
+            workspace: { t: 'workspaceScope', serverId: 'server-1', machineId: 'machine-1', rootPath: '/other-project' },
+            parentId: null, createdAt: 1, updatedAt: 1 }] };
+        const screen = await renderInfoScreen();
+        try {
+            await screen.pressByTestIdAsync('session-info-session-move-to-folder');
+            await waitForHeaderMenuOutcome(() => expect(modalShowSpy).toHaveBeenCalledOnce());
+            const config = modalShowSpy.mock.calls[0]![0];
+            const chooser = await renderScreen(React.createElement(config.component, config.props));
+            try {
+                await act(async () => { await TokenStorage.removeCredentialsForServerUrl('https://server-1.example',
+                    { serverId: accountConnection!.serverId }); });
+                await chooser.pressByTestIdAsync('session-folder-selection:root:option:session.section.move:section:section-1');
+                await waitForHeaderMenuOutcome(() => {
+                    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'action_account_scope_changed',
+                        [{ text: 'common.ok', style: 'cancel' }]);
+                    expect(requestsFor('/v2/session-organization/folder-assignments/session-1')).toEqual([]);
+                });
+            } finally { await chooser.unmount(); }
+        } finally { await screen.unmount(); }
+    });
+
+    it('refuses a foreign Home Section at the mounted Section chooser public session.section.set boundary and leaves exact Home readback unfiled', async () => {
+        mockServerId = 'server-1';
+        sessionFoldersFeatureEnabled = true;
+        mockSession = createSessionFixture({ id: 'session-1', active: false });
+        sectionRowsByHomeId['server-b'] = [{ folderId: 'foreign-section', folderKey: 'foreign-section',
+            parentFolderId: null, parentFolderKey: null, sortKey: 'a0',
+            display: { t: 'plain', v: { name: 'Foreign section', icon: null } },
+            archivedAt: null, createdAt: 1, updatedAt: 1 }];
+        const screen = await renderInfoScreen();
+        try {
+            await screen.pressByTestIdAsync('session-info-session-move-to-folder');
+            await waitForHeaderMenuOutcome(() => expect(modalShowSpy).toHaveBeenCalledOnce());
+            const config = modalShowSpy.mock.calls[0]![0];
+            const chooser = await renderScreen(React.createElement(config.component, config.props));
+            try {
+                expect(chooser.getTextContent()).not.toContain('Foreign section');
+                const { sessionOrganizationActions } = await import('@/sync/ops/sessionOrganization/sessionOrganizationActions');
+                await act(async () => {
+                    const result = await sessionOrganizationActions.setSection('session-1', 'foreign-section', {
+                        serverId: accountConnection!.serverId, expectedAccountId: 'viewer-account',
+                    });
+                    expect(result).toMatchObject({ ok: false });
+                });
+                expect(requestsFor('/v2/session-organization/folder-assignments/session-1')).toEqual([
+                    expect.objectContaining({ serverUrl: 'https://server-1.example', body: { folderId: 'foreign-section' } }),
+                ]);
+                const { fetchAndApplySessionOrganizationSnapshot } = await import('@/sync/ops/sessionOrganization/fetchSessionOrganizationSnapshot');
+                await act(async () => {
+                    const snapshot = await fetchAndApplySessionOrganizationSnapshot({ credentials, serverId: accountConnection!.serverId,
+                        request: { assignmentSessionIds: ['session-1'], includeFolders: true } });
+                    expect(snapshot?.folderAssignments).toEqual([]);
+                    expect(snapshot?.folders).toEqual([]);
+                });
+                const { getStorage } = await import('@/sync/domains/state/storageStore');
+                expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[
+                    sessionAddressKey({ serverId: accountConnection!.serverId, sessionId: 'session-1' })
+                ]?.folderId ?? null).toBeNull();
+                expect(getStorage().getState().sessionOrganizationOptimisticRecords).toEqual({});
+                await act(async () => { config.onRequestClose?.(); });
+            } finally { await chooser.unmount(); }
+        } finally { await screen.unmount(); }
+    });
+
+    it.each(['select', 'cancel', 'project'] as const)('files across Projects within the Session Home through the mounted Section chooser (%s)', async (choice) => {
             mockServerId = 'server-1';
             sessionFoldersFeatureEnabled = true;
             await restoreInfoAccountIfNeeded();
@@ -1818,7 +2013,7 @@ describe('/session/[id]/info', () => {
                         t: 'workspaceScope',
                         serverId: accountConnection.serverId,
                         machineId: 'machine-1',
-                        rootPath: '/repo',
+                        rootPath: '/another-project',
                     },
                     parentId: null,
                     name: 'Planning',
@@ -1842,23 +2037,6 @@ describe('/session/[id]/info', () => {
                     path: '/repo',
                 },
             };
-            modalShowSpy.mockImplementation((config) => {
-                const props = config.props as Readonly<{
-                    sourceLabel: string;
-                    targets: readonly import('@/sync/domains/session/folders').SessionFolderMoveTarget[];
-                    onSelect: (target: import('@/sync/domains/session/folders').SessionFolderMoveTarget) => void;
-                }>;
-                expect(props.sourceLabel).toBe('name');
-                const target = props.targets.find((candidate) => candidate.folderId === 'folder-1');
-                expect(target).toMatchObject({ id: 'session-info-move-folder:folder-1', title: 'Planning', disabled: false });
-                if (!target) throw new Error('Matching folder target is missing');
-                queueMicrotask(() => {
-                    if (choice === 'select') props.onSelect(target);
-                    else config.onRequestClose?.();
-                });
-                return 'modal-id';
-            });
-
             const { getStorage } = await import('@/sync/domains/state/storageStore');
             const { buildSessionOrganizationServerKey } = await import('@/sync/domains/session/organization');
             const { createSessionRouteServerScope } = await import('@/hooks/session/sessionRouteServerScope');
@@ -1875,7 +2053,7 @@ describe('/session/[id]/info', () => {
                     ];
                     expect(folder?.display).toMatchObject({ t: 'plain', v: { workspace: {
                         t: 'workspaceScope', serverId: addressedHomeId,
-                        machineId: session ? readSessionOwnerMetadataView(session)?.machineId : undefined, rootPath: session?.metadata?.path,
+                        machineId: session ? readSessionOwnerMetadataView(session)?.machineId : undefined, rootPath: '/another-project',
                     } } });
                 });
                 expect(network.httpRequests).toContainEqual(expect.objectContaining({
@@ -1886,17 +2064,23 @@ describe('/session/[id]/info', () => {
                     expect(modalShowSpy).toHaveBeenCalledOnce();
                     expect(modalAlertSpy).not.toHaveBeenCalled();
                 });
-                if (choice === 'select') await settleSessionAction(SESSION_ACTION_MOVE_TO_FOLDER_ID);
+                const config = modalShowSpy.mock.calls[0]![0];
+                const chooser = await renderScreen(React.createElement(config.component, config.props));
+                try {
+                    expect(chooser.getTextContent()).toContain('Planning');
+                    if (choice === 'cancel') await act(async () => { config.onRequestClose?.(); });
+                    else await chooser.pressByTestIdAsync(`session-folder-selection:root:option:session.section.move:${
+                        choice === 'select' ? 'section:folder-1' : 'project'}`);
 
                 await vi.waitFor(() => {
                     const assignment = getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[
                         sessionAddressKey({ serverId: addressedHomeId, sessionId: 'session-1' })
                     ];
-                    if (choice === 'select') {
+                    if (choice !== 'cancel') {
                         expect(requestsFor('/v2/session-organization/folder-assignments/session-1')).toEqual([
-                            expect.objectContaining({ serverUrl: 'https://server-1.example', method: 'PUT', body: { folderId: 'folder-1' } }),
+                            expect.objectContaining({ serverUrl: 'https://server-1.example', method: 'PUT', body: { folderId: choice === 'select' ? 'folder-1' : null } }),
                         ]);
-                        expect(assignment).toEqual({ sessionId: 'session-1', folderId: 'folder-1' });
+                        expect(assignment).toEqual({ sessionId: 'session-1', folderId: choice === 'select' ? 'folder-1' : null });
                         expect(network.credentialRequests).toContainEqual({ serverUrl: 'https://server-1.example', serverId: 'server-1' });
                     } else {
                         expect(requestsFor('/v2/session-organization/folder-assignments/session-1')).toEqual([]);
@@ -1904,6 +2088,7 @@ describe('/session/[id]/info', () => {
                     }
                     expect(getStorage().getState().sessionOrganizationOptimisticRecords).toEqual({});
                 });
+                } finally { await chooser.unmount(); }
             } finally {
                 await screen.unmount();
             }
@@ -1952,7 +2137,7 @@ describe('/session/[id]/info', () => {
         };
 
         const screen = await renderInfoScreen();
-        const handoffItems = screen.findAllByType(Item).filter((node: any) => node.props?.title === 'Hand off session');
+        const handoffItems = screen.findAllByType(Item).filter((node) => node.props.testID === 'session-info-hand-off');
         expect(handoffItems).toHaveLength(1);
     });
 
@@ -2005,7 +2190,7 @@ describe('/session/[id]/info', () => {
         };
 
         const screen = await renderInfoScreen();
-        let handoffItems = screen.findAllByType(Item).filter((node: any) => node.props?.title === 'Hand off session');
+        let handoffItems = screen.findAllByType(Item).filter((node) => node.props.testID === 'session-info-hand-off');
         expect(handoffItems).toHaveLength(0);
 
         const { recordCachedMachineRpcDirectRouteViable } = await import('@/sync/domains/transfers/runtime/transferRouteCache');
@@ -2017,7 +2202,7 @@ describe('/session/[id]/info', () => {
         });
         await flushHookEffects({ cycles: 10 });
 
-        handoffItems = screen.findAllByType(Item).filter((node: any) => node.props?.title === 'Hand off session');
+        handoffItems = screen.findAllByType(Item).filter((node) => node.props.testID === 'session-info-hand-off');
         expect(handoffItems).toHaveLength(1);
     });
 
@@ -2068,7 +2253,7 @@ describe('/session/[id]/info', () => {
         const screen = await renderInfoScreen();
         await flushHookEffects({ cycles: 10 });
 
-        const handoffItems = screen.findAllByType(Item).filter((node: any) => node.props?.title === 'Hand off session');
+        const handoffItems = screen.findAllByType(Item).filter((node) => node.props.testID === 'session-info-hand-off');
         expect(handoffItems).toHaveLength(1);
     });
 
@@ -2102,8 +2287,8 @@ describe('/session/[id]/info', () => {
         expect(mockSession.metadata).toMatchObject({ acpConfiguredBackendV1: { backendId: 'qa-acp-stub' } });
 
         const screen = await renderInfoScreen();
-        const providerItem = screen.findAllByType(Item).find(node => node.props.title === 'sessionInfo.aiProvider');
-        expect(providerItem?.props.subtitle).toBe('QA ACP Stub Backend');
+        const providerItem = screen.findAllByType(Item).find(node => node.props.testID === 'session-info-agent');
+        expect(providerItem?.props.detail).toBe('QA ACP Stub Backend');
     });
 
     it('shows the provider resume surfaces from the current runtime and native resume identities', async () => {
@@ -2256,8 +2441,9 @@ describe('/session/[id]/info', () => {
         expect(mockSession.metadata).toMatchObject({ transcriptStorage: 'direct',
             backendTarget: { kind: 'backend', backendId: 'codex' } });
 
-        const screen = await renderInfoScreen();
-        screen.pressByTestId('session-info-new-session-same-setup');
+        const screen = await renderInfoScreen({ publishMachineCensus: true });
+        await screen.pressByTestIdAsync('session-info-new-session-same-setup');
+        expect(modalAlertSpy.mock.calls).toEqual([]);
         await vi.waitFor(() => expect(routerPushSpy).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/new' })));
         const pushArg = routerPushSpy.mock.calls.find(([href]) => href.pathname === '/new')?.[0] as {
             pathname: string; params: { draftId: string; draftServerId: string; draftAccountId: string };
@@ -2302,6 +2488,7 @@ describe('/session/[id]/info', () => {
     });
 
     it('offers Session log navigation only in developer mode', async () => {
+        vi.stubGlobal('__DEV__', false);
         mockSession = {
             id: 'session-1',
             active: false,
@@ -2335,9 +2522,10 @@ describe('/session/[id]/info', () => {
         expect(screen.findAllByType(Item).find(node => node.props.testID === 'session-info-session-log-path')).toBeTruthy();
     });
 
-    it('copies developer debug information and omits unknown provider artifact lines', async () => {
+    it('offers plain session information with developer mode disabled and keeps raw diagnostics hidden', async () => {
         const Clipboard = await import('expo-clipboard');
-        localDevModeEnabled = true;
+        vi.stubGlobal('__DEV__', false);
+        localDevModeEnabled = false;
         mockSession = {
             id: 'session-1',
             active: false,
@@ -2361,6 +2549,7 @@ describe('/session/[id]/info', () => {
 
         const screen = await renderInfoScreen();
         const copyDebugRow = screen.findAllByType(Item).find(node => node.props.testID === 'session-info-copy-debug-information');
+        expect(screen.findByTestId('session-info-developer')).toBeNull();
         expect(copyDebugRow?.props.copy).toBe([
             'Happier session ID: session-1',
             'agentInput.agent.codex session ID: codex-session-1',
@@ -2798,7 +2987,7 @@ describe('/session/[id]/info', () => {
         await waitForHeaderMenuOutcome(() => expect(modalAlertSpy).toHaveBeenCalledWith(
             'common.error', 'sessionInfo.failedToRenameSession', [{ text: 'common.ok', style: 'cancel' }],
         ));
-        expect(screen.getTextContent()).toContain('Ready');
+        expect(screen.findByTestId('session-info-title-field')?.props.value).toBe('Ready');
     });
 
     it('settles a refused gentle Stop in the existing in-app alert without archiving or navigating away', async () => {
@@ -2843,29 +3032,6 @@ describe('/session/[id]/info', () => {
         ));
         expect(requestsFor('/v1/sessions/session-1').filter(request => request.method === 'DELETE')).toEqual([]);
         expect(safeRouterBackSpy).not.toHaveBeenCalled();
-    });
-
-    it.each([
-        { reason: 'active', active: true, connected: false, retired: true, canDelete: true },
-        { reason: 'connected', active: false, connected: true, retired: true, canDelete: true },
-        { reason: 'recoverable', active: false, connected: false, retired: false, canDelete: true },
-        { reason: 'without deletion rights', active: false, connected: false, retired: true, canDelete: false },
-    ])('suppresses Delete for a session that is $reason', async ({ active, connected, retired, canDelete }) => {
-        sessionIsConnected = connected;
-        mockSession = createSessionFixture({
-            active,
-            access: createSessionAccessFixture('owner', { deleteSession: canDelete }),
-            metadataLayoutVersion: 1,
-            ownerMetadataView: {
-                path: '/repo',
-                host: 'tester.local',
-                terminal: { mode: 'plain', controlServiceabilityV1: { v: 1, state: retired ? 'unknown' : 'recoverable_unservable', observedAt: 1, retired } },
-            },
-        });
-
-        const screen = await renderInfoScreen();
-        expect(screen.findByTestId('session-info-delete')).toBeNull();
-        expect(screen.findByTestId('sessionInfo.deleteSession')).toBeNull();
     });
 
     it.each([

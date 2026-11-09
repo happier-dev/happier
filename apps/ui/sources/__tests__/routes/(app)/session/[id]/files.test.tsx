@@ -60,7 +60,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
         const address = new URL(String(url));
         if ((init?.method ?? 'GET') !== 'GET' || address.pathname !== '/v2/sessions/session-1') return null;
         sessionReads.push(address.origin);
-        const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol');
+        const { SessionCurrentProjectionRecordV1Schema} = await import('@happier-dev/protocol/sessions/listing/response');
         const session = createSessionFixture({ id: 'session-1', serverId: runtime.serverId });
         if (!session.access) throw new Error('Expected owner access fixture');
         return Response.json({ session: SessionCurrentProjectionRecordV1Schema.parse({

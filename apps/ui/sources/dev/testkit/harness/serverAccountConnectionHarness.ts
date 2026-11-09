@@ -2,7 +2,7 @@ import { vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import type { SessionSystemRecordStored } from '@happier-dev/protocol';
+import type { SessionSystemRecordStored } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import type { SessionEffectiveAccessV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { assertBoundaryImportOrder, recordBoundaryImportOriginal } from './assertBoundaryImportOrder';
@@ -41,6 +41,17 @@ export function createSessionSystemRecordHttpFixture(params: Readonly<{
                 && candidate.address.kind === parsed.searchParams.get('kind') && candidate.address.localId === localId);
             return Response.json({ record: record ?? null });
         }
+        if (parsed.pathname === `${prefix}/system-records`) {
+            // The host list route: one complete page of the matching records, or their count.
+            const query = parsed.searchParams;
+            const matching = params.records.filter(candidate => candidate.address.owner === query.get('owner')
+                && candidate.address.namespace === query.get('namespace')
+                && (!query.has('kind') || candidate.address.kind === query.get('kind'))
+                && (!query.has('localId') || candidate.address.localId === query.get('localId')));
+            return Response.json(query.get('projection') === 'count'
+                ? { count: matching.length }
+                : { records: matching, nextCursor: null, hasNext: false });
+        }
         return new Response('{}', { status: 404 });
     };
     // Session reads arrive on the batch wire; it composes the same single-Session facts.
@@ -71,8 +82,16 @@ type SocketResponder = Readonly<{ configure: ConfigureSocketBoundary }>;
 const socketBoundary = vi.hoisted(() => ({
     configure: undefined as ConfigureSocketBoundary | undefined,
     responders: new Map<string, SocketResponder>(),
+    realOrigins: new Set<string>(),
 }));
 let currentRuntimeFetchBoundary: object | undefined;
+
+/** Keep Account restoration real while a composed test owns an actual loopback Socket.IO server. */
+export function allowRealServerSocketBoundary(serverUrl: string): Readonly<{ dispose(): void }> {
+    const origin = new URL(serverUrl).origin;
+    socketBoundary.realOrigins.add(origin);
+    return { dispose() { socketBoundary.realOrigins.delete(origin); } };
+}
 
 function socketResponderKey(serverUrl: string, token: string): string {
     return JSON.stringify([new URL(serverUrl).href.replace(/\/+$/, ''), token]);
@@ -84,6 +103,8 @@ export async function createSocketIoClientBoundary(importOriginal: <T>() => Prom
     recordBoundaryImportOriginal(actual);
     const createSocket = (...args: Parameters<typeof actual.io>) => {
         const socket = actual.io(...args);
+        if (socketBoundary.realOrigins.size > 0 && typeof args[0] === 'string'
+            && socketBoundary.realOrigins.has(new URL(args[0]).origin)) return socket;
         // Capture the physical transport principal before a fixture configures
         // SDK methods. A later Home must never become this socket's authority.
         const auth = socket.auth;
@@ -170,6 +191,10 @@ export async function restoreServerAccountForTest(params: Readonly<{
     credentialScope?: 'restored-home';
     /** Warm Account replacement uses the real serialized switch, not cold restore. */
     activation?: 'switch';
+    /** `request` answers readiness probes too, so a test can take the whole Home down. */
+    requestOwnsReachabilityProbes?: true;
+    /** As at boot, the transport phase runs in the background and its failure keeps this lifetime. */
+    retainFailedColdRestore?: true;
     /** Explicit external Homes that may receive captured cleanup after replacement. */
     additionalRequestOrigins?: readonly string[];
     /** Cold Socket SDK responder owned by this exact restored Home/auth principal. */
@@ -200,7 +225,7 @@ export async function restoreServerAccountForTest(params: Readonly<{
         if (!requestOrigins.has(requestUrl.origin)) {
             throw new Error(`Unexpected test Home request origin: ${requestUrl.origin}`);
         }
-        const probe = createServerAccountConnectionProbeHttpResponse(requestUrl.pathname);
+        const probe = params.requestOwnsReachabilityProbes ? null : createServerAccountConnectionProbeHttpResponse(requestUrl.pathname);
         if (probe) return probe;
         return await params.request?.(url, init) ?? undefined;
     }, { preferExactSnapshot: true });
@@ -227,6 +252,7 @@ export async function restoreServerAccountForTest(params: Readonly<{
     try {
         await setActiveServer({ serverId: home.id });
         if (params.activation === 'switch') await switchConnectionToActiveServer();
+        else if (params.retainFailedColdRestore) void restoreConnectionToActiveServer(credentials).catch(() => undefined);
         else await restoreConnectionToActiveServer(credentials);
     } catch (error) {
         socketResponder?.dispose();

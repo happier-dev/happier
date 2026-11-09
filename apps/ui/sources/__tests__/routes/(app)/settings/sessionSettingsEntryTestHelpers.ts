@@ -39,7 +39,7 @@ const sessionSettingsEntryState = vi.hoisted(() => ({
     settingsState: {
         sessionsRightPaneDefaultOpen: false,
         uiMultiPanePanelsEnabled: false,
-        sessionListOrderingModeV1: 'custom',
+        sessionListLayoutV1: 'projects',
     } as Record<string, unknown>,
     options: {
         reactNative: undefined as SettingsEntryModuleFactory | undefined,
@@ -55,7 +55,7 @@ export function resetSessionSettingsEntryState() {
     sessionSettingsEntryState.settingsState = {
         sessionsRightPaneDefaultOpen: false,
         uiMultiPanePanelsEnabled: false,
-        sessionListOrderingModeV1: 'custom',
+        sessionListLayoutV1: 'projects',
     };
     // SDK factories belong to the installed file fixture, not one mounted
     // screen. Re-importing a route must retain its declared viewport/native ports.

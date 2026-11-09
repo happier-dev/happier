@@ -58,6 +58,7 @@ export type CreateReactNavigationNativeMockOptions = Readonly<{
 export function createReactNavigationNativeMock(options: CreateReactNavigationNativeMockOptions = {}) {
     const isFocused = options.isFocused ?? true;
     const navigation = {
+        isFocused: () => isFocused,
         addListener: () => () => undefined,
         canGoBack: () => false,
         dispatch: () => undefined,
@@ -116,7 +117,7 @@ export function createReactNavigationNativeMock(options: CreateReactNavigationNa
         useTheme: () => React.useContext(ThemeContext) ?? defaultTheme,
         useIsFocused: () => {
             const screenNavigation = React.useContext(NavigationContext);
-            return typeof screenNavigation?.isFocused === 'function' ? screenNavigation.isFocused() === true : isFocused;
+            return typeof screenNavigation?.isFocused === 'function' ? screenNavigation.isFocused() === true : navigation.isFocused();
         },
         useFocusEffect: (effect: () => void | (() => void)) => {
             React.useEffect(() => effect(), [effect]);

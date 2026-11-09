@@ -1,3 +1,4 @@
+import { applyPickerFixtureSettings } from './testHarness';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -12,7 +13,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { settingsParse } from '@/sync/domains/settings/settings';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -147,7 +148,7 @@ describe('PreviewMachinePickerScreen replace fallback', () => {
     it('preserves the new-session context when the preview machine picker has to replace back to /new', async () => {
         await prepareAcpCatalog();
         const { storage } = await import('@/sync/domains/state/storageStore');
-        storage.getState().applySettingsLocal(settingsParse(settingsState.current));
+        await applyPickerFixtureSettings(settingsParse(settingsState.current));
         storage.getState().applyMachines([previewMachine], true, { sourceServerId: 'srv_picker_2' });
         const PreviewMachinePickerScreen = (await import('@/app/(app)/new/pick/preview-machine')).default;
 
@@ -189,7 +190,7 @@ describe('PreviewMachinePickerScreen replace fallback', () => {
             spawnServerId: 'srv_picker_2',
         };
         const { storage } = await import('@/sync/domains/state/storageStore');
-        storage.getState().applySettingsLocal(settingsParse(settingsState.current));
+        await applyPickerFixtureSettings(settingsParse(settingsState.current));
         storage.getState().applyMachines([previewMachine], true, { sourceServerId: 'srv_picker_2' });
         const PreviewMachinePickerScreen = (await import('@/app/(app)/new/pick/preview-machine')).default;
 
@@ -245,7 +246,7 @@ describe('PreviewMachinePickerScreen replace fallback', () => {
             spawnServerId: 'srv_picker_2',
         };
         const { storage } = await import('@/sync/domains/state/storageStore');
-        storage.getState().applySettingsLocal(settingsParse(settingsState.current));
+        await applyPickerFixtureSettings(settingsParse(settingsState.current));
         storage.getState().applyMachines([previewMachine], true, { sourceServerId: 'srv_picker_2' });
         const PreviewMachinePickerScreen = (await import('@/app/(app)/new/pick/preview-machine')).default;
 
@@ -287,7 +288,7 @@ describe('PreviewMachinePickerScreen replace fallback', () => {
             spawnServerId: 'srv_picker_2',
         };
         const { storage } = await import('@/sync/domains/state/storageStore');
-        storage.getState().applySettingsLocal(settingsParse(settingsState.current));
+        await applyPickerFixtureSettings(settingsParse(settingsState.current));
         storage.getState().applyMachines([previewMachine], true, { sourceServerId: 'srv_picker_2' });
         const PreviewMachinePickerScreen = (await import('@/app/(app)/new/pick/preview-machine')).default;
 
@@ -329,7 +330,7 @@ describe('PreviewMachinePickerScreen replace fallback', () => {
         };
         machineContributionRegistryProjectionDescribe.mockResolvedValue(createDiscoveredPluginBackendDescribeResult());
         const { storage } = await import('@/sync/domains/state/storageStore');
-        storage.getState().applySettingsLocal(settingsParse(settingsState.current));
+        await applyPickerFixtureSettings(settingsParse(settingsState.current));
         storage.getState().applyMachines([previewMachine], true, { sourceServerId: 'srv_picker_2' });
         const PreviewMachinePickerScreen = (await import('@/app/(app)/new/pick/preview-machine')).default;
 

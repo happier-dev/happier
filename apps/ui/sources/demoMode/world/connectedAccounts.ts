@@ -1,4 +1,4 @@
-import type { ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol';
+import type { ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { ConnectedPresentationRecordV1Schema } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
@@ -41,7 +41,7 @@ function buildDemoConnectedServices(): DemoConnectedService[] {
                     profileId: 'personal',
                     status: 'connected',
                     kind: 'oauth',
-                    providerEmail: 'you@happier.dev',
+                    providerEmail: 'maya@mayapark.dev',
                     providerAccountId: 'demo-codex-personal',
                     expiresAt: null,
                     lastUsedAt: DEMO_NOW_MS - 240_000,
@@ -51,7 +51,7 @@ function buildDemoConnectedServices(): DemoConnectedService[] {
                     profileId: 'work',
                     status: 'connected',
                     kind: 'oauth',
-                    providerEmail: 'you@acme.test',
+                    providerEmail: 'maya@northstar.studio',
                     providerAccountId: 'demo-codex-work',
                     expiresAt: null,
                     lastUsedAt: DEMO_NOW_MS - 3_600_000,
@@ -59,9 +59,9 @@ function buildDemoConnectedServices(): DemoConnectedService[] {
                 },
                 {
                     profileId: 'oncall',
-                    status: 'connected',
+                    status: 'needs_reauth',
                     kind: 'oauth',
-                    providerEmail: 'oncall@acme.test',
+                    providerEmail: 'oncall@northstar.studio',
                     providerAccountId: 'demo-codex-oncall',
                     expiresAt: null,
                     lastUsedAt: DEMO_NOW_MS - 86_400_000,
@@ -85,7 +85,7 @@ function buildDemoConnectedServices(): DemoConnectedService[] {
                     profileId: 'max',
                     status: 'connected',
                     kind: 'oauth',
-                    providerEmail: 'you@happier.dev',
+                    providerEmail: 'maya@mayapark.dev',
                     providerAccountId: 'demo-claude-max',
                     expiresAt: null,
                     lastUsedAt: DEMO_NOW_MS - 600_000,
@@ -95,7 +95,7 @@ function buildDemoConnectedServices(): DemoConnectedService[] {
                     profileId: 'team',
                     status: 'connected',
                     kind: 'oauth',
-                    providerEmail: 'team@acme.test',
+                    providerEmail: 'engineering@northstar.studio',
                     providerAccountId: 'demo-claude-team',
                     expiresAt: null,
                     lastUsedAt: DEMO_NOW_MS - 7_200_000,
@@ -119,7 +119,7 @@ function buildDemoConnectedServices(): DemoConnectedService[] {
                     profileId: 'personal',
                     status: 'connected',
                     kind: 'oauth',
-                    providerEmail: 'you@happier.dev',
+                    providerEmail: 'maya@mayapark.dev',
                     providerAccountId: 'demo-github-personal',
                     expiresAt: null,
                     lastUsedAt: DEMO_NOW_MS - 1_800_000,
@@ -228,12 +228,13 @@ function buildDemoQualifiedAccounts(): { accounts: DemoAccountV4[]; groups: Demo
         displayName: params.displayName,
     });
     const accounts: DemoAccountV4[] = [
-        demoAccount({ service: CODEX_SERVICE, accountId: 'personal', email: 'you@happier.dev', displayName: 'Personal', lastUsedAgoMs: 240_000 }),
-        demoAccount({ service: CODEX_SERVICE, accountId: 'work', email: 'you@acme.test', displayName: 'Work', lastUsedAgoMs: 3_600_000 }),
-        demoAccount({ service: CODEX_SERVICE, accountId: 'oncall', email: 'oncall@acme.test', displayName: 'On-call', lastUsedAgoMs: 86_400_000 }),
-        demoAccount({ service: CLAUDE_SUBSCRIPTION_SERVICE, accountId: 'max', email: 'you@happier.dev', displayName: 'Personal Max', lastUsedAgoMs: 600_000 }),
-        demoAccount({ service: CLAUDE_SUBSCRIPTION_SERVICE, accountId: 'team', email: 'team@acme.test', displayName: 'Team', lastUsedAgoMs: 7_200_000 }),
-        demoAccount({ service: GITHUB_SERVICE, accountId: 'personal', email: 'you@happier.dev', displayName: 'Personal', lastUsedAgoMs: 1_800_000 }),
+        demoAccount({ service: CODEX_SERVICE, accountId: 'personal', email: 'maya@mayapark.dev', displayName: 'Personal', lastUsedAgoMs: 240_000 }),
+        demoAccount({ service: CODEX_SERVICE, accountId: 'work', email: 'maya@northstar.studio', displayName: 'Work', lastUsedAgoMs: 3_600_000 }),
+        { ...demoAccount({ service: CODEX_SERVICE, accountId: 'oncall', email: 'oncall@northstar.studio', displayName: 'On-call', lastUsedAgoMs: 86_400_000 }),
+            status: 'needs_reauth' },
+        demoAccount({ service: CLAUDE_SUBSCRIPTION_SERVICE, accountId: 'max', email: 'maya@mayapark.dev', displayName: 'Personal Max', lastUsedAgoMs: 600_000 }),
+        demoAccount({ service: CLAUDE_SUBSCRIPTION_SERVICE, accountId: 'team', email: 'engineering@northstar.studio', displayName: 'Team', lastUsedAgoMs: 7_200_000 }),
+        demoAccount({ service: GITHUB_SERVICE, accountId: 'personal', email: 'maya@mayapark.dev', displayName: 'Personal', lastUsedAgoMs: 1_800_000 }),
     ];
     // The canonical policy schema owns every default; the demo world only states
     // the fields it deliberately differs on.

@@ -282,7 +282,7 @@ describe('/ (welcome) setup continuation', () => {
         }));
     });
 
-    it('renders the real Desktop shell after the Personal Home provider releases readiness', async () => {
+    it('shows pre-auth on Desktop when no Personal Home bootstrap provider owns the signed-out route', async () => {
         isAuthenticated = false;
         seedSetupIntent(null);
 
@@ -290,8 +290,8 @@ describe('/ (welcome) setup continuation', () => {
         const screen = await renderRoute(React.createElement(Screen));
         await flushHookEffects({ cycles: 1, turns: 2 });
 
-        expect(screen.findAllByType(MainView)).toHaveLength(1);
-        expect(screen.findAllByType(PreAuthOnboardingWizardEntry)).toHaveLength(0);
+        expect(screen.findAllByType(MainView)).toHaveLength(0);
+        expect(screen.findAllByType(PreAuthOnboardingWizardEntry)).toHaveLength(1);
     });
 
     it('keeps verified Home plus profile-adoption retry in the real provider/index shell', async () => {
@@ -299,6 +299,9 @@ describe('/ (welcome) setup continuation', () => {
         seedSetupIntent(null);
         const localId = await homes.addHome({ name: 'Personal Home', serverUrl: PERSONAL_HOME_URL,
             serverIdentityId: PERSONAL_HOME_ID, accountId: 'setup-account', currentAccount: true });
+        // Only the managed Personal Home belongs to bootstrap/adoption recovery.
+        const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
+        await upsertServerProfileOnly({ serverUrl: PERSONAL_HOME_URL, source: 'desktop-personal-home' });
         const features = createRootLayoutFeaturesResponse({ homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({
             v: 1, homeServerIdentityId: PERSONAL_HOME_ID, canonicalServerUrl: PERSONAL_HOME_URL, revision: 1,
             endpoints: [{ kind: 'https', url: PERSONAL_HOME_URL }],

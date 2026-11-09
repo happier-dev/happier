@@ -3,9 +3,11 @@ import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 
 import { DEMO_NOW_MS, DEMO_REVIEW_SESSION_ID, DEMO_RICH_SESSION_ID } from './constants';
+import { buildDemoFeatureMessages } from './featureSessions';
 
 export function buildDemoMessages(): Record<string, NormalizedMessage[]> {
     return {
+        ...buildDemoFeatureMessages(),
         [DEMO_RICH_SESSION_ID]: [
             {
                 id: 'demo-msg-user-1',
@@ -28,6 +30,12 @@ export function buildDemoMessages(): Record<string, NormalizedMessage[]> {
                 role: 'agent',
                 content: [
                     {
+                        type: 'text',
+                        text: 'I’ll check the existing sign-in flow, build the dashboard shell, and leave a small diff for review.',
+                        uuid: 'demo-agent-intro',
+                        parentUUID: null,
+                    },
+                    {
                         type: 'thinking',
                         thinking: 'I will inspect the auth routes, add the missing shell, and keep the diff tight.',
                         uuid: 'demo-thinking-1',
@@ -41,9 +49,14 @@ export function buildDemoMessages(): Record<string, NormalizedMessage[]> {
                             path: 'apps/ui/sources/auth/DashboardAuthShell.tsx',
                             hunks: 2,
                         },
-                        description: 'Reviewing the generated dashboard auth diff',
+                        description: 'Reviewed the dashboard auth diff',
                         uuid: 'demo-tool-call-1',
                         parentUUID: null,
+                    },
+                    {
+                        type: 'tool-result', tool_use_id: 'demo-tool-diff',
+                        content: { diff: 'Dashboard auth shell added; redirect and loading states updated.' },
+                        is_error: false, uuid: 'demo-tool-result-1', parentUUID: null,
                     },
                 ],
             },
@@ -91,9 +104,14 @@ export function buildDemoMessages(): Record<string, NormalizedMessage[]> {
                             command: 'vitest run DashboardAuthShell.test.tsx',
                             status: 'passing',
                         },
-                        description: 'Running the auth shell regression test',
+                        description: 'Auth shell regression test passed',
                         uuid: 'demo-tool-call-2',
                         parentUUID: null,
+                    },
+                    {
+                        type: 'tool-result', tool_use_id: 'demo-tool-test',
+                        content: 'PASS DashboardAuthShell.test.tsx — 4 tests passed.',
+                        is_error: false, uuid: 'demo-tool-result-2', parentUUID: null,
                     },
                 ],
             },
@@ -203,9 +221,14 @@ export function buildDemoMessages(): Record<string, NormalizedMessage[]> {
                             path: 'apps/ui/sources/components/sessions/mobile/SessionMobileHeader.tsx',
                             hunks: 3,
                         },
-                        description: 'Loading the changed files for review',
+                        description: 'Read three changed files for review',
                         uuid: 'demo-review-tool-call-1',
                         parentUUID: null,
+                    },
+                    {
+                        type: 'tool-result', tool_use_id: 'demo-review-tool-diff',
+                        content: { diff: 'Session mobile header updated: title truncation, unread badge, and spacing.' },
+                        is_error: false, uuid: 'demo-review-tool-result-1', parentUUID: null,
                     },
                 ],
             },

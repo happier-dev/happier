@@ -42,6 +42,7 @@ function nonDefaultAppearanceState(): Record<string, unknown> {
         uiBackdropBlurEnabled: false,
         detailsPaneTabsBehavior: 'persistent',
         settingsNavSidebarEnabled: false,
+        systemTabBarEnabled: false,
         loadingIndicatorStyle: 'hWave',
         loadingIndicatorSpeed: 'fast',
         loadingIndicatorPause: 'none',
@@ -75,7 +76,6 @@ installSessionSettingsEntryModuleMocks({
         return createReactNativeWebMock({
             Appearance: { getColorScheme: () => 'light' },
             Dimensions: { get: () => viewport },
-            useWindowDimensions: () => viewport,
         });
     },
     unistyles: async () => {
@@ -119,7 +119,11 @@ async function mountReset(actionsSettingsV1: unknown = { v: 1, approvalWaivedSur
     setReducedMotionPreferenceOverride(true);
     const fixture = nonDefaultAppearanceState();
     account = await createSecretSettingsTestHarness({ token: createAccountTokenForTests('account-a', { currentAccount: true }),
-        settings: settingsParse({ ...fixture, actionsSettingsV1 }), sharedEnabled: false });
+        settings: settingsParse({ ...fixture, themeProfiles: [CUSTOM_PROFILE], actionsSettingsV1 }), sharedEnabled: false });
+    const { sync } = await import('@/sync/sync');
+    await sync.awaitBootstrapForegroundAcquisition();
+    const queue = Reflect.get(sync, 'settingsSync') as import('@/utils/sessions/sync').InvalidateSync;
+    await queue.awaitQueue();
     storage.setState({ localSettings: localSettingsParse(fixture) });
     const screen = await renderSettingsView(
         <InjectedAuthProvider credentials={account.credentials}>{React.createElement(AppearanceSettingsScreen)}</InjectedAuthProvider>,
@@ -142,10 +146,12 @@ describe('Appearance reset', () => {
         await queue.awaitQueue();
         const state = storage.getState().localSettings;
         expect(state.themePreference).toBe(localSettingsDefaults.themePreference);
-        expect(state.themeProfiles).toEqual({ activeProfileIds: { light: null, dark: null }, profiles: [CUSTOM_PROFILE] });
+        expect(state.themeProfileSelection).toEqual({ light: null, dark: null });
+        expect(state.themeProfiles).toEqual(nonDefaultAppearanceState().themeProfiles);
+        expect(account?.persistedSettings.themeProfiles).toEqual([CUSTOM_PROFILE]);
         for (const key of [
             'uiFontScale', 'uiContentWidthMode', 'uiItemDensity', 'uiMultiPanePanelsEnabled',
-            'detailsPaneTabsBehavior', 'settingsNavSidebarEnabled',
+            'detailsPaneTabsBehavior', 'settingsNavSidebarEnabled', 'systemTabBarEnabled',
             'loadingIndicatorStyle', 'loadingIndicatorSpeed', 'loadingIndicatorPause',
         ] as const) {
             expect(state[key], key).toEqual(localSettingsDefaults[key]);

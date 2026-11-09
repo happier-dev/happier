@@ -72,7 +72,7 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
             }));
             if (path === '/v2/sessions/lookup-by-tags' || path === '/v2/sessions/read-batch') return null;
             const detail = /^\/v2\/sessions\/([^/]+)$/.exec(path);
-            const listing = path === '/v2/sessions' || path === '/v2/sessions/active' || path === '/v1/sessions';
+            const listing = path === '/v2/sessions' || path === '/v2/sessions/active';
             if (!detail && !listing) return null;
             for (const session of Object.values(readSessions())) {
                 if (records.has(session.id)) continue;

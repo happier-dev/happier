@@ -86,7 +86,7 @@ function installHome(home: Home) {
             return Response.json({ username: home.username });
         }
         if (path === '/v1/account/security') return Response.json({ v: 1, encryptionMode: 'plain',
-            terminalPresentUserPolicy: 'allowed', nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
+            nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
         return account!.request(input, init);
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);

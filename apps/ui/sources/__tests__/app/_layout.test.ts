@@ -2,6 +2,10 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { getStateFromPath } from '@react-navigation/core';
+import { getRoutes } from 'expo-router/build/getRoutes';
+import { getReactNavigationConfig } from 'expo-router/build/getReactNavigationConfig';
+import type { RequireContext } from 'expo-router/build/types';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -449,6 +453,32 @@ describe('RootLayout hooks order', () => {
 });
 
 describe('RootLayout stack options', () => {
+    it('keeps Home behind a directly linked New modal without duplicating Home on a root load', async () => {
+        const layout = await nativeUnavailableRootLayoutImport;
+        const screen = { default: () => null };
+        // Metro is the external module boundary; Expo still discovers and projects the real layout export.
+        const modules: Record<string, object> = {
+            './_layout.tsx': screen,
+            './(app)/_layout.tsx': layout,
+            './(app)/index.tsx': screen,
+            './(app)/new/index.tsx': screen,
+        };
+        const context = Object.assign((id: string) => modules[id], {
+            keys: () => Object.keys(modules),
+            resolve: (id: string) => id,
+            id: 'app-layout-link-state',
+        }) as RequireContext;
+        const routes = getRoutes(context, { skipGenerated: true, importMode: 'sync' });
+        const app = routes?.children.find(route => route.route === '(app)');
+        expect(app).toBeDefined();
+        const config = getReactNavigationConfig(app ?? null, true);
+        const state = getStateFromPath('/new?draftId=owned-draft', config);
+        expect(state?.routes.map(route => route.name)).toEqual(['index', 'new/index']);
+        expect(state?.index).toBe(1);
+        expect(state?.routes[1]?.params).toMatchObject({ draftId: 'owned-draft' });
+        expect(getStateFromPath('/', config)?.routes.map(route => route.name)).toEqual(['index']);
+    });
+
     it('keeps root stack screen options stable across unchanged renders', async () => {
         stubFeatureFetch();
 

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { CommandPaletteProvider } from '@/components/appShell/commandPalette/CommandPaletteProvider';
@@ -26,6 +27,7 @@ import { getCachedServerFeaturesSnapshot, resetServerFeaturesClientForTests } fr
 import { isServerProfilePersistenceSuspendedForDemo, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
+import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndexIdentity';
 
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const routerState = vi.hoisted(() => ({
@@ -554,7 +556,7 @@ describe('demo mode egress-zero smoke', () => {
                             summary: { sessionsReady: true, sessionCount },
                             visibleSessionListIndex: activeIndex,
                             hasHiddenInactiveSessions: false,
-
+                            
                             folderFeatureEnabledServerIds: [],
                             showLoading: false,
                             showEmptyState: sessionCount === 0,
@@ -567,7 +569,7 @@ describe('demo mode egress-zero smoke', () => {
                     />
                 );
             },
-            `session-list-item-${DEMO_RICH_SESSION_ID}`,
+            `session-list-item-${buildSessionListIndexNodeId({ type: 'session', serverId: getActiveServerSnapshot().serverId, sessionId: DEMO_RICH_SESSION_ID })}`,
         );
     });
 
@@ -734,3 +736,6 @@ describe('demo mode egress-zero smoke', () => {
         });
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

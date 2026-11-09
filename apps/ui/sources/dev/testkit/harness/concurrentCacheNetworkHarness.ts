@@ -8,7 +8,8 @@ import { loadSyncSingletonForTests } from './syncSingletonLoader';
 import { seedPersistedHomeProfilesForTests } from '../fixtures/persistedHomeProfiles';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { createEmptyAccountBootstrapHttpResponse } from '../fixtures/accountBootstrapHttpBoundary';
-import { createSessionReadBatchFetchBoundary } from './sessionReadBatchHttpBoundary';
+import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBoundary';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
 type SessionRow = ReturnType<typeof createPlainSessionCurrentProjectionRecordFixture>;
 type MachineRow = ReturnType<typeof createPlainMachineRowFixture>;
@@ -68,6 +69,7 @@ export async function createConcurrentCacheNetworkHarness(suite: string) {
             const answer = await responder(input, init);
             if (answer) return answer;
         }
+        if (url.pathname === '/v2/sessions/read-batch') return null;
         if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') {
             return Response.json(createRootLayoutFeaturesResponse());
         }
@@ -101,10 +103,10 @@ export async function createConcurrentCacheNetworkHarness(suite: string) {
         }
         return null;
     };
-    const sessionReads = createSessionReadBatchFetchBoundary(respond);
+    const sessionReads = createCompactSessionListFetchBoundary(respond, { preferExactSnapshot: true });
     const serve: HttpResponder = async (input, init) => {
         httpRequests.push({ url: new URL(String(input)), init });
-        return sessionReads(input, init);
+        return sessionReads(input instanceof Request ? input.url : String(input), init ?? {});
     };
     async function cleanup() {
         readGate?.release(); readGate = null;
@@ -146,7 +148,9 @@ export async function createConcurrentCacheNetworkHarness(suite: string) {
             vi.stubGlobal('__TAURI_INTERNALS__', nativePort);
             await cleanup();
             await network.dispose();
-            for (const home of homes) if (!originalProfileIds.has(home.id)) await profiles.removeServerProfile(home.id);
+            for (const home of homes) if (!originalProfileIds.has(home.id) && profiles.getServerProfileById(home.id)) {
+                await profiles.removeServerProfile(home.id);
+            }
             io.mockRestore(); bridge.dispose(); vi.unstubAllGlobals();
         },
         setResponder(value: HttpResponder | null) { responder = value; },
@@ -164,11 +168,17 @@ export async function createConcurrentCacheNetworkHarness(suite: string) {
         },
         async start() {
             cache.startConcurrentSessionCacheSync();
-            await vi.waitFor(() => expect(network.socketBoundaries.some(socket => socket.serverUrl === homeB.serverUrl)).toBe(true));
+            try {
+                await vi.waitFor(() => expect(network.socketBoundaries.some(socket => socket.serverUrl === homeB.serverUrl)).toBe(true));
+            } catch (cause) {
+                const paths = [...new Set(httpRequests.map(({ url, init }) => `${init?.method ?? 'GET'} ${url.pathname}`))];
+                const observation = storage.getState().concurrentSessionListCacheByServerId[homeB.id]?.listObservation;
+                throw new Error(`Concurrent Home socket did not start: ${JSON.stringify({ paths, phase: observation?.phase })}`, { cause });
+            }
         },
-        async startFocused() {
+        async startFocused(credentials: AuthCredentials = { token: homeA.token }) {
             focused = true;
-            await (await import('@/sync/runtime/orchestration/connectionManager')).restoreConnectionToActiveServer({ token: homeA.token });
+            await (await import('@/sync/runtime/orchestration/connectionManager')).restoreConnectionToActiveServer(credentials);
             await (await import('@/sync/runtime/getSyncSingleton')).getSyncSingleton().awaitBootstrapForegroundAcquisition();
             await vi.waitFor(() => expect(storage.getState().profile.id).toBe(homeA.accountId));
             await vi.waitFor(() => expect(storage.getState().isDataReady).toBe(true));

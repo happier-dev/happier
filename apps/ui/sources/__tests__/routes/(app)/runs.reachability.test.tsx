@@ -96,7 +96,7 @@ it('suppresses automatic run reads after request failure but explicit refresh st
     expect(readMachineRequestReachabilityObservation({ serverId: snapshot.serverIdentityId, accountId: snapshot.accountId }, 'studio'))
         .toMatchObject({ outcome: 'succeeded' });
     await flushHookEffects({ cycles: 4 });
-    expect(screen.findAll(node => node.props?.title === t('runs.empty')).length).toBeGreaterThan(0);
+    expect(screen.findAll(node => node.props?.title === t('detailPages.runs.emptyRunning')).length).toBeGreaterThan(0);
     const settledReadCount = runReads().length;
     // Recovery publishes once; unrelated renders must not turn that publication into a read storm.
     await act(async () => { screen.update(<RunsScreen />); });

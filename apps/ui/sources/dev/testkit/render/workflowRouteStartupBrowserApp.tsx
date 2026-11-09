@@ -2,7 +2,7 @@ import { store as routerStore } from 'expo-router/build/global-state/router-stor
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { storage } from '@/sync/domains/state/storage';
-import { loadLocalSettings } from '@/sync/domains/state/settingsPersistence';
+import { workspaceLayoutsState } from '@/sync/domains/state/filePaneUiState';
 import { invokeWorkspaceAction } from '@/components/appShell/workspace/workspaceActionRuntime';
 import { upsertAndActivateServer, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -17,14 +17,18 @@ import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/wor
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { WorkflowInvocationListRequestV1Schema, WorkflowRunGetRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
-import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol';
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { z } from 'zod/mini';
 import { z as zMini } from 'zod/mini';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { createArtifactStoreBoundary, createPlainArtifactHttpFixture } from '../harness/artifactStoreBoundary';
+import { ArtifactReadBatchHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 
 const credentials = { token: 'header.eyJzdWIiOiJhY2NvdW50LWEifQ==.signature' };
 let releaseHome: () => void = () => {};
 let homeRequests = 0;
+let docBodyReads = 0;
+const coldDocId = '10000000-0000-4000-8000-000000000005';
 const bootstrapStates: Array<{ isDataReady: boolean; profileScope: unknown }> = [];
 const unservedHttpPaths: string[] = [];
 const httpFetch = globalThis.fetch.bind(globalThis);
@@ -40,6 +44,11 @@ async function mount(seed = true, holdHome = false) {
     const transport = createWorkflowActionHttpTransport({ fixtureResponse: readLibraryFixtureResponse, accountId: getLibraryFixtureAccountId });
     const homeResponse = holdHome ? new Promise<void>(resolve => { releaseHome = resolve; }) : Promise.resolve();
     homeRequests = 0;
+    docBodyReads = 0;
+    const docs = createArtifactStoreBoundary({ ownerAccountId: getLibraryFixtureAccountId, encryptionMode: 'plain' });
+    docs.replaceStoredRow(createPlainArtifactHttpFixture({ id: coldDocId, title: 'Cold Doc', isDecrypted: true,
+        header: { kind: 'markdown', title: 'Cold Doc' }, body: 'The garden keeps one cedar tree.',
+        headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }, getLibraryFixtureAccountId()));
     const run = createWorkflowRunSummaryFixture({ id: '10000000-0000-4000-8000-000000000004',
         ownerAccountId: getLibraryFixtureAccountId(), machineId: 'machine-1', origin: { kind: 'direct' }, state: 'succeeded' });
     const accepted = await materializeWorkflowAcceptedSnapshotV1({
@@ -61,6 +70,19 @@ async function mount(seed = true, holdHome = false) {
         // Home bootstrap HTTP responses only; the canonical decoder and scope
         // readiness lifecycle remain unmodified beneath this boundary.
         const path = new URL(String(url)).pathname;
+        if (path === `/v1/artifacts/${coldDocId}` || path.startsWith(`/v1/artifacts/${coldDocId}/`)) {
+            if (path === `/v1/artifacts/${coldDocId}`) docBodyReads += 1;
+            const response = docs.handle(path, init);
+            if (response) return response;
+        }
+        if (path === '/v1/artifacts/read' && typeof init?.body === 'string') {
+            const input = ArtifactReadBatchHttpInputV1Schema.parse(JSON.parse(init.body));
+            if (input.artifactIds.includes(coldDocId)) {
+                if (!('projection' in input) || input.projection !== 'headers') docBodyReads += 1;
+                const response = docs.handle(path, init);
+                if (response) return response;
+            }
+        }
         if (path === '/v1/kv' || path.startsWith('/v1/kv/')) return httpFetch(url, init);
         const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
         if (path === '/v1/account/encryption') {
@@ -142,10 +164,11 @@ Object.assign(globalThis, { navigationHydrationBrowser, startupHarness: {
         isAuthenticated: getCurrentAuth()?.isAuthenticated, profileScope: storage.getState().profileScope,
         isDataReady: storage.getState().isDataReady }),
     readPersistenceState: () => ({ isDataReady: storage.getState().isDataReady,
-        profileScope: storage.getState().profileScope, layouts: loadLocalSettings().workspaceLayoutV1 }),
+        profileScope: storage.getState().profileScope, layouts: workspaceLayoutsState.readAll() }),
     readBootstrapStates: () => bootstrapStates,
     readUnservedHttpPaths: () => unservedHttpPaths,
     readHomeGate: () => ({ requests: homeRequests, isDataReady: storage.getState().isDataReady }),
+    readDocBodyReads: () => docBodyReads,
     releaseHome: () => releaseHome(),
     openWorkspace: (href: string) => invokeWorkspaceAction({ actionId: 'workspace.tabs.open', input: { href, mode: 'newTab' } }),
     listWorkspace: () => invokeWorkspaceAction({ actionId: 'workspace.tabs.list', input: {} }),

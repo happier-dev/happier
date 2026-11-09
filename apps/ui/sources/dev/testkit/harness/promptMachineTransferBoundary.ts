@@ -4,7 +4,7 @@ import { RegistryFetchRequestV1Schema, RegistryFetchResponseV1Schema, RegistryIt
     type RegistrySkillFileBytesV1 } from '@happier-dev/protocol/registries';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { DirectRouteGrantRequestV2Schema, SignedDirectRouteGrantV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
-import { DIRECT_ROUTE_GRANT_AUDIENCE_V1 } from '@happier-dev/protocol';
+import { DIRECT_ROUTE_GRANT_AUDIENCE_V1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV1';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';

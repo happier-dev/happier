@@ -81,6 +81,16 @@ const { createDirectoryHttpFixture } = await import('@/sync/ops/accountDirectory
 const { adoptHomeProfile, resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
 await initializeAuthRouteRuntimeForTests();
 const { default: Screen } = await import('@/app/(app)/restore/index');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+
+/** Settings reaches Add Home signed in, where the route keeps its focused wizard card. */
+async function renderSignedIn() {
+    return await renderScreen(
+        <InjectedAuthProvider credentials={{ token: 'signed-in-token', secret: 'secret' }}>
+            <Screen />
+        </InjectedAuthProvider>,
+    );
+}
 
 let localStorage: ReturnType<typeof installLocalStorageMock> | undefined;
 afterEach(() => {
@@ -193,7 +203,7 @@ describe('/restore (web phone)', () => {
         vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' } as any);
         restoreRouteIngressState.params = { entryIntent: 'add_home' };
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderSignedIn();
         expect(screen.getTextContent()).toContain('setupOnboarding.addHomeTitle');
         expect(screen.findByTestId('restore-wizard-progress')).not.toBeNull();
         const reportDirection = restoreRouteIngressState.scannerProps?.onInviteDirectionChange;
@@ -256,7 +266,7 @@ describe('/restore (web phone)', () => {
         vi.stubGlobal('navigator', { maxTouchPoints: 5, userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' } as any);
         restoreRouteIngressState.params = { entryIntent: 'add_home' };
 
-        const screen = await renderScreen(<Screen />);
+        const screen = await renderSignedIn();
 
         expect(restoreRouteIngressState.scannerProps?.entryIntent).toBe('add_home');
         expect(screen.getTextContent()).toContain('setupOnboarding.addHomeTitle');
@@ -276,6 +286,8 @@ describe('/restore (web phone)', () => {
             (setNavigationLocked as (locked: boolean) => void)(true);
         });
 
-        expect(screen.findByTestId('restore-wizard-back')?.props.disabled).toBe(true);
+        // Signed out, the step sits in the welcome split; a locked enrollment offers no way back.
+        expect(screen.findByTestId('unauth-shell-workflow-pane')).not.toBeNull();
+        expect(screen.findByTestId('unauth-shell-back-chevron')).toBeNull();
     });
 });

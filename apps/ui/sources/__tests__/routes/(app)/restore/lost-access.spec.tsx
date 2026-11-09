@@ -122,7 +122,8 @@ describe('/restore/lost-access', () => {
 
     it('falls back to the root when there is no history to go back to', async () => {
         const { screen } = await renderLostAccess('https://example.test/oauth');
-        screen.pressByTestId('restore-lost-access-wizard-back');
+        // Signed out, the route is a step of the welcome split; its way back is the pane's chevron.
+        screen.pressByTestId('unauth-shell-back-chevron');
 
         expect(native.replace).toHaveBeenCalledWith('/');
     });

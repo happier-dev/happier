@@ -29,8 +29,9 @@ export function createMachineReadBatchResponseFixture(body: unknown, readMachine
 }
 
 /** Plain transport fixtures intentionally admit any requested Machine ID for this Account. */
-export function createPlainMachineReadHttpResponseFixture(path: string, init?: RequestInit, accountId = 'artifact-account'): Response | null {
-    const read = (id: string) => createPlainMachineRowFixture({ id, accountId });
+export function createPlainMachineReadHttpResponseFixture(path: string, init?: RequestInit, accountId = 'artifact-account', machineOverrides?: Partial<Machine>): Response | null {
+    const read = (id: string) => createPlainMachineRowFixture({ id, accountId,
+        ...(machineOverrides ? { machine: createMachineFixture({ activeAt: Date.now(), ...machineOverrides, id }) } : {}) });
     if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body, read);
     const exact = /^\/v1\/machines\/([^/]+)$/.exec(path);
     if (exact && (init?.method ?? 'GET') === 'GET') return Response.json({ machine: read(decodeURIComponent(exact[1]!)) });
@@ -119,6 +120,9 @@ export function createPlainMachineRowFixture(input: Readonly<{ id: string; accou
         metadata: encodePlainMachineStoredContent(machine.metadata), metadataVersion: machine.metadataVersion,
         daemonState: machine.daemonState == null ? null : encodePlainMachineStoredContent(machine.daemonState), daemonStateVersion: machine.daemonStateVersion,
         dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        ...(machine.operationProtocolCapabilities ? { operationProtocolCapabilities: machine.operationProtocolCapabilities } : {}),
+        ...(machine.operationProtocolCapabilitiesRevision !== undefined
+            ? { operationProtocolCapabilitiesRevision: machine.operationProtocolCapabilitiesRevision } : {}),
         revokedAt: null, replacedByMachineId: null, installationId: 'test-installation',
         access: AccessibleMachineAccessV1Schema.parse(machine.access ?? { custodian: { accountId: input.accountId, displayName: 'Test Account' },
             role: 'manage', resourceMode: 'plain', accessState: 'ready' }),

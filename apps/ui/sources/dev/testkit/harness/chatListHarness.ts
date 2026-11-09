@@ -41,7 +41,6 @@ type ChatListHarnessState = {
     sessionScreenIsFocused: boolean;
     sessionMessagesState: SessionMessagesState;
     sessionPendingState: SessionPendingState;
-    sessionActionDraftsState: any[];
     /** Feeds state.sessionCatchUpNewerInFlight for the harness session (catch-up overlay tests). */
     sessionCatchingUpNewer: boolean;
     sessionState: any;
@@ -194,7 +193,6 @@ export const chatListHarnessState: ChatListHarnessState = {
     sessionScreenIsFocused: true,
     sessionMessagesState: { messages: [], isLoaded: true },
     sessionPendingState: { messages: [], discarded: [], isLoaded: true },
-    sessionActionDraftsState: [],
     sessionCatchingUpNewer: false,
     sessionState: null,
     settingValues: {},
@@ -212,9 +210,6 @@ function createChatListHarnessMessagesSnapshot() {
         deletedSessionIds: {},
         profileScope: chatListHarnessState.activeServerAccountScope,
         sessions: { [sessionId]: chatListHarnessState.sessionState },
-        sessionActionDraftsByAddressKey: {
-            [sessionAddressKey({ serverId: chatListHarnessState.sessionState?.serverId ?? 'test-server', sessionId })]: chatListHarnessState.sessionActionDraftsState,
-        },
         workflowRunListWindows: {},
         sessionCatchUpNewerInFlight: chatListHarnessState.sessionCatchingUpNewer ? { [sessionId]: 1 } : {},
         sessionMessages: {
@@ -249,7 +244,6 @@ export function resetChatListHarness(
     chatListHarnessState.sessionScreenIsFocused = true;
     chatListHarnessState.sessionMessagesState = { messages: [], isLoaded: true };
     chatListHarnessState.sessionPendingState = { messages: [], discarded: [], isLoaded: true };
-    chatListHarnessState.sessionActionDraftsState = [];
     chatListHarnessState.sessionCatchingUpNewer = false;
     chatListHarnessState.activeServerAccountScope = null;
     chatListHarnessState.sessionState = {
@@ -289,9 +283,7 @@ export function buildChatListHarnessItems({
     messageIdsOldestFirst,
     messagesById,
     pendingMessages,
-    actionDrafts,
 }: {
-    actionDrafts?: any[];
     messageIdsOldestFirst?: string[];
     messagesById?: Record<string, any>;
     pendingMessages?: any[];
@@ -320,20 +312,12 @@ export function buildChatListHarnessItems({
         });
     }
 
-    for (const draft of actionDrafts ?? []) {
-        items.push({
-            kind: 'action-draft',
-            id: `draft:${draft.id}`,
-            draft,
-        });
-    }
 
     return items;
 }
 
 export function createChatListHarnessItemsModuleMock(
     buildChatListItems: (options: {
-        actionDrafts?: any[];
         messageIdsOldestFirst?: string[];
         messagesById?: Record<string, any>;
         pendingMessages?: any[];
@@ -456,9 +440,9 @@ export async function createChatListHarnessStorageMock(
             useSessionWorkspacePath: () => null,
             useForkedTranscriptSnapshot: () => null,
             useSessionPendingMessages: () => chatListHarnessState.sessionPendingState,
-            useSessionActionDrafts: () => chatListHarnessState.sessionActionDraftsState,
             useSessionLatestThinkingMessageId: () => null,
-            useSessionLatestThinkingMessageActivityAtMs: () => null,
+            useSessionLatestThinkingMessageActivity: <T,>(_sessionId: string, select: (activityAtMs: number | null) => T) => select(null),
+            readSessionLatestThinkingMessageActivityAtMs: () => null,
             useMessage: (_sessionId: string, messageId: string) =>
                 readMessages().find((message: any) => message.id === messageId) ?? null,
             useSetting: (key: string) => chatListHarnessState.settingValues[key],

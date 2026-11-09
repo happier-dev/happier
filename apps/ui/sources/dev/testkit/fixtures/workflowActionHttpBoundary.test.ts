@@ -34,6 +34,20 @@ it('owns genuine Workflow Home custody, replaces its focused Account and refuses
     const feed = await apiSocket.request('/v1/feed?limit=100', { method: 'GET' });
     expect(feed.status).toBe(200);
     expect(await feed.json()).toEqual({ items: [], hasMore: false });
+    // The fixture advertises cursor 0. A real resume must consume its empty changes page,
+    // not treat an unsupported route as a reason for a late full-snapshot wake.
+    const changes = await apiSocket.request('/v2/changes?after=0&limit=500', { method: 'GET' });
+    expect(changes.status).toBe(200);
+    expect(await changes.json()).toEqual({ changes: [], nextCursor: 0 });
+    const { sync } = await import('@/sync/sync');
+    expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+    const { subscribeHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const wakes: Array<string | undefined> = [];
+    const stop = subscribeHomeAccountChange(event => wakes.push(event.source), { serverIds: [boundary.serverId] });
+    try {
+        await sync.resumeSync('server-reachable');
+        expect(wakes).not.toContain('snapshot');
+    } finally { stop(); }
     for (const method of ['GET', 'POST']) {
         const missing = await apiSocket.request('/v1/unsupported-fixture-route', { method });
         expect(missing.status).toBe(404);

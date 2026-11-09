@@ -37,6 +37,9 @@ const { SessionInvalidLinkFallback } = await import('@/components/sessions/shell
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { DestinationInstanceHost, useDestinationParams } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 const { WorkspaceRouteOutlet } = await import('@/components/appShell/workspace/WorkspaceRouteOutlet');
+const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
+const { createWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
+const { SessionViewerDestinationScope } = await import('@/components/sessions/viewer/SessionViewerDestinationScope');
 await import('@/app/(app)/session/[id]/_layout');
 const initialStorageState = storage.getState();
 const baseMetadata = createSessionFixture().metadata;
@@ -224,6 +227,17 @@ describe('ordinary session route layout', () => {
         expect(routeRuntime.setParams).not.toHaveBeenCalled();
     });
 
+    it('qualifies a hosted Session opened without a Home through its own destination navigation', async () => {
+        seedHomes(['home-b']);
+        const replace = vi.fn();
+        await renderScreen(layoutTree(() => <DestinationInstanceHost tabId="bare-session" ref={{ kind: 'session', params: { id: 'session-1', right: 'files' } }}
+            pathname="/session/session-1" focused visible navigation={{ push: vi.fn(), replace, back: vi.fn() }}>
+            {null}
+        </DestinationInstanceHost>));
+        expect(replace).toHaveBeenCalledTimes(1);
+        expect(replace).toHaveBeenCalledWith('/session/session-1?serverId=home-b&right=files');
+    });
+
     it('preserves the direct file subroute and its target when qualifying a sole Home', async () => {
         seedHomes(['home-b']);
         routeRuntime.pathname = '/session/session-1/file';
@@ -231,6 +245,56 @@ describe('ordinary session route layout', () => {
         const { default: Layout } = await import('@/app/(app)/session/[id]/_layout');
         await renderScreen(layoutTree(Layout));
         expect(routeRuntime.replace).toHaveBeenCalledWith('/session/session-1/file?serverId=home-b&path=src%2Fa.ts&startLine=7');
+    });
+
+    it('leaves the Session viewer and Board scope to the hosted destination when Expo only mirrors its URL', async () => {
+        routeParams.value = { id: 'session-1', serverId: 'home-b' };
+        const { default: Layout } = await import('@/app/(app)/session/[id]/_layout');
+        const target = { kind: 'session' as const, params: { id: 'session-1', serverId: 'home-b' } };
+        function MirroredLayout() {
+            return <WorkspaceNavigationProvider value={{
+                active: true, state: createWorkspaceState({ id: 'session-tab', target, pinned: false, preview: true }),
+                canGoBack: false, canGoForward: false, openHref: () => true,
+                activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {},
+                navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
+                registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+            }}><Layout /></WorkspaceNavigationProvider>;
+        }
+
+        const screen = await renderScreen(layoutTree(MirroredLayout));
+
+        // The workspace's DestinationInstanceHost owns this Session's viewer and Board execution;
+        // a second scope under Expo's URL mirror would run a duplicate Board controller per open.
+        expect(screen.findAllByType(SessionViewerDestinationScope)).toHaveLength(0);
+        expect(screen.findAllByType('SessionRouteSlot')).toHaveLength(1);
+    });
+
+    it('does not re-render the route layout while its Session record changes during a turn', async () => {
+        routeParams.value = { id: 'session-1', serverId: 'home-b' };
+        sessionState.current = createSessionFixture({ id: 'session-1', serverId: 'home-b', active: true });
+        const { default: Layout } = await import('@/app/(app)/session/[id]/_layout');
+        const target = { kind: 'session' as const, params: { id: 'session-1', serverId: 'home-b' } };
+        function MirroredLayout() {
+            return <WorkspaceNavigationProvider value={{
+                active: true, state: createWorkspaceState({ id: 'session-tab', target, pinned: false, preview: true }),
+                canGoBack: false, canGoForward: false, openHref: () => true,
+                activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {},
+                navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
+                registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+            }}><Layout /></WorkspaceNavigationProvider>;
+        }
+        await renderScreen(layoutTree(MirroredLayout));
+        const rendersBefore = routeRuntime.childHydrationServerIds.length;
+
+        // A streaming turn rewrites the Session record (seq, thinking, activity) many times.
+        for (let seq = 2; seq <= 6; seq += 1) {
+            const current = storage.getState().sessions['session-1']!;
+            await act(async () => {
+                storage.setState({ sessions: { 'session-1': { ...current, seq, thinking: seq % 2 === 0, thinkingAt: seq, updatedAt: seq } } });
+            });
+        }
+
+        expect(routeRuntime.childHydrationServerIds.length - rendersBefore).toBe(0);
     });
 
     it('opens an explicitly qualified link directly, even when no Home is known to hold it', async () => {
@@ -290,13 +354,14 @@ describe('ordinary session route layout', () => {
             addresses: [{ serverId, sessionId: 'session-1' }],
             nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
             phase: 'ready' as const, freshnessAt: 1, failureReason: null, failureCode: null,
+            homeObservation: { phase: 'ready' as const, lastSuccessAt: 1 },
             appliedSourceKind: 'query' as const,
         });
         retainSessionListPaneState({
             storageKind: 'all', pathname: '/', sourceScopeKey: 'test', queryMembershipActive: true,
             paneState: {
                 summary: { sessionsReady: true, sessionCount: 2 }, visibleSessionListIndex: [],
-                hasHiddenInactiveSessions: false, folderFocus: null, showLoading: false, showEmptyState: false,
+                hasHiddenInactiveSessions: false, showLoading: false, showEmptyState: false,
                 folderFeatureEnabledServerIds: [],
                 query: {
                     active: true,
@@ -319,7 +384,7 @@ describe('ordinary session route layout', () => {
             storageKind: 'all', pathname: '/', sourceScopeKey: 'test', queryMembershipActive: true,
             paneState: {
                 summary: { sessionsReady: true, sessionCount: 1 }, visibleSessionListIndex: [],
-                hasHiddenInactiveSessions: false, folderFocus: null, showLoading: false, showEmptyState: false,
+                hasHiddenInactiveSessions: false, showLoading: false, showEmptyState: false,
                 folderFeatureEnabledServerIds: [],
                 query: {
                     active: true,
@@ -329,6 +394,7 @@ describe('ordinary session route layout', () => {
                             addresses: [{ serverId: 'home-b', sessionId: 'session-1' }],
                             nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
                             phase: 'ready', freshnessAt: 1, failureReason: null, failureCode: null,
+                            homeObservation: { phase: 'ready', lastSuccessAt: 1 },
                             appliedSourceKind: 'query',
                         },
                     },

@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MMKV } from 'react-native-mmkv';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
-import { PUSH_NOTIFICATION_ACTION_IDS, RPC_METHODS } from '@happier-dev/protocol';
+import { PUSH_NOTIFICATION_ACTION_IDS} from '@happier-dev/protocol/push/pushNotificationActions';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability';
 import { createRootLayoutFeaturesResponse, createSessionFixture, flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -125,6 +126,17 @@ async function renderNotification(data: Record<string, unknown>, actionIdentifie
     nativeNotifications.response = response(data, actionIdentifier);
     await renderRootLayoutRoute(RootLayout, credentials);
     await vi.waitFor(() => expect(routerBoundary.push).toHaveBeenCalled());
+    await flushHookEffects();
+}
+async function renderLiveNotification(data: Record<string, unknown>, actionIdentifier: string) {
+    let listener: ((response: Notifications.NotificationResponse) => void) | undefined;
+    vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(callback => {
+        listener = callback;
+        return { remove: vi.fn() };
+    });
+    await renderRootLayoutRoute(RootLayout, credentials);
+    await vi.waitFor(() => expect(listener).toEqual(expect.any(Function)));
+    listener!(response(data, actionIdentifier));
     await flushHookEffects();
 }
 function permissionRequests() {
@@ -326,43 +338,63 @@ describe('App RootLayout notifications', () => {
     it.each([
         [PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1, true, 'approved'],
         [PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1, false, 'denied'],
-    ] as const)('sends the %s permission response to its admitted Home and navigates', async (actionIdentifier, approved, decision) => {
+    ] as const)('sends the live %s permission response to its admitted Home without switching or navigating', async (actionIdentifier, approved, decision) => {
+        const originalTurn = `original-turn-${decision}`;
         await arrangeHomes();
         arrangeSession('s_permission');
-        nativeNotifications.response = response({ sessionId: 's_permission', requestId: 'p_permission', turnId: 'original-turn', serverUrl: activeUrl }, actionIdentifier);
-        await renderRootLayoutRoute(RootLayout, credentials);
+        await renderLiveNotification({ sessionId: 's_permission', requestId: 'p_permission', turnId: originalTurn, serverUrl: activeUrl }, actionIdentifier);
         await vi.waitFor(() => expect(permissionRequests()).toHaveLength(1));
         expect(permissionRequests()[0]).toMatchObject({ origin: activeUrl, payload: {
-            method: 's_permission:' + RPC_METHODS.SESSION_PERMISSION_RESPOND, params: { id: 'p_permission', turnId: 'original-turn', approved, decision },
+            method: 's_permission:' + RPC_METHODS.SESSION_PERMISSION_RESPOND, params: { id: 'p_permission', turnId: originalTurn, approved, decision },
         } });
         if (!approved) {
             expect(permissionRequests()[0]).toMatchObject({ payload: { params: {
                 reason: expect.stringMatching(/\S/),
             } } });
         }
-        await vi.waitFor(() => expect(routerBoundary.push).toHaveBeenCalledWith('/session/s_permission?serverId=srv_server_1'));
+        await flushHookEffects();
+        expect(getActiveServerSnapshot().serverId).toBe('srv_server_1');
+        expect(getDeviceDefaultServerId()).toBe('srv_server_1');
+        expect(routerBoundary.push).not.toHaveBeenCalled();
     });
-    it('switches to a saved inactive Home before performing permission allow', async () => {
+    it('sends live permission allow to a saved inactive Home without selecting it or navigating', async () => {
         await arrangeHomes([profile('srv_server_1', activeUrl), profile('srv_server_2', 'https://company.example.test')]);
         arrangeSession('s_allow_2', 'srv_server_2');
-        await renderNotification({ sessionId: 's_allow_2', requestId: 'p_allow_2', turnId: 'inactive-turn', serverUrl: 'https://company.example.test' }, PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1);
-        expect(getDeviceDefaultServerId()).toBe('srv_server_2');
-        expect(routerBoundary.push).toHaveBeenCalledWith('/session/s_allow_2?serverId=srv_server_2');
+        await renderLiveNotification({ sessionId: 's_allow_2', requestId: 'p_allow_2', turnId: 'inactive-turn', serverUrl: 'https://company.example.test' }, PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1);
         await vi.waitFor(() => expect(permissionRequests()).toHaveLength(1));
         expect(permissionRequests()[0]).toMatchObject({ origin: 'https://company.example.test', payload: { params: { id: 'p_allow_2', turnId: 'inactive-turn', approved: true } } });
+        await flushHookEffects();
+        expect(getActiveServerSnapshot().serverId).toBe('srv_server_1');
+        expect(getDeviceDefaultServerId()).toBe('srv_server_1');
+        expect(routerBoundary.push).not.toHaveBeenCalled();
     });
-    it('does not perform permission allow without serverUrl', async () => {
+    it.each([
+        { sessionId: 's_allow_3', requestId: 'p_allow_3', turnId: 'missing-home-turn' },
+        { sessionId: 's_allow_3', requestId: 'p_allow_3', serverUrl: activeUrl },
+    ])('keeps an incomplete live permission target for review without navigation: %j', async (data) => {
         await arrangeHomes();
-        await renderNotification({ sessionId: 's_allow_3', requestId: 'p_allow_3' }, PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1);
+        await renderLiveNotification(data, PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1);
+        expectNoTargetMutation();
+        expect(getPendingNotificationAction()).toBeNull();
+        expect(getPendingNotificationNav()).toBeNull();
+        expect(routerBoundary.push).not.toHaveBeenCalled();
+    });
+    it('opens a cached modern permission response for review without replaying the decision', async () => {
+        await arrangeHomes();
+        arrangeSession('s_cached_permission');
+        await renderNotification({ sessionId: 's_cached_permission', requestId: 'p_cached_permission',
+            turnId: 'cached-turn', serverUrl: activeUrl }, PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1);
         expect(permissionRequests()).toHaveLength(0);
-        expect(routerBoundary.push).toHaveBeenCalledWith('/session/s_allow_3');
+        expect(routerBoundary.push).toHaveBeenCalledWith('/session/s_cached_permission?serverId=srv_server_1');
     });
     it('does not perform permission allow or send a request to an unsaved Home', async () => {
         await arrangeHomes();
-        await renderNotification({ sessionId: 's_allow_4', requestId: 'p_allow_4', serverUrl: 'https://unknown.example.test' }, PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1);
+        await renderLiveNotification({ sessionId: 's_allow_4', requestId: 'p_allow_4', turnId: 'unknown-home-turn',
+            serverUrl: 'https://unknown.example.test' }, PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1);
         expectNoTargetMutation();
-        expect(routerBoundary.push).toHaveBeenCalledWith('/settings/server/add?address=https%3A%2F%2Funknown.example.test&source=notification');
-        expectPendingNavigation('https://unknown.example.test', '/session/s_allow_4');
+        expect(getPendingNotificationAction()).toBeNull();
+        expect(getPendingNotificationNav()).toBeNull();
+        expect(routerBoundary.push).not.toHaveBeenCalled();
     });
     it('ignores unknown actions without adding a Home, writing a pending action, or navigating', async () => {
         await arrangeHomes();
@@ -376,9 +408,9 @@ describe('App RootLayout notifications', () => {
         expectNoTargetMutation();
         expect(routerBoundary.push).not.toHaveBeenCalled();
     });
-    it('connects an unsaved Home when no profiles exist but never performs its permission action', async () => {
+    it('connects an unsaved Home from a body tap when no profiles exist', async () => {
         await arrangeHomes([]);
-        await renderNotification({ sessionId: 's_allow_5', requestId: 'p_allow_5', serverUrl: 'https://new.example.test' }, PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1);
+        await renderNotification({ sessionId: 's_allow_5', serverUrl: 'https://new.example.test' });
         expect(permissionRequests()).toHaveLength(0);
         expect(getActiveServerSnapshot().serverUrl).toBe('https://new.example.test');
         expect(listServerProfiles().map(home => home.serverUrl)).toContain('https://new.example.test');

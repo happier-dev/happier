@@ -8,6 +8,7 @@
 export type PermissionStatus = 'granted' | 'denied' | 'undetermined';
 
 export const DEFAULT_ACTION_IDENTIFIER = 'expo.modules.notifications.actions.DEFAULT';
+export const SchedulableTriggerInputTypes = { DATE: 'date' } as const;
 
 export const AndroidImportance = {
     UNKNOWN: 0,
@@ -62,12 +63,16 @@ export async function getLastNotificationResponseAsync(): Promise<unknown> {
     return null;
 }
 
-export async function getPresentedNotificationsAsync(): Promise<[]> {
+export async function getPresentedNotificationsAsync(): Promise<unknown[]> {
     return [];
 }
 
 export async function scheduleNotificationAsync(_request: unknown): Promise<string> {
     return 'expo-local-notification-stub';
+}
+
+export async function cancelScheduledNotificationAsync(_identifier: string): Promise<void> {
+    // no-op
 }
 
 export async function setBadgeCountAsync(_count: number): Promise<boolean> {

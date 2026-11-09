@@ -13,6 +13,9 @@ import { storage } from '@/sync/domains/state/storage';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { deleteServerFeaturesSnapshot, getCachedServerFeaturesSnapshot, primeServerFeaturesSnapshot, type ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { setDemoConnectedMetadataCatalogProjection } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
+import { setDemoMcpServerCatalogProjection } from '@/sync/store/settings/mcpServerCatalogSnapshot';
+import { setDemoHomeHubAccountProjection } from '@/components/hub/layout/homeHubAccountStore';
+import { clearDemoSessionListViewFilters } from '@/components/sessions/shell/search/useSessionListViewFilters';
 
 import { enterDemoMode, exitDemoMode, isDemoModeActive } from '../runtime/enterExitDemoMode';
 import { buildDemoWorld, type DemoWorld } from '../world/buildDemoWorld';
@@ -24,6 +27,8 @@ import {
     type DemoRuntimeResidueMode,
 } from './runtimeResidue';
 import { buildStoreStateAfterDemoRestore, takeStoreSnapshot, type StoreSnapshot } from './storeSnapshot';
+import { setDemoMachineReadProjection } from '../runtime/demoMachineReadProjection';
+import { setDemoSettingsReadProjection } from '../runtime/demoSettingsReadProjection';
 
 type ActiveDemoSnapshot = Readonly<{
     snapshot: StoreSnapshot;
@@ -42,6 +47,12 @@ type ActiveDemoSnapshot = Readonly<{
 }>;
 
 let activeDemoSnapshot: ActiveDemoSnapshot | null = null;
+
+/** Include a demo transport's newly created Session in the existing world restore. */
+export function registerDemoSessionForRestore(sessionId: string): void {
+    if (activeDemoSnapshot === null || !isDemoModeActive()) throw new Error('A demo Session requires an active demo world.');
+    activeDemoSnapshot = { ...activeDemoSnapshot, sessionIds: new Set([...activeDemoSnapshot.sessionIds, sessionId]) };
+}
 
 export class DemoWorldSeedRefusedError extends Error {
     readonly code = 'demo_credentials_present';
@@ -120,7 +131,7 @@ export async function seedDemoWorld(options: SeedDemoWorldOptions = {}): Promise
     const demoServerProfileExisted = listServerProfiles().some((profile) => profile.serverUrl === DEMO_SERVER_BASE_URL);
     const demoServerProfile = await upsertServerProfileOnly({
         serverUrl: DEMO_SERVER_BASE_URL,
-        name: 'Demo Relay',
+        name: 'Personal Home',
         source: 'preconfigured',
     });
     const primedServerFeatureIds = Array.from(new Set([
@@ -142,7 +153,10 @@ export async function seedDemoWorld(options: SeedDemoWorldOptions = {}): Promise
         residuePolicy,
     };
 
-    enterDemoMode();
+    enterDemoMode(demoServerProfile.id);
+    setDemoMachineReadProjection(world);
+    setDemoSettingsReadProjection(world);
+    await setDemoHomeHubAccountProjection(demoServerProfile.id);
     // Focus publication reaches mounted Home observers synchronously. Make the
     // seeded capabilities readable before activating the temporary Home.
     for (const serverId of primedServerFeatureIds) {
@@ -186,6 +200,7 @@ export async function seedDemoWorld(options: SeedDemoWorldOptions = {}): Promise
         artifactsLoaded: true,
     }));
     setDemoConnectedMetadataCatalogProjection(world.connectedMetadata);
+    setDemoMcpServerCatalogProjection(world.mcpServers);
     const state = storage.getState();
     state.applyMachines(world.machines);
     // Session readers admit an exact Home identity, never ambient focus. These
@@ -201,6 +216,7 @@ export async function seedDemoWorld(options: SeedDemoWorldOptions = {}): Promise
     for (const [sessionId, messages] of Object.entries(world.messages)) {
         state.applyMessages(sessionId, messages);
         state.applyMessagesLoaded(sessionId);
+        state.markSessionMessagesHistoryStartLoaded(sessionId);
     }
     for (const [sessionId, pending] of Object.entries(world.pending)) {
         state.applyPendingMessages(sessionId, pending.messages);
@@ -233,12 +249,20 @@ export async function seedDemoWorld(options: SeedDemoWorldOptions = {}): Promise
 export async function clearDemoWorld(options: ClearDemoWorldOptions = {}): Promise<ClearDemoWorldResult> {
     const active = activeDemoSnapshot;
     if (!active) {
+        setDemoMachineReadProjection(null);
+        setDemoSettingsReadProjection(null);
+        await setDemoHomeHubAccountProjection(null);
         setDemoConnectedMetadataCatalogProjection(null);
+        setDemoMcpServerCatalogProjection(null);
         if (isDemoModeActive()) exitDemoMode();
         return { residueFindings: [] };
     }
 
+    setDemoMachineReadProjection(null);
+    setDemoSettingsReadProjection(null);
+    await setDemoHomeHubAccountProjection(null);
     setDemoConnectedMetadataCatalogProjection(null);
+    setDemoMcpServerCatalogProjection(null);
     storage.setState((current) => buildStoreStateAfterDemoRestore({
         current,
         snapshot: active.snapshot,
@@ -266,6 +290,7 @@ export async function clearDemoWorld(options: ClearDemoWorldOptions = {}): Promi
     const residueFindings = stopDemoRuntimeResidueTracking();
     activeDemoSnapshot = null;
     if (isDemoModeActive()) exitDemoMode();
+    clearDemoSessionListViewFilters(active.demoServerProfileId);
     if (residueFindings.length > 0) {
         if (residuePolicy !== 'diagnostic') {
             throw new DemoWorldRuntimeResidueError(residueFindings);

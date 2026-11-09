@@ -15,7 +15,7 @@ const onSessionVisibleSpy = vi.hoisted(() => vi.fn<(sessionId: string) => void>(
 const detailsViewSpy = vi.hoisted(() => vi.fn<(props: any, ref?: any) => React.ReactElement>((props) => React.createElement('SessionMessageDetailsView', props)));
 const useMessageSpy = vi.hoisted(() => vi.fn<(sessionId: string, messageId: string) => unknown>());
 const useSessionSpy = vi.hoisted(() => vi.fn<(sessionId: string) => unknown>());
-const useTranscriptIdsSpy = vi.hoisted(() => vi.fn<(sessionId: string) => unknown>());
+const useTranscriptLoadedSpy = vi.hoisted(() => vi.fn<(sessionId: string) => boolean>());
 const useResolvedRouteIdSpy = vi.hoisted(() => vi.fn<(sessionId: string, routeId: string) => string>());
 
 const routerMock = createExpoRouterMock({
@@ -73,7 +73,7 @@ const storageMock = createStorageModuleStub({
     useMessage: (sessionId: string, messageId: string) => useMessageSpy(sessionId, messageId),
     useResolvedSessionMessageRouteId: (sessionId: string, routeId: string) => useResolvedRouteIdSpy(sessionId, routeId),
     useSession: (sessionId: string) => useSessionSpy(sessionId),
-    useSessionTranscriptIds: (sessionId: string) => useTranscriptIdsSpy(sessionId),
+    useSessionTranscriptLoaded: (sessionId: string) => useTranscriptLoadedSpy(sessionId),
 });
 
 vi.mock('@/sync/domains/state/storage', () => storageMock);
@@ -90,11 +90,11 @@ describe('session message route', () => {
         detailsViewSpy.mockClear();
         useMessageSpy.mockReset();
         useSessionSpy.mockReset();
-        useTranscriptIdsSpy.mockReset();
+        useTranscriptLoadedSpy.mockReset();
         useResolvedRouteIdSpy.mockReset();
         useMessageSpy.mockReturnValue({ id: 'm1', kind: 'text' });
         useSessionSpy.mockReturnValue({ id: 's1', metadata: null });
-        useTranscriptIdsSpy.mockReturnValue({ isLoaded: true });
+        useTranscriptLoadedSpy.mockReturnValue(true);
         useResolvedRouteIdSpy.mockImplementation((_sessionId: string, routeId: string) => routeId);
     });
 
@@ -110,7 +110,7 @@ describe('session message route', () => {
         expect(hydrateSessionSpy).toHaveBeenCalledWith('s1', 'MessageRoute.ensureSessionVisible');
         expect(onSessionVisibleSpy).toHaveBeenCalledWith('s1');
         expect(useSessionSpy).toHaveBeenCalledWith('s1');
-        expect(useTranscriptIdsSpy).toHaveBeenCalledWith('s1');
+        expect(useTranscriptLoadedSpy).toHaveBeenCalledWith('s1');
         expect(useMessageSpy).toHaveBeenCalledWith('s1', 'm1');
         expect(detailsViewSpy).toHaveBeenCalledWith(
             expect.objectContaining({

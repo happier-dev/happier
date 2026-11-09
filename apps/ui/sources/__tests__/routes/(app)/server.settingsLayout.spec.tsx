@@ -20,8 +20,10 @@ beforeEach(() => {
 });
 afterEach(standardCleanup);
 
+// Transform the real route graph during collection, outside the per-interaction test budget.
+const Screen = (await import('@/app/(app)/server')).default;
+
 async function renderServerRoute() {
-    const Screen = (await import('@/app/(app)/server')).default;
     return renderScreen(<Screen />);
 }
 
@@ -31,13 +33,10 @@ describe('/server legacy entry', () => {
         expect(route.spies.replace).toHaveBeenCalledWith({ pathname: '/settings/server' });
     });
 
-    it('forwards address, automatic connection and notification source into the Home draft', async () => {
+    it('forwards a signed-out Home address into the welcome connection step', async () => {
         route.module.router.setParams({ url: 'https://company.example.test', auto: '1', source: 'notification' });
         await renderServerRoute();
-        expect(route.spies.replace).toHaveBeenCalledWith({
-            pathname: '/settings/server/add',
-            params: { address: 'https://company.example.test', auto: '1', source: 'notification' },
-        });
+        expect(route.spies.replace).toHaveBeenCalledWith('/?step=home&server=https%3A%2F%2Fcompany.example.test');
     });
 
     it('preserves an explicitly empty group seed in the new-group draft', async () => {

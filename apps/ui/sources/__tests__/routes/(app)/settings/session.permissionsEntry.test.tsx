@@ -106,9 +106,10 @@ describe('Session settings (Permissions entry)', () => {
         const groupTitles = screen.findAllByType(ItemGroup).map((group) => group.props.title);
 
         expect(groupTitles).toEqual([
-            'settingsSession.rootGroups.launchDefaults.title',
             'settingsSession.rootGroups.listOrganization.title',
             'settingsSession.rootGroups.rowDetails.title',
+            'sessionsList.spacesTitle',
+            'settingsSession.rootGroups.launchDefaults.title',
             'settingsSession.rootGroups.activitySignals.title',
             'settingsSession.rootGroups.mobileLayout.title',
             'workspaceTabs.sectionTitle',
@@ -120,10 +121,6 @@ describe('Session settings (Permissions entry)', () => {
     });
 
     it('places session list controls into focused root groups', async () => {
-        // Every list-organization row shows: the Active/Inactive layout with project grouping (grouping,
-        // ordering) and session folders enabled (folder sort).
-        sessionSettingsEntryState.settingsState.sessionListSectionModeV1 = 'activity';
-        sessionSettingsEntryState.settingsState.sessionListActiveGroupingV1 = 'project';
         foldersEnabled = true;
         const mod = await import('@/app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
@@ -145,23 +142,15 @@ describe('Session settings (Permissions entry)', () => {
             ['settingsSession.sessionCreation.rememberLastProjectSelectionsTitle', 'settingsSession.rootGroups.launchDefaults.title'],
             ['settingsSession.sessionCreation.rememberLastEngineSelectionsTitle', 'settingsSession.rootGroups.launchDefaults.title'],
             ['settingsAppearance.sessionListDensity.title', 'settingsSession.rootGroups.listOrganization.title'],
-            ['settingsSession.sessionList.orderingTitle', 'settingsSession.rootGroups.listOrganization.title'],
-            ['settingsSession.sessionList.folderSortModeTitle', 'settingsSession.rootGroups.listOrganization.title'],
             ['settingsSession.sessionList.layoutTitle', 'settingsSession.rootGroups.listOrganization.title'],
-            ['settingsFeatures.sessionListActiveGrouping', 'settingsSession.rootGroups.listOrganization.title'],
-            ['settingsFeatures.sessionListInactiveGrouping', 'settingsSession.rootGroups.listOrganization.title'],
             ['settingsFeatures.hideInactiveSessions', 'settingsSession.rootGroups.listOrganization.title'],
             ['settingsAppearance.sessionsRightPaneDefaultOpen', 'settingsSession.rootGroups.listOrganization.title'],
             ['settingsSession.sessionList.tagsTitle', 'settingsSession.rootGroups.rowDetails.title'],
             ['settingsSession.sessionList.identityDisplayTitle', 'settingsSession.rootGroups.rowDetails.title'],
             ['settingsSession.sessionList.activeColorTitle', 'settingsSession.rootGroups.rowDetails.title'],
-            ['settingsSession.sessionList.workspacePathDisplayTitle', 'settingsSession.rootGroups.rowDetails.title'],
+            ['settingsSession.sessionList.rowContextTitle', 'settingsSession.rootGroups.rowDetails.title'],
             ['settingsSession.sessionList.workspaceFaviconsTitle', 'settingsSession.rootGroups.rowDetails.title'],
-            ['settingsSession.sessionList.workspaceMachineSubtitlesTitle', 'settingsSession.rootGroups.rowDetails.title'],
-            ['settingsSession.sessionList.workingStatusAnimatedTextTitle', 'settingsSession.rootGroups.activitySignals.title'],
-            ['settingsSession.sessionList.attentionPromotionModeTitle', 'settingsSession.rootGroups.activitySignals.title'],
-            ['settingsSession.sessionList.workingPlacementModeTitle', 'settingsSession.rootGroups.activitySignals.title'],
-            ['settingsSession.sessionList.workingIndicatorTitle', 'settingsSession.rootGroups.activitySignals.title'],
+            ['settingsSession.sessionList.attentionPlacementTitle', 'settingsSession.rootGroups.activitySignals.title'],
             ['settingsSession.mobileWorkspaceExperience.title', 'settingsSession.rootGroups.mobileLayout.title'],
             ['settingsSession.promptPersonalization.askAgentToRenameSessionsTitle', 'settingsSession.rootGroups.agentPersonalization.title'],
             ['settingsSession.promptPersonalization.askAgentToSuggestReplyOptionsTitle', 'settingsSession.rootGroups.agentPersonalization.title'],
@@ -294,37 +283,4 @@ describe('Session settings (Permissions entry)', () => {
         await expectPersistedSettings({ sessionProviderUsageGaugeMode: 'hidden', sessionProviderUsageGaugeWindowModes: ['weekly'] });
     });
 
-    it('renders the animated working-status toggle row in session list activity settings', async () => {
-        sessionSettingsEntryState.settingsState.sessionListWorkingStatusAnimatedTextEnabled = true;
-        const mod = await import('@/app/(app)/settings/session');
-        const SessionSettingsScreen = mod.default;
-        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
-
-        const row = screen.findRowByTitle('settingsSession.sessionList.workingStatusAnimatedTextTitle');
-        expect(row).toBeTruthy();
-        expect(row?.props.testID).toBe('settings-session-workingStatusAnimatedText-item');
-
-        expect(row?.props.rightElement?.props.testID).toBe('settings-session-workingStatusAnimatedText-toggle');
-        expect(row?.props.rightElement?.props.value).toBe(true);
-
-        screen.pressRowByTitle('settingsSession.sessionList.workingStatusAnimatedTextTitle');
-
-        await expectPersistedSettings({ sessionListWorkingStatusAnimatedTextEnabled: false });
-    });
-
-    it('renders working indicator style as a session list setting', async () => {
-        const mod = await import('@/app/(app)/settings/session');
-        const SessionSettingsScreen = mod.default;
-        const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
-
-        const dropdown = screen.findAllByType(DropdownMenu).find((node) =>
-            node.props.itemTrigger?.itemProps?.testID === 'settings-session-workingIndicator-trigger'
-        );
-        expect(dropdown).toBeTruthy();
-        expect(dropdown?.props.selectedId).toBe('spinner');
-
-        dropdown?.props.onSelect('pulse');
-
-        await expectPersistedSettings({ sessionListNarrowWorkingIndicatorStyle: 'pulse' });
-    });
 });

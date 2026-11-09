@@ -52,7 +52,7 @@ type CapturingLegendListMockOptions = Readonly<{
     emitViewability?: boolean;
     /** A warm measured recycler may finish its initial layout before its parent's passive effects. */
     emitLoadDuringLayout?: boolean;
-    /** Keep mounted cells until their item or the recycler's dataVersion changes. */
+    /** Keep mounted cells until their item, dataVersion or subscribed extraData changes. */
     memoizeItems?: boolean;
     /** Observe memoized cell render work, including invalidation through extraData. */
     onRenderItem?: () => void;

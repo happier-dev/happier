@@ -26,8 +26,8 @@ import {
     resetProfileSecretRequirementHarness,
 } from './profileSecretRequirementTestHarness';
 import { settingsParse } from '@/sync/domains/settings/settings';
-import { LaunchProfileV2Schema } from '@happier-dev/protocol';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import { LaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileRecordV1Schema,
@@ -161,6 +161,7 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
 
     it('navigates to the secret requirement screen when required secrets are missing', async () => {
         routeParamsState.value = {
+            newSessionHostDraftId: 'docked-draft',
             selectedId: '',
             dataId: 'draft-1',
             machineId: 'm1',
@@ -194,6 +195,7 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
         expect(routerMock.push).toHaveBeenCalledWith({
             pathname: '/new/pick/secret-requirement',
             params: expect.objectContaining({
+                newSessionHostDraftId: 'docked-draft',
                 ...createConfiguredAgentRouteParams('review-bot'),
                 dataId: 'draft-1',
                 profileId: 'deepseek',

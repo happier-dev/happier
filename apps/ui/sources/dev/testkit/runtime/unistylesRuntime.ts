@@ -51,6 +51,8 @@ export async function createUnistylesRuntime(overrides?: TestUnistylesRuntimeOve
             },
             configure: () => {},
             absoluteFillObject: {},
+            // Unistyles' web value: one CSS pixel.
+            hairlineWidth: 1,
         },
         overrides?.styleSheet,
     );

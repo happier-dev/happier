@@ -8,7 +8,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { createAccountKvHttpFixture } from '../fixtures/accountKvHttpFixture';
 import { createPlainAccountEncryptionCurrentnessFixture } from '../fixtures/accountEncryptionCurrentness';
 import { createSessionFixture } from '../fixtures/sessionFixtures';
-import { createSessionReadBatchFetchBoundary } from './sessionReadBatchHttpBoundary';
+import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBoundary';
 import { createConnectedPurposeCatalogHttpBoundary } from './connectedAccountCatalogBoundary';
 import type { SettingsWriteDelta } from '@/sync/domains/settings/settings';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -135,7 +135,8 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
         const connection = await restoreServerAccountForTest({
             serverUrl: `https://voice-policy-${params.mode}.example.test`,
             activation: 'switch', credentialScope: 'restored-home',
-            request: createSessionReadBatchFetchBoundary(async (url, init) => {
+            request: createCompactSessionListFetchBoundary(async (url, init) => {
+              if (new URL(String(url)).pathname === '/v2/sessions/read-batch' && init?.method === 'POST') return undefined;
                 const memoryResponse = await transcriptMemory.handleFetch(url, init);
                 if (memoryResponse) return memoryResponse;
                 const path = new URL(String(url)).pathname;
@@ -159,15 +160,20 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
                 const purposeResponse = await purposes.handle(url, init);
                 if (purposeResponse) return purposeResponse;
                 return new Response('{}', { status: 404 });
-            }),
+            }, { preferExactSnapshot: true }),
         });
         teardownConnection = connection.dispose;
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-        await vi.waitFor(() => {
-            const lifetime = captureActiveServerAccountScopeLifetime();
-            if (!lifetime?.isCurrent() || lifetime.scope.serverId !== connection.home.id || !storage.getState().isDataReady) {
-                throw new Error('Test Home core Account bootstrap is not current');
-            }
+        await new Promise<void>(resolve => {
+            let unsubscribe = () => {};
+            const observeBootstrap = () => {
+                const lifetime = captureActiveServerAccountScopeLifetime();
+                if (!lifetime?.isCurrent() || lifetime.scope.serverId !== connection.home.id || !storage.getState().isDataReady) return;
+                unsubscribe();
+                resolve();
+            };
+            unsubscribe = storage.subscribe(observeBootstrap);
+            observeBootstrap();
         });
         session = { ...session, serverId: connection.home.id };
         applyPreference({ experiments: true, featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true },

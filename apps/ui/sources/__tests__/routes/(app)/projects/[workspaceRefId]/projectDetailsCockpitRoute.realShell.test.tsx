@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
-import { WorkspaceRefV1Schema } from '@happier-dev/protocol';
+import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createMachineFixture, renderScreen, applyProjectAccountRowsFixture } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { installSessionRouteCommonModuleMocks } from '../../session/[id]/sessionRouteTestHelpers';

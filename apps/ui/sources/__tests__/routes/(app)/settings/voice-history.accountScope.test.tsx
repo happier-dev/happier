@@ -11,7 +11,8 @@ import {
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
+import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createVoiceHistoryListRowFixture } from '@/voice/history/voiceConversationHistory.testkit';
 
 const legendListMock = createCapturingLegendListMock({ renderItems: true });
 const homeHttp = createHomeGovernanceHarness();
@@ -39,22 +40,22 @@ async function restoreAccount(accountId: string): Promise<void> {
 }
 
 async function installHistorySession(accountId: string) {
-  const { buildSystemSessionMetadataV1, SessionCurrentProjectionRecordV1Schema, SessionLookupByTagsResponseV2Schema } = await import('@happier-dev/protocol');
+  const { buildSystemSessionMetadataV1 } = await import('@happier-dev/protocol/sessions/control/contract');
+  const { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } = await import('@happier-dev/protocol/voice/sessionBinding');
   const sessionId = `voice-history-${accountId}`;
   const session = createSessionFixture({ id: sessionId, serverId: homeId, seq: 20,
     metadata: { ...createSessionFixture().metadata!,
-      ...buildSystemSessionMetadataV1({ key: 'voice_transcript_history', hidden: true }) },
+      ...buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true }) },
   });
-  const sessionHttp = createSessionMetadataHttpBoundary(() => ({ [sessionId]: session }));
-  const response = sessionHttp.handle(`https://voice-history.test/v2/sessions/${sessionId}`);
-  if (!response) throw new Error('Canonical Session HTTP fixture did not answer');
-  const body: unknown = await response.json();
-  if (!body || typeof body !== 'object' || !('session' in body)) throw new Error('Expected canonical Session detail');
-  const wire = SessionCurrentProjectionRecordV1Schema.parse(body.session);
+  const wire = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, seq: session.seq, metadata: session.metadata });
+  const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+  const credentials = await TokenStorage.getCredentialsForServerUrl('https://voice-history.test');
+  if (!credentials) throw new Error('History fixture Account has no credentials');
+  const row = await createVoiceHistoryListRowFixture(session, { credentials });
   homeHttp.answer(homeId, `/v2/sessions/${sessionId}`, { body: { session: wire } });
-  homeHttp.answer(homeId, '/v2/sessions/lookup-by-tags', {
-    body: SessionLookupByTagsResponseV2Schema.parse({ sessions: [wire] }),
-  });
+  // History discovers retained conversations through the canonical Session-list reader.
+  homeHttp.answer(homeId, '/v2/sessions', { body: { sessions: [row], hasNext: false, nextCursor: null } });
+  homeHttp.answer(homeId, '/v2/sessions/archived', { body: { sessions: [], hasNext: false, nextCursor: null } });
   return sessionId;
 }
 
@@ -122,6 +123,8 @@ describe('Voice History route account scope', () => {
     const pendingRefreshA = sync.refreshSessionMessages(sessionA, { authority: authorityA });
     await waitForHomeGovernance(() => expect(homeHttp.requests.slice(requestsBeforeRefresh).some(request =>
       request.path.startsWith(messagesA) && !request.path.includes('beforeSeq='))).toBe(true));
+    // The realtime transcript is one row whose turns (and Load older) open under it.
+    await act(async () => { screen.pressByTestId('voice-history-transcript'); });
     await act(async () => { screen.pressByTestId('voice-history-load-older'); });
     await waitForHomeGovernance(() => expect(homeHttp.requests.some(request =>
       request.path.startsWith(messagesA) && request.path.includes('beforeSeq=20'))).toBe(true));

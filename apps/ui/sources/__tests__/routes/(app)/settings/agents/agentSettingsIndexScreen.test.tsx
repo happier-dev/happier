@@ -5,12 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema, RPC_METHODS } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import { createDeferred, createMachineFixture, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, renderInCollectionLayout, standardCleanup } from '@/dev/testkit';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -98,6 +99,69 @@ afterEach(async () => {
 });
 
 describe('PluginAgentSettingsIndexScreen', () => {
+    it('carries exact Machine declaration compatibility into Models and retains it until refresh settles', async () => {
+        const { BUNDLED_CANONICAL_AGENT_DECLARATIONS } = await import('@/agents/registry/generatedBundledPluginEntries');
+        const { readAccountProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const claude = BUNDLED_CANONICAL_AGENT_DECLARATIONS.claude;
+        if (!claude) throw new Error('Bundled Claude declaration is required by this fixture');
+        const declarations = readAccountProviderDeclarations({ kind: 'account' });
+        const deepseek = declarations.find(row => row.definition.id === 'deepseek')!;
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            agentsById: { claude: { id: 'claude', identity: claude.identity, title: claude.cli?.displayName,
+                isBuiltIn: true, providerRequirements: claude.providerRequirements } },
+            familiesById: { providers: { family: 'providers', entriesById: Object.fromEntries(declarations.map(row =>
+                [row.contributionKey, { id: row.contributionKey, pluginId: row.contributionKey.split('/')[0],
+                    sourceKind: 'bundled', provenance: row.provenance, definition: row.definition }])) } },
+        });
+        projectionReply.mockResolvedValue(projection);
+        await select(account.serverId, 'machine-1');
+        const screen = await renderInCollectionLayout(<Screen />, 'split');
+        await vi.waitFor(() => expect(screen.findHostByTestId(`settings-agents-home.models.provider.${deepseek.contributionKey}`)).not.toBeNull());
+        expect(projectionRequests()).toHaveLength(1);
+        expect(projectionRequests()[0]).toMatchObject({ machineId: 'machine-1', serverId: 'srv_agent_index' });
+
+        const refreshed = createDeferred<unknown>();
+        projectionReply.mockImplementation(() => refreshed.promise);
+        const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+        await act(async () => { publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: account.serverId }, 'authority'); });
+        await vi.waitFor(() => expect(projectionRequests().length).toBeGreaterThan(1));
+        expect(screen.findHostByTestId(`settings-agents-home.models.provider.${deepseek.contributionKey}`)).not.toBeNull();
+        await act(async () => { refreshed.resolve(PluginProjectionV2Schema.parse({ ...projection, generation: 2, familiesById: {} })); });
+        await vi.waitFor(() => expect(screen.findHostByTestId(`settings-agents-home.models.provider.${deepseek.contributionKey}`)).toBeNull());
+    });
+
+    it('offers only declaration-compatible Providers for the admitted Agents without Machine probes', async () => {
+        await restore([]);
+        const screen = await renderInCollectionLayout(<Screen />, 'split');
+        const { readAccountProviderDeclarations, readAccountAgentProviderDeclarations } = await import('@/providers/catalog/accountProviderDeclarations');
+        const declarations = readAccountProviderDeclarations({ kind: 'account' });
+        const deepseek = declarations.find(row => row.definition.id === 'deepseek')!;
+        const { projectProviderDeclarationDetail } = await import('@/providers/catalog/providerDeclarationDetail');
+        const agents = readAccountAgentProviderDeclarations({ kind: 'account' });
+        const worksWith = projectProviderDeclarationDetail(deepseek, agents).worksWith;
+        expect(worksWith.some(agent => agent.agentTargetKey === 'agent:happier.agent.claude/claude')).toBe(true);
+        expect(worksWith.some(agent => agent.agentTargetKey === 'agent:happier.agent.codex/codex')).toBe(false);
+        await vi.waitFor(() => expect(screen.findHostByTestId(`settings-agents-home.models.provider.${deepseek.contributionKey}`)).not.toBeNull());
+        const { newProviderRoute } = await import('@/components/settings/providers/collection/providerCollectionModel');
+        await screen.pressByTestIdAsync(`settings-agents-home.models.provider.${deepseek.contributionKey}`);
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith(newProviderRoute(deepseek.contributionKey));
+        expect(daemon.state.requests).toEqual([]);
+    });
+
+    it('lands the wide root on the Agents home beside the column, not a second copy of its list (S30 §6.2)', async () => {
+        const screen = await renderInCollectionLayout(<Screen />, 'split');
+        await vi.waitFor(() => expect(screen.findHostByTestId('settings-agents-home')).not.toBeNull());
+        expect(screen.findAllByType('Redirect')).toHaveLength(0);
+        // The home carries the page's one primary Add and its Machine; the agents themselves stay in the column.
+        expect(screen.findHostByTestId('settings-agents-home.add')).not.toBeNull();
+        expect(screen.findHostByTestId('settings-agents-collection.page.list')).toBeNull();
+        expect(screen.findHostByTestId('settings-agents-collection.row.acme.review/provider')).toBeNull();
+        await screen.pressByTestIdAsync('settings-agents-home.models.providers');
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers');
+        await vi.waitFor(() => expect(projectionRequests()).toEqual(expect.arrayContaining([expect.objectContaining({ machineId: 'machine-1', serverId: 'srv_agent_index' })])));
+        expect(projectionRequests().some(request => request.machineId !== 'machine-1' || request.serverId !== 'srv_agent_index')).toBe(false);
+    });
+
     it('renders merged provider rows from the descriptor projection without relying on built-in registry lists', async () => {
         const screen = await renderSettingsView(<Screen />);
         await vi.waitFor(() => expect(screen.findRowByTitle('Acme Review Provider')).toBeTruthy());
@@ -201,5 +265,14 @@ describe('PluginAgentSettingsIndexScreen', () => {
         expect(menu?.props.items.find((item: { id: string }) => item.id === 'askAgent').subtitle).toBe('settingsAgents.authoring.needsMachine');
         await act(async () => { menu?.props.onSelect('askAgent'); });
         await vi.waitFor(() => expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenCalledWith('/settings/machines/add'));
+    });
+    it("a phone's page is the rail's own list under its title: compact rows without chevrons and the count beside the title (lab sfcols:agentsP)", async () => {
+        const screen = await renderSettingsView(<Screen />);
+        await vi.waitFor(() => expect(screen.findRowByTitle('Acme Review Provider')).toBeTruthy());
+        const row = screen.findRowByTitle('Acme Review Provider')!;
+        expect(row.props.density).toBe('compact');
+        expect(row.props.showChevron).toBe(false);
+        const header = screen.findAll(node => node.props?.testID === 'settings.agents.index.header' && node.props.titleAccessory !== undefined)[0];
+        expect(header?.props.titleAccessory).toBeTruthy();
     });
 });

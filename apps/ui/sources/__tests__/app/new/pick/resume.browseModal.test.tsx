@@ -1,3 +1,4 @@
+import { applyPickerFixtureSettings } from './testHarness';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -107,7 +108,7 @@ async function renderResumePicker() {
     });
     const { storage } = await import('@/sync/domains/state/storageStore');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
-    storage.getState().applySettingsLocal(settingsParse(settingsState.value));
+    await applyPickerFixtureSettings(settingsParse(settingsState.value));
     const { refreshAcpCatalog } = await import('@/sync/engine/settings/acpCatalogEngine');
     await refreshAcpCatalog(scope);
     const ResumePickerScreen = (await import('@/app/(app)/new/pick/resume')).default;

@@ -1,4 +1,5 @@
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createOpenBrowserTargetInWorkspace, type CreateOpenBrowserTargetInWorkspaceDeps } from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
 import { registerBrowserRuntimeWorkspaceOpeningAdapter } from '@/sync/domains/browser/actions/runtimeControlRegistry';
 import { createBrowserRuntimeActionExecutor } from '@/sync/domains/browser/actions/runtimeActionExecutor';

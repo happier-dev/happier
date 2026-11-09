@@ -9,13 +9,17 @@ import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRunt
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import {
-    type AccountSecurityGetResponseV1,
+    type AccountSecurityGetResponseV1} from '@happier-dev/protocol/auth/accountSecurity';
+import {
     AccountEncryptionMigrateRequestSchema,
-    computeAccountEncryptionMigrateKeyFingerprintV1,
-    createAccountEncryptionMigrateRequestBindingDigestV1,
-    encodePasswordCredentialFieldV1,
+    createAccountEncryptionMigrateRequestBindingDigestV1} from '@happier-dev/protocol/account/encryptionMigrate';
+import {
+    computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import {
+    encodePasswordCredentialFieldV1} from '@happier-dev/protocol/auth/accountPasswordCredential';
+import {
     sealSessionOwnerMetadataEnvelopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import {
     invalidateAccountEncryptionModeCache,
 } from '@/sync/api/account/apiAccountEncryptionMode';
@@ -113,7 +117,6 @@ const fetchAccountEncryptionCurrentnessMock =
 const fetchAccountSecurityMock = vi.hoisted(() => vi.fn<() => Promise<AccountSecurityGetResponseV1>>(async () => ({
     v: 1 as const,
     encryptionMode: 'plain' as const,
-    terminalPresentUserPolicy: 'allowed' as const,
     nativeEmail: null,
     password: { status: 'not_enrolled' as const, revision: null },
 })));
@@ -298,7 +301,6 @@ describe('Settings → Account (encryption mode toggle)', () => {
         fetchAccountSecurityMock.mockResolvedValue({
             v: 1,
             encryptionMode: 'plain',
-            terminalPresentUserPolicy: 'allowed',
             nativeEmail: null,
             password: { status: 'not_enrolled', revision: null },
         });
@@ -669,7 +671,7 @@ async function mountCurrentEncryptionHome(params: Readonly<{
     const credentials = mode === 'e2ee' || params.retainedCredential
         ? { token, secret: Buffer.from(new Uint8Array(32).fill(7)).toString('base64url') }
         : { token };
-    const migrations: import('@happier-dev/protocol').AccountEncryptionMigrateRequest[] = [];
+    const migrations: import('@happier-dev/protocol/account/encryptionMigrate').AccountEncryptionMigrateRequest[] = [];
     const requests: Array<{ path: string; method: string; body: unknown }> = [];
     const passwordProof = { provider: 'email_password', pending: 'password-step-up-pending', proof: 'password-step-up-proof' };
     let signingKeyFingerprint: string | null = null;
@@ -718,10 +720,10 @@ async function mountCurrentEncryptionHome(params: Readonly<{
         const binding = await buildContentKeyBinding(new Uint8Array(32).fill(7));
         contentKeyFingerprint = computeAccountEncryptionMigrateKeyFingerprintV1(new Uint8Array(Buffer.from(binding.contentPublicKey, 'base64')));
     }
-    // Current Session list rows are parsed by the same protocol schema as Home
-    // replies. Only the sealed owner material is deliberately from another key.
-    const { V2SessionListResponseSchema } = await import('@happier-dev/protocol');
-    const ownerInventory = V2SessionListResponseSchema.parse({ sessions: params.ownerMaterialUnavailable ? [{
+    // Full source documents remain at the HTTP fixture boundary for demanded
+    // reads. Only the sealed owner material is deliberately from another key.
+    const { createSessionListSourceFixture } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+    const ownerInventory = createSessionListSourceFixture({ sessions: params.ownerMaterialUnavailable ? [{
         id: 'session-locked', seq: 1, createdAt: 1, updatedAt: 1, active: false, activeAt: 1, archivedAt: null,
         encryptionMode: 'e2ee', metadata: 'shared-metadata', metadataLayoutVersion: 1, metadataVersion: 7,
         agentState: null, agentStateVersion: 8, dataEncryptionKey: null, share: null,
@@ -744,7 +746,7 @@ async function mountCurrentEncryptionHome(params: Readonly<{
                 updatedAt: 1, signingKeyFingerprint, contentKeyFingerprint,
                 recipientEnvelopeReadiness: mode === 'plain' ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } });
             if (path === '/v1/account/security') return Response.json({ v: 1, encryptionMode: mode,
-                terminalPresentUserPolicy: 'allowed', nativeEmail: params.password ? 'person@example.test' : null,
+                nativeEmail: params.password ? 'person@example.test' : null,
                 password: params.password ? { status: 'enrolled', revision: 5 } : { status: 'not_enrolled', revision: null } });
             if (path === '/v1/auth/entry' && method === 'POST') return Response.json({ v: 1, state: 'ready', scope: { kind: 'home' },
                 actions: [{ kind: 'authenticate', methodId: params.provider, action: 'login', mode: 'keyless', origin: 'home',
@@ -753,7 +755,7 @@ async function mountCurrentEncryptionHome(params: Readonly<{
             if (path === '/v1/auth/external/github/params') return Response.json({ url: 'https://github.example.test/authorize' });
             if (path === '/v1/auth/email/step-up' && method === 'POST') return Response.json({ externalAuthProof: passwordProof });
             if (path === '/v1/auth/password/mutation/challenge' && method === 'POST') {
-                const { PasswordMutationPreparationRequestV1Schema, PasswordMutationPreparationResponseV1Schema } = await import('@happier-dev/protocol');
+                const { PasswordMutationPreparationRequestV1Schema, PasswordMutationPreparationResponseV1Schema} = await import('@happier-dev/protocol/auth/accountSecurity');
                 const preparation = PasswordMutationPreparationRequestV1Schema.parse(body);
                 if (!('newE2eePassword' in preparation)) throw new Error('Expected encrypted password preparation');
                 const targetCredential = { ...e2eeTransitionPasswordCredential(5).credential, envelope: preparation.newE2eePassword.envelope };
@@ -761,6 +763,8 @@ async function mountCurrentEncryptionHome(params: Readonly<{
                 return Response.json(PasswordMutationPreparationResponseV1Schema.parse({ targetCredential }));
             }
             if (path === '/v2/account/settings') return Response.json({ content: settingsContent, version: settingsVersion });
+            if (path === '/v2/sessions/read-batch') return null;
+            if (path === '/v2/sessions/session-locked') return Response.json({ session: ownerInventory.sessions[0] });
             if (path === '/v2/sessions') return Response.json(ownerInventory);
             if (path === '/v2/sessions/active' || path === '/v2/sessions/archived') return Response.json({ sessions: [], hasNext: false, nextCursor: null });
             if (path === '/v1/machines' || path === '/v1/artifacts') return Response.json([]);
@@ -926,6 +930,7 @@ describe('Account encryption current Home authority', () => {
         const home = await mountCurrentEncryptionHome({ mode: 'e2ee', ownerMaterialUnavailable: true });
         try {
             await act(async () => { await home.screen.findByTestId('settings-account-encryption-mode-switch')?.props.onValueChange(false); });
+            await vi.waitFor(() => expect(home.alert).toHaveBeenCalledWith('common.error', 'settingsAccount.encryptionUpdateFailed'));
             expect(home.requests.some(row => row.path === '/v2/sessions/archived')).toBe(true);
             expect(home.migrations).toEqual([]);
             expect(home.mode).toBe('e2ee');
@@ -1096,7 +1101,7 @@ describe('Account encryption recovery through the current Home boundary', () => 
                     if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'account-a' });
                     if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json({ sessions: [], hasNext: false, nextCursor: null });
                     if (path === '/v1/account/security') return Response.json({ v: 1, encryptionMode: legacy ? 'e2ee' : 'plain',
-                        terminalPresentUserPolicy: 'allowed', nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
+                        nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
                     return Response.json({ error: 'not_found' }, { status: 404 });
                 },
             });

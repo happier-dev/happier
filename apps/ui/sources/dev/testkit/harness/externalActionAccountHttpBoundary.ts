@@ -149,6 +149,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     };
     return {
         machine,
+        installationPrivateKey: installation.privateKey,
         signApprovalInput: (input: Omit<Parameters<typeof signExternalActionApprovalInputV1>[0], 'privateKey'>) =>
             signExternalActionApprovalInputV1({ ...input, privateKey: installation.privateKey }),
         async handle(url: URL, init?: RequestInit): Promise<Response | null> {

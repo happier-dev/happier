@@ -10,6 +10,8 @@ import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountD
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { encodeBase64 } from '@/encryption/base64';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 
 const navigation = vi.hoisted(() => ({
     back: vi.fn(), replace: vi.fn(), dismissTo: vi.fn(),
@@ -27,7 +29,7 @@ const { initializeAuthRouteRuntimeForTests } = await import('@/dev/testkit/harne
 await initializeAuthRouteRuntimeForTests();
 const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-const { adoptHomeProfile, resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
+const { adoptHomeProfile, getDeviceDefaultServerId, getTabActiveServerId, resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
 const { getActiveServerSnapshot, upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
 const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
 const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -57,6 +59,29 @@ async function renderManualRestoreScreen() {
 }
 
 describe('/restore/manual', () => {
+    it('focuses the restored Home only in its full secondary window', async () => {
+        const browser = await installBrowserRuntimeForTests({ url: 'https://app.happier.dev/desktop/app-window' });
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: createDesktopSecureStorageBoundary().invoke });
+        try {
+            const origin = await upsertAndActivateServer({ serverUrl: 'https://main-restore.example.test', scope: 'device' });
+            const fixture = createDirectoryHttpFixture();
+            const home = await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor,
+                source: 'qr', descriptorAuthority: 'current_connection_observation' });
+            navigation.params = { targetServerId: home.id, targetServerUrl: home.serverUrl };
+            const screen = await renderManualRestoreScreen();
+            // Authentication itself is covered below; exercise the real post-auth focus handoff.
+            await act(async () => { await screen.find(candidate => candidate.props.target?.serverId === home.id)!.props.onAuthenticated(); });
+            expect(getActiveServerSnapshot().serverUrl).toBe(home.serverUrl);
+            expect(getTabActiveServerId()).toBe(home.id);
+            expect(getDeviceDefaultServerId()).toBe(origin.id);
+            expect(navigation.dismissTo).toHaveBeenCalledWith('/');
+            await screen.unmount();
+        } finally {
+            vi.unstubAllGlobals();
+            browser.restore();
+        }
+    });
+
     it('fails closed instead of falling back to the active Home when an exact repair target is incomplete', async () => {
         navigation.params = { returnTo: '/settings/account/api-tokens', resumeCreate: '1', targetServerId: 'home-a' };
         const screen = await renderManualRestoreScreen();

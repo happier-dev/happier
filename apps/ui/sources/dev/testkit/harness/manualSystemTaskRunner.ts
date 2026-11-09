@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import { createSystemTaskRunner } from '@/components/systemTasks/createSystemTaskRunner';
 import type { SystemTaskBridgeListenerSet, SystemTaskRunner } from '@/components/systemTasks/types';
 

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ExecutionRunGetResponseSchema, ExecutionRunPublicStateSchema, type ExecutionRunPublicState } from '@happier-dev/protocol';
+import { ExecutionRunGetResponseSchema, ExecutionRunPublicStateSchema, type ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';

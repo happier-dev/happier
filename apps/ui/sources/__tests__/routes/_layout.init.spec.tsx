@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
-import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS } from '@happier-dev/protocol';
+import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import type { RenderScreenResult } from '@/dev/testkit';
 import type {
     DesktopWindowChromePolicy,
@@ -16,6 +16,9 @@ const loadAsyncMock = vi.fn();
 const hideAsyncMock = vi.fn(async () => {});
 let mockedPlatformOS: string = 'web';
 let mockedPathname = '/';
+let embedRouteLayout: React.ComponentType | null = null;
+let shellRouteProbe: React.ComponentType | null = null;
+const embedSlotDepth = React.createContext(0);
 let mockedConfigVariant: string = '';
 const sentryInitMock = vi.fn();
 const sentryMobileReplayIntegrationMock = vi.fn(() => ({ name: 'mobileReplayIntegration' }));
@@ -196,7 +199,21 @@ installRouteRootCommonModuleMocks({
             pathname: () => mockedPathname,
             router: { push: routerPushMock, back: vi.fn() },
         });
-        return expoRouterMock.module;
+        return {
+            ...expoRouterMock.module,
+            // Router owns placing the selected route below the real shell.
+            Stack: Object.assign(function StackBoundary(props: React.PropsWithChildren) {
+                return React.createElement(expoRouterMock.module.Stack, props,
+                    props.children, shellRouteProbe ? React.createElement(shellRouteProbe) : null);
+            }, { Screen: expoRouterMock.module.Stack.Screen }),
+            // Metro/Router owns route discovery; render the real nested layout below this boundary.
+            Slot: function SlotBoundary() {
+                const depth = React.useContext(embedSlotDepth);
+                if (depth !== 0 || !embedRouteLayout) return null;
+                return React.createElement(embedSlotDepth.Provider, { value: depth + 1 },
+                    React.createElement(embedRouteLayout));
+            },
+        };
     },
 });
 
@@ -209,9 +226,10 @@ vi.mock('react-native-keyboard-controller', () => {
     };
 });
 
-vi.mock('react-native-gesture-handler', () => {
+vi.mock('react-native-gesture-handler', async () => {
     const React = require('react');
     return {
+        ...(await import('@/dev/testkit/mocks/gestureHandler')).createGestureHandlerMock(),
         GestureHandlerRootView: ({ children }: { children: React.ReactNode }) => React.createElement('GestureHandlerRootView', null, children),
     };
 });
@@ -280,6 +298,7 @@ describe('app/_layout init resilience', () => {
     let browser: Awaited<ReturnType<typeof import('@/dev/testkit/harness/browserRuntimeHarness').installBrowserRuntimeForTests>> | undefined;
 
     beforeEach(async () => {
+        shellRouteProbe = null;
         browser = await (await import('@/dev/testkit/harness/browserRuntimeHarness')).installBrowserRuntimeForTests({
             url: 'https://root.example.test/',
         });
@@ -349,6 +368,7 @@ describe('app/_layout init resilience', () => {
         vi.useRealTimers();
         mockedPlatformOS = 'web';
         mockedPathname = '/';
+        embedRouteLayout = null;
         mockedConfigVariant = '';
         bootCredentialsState.authenticated = false;
         shellChromeState.isDesktopHost = false;
@@ -454,6 +474,37 @@ describe('app/_layout init resilience', () => {
         return screen;
     }
 
+    describe('embedded frame boot', () => {
+        beforeEach(() => {
+            mockedPathname = '/embed/new';
+            browser?.reconfigureUrl('https://root.example.test/embed/new');
+            // Realm captures must observe the embed DOM before route/credential imports.
+            vi.resetModules();
+        });
+
+        it('boots the real embed route composition before credential admission without an auth-provider crash', async () => {
+            expect((await import('@/embed/isEmbedWindowContext')).isEmbedWindowContext()).toBe(true);
+            await prepareRootFixture();
+            const EmbedLayout = (await import('@/app/embed/_layout')).default;
+            const { useAuth } = await import('@/auth/context/AuthContext');
+            // Exercise a real auth consumer before the nested layout: a provider
+            // inside that layout cannot protect route-composition consumers.
+            embedRouteLayout = function AuthConsumingEmbedRoute() {
+                useAuth();
+                return React.createElement(EmbedLayout);
+            };
+            const RootLayout = (await importRootLayout()).default;
+            const { renderScreen } = await import('@/dev/testkit');
+            const { EmbedSessionViewport } = await import('@/embed/EmbedSessionViewport');
+            const screen = await renderScreen(React.createElement(RootLayout));
+            try {
+                await vi.waitFor(() => expect(screen.root.findAllByType(EmbedSessionViewport)).toHaveLength(1));
+            } finally {
+                await screen.unmount();
+            }
+        });
+    });
+
     it('wraps the root layout with Sentry.wrap', async () => {
         process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0';
         await importRootLayout();
@@ -472,6 +523,84 @@ describe('app/_layout init resilience', () => {
         notificationNativeState.unavailable = true;
 
         await expect(importRootLayout()).resolves.toHaveProperty('default');
+    });
+
+    it('shows a person-handled original question once in the shell Inbox and removes it on owner settlement', async () => {
+        bootCredentialsState.authenticated = true;
+        await prepareRootFixture();
+        const { installDisconnectedServerSocketBoundary, configureConnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+        const [{ createSessionFixture, createSessionViewerFixture, createPlainSessionByIdResponseFixture },
+            { createSessionListSourceFixture }, { createRootLayoutFeaturesResponse }, { tryWriteServerEnabledBitInPlace },
+            { InboxModelProvider, useInboxModel }, { publishHomeAccountChange }] = await Promise.all([
+            import('@/dev/testkit/fixtures/sessionFixtures'),
+            import('@/dev/testkit/harness/sessionReadBatchHttpBoundary'),
+            import('@/dev/testkit/fixtures/featureFixtures'),
+            import('@happier-dev/protocol/features/serverEnabledBit'),
+            import('@/hooks/inbox/useInboxModel'),
+            import('@/sync/runtime/orchestration/homeAccountChange'),
+        ]);
+        const features = createRootLayoutFeaturesResponse();
+        expect(tryWriteServerEnabledBitInPlace(features, 'sessions.filteredListing', true)).toBe(true);
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({ serverId: homeId, snapshot: { status: 'ready', features } });
+        homes.answer(homeId, '/v1/features', { body: features });
+        homes.answer(homeId, '/v1/features/authenticated', { body: features });
+        homes.answer(homeId, '/v2/sessions', { body: { sessions: [], hasNext: false, nextCursor: null } });
+        homes.answer(homeId, '/v2/sessions/active', { body: { sessions: [], hasNext: false, nextCursor: null } });
+        const requestId = 'original-worker-question';
+        const worker = createSessionFixture({ id: 'inbox-worker', serverId: homeId, encryptionMode: 'plain',
+            active: true, activeAt: Date.now(), updatedAt: Date.now(), manager: { sessionId: 'manager' },
+            ownerAccountId: 'root-layout-account', latestTurnStatus: 'waiting', pendingUserActionRequestCount: 1,
+            viewer: createSessionViewerFixture({ relevance: { relevant: true, reasons: ['owned_by_me'] },
+                attention: { needsAttention: true, reasons: ['user_action_required'], primary: 'user_action_required', presentation: 'full' } }),
+            agentState: { requests: { [requestId]: { kind: 'user_action', tool: 'AskUserQuestion',
+                arguments: { questions: [{ question: 'Which region?' }] }, createdAt: Date.now(),
+                questionV1: { mode: 'wait', type: 'decision', lasting: false }, currentHandler: { kind: 'person' } } } } });
+        let current = worker;
+        const wire = () => ({ ...createPlainSessionByIdResponseFixture(current).session,
+            ownerAccountId: current.ownerAccountId, viewer: current.viewer });
+        homes.answer(homeId, '/v2/sessions/query', { select: () => ({ body: createSessionListSourceFixture({
+            sessions: [wire()], hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
+        }) }) });
+        homes.answer(homeId, `/v2/sessions/${worker.id}`, { select: () => ({ body: { session: wire() } }) });
+        homes.answer(homeId, `/v1/sessions/${worker.id}/messages`, { body: { messages: [], hasMore: false, nextAfterSeq: null } });
+        let inbox: ReturnType<typeof useInboxModel> | null = null;
+        function Probe() { inbox = useInboxModel(); return null; }
+        shellRouteProbe = () => React.createElement(InboxModelProvider, null, React.createElement(Probe));
+        await renderSettledRootLayout();
+        const ownRows = () => inbox?.items.filter(item => item.focus.kind === 'session' && item.focus.id === worker.id);
+        await vi.waitFor(() => expect(ownRows(), JSON.stringify({
+            membership: inbox?.source.personalSessionListMembershipByServerId,
+            queries: Object.fromEntries(Object.entries(inbox?.source.personalSessionListQueryStatesByServerId ?? {}).map(([id, value]) =>
+                [id, { phase: value?.phase, reason: value?.failureReason, code: value?.failureCode }])),
+            calls: homes.requests.filter(request => request.path.includes('sessions')).map(request => request.path),
+        })).toEqual([expect.objectContaining({ view: 'needs_you', type: 'decision',
+            question: expect.objectContaining({ requestId, currentHandler: { kind: 'person' } }),
+            focus: { kind: 'session', id: worker.id, serverId: 'srv_root_layout' },
+        })]));
+        const queryReads = () => homes.requests.filter(request => request.path === '/v2/sessions/query').length;
+        const before = queryReads();
+        const { act, flushHookEffects } = await import('@/dev/testkit');
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        const sourceHomeId = resolveServerProfileScopeIdForIdentifier(homeId);
+        await act(async () => {
+            // Mirror the socket owner's accounting-only wake: it cannot move a Session corpus.
+            for (let index = 0; index < 100; index++) publishHomeAccountChange(sourceHomeId, [], {
+                usageQueryAffects: true, accountSettingsAffects: false, profileCatalogAffects: false, sessionListQueryAffects: false,
+            });
+        });
+        await flushHookEffects();
+        expect(queryReads()).toBe(before);
+        expect(ownRows()).toHaveLength(1);
+        current = createSessionFixture({ ...worker, agentStateVersion: worker.agentStateVersion + 1,
+            seq: worker.seq + 1, updatedAt: Date.now(), pendingRequestObservedAt: Date.now(),
+            pendingUserActionRequestCount: 0, latestTurnStatus: 'completed', latestTurnStatusObservedAt: Date.now(), agentState: { requests: {}, completedRequests: {
+                [requestId]: { ...worker.agentState!.requests![requestId]!, status: 'approved', completedAt: Date.now() },
+            } }, viewer: createSessionViewerFixture({ relevance: worker.viewer!.relevance }) });
+        await act(async () => publishHomeAccountChange(sourceHomeId, [worker.id], { changeKinds: ['session'], sessionListQueryAffects: true }));
+        await vi.waitFor(() => expect(queryReads()).toBeGreaterThan(before));
+        await vi.waitFor(() => expect(ownRows()).toEqual([]));
     });
 
     it('provides the main app tab state to the root sidebar shell', async () => {
@@ -787,7 +916,42 @@ describe('app/_layout init resilience', () => {
 
         await renderSettledRootLayout();
 
-        expect(routerPushMock).toHaveBeenCalledWith('/(app)/settings/report-issue');
+        expect(routerPushMock.mock.calls[0]?.[0]).toBe('/settings/report-issue');
+    });
+
+    it.each(['/', '/settings'])('retains a crash report boot destination from %s through the nested Settings navigator mount', async initialPath => {
+        mockedPlatformOS = 'web';
+        mockedPathname = initialPath;
+        bootCredentialsState.authenticated = true;
+        browser?.reconfigureUrl(`https://root.example.test${initialPath}`);
+        await prepareRootFixture();
+        const { useOptionalWorkspaceNavigation } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
+        const admission: Array<{ active: boolean; ownsRoute?: boolean }> = [];
+        shellRouteProbe = function WorkspaceBootProbe() {
+            const navigation = useOptionalWorkspaceNavigation();
+            if (navigation) admission.push({ active: navigation.active, ownsRoute: navigation.ownsRoute });
+            return React.createElement('WorkspaceBootProbe', {
+                testID: 'workspace-boot-probe', navigation,
+            });
+        };
+        // Expo is the URL-mirroring boundary. Its nested Settings navigator initially
+        // presents the parent while mounting a requested child (also characterized
+        // by WorkspaceProvider's exact-Team-arrival tests).
+        routerPushMock.mockImplementation(() => {
+            window.history.replaceState(window.history.state, '', '/settings');
+        });
+        const { persistRestartBugReportIntent } = await import('@/utils/system/restartBugReportIntent');
+        await persistRestartBugReportIntent({ v: 1, createdAtMs: Date.now(), reason: 'crash' });
+        const screen = await renderSettledRootLayout();
+        await vi.waitFor(() => expect(screen.findByTestId('workspace-boot-probe')?.props.navigation?.active).toBe(true));
+        await vi.waitFor(() => expect(window.location.pathname, JSON.stringify(admission)).toBe('/settings/report-issue'));
+        expect(admission.length).toBeGreaterThan(0);
+        expect(admission.some(facts => !facts.active && !facts.ownsRoute)).toBe(true);
+        expect(admission.some(facts => facts.active && facts.ownsRoute)).toBe(true);
+        await React.act(async () => {
+            window.history.replaceState(window.history.state, '', '/settings');
+        });
+        expect(window.location.pathname).toBe('/settings/report-issue');
     });
 
     it('keeps web startup usable while every injected font family load settles in the background', async () => {

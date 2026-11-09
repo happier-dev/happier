@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { act } from 'react-test-renderer';
-import { AccountEncryptionMigrateRequestSchema, createAccountEncryptionMigrateRequestBindingDigestV1 } from '@happier-dev/protocol';
+import { AccountEncryptionMigrateRequestSchema, createAccountEncryptionMigrateRequestBindingDigestV1 } from '@happier-dev/protocol/account/encryptionMigrate';
 import { renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';

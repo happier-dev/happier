@@ -95,9 +95,13 @@ function shouldAllowSameOriginStaticFetch(input: RequestInfo | URL, init?: Reque
     // Demo mode bans data egress, not the browser loading this app. Keep the
     // allow path constrained to same-origin Expo/Metro module and asset shapes:
     // bundle endpoints plus static/chunk/asset directories with script/font/media
-    // extensions. Same-origin API or socket-looking paths are checked first so
-    // a data endpoint cannot pass just by adding a static-looking suffix.
-    return isExpoMetroStaticPath(url.pathname);
+    // extensions. Expo also serves packaged assets through /assets/, with the
+    // static file path in unstable_path instead of the endpoint pathname.
+    // Same-origin API or socket-looking paths are checked first so a data
+    // endpoint cannot pass just by adding a static-looking suffix.
+    const assetPath = url.pathname === '/assets/' ? url.searchParams.get('unstable_path') : null;
+    return isExpoMetroStaticPath(url.pathname)
+        || (assetPath !== null && isExpoMetroStaticPath(assetPath));
 }
 
 function blockDemoEgress(channel: DemoFirewallChannel, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {

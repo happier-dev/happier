@@ -1,4 +1,5 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { buildDemoMachineReadings } from './machineReadings';
 
 import { DEMO_HOME_DIR, DEMO_MACHINE_ID, DEMO_NOW_MS, DEMO_SECONDARY_MACHINE_ID } from './constants';
 
@@ -16,8 +17,10 @@ function createDemoMachine(params: Readonly<{
         seq: params.updatedAt,
         createdAt: params.updatedAt - 86_400_000,
         updatedAt: params.updatedAt,
-        active: false,
-        activeAt: params.updatedAt - 86_400_000,
+        active: true,
+        activeAt: params.updatedAt,
+        presenceProtocolVersion: 1,
+        availability: { kind: 'available' },
         metadata: {
             host: params.host,
             platform: params.platform,
@@ -33,23 +36,28 @@ function createDemoMachine(params: Readonly<{
     };
 }
 
-export function buildDemoMachines(): Machine[] {
+export function buildDemoMachines(readings = buildDemoMachineReadings()): Machine[] {
     return [
         createDemoMachine({
             id: DEMO_MACHINE_ID,
-            host: 'macbook-pro.local',
+            host: 'macbook-pro',
             displayName: 'MacBook Pro',
             platform: 'darwin',
             updatedAt: DEMO_NOW_MS - 5_000,
         }),
         createDemoMachine({
             id: DEMO_SECONDARY_MACHINE_ID,
-            host: 'studio.local',
-            displayName: 'Studio',
+            host: 'mac-studio',
+            displayName: 'Mac Studio',
             platform: 'darwin',
             updatedAt: DEMO_NOW_MS - 120_000,
         }),
-    ];
+    ].map(machine => ({ ...machine, daemonState: { resources: {
+        v: 1, host: readings[machine.id]!.host,
+        attention: readings[machine.id]!.vitals.attention,
+        vitals: { state: 'reporting' },
+        guard: readings[machine.id]!.guard.state,
+    } } }));
 }
 
 export function createDemoMachineFixture(options: CreateDemoMachineFixtureOptions = {}): Machine {

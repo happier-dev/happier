@@ -24,7 +24,8 @@ vi.mock('@/text', async () =>
     (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key }));
 vi.mock('expo-image', () => ({ Image: 'Image' }));
 
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema, RPC_METHODS } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';

@@ -1,4 +1,6 @@
-import type { PluginProjectionV2, PluginJsonSchemaV2, PluginContributionIdentityV1, PluginProjectedResourceV2, PluginProjectedFamilyEntryV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2, PluginProjectedResourceV2, PluginProjectedFamilyEntryV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginJsonSchemaV2} from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import type { PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
 import type { InputHints } from '@happier-dev/protocol/inputs';
 import { normalizePluginUiInlineSurfaceBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { WIDGET_SIZE_ORDER_V1, type WidgetSizeDeclarationV1 } from '@happier-dev/protocol/widgets';
@@ -7,6 +9,7 @@ import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machi
 import {
     normalizePluginUiProjection,
     type PluginUiProjectionModel,
+    type PluginUiSurfaceAvailabilityProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { WidgetHomeDefault, WidgetTargetKind } from '@/sync/domains/plugins/ui/widgetContract';
 import { WIDGET_ROLE } from '@/sync/domains/plugins/ui/widgetContract';
@@ -30,7 +33,9 @@ export type WidgetFixtureEntry = Readonly<{
     role?: typeof WIDGET_ROLE | 'sessionSubagentDetails';
     entryId?: string;
     availability?: 'available' | 'unavailable';
+    executionOrigin?: PluginMachineExecutionOriginV1;
     featureGate?: string;
+    disabledWhen?: PluginUiSurfaceAvailabilityProjection['disabledWhen'];
     requiredPermissionIds?: readonly string[];
     capabilityIds?: readonly string[];
     platforms?: readonly ('web' | 'desktop' | 'ios' | 'android')[];
@@ -64,6 +69,7 @@ export function widgetProjectionEntry(input: WidgetFixtureEntry): Extract<Plugin
         // The daemon producer stamps every projected UI entry with its exact plugin-slot
         // occurrence; a fixture without one is not a projection the product can produce.
         occurrenceId: input.occurrenceId ?? `${input.pluginId}#1`,
+        ...(input.executionOrigin ? { executionOrigin: input.executionOrigin } : {}),
         binding: { ...binding, rendererChain: [...binding.rendererChain], platforms: [...binding.platforms] },
         target: binding.target,
         renderer: { kind: 'declarative', contributionId: 'widget-native' },
@@ -78,6 +84,7 @@ export function widgetProjectionEntry(input: WidgetFixtureEntry): Extract<Plugin
             state: input.availability === 'unavailable' ? 'disabled' : 'available',
             reason: input.availability === 'unavailable' ? 'plugin_disabled' : 'available',
             diagnostics: [],
+            ...(input.disabledWhen ? { disabledWhen: input.disabledWhen } : {}),
             ...(input.featureGate || input.platforms || input.capabilityIds ? { when: { all: [
                 ...(input.featureGate ? [{ fact: 'host.feature', operator: 'enabled', value: input.featureGate }] : []),
                 ...(input.platforms ? [{ any: input.platforms.map(platform => ({ fact: 'host.platform', operator: 'equals', value: platform })) }] : []),

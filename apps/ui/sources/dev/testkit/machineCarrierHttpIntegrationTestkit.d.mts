@@ -1,4 +1,6 @@
-import type { FeaturesResponse, IrohEndpointDescriptorV1, MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol';
+import type { FeaturesResponse} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import type { IrohEndpointDescriptorV1} from '@happier-dev/protocol/connectivity/iroh/endpointDescriptorV1';
+import type { MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 
 export type Machine = Readonly<{
     id: string;

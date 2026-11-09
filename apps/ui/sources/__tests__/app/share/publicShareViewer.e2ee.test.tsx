@@ -6,9 +6,10 @@ import { installPublicShareViewerCommonModuleMocks } from './publicShareViewerTe
 import { encodeBase64 } from '@/encryption/base64';
 import { AES256Encryption } from '@/sync/encryption/encryptor';
 import {
-    ExternalSessionOperationSharedPresentationV1Schema,
+    ExternalSessionOperationSharedPresentationV1Schema} from '@happier-dev/protocol/sessions/external/operationV1';
+import {
     projectSessionSharedMetadataV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).expo = { EventEmitter: class { } };

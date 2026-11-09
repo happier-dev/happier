@@ -55,7 +55,7 @@ async function renderAccount() {
         if (new URL(String(input)).pathname === '/v1/account/security') {
             boundary.securityRequests.push('/v1/account/security');
             if (boundary.holdSecurityRead) return await new Promise<Response>(() => {});
-            return Response.json({ v: 1, encryptionMode: boundary.encryptionMode, terminalPresentUserPolicy: 'allowed',
+            return Response.json({ v: 1, encryptionMode: boundary.encryptionMode, 
                 nativeEmail: 'lee@example.test', password: { status: 'enrolled', revision: 1 } });
         }
         return originalRequest(input, init);

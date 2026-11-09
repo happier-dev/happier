@@ -1,7 +1,8 @@
+import { applyPickerFixtureSettings } from './testHarness';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import {
@@ -97,7 +98,7 @@ describe('ResumeBrowsePickerScreen cold projection', () => {
         };
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { settingsParse } = await import('@/sync/domains/settings/settings');
-        storage.getState().applySettingsLocal(settingsParse({}));
+        await applyPickerFixtureSettings(settingsParse({}));
         browseScreenPropsRef.current = null;
         routerMock.push.mockClear();
         routerMock.back.mockClear();

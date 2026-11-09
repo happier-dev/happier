@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { vi } from 'vitest';
 
-import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
 import {
     resolveMachineAdministrationTargetState,

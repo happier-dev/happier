@@ -1,9 +1,10 @@
+import { applyPickerFixtureSettings } from './testHarness';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_RECORDS_ROUTE_V1, PROFILE_RECORD_READ_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1,
@@ -123,7 +124,7 @@ beforeEach(async () => {
     savedRecord = null;
     profileRevision = 3;
     profileMutations.length = 0;
-    storage.getState().applySettingsLocal({ lastUsedAgent: 'customAcp', lastUsedBackendTarget: null });
+    await applyPickerFixtureSettings({ lastUsedAgent: 'customAcp', lastUsedBackendTarget: null });
     storage.getState().applyMachines([createMachineFixture({
         id: 'machine-2', active: true, storageMode: 'plain', activeAt: Date.now(),
     })], true, { sourceServerId: runtime.serverId });
@@ -160,7 +161,7 @@ describe('ProfileEditScreen replace fallback', () => {
         const save = screen.findHostByTestId('profile-edit-save');
         if (!save || typeof save.props.onPress !== 'function') throw new Error('Expected actual profile save action');
         await act(async () => save.props.onPress());
-        expect(profileMutations).toHaveLength(1);
+        await waitForHomeGovernance(() => expect(profileMutations).toHaveLength(1));
         expect(profileMutations[0]).toMatchObject({ id: 'profile-new', operation: 'create', expectedRevision: 'absent',
             content: { t: 'plain', v: { id: 'profile-new', definition: { kind: 'inline', profile: { v: 2, name: 'New Profile' } } } } });
         await act(async () => { await refreshProfileCatalog(scope); });
@@ -169,7 +170,7 @@ describe('ProfileEditScreen replace fallback', () => {
         }) })]);
         expect(storage.getState().settings).toEqual(retiredProfiles);
         expect(storage.getState().authoringMemory.lastUsedProfile).toBe(rememberedProfile);
-        expect(routerMock.replace).toHaveBeenCalledTimes(1);
+        await waitForHomeGovernance(() => expect(routerMock.replace).toHaveBeenCalledTimes(1));
         expect(routerMock.replace).toHaveBeenCalledWith({
             pathname: '/new', params: {
                 ...BUNDLED_AGENT_ROUTE_PARAMS.claude, dataId: 'draft-1', machineId: 'machine-2',

@@ -68,7 +68,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
         const address = new URL(String(url));
         if ((init?.method ?? 'GET') !== 'GET' || address.pathname !== '/v2/sessions/session-1') return null;
         sessionReads.push(address.origin);
-        const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol');
+        const { SessionCurrentProjectionRecordV1Schema} = await import('@happier-dev/protocol/sessions/listing/response');
         const session = createSessionFixture({ id: 'session-1', serverId: runtime.serverId });
         if (!session.access) throw new Error('Expected owner access fixture');
         return Response.json({ session: SessionCurrentProjectionRecordV1Schema.parse({
@@ -126,7 +126,7 @@ describe('/session/[id]/terminal', () => {
         const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
         const { resolveCompactAppDestinations, hrefForDestinationRef } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
         const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
-        const { writeScopedWorkspaceLayout, readScopedWorkspaceLayout, workspaceLayoutScopeKey } = await import('@/components/appShell/workspace/workspacePersistence');
+        const { serializeWorkspaceLayout, parseWorkspaceLayout, workspaceLayoutScopeKey } = await import('@/components/appShell/workspace/workspacePersistence');
         const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
         const { useRegisterSessionPaneDriver } = await import('@/components/sessions/panes/useRegisterSessionPaneDriver');
         const { useSessionPaneUrlSync } = await import('@/components/sessions/panes/url/useSessionPaneUrlSync');
@@ -148,7 +148,7 @@ describe('/session/[id]/terminal', () => {
             axis: 'row', placement: 'after', availableSizePx: 1440, minimumFirstSizePx: 320, minimumSecondSizePx: 320,
             tab: { id: 'other-pane', target: { kind: 'projects', params: {} }, pinned: false, preview: false } });
         const key = workspaceLayoutScopeKey({ ...scope, windowId: 'c22-original-profile' });
-        state = readScopedWorkspaceLayout(JSON.parse(JSON.stringify(writeScopedWorkspaceLayout({}, key, state))), key)!;
+        state = parseWorkspaceLayout(JSON.parse(JSON.stringify({ [key]: serializeWorkspaceLayout(state) }))[key])!;
         const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: true, workflows: false, friends: false }, pages: [] });
         const adapter = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => catalog, getScope: () => scope,
             dispatch: action => { state = reduceWorkspaceState(state, action); }, transport: { commit: () => {} },

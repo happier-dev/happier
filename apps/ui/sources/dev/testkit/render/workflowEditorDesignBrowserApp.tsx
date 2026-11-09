@@ -10,6 +10,7 @@ import { resolveCompactAppDestinations } from '@/components/appShell/destination
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { AppShellMaterialFrame } from '@/components/navigation/shell/AppShellMaterialFrame';
 import { WorkflowEditorBody } from '@/components/workflows/screens/WorkflowEditorBody';
+import { useControlledWorkflowEditorDraftStore } from '@/components/workflows/editor/workflowEditorDraftStore';
 import { WorkflowEditorHostScreen } from '@/components/workflows/screens/WorkflowEditorHostScreen';
 import { WorkflowBuiltinEditorHostScreen } from '@/components/workflows/screens/WorkflowCatalogEditorHostScreen';
 import { useWorkflowAuthoringHost } from '@/components/workflows/screens/useWorkflowAuthoringHost';
@@ -18,7 +19,7 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { WorkflowTriggerSection } from '@/components/workflows/triggers/WorkflowTriggerSection';
 import { EMPTY_WORKFLOW_TRIGGER_DRAFT } from '@/components/workflows/triggers/workflowTriggerDraft';
-import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol';
+import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { createWorkflowEditorDraft, insertWorkflowEditorBlock, type WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -70,7 +71,7 @@ function Habit() {
     const [view, setView] = React.useState<'steps' | 'flow'>('steps');
     const [target, setTarget] = React.useState<WorkflowAuthoringTarget>({ machineId: HABIT_MACHINE.id, directory: '/tmp' });
     const host = useWorkflowAuthoringHost({ projectTarget: target, serverId: 'home-a' });
-    return <WorkflowEditorBody draft={draft} onChange={setDraft} machineName="NLDW4-5-40-40"
+    return <WorkflowEditorBody draftStore={useControlledWorkflowEditorDraftStore(draft)} onChange={setDraft} machineName="NLDW4-5-40-40"
         projectTarget={target} projectMachines={[HABIT_MACHINE]} onChangeProjectTarget={setTarget}
         selectedBlockId={selectedBlockId} onSelectBlock={selectBlock} onCustomizeBlock={selectBlock}
         view={view} onChangeView={setView} composerScope={host.composerScope} authoringFacts={host.authoringFacts}
@@ -134,7 +135,7 @@ function Release() {
     const [view, setView] = React.useState<'steps' | 'flow'>('steps');
     const [target, setTarget] = React.useState<WorkflowAuthoringTarget>({ machineId: HABIT_MACHINE.id, directory: '/home/me/src/happier' });
     const host = useWorkflowAuthoringHost({ projectTarget: target, serverId: 'home-a' });
-    return <WorkflowEditorBody draft={draft} onChange={setDraft} machineName="NLDW4-5-40-40"
+    return <WorkflowEditorBody draftStore={useControlledWorkflowEditorDraftStore(draft)} onChange={setDraft} machineName="NLDW4-5-40-40"
         projectTarget={target} projectMachines={[HABIT_MACHINE]} onChangeProjectTarget={setTarget}
         selectedBlockId={selectedBlockId} onSelectBlock={selectBlock} onCustomizeBlock={selectBlock}
         view={view} onChangeView={setView} composerScope={host.composerScope} authoringFacts={host.authoringFacts}
@@ -150,7 +151,7 @@ function Pristine() {
     const [view, setView] = React.useState<'steps' | 'flow'>('steps');
     const [target, setTarget] = React.useState<WorkflowAuthoringTarget | null>(null);
     const host = useWorkflowAuthoringHost({ projectTarget: target, serverId: 'home-a' });
-    return <WorkflowEditorBody draft={draft} onChange={setDraft} machineName={null}
+    return <WorkflowEditorBody draftStore={useControlledWorkflowEditorDraftStore(draft)} onChange={setDraft} machineName={null}
         projectTarget={target} projectMachines={[HABIT_MACHINE]} onChangeProjectTarget={setTarget}
         selectedBlockId={selectedBlockId} onSelectBlock={selectBlock} onCustomizeBlock={selectBlock}
         view={view} onChangeView={setView} composerScope={host.composerScope} authoringFacts={host.authoringFacts}
@@ -165,7 +166,7 @@ function Editor() {
     }), { request: { kind: 'wait' }, list: { kind: 'root' } }).draft);
     const [selectedBlockId, selectBlock] = React.useState<string | null>(null);
     const [view, setView] = React.useState<'steps' | 'flow'>('steps');
-    return <WorkflowEditorBody draft={draft} onChange={setDraft} machineName={null}
+    return <WorkflowEditorBody draftStore={useControlledWorkflowEditorDraftStore(draft)} onChange={setDraft} machineName={null}
         selectedBlockId={selectedBlockId} onSelectBlock={selectBlock} onCustomizeBlock={selectBlock}
         view={view} onChangeView={setView} composerScope={{ kind: 'machine', machineId: null }}
         onRunNow={() => {}} onSave={() => {}} />;

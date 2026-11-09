@@ -1,9 +1,10 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -16,8 +17,12 @@ import { storage } from '@/sync/domains/state/storage';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { buildUiFeatureToggleChange } from '@/sync/domains/features/featureRegistry';
 
-const navigation = vi.hoisted(() => ({ replace: vi.fn(), back: vi.fn() }));
+const navigation = vi.hoisted(() => ({ replace: vi.fn(), back: vi.fn(), push: vi.fn(), width: 390 }));
 installTerminalRouteCommonModuleMocks({
+    reactNative: async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock(
+        { platformOS: 'android' },
+        { useWindowDimensions: () => ({ width: navigation.width, height: 844, scale: 1, fontScale: 1 }) },
+    ),
     router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
         pathname: '/friends', router: navigation,
     }).module,
@@ -33,7 +38,9 @@ afterEach(async () => {
 });
 
 describe('/friends redirect', () => {
-    it('renders the enabled Friends surface without redirecting /friends to /inbox', async () => {
+    it.each([390, 1024])('opens friend search once from the enabled Friends header at width %i', async (width) => {
+        navigation.width = width;
+        navigation.push.mockClear();
         const profile = AccountProfileSchema.parse({ ...profileDefaults, id: 'viewer', username: 'viewer' });
         const features = buildServerFeaturesResponse({ friendsEnabled: true, friendsAllowUsername: true });
         connection = await restoreServerAccountForTest({
@@ -51,10 +58,28 @@ describe('/friends redirect', () => {
             ...buildUiFeatureToggleChange(storage.getState().settings, 'social.friends', true) });
         storage.setState({ profile, friendsLoaded: true, feedLoaded: true });
         navigation.replace.mockClear();
-        const Page = (await import('@/app/(app)/friends/index')).default;
-        const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}><Page /></InjectedAuthProvider>);
+        const { FriendsPage } = await import('@/app/(app)/friends/index');
+        const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+        const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
+            <DestinationInstanceHost tabId="friends" ref={{ kind: 'friends', params: {} }} pathname="/friends"
+                focused visible phone={width === 390} navigation={{ push: navigation.push, replace: navigation.replace, back: navigation.back }}>
+                <FriendsPage />
+            </DestinationInstanceHost>
+        </InjectedAuthProvider>);
 
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('friends.emptyTitle'));
         expect(navigation.replace).not.toHaveBeenCalledWith('/inbox');
+        const buttons = screen.findAllHostsByTestId('friends-add-friend');
+        expect(buttons).toHaveLength(1);
+        expect(screen.findByTestId('friends-add-friend')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('friends-add-friend');
+        expect(navigation.push).toHaveBeenCalledWith('/friends/search');
+
+        await act(async () => { storage.getState().applyProfile({ ...profile, username: null, linkedProviders: [] }); });
+        const button = screen.findByTestId('friends-add-friend');
+        expect(button?.props.disabled).toBe(true);
+        navigation.push.mockClear();
+        await screen.pressByTestIdAsync('friends-add-friend');
+        expect(navigation.push).not.toHaveBeenCalled();
     });
 });

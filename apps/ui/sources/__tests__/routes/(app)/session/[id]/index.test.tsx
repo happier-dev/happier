@@ -1,24 +1,12 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { act } from 'react-test-renderer';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
-import {
-    createDeferred,
-    createPlainSessionByIdResponseFixture,
-    createRootLayoutFeaturesResponse,
-    createSessionFixture,
-    renderScreen,
-    standardCleanup,
-    type Deferred,
-} from '@/dev/testkit';
-import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
-import { buildRealmQualifiedMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
-import { storage } from '@/sync/domains/state/storageStore';
-import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import type { Deferred } from '@/dev/testkit';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,8 +17,11 @@ const heldInteractionJobs = new Set<() => void>();
 let routeParams: Record<string, string | undefined> = { id: 'session-1' };
 let pendingSessionRead: Deferred<Response> | null = null;
 let sessionReadFails = false;
+let sessionLastMobileSurfaceState: typeof import('@/sync/domains/state/navigationUiState')['sessionLastMobileSurfaceState'];
 
-beforeEach(() => {
+beforeEach(async () => {
+    ({ sessionLastMobileSurfaceState } = await import('@/sync/domains/state/navigationUiState'));
+    replacePersistentUiStateForTest(sessionLastMobileSurfaceState, {});
     phone = false;
     holdInteractionJobs = false;
     heldInteractionJobs.clear();
@@ -42,8 +33,11 @@ beforeEach(() => {
 installSessionRouteCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        const readDimensions = () => ({ width: phone ? 390 : 1280, height: phone ? 844 : 900, scale: 1, fontScale: 1 });
         const native = await createReactNativeNativeMock({ platformOS: 'ios' }, {
-            useWindowDimensions: () => ({ width: phone ? 390 : 1280, height: phone ? 844 : 900, scale: 1, fontScale: 1 }),
+            // Presentation geometry reads the SDK authority directly, not only its hook.
+            Dimensions: { get: readDimensions },
+            useWindowDimensions: readDimensions,
         });
         const interactionManager = native.InteractionManager;
         const sdkRunAfterInteractions = interactionManager.runAfterInteractions;
@@ -68,6 +62,18 @@ installSessionRouteCommonModuleMocks({
     },
 });
 
+// Runtime imports can reach route consumers through the shared graph. Configure
+// their SDK boundaries first, so no consumer captures the default empty route.
+const { createDeferred, createPlainSessionByIdResponseFixture, createRootLayoutFeaturesResponse,
+    createSessionFixture, renderScreen, standardCleanup } = await import('@/dev/testkit');
+const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+const { installSessionPaneRuntimeTestHarness } = await import('@/components/sessions/panes/sessionPaneRuntimeTestHarness');
+const { buildRealmQualifiedMobileSurfaceStorageKey } = await import('@/sync/domains/settings/mobileSurfacePersistence');
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { replacePersistentUiStateForTest } = await import('@/dev/testkit/harness/persistentUiState');
+const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+
 const runtime = installSessionPaneRuntimeTestHarness({
     sessionId: 'session-1',
     features: () => createRootLayoutFeaturesResponse({ features: { terminal: { embeddedPty: { enabled: true } } } }),
@@ -79,13 +85,16 @@ const runtime = installSessionPaneRuntimeTestHarness({
     },
 });
 
-let hydration: typeof import('@/hooks/session/useHydrateSessionForRoute');
-let serverRuntime: typeof import('@/sync/domains/server/serverRuntime');
-let terminalAvailability: typeof import('@/components/sessions/terminal/useSessionTerminalAvailability');
-let SessionView: typeof import('@/components/sessions/shell/SessionView')['SessionView'];
-let SessionCockpitShell: typeof import('@/components/workspaceCockpit/session/SessionCockpitShell')['SessionCockpitShell'];
-let ActivitySpinner: typeof import('@/components/ui/feedback/ActivitySpinner')['ActivitySpinner'];
-let SurfaceStateCard: typeof import('@/components/ui/surfaces/SurfaceStateCard')['SurfaceStateCard'];
+// Load the real graph once during collection, not inside each case's hook budget.
+// Install the transport/SDK boundaries above before warming the registered Sync owner.
+await loadSyncSingletonForTests();
+const hydration = await import('@/hooks/session/useHydrateSessionForRoute');
+const serverRuntime = await import('@/sync/domains/server/serverRuntime');
+const terminalAvailability = await import('@/components/sessions/terminal/useSessionTerminalAvailability');
+const { SessionView } = await import('@/components/sessions/shell/SessionView');
+const { SessionCockpitShell } = await import('@/components/workspaceCockpit/session/SessionCockpitShell');
+const { ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner');
+const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 
 let hydrateSessionForRouteSpy: MockInstance<typeof hydration.useHydrateSessionForRoute>;
 let subscribeActiveServerSpy: MockInstance<typeof serverRuntime.subscribeActiveServer>;
@@ -93,13 +102,6 @@ let terminalAvailabilitySpy: MockInstance<typeof terminalAvailability.useSession
 
 beforeEach(async () => {
     storage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'classic' });
-    hydration = await import('@/hooks/session/useHydrateSessionForRoute');
-    serverRuntime = await import('@/sync/domains/server/serverRuntime');
-    terminalAvailability = await import('@/components/sessions/terminal/useSessionTerminalAvailability');
-    ({ SessionView } = await import('@/components/sessions/shell/SessionView'));
-    ({ SessionCockpitShell } = await import('@/components/workspaceCockpit/session/SessionCockpitShell'));
-    ({ ActivitySpinner } = await import('@/components/ui/feedback/ActivitySpinner'));
-    ({ SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard'));
     hydrateSessionForRouteSpy = vi.spyOn(hydration, 'useHydrateSessionForRoute');
     subscribeActiveServerSpy = vi.spyOn(serverRuntime, 'subscribeActiveServer');
     terminalAvailabilitySpy = vi.spyOn(terminalAvailability, 'useSessionTerminalAvailability');
@@ -133,7 +135,7 @@ function rememberSurface(surface: 'tabs' | 'git') {
     if (!scope) throw new Error('Expected restored Account scope');
     const key = buildRealmQualifiedMobileSurfaceStorageKey('session', scope, 'session-1');
     if (!key) throw new Error('Expected qualified Session preference key');
-    storage.getState().applyLocalSettings({ sessionLastMobileSurfaceBySessionId: { 'session-1': 'git', [key]: surface } });
+    replacePersistentUiStateForTest(sessionLastMobileSurfaceState, { 'session-1': 'git', [key]: surface });
 }
 
 async function renderRoute() {
@@ -182,24 +184,40 @@ describe('session route index', () => {
         const sessionView = screen.findByType(SessionView);
         expect(sessionView.props.routeHydrationState).toEqual({
             kind: 'retrying', sessionId: 'session-1', serverId: runtime.serverId, cause: 'unknown',
+            retry: expect.any(Function),
         });
     });
 
-    it('mounts the session view reactively when the scoped session lands after route hydration started', async () => {
+    it('opens an exact-Home Session absent from the loaded list through by-id route hydration', async () => {
         routeParams.serverId = runtime.serverId;
         const pending = pendingHydration();
+        // The Home harness serves empty active/query/history lists. Neither a list
+        // row nor a test-owned store publication may satisfy this opened route.
+        expect(storage.getState().sessions['session-1']).toBeUndefined();
+        expect(storage.getState().sessionListRowsByServerId).toEqual({});
         const screen = await renderRoute();
 
-        expect(screen.findAllByType(ActivitySpinner)).toHaveLength(1);
+        expect(screen.findAllByType(ActivitySpinner), JSON.stringify({
+            routeParams,
+            hydrationInput: hydrateSessionForRouteSpy.mock.calls.at(-1),
+            activeServerId: serverRuntime.getActiveServerSnapshot().serverId,
+            text: screen.getTextContent(),
+            renderedIds: screen.findAll(node => typeof node.type === 'string' && typeof node.props.testID === 'string')
+                .map(node => node.props.testID),
+        })).toHaveLength(1);
+        expect(screen.findAllByTestId('session-root-unavailable')).toHaveLength(0);
         const session = createSessionFixture({ id: 'session-1', serverId: runtime.serverId, seq: 0 });
         await act(async () => {
-            storage.getState().applySessions([session]);
             pending.resolve(Response.json(createPlainSessionByIdResponseFixture(session)));
         });
 
-        await waitForHomeGovernance(() => expect(screen.findAllByType(SessionView)).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(screen.findByType(SessionView).props.routeHydrationState).toMatchObject({
+            kind: 'available', sessionId: 'session-1', serverId: runtime.serverId,
+        }));
+        expect(storage.getState().sessions['session-1']).toMatchObject({ id: 'session-1', serverId: runtime.serverId });
         expect(screen.findAllByType(ActivitySpinner)).toHaveLength(0);
         expect(screen.findAllByType(SessionView)).toHaveLength(1);
+        expect(screen.findAllByTestId('session-root-unavailable')).toHaveLength(0);
     });
 
     it('shows a loading spinner before mounting the cockpit shell while hydration is pending', async () => {
@@ -273,3 +291,6 @@ describe('session route index', () => {
         expect(terminalAvailabilitySpy.mock.calls[0]?.[0]).toBeNull();
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

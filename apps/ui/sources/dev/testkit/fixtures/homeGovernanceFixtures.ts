@@ -1,4 +1,6 @@
-import type { AccountDisplayProfileV1, FeatureDecision, FeatureId } from '@happier-dev/protocol';
+import type { AccountDisplayProfileV1} from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import type { FeatureDecision} from '@happier-dev/protocol/features/decision';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import type {
     HomeAccountDetailV1,
     HomeAccountPickerRowV1,
@@ -118,6 +120,7 @@ export function homeAccountDetailFixture(
     const row = homeAccountRowFixture(accountId);
     return {
         ...row,
+        publicProfile: { managementCapability: { status: 'available' }, restricted: false },
         authentication: { ...row.authentication, linkedProviderIds: [] },
         teams: [],
         machines: { count: 0 },

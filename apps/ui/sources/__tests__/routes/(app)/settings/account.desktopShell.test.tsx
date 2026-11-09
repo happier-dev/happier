@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import 'fake-indexeddb/auto';
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -51,7 +51,7 @@ describe('Settings → Account desktop shell', () => {
         account.request.mockImplementation(async (input, init) => {
             const path = new URL(String(input)).pathname;
             if (path === '/v1/features') return Response.json(createAccountFeaturesResponse());
-            if (path === '/v1/account/security') return Response.json({ v: 1, encryptionMode: 'plain', terminalPresentUserPolicy: 'allowed',
+            if (path === '/v1/account/security') return Response.json({ v: 1, encryptionMode: 'plain', 
                 nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
             return originalRequest(input, init);
         });

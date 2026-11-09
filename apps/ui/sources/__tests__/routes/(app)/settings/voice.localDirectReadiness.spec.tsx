@@ -17,10 +17,12 @@ import {
     voiceSettingsParse, writeLocalConversationVoiceSettings, writeLocalDirectVoiceSettings, type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 import {
-    DaemonVoiceInferenceModelsListResponseSchema, DaemonVoiceInferenceModelsStatusResponseSchema,
-    getDefaultModelPackId, getModelPackCatalogEntry, listModelPackCatalogEntries,
-    tryWriteServerEnabledBitInPlace, type DaemonVoiceInferenceModelStatus,
-} from '@happier-dev/protocol';
+    DaemonVoiceInferenceModelsListResponseSchema, DaemonVoiceInferenceModelsStatusResponseSchema, type DaemonVoiceInferenceModelStatus,
+} from '@happier-dev/protocol/daemon/voiceInference';
+import {
+    getDefaultModelPackId, getModelPackCatalogEntry, listModelPackCatalogEntries} from '@happier-dev/protocol/voice/modelPacks/catalog';
+import {
+    tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { VoiceSpeechDiagnosticsStatusResponseV1Schema, resolveVoiceSpeechDiagnosticsStoragePolicy } from '@happier-dev/protocol/voice/diagnostics';
 

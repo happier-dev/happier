@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
-import type { AiLaunchProfile } from '@happier-dev/protocol';
+import type { AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
 
 import { createDeferred, flushHookEffects, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
 
@@ -239,7 +239,7 @@ vi.spyOn(actionRuntime, 'createFrontDoorActionExecute').mockImplementation((...f
         const [actionId, input, context] = args;
         shareState.calls.push({ actionId, input, context });
         return execute(...args);
-    }, { confirmed: execute.confirmed, prepare: execute.prepare });
+    }, { prepare: execute.prepare });
 });
 const profileEditModule = await import('@/components/profiles/edit');
 const realLaunchProfileEditForm = profileEditModule.LaunchProfileEditForm;
@@ -352,7 +352,7 @@ describe('Settings › Profiles detail: machine scope and unsaved navigation', (
     it('keeps legacy profile preview selection explicit', async () => {
         // A stored pre-V2 custom Profile opens in the legacy editor. Built-in presets no longer do:
         // creating from a legacy API-key preset is refused and routed to Provider migration.
-        const { AIBackendProfileSchema } = await import('@happier-dev/protocol');
+        const { AIBackendProfileSchema} = await import('@happier-dev/protocol/profiles/backendProfileSchema');
         const legacy = AIBackendProfileSchema.parse({ id: 'legacy-custom', name: 'Legacy custom', isBuiltIn: false, createdAt: 1, updatedAt: 1 });
         profileFixture.profiles = [legacy as never];
         await seedFocusedAccount();
@@ -641,7 +641,7 @@ describe('Settings › Profiles detail: Share…', () => {
         // "Send a copy instead" hands over the value-free document itself, never Settings values.
         await act(async () => { await (shareState.shown[0]!.props!.onSendCopy as () => unknown)(); });
         await vi.waitFor(() => expect(shareState.savedFiles).toHaveLength(1));
-        const { LaunchProfileArtifactV1Schema } = await import('@happier-dev/protocol');
+        const { LaunchProfileArtifactV1Schema} = await import('@happier-dev/protocol/launchProfiles/launchProfileArtifactV1');
         expect(LaunchProfileArtifactV1Schema.parse(JSON.parse(shareState.savedFiles[0]!.json)))
             .toEqual(LaunchProfileArtifactV1Schema.parse(publishedProfileContent));
     });

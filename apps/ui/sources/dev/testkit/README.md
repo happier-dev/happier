@@ -14,6 +14,7 @@ Canonical UI-local testing surface for `apps/ui`.
 - `hooks/`: hook render, deferred, and effect-flush helpers
 - `harness/`: repeated screen and feature harnesses
 - `cleanup/`: shared cleanup registration used by render and hook helpers
+- `harness/hitFrameReach`: `readHitArea(node, drawn?)` is the effective hit rect (native `hitSlop` or the web `[data-happier-hit-area]` frame, border excluded) and `hitAreaOverlap(a, b, { axis, gap })` is how far neighbours overrun their gap; read hit areas through them, never re-derive from props or styles.
 - `performance/`: deterministic render/commit, real-store notification, transport request and live timer counts
 
 ## Performance contracts
@@ -55,6 +56,7 @@ changing that budget requires evidence that the additional work has a consumer.
 - Keep the global setup light. A module whose process-global state must not leak between tests registers its own
   reset when it loads (`dev/vitestTestResets.ts`; `machineReachability.ts` is the example). Never import or
   `vi.importActual` a module from `dev/vitestSetup.ts` only to reset it: that cold-loads its graph on every file's first test.
+- For web viewport fixtures, override `Dimensions.get` once in `createReactNativeWebMock`; its default `useWindowDimensions` reads the same window port.
 
 ## Transport boundary import order
 

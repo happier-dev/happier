@@ -78,7 +78,8 @@ export async function readLibraryFixtureResponse(actionId: string, input: Record
         if (actionId === 'workflow.run.summaries' && designSceneSummaries !== null) return { ok: true, result: WorkflowRunSummariesResultV1Schema.parse({
             summaries: designSceneSummaries.map(row => ({ sourceArtifactId: row.sourceArtifactId, recent: row.recent,
                 lastRun: row.lastRunAgoMs === null || row.recent.length === 0 ? null : { ...row.recent[0],
-                    createdAt: new Date(Date.now() - row.lastRunAgoMs).toISOString(), finishedAt: null },
+                    createdAt: new Date(Date.now() - row.lastRunAgoMs).toISOString(),
+                    startedAt: new Date(Date.now() - row.lastRunAgoMs).toISOString(), finishedAt: null },
                 needsYouCount: row.needsYouRunId === null ? 0 : 1, needsYouRunId: row.needsYouRunId })),
             remainingSourceArtifactIds: [],
         }) };

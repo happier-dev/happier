@@ -18,6 +18,9 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: false, refreshFromActiveServer: async () => {} }),
 }));
 
+// Transform the real route graph during collection, outside the per-interaction test budget.
+const Screen = (await import('@/app/(app)/setup/wizard')).default;
+
 describe('legacy setup destinations', () => {
     beforeEach(() => route.resetParams());
     afterEach(standardCleanup);
@@ -26,22 +29,26 @@ describe('legacy setup destinations', () => {
         [{ scope: 'machine', action: 'local' }, '/settings/machines/add?path=thisComputer'],
         [{ scope: 'machine', action: 'remote' }, '/settings/machines/add?path=ssh'],
         [{ scope: 'machine' }, '/settings/machines/add'],
-        [{ scope: 'relay' }, '/settings/server/add?path=server_home'],
         [{}, '/'],
         [{ scope: 'all', step: 'remote_ssh_setup' }, '/'],
         [{ scope: ['machine', 'relay'], action: 'local' }, '/'],
     ])('redirects %j to %s', async (params, destination) => {
         route.module.router.setParams(params);
-        const Screen = (await import('@/app/(app)/setup/wizard')).default;
         const screen = await renderScreen(<Screen />);
         expect(screen.findByType('Redirect').props.href).toEqual(destination);
+    });
+
+    it('opens the welcome Home step for a signed-out legacy Home setup entry', async () => {
+        route.module.router.setParams({ scope: 'relay' });
+        const screen = await renderScreen(<Screen />);
+        expect(route.spies.replace).toHaveBeenLastCalledWith('/?step=home');
+        expect(screen.findAllByType('Redirect')).toHaveLength(0);
     });
 
     it('preserves an issued account-service callback while removing the legacy mode', async () => {
         route.module.router.setParams({
             mode: 'account-entry', accountServiceReturn: '1', accountServiceIdentity: 'service-1',
         });
-        const Screen = (await import('@/app/(app)/setup/wizard')).default;
         const screen = await renderScreen(<Screen />);
         expect(screen.findByType('Redirect').props.href).toEqual({
             pathname: '/homes/sign-in',

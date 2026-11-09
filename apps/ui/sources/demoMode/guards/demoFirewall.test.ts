@@ -101,6 +101,23 @@ describe('demoFirewall', () => {
         ]);
     });
 
+    it('allows packaged Metro asset queries while preserving API, cross-origin and write denials', async () => {
+        const fetchSpy = vi.fn(async () => new Response('packaged grammar'));
+        globalThis.fetch = fetchSpy;
+        vi.stubGlobal('location', { origin: 'http://localhost:19364', href: 'http://localhost:19364/' });
+        const assetQuery = '?unstable_path=./.expo/hstack/shiki/1fc9566ecdf9c6f079896d18d633fcfb1062fd4e194772b671fc840cf790e991.json.bundle';
+
+        installDemoFirewall();
+
+        await expect(globalThis.fetch(`/assets/${assetQuery}`)).resolves.toBeInstanceOf(Response);
+        await expect(globalThis.fetch(`/assets/${assetQuery}`, { method: 'HEAD' })).resolves.toBeInstanceOf(Response);
+        await expect(globalThis.fetch(`/assets/${assetQuery}`, { method: 'POST' })).rejects.toThrow(/Demo mode blocked network egress/);
+        await expect(globalThis.fetch(`https://cdn.example.test/assets/${assetQuery}`)).rejects.toThrow(/Demo mode blocked network egress/);
+        await expect(globalThis.fetch(`/api/${assetQuery}`)).rejects.toThrow(/Demo mode blocked network egress/);
+        await expect(globalThis.fetch('/assets/?unstable_path=./private-data')).rejects.toThrow(/Demo mode blocked network egress/);
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
     it('allows the S2 restore lazy screen bundle request while the firewall is installed', async () => {
         const fetchSpy = vi.fn(async () => new Response('server settings bundle'));
         globalThis.fetch = fetchSpy;

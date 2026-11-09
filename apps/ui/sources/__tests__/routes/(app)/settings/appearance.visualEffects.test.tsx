@@ -51,7 +51,6 @@ await vi.hoisted(async () => {
             return createReactNativeWebMock({
                 Appearance: { getColorScheme: () => 'light' },
                 Dimensions: { get: () => viewport },
-                useWindowDimensions: () => viewport,
             });
         },
         unistyles: async () => {

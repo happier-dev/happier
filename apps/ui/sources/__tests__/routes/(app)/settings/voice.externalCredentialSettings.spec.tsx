@@ -2,9 +2,11 @@ import React from 'react';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import {
-  PluginContributesV2Schema, createRecipientContractDigestV1,
-  createVoiceProviderRecipientContractFromCredentialsV1, type VoiceProviderContribution,
-} from '@happier-dev/protocol';
+  PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import { createRecipientContractDigestV1,
+  createVoiceProviderRecipientContractFromCredentialsV1} from '@happier-dev/protocol/plugins/recipientContractV1';
+import { type VoiceProviderContribution,
+} from '@happier-dev/protocol/plugins/contributions/voice';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';

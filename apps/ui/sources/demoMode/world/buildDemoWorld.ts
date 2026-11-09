@@ -1,4 +1,5 @@
-import type { ExternalSessionsSource, FeaturesResponse } from '@happier-dev/protocol';
+import type { ExternalSessionsSource} from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import type { ExternalSessionBrowseCandidate } from '@/components/sessions/external/browse/useExternalSessionBrowseCandidates';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -10,6 +11,8 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { buildDemoConnectedMetadataCatalog, buildDemoProfile, type DemoWorldProfile } from './connectedAccounts';
 import type { ConnectedMetadataCatalogV1 } from '@happier-dev/protocol/connect/connectedMetadataCatalogV1';
 import { buildDemoLocalSettings, type DemoWorldLocalSettings } from './localSettings';
+import { buildDemoMcpServerCatalog } from './mcpServers';
+import type { McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 
 import {
     DEMO_MACHINE_ID,
@@ -20,11 +23,14 @@ import {
     DEMO_SERVER_BASE_URL,
 } from './constants';
 import { buildDemoMachines, createDemoMachineFixture } from './machines';
+import { buildDemoMachineReadings, buildDemoMachinePresets } from './machineReadings';
+import { buildDemoSavedSecretMetadata } from './savedSecretMetadata';
 import { buildDemoMessages, buildDemoPendingMessages, buildDemoReviewComments } from './messages';
 import { buildDemoServerFeatures } from './serverFeatures';
 import { buildDemoSessions, createDemoOpenCodeSessionFixture } from './sessions';
 import { buildDemoSettings, type DemoWorldSettings } from './settings';
 import { buildDemoRoleArtifacts } from './subagentGuidance';
+import { buildDemoDiscussionSessions } from './discussion';
 
 export { DEMO_RICH_SESSION_ID } from './constants';
 export { createDemoMachineFixture, type CreateDemoMachineFixtureOptions } from './machines';
@@ -34,6 +40,9 @@ export type DemoWorld = Readonly<{
     artifacts: DecryptedArtifact[];
     sessions: Session[];
     machines: Machine[];
+    machineReadings: ReturnType<typeof buildDemoMachineReadings>;
+    machinePresets: ReturnType<typeof buildDemoMachinePresets>;
+    savedSecretMetadata: ReturnType<typeof buildDemoSavedSecretMetadata>;
     messages: Record<string, NormalizedMessage[]>;
     pending: Record<string, { messages: PendingMessage[] }>;
     reviewComments: Record<string, ReviewCommentDraft[]>;
@@ -42,13 +51,18 @@ export type DemoWorld = Readonly<{
     localSettings: DemoWorldLocalSettings;
     profile: DemoWorldProfile;
     connectedMetadata: ConnectedMetadataCatalogV1;
+    mcpServers: McpServerCatalogV1;
 }>;
 
 export function buildDemoWorld(): DemoWorld {
+    const machineReadings = buildDemoMachineReadings();
     return {
         artifacts: buildDemoRoleArtifacts(),
-        sessions: buildDemoSessions(),
-        machines: buildDemoMachines(),
+        sessions: [...buildDemoSessions(), ...buildDemoDiscussionSessions()],
+        machines: buildDemoMachines(machineReadings),
+        machineReadings,
+        machinePresets: buildDemoMachinePresets(),
+        savedSecretMetadata: buildDemoSavedSecretMetadata(),
         messages: buildDemoMessages(),
         pending: buildDemoPendingMessages(),
         reviewComments: buildDemoReviewComments(),
@@ -57,6 +71,7 @@ export function buildDemoWorld(): DemoWorld {
         localSettings: buildDemoLocalSettings(),
         profile: buildDemoProfile(),
         connectedMetadata: buildDemoConnectedMetadataCatalog(),
+        mcpServers: buildDemoMcpServerCatalog(),
     };
 }
 

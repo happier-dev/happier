@@ -3,6 +3,8 @@ import {
     type MachineReachabilityScope,
 } from '@/sync/domains/machines/reachability/machineReachability';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 /** A fresh fixture ingress after publishing its rows; reconnect alone is not an observation. */
 export function observeMachinePresenceForTest(scope: MachineReachabilityScope, machineIds: readonly string[]): void {
@@ -13,9 +15,13 @@ export function observeMachinePresenceForTest(scope: MachineReachabilityScope, m
 export async function publishMachineInventoryForTest(scope: MachineReachabilityScope, machines: readonly Machine[]): Promise<void> {
     // Call after installing Home boundaries; importing this helper must not load Sync.
     const { storage } = await import('@/sync/domains/state/storageStore');
-    storage.setState(state => ({
-        machineListByServerId: { ...state.machineListByServerId, [scope.serverId]: [...machines] },
-        machineListStatusByServerId: { ...state.machineListStatusByServerId, [scope.serverId]: 'idle' },
-    }));
+    if (areServerProfileIdentifiersEquivalent(getActiveServerSnapshot().serverId, scope.serverId)) {
+        storage.setState({ profileScope: { ...scope, serverId: resolveServerProfileScopeIdForIdentifier(scope.serverId) } });
+    }
+    storage.getState().applyMachines([...machines], true, {
+        sourceServerId: scope.serverId,
+        sourceAccountId: scope.accountId,
+    });
+    storage.getState().markMachineListSettled(scope.serverId);
     observeMachinePresenceForTest(scope, machines.map(machine => machine.id));
 }

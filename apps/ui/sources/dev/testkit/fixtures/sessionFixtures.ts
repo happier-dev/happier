@@ -158,6 +158,7 @@ export function createPlainSessionByIdResponseFixture(session: Session): V2Sessi
     }
     const record = createPlainSessionCurrentProjectionRecordFixture({
         id: session.id, seq: session.seq, createdAt: session.createdAt, updatedAt: session.updatedAt,
+        projectKey: session.projectKey,
         active: session.active, activeAt: session.activeAt, archivedAt: session.archivedAt,
         metadata: readSessionOwnerMetadataView(session),
         metadataVersion: session.metadataVersion, agentStateVersion: session.agentStateVersion,
@@ -183,6 +184,9 @@ export function createPlainSessionByIdResponseFixture(session: Session): V2Sessi
                 canApprovePermissions: access.capabilities.approveRuntimePermissions } } : {}),
         } : {}),
         pendingVersion: session.pendingVersion, pendingCount: session.pendingCount,
+        pendingPermissionRequestCount: session.pendingPermissionRequestCount,
+        pendingUserActionRequestCount: session.pendingUserActionRequestCount,
+        pendingRequestObservedAt: session.pendingRequestObservedAt,
         pendingActivationAuthorization: session.pendingActivationAuthorization ?? undefined,
     } });
 }

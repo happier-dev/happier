@@ -1,5 +1,10 @@
+import { storage } from '@/sync/domains/state/storageStore';
+import { act } from 'react-test-renderer';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { createSessionFixture, standardCleanup } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
@@ -31,14 +36,9 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ params: { id: 'user-1' } }).module;
 });
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({ useAllSessions: () => [] });
-});
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => profileState.auth,
 }));
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => false }));
 vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => vi.fn() }));
 vi.mock('@/track', () => ({ trackFriendsConnect: vi.fn() }));
 // The social API is the network boundary.
@@ -48,13 +48,53 @@ vi.mock('@/sync/api/social/apiFriends', () => ({
     })),
 }));
 
-afterEach(() => {
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const { default: UserProfileScreen } = await import('@/app/(app)/user/[id]');
+beforeEach(async () => { await homes.reset(); });
+afterEach(async () => {
     profileState.resolveProfile = null;
+    setScreenSharingPrivacyActive(false);
+    await standardCleanup();
+    await homes.reset();
 });
 
 describe('UserProfileScreen states', () => {
+    it('removes private shared Sessions from the friend list and restores them when sharing ends', async () => {
+        const serverId = await homes.addHome({ name: 'Friends', serverUrl: 'https://friend-privacy.test', accountId: 'viewer' });
+        await homes.selectHomes([serverId]);
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol/features/serverEnabledBit');
+        const features = createRootLayoutFeaturesResponse();
+        expect(tryWriteServerEnabledBitInPlace(features, 'sharing.session', true)).toBe(true);
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        storage.setState({ isDataReady: true, sessions: {
+            private: createSessionFixture({ id: 'private', serverId, owner: 'user-1', metadata: { name: 'Secret launch', path: '/secret' } }),
+            public: createSessionFixture({ id: 'public', serverId, owner: 'user-1', metadata: { name: 'Public plan', path: '/public' } }),
+        } });
+        const screen = await renderScreen(<UserProfileScreen />);
+        await flushHookEffects();
+        await act(async () => {
+            profileState.resolveProfile?.({ id: 'user-1', firstName: 'Ada', lastName: null, username: 'ada', bio: null,
+                avatar: null, status: 'friend', publicKey: null });
+        });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Secret launch'));
+        expect(screen.getTextContent()).toContain('Public plan');
+        await act(async () => {
+            storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
+            storage.getState().setSessionTagAssignmentsOptimistic(serverId, 'private', ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        expect(screen.getTextContent()).not.toContain('Secret launch');
+        expect(screen.getTextContent()).toContain('Public plan');
+        await act(async () => setScreenSharingPrivacyActive(false));
+        expect(screen.getTextContent()).toContain('Secret launch');
+    });
+
     it('keeps the page header while the person loads and when they are not found', async () => {
-        const { default: UserProfileScreen } = await import('@/app/(app)/user/[id]');
         const screen = await renderScreen(React.createElement(UserProfileScreen));
         await flushHookEffects({ cycles: 2, turns: 1 });
 

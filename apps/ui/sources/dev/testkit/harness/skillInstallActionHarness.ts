@@ -2,12 +2,12 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import { SkillsRulesSetInputV1Schema } from '@happier-dev/protocol/actions/specs/capabilityRules';
 import type { PromptLibraryArtifactStore, PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { mutateSkillRulesV1, type SkillRulesActionPortV1 } from '@happier-dev/protocol/prompts/library/skillRulesActionsV1';
-import { createSkillActionExecuteV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
+import { createSkillActionExecuteV1, type SkillActionPortV1 } from '@happier-dev/protocol/prompts/library/skills/skillActionOperations';
 import type { SkillRuleV1 } from '@happier-dev/protocol/reach/reachRuleV1';
 import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
 
 /** Real batch/held identity/rules owners over independently acknowledged persistent-store boundaries. */
-export function createSkillInstallActionHarness() {
+export function createSkillInstallActionHarness(options: Pick<SkillActionPortV1, 'readFoundSkillBundle'> = {}) {
     const artifacts = new Map<string, PromptLibraryStoredArtifact>();
     let contentLimit: number | null = null, rulesUnavailable = false, revision = 0, nextId = 0;
     let rules: SkillRuleV1[] = [];
@@ -40,11 +40,11 @@ export function createSkillInstallActionHarness() {
             return { status: 'updated', revision: ++revision, cursor: revision };
         },
     };
-    const owner = createSkillActionExecuteV1({ store, skillRules, randomId: () => `rule-${revision}`, nowMs: () => 1,
-        includeInSession: async () => ({ ok: true }) });
+    const owner = createSkillActionExecuteV1({ ...options, store, skillRules, randomId: () => `rule-${revision}`, nowMs: () => 1,
+        includeInSession: async () => ({ ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } }) });
     const execute: MountedAuthoringActionExecute = async (actionId, input) => {
         if (actionId === 'skills.rules.set') return { ok: true, result: await mutateSkillRulesV1(skillRules, SkillsRulesSetInputV1Schema.parse(input)) };
-        if (actionId !== 'skills.install') throw new Error(`Unexpected Action ${actionId}`);
+        if (actionId !== 'skills.install' && actionId !== 'skills.found.adopt') throw new Error(`Unexpected Action ${actionId}`);
         const result = await owner(actionId, input, { surface: 'ui' });
         const failure = ActionExecuteFailureSchema.safeParse(result);
         return failure.success ? failure.data : { ok: true, result };

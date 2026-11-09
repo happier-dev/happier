@@ -2,23 +2,17 @@
 import { testResetsForTests } from './vitestTestResets';
 import '@/boot/configureZodLocale';
 import './vitestDomTextEncoding';
+import './vitestDomBlob';
 import * as React from 'react';
 import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
-import { loadVitestModuleForNodeRequire } from './vitestRnShim';
+import { installVitestRnShim, loadVitestModuleForNodeRequire } from './vitestRnShim';
 import { getVitestNodeBuiltin } from './vitestNodeBuiltins';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
 import { createReanimatedModuleMock } from './testkit/mocks/reanimated';
 import { createReactNavigationNativeMock } from './testkit/mocks/reactNavigation';
 import { installShippedNativeFrameScheduler } from './testkit/legend/shippedNativeLegendRuntime';
-
-// Install the existing Node bridge before static cleanup/render helpers import
-// external renderers, whose private React peer must share this run's dispatcher.
-await vi.hoisted(async () => {
-    const { installVitestRnShim } = await import('./vitestRnShim');
-    installVitestRnShim({ traceFile: process.env.VITEST_TRACE_LOAD ?? null });
-});
 
 // Native lists and frame-deferred controls need the same timer-backed platform
 // boundary in every Node suite, before their modules or effects can schedule work.
@@ -256,6 +250,8 @@ if (process.env.HAPPIER_VITEST_ENABLE_SIGNAL_DUMP === '1') {
     });
 }
 
+installVitestRnShim({ traceFile: process.env.VITEST_TRACE_LOAD ?? null });
+
 // `react-native` includes Flow syntax. Even with Vite aliases, some dependencies still
 // resolve it via Node's CJS loader, so we mock it explicitly here as well.
 vi.mock('react-native', async () => await import('./reactNativeStub'));
@@ -301,9 +297,9 @@ beforeEach(async () => {
     // shape before each test so server seeding/runtime heuristics stay deterministic.
     restoreDomGlobalsToOriginal();
 
-    // Reset this shared physical backing only; native SDK overrides need not
-    // implement a test-only export that the real MMKV package does not expose.
-    (await vi.importActual<typeof import('./reactNativeMmkvStub')>('./reactNativeMmkvStub')).resetMmkvStoresForTests();
+    // Device isolation includes keyed projections, not just their physical backing.
+    // The testkit resets the native boundary without opening an unused adapter.
+    await (await import('./testkit/cleanup/persistentUiState')).resetPersistentUiStateForTest();
     asyncStorageBacking.clear();
     secureStoreBacking.clear();
     localStorageBacking.clear();

@@ -148,7 +148,6 @@ export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
     })();
     const nodeRequire = createRequire(requireBase);
     const Module = nodeRequire('node:module') as NodeModuleWithLoader;
-    const react = nodeRequire('react');
     const recentLoads: string[] = [];
 
     const resolveAlias = (request: string): string => resolve(sourcesDir, request.slice(2));
@@ -199,9 +198,6 @@ export function installVitestRnShim(options: VitestRnShimOptions = {}): void {
                 // opaque asset reference instead of executing plugin code
                 // during test-module collection.
                 if (BUNDLED_PLUGIN_UI_CJS_ASSET.test(request)) return request;
-                // External CJS renderers can carry a private peer copy. Share the
-                // same real React module as Vite's deduped first-party imports.
-                if (request === 'react') return react;
                 if (request === 'react-native') return reactNativeRootStub;
                 if (request.startsWith('react-native/')) return reactNativeInternalProxy;
                 if (request === 'expo-constants' || request.startsWith('expo-constants/')) return expoConstantsStub;

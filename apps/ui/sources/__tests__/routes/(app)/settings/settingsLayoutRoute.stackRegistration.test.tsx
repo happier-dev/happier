@@ -35,12 +35,6 @@ vi.mock('react-native', async () => {
             OS: 'web',
             select: (options: any) => (options && 'web' in options ? options.web : options?.default),
         },
-        useWindowDimensions: () => ({
-            width: 390,
-            height: 844,
-            scale: 2,
-            fontScale: 1,
-        }),
         Dimensions: {
             get: () => ({
                 width: 390,

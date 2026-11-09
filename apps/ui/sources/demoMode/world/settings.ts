@@ -9,6 +9,8 @@ import { DEMO_CLIENT_FEATURE_TOGGLES } from './serverFeatures';
  * restored on teardown.
  */
 const DEMO_WORLD_SETTINGS_KEYS = [
+    'experiments',
+    'executionRunsNotifyParentOnCompletionDefault',
     'featureToggles',
     'hideInactiveSessions',
     'sessionListDensity',
@@ -30,6 +32,8 @@ export type DemoWorldSettings = Pick<Settings, DemoWorldSettingKey>;
 
 export function buildDemoSettings(): DemoWorldSettings {
     return {
+        experiments: true,
+        executionRunsNotifyParentOnCompletionDefault: true,
         featureToggles: {
             // A5 subagents: `execution.runs` is the client-represented substrate the
             // sub-agent screen gates its whole delegation model on.
@@ -39,7 +43,7 @@ export function buildDemoSettings(): DemoWorldSettings {
         hideInactiveSessions: false,
         sessionListDensity: 'narrow',
         sessionListLayoutV1: 'projects',
-        sessionListAttentionPlacementV1: 'both',
+        sessionListAttentionPlacementV1: 'top',
         ...buildDemoConnectedServicesSettings(),
         // A9 source control: a workspace someone has actually configured — live Git
         // staging, a confirmation before anything leaves the machine, generated

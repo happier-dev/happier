@@ -12,6 +12,7 @@ export const DEMO_CLIENT_FEATURE_TOGGLES = {
 export function buildDemoServerFeatures(): FeaturesResponse {
     return FeaturesResponseSchema.parse({
         features: {
+            browser: { enabled: true, viewTargets: { enabled: true }, internal: { enabled: true }, context: { enabled: true } },
             sessions: {
                 enabled: true,
                 folders: { enabled: false },

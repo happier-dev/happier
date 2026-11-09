@@ -9,5 +9,5 @@ export const DEMO_ATTENTION_SESSION_ID = 'demo-session-attention';
 export const DEMO_NOW_MS = Date.now();
 export const DEMO_HOME_DIR = '/Users/happier';
 export const DEMO_PROJECT_PATH = '/Users/happier/work/happier';
-export const DEMO_SERVER_BASE_URL = 'http://127.0.0.1:4099';
+export const DEMO_SERVER_BASE_URL = 'https://home.mayapark.dev';
 export const DEMO_OPEN_CODE_PROVIDER_SESSION_ID = 'opencode-demo-dashboard-auth';

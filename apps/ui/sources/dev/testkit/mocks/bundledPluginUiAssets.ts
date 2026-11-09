@@ -1,4 +1,4 @@
-import type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '@/sync/domains/plugins/availability/bundledPluginUiArtifactInventory';
+import type { BundledPluginPackagedResource, BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '@/sync/domains/plugins/availability/bundledPluginUiArtifactInventory';
 
 // Package/Expo asset boundary only: this test app contains no preseeded bundle
 // bytes. Artifact selection, source adapters, leases, and catalogs remain real.
@@ -12,9 +12,11 @@ export function installBundledPluginUiDeclarationsForTests(declarations: readonl
     return () => { BUNDLED_PLUGIN_UI_APP_DECLARATIONS = previous; };
 }
 export const BUNDLED_PLUGIN_BRAND_MARKS = Object.freeze([]);
+export const BUNDLED_PLUGIN_PACKAGED_RESOURCES = Object.freeze([]) satisfies readonly BundledPluginPackagedResource[];
 
 export const emptyBundledPluginUiAssetsModule = Object.freeze({
     BUNDLED_PLUGIN_UI_APP_ARTIFACTS,
     BUNDLED_PLUGIN_UI_APP_DECLARATIONS,
     BUNDLED_PLUGIN_BRAND_MARKS,
+    BUNDLED_PLUGIN_PACKAGED_RESOURCES,
 });

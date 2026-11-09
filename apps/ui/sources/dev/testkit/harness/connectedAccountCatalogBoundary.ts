@@ -7,7 +7,7 @@ import {
     type ConnectedAccountCatalogRowMutationV1,
     type ConnectedPurposeCatalogV1,
 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol';
+import { AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ConnectedAccountCatalogValueSnapshot } from '@/sync/store/settings/connectedAccountCatalogSnapshot';

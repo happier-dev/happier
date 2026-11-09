@@ -1,5 +1,5 @@
 import { expect, vi } from 'vitest';
-import { createSessionReadBatchFetchBoundary } from './sessionReadBatchHttpBoundary';
+import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBoundary';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import type { BundledRealtimeProviderRuntimeHost } from '@/voice/registry/bundledConversationRuntimeContract';
@@ -19,7 +19,7 @@ type CreateAgentSessionRealtimeService = NonNullable<BundledRealtimeProviderRunt
 export async function createCodexVoiceRuntimeEnvironment() {
     await import('@/sync/syncEngine');
     const { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } = await import('@/voice/registry/generatedBundledVoiceRuntimeEntries');
-    const { buildQualifiedPluginContributionKey, createPluginContributionIdentity, FeaturesResponseSchema } = await import('@happier-dev/protocol');
+    const [{ buildQualifiedPluginContributionKey}, { createPluginContributionIdentity}, { FeaturesResponseSchema}] = await Promise.all([import('@happier-dev/protocol/plugins/contribution-key'), import('@happier-dev/protocol/plugins/contribution-identity'), import('@happier-dev/protocol/features/payload/featuresResponseSchema')]);
     const { AccountProfileSchema } = await import('@happier-dev/protocol/account/profile');
     const { encodePlainMachineStoredContent } = await import('@happier-dev/protocol/machines/machineStoredContent');
     const { ACP_CATALOG_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/acp/catalog/catalogRowsV1');
@@ -93,7 +93,8 @@ export async function createCodexVoiceRuntimeEnvironment() {
         metadataVersion: machine.metadataVersion, daemonState: machine.daemonState ? encodePlainMachineStoredContent(machine.daemonState) : null,
         daemonStateVersion: machine.daemonStateVersion,
     });
-    const request = createSessionReadBatchFetchBoundary(async (input: URL | RequestInfo, init?: RequestInit): Promise<Response | null> => {
+    const request = createCompactSessionListFetchBoundary(async (input: URL | RequestInfo, init?: RequestInit): Promise<Response | null | undefined> => {
+      if (new URL(String(input)).pathname === '/v2/sessions/read-batch' && init?.method === 'POST') return undefined;
         const response = await homeResponse(input, init);
         if (response) return response;
         const path = new URL(String(input)).pathname;
@@ -128,7 +129,7 @@ export async function createCodexVoiceRuntimeEnvironment() {
         const preparation = answerVoiceRealtimePreparationHttpRequest(input, persistedSettings);
         if (preparation) return preparation;
         return transcriptRequest(input, init);
-    });
+    }, { preferExactSnapshot: true });
     const configureSocket: NonNullable<Parameters<typeof restoreServerAccountForTest>[0]['configureSocket']> = (socket, serverUrl) => {
         let timeoutMs: number | null = null;
         socket.connect = vi.fn<typeof socket.connect>(() => {

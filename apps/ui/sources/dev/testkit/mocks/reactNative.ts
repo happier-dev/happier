@@ -46,6 +46,22 @@ export function createMeasuredImageMock(size: Readonly<{ width: number; height: 
     });
 }
 
+/** Native layout is absent from the host renderer; report the addressed view's real-sized box. */
+export function createMeasuredViewMock(
+    size: Readonly<{ width: number; height: number }>,
+    matchesTestID: (testID: string) => boolean,
+) {
+    return React.forwardRef<unknown, TestReactNativeHostProps>(function MeasuredView(props, ref) {
+        const { onLayout, testID } = props;
+        React.useLayoutEffect(() => {
+            if (typeof testID === 'string' && matchesTestID(testID) && typeof onLayout === 'function') {
+                onLayout({ nativeEvent: { layout: { x: 0, y: 0, ...size } } });
+            }
+        }, [onLayout, testID]);
+        return React.createElement('View', { ...props, ref });
+    });
+}
+
 export function createReactNativeNativeMock(
     options: Readonly<{ platformOS: TestReactNativeNativeMockPlatformOS }>,
     overrides?: TestReactNativeOverrides,

@@ -32,6 +32,7 @@ const mockState = vi.hoisted(() => ({
         draftAccountId?: string;
     },
     wizardRenders: 0,
+    isCreating: false,
     draftReadScopes: [] as Array<{ serverId: string; accountId: string }>,
     draftDeleteCalls: [] as Array<Readonly<{
         scope: { serverId: string; accountId: string };
@@ -137,7 +138,7 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionScreenModel', () => ({
     useNewSessionScreenModel: (input: Readonly<{
         composerTopContent?: React.ReactNode;
         draftId: string;
-        statusTrailingActions?: React.ReactNode;
+        renderStatusTrailingActions?: (state: Readonly<{ isCreating: boolean }>) => React.ReactNode;
     }>) => ({
         variant: 'wizard',
         popoverBoundaryRef: { current: null },
@@ -150,7 +151,7 @@ vi.mock('@/components/sessions/new/hooks/useNewSessionScreenModel', () => ({
             machine: null,
             footer: {
                 composerTopContent: input.composerTopContent,
-                statusTrailingActions: input.statusTrailingActions,
+                statusTrailingActions: input.renderStatusTrailingActions?.({ isCreating: mockState.isCreating }),
             },
         },
     }),
@@ -259,6 +260,7 @@ afterEach(async () => {
         draftId: '8e0a5dd1-b1df-43dd-b51e-b7787b30362e',
     });
     mockState.wizardRenders = 0;
+    mockState.isCreating = false;
     mockState.draftReadScopes = [];
     mockState.draftDeleteCalls = [];
     mockState.routerPush.mockReset();
@@ -275,7 +277,7 @@ async function seedConflictingDraft(draftId: string) {
     const cipher = createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,
         getSessionContext: () => null, randomBytes: getRandomBytes });
     const otherDevice = repository.createSessionDraftRepository({ syncEnabled: false, cipher,
-        storage: { getString: key => values.get(key), set: (key, value) => { values.set(key, value); },
+        storage: { getString: key => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => { values.set(key, value); },
             delete: key => { values.delete(key); } } });
     otherDevice.writeNewSessionDraft({ scope, draftId, patch: { text: 'Original draft' }, materializationIntent: 'seeded' });
     const base = otherDevice.getSessionDraftSnapshot(scope, address)?.document;
@@ -354,6 +356,20 @@ describe('/new', () => {
             },
         });
         expect(mockState.routerPush).not.toHaveBeenCalled();
+    });
+
+    it('keeps Start another available while the draft launches, but holds Delete', async () => {
+        mockState.isCreating = true;
+        await seedConflictingDraft(mockState.localSearchParams.draftId!);
+
+        const screen = await renderScreen(React.createElement(Screen));
+
+        expect(screen.findByProps({ testID: 'new-session-draft-delete' }).props.disabled).toBe(true);
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'new-session-draft-start-another' }));
+        expect(mockState.routerReplace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: expect.objectContaining({ draftOrigin: 'ordinary' }),
+        });
     });
 
     it('ignores unrelated Action operation updates while retaining exact launch custody', async () => {
@@ -479,6 +495,7 @@ describe('/new', () => {
             && (request.path === SESSION_DRAFT_ROUTE_MUTATE || request.path === SESSION_DRAFT_V2_ROUTE_MUTATE)))
             .toBe(true);
     });
+
     // JOURNEY-OPUS-83 D13: the Home stopped answering while a draft was deleted; the text and its row stayed and
     // nothing said why. A Delete that did not happen keeps the draft and tells the person, once.
     it('says why a Delete did not happen and keeps the draft when the Home does not answer', async () => {

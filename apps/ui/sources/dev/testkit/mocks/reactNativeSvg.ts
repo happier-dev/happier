@@ -1,5 +1,8 @@
 import * as React from 'react';
 
+// Keep the SDK parser real while the Vite adapter substitutes native drawing tags.
+export { parse } from 'react-native-svg/lib/module/xml.js';
+
 type SvgHostProps = Record<string, unknown> & { children?: React.ReactNode };
 
 /** Native SVG drawing is the boundary; retain authored props and real renderer logic. */

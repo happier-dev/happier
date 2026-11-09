@@ -164,7 +164,7 @@ function invokeChangeText(target: ReactTestInstance, testID: string, value: stri
     // travels on it — legitimately wires only `onChange`, so drive that shape the
     // way the host does instead of forcing every such control to keep a second
     // handler alive for tests.
-    const change = target.props?.onChange;
+    const change = target.props?.onComposerChange ?? target.props?.onChange;
     if (typeof change === 'function') {
         // The Composer editor's event also carries the caret, the edit count and its inline references.
         change({ nativeEvent: { text: value, selection: { start: value.length, end: value.length }, eventCount: 1, references: [] } });

@@ -2,8 +2,10 @@ import {
     buildLinkedExternalSessionMetadataV1,
     buildLinkedExternalSessionQualifiedIdentityV1,
 } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { buildDemoFeatureSessions } from './featureSessions';
 
 import {
     DEMO_ATTENTION_SESSION_ID,
@@ -17,6 +19,12 @@ import {
     DEMO_SECONDARY_MACHINE_ID,
     DEMO_SERVER_BASE_URL,
 } from './constants';
+
+const ownerAccess = {
+    role: 'owner',
+    level: 'owner',
+    capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }),
+} as const satisfies NonNullable<Session['access']>;
 
 export type CreateDemoOpenCodeSessionFixtureOptions = Partial<Session> & Readonly<{
     machineId?: string | null;
@@ -116,7 +124,7 @@ export function createDemoOpenCodeSessionFixture(options: CreateDemoOpenCodeSess
     const linkedMetadata = buildLinkedExternalSessionMetadataV1(
         {
             path,
-            host: 'macbook-pro.local',
+            host: 'macbook-pro',
             homeDir: DEMO_HOME_DIR,
             name: title,
             ...(machineId ? { machineId } : {}),
@@ -173,7 +181,7 @@ export function createDemoOpenCodeSessionFixture(options: CreateDemoOpenCodeSess
             ...linkedMetadata,
             ...(metadataOverrides ?? {}),
             path: typeof metadataOverrides?.path === 'string' ? metadataOverrides.path : path,
-            host: typeof metadataOverrides?.host === 'string' ? metadataOverrides.host : 'macbook-pro.local',
+            host: typeof metadataOverrides?.host === 'string' ? metadataOverrides.host : 'macbook-pro',
         },
         metadataVersion: 1,
         agentState: null,
@@ -187,7 +195,7 @@ export function createDemoOpenCodeSessionFixture(options: CreateDemoOpenCodeSess
     };
 }
 
-function createDemoListSession(params: Readonly<{
+export function createDemoListSession(params: Readonly<{
     id: string;
     machineId: string;
     title: string;
@@ -199,6 +207,7 @@ function createDemoListSession(params: Readonly<{
     pendingCount?: number;
     pendingUserActionRequestCount?: number;
     thinking?: boolean;
+    flavor?: string;
 }>): Session {
     const thinking = params.thinking ?? params.active;
     return {
@@ -216,8 +225,9 @@ function createDemoListSession(params: Readonly<{
         pendingUserActionRequestCount: params.pendingUserActionRequestCount ?? 0,
         pendingVersion: params.pendingCount ? 1 : 0,
         metadata: {
+            flavor: params.flavor ?? 'claude',
             path: params.path ?? '',
-            host: params.machineId === DEMO_MACHINE_ID ? 'macbook-pro.local' : 'studio.local',
+            host: params.machineId === DEMO_MACHINE_ID ? 'macbook-pro' : 'mac-studio',
             homeDir: DEMO_HOME_DIR,
             name: params.title,
             machineId: params.machineId,
@@ -237,17 +247,34 @@ function createDemoListSession(params: Readonly<{
         presence: params.active || thinking ? 'online' : params.activeAt,
         permissionMode: 'default',
         modelMode: 'default',
+        access: ownerAccess,
     };
 }
 
 export function buildDemoSessions(): Session[] {
+    const rich = createDemoListSession({
+        id: DEMO_RICH_SESSION_ID,
+        machineId: DEMO_MACHINE_ID,
+        title: 'Dashboard auth skeleton',
+        path: DEMO_PROJECT_PATH,
+        active: true,
+        activeAt: DEMO_NOW_MS,
+        seq: 10,
+        pendingCount: 1,
+    });
     return [
-        createDemoOpenCodeSessionFixture(),
+        {
+            ...rich,
+            lastViewedSessionSeq: rich.seq,
+            metadata: { ...rich.metadata!, ...buildModelMetadata(DEMO_NOW_MS), flavor: 'opencode' },
+        },
         createDemoListSession({
             id: DEMO_REVIEW_SESSION_ID,
             machineId: DEMO_SECONDARY_MACHINE_ID,
             title: 'Review mobile PR from the train',
-            active: false,
+            active: true,
+            thinking: false,
+            flavor: 'opencode',
             activeAt: DEMO_NOW_MS - 900_000,
             seq: 11,
             pendingCount: 1,
@@ -267,6 +294,7 @@ export function buildDemoSessions(): Session[] {
             id: 'demo-session-api-contract',
             machineId: DEMO_MACHINE_ID,
             title: 'API contract migration',
+            flavor: 'codex',
             active: true,
             activeAt: DEMO_NOW_MS - 70_000,
             seq: 13,
@@ -275,11 +303,11 @@ export function buildDemoSessions(): Session[] {
         createDemoListSession({
             id: 'demo-session-ios-smoke',
             machineId: DEMO_SECONDARY_MACHINE_ID,
-            title: 'iOS smoke retry',
-            active: true,
+            title: 'iOS release checks',
+            active: false,
             activeAt: DEMO_NOW_MS - 3_000_000,
             seq: 14,
-            thinking: true,
+            thinking: false,
         }),
         createDemoListSession({
             id: 'demo-session-docs-refresh',
@@ -293,6 +321,7 @@ export function buildDemoSessions(): Session[] {
             id: 'demo-session-terminal-latency',
             machineId: DEMO_SECONDARY_MACHINE_ID,
             title: 'Terminal latency pass',
+            flavor: 'codex',
             active: false,
             activeAt: DEMO_NOW_MS - 7_200_000,
             seq: 16,
@@ -309,9 +338,11 @@ export function buildDemoSessions(): Session[] {
             id: 'demo-session-refactor-plan',
             machineId: DEMO_SECONDARY_MACHINE_ID,
             title: 'Provider registry refactor plan',
+            flavor: 'opencode',
             active: false,
             activeAt: DEMO_NOW_MS - 21_600_000,
             seq: 18,
         }),
+        ...buildDemoFeatureSessions(createDemoListSession),
     ];
 }

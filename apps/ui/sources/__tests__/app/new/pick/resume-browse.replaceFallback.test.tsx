@@ -1,3 +1,4 @@
+import { applyPickerFixtureSettings } from './testHarness';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -110,7 +111,7 @@ async function renderResumeBrowsePicker() {
     });
     const { storage } = await import('@/sync/domains/state/storageStore');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
-    storage.getState().applySettingsLocal(settingsParse(settingsState.value));
+    await applyPickerFixtureSettings(settingsParse(settingsState.value));
     const { refreshAcpCatalog } = await import('@/sync/engine/settings/acpCatalogEngine');
     await refreshAcpCatalog(scope);
     const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;

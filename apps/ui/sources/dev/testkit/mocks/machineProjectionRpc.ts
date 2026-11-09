@@ -1,4 +1,5 @@
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { waitForNetworkResponseForTests } from './runtimeFetch';
 
 /**
  * A fixture's answer at the level a projection reader sees it: what
@@ -12,6 +13,7 @@ type MachineRpcParams = Readonly<{
     machineId: string;
     serverId?: string | null;
     method: string;
+    signal?: AbortSignal;
 }>;
 
 /**
@@ -33,7 +35,9 @@ export function answerMachineProjectionDescribeAtRpcBoundary(
         if (params.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
             throw new Error(`Unexpected machine RPC in projection test: ${params.method}`);
         }
-        const answer = await readAnswer(params.machineId, { serverId: params.serverId ?? null });
+        const answer = await waitForNetworkResponseForTests(
+            Promise.resolve(readAnswer(params.machineId, { serverId: params.serverId ?? null })), params.signal,
+        );
         if (answer.supported) {
             const { supported: _supported, ...siblings } = answer;
             return { protocolVersion: 1, ...siblings };

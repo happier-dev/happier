@@ -49,6 +49,24 @@ function loadMetroConfig(uiDir: string, envOverrides: Record<string, string | nu
 }
 
 describe('metro.config.js (web)', () => {
+    it('uses the smallest measured transformer pool on the full web bundle latency plateau', () => {
+        // METROPOOL 2026-10-25, nl1: same web-dev cold/warm workload, isolated
+        // caches per pool; terminal evidence in the METROPOOL lane report.
+        const measurements = [
+            { workers: 4, coldMs: 168956, warmMs: 45534 },
+            { workers: 8, coldMs: 116644, warmMs: 47041 },
+            { workers: 16, coldMs: 98400, warmMs: 47716 },
+            { workers: 24, coldMs: 97193, warmMs: 49778 },
+        ];
+        const baseline = measurements[measurements.length - 1]!;
+        // The 16/default cold difference is 1.24%; use a 2% comparison band
+        // and require no warm slowdown. This is measurement selection, not a timeout.
+        const plateau = measurements.filter(row => row.coldMs <= baseline.coldMs * 1.02
+            && row.warmMs <= baseline.warmMs);
+        const smallestMeasuredPool = Math.min(...plateau.map(row => row.workers));
+        expect(loadMetroConfig(getUiDir()).maxWorkers).toBe(smallestMeasuredPool);
+    });
+
     it.each(['ios', 'android', 'web'])('resolves workspace sources, canonical runtime peers and private ESM dependencies on %s', (platform) => {
         const uiDir = getUiDir();
         const config = loadMetroConfig(uiDir);
@@ -182,6 +200,76 @@ describe('metro.config.js (web)', () => {
     afterEach(() => {
         vi.doUnmock('@sentry/react-native/metro');
         vi.resetModules();
+    });
+
+    it.each([
+        ['browser', 'Mozilla/5.0 Chrome/142.0'],
+        ['curl', 'curl/8.0'],
+        ['node', 'undici'],
+        ['other', 'custom-client/1.0'],
+    ])('attributes platform-less Metro bundles once for %s clients without disclosing request details', (userAgentFamily, userAgent) => {
+        const config = loadMetroConfig(getUiDir(), { HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: null });
+        const requests: unknown[] = [];
+        const middleware = config.server.enhanceMiddleware((req: unknown) => requests.push(req), {});
+        const request = {
+            url: '/index.bundle?lazy=true&modulesOnly=1&details=not-for-output',
+            headers: {
+                'user-agent': userAgent,
+                'x-forwarded-for': '203.0.113.8, 198.51.100.9',
+                referer: 'https://caller.example/private-page?details=not-for-output',
+                'x-extra': 'not-for-output',
+            },
+        };
+        const output = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+            middleware(request, {}, () => {});
+            expect(output.mock.calls).toEqual([[
+                '[metro-request-attribution] ' + JSON.stringify({
+                    path: '/index.bundle', userAgentFamily, callerHost: '203.0.113.8', lazy: true, modulesOnly: true,
+                }),
+            ]]);
+            expect(requests).toEqual([request]);
+        } finally {
+            output.mockRestore();
+        }
+    });
+
+    it('attributes platform-less Metro bundles with only the referer host and boolean flags when forwarding is unavailable', () => {
+        const config = loadMetroConfig(getUiDir(), { HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: null });
+        const middleware = config.server.enhanceMiddleware(() => {}, {});
+        const output = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+            middleware({
+                url: '/index.bundle?lazy=false&modulesOnly=not-for-output&details=not-for-output',
+                headers: { 'x-forwarded-for': 'not-an-address', referer: 'https://caller.example:9443/private-page?details=not-for-output' },
+            }, {}, () => {});
+            middleware({ url: '/index.bundle', headers: { referer: 'not-a-url' } }, {}, () => {});
+            expect(output.mock.calls).toEqual([
+                ['[metro-request-attribution] ' + JSON.stringify({
+                    path: '/index.bundle', userAgentFamily: 'other', callerHost: 'caller.example:9443', lazy: false, modulesOnly: null,
+                })],
+                ['[metro-request-attribution] ' + JSON.stringify({
+                    path: '/index.bundle', userAgentFamily: 'other', callerHost: null, lazy: null, modulesOnly: null,
+                })],
+            ]);
+        } finally {
+            output.mockRestore();
+        }
+    });
+
+    it('keeps normal Metro requests silent and forwards them unchanged', () => {
+        const config = loadMetroConfig(getUiDir(), { HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: null });
+        const requests: unknown[] = [];
+        const middleware = config.server.enhanceMiddleware((req: unknown) => requests.push(req), {});
+        const urls = ['/status', '/index.map', '/index.bundle?platform=web', '/index.bundle?platform=ios', '/index.bundle?platform=android', '/index.bundle?platform='];
+        const output = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+            for (const url of urls) middleware({ url, headers: {} }, {}, () => {});
+            expect(output).not.toHaveBeenCalled();
+            expect(requests).toEqual(urls.map(url => ({ url, headers: {} })));
+        } finally {
+            output.mockRestore();
+        }
     });
 
     it('enables require.context for Expo Router lazy route loading on web', () => {
@@ -702,6 +790,21 @@ describe('metro.config.js (web)', () => {
         expect(isBlocked(join(packageRoot, 'dist/index.js'))).toBe(true);
         expect(isBlocked(join(packageRoot, '.tmp/index.ts'))).toBe(false);
         expect(isBlocked(join(packageRoot, 'dist.staging/index.js'))).toBe(false);
+        for (const scratch of [
+            resolve(repoRoot, 'node_modules/packages/skia/artifacts'),
+            String.raw`C:\repo\node_modules\packages\skia\artifacts`,
+        ]) {
+            expect(isBlocked(scratch), scratch).toBe(true);
+            expect(isBlocked(`${scratch}/probe.js`), scratch).toBe(true);
+        }
+        for (const retained of [
+            resolve(repoRoot, 'node_modules/@shopify/react-native-skia/lib/module/index.js'),
+            resolve(repoRoot, 'node_modules/packages/skia/artifacts-other/index.js'),
+            resolve(uiDir, '.happier-other/index.js'),
+            resolve(uiDir, '.happier/consumer/inventory.js'),
+            String.raw`C:\repo\apps\ui\.happier\consumer\inventory.js`,
+            String.raw`C:\Users\dev\.happier\stacks\dev\plugin-ui\artifacts\entry.cjs.bundle`,
+        ]) expect(isBlocked(retained), retained).toBe(false);
     });
 
     it('excludes workspace-private dependency trees at every discovered package depth while retaining bundle inputs', () => {

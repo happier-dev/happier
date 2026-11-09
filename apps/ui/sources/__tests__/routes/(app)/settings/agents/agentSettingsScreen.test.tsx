@@ -1,44 +1,21 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKey, type PluginProjectionV2 } from '@happier-dev/protocol';
+import { buildBackendTargetKey} from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import { type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { ActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import {
-    clearProjectedAgentUiBehaviorDescriptors,
-    publishProjectedAgentUiBehaviorDescriptors,
-} from '@/agents/registry/agentUiBehaviorProjection';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
-import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
-import { activateStorageAccountScope } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { createExpoVectorIconsMock } from '@/dev/testkit/mocks/icons';
-import { createMachineAdministrationTargetSelectionMock } from '@/dev/testkit/mocks/machineAdministrationTargetSelection';
-import {
-    flushHookEffects,
-    createMachineFixture,
-    renderHook,
-    renderScreen,
-    standardCleanup,
-} from '@/dev/testkit';
 import { installSessionSettingsEntryModuleMocks } from '../sessionSettingsEntryTestHelpers';
-import { storage } from '@/sync/domains/state/storageStore';
-import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
-import { localSettingsParse } from '@/sync/domains/settings/localSettings';
-import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { setRuntimeFetch, type RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
-import { applyConnectedAccountCatalogSnapshot, beginConnectedAccountCatalogLoad, resetConnectedAccountCatalogSnapshotsForTests } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 
-const initialAgentSettingsStorage = storage.getState();
 let activeStorageScope: Readonly<{ dispose(): void }> | null = null;
-let purposes = createConnectedPurposeCatalogHttpBoundary();
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -83,9 +60,6 @@ const administrationMachines = [
     { machineId: 'm2', displayName: 'Machine Two', homeDir: '/Users/m2', daemonStateVersion: 0, serverIdentityId: 'server1', serverId: 'server1' },
     { machineId: 'm3', displayName: 'Machine Three', homeDir: '/Users/m3', daemonStateVersion: 0, serverIdentityId: 'server2', serverId: 'server2' },
 ];
-const administrationSelection = createMachineAdministrationTargetSelectionMock({
-    serverId: 'server1', serverIdentityId: 'server1', machines: administrationMachines,
-});
 
 const machineCapabilitiesInvokeMock = vi.hoisted(() => vi.fn(async () => ({
     supported: true,
@@ -133,21 +107,21 @@ let machineListStatusByServerIdState = {
     server1: { status: 'ready' },
     server2: { status: 'ready' },
 };
-let activeServerSnapshot: ActiveServerSnapshot = {
+// Runtime imports can read the server port before this module's body executes.
+let activeServerSnapshot = vi.hoisted<ActiveServerSnapshot>(() => ({
     serverId: 'server1',
     serverUrl: 'http://localhost:3000',
     generation: 1,
-};
-let serverIdentityByProfileId: Record<string, string> = {
+}));
+let serverIdentityByProfileId = vi.hoisted<Record<string, string>>(() => ({
     server1: 'server1',
-};
-let activeServerSubscribers = new Set<(snapshot: ActiveServerSnapshot) => void>();
+}));
+let activeServerSubscribers = vi.hoisted(() => new Set<(snapshot: ActiveServerSnapshot) => void>());
 function emitActiveServerSnapshot(snapshot: ActiveServerSnapshot) {
     for (const subscriber of activeServerSubscribers) {
         subscriber(snapshot);
     }
 }
-const passThrough = (componentName: string) => createPassThroughModule([componentName]);
 
 function buildExternalSessionsAgentProjection() {
     return {
@@ -438,8 +412,6 @@ function buildCollidingInstalledAgentProjection(): PluginProjectionV2 {
             },
         },
         actionsById: {},
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {},
@@ -488,16 +460,23 @@ installSessionSettingsEntryModuleMocks({
 
 vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
 
+// This suite checks settled disclosure visibility, including removal after collapse.
+vi.mock('react-native-reanimated', async () =>
+    (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock({ settleTimingCallbacks: true }));
+
 vi.mock('@/components/ui/icons/Icon', () => ({
     Icon: 'Icon',
     ICON_SIZE: { xs: 14, sm: 16, md: 20, lg: 24, xl: 29 },
 }));
 
-vi.mock('@/components/ui/lists/ItemList', () => passThrough('ItemList'));
+vi.mock('@/components/ui/lists/ItemList', async () =>
+    (await import('@/dev/testkit/mocks/components')).createPassThroughModule(['ItemList']));
 
-vi.mock('@/components/ui/lists/ItemGroup', () => passThrough('ItemGroup'));
+vi.mock('@/components/ui/lists/ItemGroup', async () =>
+    (await import('@/dev/testkit/mocks/components')).createPassThroughModule(['ItemGroup']));
 
-vi.mock('@/components/ui/lists/Item', () => passThrough('Item'));
+vi.mock('@/components/ui/lists/Item', async () =>
+    (await import('@/dev/testkit/mocks/components')).createPassThroughModule(['Item']));
 
 vi.mock('@/components/ui/lists/virtualized', () => ({
     VirtualizedList: 'VirtualizedList',
@@ -831,7 +810,7 @@ vi.mock('@/agents/catalog/localAuth/agentLocalAuthCatalog', () => ({
         agentId: 'codex',
         support: 'login_terminal',
         docsUrl: 'https://example.com/codex',
-        buildLoginLaunch: () => ({ initialCommand: 'codex login' }),
+        buildLoginLaunch: () => ({ launch: { kind: 'agent_login', agentId: 'codex' } }),
     }),
 }));
 
@@ -864,7 +843,8 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
 });
 
 
-vi.mock('@/components/ui/layout/BadgeGrid', () => passThrough('BadgeGrid'));
+vi.mock('@/components/ui/layout/BadgeGrid', async () =>
+    (await import('@/dev/testkit/mocks/components')).createPassThroughModule(['BadgeGrid']));
 
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
     AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main),
@@ -879,6 +859,26 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     },
 }));
 
+
+// Configure SDK ports before loading storage/Agent runtime consumers. Static imports here
+// resolve hoisted mocks before installSessionSettingsEntryModuleMocks can supply route params.
+const { flushHookEffects, createMachineFixture, renderHook, renderScreen, standardCleanup } = await import('@/dev/testkit');
+const { createMachineAdministrationTargetSelectionMock } = await import('@/dev/testkit/mocks/machineAdministrationTargetSelection');
+const administrationSelection = createMachineAdministrationTargetSelectionMock({
+    serverId: 'server1', serverIdentityId: 'server1', machines: administrationMachines,
+});
+const { activateStorageAccountScope } = await import('@/dev/testkit/mocks/storage');
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { settingsDefaults, settingsParse } = await import('@/sync/domains/settings/settings');
+const { localSettingsParse } = await import('@/sync/domains/settings/localSettings');
+const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+const { resolveBackendTargetKeyV2 } = await import('@/agents/backendCatalog/backendTargetKeyV2');
+const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+const { clearProjectedAgentUiBehaviorDescriptors, publishProjectedAgentUiBehaviorDescriptors } = await import('@/agents/registry/agentUiBehaviorProjection');
+const { createConnectedPurposeCatalogHttpBoundary } = await import('@/dev/testkit/harness/connectedAccountCatalogBoundary');
+const { applyConnectedAccountCatalogSnapshot, beginConnectedAccountCatalogLoad, resetConnectedAccountCatalogSnapshotsForTests } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+const initialAgentSettingsStorage = storage.getState();
+let purposes = createConnectedPurposeCatalogHttpBoundary();
 
 async function renderPluginAgentSettingsScreen() {
     storage.setState({
@@ -1137,7 +1137,7 @@ describe('PluginAgentSettingsScreen', () => {
                         agentId,
                         support: 'login_terminal',
                         docsUrl: 'https://example.com/codex',
-                        buildLoginLaunch: () => ({ initialCommand: 'codex login' }),
+                        buildLoginLaunch: () => ({ launch: { kind: 'agent_login', agentId: 'codex' } }),
                     }
                     : null,
                 backendEntry: null,
@@ -1556,7 +1556,7 @@ describe('PluginAgentSettingsScreen', () => {
                 agentId,
                 support: 'login_terminal',
                 docsUrl: 'https://example.com/acme',
-                buildLoginLaunch: () => ({ initialCommand: 'acme login' }),
+                buildLoginLaunch: () => ({ launch: { kind: 'agent_login', agentId: 'acme' } }),
             },
             backendEntry: null,
         }));
@@ -1980,6 +1980,67 @@ describe('PluginAgentSettingsScreen', () => {
 
         const screen = await renderPluginAgentSettingsScreen();
         expect(findEnabledSwitch(screen)).toBeUndefined();
+    });
+
+    it.each(['before mount', 'after mount'] as const)('opens the routed machine setup without an install intent (%s) and lets the person collapse it', async (arrival) => {
+        // Capability observations survive unmount. Each scenario has its own physical fixture identity.
+        const machineId = arrival === 'before mount' ? 'routed-direct' : 'routed-late';
+        machinesState.push({ id: machineId, metadata: { displayName: 'Routed machine', host: machineId, homeDir: `/Users/${machineId}` } });
+        machineListByServerIdState.server1.push({ id: machineId, revokedAt: null });
+        administrationSelection.controller.setMachines([...administrationMachines, {
+            machineId, displayName: 'Routed machine', homeDir: `/Users/${machineId}`, daemonStateVersion: 0,
+            serverId: 'server1', serverIdentityId: 'srv_portable',
+        }]);
+        if (arrival === 'before mount') {
+            mockRecoveryMachineId = machineId;
+            mockRecoveryServerIdentityId = 'srv_portable';
+        }
+        // Set up Codex also repairs sign-in, so its route has no install/update request.
+        mockInstallIntent = null;
+        const { MachineAgentInventoryItemSchema } = await import('@happier-dev/protocol/capabilities');
+        const { BUNDLED_CANONICAL_AGENT_DECLARATIONS } = await import('@/agents/registry/generatedBundledPluginEntries');
+        const declaration = BUNDLED_CANONICAL_AGENT_DECLARATIONS.codex;
+        if (!declaration) throw new Error('Expected the bundled Codex declaration');
+        const projection = buildExternalSessionsAgentProjection();
+        machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: true, projection: {
+            ...projection,
+            agentsById: { codex: {
+                ...projection.agentsById.codex,
+                cli: declaration.cli,
+                capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+            } },
+        } });
+        const inventory = MachineAgentInventoryItemSchema.parse({
+            agentId: 'codex', title: 'Codex', installed: true, version: '1.0.0', latestVersion: null,
+            update: { supported: false, command: null },
+            signIn: { status: 'signedOut', loginSupport: 'login_terminal' },
+            platform: { supported: true },
+            install: { available: true, mode: 'vendor_recipe', sizeBytes: null, guideUrl: null },
+            dependencies: [],
+        });
+        // Daemon RPC is the boundary; inventory publication, row expansion and setup remain real.
+        machinePluginSessionHooksRpcMock.mockImplementation(async (request: Readonly<{ method: string }>) =>
+            request.method === 'capabilities.detect'
+                ? { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: inventory } } }
+                : { ok: false, diagnostic: { code: 'installation_unsupported', retryable: false } });
+        const screen = await renderPluginAgentSettingsScreen();
+
+        const rowId = `settings.agents.detail.machines:machine:${machineId}`;
+        const setupId = `${rowId}:setup`;
+        if (arrival === 'after mount') {
+            await vi.waitFor(() => expect(screen.findByTestId(rowId)).not.toBeNull());
+            expect(screen.findByTestId(setupId)).toBeNull();
+            await act(async () => {
+                mockRecoveryMachineId = machineId;
+                mockRecoveryServerIdentityId = 'srv_portable';
+                // The canonical selection port publishes the routed target after the screen mounted.
+                administrationSelection.controller.select(machineId, 'srv_portable');
+            });
+        }
+        await vi.waitFor(() => expect(screen.findByTestId(setupId)).not.toBeNull());
+        expect(screen.findByTestId('settings.agents.detail.machines:machine:m1:setup')).toBeNull();
+        await screen.pressByTestIdAsync(rowId);
+        expect(screen.findByTestId(setupId)).toBeNull();
     });
 
     it('addresses the recovery handoff to its exact portable target', async () => {

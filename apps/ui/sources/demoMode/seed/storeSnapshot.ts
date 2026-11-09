@@ -2,6 +2,7 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Profile } from '@/sync/domains/profiles/profile';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { StorageState } from '@/sync/store/types';
+import { publishSessionListBotSelection } from '@/sync/store/domains/sessionListBotSelection';
 
 import type { DemoWorldSettingKey } from '../world/settings';
 
@@ -32,6 +33,7 @@ export type StoreSnapshot = Readonly<{
     machineDisplayById: StorageState['machineDisplayById'];
     machineListByServerId: StorageState['machineListByServerId'];
     sessionMessages: StorageState['sessionMessages'];
+    sessionMessagesHistoryStartLoaded: StorageState['sessionMessagesHistoryStartLoaded'];
     sessionPending: StorageState['sessionPending'];
     reviewCommentsDraftsBySessionId: StorageState['reviewCommentsDraftsBySessionId'];
     settings: Pick<Settings, DemoSettingKey>;
@@ -66,9 +68,12 @@ export function takeStoreSnapshot(state: StorageState): StoreSnapshot {
         machineDisplayById: cloneData(state.machineDisplayById),
         machineListByServerId: cloneData(state.machineListByServerId),
         sessionMessages: cloneSessionMessages(state.sessionMessages),
+        sessionMessagesHistoryStartLoaded: cloneData(state.sessionMessagesHistoryStartLoaded),
         sessionPending: cloneData(state.sessionPending),
         reviewCommentsDraftsBySessionId: cloneData(state.reviewCommentsDraftsBySessionId),
         settings: {
+            experiments: state.settings.experiments,
+            executionRunsNotifyParentOnCompletionDefault: state.settings.executionRunsNotifyParentOnCompletionDefault,
             featureToggles: cloneData(state.settings.featureToggles),
             hideInactiveSessions: state.settings.hideInactiveSessions,
             sessionListDensity: state.settings.sessionListDensity,
@@ -202,15 +207,19 @@ export function buildStoreStateAfterDemoRestore(params: Readonly<{
     machineIds: ReadonlySet<string>;
     artifactIds: ReadonlySet<string>;
 }>): Partial<StorageState> {
+    const sessionListRowsByServerId = restoreSessionListRows(
+        params.current.sessionListRowsByServerId,
+        params.snapshot.sessionListRowsByServerId,
+        params.sessionIds,
+    );
     return {
         artifacts: restoreRecordByOwnedIds(params.current.artifacts, params.snapshot.artifacts, params.artifactIds),
         artifactsLoaded: params.snapshot.artifactsLoaded,
         isSessionDraftsReady: params.snapshot.isSessionDraftsReady,
         sessions: restoreRecordByOwnedIds(params.current.sessions, params.snapshot.sessions, params.sessionIds),
-        sessionListRowsByServerId: restoreSessionListRows(
-            params.current.sessionListRowsByServerId,
-            params.snapshot.sessionListRowsByServerId,
-            params.sessionIds,
+        sessionListRowsByServerId,
+        sessionListBotRowsByServerId: publishSessionListBotSelection(
+            params.current.sessionListRowsByServerId, sessionListRowsByServerId, params.current.sessionListBotRowsByServerId,
         ),
         ordinarySessionListMembershipByServerId: restoreSessionListMembership(
             params.current.ordinarySessionListMembershipByServerId,
@@ -241,6 +250,11 @@ export function buildStoreStateAfterDemoRestore(params: Readonly<{
         sessionMessages: restoreRecordByOwnedIds(
             params.current.sessionMessages,
             params.snapshot.sessionMessages,
+            params.sessionIds,
+        ),
+        sessionMessagesHistoryStartLoaded: restoreRecordByOwnedIds(
+            params.current.sessionMessagesHistoryStartLoaded,
+            params.snapshot.sessionMessagesHistoryStartLoaded,
             params.sessionIds,
         ),
         sessionPending: restoreRecordByOwnedIds(

@@ -14,18 +14,21 @@ export async function createRegistrySourcesUiHome(suffix: string, options: Reado
     picks?: boolean;
     token?: RegistrySourceV1['token'];
     savedSecretResourceIds?: readonly string[];
+    source?: RegistrySourceV1;
+    /** Extra Home HTTP behavior, including delayed persistence responses. */
+    handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>;
     /** A registry link outside the fixture repository (checked before the defaults). */
     external?: (url: string, init?: RequestInit) => Promise<Response | null>;
 }> = {}) {
-    const sourceUrl = 'https://github.com/fixture/skills';
-    const sourceId = deriveRegistrySourceIdV1(sourceUrl);
+    const sourceUrl = options.source?.url ?? 'https://github.com/fixture/skills';
+    const sourceId = options.source?.id ?? deriveRegistrySourceIdV1(sourceUrl);
     const skill = createPromptRegistrySkillFixture({ sourceId, itemId: 'review', title: 'review', files: [
         { path: 'SKILL.md', content: '---\nname: review\ndescription: Review changes\n---\nRead the diff.' },
         { path: 'check.sh', content: '#!/bin/sh\nexit 0', unixMode: 0o755 },
     ] });
     if (skill.item.payload.kind !== 'skill') throw new Error('Expected skill fixture');
     const payload = skill.item.payload.skill;
-    const source: RegistrySourceV1 = { id: sourceId, title: 'Review skills', format: 'git', kinds: ['skill'],
+    const source: RegistrySourceV1 = options.source ?? { id: sourceId, title: 'Review skills', format: 'git', kinds: ['skill'],
         url: sourceUrl, enabled: true, addedAt: 1, ...(options.token ? { token: options.token } : {}) };
     const externalRequests: string[] = [];
     const initial = PromptLibraryRecordV1Schema.parse({
@@ -39,13 +42,18 @@ export async function createRegistrySourcesUiHome(suffix: string, options: Reado
     let headCommit = payload.ref.commit;
     const homeFixture = await createPlainArtifactHomeFixture(`https://registry-ui-${suffix}.test`, {
         handleRequest: async (path, init) => {
+            const response = await options.handleRequest?.(path, init);
+            if (response) return response;
             if (path === '/v1/artifacts' && init?.method === 'POST') {
                 if (failContentAfter !== null && contentWrites >= failContentAfter)
                     return Response.json({ error: 'quota_exceeded' }, { status: 400 });
                 contentWrites++;
             }
-            if (path === '/v1/account/saved-secrets/resources/materials') return Response.json(SavedSecretResourceMaterialsResponseV1Schema.parse({
-                resources: (options.savedSecretResourceIds ?? []).map(resourceId => ({ resourceId, encryptionMode: 'plain',
+            const resourceRequest = new URL(path, 'https://registry-fixture.test');
+            if (resourceRequest.pathname === '/v1/account/saved-secrets/resources/materials') return Response.json(SavedSecretResourceMaterialsResponseV1Schema.parse({
+                resources: (options.savedSecretResourceIds ?? [])
+                    .filter(resourceId => !resourceRequest.searchParams.has('resourceId') || resourceRequest.searchParams.get('resourceId') === resourceId)
+                    .map(resourceId => ({ resourceId, encryptionMode: 'plain',
                     storedContent: { t: 'plain', v: { v: 1, name: resourceId, kind: 'token', value: 'fixture-token' } }, recipientEnvelope: null,
                     entry: { ref: formatSharedSavedSecretRefV1(resourceId), source: 'shared_resource', relationship: 'owner', ownerAccountId: 'artifact-account',
                         name: resourceId, kind: 'token', revision: 1, materialStatus: 'ready',

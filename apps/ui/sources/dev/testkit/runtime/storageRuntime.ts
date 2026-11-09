@@ -8,6 +8,7 @@ import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settin
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import type { StorageState } from '@/sync/store/types';
+import { publishSessionListBotSelection } from '@/sync/store/domains/sessionListBotSelection';
 import { readCurrentProjectAccountRows, readProjectWorkspaceRefs, EMPTY_PROJECT_ORGANIZATIONS, EMPTY_WORKSPACE_RELATIONSHIPS, EMPTY_PINNED_WORKSPACE_REF_IDS } from '@/sync/store/domains/projectAccountRows';
 import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
 import { readSessionMessagesSnapshot } from '@/sync/store/sessionMessagesSnapshot';
@@ -230,6 +231,7 @@ function completePartialStorageState(state: Partial<StorageState>): StorageState
         sessionLastViewed: {},
         sessionPending: {},
         sessionListRowsByServerId: {},
+        sessionListBotRowsByServerId: publishSessionListBotSelection({}, state.sessionListRowsByServerId ?? {}),
         ordinarySessionListMembershipByServerId: {},
         archivedSessionListMembershipByServerId: {},
         sessionTailContiguousBoundary: {},
@@ -247,8 +249,6 @@ function completePartialStorageState(state: Partial<StorageState>): StorageState
         sessionOrganizationTagAssignmentsBySessionKey: {},
         sessionOrganizationOrderEntriesByScopeKey: {},
         sessionOrganizationLabelsByLabelKey: {},
-        sessionOrganizationLoadingByServerId: {},
-        sessionOrganizationErrorByServerId: {},
         sessionOrganizationOptimisticRecords: {},
         authoringMemory: authoringMemoryDefaults,
         applyAuthoringMemory: () => undefined,
@@ -302,7 +302,6 @@ export function createStorageModuleStub<TOverrides extends object>(
     const updateWorkspaceScmSnapshot = () => undefined;
     const updateWorkspaceScmSnapshotError = () => undefined;
     const updateWorkspaceScmStatus = () => undefined;
-    const pruneWorkspaceScmTouchedPaths = () => undefined;
     const pruneWorkspaceScmCommitSelectionPaths = () => undefined;
     const pruneWorkspaceScmCommitSelectionPatches = () => undefined;
     // A transcript session reference is present-and-unnamed by default: not deleted, and with no
@@ -318,7 +317,6 @@ export function createStorageModuleStub<TOverrides extends object>(
         updateWorkspaceScmSnapshot,
         updateWorkspaceScmSnapshotError,
         updateWorkspaceScmStatus,
-        pruneWorkspaceScmTouchedPaths,
         pruneWorkspaceScmCommitSelectionPaths,
         pruneWorkspaceScmCommitSelectionPatches,
         clearSessionReviewCommentDrafts: () => undefined,
@@ -332,6 +330,7 @@ export function createStorageModuleStub<TOverrides extends object>(
         getStorage: () => store,
         useSettings: () => defaultSettings,
         useSettingsVersion: () => store.getState().settingsVersion ?? null,
+        useSettingsReady: () => store.getState().settingsVersion != null,
         useAccountSettingsScope: () => store.getState().settingsScope ?? null,
         useSettingsSelector: <T>(selector: (settings: Settings) => T): T => selector(defaultSettings),
         useSetting,
@@ -346,7 +345,6 @@ export function createStorageModuleStub<TOverrides extends object>(
         useSessionCompanionPreferenceSlot: () => ({ storageKey: null, stored: undefined }),
         useMutateSessionCompanionPreference: () => () => false,
         useProjectLastMobileSurface: () => null,
-        useProjectLastMobileSurfacesByWorkspaceRefId: () => ({}),
         usePersistProjectLastMobileSurface: () => () => undefined,
         useProfile: () => store.getState().profile ?? defaultProfile,
         useIsDataReady: () => true,
@@ -367,6 +365,7 @@ export function createStorageModuleStub<TOverrides extends object>(
         }),
         useSessionUsage: () => null,
         useSessionProjectScmSnapshot: () => null,
+        useSessionProjectScmSummarySnapshot: () => null,
         useSessionDirectoryKind: () => null,
         useSessionSubagentSourceMessages: () => [],
         useSessionSidechainMessages: () => [],
@@ -379,10 +378,12 @@ export function createStorageModuleStub<TOverrides extends object>(
         useSessionChatFooterState: () => null,
         useSessionCatchingUpNewer: () => false,
         useHasUnreadMessages: () => false,
-        useSessionLatestThinkingMessageActivityAtMs: () => null,
+        useSessionLatestThinkingMessageActivity: <T,>(_sessionId: string, select: (activityAtMs: number | null) => T) => select(null),
+        readSessionLatestThinkingMessageActivityAtMs: () => null,
         useSessionListMeaningfulActivityAt: () => null,
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true } as const),
-        useAllMachines: () => allMachines,
+        useAllMachines: ((select?: (machines: typeof allMachines) => unknown) => select ? select(allMachines) : allMachines) as StorageModule['useAllMachines'],
+        useActiveMachineFacts: () => allMachines,
         useMachineDisplayById: () => machineDisplayById,
         useMachineDisplayNamesById: () => ({}),
         useAllSessions: () => allSessions,
@@ -409,6 +410,7 @@ export function createStorageModuleStub<TOverrides extends object>(
         },
         useSessionListRenderable: () => null,
         useSessionListRenderableWithServerScope: () => null,
+        useSessionListRowSelector: <T>(_serverId: string | null | undefined, _sessionId: string, select: (row: null) => T): T => select(null),
         buildSessionListReachabilityRenderableKey,
         useSessionListReachabilityRenderablesForItems: () => new Map(),
         useSessionListRowRenderablesForItems: () => new Map(),
@@ -423,7 +425,7 @@ export function createStorageModuleStub<TOverrides extends object>(
         useSessionOrganizationProjections: () => emptySessionOrganizationProjectionsByServerId,
         useArtifacts: () => [],
         // A stubbed store has no Artifact bodies to demand; the real owner is covered by its own hooks tests.
-        useInboxApprovalBodyHydration: () => undefined,
+        useInboxArtifactBodyHydration: () => ({ pending: false, failed: false, retry: () => {} }),
         useArtifact: () => null,
         useOpenApprovalSessionReferences: () => [],
         useOpenApprovalArtifactsForSession: () => [],
@@ -433,11 +435,13 @@ export function createStorageModuleStub<TOverrides extends object>(
         useMachineListByServerId: () => ({}),
         useMachineListStatusByServerId: () => ({}),
         useMachineListForServer: () => null,
+        useMachineListForServerSelection: <T,>(_serverId: string, select: (machines: readonly never[]) => T): T => select([]),
         useMachineListStatusForServer: () => 'idle' as const,
         useIsMachineListSettled: () => false,
         useIsActiveMachineListSettled: () => true,
         useServerScopedMachine: () => null,
         useWorkspaceScmSnapshot: () => null,
+        useWorkspaceScmSummarySnapshot: () => null,
         useWorkspaceScmSnapshotError: () => null,
         useSocketStatus: () => ({
             status: 'connected',
@@ -456,6 +460,8 @@ export function createStorageModuleStub<TOverrides extends object>(
             lastErrorMessage: null,
         }),
         useEndpointStatus: () => 'online',
+        useEndpointOnlineVerdict: () => true,
+        useEndpointLastConnectedAt: () => null,
         useSyncError: () => null,
         useAuthoringMemoryField: ((name: keyof typeof authoringMemoryDefaults) =>
             (store.getState().authoringMemory ?? authoringMemoryDefaults)[name]) as StorageModule['useAuthoringMemoryField'],
@@ -517,6 +523,8 @@ export function createProjectAccountRowHookMocks(storage: StorageStore, override
         useProjectOrganizations: () => storage(state => readCurrentProjectAccountRows(state)?.organizations ?? EMPTY_PROJECT_ORGANIZATIONS),
         useWorkspaceSyncRelationships: () => storage(state => readCurrentProjectAccountRows(state)?.relationships ?? EMPTY_WORKSPACE_RELATIONSHIPS),
         usePinnedWorkspaceRefIds: () => storage(state => readCurrentProjectAccountRows(state) ? state.pinnedWorkspaceRefIds : EMPTY_PINNED_WORKSPACE_REF_IDS),
+        useIsWorkspaceRefPinned: (id: string | undefined) => storage(state => id !== undefined && readCurrentProjectAccountRows(state) !== null
+            && state.pinnedWorkspaceRefIds.includes(id)),
     } satisfies Partial<StorageModule>;
     return Object.fromEntries(Object.entries(readers).filter(([key]) => !Object.prototype.hasOwnProperty.call(overrides, key)));
 }

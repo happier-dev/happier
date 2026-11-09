@@ -1,11 +1,16 @@
 import {
-    AccountProfileSchema,
-    isConnectedServiceCredentialHealthStatusUsable,
-    readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
-    readServerEnabledBit,
-    RoleArtifactV1Schema,
+    AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import {
+    isConnectedServiceCredentialHealthStatusUsable} from '@happier-dev/protocol/connect/connected-service-schemas';
+import {
+    readNonAuthoritativeLinkedExternalSessionV1FromMetadata} from '@happier-dev/protocol/sessions/external/linked-metadata';
+import {
+    readServerEnabledBit} from '@happier-dev/protocol/features/serverEnabledBit';
+import {
+    RoleArtifactV1Schema} from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import {
     parseBackendTargetKeyV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { describe, expect, it } from 'vitest';
 
 import { profileDefaults } from '@/sync/domains/profiles/profile';
@@ -13,9 +18,15 @@ import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionW
 import { ThemeProfilesLocalStateSchema } from '@/theme/profiles/themeProfilePersistence';
 import { projectUiSessionRuntimeAwareness } from '@/sync/domains/session/attention/runtimePresentation';
 import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { computeVisibleSessionListIndex } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
+import { readMachineInventoryRowReadiness } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
+import { projectMachineResourceSummaryV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import {
     buildDemoWorld,
     createDemoExternalSessionBrowseCandidateFixture,
+    createDemoOpenCodeSessionFixture,
     DEMO_RICH_SESSION_ID,
 } from './buildDemoWorld';
 import {
@@ -24,8 +35,58 @@ import {
     DEMO_PROJECT_PATH,
     DEMO_REVIEW_SESSION_ID,
 } from './constants';
+import { DEMO_BROWSER_CONTEXT_SESSION_ID, DEMO_SESSION_MESSAGES_SESSION_ID, DEMO_SUBAGENTS_SESSION_ID } from './featureSessions';
 
 describe('buildDemoWorld', () => {
+    it('enables delegated work through the real local feature policy and completion rule', () => {
+        const { settings } = buildDemoWorld();
+        expect(resolveLocalFeaturePolicyEnabled('execution.runs', settings)).toBe(true);
+        expect(settings.executionRunsNotifyParentOnCompletionDefault).toBe(true);
+    });
+
+    it('provides usable telemetry and saved machine setups for the whole demo fleet', () => {
+        const world = buildDemoWorld();
+        for (const machine of world.machines) {
+            const reading = world.machineReadings[machine.id]!;
+            const summary = projectMachineResourceSummaryV1(reading.vitals, reading.host)!;
+            expect(summary.cpu.busyPct).toBeGreaterThan(0);
+            expect(summary.memory.availableBytes).toBeGreaterThan(0);
+            expect(summary.disk.availableBytes).toBeGreaterThan(0);
+            expect(reading.guard.policy.memoryGuard.enabled).toBe(true);
+            expect(reading.storage.volumes[0]?.freeBytes).toBe(summary.disk.availableBytes);
+        }
+        expect(world.machinePresets).toHaveLength(2);
+        expect(world.machinePresets.every(preset => preset.name.length > 0 && (preset.setup?.scripts?.length ?? 0) > 0)).toBe(true);
+    });
+    it('shows each demo conversation once even when attention and working groups promote it', () => {
+        const world = buildDemoWorld();
+        const rows = new Map(world.sessions.map(session => [session.id, buildSessionListRenderableFromSession(session)]));
+        const items = computeVisibleSessionListIndex({
+            source: world.sessions.map(session => ({ type: 'session' as const, serverId: 'demo', sessionId: session.id,
+                groupKey: 'demo-project', groupKind: 'project' as const })),
+            resolveSessionRow: (_serverId, sessionId) => rows.get(sessionId) ?? null,
+            hideInactiveSessions: world.settings.hideInactiveSessions,
+            sessionListAttentionPlacementV1: world.settings.sessionListAttentionPlacementV1,
+            pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
+            attentionPlacement: { mode: 'global' }, workingPlacement: { mode: 'global' },
+            presentation: { enabled: false, presentation: 'grouped' }, nowMs: Date.now(),
+        }) ?? [];
+        const ids = items.flatMap(item => item.type === 'session' ? [item.sessionId] : []);
+        expect(ids).toHaveLength(world.sessions.length);
+        expect(new Set(ids).size).toBe(ids.length);
+    });
+    it('opens the default world with online machines and owned, interactive sessions', () => {
+        const world = buildDemoWorld();
+        expect(world.machines.every(machine => machine.active)).toBe(true);
+        expect(world.machines.map(readMachineInventoryRowReadiness)).toEqual(world.machines.map(() => 'available'));
+        for (const id of [DEMO_RICH_SESSION_ID, DEMO_REVIEW_SESSION_ID]) {
+            const session = world.sessions.find(candidate => candidate.id === id)!;
+            expect(session.access).toMatchObject({ role: 'owner', capabilities: { submitAgentInput: true } });
+            expect(session.active).toBe(true);
+            expect(getSessionStorageKind(session)).toBe('persisted');
+            expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(session.metadata)).toBeNull();
+        }
+    });
     it('builds the canonical production-safe demo world', () => {
         const world = buildDemoWorld();
         const richSession = world.sessions.find((session) => session.id === DEMO_RICH_SESSION_ID);
@@ -42,28 +103,8 @@ describe('buildDemoWorld', () => {
             agentId: 'opencode',
             configOptions: expect.arrayContaining([expect.objectContaining({ id: expect.any(String) })]),
         });
-        expect(getSessionStorageKind(richSession)).toBe('direct');
-        expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(richSession?.metadata)).toMatchObject({
-            v: 1,
-            agentId: 'opencode',
-            machineId: DEMO_MACHINE_ID,
-            remoteSessionId: DEMO_OPEN_CODE_PROVIDER_SESSION_ID,
-            source: {
-                kind: 'opencodeServer',
-                directory: DEMO_PROJECT_PATH,
-            },
-            qualifiedIdentity: {
-                v: 1,
-                agent: {
-                    pluginId: 'happier.agent.opencode',
-                    localId: 'opencode',
-                },
-                source: {
-                    kind: 'opencodeServer',
-                    contractVersion: 1,
-                },
-            },
-        });
+        expect(getSessionStorageKind(richSession)).toBe('persisted');
+        expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(richSession?.metadata)).toBeNull();
         expect(richSession?.metadata).not.toHaveProperty('directSessionV1');
 
         const browseCandidate = createDemoExternalSessionBrowseCandidateFixture();
@@ -98,9 +139,9 @@ describe('buildDemoWorld', () => {
         ));
         const needsAttentionSessions = world.sessions.filter((session) => (session.pendingBlockedCount ?? 0) > 0);
         expect(workingSessions.length).toBeGreaterThanOrEqual(2);
-        expect(workingSessions.length).toBeLessThanOrEqual(3);
+        expect(workingSessions.length).toBeLessThanOrEqual(5);
         expect(visiblyWorkingSessions.length).toBeGreaterThanOrEqual(2);
-        expect(visiblyWorkingSessions.length).toBeLessThanOrEqual(3);
+        expect(visiblyWorkingSessions.length).toBeLessThanOrEqual(5);
         expect(needsAttentionSessions.length).toBeGreaterThanOrEqual(2);
         expect(needsAttentionSessions.length).toBeLessThanOrEqual(3);
         expect(richSession).toMatchObject({
@@ -113,7 +154,7 @@ describe('buildDemoWorld', () => {
             sessionSeq: richSession?.seq,
             pendingActivityAt: expect.any(Number),
         });
-        expect(richSession?.metadata).not.toHaveProperty('machineId');
+        expect(richSession?.metadata?.machineId).toBe(DEMO_MACHINE_ID);
         expect(world.pending[DEMO_RICH_SESSION_ID]?.messages).toHaveLength(1);
         expect(world.pending[DEMO_RICH_SESSION_ID]?.messages[0]).toMatchObject({
             source: 'local_outbound',
@@ -148,22 +189,31 @@ describe('buildDemoWorld', () => {
                 'sessions.direct': true,
             },
             hideInactiveSessions: false,
-            sessionListAttentionPromotionModeV1: 'global',
-            sessionListWorkingPlacementModeV1: 'global',
+            sessionListLayoutV1: 'projects',
+            sessionListAttentionPlacementV1: 'top',
             sessionListDensity: 'narrow',
-            sessionListSectionModeV1: 'single',
         });
 
         for (const session of world.sessions) {
             expect(session.encryptionMode).toBe('plain');
             expect(session.metadata).not.toHaveProperty('workspacePath');
             expect(readSessionWorkspaceContext({ sessions: { [session.id]: session } }, session.id).workspacePath)
-                .toBe(session.id === DEMO_RICH_SESSION_ID ? DEMO_PROJECT_PATH : null);
+                .toBe([DEMO_RICH_SESSION_ID, DEMO_SUBAGENTS_SESSION_ID, DEMO_SESSION_MESSAGES_SESSION_ID, DEMO_BROWSER_CONTEXT_SESSION_ID].includes(session.id) ? DEMO_PROJECT_PATH : null);
         }
         for (const machine of world.machines) {
-            expect(machine.active).toBe(false);
+            expect(machine.active).toBe(true);
             expect(machine.metadata).not.toHaveProperty('workspacePath');
         }
+    });
+
+    it('retains explicit external-session fixtures for demonstrations of imported sessions', () => {
+        const external = createDemoOpenCodeSessionFixture();
+        expect(getSessionStorageKind(external)).toBe('direct');
+        expect(readNonAuthoritativeLinkedExternalSessionV1FromMetadata(external.metadata)).toMatchObject({
+            agentId: 'opencode', machineId: DEMO_MACHINE_ID,
+            remoteSessionId: DEMO_OPEN_CODE_PROVIDER_SESSION_ID,
+            source: { kind: 'opencodeServer', directory: DEMO_PROJECT_PATH },
+        });
     });
 
     it('seeds every feature the dream beats claim on their own stage', () => {

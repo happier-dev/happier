@@ -1,8 +1,8 @@
-import { isDataKeyAuthCredentials, isLegacyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
-import { decodeBase64 } from '@/encryption/base64';
-import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { isDataKeyAuthCredentials, isLegacyAuthCredentials, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { decodeBase64 } from '@/encryption/base64';
 
 /** A supported legacy Account whose advertised identity matches its actual recovery material. */
 export function createLegacyAccountEncryptionCurrentnessFixture(input: Readonly<{ secret: Uint8Array }>): AccountEncryptionCurrentnessResponse {

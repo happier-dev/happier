@@ -1,4 +1,5 @@
 import React from 'react';
+import { createRequire } from 'node:module';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // The static storage graph reaches the Socket.IO transport; register its external boundary before any import.
@@ -6,6 +7,7 @@ vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 import { renderScreen } from '@/dev/testkit';
+import { evaluateInstalledExpoModule } from '@/dev/testkit/runtime/installedExpoPathSerializer';
 import { storage } from '@/sync/domains/state/storageStore';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import type { IModal } from '@/modal';
@@ -25,12 +27,23 @@ import {
 enableReactActEnvironment();
 const routerMock = createRouterMock();
 const navigationMock = {
-    ...createNavigationMock(), setOptions: vi.fn(), addListener: vi.fn(() => () => {}),
+    ...createNavigationMock(), setOptions: vi.fn(), addListener: vi.fn(() => () => {}), isFocused: () => true,
 };
 const stackOptionsCapture = createStackOptionsCapture();
+const optionsListeners = new Set<() => void>();
+let optionsVersion = 0;
+const subscribeOptions = (listener: () => void) => {
+    optionsListeners.add(listener);
+    return () => { optionsListeners.delete(listener); };
+};
+function useEditorNavigation() {
+    React.useSyncExternalStore(subscribeOptions, () => optionsVersion, () => optionsVersion);
+    return navigationMock;
+}
 const alertSpy = vi.fn<IModal['alert']>();
 let profileData = '';
 let profileId: string | undefined;
+let draftId = 'draft-before';
 
 vi.mock('expo-constants', () => ({ default: { statusBarHeight: 0 } }));
 vi.mock('@react-navigation/elements', () => ({ useHeaderHeight: () => 0 }));
@@ -43,12 +56,29 @@ installPickerCommonModuleMocks({
             useWindowDimensions: () => ({ width: 390, height: 844, scale: 1, fontScale: 1 }),
         });
     },
-    expoRouter: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
-        navigation: navigationMock,
-        params: () => ({ profileData, profileId }),
-        router: { push: routerMock.push, back: routerMock.back, replace: routerMock.replace, setParams: routerMock.setParams },
-        stackOptionsCapture,
-    }).module,
+    expoRouter: async () => {
+        const base = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+            navigation: navigationMock,
+            router: { push: routerMock.push, back: routerMock.back, replace: routerMock.replace, setParams: routerMock.setParams },
+        }).module;
+        const require = createRequire(import.meta.url);
+        // Run the installed Screen options effect. Its native navigator is the
+        // boundary: setOptions publishes a new navigation snapshot to the route.
+        const sdk = await evaluateInstalledExpoModule(require.resolve('expo-router/build/views/Screen'), {
+            react: React,
+            '@react-navigation/native': { useRoute: () => ({ key: 'profile-edit' }) },
+            '../useNavigation': { useNavigation: useEditorNavigation },
+            './useSafeLayoutEffect': { useSafeLayoutEffect: React.useLayoutEffect },
+        });
+        const { Screen } = sdk as { Screen: React.ComponentType<{ options?: Record<string, unknown> }> };
+        return {
+            ...base,
+            Stack: { Screen },
+            useNavigation: useEditorNavigation,
+            // Installed Expo decodes into a fresh object on every render.
+            useLocalSearchParams: () => ({ profileData, profileId, draftId }),
+        };
+    },
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
     modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
         spies: { alert: alertSpy },
@@ -91,6 +121,7 @@ beforeEach(async () => {
     const { createEmptyCustomProfile } = await import('@/sync/domains/profiles/profileMutations');
     profileData = JSON.stringify({ ...createEmptyCustomProfile(), id: 'p1', name: 'Test profile' });
     profileId = undefined;
+    draftId = 'draft-before';
     profileRows.clear();
     profileRevision = 1;
     stackOptionsCapture.reset();
@@ -98,6 +129,11 @@ beforeEach(async () => {
     navigationMock.goBack.mockClear();
     navigationMock.dispatch.mockClear();
     navigationMock.setOptions.mockClear();
+    navigationMock.setOptions.mockImplementation((options: Record<string, unknown>) => {
+        stackOptionsCapture.record({ ...stackOptionsCapture.getResolved(), ...options });
+        optionsVersion += 1;
+        optionsListeners.forEach(listener => listener());
+    });
     routerMock.back.mockClear();
     routerMock.replace.mockClear();
 });
@@ -143,12 +179,33 @@ describe('ProfileEditScreen (header buttons)', () => {
     it('keeps a pristine form unsaveable and closes it without a prompt through the real keyboard-aware form', async () => {
         const screen = await renderProfileEditor();
         const { KeyboardAwareScreen } = await import('@/components/ui/keyboardAvoidance');
-        expect(screen.findAllByType(KeyboardAwareScreen)).toHaveLength(1);
+        const { KeyboardAwareScrollView } = await import('@/components/ui/keyboardAvoidance/KeyboardAwareScrollView');
+        // The editor's keyboard-aware list is the single keyboard owner; a screen frame would double it.
+        expect(screen.findAllByType(KeyboardAwareScreen)).toHaveLength(0);
+        expect(screen.findAllByType(KeyboardAwareScrollView)).toHaveLength(1);
         expect(stackOptionsCapture.getResolved()?.headerRight?.()?.props.disabled).toBe(true);
         expect(typeof stackOptionsCapture.getResolved()?.headerLeft).toBe('function');
         await closeAndFlush();
         expect(alertSpy).not.toHaveBeenCalled();
         expect(navigationMock.goBack).toHaveBeenCalledOnce();
+    });
+
+    it('uses the latest route fallback when the stable header Cancel is invoked', async () => {
+        await renderProfileEditor();
+        draftId = 'draft-after';
+        await act(async () => { optionsVersion += 1; optionsListeners.forEach(listener => listener()); });
+        const state = vi.spyOn(navigationMock, 'getState').mockReturnValue({
+            index: 0, routes: [{ key: 'profile-edit' }],
+        });
+        try {
+            await closeAndFlush();
+            expect(routerMock.replace).toHaveBeenCalledWith({
+                pathname: '/new', params: expect.objectContaining({ draftId: 'draft-after' }),
+            });
+            expect(navigationMock.goBack).not.toHaveBeenCalled();
+        } finally {
+            state.mockRestore();
+        }
     });
 
     it('explains a same-Home stale row refusal through the actual save header but stays silent after leaving Home', async () => {
@@ -233,7 +290,7 @@ describe('ProfileEditScreen (header buttons)', () => {
         await vi.waitFor(() => {
             expect(savedProfiles()).toEqual([expect.objectContaining({ v: 2, name: 'Saved built-in copy' })]);
         });
-        const { readAiLaunchProfileCollection } = await import('@happier-dev/protocol');
+        const { readAiLaunchProfileCollection} = await import('@happier-dev/protocol/profiles/read');
         const entry = readAiLaunchProfileCollection(savedProfiles()).entries[0];
         if (!entry || entry.kind === 'opaque') throw new Error('Expected saved current profile');
         expect(entry.profile.id).not.toBe(builtIn.id);

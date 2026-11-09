@@ -38,6 +38,8 @@ function installPopoverWebGlobals(options: PopoverWebGlobalsOptions = {}): () =>
         removeEventListener: vi.fn(),
         setTimeout: globalThis.setTimeout.bind(globalThis),
         clearTimeout: globalThis.clearTimeout.bind(globalThis),
+        // Every browser window has a document address; web route owners read it (plugin page ingress).
+        location: { href: 'http://localhost/', origin: 'http://localhost', pathname: '/', search: '', hash: '' },
     };
     const customFrameScheduler = options.frameScheduler ?? options.requestAnimationFrame;
     (globalThis as Record<string, unknown>).requestAnimationFrame = customFrameScheduler

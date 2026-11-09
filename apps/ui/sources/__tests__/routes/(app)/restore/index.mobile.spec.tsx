@@ -88,9 +88,10 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({ state: 'enabled' }),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ login: vi.fn(async () => {}), isAuthenticated: false, credentials: null }),
-}));
+vi.mock('@/auth/context/AuthContext', () => {
+    const signedOut = { login: vi.fn(async () => {}), isAuthenticated: false, credentials: null };
+    return { useAuth: () => signedOut, useOptionalAuth: () => signedOut };
+});
 
 vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: 'RoundButton',

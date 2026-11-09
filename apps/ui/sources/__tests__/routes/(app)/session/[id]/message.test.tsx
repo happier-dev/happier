@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 vi.mock('socket.io-client', async importOriginal =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
-import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { DeferredPromise } from './testUtils/deferredPromise';
 import { createDeferredPromise } from './testUtils/deferredPromise';

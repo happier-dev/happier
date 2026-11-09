@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { FeaturesResponse } from '@happier-dev/protocol';
+import type { FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 import {
     createRootLayoutFeaturesResponse,

@@ -51,6 +51,7 @@ export async function installWorkflowActionHttpBoundary(params: Readonly<{
     await refreshAccount();
     return {
         request,
+        artifacts: boundary.artifacts,
         serverId: home.serverId,
         serverUrl: home.serverUrl,
         get credentials() { return credentials; },

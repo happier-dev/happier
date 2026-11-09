@@ -2,7 +2,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { storage } from '@/sync/domains/state/storage';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { getActiveServerSnapshot, subscribeActiveServer, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { loadHomeViewState, saveHomeViewState } from '@/sync/domains/server/serverProfiles';
 import { loadSessionReviewCommentsDrafts } from '@/sync/domains/state/sessionPersistence';
@@ -14,6 +14,9 @@ import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind
 import { deleteServerFeaturesSnapshot, getCachedServerFeaturesSnapshot, primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
+import { getMcpServerCatalogSnapshot } from '@/sync/store/settings/mcpServerCatalogSnapshot';
+import { getDemoHomeHubAccountProjection } from '@/components/hub/layout/homeHubAccountStore';
+import { getSessionListQueryHomeAvailability, readOrdinarySessionListHomeState, resolveOrdinarySessionListHomeOwner } from '@/sync/domains/session/listing/sessionListQueryRuntime';
 import { connectedServiceProfileKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { Socket as SocketIoClientSocket } from 'socket.io-client';
@@ -23,8 +26,19 @@ import { DEMO_SERVER_BASE_URL } from '../world/constants';
 import { buildDemoWorld, DEMO_RICH_SESSION_ID } from '../world/buildDemoWorld';
 import { isDemoModeActive, resetDemoModeDepthForTests } from '../runtime/enterExitDemoMode';
 import { getDemoFirewallDenyLog, installDemoFirewall, uninstallDemoFirewall } from '../guards/demoFirewall';
-import { clearDemoWorld, seedDemoWorld } from './seedDemoWorld';
-import { takeStoreSnapshot } from './storeSnapshot';
+import { clearDemoWorld, seedDemoWorld, registerDemoSessionForRestore } from './seedDemoWorld';
+import { buildStoreStateAfterDemoRestore, takeStoreSnapshot } from './storeSnapshot';
+import { getDemoMachineRead, getDemoMachinePresets } from '../runtime/demoMachineReadProjection';
+import { createDemoMachinesWidgetBinding, isDemoMachineWidgetRead } from '../runtime/demoMachinesWidgetBinding';
+import { machineResourceStore } from '@/sync/domains/machines/resources/machineResourceStore';
+import { machineGuardStore } from '@/sync/domains/machines/guard/machineGuardStore';
+import { machineStorageStore } from '@/sync/domains/machines/storage/machineStorageStore';
+import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
+import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
+import { createMachinesWidgetPresets } from '@/components/machines/widgets/machinesWidgetPresets';
+import { WidgetSurfaceReadV1Schema } from '@happier-dev/protocol/widgets';
+import { getDemoSavedSecretMetadata } from '../runtime/demoSettingsReadProjection';
+import { DEMO_SUBAGENTS_SESSION_ID } from '../world/featureSessions';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -42,6 +56,122 @@ function omitKey<T>(record: Readonly<Record<string, T>>, key: string): Record<st
 }
 
 describe('seedDemoWorld and clearDemoWorld', () => {
+    it('projects Codex and Gemini delegates from the Claude transcript into real recipient targets', async () => {
+        const { resolveAgentIdFromSessionMetadata, resolveAgentExecutionTargetFromSessionMetadata } = await import('@happier-dev/agents');
+        const { deriveSessionSubagents } = await import('@/sync/domains/session/subagents/deriveSessionSubagents');
+        const { deriveSessionSubagentRecipients } = await import('@/sync/domains/session/subagents/deriveSessionSubagentRecipients');
+        const { resolveSessionMessageRouteId } = await import('@happier-dev/session-core/messages');
+        const { deriveAutoRecipientFromFocusedToolTranscript, deriveSessionParticipantTargets } = await import('@/sync/domains/session/participants/deriveSessionParticipantTargets');
+        const { resolveToolStatusIndicatorKind } = await import('@happier-dev/session-core/tools');
+        await seedDemoWorld();
+        const state = storage.getState();
+        const session = state.sessions[DEMO_SUBAGENTS_SESSION_ID]!;
+        const messages = Object.values(state.sessionMessages[DEMO_SUBAGENTS_SESSION_ID]?.messagesById ?? {});
+        expect(resolveAgentIdFromSessionMetadata(session.metadata)).toBe('claude');
+        expect(resolveAgentExecutionTargetFromSessionMetadata(session.metadata)).toEqual({
+            kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+        });
+        const delegates = deriveSessionSubagents({ session, messages }).filter(agent => agent.kind === 'execution_run');
+        expect(delegates).toEqual(expect.arrayContaining([
+            expect.objectContaining({ status: 'running', display: expect.objectContaining({ title: 'Codex · redirect review', providerLabel: 'codex' }) }),
+            expect.objectContaining({ status: 'running', display: expect.objectContaining({ title: 'Gemini · accessibility review', providerLabel: 'gemini' }) }),
+        ]));
+        expect(deriveSessionSubagentRecipients(delegates).map(target => target.displayLabel)).toEqual(
+            expect.arrayContaining(['Codex · redirect review', 'Gemini · accessibility review']),
+        );
+        const transcript = state.sessionMessages[session.id]!;
+        const messageId = resolveSessionMessageRouteId({
+            routeMessageId: 'tool:demo-auth-codex-delegate',
+            messagesById: transcript.messagesById,
+            reducerState: transcript.reducerState,
+        });
+        const message = messageId ? transcript.messagesById[messageId] : undefined;
+        if (message?.kind !== 'tool-call') throw new Error('Missing delegated tool conversation');
+        expect(deriveAutoRecipientFromFocusedToolTranscript({ session, messages, tool: message.tool })).toEqual({
+            kind: 'execution_run', runId: 'run_de0c0de00001',
+        });
+        expect(deriveSessionParticipantTargets({ session, messages }).map(target => target.displayLabel)).toEqual(
+            expect.arrayContaining(['Codex · redirect review', 'Gemini · accessibility review']),
+        );
+        for (const delegate of messages.filter(message => message.kind === 'tool-call' && message.tool.name === 'SubAgentRun')) {
+            if (delegate.kind !== 'tool-call') continue;
+            expect(delegate.tool.state).toBe('running');
+            expect(resolveToolStatusIndicatorKind(delegate.tool)).toBe('running');
+            expect(delegate.children.some(child => child.kind === 'agent-text')).toBe(true);
+            expect(delegate.children.some(child => child.kind === 'tool-call' && child.tool.state === 'completed')).toBe(true);
+        }
+    });
+    it('restores Sessions created by a demo plugin while preserving unrelated concurrent Sessions', async () => {
+        vi.useFakeTimers();
+        try {
+        await seedDemoWorld();
+        const generated = createSessionFixture({ id: 'demo-created-by-triage', serverId: getActiveServerSnapshot().serverId });
+        const unrelated = createSessionFixture({ id: 'concurrent-unrelated-session', serverId: 'another-home' });
+        registerDemoSessionForRestore(generated.id);
+        storage.getState().applySessions([generated, unrelated]);
+        const storedUnrelated = storage.getState().sessions[unrelated.id];
+        storage.getState().applyMessages(generated.id, [{ id: 'demo-start-input', seq: 1, localId: null,
+            createdAt: Date.now(), isSidechain: false, role: 'user', content: { type: 'text', text: 'Investigate this issue' } }]);
+        // Concurrent ordinary writes own their normal persistence debounce, as in
+        // the existing interleaved-foreign-write contract below.
+        await vi.runOnlyPendingTimersAsync();
+        await clearDemoWorld();
+        expect(storage.getState().sessions[generated.id]).toBeUndefined();
+        expect(storage.getState().sessionMessages[generated.id]).toBeUndefined();
+        expect(storage.getState().sessions[unrelated.id]).toEqual(storedUnrelated);
+        } finally { vi.useRealTimers(); }
+    });
+    it('serves complete seeded sidechains without attempting a socket or network read', async () => {
+        const { sync } = await import('@/sync/syncEngine');
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        const request = vi.spyOn(apiSocket, 'request');
+        await seedDemoWorld();
+        installDemoFirewall();
+        try {
+            expect(await sync.ensureSidechainMessagesLoaded(DEMO_SUBAGENTS_SESSION_ID, 'demo-auth-jules-task')).toBe('loaded');
+            expect(await sync.loadOlderSidechainMessages(DEMO_SUBAGENTS_SESSION_ID, 'demo-auth-jules-task'))
+                .toEqual({ loaded: 0, hasMore: false, status: 'no_more' });
+            expect(request).not.toHaveBeenCalled();
+            expect(getDemoFirewallDenyLog()).toEqual([]);
+        } finally {
+            uninstallDemoFirewall();
+        }
+    });
+
+    it('provides machine read answers and the real widget preset only during the credential-free demo lifetime', async () => {
+        const priorExperiments = storage.getState().settings.experiments;
+        const world = await seedDemoWorld();
+        const serverId = getActiveServerSnapshot().serverId;
+        const machineId = world.machines[0]!.id;
+        expect(describeMachinePresenceLine(world.machines[0]!)).toMatchObject({ online: true, status: 'online' });
+        expect(resolveMachineReachability(null, world.machines[0]!)).toBe('unknown');
+        expect(getDemoMachineRead({ serverId, machineId })?.resources.summary?.cpu.busyPct).toBeGreaterThan(0);
+        expect(getDemoMachineRead({ serverId: 'another-home', machineId })).toBeNull();
+        expect(getDemoMachineRead({ serverId, machineId, expectedAccountId: 'real-account' })).toBeNull();
+        expect(getDemoMachinePresets(serverId)).toHaveLength(2);
+        expect(machineResourceStore.getState({ serverId, machineId, view: 'summary' }).summary?.cpu.busyPct).toBeGreaterThan(0);
+        expect(machineGuardStore.getView({ serverId, machineId }).view?.policy.memoryGuard.enabled).toBe(true);
+        expect(machineStorageStore.getState({ serverId, machineId }).summary?.volumes[0]?.freeBytes).toBeGreaterThan(0);
+        expect(getDemoSavedSecretMetadata()).toMatchObject([{ name: 'Preview deploy token', capabilities: { use: false } }]);
+        const binding = createDemoMachinesWidgetBinding(createMachinesWidgetPresets({ overview: 'Overview', machineHealth: 'Machine health' },
+            { machine: { serverId, machineId } }))!;
+        const result = await binding.port.execute({ actionId: 'widgets.item.list' });
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error(result.error);
+        const read = WidgetSurfaceReadV1Schema.parse(result.result);
+        expect(read.instances).toHaveLength(4);
+        expect(read.canEdit).toBe(false);
+        expect(isDemoMachineWidgetRead(binding.surface, { kind: 'builtin', id: 'machine_vitals' })).toBe(true);
+        expect(isDemoMachineWidgetRead(binding.surface, { kind: 'builtin', id: 'session_summary' })).toBe(false);
+        expect(isDemoMachineWidgetRead({ ...binding.surface, serverId: 'another-home' }, { kind: 'builtin', id: 'machine_vitals' })).toBe(false);
+        expect((await binding.executeLayoutAction('widgets.area.layout.create')).ok).toBe(false);
+        await clearDemoWorld();
+        expect(isDemoMachineWidgetRead(binding.surface, { kind: 'builtin', id: 'machine_vitals' })).toBe(false);
+        expect(getDemoMachineRead({ serverId, machineId })).toBeNull();
+        expect(getDemoMachinePresets(serverId)).toBeNull();
+        expect(getDemoSavedSecretMetadata()).toBeNull();
+        expect(storage.getState().settings.experiments).toBe(priorExperiments);
+    });
     let browser: Awaited<ReturnType<typeof installBrowserRuntimeForTests>>;
     beforeEach(async () => {
         browser = await installBrowserRuntimeForTests({ url: 'https://demo-owner.example.test' });
@@ -60,6 +190,33 @@ describe('seedDemoWorld and clearDemoWorld', () => {
         }
     });
 
+    it('projects a complete online demo Home and populated MCP catalog only for the seeded lifetime', async () => {
+        const beforeCatalog = getMcpServerCatalogSnapshot(null);
+        const beforeHistory = storage.getState().sessionMessagesHistoryStartLoaded[DEMO_RICH_SESSION_ID];
+        const durableSettings = structuredClone(loadSettings().settings);
+        const world = await seedDemoWorld();
+        const serverId = getActiveServerSnapshot().serverId;
+        expect(storage.getState().sessionMessagesHistoryStartLoaded[DEMO_RICH_SESSION_ID]).toBe(true);
+        const home = getDemoHomeHubAccountProjection(serverId);
+        expect(home?.getSnapshot()).toMatchObject({ status: 'ready', hasSnapshot: true,
+            layout: { hidden: ['setup'] } });
+        expect(getDemoHomeHubAccountProjection('another-home')).toBeNull();
+        expect.soft(getSessionListQueryHomeAvailability(serverId)).toBe('online');
+        expect.soft(resolveOrdinarySessionListHomeOwner(serverId)).not.toBeNull();
+        expect(readOrdinarySessionListHomeState({ serverId, requestedQueryKey: 'demo-ordinary', online: true }))
+            .toMatchObject({ phase: 'ready', hasNext: false, addresses: world.sessions.map(session => ({ serverId, sessionId: session.id })) });
+        const catalog = getMcpServerCatalogSnapshot(null);
+        expect.soft(catalog.status).toBe('ready');
+        expect.soft(catalog.value?.servers.length ?? 0).toBeGreaterThan(0);
+        expect(getMcpServerCatalogSnapshot({ serverId, accountId: 'real-account' }).value).toBeNull();
+        expect(loadSettings().settings).toEqual(durableSettings);
+        await clearDemoWorld();
+        expect(storage.getState().sessionMessagesHistoryStartLoaded[DEMO_RICH_SESSION_ID]).toBe(beforeHistory);
+        expect(getDemoHomeHubAccountProjection(serverId)).toBeNull();
+        expect(getMcpServerCatalogSnapshot(null)).toBe(beforeCatalog);
+        expect(getSessionListQueryHomeAvailability(serverId)).not.toBe('online');
+    });
+
     it('snapshots seeded transcript records and keeps their messages after the live transcript is cleared', async () => {
         await seedDemoWorld();
         const snapshot = takeStoreSnapshot(storage.getState());
@@ -76,6 +233,22 @@ describe('seedDemoWorld and clearDemoWorld', () => {
         expect(storage.getState().isSessionDraftsReady).toBe(true);
         await clearDemoWorld();
         expect(storage.getState().isSessionDraftsReady).toBe(false);
+    });
+
+    it('restores Bot selection from the restored rows while retaining foreign Bots', () => {
+        const original = createSessionListRenderableSessionFixture({ id: 'owned-bot',
+            metadata: { path: '/original', bot: { kind: 'bot' } } });
+        const foreign = createSessionListRenderableSessionFixture({ id: 'foreign-bot',
+            metadata: { path: '/foreign', bot: { kind: 'bot' } } });
+        const baseline = { ...storage.getState(), sessionListRowsByServerId: { home: { [original.id]: original } } };
+        const snapshot = takeStoreSnapshot(baseline);
+        const rows = { home: { [original.id]: { ...original, metadata: { path: '/demo' } }, [foreign.id]: foreign } };
+        const restored = buildStoreStateAfterDemoRestore({ current: { ...baseline,
+            sessionListRowsByServerId: rows, sessionListBotRowsByServerId: { home: { [foreign.id]: foreign } } },
+            snapshot, sessionIds: new Set([original.id]), machineIds: new Set(), artifactIds: new Set() });
+        expect(restored.sessionListBotRowsByServerId?.home).toEqual({ [original.id]: original, [foreign.id]: foreign });
+        expect(restored.sessionListBotRowsByServerId?.home?.[original.id])
+            .toBe(restored.sessionListRowsByServerId?.home?.[original.id]);
     });
 
     it('keeps demo session membership out of a retained Account warm cache', async () => {
@@ -462,11 +635,11 @@ describe('seedDemoWorld and clearDemoWorld', () => {
             ?.filter((item) => item.type === 'session')
             .map((item) => item.sessionId) ?? [];
 
-        expect(getSessionStorageKind(storage.getState().sessions[DEMO_RICH_SESSION_ID])).toBe('direct');
+        expect(getSessionStorageKind(storage.getState().sessions[DEMO_RICH_SESSION_ID])).toBe('persisted');
         expect(activeIndex).toContainEqual(expect.objectContaining({
-            type: 'session', sessionId: DEMO_RICH_SESSION_ID, storageKind: 'direct',
+            type: 'session', sessionId: DEMO_RICH_SESSION_ID, storageKind: 'persisted',
         }));
-        expect(visibleSessionIds).toHaveLength(9);
+        expect(new Set(visibleSessionIds)).toEqual(new Set(world.sessions.map(session => session.id)));
     });
 
     it('selects the demo server for session-list presentation while seeded', async () => {

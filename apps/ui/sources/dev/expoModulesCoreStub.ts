@@ -1,4 +1,4 @@
-import { createHash, getHashes } from 'node:crypto';
+import { createHash, getHashes, randomFillSync } from 'node:crypto';
 import * as React from 'react';
 import type { NativeComposerInputHandle } from '@/components/ui/forms/nativeComposerInput';
 
@@ -60,6 +60,9 @@ function digestBytes(algorithm: string, data: BufferSource): Uint8Array<ArrayBuf
 }
 
 const expoCryptoModule = {
+    getRandomValues(bytes: Uint8Array): void {
+        randomFillSync(bytes);
+    },
     digest(algorithm: string, output: Uint8Array, data: BufferSource): void {
         output.set(digestBytes(algorithm, data));
     },
@@ -70,6 +73,7 @@ const expoCryptoModule = {
 
 export function requireNativeModule<T = never>(moduleName: string): T {
     if (moduleName === 'ExpoCrypto') return expoCryptoModule as T;
+    if (optionalNativeModules.has(moduleName)) return optionalNativeModules.get(moduleName) as T;
     return {} as T;
 }
 

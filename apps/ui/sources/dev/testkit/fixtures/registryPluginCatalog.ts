@@ -2,6 +2,7 @@ import { MarketplaceIndexSourceSnapshotV1Schema, deriveMarketplaceSourceId, crea
 import { createPluginCompatibilityProjectionV1, type PluginCompatibilityProjectionV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import type { PluginManifest } from '@happier-dev/protocol/plugins/manifest';
+import type { PluginBotTemplateContributionV1 } from '@happier-dev/protocol/plugins/contributions/botTemplates';
 
 export function createRegistryNpmPackageFixture(input: Readonly<{ packageName: string; pluginId: string; title: string; version: string;
     contributes?: PluginManifest['contributes'] }>): {
@@ -30,6 +31,7 @@ export function createRegistryPluginCatalogFixture(input: Readonly<{
     sourceUrl: string;
     kind?: 'curated' | 'user';
     entries?: readonly Readonly<{ pluginId: string; title: string; version?: string;
+        botTemplates?: readonly PluginBotTemplateContributionV1[];
         review?: 'approved' | 'unreviewed' | 'blocked' | 'withdrawn' }>[];
 }>) {
     return MarketplaceIndexSourceSnapshotV1Schema.parse({
@@ -41,7 +43,8 @@ export function createRegistryPluginCatalogFixture(input: Readonly<{
             distribution: { kind: 'npm', registryOrigin: 'https://registry.npmjs.org', packageName: entry.pluginId.replaceAll('.', '-'), version: entry.version ?? '1.2.3',
                 integrity: 'sha512-AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ==' },
             manifestDigest: 'sha256:' + 'a'.repeat(64), compatibility: { happier: '>=1', platforms: ['web'] },
-            summary: { contributions: ['agents'], requiredHostAccess: [], optionalHostAccess: [], executableRealms: ['daemon'] },
+            summary: { contributions: entry.botTemplates ? ['botTemplates'] : ['agents'],
+                ...(entry.botTemplates ? { botTemplates: entry.botTemplates } : {}), requiredHostAccess: [], optionalHostAccess: [], executableRealms: ['daemon'] },
             review: { status: entry.review ?? 'unreviewed', reviewedAt: entry.review === 'approved' ? '2026-10-12T00:00:00.000Z' : null },
             categories: ['agents'], media: [], updatePolicy: 'allowed', links: {},
         })),

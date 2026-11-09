@@ -3,11 +3,12 @@ import {
     AutomationDefinitionDetailSchema,
     AutomationDefinitionListItemSchema,
     AutomationDefinitionListRequestSchema,
+    AutomationDefinitionListResponseSchema,
     AutomationDefinitionDetailsRequestSchema,
     AutomationDefinitionDetailsResponseSchema,
-    AutomationDefinitionListResponseSchema,
     AutomationDefinitionPatchRequestSchema,
     AutomationDefinitionReconcileRequestSchema,
+    AutomationDeleteResponseSchema,
     AutomationTriggerDetailSchema,
     type AutomationDefinitionDetail,
     type AutomationDefinitionListResponse,
@@ -92,6 +93,10 @@ export function createWorkflowAutomationHttpBoundary(): {
             if (method === 'GET') {
                 if (id) return rows.has(id) ? Response.json(rows.get(id)) : Response.json({ error: 'not-found' }, { status: 404 });
                 return Response.json(selectWorkflowAutomationListFixture([...rows.values()], Object.fromEntries(url.searchParams)));
+            }
+            if (method === 'DELETE' && id) {
+                if (!rows.delete(id)) return Response.json({ error: 'not-found' }, { status: 404 });
+                return Response.json(AutomationDeleteResponseSchema.parse({ ok: true }));
             }
             if (method === 'PATCH' && id) {
                 const input = AutomationDefinitionPatchRequestSchema.parse(JSON.parse(String(init?.body)));

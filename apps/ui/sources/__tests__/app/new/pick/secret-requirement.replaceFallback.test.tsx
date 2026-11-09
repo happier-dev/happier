@@ -1,3 +1,4 @@
+import { applyPickerFixtureSettings } from './testHarness';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -5,7 +6,7 @@ import { act } from 'react-test-renderer';
 // Catalog owners import the Socket SDK before the runtime setup hook.
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import { LaunchProfileV2Schema } from '@happier-dev/protocol';
+import { LaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileRecordV1Schema,
     ProfileRowsListResponseV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
@@ -129,7 +130,7 @@ describe('SecretRequirementPickerScreen replace fallback', () => {
         machineContributionRegistryProjectionDescribe.mockResolvedValue(createDiscoveredPluginBackendDescribeResult());
 
         const { storage } = await import('@/sync/domains/state/storageStore');
-        storage.getState().applySettingsLocal(settingsParse(settingsState.current));
+        await applyPickerFixtureSettings(settingsParse(settingsState.current));
         const profile = LaunchProfileV2Schema.parse({
             v: 2, id: 'deepseek', name: 'DeepSeek', extraEnvironmentVariables: [],
             envVarRequirements: [{ name: 'DEPLOY_TOKEN', kind: 'secret', required: true }],

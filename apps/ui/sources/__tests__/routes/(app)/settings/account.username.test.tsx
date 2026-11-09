@@ -101,7 +101,7 @@ describe('Settings → Account (username)', () => {
                 return Response.json({ username: usernameOnHome });
             }
             if (new URL(url).pathname === '/v1/account/security') return Response.json({ v: 1, encryptionMode: 'plain',
-                terminalPresentUserPolicy: 'allowed', nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
+                nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
             return account!.request(input, init);
         });
         vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);

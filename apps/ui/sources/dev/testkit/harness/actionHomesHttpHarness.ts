@@ -4,7 +4,7 @@ import { vi } from 'vitest';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
 import type { AuthCredentials, HomeCredentialWriteRollback } from '@/auth/storage/tokenStorage';
-import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import {
@@ -16,6 +16,8 @@ import {
 } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBoundary';
+import { createUsageQueryBatchHttpBoundary } from './usageQueryBatchHttpBoundary';
 
 // File identities belong to Node, not Vite's client asset URL transform.
 const { URL: NodeURL } = getVitestNodeBuiltin<typeof import('node:url')>('node:url');
@@ -186,6 +188,7 @@ export async function serveAccountHomes(params: Readonly<{
     const focused = params.homes.at(-1)!;
     const requests: ServedHomeRequest[] = [];
     const httpRequests: ServedHomeRequest[] = [];
+    const route = createUsageQueryBatchHttpBoundary(params.route, requests);
     async function writeCredentials(key: string, accountId: string) {
         const home = homes[key];
         if (!home) throw new Error(`Unknown served Home: ${key}`);
@@ -206,7 +209,7 @@ export async function serveAccountHomes(params: Readonly<{
         return credentials;
     }
     // Install all transport answers before activation can trigger real restoration.
-    const homeFetch = async (url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const homeFetch = createCompactSessionListFetchBoundary(async (url, init) => {
         const target = new URL(String(url));
         const home = byOrigin.get(target.origin);
         if (!home) throw new Error(`Request to an unknown Home: ${target.origin}`);
@@ -238,9 +241,8 @@ export async function serveAccountHomes(params: Readonly<{
         }
         const settingsResponse = settingsByHome.get(home)!.handle(url, init);
         if (settingsResponse) return settingsResponse;
-        requests.push(request);
-        return await params.route(request) ?? Response.json({ error: 'not_found' }, { status: 404 });
-    };
+        return await route(request);
+    }, { preferExactSnapshot: true });
     setRuntimeFetch(homeFetch);
     let disposed = false;
     const dispose = async () => {

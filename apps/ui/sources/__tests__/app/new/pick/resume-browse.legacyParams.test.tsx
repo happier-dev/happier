@@ -1,3 +1,4 @@
+import { applyPickerFixtureSettings } from './testHarness';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -70,7 +71,7 @@ describe('ResumeBrowsePickerScreen legacy param compatibility', () => {
         };
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { settingsParse } = await import('@/sync/domains/settings/settings');
-        storage.getState().applySettingsLocal(settingsParse({ lastUsedAgent: 'claude' }));
+        await applyPickerFixtureSettings(settingsParse({ lastUsedAgent: 'claude' }));
         describeProjection.mockResolvedValue({ supported: true, projection: createSupportedClaudeProjection() });
         routerMock.push.mockClear();
         routerMock.back.mockClear();

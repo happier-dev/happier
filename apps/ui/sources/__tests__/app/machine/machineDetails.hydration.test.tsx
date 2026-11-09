@@ -8,9 +8,11 @@ import { arrangeMachineDetailsHomeForTests, initializeMachineDetailsRuntimeForTe
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
-import { DaemonExecutionRunEntrySchema } from '@happier-dev/protocol';
+import { DaemonExecutionRunEntrySchema } from '@happier-dev/protocol/daemon/executionRuns';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { socketRpcCodec } from '@happier-dev/sync-client';
+import { resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 const stopDialogs = vi.hoisted(() => ({ alert: vi.fn(), confirm: vi.fn(async () => true),
     alertAsync: vi.fn<typeof import('@/modal').Modal.alertAsync>() }));
@@ -26,7 +28,6 @@ const network = await initializeMachineDetailsRuntimeForTests();
 const disposeActionExecutorLoader = await installRealActionExecutorModuleLoader();
 afterAll(disposeActionExecutorLoader);
 const MachineDetailScreen = (await import('@/components/machines/page/MachinePageScreen')).MachinePageScreen;
-const { MachineSubPageScreen } = await import('@/components/machines/page/MachineSubPageScreen');
 stopDialogs.alertAsync.mockImplementation(async (title, message, buttons) => {
     stopDialogs.alert(title, message, buttons);
     buttons?.find(button => button.text === 'runs.stop.stopSession')?.onPress?.();
@@ -146,9 +147,9 @@ describe('MachineDetailScreen canonical Stop fallback', () => {
                 serverUrl: `https://machine-stop-${settlement}.example.test`, machines: [machine], sessions: [session],
                 settings: { actionsSettingsV1 },
             });
-            routeParams.current = { id: machine.id, page: 'work' };
+            routeParams.current = { id: machine.id, tab: 'overview' };
             if (settlement === 'route-home') {
-                routeParams.current = { id: machine.id, serverId: home.home.id, page: 'work' };
+                routeParams.current = { id: machine.id, serverId: home.home.id, tab: 'overview' };
                 const focused = await network.addHome('https://machine-stop-focused-elsewhere.example.test', 'focused-account');
                 const { setActiveServerId, getActiveServerId } = await import('@/sync/domains/server/serverProfiles');
                 const { resolveRoutineServerSelectionScope } = await import('@/sync/domains/server/selection/serverSelectionScope');
@@ -184,26 +185,47 @@ describe('MachineDetailScreen canonical Stop fallback', () => {
                     : {};
                 return await socketRpcCodec.encodeResponse({ mode: 'plain' }, response, decoded.callId);
             });
-            const screen = await home.render(MachineSubPageScreen);
+            const fallbackConfirmation = createDeferred<void>();
+            stopDialogs.alertAsync.mockImplementationOnce(async (title, message, buttons) => {
+                stopDialogs.alert(title, message, buttons);
+                await fallbackConfirmation.promise;
+                buttons?.find(button => button.text === 'runs.stop.stopSession')?.onPress?.();
+            });
+            const screen = await home.render(MachineDetailScreen);
             await vi.waitFor(() => expect(screen.findAllByProps({ accessibilityLabel: 'runs.stop.stopRunA11y' }).length).toBeGreaterThan(0));
             const stop = screen.findAllByProps({ accessibilityLabel: 'runs.stop.stopRunA11y' })[0]!.props.onPress;
-            await act(async () => {
-                await stop();
-                await flushHookEffects({ cycles: 2, turns: 2 });
-            });
+            let stopping: Promise<void> | undefined;
+            try {
+                await act(async () => {
+                    stopping = stop();
+                    await flushHookEffects({ cycles: 2, turns: 2 });
+                });
+                await vi.waitFor(() => expect(stopDialogs.alert).toHaveBeenCalledWith(
+                    'runs.stop.stopRunFailedTitle', 'runs.stop.stopRunFailedBody',
+                    expect.arrayContaining([expect.objectContaining({ text: 'runs.stop.stopSession', onPress: expect.any(Function) })]),
+                ));
+                expect(network.requests.filter(request => request.method === RPC_METHODS.STOP_SESSION)).toEqual([]);
+            } finally {
+                await act(async () => {
+                    fallbackConfirmation.resolve();
+                    await stopping;
+                    await flushHookEffects({ cycles: 2, turns: 2 });
+                });
+            }
             // A genuine issued run failure, not a pre-issuance policy/setup refusal, offers fallback.
             expect(network.requests.some(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toBe(true);
             expect(network.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP
                 || request.method === RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST).every(request => request.serverUrl === home!.home.serverUrl)).toBe(true);
-            expect(stopDialogs.alert).toHaveBeenCalledWith('runs.stop.stopRunFailedTitle', 'runs.stop.stopRunFailedBody',
-                expect.arrayContaining([expect.objectContaining({ text: 'runs.stop.stopSession', onPress: expect.any(Function) })]));
             expect(stopDialogs.confirm).not.toHaveBeenCalled();
             const stopEffects = network.requests.filter(request => request.method === RPC_METHODS.STOP_SESSION);
             if (settlement === 'disabled') {
                 expect(stopEffects).toEqual([]);
                 expect(stopDialogs.alert).toHaveBeenCalledWith('common.error', expect.stringContaining('action_disabled'));
             } else {
-                expect(stopEffects.map(request => ({ serverUrl: request.serverUrl, machineId: request.targetId })), JSON.stringify(stopDialogs.alert.mock.calls))
+                expect(stopEffects.map(request => ({ serverUrl: request.serverUrl, machineId: request.targetId })), JSON.stringify({
+                    alerts: stopDialogs.alert.mock.calls,
+                    sessionReads: network.httpRequests.map(request => request.url).filter(url => url.includes(`/sessions/${session.id}`)),
+                }))
                     .toEqual([{ serverUrl: home.home.serverUrl, machineId: machine.id }]);
                 if (settlement === 'refused') expect(stopDialogs.alert).toHaveBeenCalledWith('common.error',
                     'Session stop incomplete: destroy_failed');
@@ -221,6 +243,11 @@ describe('MachineDetailScreen canonical Stop fallback', () => {
                 } else {
                     // A request receipt is not evidence that the process became inactive.
                     expect(state.sessions[session.id]?.active).toBe(true);
+                    // The real session.stop Action must preserve lifecycle_control semantics:
+                    // accepting this fallback must not fence the next ordinary-message wake.
+                    expect(readSessionOwnerMetadataView(state.sessions[session.id])?.sessionExplicitStopV1).toBeUndefined();
+                    expect(resolveSessionAutoResumeAdmissionV1({ metadata: readSessionOwnerMetadataView(state.sessions[session.id]),
+                        archivedAt: null, authorityAvailable: true, machineAvailable: true })).toBe('eligible');
                 }
             }
             expect(screen.findAllByProps({ accessibilityLabel: 'runs.stop.stopRunA11y' })[0]!.props.disabled).toBe(false);

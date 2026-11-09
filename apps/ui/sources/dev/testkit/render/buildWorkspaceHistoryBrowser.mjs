@@ -71,7 +71,7 @@ if (process.argv[2] === '--metro-build') {
 
 /** @param {{ entryFile?: string, boundaryFiles?: Record<string, string>, boundaryModules?: Record<string, string>, realExpoRouter?: boolean, asyncRoutes?: boolean, lazy?: boolean, production?: boolean }} options */
 async function buildDevelopmentBrowser(options) {
-    const sourceConfig = require(path.join(uiRoot, 'metro.config.js'));
+    const sourceConfig = await require('metro').loadConfig({ cwd: uiRoot, config: path.join(uiRoot, 'metro.config.js') });
     // Each journey owns its network/router boundary; never retain a prior entry's resolver.
     const config = { ...sourceConfig, resolver: { ...sourceConfig.resolver },
         // Keep transform workers within the compiler's lifetime, including

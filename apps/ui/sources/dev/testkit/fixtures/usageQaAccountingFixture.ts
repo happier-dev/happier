@@ -1,4 +1,4 @@
-import { UsageAnalyticsContributionSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol';
+import { UsageAnalyticsContributionSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import accounting from './usageQaAccounting';
 import observations from './usageQaContributions';

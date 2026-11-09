@@ -480,7 +480,56 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
 
     });
 
-    it('resolves a newly generated Protocol leaf through the same loaded Metro config', async () => {
+    it('reads workspace manifests once per package across repeated resolutions through Metro’s package cache', () => {
+        const config = requireFreshMetroConfig();
+        // Use Metro's real cache; only filesystem IO is observed at the boundary.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { PackageCache } = require('metro/private/node-haste/PackageCache');
+        const cache = new PackageCache({ getClosestPackage: () => null });
+        const manifests = new Map<string, string>();
+        function visit(directory: string) {
+            const manifestPath = path.join(directory, 'package.json');
+            if (fs.existsSync(manifestPath)) {
+                const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+                if (String(manifest.name).startsWith('@happier-dev/')) {
+                    manifests.set(manifest.name, manifestPath);
+                    return;
+                }
+            }
+            for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+                if (entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.')) {
+                    visit(path.join(directory, entry.name));
+                }
+            }
+        }
+        visit(path.resolve(__dirname, '../../../../packages'));
+        const realRead = fs.readFileSync.bind(fs);
+        const manifestPaths = new Set(manifests.values());
+        let reads = 0;
+        const readSpy = vi.spyOn(fs, 'readFileSync').mockImplementation((file, options) => {
+            if (manifestPaths.has(String(file))) reads++;
+            return realRead(file, options);
+        });
+        try {
+            const context = { getPackage: (file: string) => cache.getPackage(file).read(), resolveRequest: () => ({ type: 'empty' }) };
+            for (let pass = 0; pass < 3; pass++) {
+                for (const name of manifests.keys()) {
+                    // Some private packages deliberately have no portable root export.
+                    // Repeated refusals must also use the manifest lifecycle owner.
+                    try { config.resolver.resolveRequest(context, name, 'web'); } catch (error) {
+                        expect(String(error)).toContain('must declare');
+                    }
+                }
+            }
+            expect(reads).toBe(manifests.size);
+            expect(config.resolver.resolveRequest(context, '@happier-dev/protocol', 'web'))
+                .toEqual({ type: 'sourceFile', filePath: path.resolve(__dirname, '../../../../packages/protocol/src/index.ts') });
+        } finally {
+            readSpy.mockRestore();
+        }
+    });
+
+    it('resolves a newly generated Protocol leaf after Metro invalidates its manifest in the same loaded config', async () => {
         const fixture = await mkdtemp(path.join(tmpdir(), 'protocol-metro-exports-'));
         const packageRoot = path.resolve(__dirname, '../../../../packages/protocol');
         const manifestPath = path.join(packageRoot, 'package.json');
@@ -501,7 +550,10 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
             const existsSpy = vi.spyOn(fs, 'existsSync').mockImplementation(file =>
                 String(file) === sourcePath ? realExistsSync(path.join(fixture, 'src/newGeneratedMarker.ts')) : realExistsSync(file));
             restoreSpies.push(() => existsSpy.mockRestore());
-            const context = { resolveRequest: () => ({ type: 'empty' }) };
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { PackageCache } = require('metro/private/node-haste/PackageCache');
+            const cache = new PackageCache({ getClosestPackage: () => null });
+            const context = { getPackage: (file: string) => cache.getPackage(file).read(), resolveRequest: () => ({ type: 'empty' }) };
             const specifier = '@happier-dev/protocol/newGeneratedMarker';
             expect(config.resolver.resolveRequest(context, specifier, 'web')).toEqual({ type: 'empty' });
             await writeFile(path.join(fixture, 'src/newGeneratedMarker.ts'), 'export const value = 43;');
@@ -509,6 +561,7 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
             await promisify(execFile)(process.execPath, ['--input-type=module', '-e',
                 'const { generateProtocolExports } = await import(process.argv[1]); await generateProtocolExports({ packageRoot: process.argv[2] });',
                 generator, fixture], { env: { ...process.env, NODE_OPTIONS: '' } });
+            cache.invalidate(manifestPath);
             for (const platform of ['web', 'android']) {
                 expect(config.resolver.resolveRequest(context, specifier, platform))
                     .toEqual({ type: 'sourceFile', filePath: sourcePath });

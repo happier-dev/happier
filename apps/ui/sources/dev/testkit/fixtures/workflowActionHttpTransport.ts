@@ -1,12 +1,13 @@
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
-import { AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { AutomationDefinitionDetailsRequestSchema, AutomationDefinitionListRequestSchema, AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { WorkflowDefinitionListResultV1Schema, WorkflowDefinitionGetResultV1Schema, WorkflowRunListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { workflowDefinitionPreviewStepsV1 } from '@happier-dev/protocol/workflows';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
@@ -17,13 +18,13 @@ import { createRootLayoutFeaturesResponse } from './featureFixtures';
 import { createWorkflowDefinitionFixture } from './workflowRunFixtures';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
-import { CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
+import { ChangesResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
 import { PushTokensResponseSchema, PushTokensRemoteAlertProjectionV2Schema } from '@happier-dev/protocol/push/pushTokenRegistration';
 import { createPlainProjectAccountRowListFixture } from './projectAccountRows';
 import { FeedResponseSchema } from '@/sync/domains/social/feedTypes';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { createEmptyAccountBootstrapHttpResponse } from './accountBootstrapHttpBoundary';
-import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse } from '../harness/artifactStoreBoundary';
+import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse, type ArtifactStoreBoundary } from '../harness/artifactStoreBoundary';
 import { deriveArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { createPlainMachineReadHttpResponseFixture } from './machineFixtures';
 
@@ -78,6 +79,9 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
         }
         if (target.pathname === '/v1/machines') return json(params.machineRows?.() ?? []);
         if (target.pathname === '/v2/cursor') return json(CurrentCursorResponseSchema.parse({ cursor: 0, changesFloor: 0 }));
+        // This fixture advertises an empty Account feed. Its readers receive explicit Workflow
+        // changes from the test; an absent route would spuriously force snapshot recovery.
+        if (target.pathname === '/v2/changes') return json(ChangesResponseSchema.parse({ changes: [], nextCursor: 0 }));
         if (target.pathname === AUTHORING_MEMORY_ROUTE_V1) return json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
         if (target.pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return json(createPlainProjectAccountRowListFixture());
         if (target.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
@@ -126,7 +130,10 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
                     dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
                     header: encodePlainArtifactStoredContent('contentUnavailableReason' in item && item.contentUnavailableReason === 'invalid_header'
                         ? { kind: item.kind } : { kind: item.kind, definitionId: item.definitionId,
-                            revision: item.revision, metadata: item.metadata, previewSteps: [] }),
+                            revision: item.revision, metadata: item.metadata,
+                            // A current writer's header carries its step labels; an unavailable fixture row keeps a
+                            // legacy header so the library opens its unreadable body and reports why.
+                            ...(item.contentStatus === 'available' ? { previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) } : {}) }),
                     body: encodePlainArtifactStoredContent({ body: item.contentStatus === 'available'
                         ? JSON.stringify({ kind: 'workflow-definition.v1', definition }) : 'invalid stored body' }),
                     headerVersion: item.revision?.headerVersion ?? 1, bodyVersion: item.revision?.bodyVersion ?? 1,
@@ -182,6 +189,18 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
             if (custom) return custom;
         }
         if (target.pathname === '/v3/automations') return json(automations);
+        if (target.pathname === '/v3/automations/query' && init?.method === 'POST') {
+            const input: unknown = JSON.parse(String(init.body));
+            const details = input !== null && typeof input === 'object' && 'details' in input && input.details === true;
+            const query = details ? AutomationDefinitionDetailsRequestSchema.parse(input) : AutomationDefinitionListRequestSchema.parse(input);
+            // This fixture's default rows come from saved definitions. Standalone Account
+            // Workflows use automationDefinitions above to supply their admitted private page.
+            if (query.scope === 'account_inline') return json({ automations: [], nextCursor: null });
+            const ids = query.workflowDefinitionIds;
+            if (ids === undefined) return json({ error: 'invalid_parameters' }, 400);
+            return json({ automations: automations.automations.filter(row => row.workflowDefinitionId != null
+                && ids.includes(row.workflowDefinitionId)), nextCursor: null });
+        }
         if (target.pathname === '/v3/automations/runs' && params.automationRuns) return params.automationRuns(target, init);
         if (target.pathname === '/v3/automations/runs/workflow-storage') {
             const operation = record(JSON.parse(String(init?.body)));
@@ -223,5 +242,13 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
         // Required routes must prove their successful domain outcome above it.
         return json({ error: 'Not found', path: target.pathname, method: init?.method ?? 'GET' }, 404);
     };
-    return { fetch, features };
+    // Tests that publish an external Artifact change must commit that change to this HTTP
+    // boundary first. A list fixture callback alone does not mutate an already served row.
+    const artifactRows: Pick<ArtifactStoreBoundary, 'read' | 'replaceStoredRow'> = {
+        read: artifactId => artifacts.find(row => row.id === artifactId) ?? null,
+        replaceStoredRow: artifact => {
+            artifacts = [...artifacts.filter(row => row.id !== artifact.id), artifact];
+        },
+    };
+    return { fetch, features, artifacts: artifactRows };
 }

@@ -21,12 +21,6 @@ vi.mock('react-native', async () => {
         PanResponder: {
             create: () => ({ panHandlers: {} }),
         },
-        useWindowDimensions: () => ({
-            width: windowDimensions.width,
-            height: windowDimensions.height,
-            scale: 2,
-            fontScale: 1,
-        }),
         Dimensions: {
             get: () => ({
                 width: windowDimensions.width,

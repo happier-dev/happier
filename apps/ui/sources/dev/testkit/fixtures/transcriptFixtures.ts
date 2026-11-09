@@ -2,6 +2,7 @@ import type { Message, ToolCall, ToolCallMessage } from "@happier-dev/session-co
 import type { DiscardedPendingMessage, PendingMessage } from '@/sync/domains/state/storageTypes';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import type { SessionMessages } from '@/sync/store/domains/messages';
+import { buildLatestWorkerUpdates } from '@/sync/store/latestWorkerUpdates';
 
 export function createPendingMessageFixture(overrides: Partial<PendingMessage> = {}): PendingMessage {
     const createdAt = overrides.createdAt ?? 1;
@@ -43,6 +44,9 @@ export function createSessionMessagesFixture(overrides: Partial<SessionMessages>
         messagesVersion: 0,
         isLoaded: false,
         ...overrides,
+        latestWorkerUpdates: overrides.latestWorkerUpdates ?? buildLatestWorkerUpdates(
+            (overrides.messageIdsOldestFirst ?? []).flatMap(id => messagesById[id] ? [messagesById[id]] : []),
+        ),
     };
 }
 

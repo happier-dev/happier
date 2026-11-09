@@ -3,8 +3,8 @@ import { z } from 'zod/mini';
 import type { KvItem } from '@/sync/api/account/apiKv';
 
 /** External opaque KV HTTP facts; Account codecs, CAS and tab reconciliation stay real. */
-export function createAccountKvHttpFixture() {
-    const rows = new Map<string, KvItem>();
+export function createAccountKvHttpFixture(options: Readonly<{ rows?: Map<string, KvItem> }> = {}) {
+    const rows = options.rows ?? new Map<string, KvItem>();
     const requests: Array<{ method: string | undefined; path: string }> = [];
     const mutationsSchema = z.strictObject({ mutations: z.array(z.strictObject({
         key: z.string(), value: z.nullable(z.string()), version: z.number().check(z.int()),

@@ -2,7 +2,6 @@ import { expect } from 'vitest';
 import { act } from 'react';
 import type { Socket } from 'socket.io-client';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
 
@@ -65,10 +64,13 @@ export async function createSessionListQuerySourceHarness() {
     const gates = new Map<string, Promise<void>>();
     const releases = new Map<string, () => void>();
     const failures = new Map<string, 'all' | 'nextPage'>();
+    const unreachableHomes = new Set<string>();
     const accountIds = new Map<string, string>();
     const serverIds: string[] = [];
     const urls = ['https://query-source-a.test', 'https://query-source-b.test', 'https://query-source-c.test'];
     const setReachable = (serverId: string, reachable: boolean) => {
+        if (reachable) unreachableHomes.delete(serverId);
+        else unreachableHomes.add(serverId);
         for (const path of ['/health', '/v1/auth/ping']) {
             http.answer(serverId, path, { select() {
                 events.push({ kind: 'probe', serverId });
@@ -85,7 +87,7 @@ export async function createSessionListQuerySourceHarness() {
         http.answer(serverId, '/v1/features', { body: features });
         http.answer(serverId, '/v1/features/authenticated', { body: features });
     };
-    const page = (sessionIds: readonly string[], nextCursor: string | null) => V2SessionListResponseSchema.parse({
+    const page = (sessionIds: readonly string[], nextCursor: string | null) => ({
         sessions: sessionIds.map(id => {
             const session = createSessionFixture({ id, active: true, activeAt: Date.now() });
             return { ...createPlainSessionCurrentProjectionRecordFixture({
@@ -119,6 +121,7 @@ export async function createSessionListQuerySourceHarness() {
             signal?.addEventListener('abort', () => { aborts.count += 1; }, { once: true });
             queryRequests.push({ serverId, cursor, signal, aborts });
             events.push({ kind: 'query', serverId });
+            if (unreachableHomes.has(serverId)) return { dispatchThenFail: true };
             const failure = failures.get(serverId);
             if (failure === 'all' || (failure === 'nextPage' && cursor)) return { body: {}, status: 503, respondAfter: gates.get(serverId) };
             const currentAccountId = accountIds.get(serverId)!;

@@ -83,7 +83,6 @@ function readSessionSettingFixture(key: string): unknown {
     if (key === 'sessionListAttentionPlacementV1') return 'both';
     if (key === 'sessionListLayoutV1') return 'projects';
     if (key === 'workspaceFaviconsEnabled') return true;
-    if (key === 'workspaceMachineSubtitlesEnabled') return true;
     if (key === 'hideInactiveSessions') return false;
     if (key === 'agentInputActionBarLayout') return 'auto';
     if (key === 'agentInputChipDensity') return 'auto';
@@ -229,7 +228,7 @@ describe('Session settings session list density', () => {
         expect(account?.settingsWrites).toEqual([]);
     });
 
-    it('retains favicons and Machine names without retired animation, indicator or path controls', async () => {
+    it('retains favicons without retired animation, indicator, path or machine-subtitle controls', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
@@ -251,15 +250,6 @@ describe('Session settings session list density', () => {
             faviconItem!.props.onPress();
         });
         await expectPersistedSettings({ workspaceFaviconsEnabled: false });
-
-        const machineSubtitleItem = screen.findAllByType(Item).find((node: any) =>
-            node.props?.title === 'en:settingsSession.sessionList.workspaceMachineSubtitlesTitle');
-        expect(machineSubtitleItem).toBeTruthy();
-        await act(async () => {
-            machineSubtitleItem!.props.onPress();
-        });
-        await expectPersistedSettings({ workspaceMachineSubtitlesEnabled: false });
-
 
 
     });

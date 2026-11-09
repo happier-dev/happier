@@ -50,7 +50,7 @@ const authState = vi.hoisted(() => ({
     credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },
     refreshFromActiveServer: vi.fn(async () => {}),
 }));
-vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => authState }));
+vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => authState, useOptionalAuth: () => authState }));
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     setPendingTerminalConnect: vi.fn(),

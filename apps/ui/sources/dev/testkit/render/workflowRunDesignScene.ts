@@ -1,12 +1,14 @@
 import {
   WorkflowDefinitionV1Schema,
+  type WorkflowDefinitionV1} from '@happier-dev/protocol/workflows/workflowV1';
+import {
   WorkflowProgressEnvelopeV1Schema,
-  type WorkflowDefinitionV1,
   type WorkflowInvocationLifecycleV1,
-  type WorkflowMaterializedLeafV1,
   type WorkflowProgressEnvelopeV1,
   type WorkflowRunInvocationIndexV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowProgressV1';
+import {
+  type WorkflowMaterializedLeafV1} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 
 import { createWorkflowInvocationIndexFixture } from '../fixtures/workflowRunFixtures';

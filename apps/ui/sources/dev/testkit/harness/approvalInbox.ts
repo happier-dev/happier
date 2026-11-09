@@ -22,6 +22,40 @@ type MachineFilesystemEffects = Pick<import('@happier-dev/protocol/actions/execu
     'languageIntelligenceApply' | 'workspaceFilesReplace' | 'workspaceFilesReplacePreview'>;
 
 /**
+ * An explicit UI proposal through the public approval Action. Ordinary UI
+ * presses answer Ask in their native confirmation and do not create an Inbox item.
+ */
+export async function createUiApprovalRequest(input: Readonly<{
+    serverId: string;
+    actionId: Parameters<Execute>[0];
+    actionInput: Parameters<Execute>[1];
+    actionRequestId: string;
+    externalActionTarget?: NonNullable<Parameters<Execute>[2]>['externalActionTarget'];
+}>): Promise<string> {
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => null });
+    let result: ExecuteResult | undefined;
+    await act(async () => {
+        result = await executor.execute('approval.request.create', {
+            actionId: input.actionId,
+            actionArgs: input.actionInput,
+            summary: 'Review the UI proposal',
+            createdBy: { surface: 'system' },
+        }, {
+            serverId: input.serverId,
+            surface: 'ui',
+            actionRequestId: input.actionRequestId,
+            ...(input.externalActionTarget ? { externalActionTarget: input.externalActionTarget } : {}),
+        });
+    });
+    const created = result as { ok?: unknown; result?: { artifactId?: unknown } } | undefined;
+    if (created?.ok !== true || typeof created.result?.artifactId !== 'string') {
+        throw new Error(`approval_request_not_created:${JSON.stringify(result)}`);
+    }
+    return created.result.artifactId;
+}
+
+/**
  * Creates an agent's explicit proposal through the public approval Action.
  * A person's own UI press supplies admission and cannot stand in for the
  * remote request an approval surface needs to display.
@@ -49,8 +83,6 @@ export async function createAgentApprovalRequest(input: Readonly<{
             surface: 'agent',
             authority: 'account_automation',
             actionRequestId: input.actionRequestId,
-            ...(input.defaultSessionId ? { actionCaller: { kind: 'session' as const,
-                sessionId: input.defaultSessionId, starterDepth: 0, turnDepth: 0 } } : {}),
             ...(input.externalActionTarget ? { externalActionTarget: input.externalActionTarget } : {}),
             ...(input.defaultSessionId ? { defaultSessionId: input.defaultSessionId } : {}),
             ...(input.defaultSessionMachineId ? { defaultSessionMachineId: input.defaultSessionMachineId } : {}),

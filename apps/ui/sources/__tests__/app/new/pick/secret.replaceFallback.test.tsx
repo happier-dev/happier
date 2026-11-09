@@ -1,3 +1,4 @@
+import { applyPickerFixtureSettings } from './testHarness';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -9,7 +10,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { settingsParse } from '@/sync/domains/settings/settings';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SavedSecretSchema } from '@/sync/domains/settings/savedSecretTypes';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -140,7 +141,7 @@ describe('SecretPickerScreen replace fallback', () => {
             status: 'present', revision: 3, content: { t: 'plain', v: { v: 1, definitions: acpDefinitions } },
         }) });
         const { storage } = await import('@/sync/domains/state/storageStore');
-        storage.getState().applySettingsLocal(settingsParse(settingsState.current));
+        await applyPickerFixtureSettings(settingsParse(settingsState.current));
         picker.homeBoundary.answer(scope.serverId, '/v1/account/saved-secrets/resources/materials', {
             body: SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{
                 resourceId: 'secret-picked', encryptionMode: 'plain', recipientEnvelope: null,

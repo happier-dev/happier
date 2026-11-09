@@ -15,6 +15,7 @@ import { createMachineFixture, createPlainMachineRowFixture } from '../fixtures/
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from './serverAccountConnectionHarness';
 import { encodeBase64 } from '@/encryption/base64';
 import { createExternalActionAccountHttpBoundary } from './externalActionAccountHttpBoundary';
+import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 
 type WorkspaceStatFileResponse = Awaited<ReturnType<typeof import('@/sync/domains/transfers/runtime/transferRuntime').callDaemonWorkspaceStatFileRpc>>;
 
@@ -59,6 +60,8 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
     preparedHttpResponse?: (request: Readonly<{ path: string; signal?: AbortSignal | null }>, response: Response) => Response | Promise<Response>;
     composerInspection?: Readonly<{ id: string; sizeBytes?: number }>;
     onCompleted?: () => void;
+    /** Provider Action schemas at the genuine daemon transport boundary. */
+    downloadActionInputSchema?: object;
 }> = {}) {
     configureWorkspaceDownloadSocketBoundary();
     const { createHomeGovernanceHarness } = await import('./homeGovernanceHarness');
@@ -232,6 +235,9 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
         async machineRPC(machineId, method, payload, rpcOptions) {
             rpcOptions?.onIssued?.();
             rpcRequests.push({ machineId, method, payload });
+            if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ && options.downloadActionInputSchema) {
+                return { ok: true, inputSchema: options.downloadActionInputSchema };
+            }
             if (method === RPC_METHODS.STAT_FILE) return statResponse;
             if (method === 'daemon.filesystem.upload') {
                 const envelope = TargetedActionRpcRequestV1Schema.parse(payload);
@@ -305,7 +311,7 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
     homes.answer(serverId, '/v1/machines', { body: [admittedMachineRow] });
     homes.answer(serverId, '/v1/machines?includeRevoked=true', { body: [admittedMachineRow] });
     installed.current = owner;
-    setRuntimeFetch(async (input, init) => {
+    const request: RuntimeFetch = async (input, init) => {
         const url = new URL(String(input));
         requests.push({ method: (init?.method ?? 'GET').toUpperCase(), url: url.toString(), signal: init?.signal });
         if (url.pathname.startsWith('/v1/actions/')) {
@@ -329,9 +335,16 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
         }
         return await respondPrepared(url.pathname, new Headers(init?.headers).get('x-happier-transfer-recipient-public-key') ?? '',
             typeof init?.body === 'string' && init.body.length > 0 ? JSON.parse(init.body) : undefined, init?.signal);
-    });
+    };
+    setRuntimeFetch(request);
     return {
-        scope, composerHandle, requests, rpcRequests, nativeTunnelStarts, nativeTunnelStops, uploads,
+        scope, composerHandle, request, requests, rpcRequests, nativeTunnelStarts, nativeTunnelStops, uploads,
+        /** Models the provider's accepted publication after real client Action admission. */
+        prepareDownloadReceipt(destinationId: string) {
+            return { success: true as const, status: 'accepted' as const, operationId: 'provider-download', destinationId,
+                prepared: preparePublication() };
+        },
+        switchAccount: async () => { await homes.switchAccount(serverId, 'replacement-download-account', { currentAccount: true }); },
         setStatResponse(response: WorkspaceStatFileResponse) { statResponse = response; },
         failNextChunk() { failChunk = true; },
         failNextUploadFinalize() {
