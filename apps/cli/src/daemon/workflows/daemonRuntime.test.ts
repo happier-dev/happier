@@ -51,7 +51,8 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { join } from 'node:path';
 import { logger } from '@/ui/logger';
 import { createProductionWorkflowConversationOwner } from './sessionStepExecutor';
-import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1,
+  readWorkflowRunLeafStartRequestV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -80,6 +81,9 @@ import { ConnectedServiceRunMaterializeRequestSchema, ConnectedServiceRunMateria
 import { checkExecutionRunConnectedServicesGenerationCurrent } from '@/daemon/controlClient';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
+import { createWorkflowActionContextResolver } from './workflowActionContext';
+import { createCredentialedWorkflowMaterializationHostV1 } from '@/session/actions/workflowMaterializationHost';
+import { admitActionAgentStartV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 
 // Physical daemon HTTP binding is an OS boundary; the startup/ingress composition stays real.
 vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async () => ({ port: 44322, stop: async () => {} }) }));
@@ -1417,7 +1421,7 @@ describe('production daemon Workflow policy-only context preparation', () => {
     } finally { vi.unstubAllEnvs(); }
   });
 
-  it('checks fresh controller policy on repeated accepted work without listing Artifact or Role inventories', async () => {
+  it('refreshes installed Workflow Action policy without listing accepted Artifact or Role inventories', async () => {
     const accountId = 'workflow-policy-owner';
     const machineId = 'workflow-policy-machine';
     const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
@@ -1450,8 +1454,8 @@ describe('production daemon Workflow policy-only context preparation', () => {
     const reads: string[] = [];
     mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
-    // Only authenticated Home HTTP is substituted. The coordinator, accepted
-    // snapshot codec, Settings bootstrap, policy and Role readers remain real.
+    // Only authenticated Home HTTP is substituted. The installed context
+    // resolver, Settings bootstrap, policy and Role readers remain real.
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const target = new URL(String(url));
       expect(target.origin).toBe(home);
@@ -1478,18 +1482,22 @@ describe('production daemon Workflow policy-only context preparation', () => {
       lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), catalog })).toBe(true);
     reads.length = 0;
     const unavailable = async (): Promise<never> => { throw new Error('Refused work must not reach a Machine'); };
-    const runtime = createProductionDaemonWorkflowRuntime({ credentials, accountId });
-    const coordinate = () => runtime.createCoordinatorForMachine({ machineId, machineAdmissionTransport: unavailable,
-      machineActionDirectTargetTransport: { machineId, invoke: unavailable } });
-    const claim = () => ({ runId, attempt: 0, expectedRevision: storage.run().revision, acceptedEnvelope,
-      workflowResumeRequestedRevision: storage.run().revision,
-      accountCurrentness: { mode: 'plain' as const, version: 1, contentKeyFingerprint: null } });
-    expect(await coordinate()(claim())).toMatchObject({ state: 'paused', reason: 'policy_denied_field' });
+    const resolveContext = createWorkflowActionContextResolver(createCredentialedWorkflowMaterializationHostV1({
+      credentials, accountId, serverId: configuration.activeServerId,
+      callMachineAction: unavailable, readWorkflowDefinition: unavailable,
+    }));
+    const leaf = (await readWorkflowAcceptedAgentStartLeavesV1(accepted.snapshot))[0]!;
+    const admitNewAction = async () => {
+      const context = await resolveContext({ runId, authorization: accepted.snapshot.authorization,
+        workspace: accepted.snapshot.workspaceTarget.project, workDepth: accepted.snapshot.workDepth, role });
+      return admitActionAgentStartV1(context, readWorkflowRunLeafStartRequestV1(leaf), context.agentStartContext ?? null);
+    };
+    expect(await admitNewAction()).toMatchObject({ ok: false, error: { errorCode: 'policy_denied_field' } });
     const firstSettingsReads = reads.filter(path => path === '/v2/account/settings').length;
     expect(firstSettingsReads).toBeGreaterThan(0);
     settingsVersion++;
     settings = AccountSettingsSchema.parse({ workDepthLimit: 0, sessionAgentStartAllowListsV1: { v: 1, allowedRoleIds: null } });
-    expect(await coordinate()(claim())).toMatchObject({ state: 'paused', reason: 'work_depth_exceeded' });
+    expect(await admitNewAction()).toMatchObject({ ok: false, error: { errorCode: 'work_depth_exceeded' } });
     expect(reads.filter(path => path === '/v2/account/settings').length).toBeGreaterThan(firstSettingsReads);
     expect(storage.acceptedEnvelope()).toBe(acceptedEnvelope);
     expect(reads.filter(path => path === '/v1/artifacts' || path === PROMPT_LIBRARY_ROWS_ROUTE_V1),

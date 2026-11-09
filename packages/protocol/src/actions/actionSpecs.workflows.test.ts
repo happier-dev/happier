@@ -1,5 +1,14 @@
 import { expect, it } from 'vitest';
-import { getActionSpec, listVoiceToolActionSpecs } from './actionSpecs.js';
+import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, listVoiceToolActionSpecs } from './actionSpecs.js';
+
+it('opens boundary Resume content for automation while keeping person controls key-free', () => {
+  const input = { mode: 'boundary', runId: '11111111-1111-4111-8111-111111111111', expectedRevision: 2 };
+  const demand = getActionSpec('workflow.run.resume').requesterAccountContentDemandForInput!;
+  expect(demand(input, { surface: 'ui', authority: 'present_user' })).toBe(false);
+  expect(demand(input, { surface: 'agent', authority: 'account_automation' })).toBe(true);
+  expect(doesExternalActionConsumeRequesterAccountContentV1({ actionId: 'workflow.run.resume', input })).toBe(true);
+  expect(demand({ mode: 'recover', runId: input.runId, expectedRevision: 2 }, { surface: 'ui', authority: 'present_user' })).toBe(true);
+});
 
 it('projects every workflow start through Voice with the ordinary start approval and strict input', () => {
   const spec = getActionSpec('workflow.run.start');

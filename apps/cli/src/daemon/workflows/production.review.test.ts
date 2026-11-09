@@ -259,7 +259,7 @@ describe('durable review coordinator', () => {
       .toMatchObject({ lifecycle: 'superseded', result: 'prior', execution: { localInputId: 'prior-input' } });
   });
 
-  it.each(['default', 'safe-yolo'] as const)('checks live controller dominance only for recorded boundary Resume (%s)', async (callerPermissionMode) => {
+  it.each([false, true])('checks original source currentness only for recorded boundary Resume (%s)', async (sourceCurrent) => {
     const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: {
         authoredDefinition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'human', document: { text: 'Continue', references: [], attachments: [] } }] },
@@ -269,7 +269,9 @@ describe('durable review coordinator', () => {
         definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'human', document: { text: 'Continue', references: [], attachments: [] } }] },
         source: { kind: 'inline' }, inputs: {}, machineId: 'machine', executionTarget: { kind: 'session' },
         workspaceTarget: { project: workspace }, origin: { kind: 'direct' },
-        authorization: { admittedPermissionCeiling: 'safe-yolo', principal: { kind: 'host' } },
+        authorization: { admittedPermissionCeiling: 'safe-yolo', principal: { kind: 'host' }, sourceAuthority: {
+          mediatorPluginId: 'com.happier.resume-source', sourceRef: 'message-1', sourceRevisionOrEpoch: '1', remoteApprovalMaxScope: 'request',
+        } },
       } }));
     const h = await harness(acceptedEnvelope, true);
     const boundary = h.storage;
@@ -277,19 +279,15 @@ describe('durable review coordinator', () => {
       state: 'paused', checkpointEnvelope: boundary.checkpointEnvelope()! });
     await boundary.execute({ operation: 'resume', runId, expectedRevision: boundary.run().revision });
     const workflowResumeRequestedRevision = boundary.run().revision;
-    let resumeCheckCompleted = false;
+    let sourceReads = 0;
     let entries = 0;
     const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: 'machine',
       resolveAccountEncryption: async () => ({ kind: 'available', witness: encryption.witness }),
-      resolveControllerContext: async () => {
-        if (resumeCheckCompleted) throw new Error('resume_marker_already_consumed');
-        resumeCheckCompleted = true;
-        return { surface: 'cli', authority: 'account_automation', callerPermissionMode };
-      },
+      resolveControllerContext: async () => { throw new Error('controller_was_admitted_at_action'); },
       isAcceptedAuthorizationCurrent: createWorkflowAcceptedAuthorizationCurrentness({ accountId,
         listAccountApiTokens: async () => { throw new Error('host has no token principal'); },
-        resolveCurrentPluginOccurrenceId: async () => { throw new Error('host has no plugin principal'); },
-        isMediatedSourceCurrent: async () => { throw new Error('host has no source mediator'); },
+        resolveCurrentPluginOccurrenceId: async () => 'installed-source',
+        isMediatedSourceCurrent: async () => { sourceReads++; return sourceCurrent; },
       }), onCommittedTransition: async () => {}, onReviewEntered: async () => { entries++; }, storage: boundary,
       execution: { credentials: { token: 'token', encryption: null }, serverId: 'server',
 
@@ -300,8 +298,8 @@ describe('durable review coordinator', () => {
       } });
     const result = await coordinate({ runId, attempt: 0, expectedRevision: boundary.run().revision,
       workflowResumeRequestedRevision, acceptedEnvelope, accountCurrentness: encryption.witness });
-    expect(resumeCheckCompleted).toBe(true);
-    if (callerPermissionMode === 'safe-yolo') {
+    expect(sourceReads).toBe(1);
+    if (sourceCurrent) {
       expect(result).toMatchObject({ state: 'waiting_for_review' });
       expect(entries).toBe(1);
       const opened = openWorkflowCheckpointStoredEnvelopeV1({ mode: 'plain',
@@ -312,6 +310,7 @@ describe('durable review coordinator', () => {
       // review wake/reclaim. It must not repeat D3 or a Resume disposition.
       expect(await coordinate({ runId, attempt: 0, expectedRevision: boundary.run().revision,
         acceptedEnvelope, accountCurrentness: encryption.witness })).toMatchObject({ state: 'waiting_for_review' });
+      expect(sourceReads).toBe(1);
     } else {
       expect(result).toMatchObject({ state: 'paused', reason: 'run_access_denied' });
       expect(boundary.run()).toMatchObject({ state: 'paused', workflowCustodyState: 'pending' });
@@ -334,7 +333,9 @@ describe('durable review coordinator', () => {
           authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'session' } }],
         source: { kind: 'inline' }, inputs: {}, machineId: 'machine', executionTarget: { kind: 'session' },
         workspaceTarget: { project: workspace }, origin: { kind: 'direct' },
-        authorization: { admittedPermissionCeiling: 'safe-yolo', principal: { kind: 'host' } },
+        authorization: { admittedPermissionCeiling: 'safe-yolo', principal: { kind: 'host' }, sourceAuthority: {
+          mediatorPluginId: 'com.happier.resume-source', sourceRef: 'message-1', sourceRevisionOrEpoch: '1', remoteApprovalMaxScope: 'request',
+        } },
       } }));
     const h = await harness(acceptedEnvelope, true);
     const childId = '33333333-3333-4333-8333-333333333333';
@@ -350,13 +351,17 @@ describe('durable review coordinator', () => {
     let resumedEffect = false;
     const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId: 'machine', storage: h.storage,
       resolveAccountEncryption: async () => ({ kind: 'available', witness: encryption.witness }),
-      // The controller/network read observes a narrower authority; a concurrent
-      // human Stop reaches the storage boundary before the coordinator reads control.
-      resolveControllerContext: async () => {
-        if (stop) h.storage.requestControl('cancel_requested');
-        return { surface: 'cli', authority: 'account_automation', callerPermissionMode: 'default' };
-      },
-      isAcceptedAuthorizationCurrent: async () => true, onCommittedTransition: async () => {}, onReviewEntered: async () => {},
+      resolveControllerContext: async () => { throw new Error('controller_was_admitted_at_action'); },
+      // Source lookup is an external boundary. A concurrent human Stop reaches
+      // storage before the coordinator reads control after that lookup.
+      isAcceptedAuthorizationCurrent: createWorkflowAcceptedAuthorizationCurrentness({ accountId,
+        listAccountApiTokens: async () => { throw new Error('host has no token principal'); },
+        resolveCurrentPluginOccurrenceId: async () => 'installed-source',
+        isMediatedSourceCurrent: async () => {
+          if (stop) h.storage.requestControl('cancel_requested');
+          return false;
+        },
+      }), onCommittedTransition: async () => {}, onReviewEntered: async () => {},
       execution: { credentials: { token: 'token', encryption: null }, serverId: 'server',
         machineAdmissionTransport: async () => { resumedEffect = true; throw new Error('denied_resume_cannot_admit'); },
         resolveExistingSessionConversation: async () => { resumedEffect = true; throw new Error('denied_resume_cannot_prepare'); },

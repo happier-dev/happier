@@ -3286,12 +3286,16 @@ authorship and decision values remain in the existing invocation content
 envelope. These structural disclosures do not introduce plaintext copies of
 that private content, a manual-intent column, or mutable-index tamper protection.
 
-Boundary Resume is a key-free control write. Its nullable
+Person boundary Resume is a key-free Can-edit control write. Automation boundary
+Resume opens the accepted snapshot through the existing requester-content Action
+path and compares the actual admitted caller with the frozen Run authority before
+the storage mutation. Its nullable
 `workflowResumeRequestedRevision` is server-readable control metadata in both
 plain and E2EE Accounts, written with the Run's state/revision CAS and consumed
 by the successful worker claim. It discloses a Resume request revision, not
-private content or new authority; the key-holding worker still checks live
-controller dominance before acting.
+private content or new authority. The key-holding worker checks original-source
+currentness once on that claim; it never reconstructs the controller from the
+Run's own authority. Ordinary review wakes do not repeat either check.
 
 The active development V4 Account-mode transition includes retained current Run
 content, invocation content tokens and recipient envelopes in its Automation

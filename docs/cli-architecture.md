@@ -4903,13 +4903,17 @@ quiescence by reading the parent revision and then exact held rows, and the
 worker parks using that confirmed revision rather than a later refreshed one.
 The parked parent releases the worker slot; durable Run custody stays pending
 and retention protection remains. Human decisions wake through the existing
-claim owner; boundary Resume requeues a paused Run without opening its private
-snapshot. Explicit Machine restrictions use the public Run row; project-scoped
-boundary Resume fails closed because project identity is private. The server
+claim owner. Person boundary Resume requeues a paused Run without opening its
+private snapshot. Explicit Machine restrictions use the public Run row;
+project-scoped person boundary Resume fails closed because project identity is
+private. Automation boundary Resume uses the existing requester-content Action
+path to open the accepted snapshot and compare the actual admitted controller
+through `assertControllerDominates` before requeueing. The server
 records `workflowResumeRequestedRevision` in the same CAS that requeues Resume.
 The successful claim clears it atomically and carries the consumed revision to
-the worker through the existing V3 claim/receipt. Only that claim runs Resume's
-controller-dominance check; denial settles paused with "Couldn't resume: …".
+the worker through the existing V3 claim/receipt. Only that claim checks the
+original source's currentness; denial settles paused with "Couldn't resume: …".
+The worker never reconstructs a controller from the Run's accepted authority.
 Initial claims, review wakes and subsequent reclaims do not acquire Resume
 semantics. Generate retains its own live authority and continuation checks and
 "Couldn't generate: …" disposition. The composed real-database and loaded-runtime review checks remain

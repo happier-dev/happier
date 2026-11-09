@@ -36,7 +36,7 @@ import { getOrCreateServerIdentityId, readCachedServerIdentityIdForHotPath } fro
 import { automationAccountCurrentnessSelect, deriveAutomationAccountCurrentnessWitness } from '@/app/automations/automationAccountCurrentness';
 import { createSignedPluginInstallationPublisherHeader } from './pluginInstallationPublisherTestkit';
 import { createLightSqliteHarness } from './lightSqliteHarness';
-import { claimAutomationRun } from '@/app/automations/automationClaimService';
+import { claimAutomationRun, toAutomationV3WorkerClaimResponse } from '@/app/automations/automationClaimService';
 import { accountRoutes } from '@/app/api/routes/account/accountRoutes';
 import { authRoutes } from '@/app/api/routes/auth/authRoutes';
 import { automationRoutes } from '@/app/api/routes/automations/automationRoutes';
@@ -353,7 +353,10 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
             claim: async (machineId: string) => {
                 const result = await claimAutomationRun({ accountId: account.id, machineId, leaseDurationMs: 30_000, scope: 'workflow' });
                 if (!result.run) throw new Error('workflow_test_claim_unavailable');
-                return { runId: result.run.id, attempt: result.run.attempt, revision: result.run.revision };
+                const claimed = toAutomationV3WorkerClaimResponse(result).run;
+                return { runId: result.run.id, attempt: result.run.attempt, revision: result.run.revision,
+                    ...(claimed?.workflowResumeRequestedRevision === undefined ? {}
+                        : { workflowResumeRequestedRevision: claimed.workflowResumeRequestedRevision }) };
             },
             revokeAccount: async () => { await db.account.update({ where: { id: account.id }, data: { tokenEpoch: { increment: 1 } } }); },
             setMachineOnline: async (machineId: string, active: boolean) => { await db.machine.update({ where: { id: machineId }, data: { active } }); },

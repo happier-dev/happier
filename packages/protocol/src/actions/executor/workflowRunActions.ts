@@ -2799,7 +2799,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     if (args.actionId === 'workflow.run.resume') {
       if (args.input.mode === 'boundary') {
-        if (target !== undefined) {
+        if (args.context.authority !== 'present_user') {
+          const opened = await openAccepted(args.input.runId, args.context.signal);
+          // The actual controller is available only at Action admission. The
+          // marked worker claim checks the original source's currentness once.
+          await assertControllerDominates(args, opened.accepted, ingressContext, () => true, deps);
+        } else if (target !== undefined) {
           // Project identity is private: a key-free control cannot prove that
           // restriction. Machine restrictions use only the public Run row.
           if (target.kind !== 'machine' || target.project) throw workflowError('target_unavailable');

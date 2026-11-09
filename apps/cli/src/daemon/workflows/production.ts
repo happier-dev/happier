@@ -27,7 +27,7 @@ import { ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sameAutomationAccountContentIdentityV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import type { WorkflowRunEncryptionV1, WorkflowRunRecipientCensusResponseV1, WorkflowCheckpointEnvelopeV1, WorkflowProgressEnvelopeV1, WorkflowRunInvocationIndexV1, WorkflowRunSummaryV1, WorkflowRunStepProgressV1, TriggerTargetV1, WorkflowDefinitionV1, MaterializeWorkflowAcceptedSnapshotV1Input } from '@happier-dev/protocol';
-import { assertControllerDominates, normalizeStoredWorkflowTriggerConsent } from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import { normalizeStoredWorkflowTriggerConsent } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { createWorkflowInteractionCapacityError } from '@/agent/permissions/interactionPersistenceError';
@@ -1409,7 +1409,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
   resolveAccountEncryption: (signal?: AbortSignal) => Promise<AvailableAutomationAccountEncryptionV1>;
   isAcceptedAuthorizationCurrent: WorkflowAcceptedAuthorizationCurrentness;
   waitForNewWorkAdmission?: (signal?: AbortSignal) => Promise<void>;
-  /** Fresh host/controller facts; claim-time D3 stays at the shared Action owner. */
+  /** Fresh host policy for trigger admission; Resume consumes its actual Action caller. */
   resolveControllerContext: (input: Readonly<{
     runId: string; accepted: ReturnType<typeof WorkflowAcceptedSnapshotV1Schema.parse>; signal?: AbortSignal;
   }>) => Promise<ActionExecutorContext>;
@@ -1810,16 +1810,12 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     const isPublicationEncryptionCurrent = async (signal?: AbortSignal): Promise<boolean> =>
       sameAutomationAccountContentIdentityV1((await params.resolveAccountEncryption(signal)).witness, accountEncryption.witness);
 
-    const checkControllerDominance = async (signal?: AbortSignal) => {
+    const checkResumeSourceCurrentness = async (signal?: AbortSignal) => {
       try {
-        const context = await params.resolveControllerContext({ runId: claim.runId, accepted,
-          ...(signal ? { signal } : {}) });
-        await assertControllerDominates({ actionId: 'workflow.run.resume',
-          input: { mode: 'boundary', runId: claim.runId, expectedRevision: initial.run.revision },
-          context: { ...context, ...(signal ? { signal } : {}) } },
-          accepted, undefined, input => isOpenedAuthorizationCurrent(input.signal),
-          { normalizeAbsolutePath: directory => resolveCanonicalAbsolutePath(directory)?.path ?? null });
-        return undefined;
+        // The Resume Action already compared its actual controller. Rebuilding
+        // that controller from accepted.authorization would compare the Run
+        // with itself. Key-free person controls still need this source check.
+        return await isOpenedAuthorizationCurrent(signal) ? undefined : 'run_access_denied' as const;
       } catch (error) {
         signal?.throwIfAborted();
         const code = WorkflowOperationErrorCodeV1Schema.safeParse(error !== null && typeof error === 'object' && 'code' in error ? error.code : undefined);
@@ -1829,7 +1825,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     };
     const controllerFailure = claim.workflowResumeRequestedRevision === undefined
       ? undefined
-      : await checkControllerDominance(claim.signal);
+      : await checkResumeSourceCurrentness(claim.signal);
 
     let checkpoint: WorkflowCheckpointEnvelopeV1;
     let rootRecordId: string;
