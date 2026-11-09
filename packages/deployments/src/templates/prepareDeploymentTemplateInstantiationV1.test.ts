@@ -94,6 +94,29 @@ describe('stored template preparation', () => {
         expect(new Set(services).size).toBe(services.length);
     });
 
+    it('retains both database inventories when MySQL is added after PostgreSQL', () => {
+        const health = [{ service: 'db', participates: false }];
+        const postgres = prepareDeploymentTemplateInstantiationV1({ template: { ...template, health }, templateRef, source, bindings: [binding] });
+        const existing = current();
+        const content = DeploymentEnvironmentContentV1Schema.parse({ ...existing.content,
+            definition: { ...existing.content.definition, document: postgres.document, services: postgres.services },
+            template: { ...postgres.template, definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` } } });
+        const mysqlSource = { services: { mysql: { image: 'mysql:8.4' } } };
+        const mysql = DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'MySQL',
+            compose: { document: JSON.stringify(mysqlSource), profiles: [], services: ['mysql'] },
+            variables: [], generatedSecrets: [], domains: [], volumes: [],
+            data: { engine: 'mysql', service: 'mysql', port: 3306, logicalBackup: { adapter: 'mysql-v1' } } });
+        const prepared = prepareDeploymentTemplateInstantiationV1({ template: mysql,
+            templateRef: { ...templateRef, itemId: 'mysql' }, source: mysqlSource, bindings: [],
+            current: { content, source: JSON.parse(postgres.document) } });
+        const stored = DeploymentEnvironmentContentV1Schema.parse({ ...content,
+            template: { ...prepared.template, definition: content.template!.definition } });
+        expect(JSON.parse(prepared.document).services).toEqual({ ...source.services, ...mysqlSource.services });
+        expect(stored.template?.data).toEqual([template.data, mysql.data]);
+        expect(stored.template?.services).toEqual(['db', 'mysql']);
+        expect(stored.template?.health).toEqual(health);
+    });
+
     it('reviews declared capacity shortfalls without refusing the attempt or inventing unavailable disk observations', () => {
         const declared = DeploymentTemplateV1Schema.parse({ ...template, minimumResources: { memoryBytes: 2048, freeDiskBytes: 4096 } });
         const input = { template: declared, templateRef, source, bindings: [binding] };
@@ -126,7 +149,7 @@ describe('stored template preparation', () => {
         expect(compose.services.cache).toEqual({ image: 'redis:7' });
         expect(compose.volumes).toEqual(source.volumes);
         expect(prepared.bindings).toEqual([binding]);
-        expect(prepared.template).toMatchObject({ templateRef, data: template.data, exports: template.exports, services: ['db'], health: participation });
+        expect(prepared.template).toMatchObject({ templateRef, data: [template.data], exports: template.exports, services: ['db'], health: participation });
         const stored = DeploymentEnvironmentContentV1Schema.parse({ ...input.current.content,
             template: { ...prepared.template, definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` } } });
         expect(stored.template?.health).toEqual(participation);

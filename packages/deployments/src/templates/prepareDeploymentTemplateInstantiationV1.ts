@@ -19,8 +19,7 @@ export type PreparedDeploymentTemplateInstantiationV1 = Readonly<{
     generatedSecrets: Readonly<{ name: string; phase: 'build' | 'runtime'; key: string; profile: DeploymentTemplateSecretProfileV1 }>[];
     domains: (DeploymentTemplateV1['domains'][number] & { hostname: string })[];
     capacity: DeploymentTemplateCapacityReviewV1;
-    template: Readonly<{ templateRef: TemplateRef; services: string[] }>
-        & Pick<DeploymentTemplateV1, 'data' | 'exports' | 'loginFields' | 'firstRunSetup' | 'health'>;
+    template: Omit<NonNullable<DeploymentEnvironmentContentV1['template']>, 'definition'>;
 }> & Pick<DeploymentTemplateV1['compose'], 'publicFiles'>;
 export class DeploymentTemplatePreparationErrorV1 extends Error {
     constructor(readonly code: string, readonly details?: Readonly<{ key: string }>) {
@@ -221,9 +220,18 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
             observedAt: observedBytes === null ? null : input.targetResources!.sampledAt,
             state: observedBytes === null ? 'unknown' : observedBytes < minimumBytes ? 'shortfall' : 'meetsMinimum' });
     }
+    const previousTemplate = input.current?.content.template;
+    const mergedServices = record(document.services);
+    const replacedServices = new Set(selectedServices);
+    const retainMetadata = <T extends { service: string }>(entries: readonly T[] | undefined) =>
+        (entries ?? []).filter(entry => !replacedServices.has(entry.service) && Object.hasOwn(mergedServices, entry.service));
+    const data = [...retainMetadata(previousTemplate?.data), ...(template.data ? [template.data] : [])];
+    const health = [...retainMetadata(previousTemplate?.health), ...(template.health ?? [])];
+    const templateServices = [...new Set([...(previousTemplate?.services ?? []), ...selectedServices])]
+        .filter(service => Object.hasOwn(mergedServices, service));
     return { document: JSON.stringify(document), ...(publicFiles.length ? { publicFiles } : {}), profiles, services, ...(primaryService ? { primaryService } : {}), bindings, generatedSecrets, domains, capacity,
-        template: { templateRef: input.templateRef, services: selectedServices,
-            ...(template.health ? { health: template.health } : {}),
-            ...(template.data ? { data: template.data } : {}), ...(template.exports ? { exports: template.exports } : {}),
+        template: { templateRef: input.templateRef, services: templateServices,
+            ...(health.length ? { health } : {}),
+            ...(data.length ? { data } : {}), ...(template.exports ? { exports: template.exports } : {}),
             ...(template.loginFields ? { loginFields: template.loginFields } : {}), ...(template.firstRunSetup ? { firstRunSetup: template.firstRunSetup } : {}) } };
 }

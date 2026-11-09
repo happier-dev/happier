@@ -90,12 +90,13 @@ export async function prepareOwnServerBackupRepositoryOperandsForHost(input: Bac
 /** Lazy operands for P41's admitted pre-migration backup. Binding keys are
  * resolved by P42, never interpreted as literal database names by the consumer. */
 export async function prepareOwnServerPreMigrationBackupOperandsForHost(input: BackupDestinationPreparation & Readonly<{
-    data: DeploymentBackupRunInputV1['data'];
+    data: NonNullable<DeploymentEnvironmentContentV1['template']>['data'];
 }>): Promise<OwnServerPreMigrationBackupOperandsForHost> {
     const configuration = input.configuration;
     if (!configuration || 'notNeeded' in configuration) return refuse('backup_required');
     if (configuration.ownership.environmentId !== input.preparation.environmentId) return refuse('stale_input');
-    const data = input.data;
+    const dump = configuration.sources.find(source => source.kind === 'dump');
+    const data = input.data?.find(database => database.service === dump?.service);
     if (data?.engine !== 'postgres' || data.logicalBackup?.adapter !== 'postgres-v1') return refuse('unsupported_action');
     const databaseKey = data.logicalBackup.database;
     const databaseBinding = input.preparation.bindings.find(binding => binding.purpose === 'variable'

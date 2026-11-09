@@ -1,8 +1,12 @@
 import { z } from 'zod/mini';
-import { DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
+import { DeploymentTemplateDataV1Schema, DeploymentTemplateV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTemplates';
 import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentEnvironmentUpdateInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentRevisionV1Schema } from '@happier-dev/protocol/deployments/deploymentIdentifiersV1';
+
+// Current Environment artifacts may contain the scalar written before multiple database additions.
+// Normalize that stored input once; every live consumer receives the same service inventory.
+const databaseInventory = z.union([z.array(DeploymentTemplateDataV1Schema), DeploymentTemplateDataV1Schema]);
 
 /** Private provenance only. Definition owns Compose; bindings own all credential references. */
 export const DeploymentEnvironmentTemplateProvenanceV1Schema = z.strictObject({
@@ -10,7 +14,7 @@ export const DeploymentEnvironmentTemplateProvenanceV1Schema = z.strictObject({
     definition: z.strictObject({ kind: z.literal('stored'), contentRevision: DeploymentRevisionV1Schema, composeDigest: DeploymentDigestV1Schema }),
     services: z.array(z.string().check(z.minLength(1))),
     health: DeploymentTemplateV1Schema.shape.health,
-    data: DeploymentTemplateV1Schema.shape.data,
+    data: z.optional(z.pipe(databaseInventory, z.transform((data: z.infer<typeof databaseInventory>) => Array.isArray(data) ? data : [data]))),
     exports: DeploymentTemplateV1Schema.shape.exports,
     loginFields: DeploymentTemplateV1Schema.shape.loginFields,
     firstRunSetup: DeploymentTemplateV1Schema.shape.firstRunSetup,

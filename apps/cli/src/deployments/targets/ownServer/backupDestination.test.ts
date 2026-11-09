@@ -101,7 +101,8 @@ it.each(['first-party', 'external'] as const)('opens the configured %s destinati
                 binding: { purpose: 'variable', phase: 'runtime', name: database.name } }, installationPublicKey: publicKey,
                 content: { kind: 'environmentValues', definition: database.source } }));
             const data = { engine: 'postgres', service: 'postgres', logicalBackup: { adapter: 'postgres-v1', database: 'DB_NAME' } } as const;
-            const operands = { registry, configuration, data, context: {}, signal: request.signal, isCurrent: () => true,
+            const unrelated = { engine: 'mysql', service: 'mysql', logicalBackup: { adapter: 'mysql-v1' } } as const;
+            const operands = { registry, configuration, data: [unrelated, data], context: {}, signal: request.signal, isCurrent: () => true,
                 preparation: { ...subject, installationPrivateSeed: seed, bindings: [...uses, database], grants,
                     backupConfigBaseDir: root, assertCurrent: async () => {} } };
             const prepared = await prepareOperands(operands);
@@ -109,7 +110,7 @@ it.each(['first-party', 'external'] as const)('opens the configured %s destinati
                 expect(prepared.destination).toEqual({ environmentId: 'environment', service: 'postgres', adapter: 'postgres-v1', database: 'actual_database' });
                 expect(prepared.readAccess().repository).toBe(kind === 'first-party'
                     ? 's3:https://storage.invalid/recovery/one' : 's3:https://external.invalid/recorded');
-                await expect(prepareOperands({ ...operands, data: { ...data, logicalBackup: { ...data.logicalBackup, database: 'ABSENT' } } }))
+                await expect(prepareOperands({ ...operands, data: [unrelated, { ...data, logicalBackup: { ...data.logicalBackup, database: 'ABSENT' } }] }))
                     .rejects.toMatchObject({ data: { code: 'secret_missing' } });
                 await expect(prepareOperands({ ...operands, configuration: { ...configuration, ownership: { ...configuration.ownership, environmentId: 'foreign' } } }))
                     .rejects.toMatchObject({ data: { code: 'stale_input' } });

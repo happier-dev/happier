@@ -35,7 +35,7 @@ export function projectReadinessEnvironmentFactForHost(scope: ProjectReadinessEn
     throw Object.assign(new Error('stale_input'), { code: 'stale_input' });
   }
   return { kind: 'available', durableData: detail.content.template
-    ? detail.content.template.data ? 'present' : 'absent' : 'unknown', backup: detail.content.backup };
+    ? detail.content.template.data?.length ? 'present' : 'absent' : 'unknown', backup: detail.content.backup };
 }
 
 const unavailable = (reason: string): ProjectReadinessFactOutcomeV1 => ({ status: 'unavailable', reason });

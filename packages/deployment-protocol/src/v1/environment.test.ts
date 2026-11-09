@@ -86,7 +86,11 @@ describe('multi-Machine deployment contracts', () => {
             definition: { kind: 'stored', contentRevision: 2, composeDigest: `sha256:${'b'.repeat(64)}` }, services: ['db'],
             data: { engine: 'postgres', service: 'db', port: 5432 },
             exports: { database: { service: 'db', port: 5432, defaultExposure: 'internal', env: { DATABASE_URL: 'postgres://${DB_USER}:${DB_PASSWORD}@db:5432/app' } } } };
-        expect(DeploymentEnvironmentContentV1Schema.parse({ ...environment.content, template })).toEqual({ ...environment.content, template });
+        expect(DeploymentEnvironmentContentV1Schema.parse({ ...environment.content, template })).toEqual({ ...environment.content,
+            template: { ...template, data: [template.data] } });
+        const databases = [template.data, { engine: 'mysql', service: 'mysql', port: 3306 }];
+        expect(DeploymentEnvironmentContentV1Schema.parse({ ...environment.content, template: { ...template, data: databases } })
+            .template?.data).toEqual(databases);
         for (const invalid of [{ ...template, document: 'second-compose-owner' }, { ...template, password: 'inline-secret' }]) {
             expect(DeploymentEnvironmentContentV1Schema.safeParse({ ...environment.content, template: invalid }).success).toBe(false);
         }

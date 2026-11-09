@@ -1090,6 +1090,13 @@ existing owners. For a new repository-free Project, the Environment transaction
 calls the ordinary Source creator at apply time. A later Environment refusal
 rolls both records back; there is no early Project write or separate Store writer.
 
+Environment template provenance retains each database by its Compose service when
+another template is added. Data overview and detail pages read that inventory;
+pre-migration backups select the database named by the saved dump source. The
+Environment decoder normalizes scalar database metadata already written by the
+current development producer into the same inventory. Catalog templates continue
+to declare their own single database.
+
 In development, generated template bindings select the pinned descriptor's `generatedSecrets[].key`;
 they do not name a new Saved Secret. The shared planner refuses an undeclared
 selection with `template_generator_undeclared`, naming the supplied key in the

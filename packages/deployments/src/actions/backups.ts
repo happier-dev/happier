@@ -15,7 +15,7 @@ export type DeploymentBackupNativeResultV1 = Readonly<{ kind: 'outcome_unknown' 
 }>;
 export type DeploymentBackupRunResultV1 = Readonly<{ kind: 'verified'; manifests: readonly BackupManifestV1[];
     restoreCaptures?: readonly DeploymentPreMigrationBackupV1[] }>;
-type CapturedData = NonNullable<NonNullable<DeploymentEnvironmentContentV1['template']>['data']>;
+type CapturedData = NonNullable<NonNullable<DeploymentEnvironmentContentV1['template']>['data']>[number];
 export type DeploymentBackupRunInputV1 = Readonly<{
     environmentId: string; configuration: DeploymentBackupConfigurationV1; data?: CapturedData;
     access: ResticAccessV1; signal: AbortSignal;
