@@ -12,6 +12,12 @@ effective decision or grant payload. The permission response owner resolves the
 stored offer, refuses missing or stale native answers, and applies the native
 decision before reporting success. Application failure leaves the occurrence pending.
 
+Application uses each transport's existing decision boundary: MSP awaits its
+separate `approval/decide` command result; ACP returns the chosen permission option
+from its handler; Codex app-server sends its existing approval response. Response
+transports record that decision through their existing return/response path and
+do not add an early-response API or wait for a second acknowledgement.
+
 The same response owner requires the attributed Account owner for durable grant
 carriers, including rule, mode and execution-policy changes. Shared approvers may
 answer once or Session choices that carry no such grant. Caller-specific pending
