@@ -6805,6 +6805,8 @@ retires pending delivery and closes the mounted list without ending Voice.
 Open conversation uses the captured attempt's exact destination: saved
 conversation, coding target, or Voice History for a targetless runtime attempt.
 An ended attempt from another Account is unavailable, never redirected to focus.
+The conversation header names the service from its exact binding or the same
+Account's captured ended attempt, never from the provider selected for the next Start.
 Conversation and recovery navigation use the mounted workspace's existing tab
 owner, falling back to Expo navigation only when no workspace is mounted.
 Teleport exposes the existing daemon-backed operation to Agents and MCP under

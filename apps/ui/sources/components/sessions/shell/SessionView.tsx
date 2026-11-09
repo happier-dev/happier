@@ -241,7 +241,7 @@ type SessionViewProps = Readonly<{
     embeddedArrangement?: React.ReactNode;
 }>;
 
-function SessionAuthRecoveryFallback({ message }: Readonly<{ message: string }>) {
+function SessionAuthRecoveryFallback() {
     return (
         <View
             testID="session-auth-required-fallback"
@@ -253,7 +253,7 @@ function SessionAuthRecoveryFallback({ message }: Readonly<{ message: string }>)
             }}
         >
             <View style={{ width: '100%', maxWidth: 420 }}>
-                <SessionAuthRecoveryBanner message={message} />
+                <SessionAuthRecoveryBanner />
             </View>
         </View>
     );
@@ -1542,7 +1542,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     );
 
     const localizeHeaderPluginText = usePluginLocalizedTextResolver({ projection: headerPluginProjection.pluginUiProjection });
-    const voiceConversationSubtitle = useVoiceConversationHeaderSubtitle(ownerMetadata);
+    const voiceConversationSubtitle = useVoiceConversationHeaderSubtitle(ownerMetadata, sessionRouteAddress);
     // Compute header props based on session state
     const headerProps = React.useMemo(() => resolveSessionViewHeaderProps({
         isDataReady,
@@ -1783,7 +1783,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     }> | null => {
         const surface = (node: React.ReactElement, state: Exclude<EmbeddedSessionPartsState, 'ready'>) => ({ node, state });
         if (blockedSurfaceState?.kind === 'account_recovery') {
-            return surface(<SessionAuthRecoveryFallback message={blockedSurfaceState.auth.message} />, 'blocked');
+            return surface(<SessionAuthRecoveryFallback />, 'blocked');
         }
         if (blockedSurfaceState) {
             return surface((
@@ -2467,7 +2467,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
           <>
               {authSurfaceState && !(inactiveUi.shouldShowInput && !isEncryptedSessionLocked) ? (
                   <View style={{ marginTop: theme.space.s8, marginHorizontal: theme.space.s8 }}>
-                      <SessionAuthRecoveryBanner message={authSurfaceState.message} />
+                      <SessionAuthRecoveryBanner />
                   </View>
               ) : null}
               <SessionTranscriptContent
