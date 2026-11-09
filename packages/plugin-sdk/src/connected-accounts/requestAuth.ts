@@ -1,5 +1,5 @@
-import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER, CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION, CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1, CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_MATERIALIZATION_ID_MAX_LENGTH, CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH, PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1, PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURES_V1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
-import type { ConnectedAccountAuthFailureRequestV1, ConnectedAccountQuotaFailureRequestV1, OAuthBearerLeaseV1, QualifiedConnectedAccountPurposeV1, RequestAuthFailureOutcomeV1 } from '@happier-dev/protocol';
+import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER, CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION, CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1, CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_MATERIALIZATION_ID_MAX_LENGTH, CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import type { ConnectedAccountAuthFailureRequestV1, ConnectedAccountQuotaFailureRequestV1, RequestAuthHeadersV1, QualifiedConnectedAccountPurposeV1, RequestAuthFailureOutcomeV1 } from '@happier-dev/protocol';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 
 export const CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV =
@@ -60,12 +60,7 @@ const CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH = ${js(CONNECTED_ACCOUNT_REQUE
 const CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH = ${js(CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH)};
 const CONNECTED_ACCOUNT_REQUEST_AUTH_TIMEOUT_MS = ${requestTimeoutMs};
 const CONNECTED_ACCOUNT_REQUEST_AUTH_RECOVERY_TIMEOUT_MS = ${authFailureRequestTimeoutMs};
-const CONNECTED_ACCOUNT_REQUEST_AUTH_RESPONSE_MAX_BYTES = 256 * 1024;
 const CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS = Object.freeze(${js(CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1)});
-const CONNECTED_ACCOUNT_REQUEST_AUTH_PINNED_TERMINAL_FRONTIER = Object.freeze({
-  producerVersions: Object.freeze(${js(PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1)}),
-  signatures: Object.freeze(${js(PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURES_V1)}),
-});
 
 class ConnectedAccountRequestAuthTransportError extends Error {
   constructor(code, status) {
@@ -202,21 +197,6 @@ function requestAuthParseEvidence(value) {
   if (requestAuthHasExactKeys(value.evidenceSource, ["kind"])
     && value.evidenceSource.kind === "structured") {
     evidenceSource = { kind: "structured" };
-  } else if (
-    requestAuthHasExactKeys(
-      value.evidenceSource,
-      ["kind", "producer", "producerVersion", "provider", "signatureId"],
-    )
-    && value.evidenceSource.kind === "pinnedProviderTerminal"
-    && value.evidenceSource.producer === "pi"
-    && requestAuthIsBoundedString(value.evidenceSource.producerVersion, 1, 64)
-    && value.evidenceSource.producerVersion === value.evidenceSource.producerVersion.trim()
-    && requestAuthIsBoundedString(value.evidenceSource.provider, 1, 128)
-    && value.evidenceSource.provider === value.evidenceSource.provider.trim()
-    && requestAuthIsBoundedString(value.evidenceSource.signatureId, 1, 128)
-    && value.evidenceSource.signatureId === value.evidenceSource.signatureId.trim()
-  ) {
-    evidenceSource = { ...value.evidenceSource };
   } else {
     throw new Error("happier_request_auth_schema_invalid");
   }
@@ -233,23 +213,6 @@ function requestAuthParseEvidence(value) {
   }
   if (value.resetAtMs !== undefined && (!Number.isSafeInteger(value.resetAtMs) || value.resetAtMs < 0)) {
     throw new Error("happier_request_auth_schema_invalid");
-  }
-  if (evidenceSource.kind === "pinnedProviderTerminal") {
-    const signature = CONNECTED_ACCOUNT_REQUEST_AUTH_PINNED_TERMINAL_FRONTIER.signatures.find((candidate) => (
-      candidate.provider === evidenceSource.provider
-      && candidate.signatureId === evidenceSource.signatureId
-    ));
-    if (
-      !CONNECTED_ACCOUNT_REQUEST_AUTH_PINNED_TERMINAL_FRONTIER.producerVersions.includes(
-        evidenceSource.producerVersion,
-      )
-      || !signature
-      || signature.limitCategory !== value.limitCategory
-      || signature.quotaScope !== value.quotaScope
-      || (value.httpStatus !== undefined && signature.httpStatus !== value.httpStatus)
-    ) {
-      throw new Error("happier_request_auth_schema_invalid");
-    }
   }
   return {
     ...value,
@@ -279,38 +242,36 @@ function requestAuthParseFailure(value, expectedClass) {
   return { class: expectedClass, evidence };
 }
 
-function requestAuthParseLease(value) {
-  if (!requestAuthHasExactKeys(value, ["accessToken", "credentialContext"], ["requiredHeaders", "expiresAt"])
-    || !requestAuthIsBoundedString(value.accessToken, 1, 131072)) {
+function requestAuthParseMaterial(value) {
+  if (!requestAuthHasExactKeys(value, ["headers", "facts", "credentialContext"], ["expiresAt"])
+    || !requestAuthIsRecord(value.headers) || Object.keys(value.headers).length > 32
+    || !requestAuthIsRecord(value.facts)) {
     throw new Error("happier_request_auth_schema_invalid");
   }
-  let requiredHeaders;
-  if (value.requiredHeaders !== undefined) {
-    if (!requestAuthIsRecord(value.requiredHeaders) || Object.keys(value.requiredHeaders).length > 32) {
+  const headers = {};
+  const seen = new Set();
+  for (const [name, headerValue] of Object.entries(value.headers)) {
+    const lower = name.toLowerCase();
+    if (!/^[!#$%&'*+\\-.^_\`|~0-9A-Za-z]{1,128}$/.test(name)
+      || seen.has(lower) || typeof headerValue !== "string"
+      || (headerValue.length > (lower === "authorization" ? 131079 : 16384)) || /[\\r\\n]/.test(headerValue)) {
       throw new Error("happier_request_auth_schema_invalid");
     }
-    requiredHeaders = {};
-    const seen = new Set();
-    for (const [name, headerValue] of Object.entries(value.requiredHeaders)) {
-      const lower = name.toLowerCase();
-      if (!/^[!#$%&'*+\\-.^_\`|~0-9A-Za-z]{1,128}$/.test(name)
-        || lower === "authorization"
-        || seen.has(lower)
-        || typeof headerValue !== "string"
-        || headerValue.length > 16384
-        || /[\\r\\n]/.test(headerValue)) {
-        throw new Error("happier_request_auth_schema_invalid");
-      }
-      seen.add(lower);
-      requiredHeaders[name] = headerValue;
+    seen.add(lower);
+    Object.defineProperty(headers, name, { value: headerValue, enumerable: true });
+  }
+  const facts = {};
+  for (const [name, fact] of Object.entries(value.facts)) {
+    if (typeof fact !== "string" && typeof fact !== "boolean"
+      && (typeof fact !== "number" || !Number.isFinite(fact))) {
+      throw new Error("happier_request_auth_schema_invalid");
     }
+    Object.defineProperty(facts, name, { value: fact, enumerable: true });
   }
   if (value.expiresAt !== undefined && (!Number.isSafeInteger(value.expiresAt) || value.expiresAt < 0)) {
     throw new Error("happier_request_auth_schema_invalid");
   }
-  return {
-    accessToken: value.accessToken,
-    ...(requiredHeaders ? { requiredHeaders } : {}),
+  return { headers, facts,
     ...(value.expiresAt !== undefined ? { expiresAt: value.expiresAt } : {}),
     credentialContext: requestAuthParseCredentialContext(value.credentialContext),
   };
@@ -366,7 +327,7 @@ function requestAuthComposeSignal(signal, timeoutMs) {
   return signal || timeout || undefined;
 }
 
-async function requestAuthReadBoundedResponse(response) {
+async function requestAuthReadResponse(response) {
   if (!response.body || typeof response.body.getReader !== "function") {
     return { kind: "decoded", envelope: null };
   }
@@ -383,10 +344,6 @@ async function requestAuthReadBoundedResponse(response) {
       }
       if (result.done) break;
       byteLength += result.value.byteLength;
-      if (byteLength > CONNECTED_ACCOUNT_REQUEST_AUTH_RESPONSE_MAX_BYTES) {
-        await reader.cancel().catch(() => {});
-        return { kind: "too_large", envelope: null };
-      }
       chunks.push(result.value);
     }
   } finally {
@@ -426,13 +383,7 @@ async function requestAuthCall(path, body, signal, timeoutMs = CONNECTED_ACCOUNT
     if (signal && signal.aborted) throw error;
     throw new ConnectedAccountRequestAuthTransportError("request_auth_unavailable", 503);
   }
-  const decoded = await requestAuthReadBoundedResponse(response);
-  if (decoded.kind === "too_large") {
-    throw new ConnectedAccountRequestAuthTransportError(
-      "happier_request_auth_response_too_large",
-      response.status,
-    );
-  }
+  const decoded = await requestAuthReadResponse(response);
   if (decoded.kind === "read_failed") {
     throw new ConnectedAccountRequestAuthTransportError(
       "happier_request_auth_response_read_failed",
@@ -469,7 +420,7 @@ async function lookupConnectedAccountRequestAuth(input) {
     throw new Error("happier_request_auth_schema_invalid");
   }
   const purpose = requestAuthParsePurpose(input.purpose);
-  return requestAuthParseLease(await requestAuthCall(
+  return requestAuthParseMaterial(await requestAuthCall(
     CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
     { purpose },
     input.signal,
@@ -513,7 +464,7 @@ async function reportConnectedAccountQuotaFailure(input) {
 }
 
 export type ConnectedAccountRequestAuthClient = Readonly<{
-  lookupConnectedAccountRequestAuth(input: Readonly<{ purpose: QualifiedConnectedAccountPurposeV1; signal?: AbortSignal }>): Promise<OAuthBearerLeaseV1>;
+  lookupConnectedAccountRequestAuth(input: Readonly<{ purpose: QualifiedConnectedAccountPurposeV1; signal?: AbortSignal }>): Promise<RequestAuthHeadersV1>;
   reportConnectedAccountAuthFailure(input: ConnectedAccountAuthFailureRequestV1 & Readonly<{ signal?: AbortSignal }>): Promise<RequestAuthFailureOutcomeV1>;
   reportConnectedAccountQuotaFailure(input: ConnectedAccountQuotaFailureRequestV1 & Readonly<{ signal?: AbortSignal }>): Promise<RequestAuthFailureOutcomeV1>;
 }>;

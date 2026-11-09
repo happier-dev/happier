@@ -1,14 +1,15 @@
 import { createHash } from 'node:crypto';
 import { setImmediate } from 'node:timers/promises';
+import { readCredentialRedactionValues } from '@happier-dev/cli-common/plugins/http';
 import { logger } from '@/ui/logger';
 import type { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { QualifiedConnectedAccountMaterialFailureCode } from '../qualifiedConnectedAccountMaterialError';
 
-import { ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema, OAuthBearerLeaseV1Schema, RequestAuthFailureOutcomeV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema, RequestAuthFailureOutcomeV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import type { ConnectedAccountAuthFailureRequestV1, ConnectedAccountQuotaFailureRequestV1, OAuthBearerLeaseV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1, QualifiedConnectedAccountRef, RequestAuthFailureOutcomeV1, RequestAuthRequiredHeadersV1 } from '@happier-dev/protocol';
+import type { ConnectedAccountAuthFailureRequestV1, ConnectedAccountQuotaFailureRequestV1, RequestAuthHeadersV1, QualifiedConnectedAccountPurposeBindingV1, QualifiedConnectedAccountPurposeV1, QualifiedConnectedAccountRequestAuthUseV1, QualifiedConnectedAccountRef, RequestAuthFailureOutcomeV1, RequestAuthHeaderMapV1, RequestAuthFactsV1 } from '@happier-dev/protocol';
 
 export type ConnectedAccountRequestAuthErrorCode =
     | 'request_auth_not_active'
@@ -52,8 +53,8 @@ export class ConnectedAccountRequestAuthError extends Error {
 /** Process-local ports captured from the exact purpose lease's owner at issuance. */
 export type ConnectedAccountRequestAuthBindingAuthority = Readonly<{
     resolveCurrentBinding(input: Readonly<{ binding: QualifiedConnectedAccountPurposeBindingV1; signal: AbortSignal }>): Promise<ConnectedAccountRequestAuthResolvedBinding | null>;
-    materializeBearer(input: Readonly<{ binding: QualifiedConnectedAccountPurposeBindingV1; resolved: ConnectedAccountRequestAuthResolvedBinding;
-        materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization']; signal: AbortSignal }>): Promise<BearerMaterial>;
+    materializeHeaders(input: Readonly<{ binding: QualifiedConnectedAccountPurposeBindingV1; resolved: ConnectedAccountRequestAuthResolvedBinding;
+        materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization']; signal: AbortSignal }>): Promise<HeadersMaterial>;
 }>;
 
 export type ConnectedAccountRequestAuthSubject = Readonly<{
@@ -95,18 +96,18 @@ export type ConnectedAccountRequestAuthResolvedBinding = Readonly<{
     }>;
 }>;
 
-export type BearerMaterial = Readonly<{
-    accessToken: string;
-    requiredHeaders?: RequestAuthRequiredHeadersV1;
+export type HeadersMaterial = Readonly<{
+    headers: RequestAuthHeaderMapV1;
+    facts: RequestAuthFactsV1;
     expiresAt?: number;
 }>;
 
 type MaybePromise<T> = T | Promise<T>;
 
-type CachedBearerMaterial = Readonly<{
+type CachedHeadersMaterial = Readonly<{
     account: QualifiedConnectedAccountRef;
-    accessToken: string;
-    requiredHeaders?: Readonly<Record<string, string>>;
+    headers: RequestAuthHeaderMapV1;
+    facts: RequestAuthFactsV1;
     expiresAt?: number;
     credentialRevision: string;
     legacyServiceKeyedCompatibility?: true;
@@ -120,7 +121,7 @@ export type ConnectedAccountRequestAuthServiceDependencies = Readonly<{
             signal: AbortSignal;
         }>,
     ) => MaybePromise<ConnectedAccountRequestAuthResolvedBinding | null>;
-    materializeBearer: (
+    materializeHeaders: (
         input: Readonly<{
             subject: ConnectedAccountRequestAuthSubject;
             binding: QualifiedConnectedAccountPurposeBindingV1;
@@ -128,7 +129,7 @@ export type ConnectedAccountRequestAuthServiceDependencies = Readonly<{
             materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'];
             signal: AbortSignal;
         }>,
-    ) => Promise<BearerMaterial>;
+    ) => Promise<HeadersMaterial>;
     refreshAfterAuthFailure: (input: Readonly<{
         subject: ConnectedAccountRequestAuthSubject;
         resolved: ConnectedAccountRequestAuthResolvedBinding;
@@ -174,7 +175,7 @@ export type ConnectedAccountRequestAuthService = Readonly<{
         subject: ConnectedAccountRequestAuthSubject;
         purpose: QualifiedConnectedAccountPurposeV1;
         signal?: AbortSignal;
-    }>) => Promise<OAuthBearerLeaseV1>;
+    }>) => Promise<RequestAuthHeadersV1>;
     refreshAfterAuthFailure: (input: Readonly<{
         subject: ConnectedAccountRequestAuthSubject;
         request: ConnectedAccountAuthFailureRequestV1;
@@ -356,8 +357,8 @@ function authFailureOperationKey(input: Readonly<{
     ]);
 }
 
-function tokenFingerprint(accessToken: string): string {
-    return `sha256:${createHash('sha256').update(accessToken, 'utf8').digest('hex')}`;
+function materialFingerprint(headers: RequestAuthHeaderMapV1): string {
+    return `sha256:${createHash('sha256').update(JSON.stringify(Object.entries(headers).sort(([left], [right]) => left.localeCompare(right))), 'utf8').digest('hex')}`;
 }
 
 function sameResolvedBinding(
@@ -398,14 +399,8 @@ function contextMatchesResolved(
         && context.group?.generation === resolved.group?.generation;
 }
 
-function isExpired(value: CachedBearerMaterial, nowMs: number): boolean {
+function isExpired(value: CachedHeadersMaterial, nowMs: number): boolean {
     return value.expiresAt !== undefined && value.expiresAt <= nowMs;
-}
-
-function cloneHeaders(
-    headers: Readonly<Record<string, string>> | undefined,
-): Readonly<Record<string, string>> | undefined {
-    return headers ? { ...headers } : undefined;
 }
 
 export function createConnectedAccountRequestAuthService(
@@ -426,8 +421,8 @@ export function createConnectedAccountRequestAuthService(
         && configuredAuthFailureOperationDeadlineMs > 0
             ? configuredAuthFailureOperationDeadlineMs
             : DEFAULT_REQUEST_AUTH_RECOVERY_DEADLINE_MS;
-    const leases = new Map<string, CachedBearerMaterial>();
-    const fills = new Map<string, RequestAuthSharedOperation<CachedBearerMaterial>>();
+    const leases = new Map<string, CachedHeadersMaterial>();
+    const fills = new Map<string, RequestAuthSharedOperation<CachedHeadersMaterial>>();
     const authFailures = new Map<string, Readonly<{
         kind: 'failure' | 'replacement_freshness';
         cacheKey: string;
@@ -543,7 +538,7 @@ export function createConnectedAccountRequestAuthService(
         resolved: ConnectedAccountRequestAuthResolvedBinding,
         materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'],
         signal: AbortSignal,
-    ): Promise<CachedBearerMaterial> => {
+    ): Promise<CachedHeadersMaterial> => {
         pruneExpiredLeases();
         const key = leaseKey(resolved, materialization, subject);
         const existing = leases.get(key);
@@ -566,7 +561,7 @@ export function createConnectedAccountRequestAuthService(
         const fill = createSharedOperation(async (ownerSignal) => {
             const material = await startRequestAuthOperation(
                 ownerSignal,
-                () => dependencies.materializeBearer({
+                () => dependencies.materializeHeaders({
                     subject,
                     binding,
                     resolved,
@@ -574,23 +569,23 @@ export function createConnectedAccountRequestAuthService(
                     signal: ownerSignal,
                 }),
             );
-            const lease = OAuthBearerLeaseV1Schema.parse({
-                accessToken: material.accessToken,
-                ...(material.requiredHeaders ? { requiredHeaders: material.requiredHeaders } : {}),
+            const lease: RequestAuthHeadersV1 = {
+                headers: material.headers,
+                facts: material.facts,
                 ...(material.expiresAt !== undefined ? { expiresAt: material.expiresAt } : {}),
                 credentialContext: {
                     account: resolved.account,
                     ...(resolved.group ? { group: resolved.group } : {}),
                     credentialRevision: resolved.credentialRevision,
                 },
-            });
-            const cached: CachedBearerMaterial = {
+            };
+            const cached: CachedHeadersMaterial = {
                 account: Object.freeze({
                     service: Object.freeze({ ...resolved.account.service }),
                     accountId: resolved.account.accountId,
                 }),
-                accessToken: lease.accessToken,
-                ...(lease.requiredHeaders ? { requiredHeaders: { ...lease.requiredHeaders } } : {}),
+                headers: Object.freeze({ ...lease.headers }),
+                facts: Object.freeze({ ...lease.facts }),
                 ...(lease.expiresAt !== undefined ? { expiresAt: lease.expiresAt } : {}),
                 credentialRevision: resolved.credentialRevision,
                 ...(resolved.legacyServiceKeyedCompatibility === true
@@ -663,23 +658,23 @@ export function createConnectedAccountRequestAuthService(
                 }
 
                 input.subject.registerRedaction(Object.freeze([
-                    material.accessToken,
-                    ...Object.values(material.requiredHeaders ?? {})
-                        .filter((value) => value.length > 0),
+                    ...Object.entries(material.headers).flatMap(([name, value]) => readCredentialRedactionValues(
+                        name.toLowerCase() === 'authorization' ? { authorizationValue: value } : { rawCredential: value },
+                    )),
+                    ...Object.values(material.facts).flatMap(value => typeof value === 'string'
+                        ? readCredentialRedactionValues({ rawCredential: value }) : []),
                 ]));
-                return OAuthBearerLeaseV1Schema.parse({
-                    accessToken: material.accessToken,
-                    ...(material.requiredHeaders
-                        ? { requiredHeaders: cloneHeaders(material.requiredHeaders) }
-                        : {}),
+                return {
+                    headers: { ...material.headers },
+                    facts: { ...material.facts },
                     ...(material.expiresAt !== undefined ? { expiresAt: material.expiresAt } : {}),
                     credentialContext: {
                         account: after.resolved.account,
                         ...(after.resolved.group ? { group: after.resolved.group } : {}),
                         credentialRevision: after.resolved.credentialRevision,
-                        failingAccessTokenFingerprint: tokenFingerprint(material.accessToken),
+                        failingAccessTokenFingerprint: materialFingerprint(material.headers),
                     },
-                });
+                };
             }
         } catch (error) {
             logger.debug('[CONNECTED ACCOUNT] Request-auth lookup refused', {
@@ -766,7 +761,7 @@ export function createConnectedAccountRequestAuthService(
         }
         if (
             !context.failingAccessTokenFingerprint
-            || context.failingAccessTokenFingerprint !== tokenFingerprint(material.accessToken)
+            || context.failingAccessTokenFingerprint !== materialFingerprint(material.headers)
         ) {
             return false;
         }

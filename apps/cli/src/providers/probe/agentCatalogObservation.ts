@@ -80,7 +80,7 @@ function requestAuthMaterializationKey(use: QualifiedConnectedAccountRequestAuth
   const materialization = use.materialization;
   return JSON.stringify([
     materialization.kind,
-    [...materialization.origins].sort(),
+    new URL(materialization.origin).origin,
     [...materialization.headerNames].map((name) => name.trim().toLowerCase()).sort(),
   ]);
 }
@@ -306,7 +306,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
                     close: () => {},
                   }),
                   authorizeDestination: async (destination) => {
-                    if (!sharedSubject.isCurrent() || !input.requestAuthUse.materialization.origins.includes(destination.origin)) {
+                    if (!sharedSubject.isCurrent() || destination.origin !== input.requestAuthUse.materialization.origin) {
                       throw new ProviderProbeCancelledError();
                     }
                   },
@@ -454,7 +454,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
       return await observeWithDependencies(nativeDependencies, {
         ...input,
         requestAuthUse: { purpose: input.purpose, materialization: {
-          kind: 'httpHeaders', origins: [new URL(input.target.endpointUrl).origin],
+          kind: 'httpHeaders', origin: new URL(input.target.endpointUrl).origin,
           headerNames: input.target.headerBindings.map(binding => binding.name),
         } },
         binding: nativeBinding,

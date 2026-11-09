@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -15,6 +15,7 @@ import {
 } from '../../../../../../../../apps/cli/src/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthRecovery.ts';
 import { PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS } from './purposes.js';
 import { buildPiRequestAuthExtensionSource } from './source.js';
+import { createPiRequestAuthTestWorkspace, PI_REQUEST_AUTH_TEST_PACKAGE_DIRECTORY } from './workspace.testkit.js';
 
 type PiVersion = '0.81.0' | '0.81.1' | '0.82.0' | '0.82.1';
 type ProviderId = 'anthropic' | 'openai-codex';
@@ -86,20 +87,7 @@ const PURPOSES = Object.freeze({
   },
 });
 
-const PACKAGE_DIRECTORY = fileURLToPath(new URL('../../../../../', import.meta.url));
-const COMPOSED_TEST_WORKSPACE_PARENT = join(
-  PACKAGE_DIRECTORY,
-  'node_modules',
-  '.cache',
-  'happier-tests',
-  'pi-request-auth',
-);
 const require = createRequire(import.meta.url);
-
-async function createComposedTestWorkspace(): Promise<string> {
-  await mkdir(COMPOSED_TEST_WORKSPACE_PARENT, { recursive: true });
-  return await mkdtemp(join(COMPOSED_TEST_WORKSPACE_PARENT, 'composed-'));
-}
 
 // Adding a supported Pi version requires an exact coding-agent alias, an exact pi-ai alias,
 // retained terminal signatures, and this complete matrix passing before Level B is enabled.
@@ -430,21 +418,8 @@ function tokenFor(providerId: ProviderId, accountId: string): string {
   return `header.${encoded}.signature`;
 }
 
-function pinned(
-  version: PiVersion,
-  provider: ProviderId,
-  signatureId: string,
-): Readonly<Record<string, unknown>> {
-  return {
-    kind: 'pinnedProviderTerminal',
-    producer: 'pi',
-    producerVersion: version,
-    provider,
-    signatureId,
-  };
-}
 
-function scenarios(version: PiVersion): readonly Scenario[] {
+function scenarios(): readonly Scenario[] {
   return [
     {
       id: 'terminal-rate-enabled',
@@ -466,7 +441,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 429,
           limitCategory: 'rate_limit',
           quotaScope: 'unknown',
-          evidenceSource: pinned(version, 'anthropic', 'anthropic-sdk-429-rate-limit-v1'),
+          evidenceSource: { kind: 'structured' },
         }],
       },
     },
@@ -491,7 +466,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 429,
           limitCategory: 'rate_limit',
           quotaScope: 'unknown',
-          evidenceSource: pinned(version, 'anthropic', 'anthropic-sdk-429-rate-limit-v1'),
+          evidenceSource: { kind: 'structured' },
         }],
         promptBoundaries: [
           { attempts: 1, lookups: 1, reports: 1 },
@@ -520,7 +495,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 429,
           limitCategory: 'rate_limit',
           quotaScope: 'unknown',
-          evidenceSource: pinned(version, 'anthropic', 'anthropic-sdk-429-rate-limit-v1'),
+          evidenceSource: { kind: 'structured' },
         }],
         finalDiagnosticIncludes: 'rate limit exceeded',
       },
@@ -544,7 +519,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 529,
           limitCategory: 'capacity',
           quotaScope: 'unknown',
-          evidenceSource: pinned(version, 'anthropic', 'anthropic-sdk-529-overloaded-v1'),
+          evidenceSource: { kind: 'structured' },
         }],
         finalDiagnosticIncludes: 'final diagnostic after retry',
         finalDiagnosticExcludes: 'Overloaded',
@@ -570,13 +545,13 @@ function scenarios(version: PiVersion): readonly Scenario[] {
             httpStatus: 529,
             limitCategory: 'capacity',
             quotaScope: 'unknown',
-            evidenceSource: pinned(version, 'anthropic', 'anthropic-sdk-529-overloaded-v1'),
+            evidenceSource: { kind: 'structured' },
           },
           {
             httpStatus: 429,
             limitCategory: 'rate_limit',
             quotaScope: 'unknown',
-            evidenceSource: pinned(version, 'anthropic', 'anthropic-sdk-429-rate-limit-v1'),
+            evidenceSource: { kind: 'structured' },
           },
         ],
         finalDiagnosticIncludes: 'rate limit exceeded',
@@ -601,7 +576,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 429,
           limitCategory: 'usage_limit',
           quotaScope: 'account',
-          evidenceSource: pinned(version, 'anthropic', 'anthropic-sdk-429-account-exhaustion-v1'),
+          evidenceSource: { kind: 'structured' },
         }],
       },
     },
@@ -623,7 +598,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 401,
           limitCategory: 'auth_invalid',
           quotaScope: 'unknown',
-          evidenceSource: pinned(version, 'anthropic', 'anthropic-sdk-401-authentication-v1'),
+          evidenceSource: { kind: 'structured' },
         }],
       },
     },
@@ -647,7 +622,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 529,
           limitCategory: 'capacity',
           quotaScope: 'unknown',
-          evidenceSource: pinned(version, 'anthropic', 'anthropic-sdk-529-overloaded-v1'),
+          evidenceSource: { kind: 'structured' },
         }],
       },
     },
@@ -669,7 +644,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 529,
           limitCategory: 'capacity',
           quotaScope: 'unknown',
-          evidenceSource: pinned(version, 'anthropic', 'anthropic-sdk-529-overloaded-v1'),
+          evidenceSource: { kind: 'structured' },
         }],
         finalDiagnosticIncludes: 'Overloaded',
       },
@@ -693,11 +668,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 503,
           limitCategory: 'capacity',
           quotaScope: 'unknown',
-          evidenceSource: pinned(
-            version,
-            'anthropic',
-            'anthropic-sdk-503-api-error-v1',
-          ),
+          evidenceSource: { kind: 'structured' },
         }],
       },
     },
@@ -739,11 +710,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 503,
           limitCategory: 'capacity',
           quotaScope: 'unknown',
-          evidenceSource: pinned(
-            version,
-            'anthropic',
-            'anthropic-sdk-503-api-error-v1',
-          ),
+          evidenceSource: { kind: 'structured' },
         }],
         finalDiagnosticIncludes: 'service unavailable',
       },
@@ -864,11 +831,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
             httpStatus: 429,
             limitCategory: 'usage_limit',
             quotaScope: 'account',
-            evidenceSource: pinned(
-              version,
-              'openai-codex',
-              'openai-codex-chatgpt-usage-limit-v1',
-            ),
+            evidenceSource: { kind: 'structured' },
           },
           {
             httpStatus: 400,
@@ -899,21 +862,13 @@ function scenarios(version: PiVersion): readonly Scenario[] {
             httpStatus: 429,
             limitCategory: 'usage_limit',
             quotaScope: 'account',
-            evidenceSource: pinned(
-              version,
-              'openai-codex',
-              'openai-codex-chatgpt-usage-limit-v1',
-            ),
+            evidenceSource: { kind: 'structured' },
           },
           {
             httpStatus: 429,
             limitCategory: 'usage_limit',
             quotaScope: 'account',
-            evidenceSource: pinned(
-              version,
-              'openai-codex',
-              'openai-codex-chatgpt-usage-limit-v1',
-            ),
+            evidenceSource: { kind: 'structured' },
           },
         ],
         finalDiagnosticIncludes: 'You have hit your ChatGPT usage limit.',
@@ -943,11 +898,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 429,
           limitCategory: 'usage_limit',
           quotaScope: 'account',
-          evidenceSource: pinned(
-            version,
-            'openai-codex',
-            'openai-codex-chatgpt-usage-limit-v1',
-          ),
+          evidenceSource: { kind: 'structured' },
         }],
         finalDiagnosticIncludes: 'You have hit your ChatGPT usage limit.',
       },
@@ -974,11 +925,7 @@ function scenarios(version: PiVersion): readonly Scenario[] {
           httpStatus: 429,
           limitCategory: 'usage_limit',
           quotaScope: 'account',
-          evidenceSource: pinned(
-            version,
-            'openai-codex',
-            'openai-codex-chatgpt-usage-limit-v1',
-          ),
+          evidenceSource: { kind: 'structured' },
         }],
       },
     })),
@@ -1070,7 +1017,7 @@ async function runScenario(
   modules: ExactPiModules,
   scenario: Scenario,
 ): Promise<void> {
-  const root = await createComposedTestWorkspace();
+  const root = await createPiRequestAuthTestWorkspace('composed-');
   const extensionPath = join(root, 'request-auth.mjs');
   const generated = buildPiRequestAuthExtensionSource({
     purposes: { [scenario.providerId]: PURPOSES[scenario.providerId] },
@@ -1195,18 +1142,19 @@ async function runScenario(
   };
   const requestAuthOwner = createConnectedAccountRequestAuthService({
     resolveCurrentBinding,
-    materializeBearer: async ({ resolved }) => ({
-      accessToken: tokenFor(scenario.providerId, resolved.account.accountId),
-      ...(scenario.providerId === 'openai-codex'
-        ? {
-          requiredHeaders: {
+    materializeHeaders: async ({ resolved }) => ({
+      headers: {
+        authorization: `Bearer ${tokenFor(scenario.providerId, resolved.account.accountId)}`,
+        ...(scenario.providerId === 'openai-codex'
+          ? {
             'ChatGPT-Account-ID':
               scenario.corruptReplayCodexHeader && state.recoveryEffects.length > 0
                 ? 'different-account'
                 : resolved.account.accountId,
-          },
-        }
-        : {}),
+          }
+          : {}),
+      },
+      facts: {},
     }),
     refreshAfterAuthFailure: async ({ resolved, failure }) => (
       await applyRealRecovery(resolved, failure)
@@ -1415,9 +1363,9 @@ async function runScenario(
 
 describe('Pi request-auth composed test workspace', () => {
   it('keeps generated extensions outside source while preserving package module resolution', async () => {
-    const root = await createComposedTestWorkspace();
+    const root = await createPiRequestAuthTestWorkspace('composed-');
     try {
-      expect(root.startsWith(`${join(PACKAGE_DIRECTORY, 'node_modules')}${sep}`)).toBe(true);
+      expect(root.startsWith(`${join(PI_REQUEST_AUTH_TEST_PACKAGE_DIRECTORY, 'node_modules')}${sep}`)).toBe(true);
       const resolutionProbePath = join(root, 'resolution-probe.mjs');
       await writeFile(
         resolutionProbePath,
@@ -1456,7 +1404,7 @@ describe('Pi request-auth exact-version AgentSession composed matrix', () => {
       const previousVersion = process.env.HAPPIER_PI_REQUEST_AUTH_PRODUCER_VERSION;
       process.env.HAPPIER_PI_REQUEST_AUTH_PRODUCER_VERSION = version;
       try {
-        for (const scenario of scenarios(version)) {
+        for (const scenario of scenarios()) {
           await runScenario(version, modules, scenario);
         }
       } finally {

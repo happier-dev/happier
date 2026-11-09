@@ -9,7 +9,6 @@ export type {
     ProviderLimitCategory,
     ProviderLimitEvidenceClassification,
     ProviderLimitEvidenceConfidence,
-    ProviderLimitEvidenceContext,
     ProviderLimitEvidenceProvenance,
 } from '../cloud/providerLimitEvidence.js';
 export type { AuthCallbackMode } from '../connectedAccounts.js';

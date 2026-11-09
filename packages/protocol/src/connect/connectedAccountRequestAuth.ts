@@ -63,101 +63,9 @@ export const ConnectedAccountRequestAuthErrorResponseV1Schema = lazyZodSchema(()
   }),
 }));
 
-export const PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1 = [
-  '0.81.0',
-  '0.81.1',
-  '0.82.0',
-  '0.82.1',
-] as const;
-
-export const PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1 = Object.freeze({
-  openAiCodexChatgptUsageLimit: 'openai-codex-chatgpt-usage-limit-v1',
-  anthropicAccountExhaustion: 'anthropic-sdk-429-account-exhaustion-v1',
-  anthropicRateLimit: 'anthropic-sdk-429-rate-limit-v1',
-  anthropicAuthentication: 'anthropic-sdk-401-authentication-v1',
-  anthropicOverloaded: 'anthropic-sdk-529-overloaded-v1',
-  anthropicApiError500: 'anthropic-sdk-500-api-error-v1',
-  anthropicApiError502: 'anthropic-sdk-502-api-error-v1',
-  anthropicApiError503: 'anthropic-sdk-503-api-error-v1',
-  anthropicApiError504: 'anthropic-sdk-504-api-error-v1',
-} as const);
-
-/**
- * Exact private-wire identities and canonical outcomes for Pi terminal evidence.
- *
- * Provider formatting and Pi retry-predicate matching remain owned by Plugin SDK's canonical
- * provider-limit classifier. This projection prevents a capability holder from inventing a
- * producer/provider/signature tuple or pairing a retained signature with a different category,
- * scope, or observed status at the daemon boundary.
- */
-export const PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURES_V1 = Object.freeze([
-  Object.freeze({
-    provider: 'openai-codex',
-    signatureId:
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.openAiCodexChatgptUsageLimit,
-    httpStatus: 429,
-    limitCategory: 'usage_limit',
-    quotaScope: 'account',
-  }),
-  Object.freeze({
-    provider: 'anthropic',
-    signatureId:
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicAccountExhaustion,
-    httpStatus: 429,
-    limitCategory: 'usage_limit',
-    quotaScope: 'account',
-  }),
-  Object.freeze({
-    provider: 'anthropic',
-    signatureId: PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicRateLimit,
-    httpStatus: 429,
-    limitCategory: 'rate_limit',
-    quotaScope: 'unknown',
-  }),
-  Object.freeze({
-    provider: 'anthropic',
-    signatureId:
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicAuthentication,
-    httpStatus: 401,
-    limitCategory: 'auth_invalid',
-    quotaScope: 'unknown',
-  }),
-  Object.freeze({
-    provider: 'anthropic',
-    signatureId: PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicOverloaded,
-    httpStatus: 529,
-    limitCategory: 'capacity',
-    quotaScope: 'unknown',
-  }),
-  ...([
-    [
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicApiError500,
-      500,
-    ],
-    [
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicApiError502,
-      502,
-    ],
-    [
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicApiError503,
-      503,
-    ],
-    [
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicApiError504,
-      504,
-    ],
-  ] as const).map(([signatureId, httpStatus]) => Object.freeze({
-    provider: 'anthropic' as const,
-    signatureId,
-    httpStatus,
-    limitCategory: 'capacity' as const,
-    quotaScope: 'unknown' as const,
-  })),
-] as const);
-
-const RequestAuthAccessTokenSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(128 * 1024)));
 const RequestAuthHeaderNameSchema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(128), z.regex(/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u)));
-const RequestAuthHeaderValueSchema = lazyZodSchema(() => z.string().check(z.maxLength(16 * 1024), z.refine((value) => !/[\r\n]/u.test(value), 'Header values cannot contain line breaks.')));
+// Preserve the former accessToken bound after including its Bearer scheme.
+const RequestAuthHeaderValueSchema = lazyZodSchema(() => z.string().check(z.maxLength(128 * 1024 + 'Bearer '.length), z.refine((value) => !/[\r\n]/u.test(value), 'Header values cannot contain line breaks.')));
 
 const ConnectedAccountRequestAuthCanonicalHttpsOriginV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(2_048), z.superRefine((value, context) => {
     let url: URL;
@@ -203,13 +111,6 @@ export const ConnectedAccountRequestAuthMaterializationV1Schema = lazyZodSchema(
       });
     }
     seen.add(headerName);
-  }
-  if (!seen.has('authorization')) {
-    context.addIssue({
-      code: 'custom',
-      path: ['headerNames'],
-      message: 'Request-auth materialization must request authorization.',
-    });
   }
 })));
 
@@ -260,7 +161,7 @@ export const QualifiedConnectedAccountRequestAuthUsesV1Schema = lazyZodSchema(()
   }
 })));
 
-export const RequestAuthRequiredHeadersV1Schema = lazyZodSchema(() => z.record(
+export const RequestAuthHeaderMapV1Schema = lazyZodSchema(() => z.record(
   RequestAuthHeaderNameSchema,
   RequestAuthHeaderValueSchema,
 ).check(z.superRefine((headers, context) => {
@@ -268,24 +169,20 @@ export const RequestAuthRequiredHeadersV1Schema = lazyZodSchema(() => z.record(
   if (names.length > 32) {
     context.addIssue({
       code: 'custom',
-      message: 'At most 32 required request-auth headers are allowed.',
+      message: 'At most 32 request-auth headers are allowed.',
     });
   }
   const seen = new Set<string>();
   for (const name of names) {
     const normalized = name.toLowerCase();
-    if (normalized === 'authorization') {
-      context.addIssue({
-        code: 'custom',
-        path: [name],
-        message: 'Authorization is owned by accessToken.',
-      });
+    if (normalized !== 'authorization' && headers[name]!.length > 16 * 1024) {
+      context.addIssue({ code: 'custom', path: [name], message: 'Request-auth header exceeds its value bound.' });
     }
     if (seen.has(normalized)) {
       context.addIssue({
         code: 'custom',
         path: [name],
-        message: 'Required request-auth header names must be unique case-insensitively.',
+        message: 'Request-auth header names must be unique case-insensitively.',
       });
     }
     seen.add(normalized);
@@ -304,9 +201,11 @@ export const RequestAuthCredentialContextV1Schema = lazyZodSchema(() => z.strict
   failingAccessTokenFingerprint: z.optional(RequestAuthTokenFingerprintV1Schema),
 }));
 
-export const OAuthBearerLeaseV1Schema = lazyZodSchema(() => z.strictObject({
-  accessToken: RequestAuthAccessTokenSchema,
-  requiredHeaders: z.optional(RequestAuthRequiredHeadersV1Schema),
+export const RequestAuthFactsV1Schema = lazyZodSchema(() => z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])));
+
+export const RequestAuthHeadersV1Schema = lazyZodSchema(() => z.strictObject({
+  headers: RequestAuthHeaderMapV1Schema,
+  facts: RequestAuthFactsV1Schema,
   expiresAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   credentialContext: RequestAuthCredentialContextV1Schema,
 }));
@@ -316,28 +215,9 @@ export const ConnectedAccountRequestAuthLookupRequestV1Schema = lazyZodSchema(()
 }));
 
 
-export const ProviderFailureEvidenceSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({
-    kind: z.literal('structured'),
-  }),
-  z.strictObject({
-    kind: z.literal('pinnedProviderTerminal'),
-    producer: z.literal('pi'),
-    producerVersion: z.enum(PI_REQUEST_AUTH_PINNED_TERMINAL_PRODUCER_VERSIONS_V1),
-    provider: z.enum(['anthropic', 'openai-codex']),
-    signatureId: z.enum([
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.openAiCodexChatgptUsageLimit,
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicAccountExhaustion,
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicRateLimit,
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicAuthentication,
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicOverloaded,
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicApiError500,
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicApiError502,
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicApiError503,
-      PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURE_IDS_V1.anthropicApiError504,
-    ]),
-  }),
-]));
+export const ProviderFailureEvidenceSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('structured'),
+}));
 
 export const BoundedProviderFailureEvidenceV1Schema = lazyZodSchema(() => z.strictObject({
   httpStatus: z.optional(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
@@ -347,29 +227,7 @@ export const BoundedProviderFailureEvidenceV1Schema = lazyZodSchema(() => z.stri
   limitCategory: ConnectedServiceLimitCategoryCanonicalV1Schema,
   quotaScope: ProviderAccountUsageQuotaScopeV1Schema,
   evidenceSource: ProviderFailureEvidenceSourceV1Schema,
-}).check(z.superRefine((evidence, context) => {
-  const evidenceSource = evidence.evidenceSource;
-  if (evidenceSource.kind !== 'pinnedProviderTerminal') return;
-  const signature = PI_REQUEST_AUTH_PINNED_TERMINAL_SIGNATURES_V1.find((candidate) => (
-    candidate.provider === evidenceSource.provider
-    && candidate.signatureId === evidenceSource.signatureId
-  ));
-  if (
-    !signature
-    || signature.limitCategory !== evidence.limitCategory
-    || signature.quotaScope !== evidence.quotaScope
-    || (
-      evidence.httpStatus !== undefined
-      && signature.httpStatus !== evidence.httpStatus
-    )
-  ) {
-    context.addIssue({
-      code: 'custom',
-      path: ['evidenceSource'],
-      message: 'Pinned Provider terminal evidence must match the retained Pi signature frontier.',
-    });
-  }
-})));
+}));
 
 const ConnectedAccountAuthenticationFailureV1Schema = lazyZodSchema(() => z.strictObject({
   class: z.literal('authentication'),
@@ -420,7 +278,7 @@ export const RequestAuthFailureOutcomeV1Schema = lazyZodSchema(() => z.strictObj
 
 export const ConnectedAccountRequestAuthLookupSuccessResponseV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(true),
-  value: OAuthBearerLeaseV1Schema,
+  value: RequestAuthHeadersV1Schema,
 }));
 
 export const ConnectedAccountRequestAuthFailureSuccessResponseV1Schema = lazyZodSchema(() => z.strictObject({
@@ -428,7 +286,8 @@ export const ConnectedAccountRequestAuthFailureSuccessResponseV1Schema = lazyZod
   value: RequestAuthFailureOutcomeV1Schema,
 }));
 
-export type RequestAuthRequiredHeadersV1 = z.infer<typeof RequestAuthRequiredHeadersV1Schema>;
+export type RequestAuthFactsV1 = z.infer<typeof RequestAuthFactsV1Schema>;
+export type RequestAuthHeaderMapV1 = z.infer<typeof RequestAuthHeaderMapV1Schema>;
 export type ConnectedAccountRequestAuthMaterializationV1 = Readonly<{
   kind: 'httpHeaders';
   origin: string;
@@ -443,7 +302,7 @@ export type QualifiedConnectedAccountRequestAuthUseV1 = Readonly<{
   materialization: ConnectedAccountRequestAuthMaterializationV1;
 }>;
 export type RequestAuthCredentialContextV1 = z.infer<typeof RequestAuthCredentialContextV1Schema>;
-export type OAuthBearerLeaseV1 = z.infer<typeof OAuthBearerLeaseV1Schema>;
+export type RequestAuthHeadersV1 = z.infer<typeof RequestAuthHeadersV1Schema>;
 export type ConnectedAccountRequestAuthLookupRequestV1 = z.infer<
   typeof ConnectedAccountRequestAuthLookupRequestV1Schema
 >;

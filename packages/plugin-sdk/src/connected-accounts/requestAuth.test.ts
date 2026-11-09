@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
+  RequestAuthHeadersV1Schema,
 } from '@happier-dev/protocol/connect/connected-account-request-auth';
 
 import {
@@ -30,8 +31,6 @@ const purpose = {
   },
   purpose: 'model-request',
 } as const;
-
-const requestAuthResponseMaxBytes = 256 * 1024;
 
 async function startLoopbackServer(listener: RequestListener): Promise<Readonly<{
   port: number;
@@ -65,7 +64,6 @@ function createChunkedResponse(
   status: number,
 ): Readonly<{
   response: Response;
-  producedBytes: () => number;
   wasCancelled: () => boolean;
 }> {
   const encoded = new TextEncoder().encode(body);
@@ -90,7 +88,6 @@ function createChunkedResponse(
   });
   return {
     response,
-    producedBytes: () => offset,
     wasCancelled: () => cancelled,
   };
 }
@@ -179,25 +176,55 @@ function writeTestCapabilityFileSync(
 }
 
 describe('generated connected-account request-auth client source', () => {
+  it('preserves schema-valid scalar facts larger than the former response cap', async () => {
+    const { capability } = await configureFiles();
+    const material = RequestAuthHeadersV1Schema.parse({
+      headers: { 'x-api-key': 'fixture-key' },
+      facts: { projectId: 'x'.repeat(300_000) },
+      credentialContext: {
+        account: { service: { pluginId: 'fixture.service', localId: 'subscription' }, accountId: 'selected' },
+        credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+      },
+    });
+    const streamed = createChunkedResponse(JSON.stringify({ ok: true, value: material }), 200);
+    globalThis.fetch = vi.fn(async () => streamed.response);
+    const client = await createConnectedAccountRequestAuthClient({ capabilityFile: capability.path });
+
+    await expect(client.lookupConnectedAccountRequestAuth({ purpose })).resolves.toEqual(material);
+    expect(streamed.wasCancelled()).toBe(false);
+    expect(streamed.response.body?.locked).toBe(false);
+  });
+
+  it.each([
+    { authorization: 'Basic Zml4dHVyZTpwYXNz' },
+    { 'x-api-key': 'fixture-key' },
+  ])('decodes complete header material and scalar facts without inventing Bearer %#', async headers => {
+    await configureFiles();
+    const client = await loadGeneratedClient();
+    const material = { headers, facts: { projectId: 'fixture-project', attempt: 2, usingApi: true },
+      credentialContext: { account: { service: { pluginId: 'fixture.service', localId: 'subscription' }, accountId: 'selected' }, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS' } };
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true, value: material })));
+    await expect(client.lookupConnectedAccountRequestAuth({ purpose })).resolves.toEqual(material);
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ ok: true, value: { ...material, facts: { nested: { projectId: 'fixture' } } } })));
+    await expect(client.lookupConnectedAccountRequestAuth({ purpose })).rejects.toThrow('happier_request_auth_schema_invalid');
+  });
+
   it('keeps the callable host client on the same transport and rereads its explicit capability file', async () => {
     const { capability } = await configureFiles();
     delete process.env[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV];
     const receivedCapabilities: string[] = [];
     globalThis.fetch = vi.fn(async (_url, init) => {
       receivedCapabilities.push(new Headers(init?.headers).get(CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER) ?? '');
-      return new Response(JSON.stringify({ ok: true, value: {
-        accessToken: 'host-access',
-        credentialContext: {
+      return new Response(JSON.stringify({ ok: true, value: { headers: { authorization: 'Bearer ' + ('host-access') }, facts: {}, credentialContext: {
           account: { service: { pluginId: 'happier.connected-account.test', localId: 'subscription' }, accountId: 'work' },
           credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-        },
-      } }), { status: 200 });
+        } } }), { status: 200 });
     });
     const client = await createConnectedAccountRequestAuthClient({ capabilityFile: capability.path });
-    expect((await client.lookupConnectedAccountRequestAuth({ purpose })).accessToken).toBe('host-access');
+    expect((await client.lookupConnectedAccountRequestAuth({ purpose })).headers.authorization).toBe('Bearer host-access');
     const rotatedCapability = randomBytes(32).toString('base64url');
     writeTestCapabilityFileSync(capability.path, 'run-2', rotatedCapability);
-    expect((await client.lookupConnectedAccountRequestAuth({ purpose })).accessToken).toBe('host-access');
+    expect((await client.lookupConnectedAccountRequestAuth({ purpose })).headers.authorization).toBe('Bearer host-access');
     expect(receivedCapabilities).toEqual([capability.document.capability, rotatedCapability]);
   });
 
@@ -206,9 +233,7 @@ describe('generated connected-account request-auth client source', () => {
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     globalThis.fetch = vi.fn(async (url) => {
       const value = String(url).endsWith('/lookup')
-        ? {
-            accessToken: 'access',
-            credentialContext: {
+        ? { headers: { authorization: 'Bearer ' + ('access') }, facts: {}, credentialContext: {
               account: {
                 service: {
                   pluginId: 'happier.connected-account.test',
@@ -217,8 +242,7 @@ describe('generated connected-account request-auth client source', () => {
                 accountId: 'work',
               },
               credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-            },
-          }
+            } }
         : { status: 'current_changed' };
       return new Response(JSON.stringify({ ok: true, value }), {
         status: 200,
@@ -259,9 +283,7 @@ describe('generated connected-account request-auth client source', () => {
       seenCapabilities.push(headers['x-happier-connected-account-capability']);
       return new Response(JSON.stringify({
         ok: true,
-        value: {
-          accessToken: 'access',
-          credentialContext: {
+        value: { headers: { authorization: 'Bearer ' + ('access') }, facts: {}, credentialContext: {
             account: {
               service: {
                 pluginId: 'happier.connected-account.test',
@@ -270,8 +292,7 @@ describe('generated connected-account request-auth client source', () => {
               accountId: 'work',
             },
             credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-          },
-        },
+          } },
       }), { status: 200, headers: { 'content-type': 'application/json' } });
     }) as typeof fetch;
     const client = await loadGeneratedClient();
@@ -346,9 +367,7 @@ describe('generated connected-account request-auth client source', () => {
       urls.push(String(url));
       bodies.push(JSON.parse(String(init?.body)));
       const value = String(url).endsWith('/lookup')
-        ? {
-            accessToken: 'access',
-            credentialContext: {
+        ? { headers: { authorization: 'Bearer ' + ('access') }, facts: {}, credentialContext: {
               account: {
                 service: {
                   pluginId: 'happier.connected-account.test',
@@ -357,8 +376,7 @@ describe('generated connected-account request-auth client source', () => {
                 accountId: 'work',
               },
               credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-            },
-          }
+            } }
         : { status: 'current_changed' };
       return new Response(JSON.stringify({ ok: true, value }), {
         status: 200,
@@ -418,7 +436,7 @@ describe('generated connected-account request-auth client source', () => {
     });
   });
 
-  it('rejects unpinned terminal provenance before crossing the private transport', async () => {
+  it('rejects retired terminal provenance before crossing the private transport', async () => {
     await configureFiles();
     const fetchRequestAuth = vi.fn();
     globalThis.fetch = fetchRequestAuth as typeof fetch;
@@ -445,9 +463,9 @@ describe('generated connected-account request-auth client source', () => {
           evidenceSource: {
             kind: 'pinnedProviderTerminal',
             producer: 'pi',
-            producerVersion: '0.83.0',
+            producerVersion: '0.82.0',
             provider: 'anthropic',
-            signatureId: 'anthropic-overloaded-error-v1',
+            signatureId: 'anthropic-sdk-529-overloaded-v1',
           },
         },
       },
@@ -501,9 +519,7 @@ describe('generated connected-account request-auth client source', () => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({
         ok: true,
-        value: {
-          accessToken: 'redirect-destination-token',
-          credentialContext: {
+        value: { headers: { authorization: 'Bearer ' + ('redirect-destination-token') }, facts: {}, credentialContext: {
             account: {
               service: {
                 pluginId: 'happier.connected-account.test',
@@ -512,8 +528,7 @@ describe('generated connected-account request-auth client source', () => {
               accountId: 'work',
             },
             credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-          },
-        },
+          } },
       }));
     });
     let brokerRequests = 0;
@@ -529,9 +544,7 @@ describe('generated connected-account request-auth client source', () => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({
         ok: true,
-        value: {
-          accessToken: 'exact-loopback-token',
-          credentialContext: {
+        value: { headers: { authorization: 'Bearer ' + ('exact-loopback-token') }, facts: {}, credentialContext: {
             account: {
               service: {
                 pluginId: 'happier.connected-account.test',
@@ -540,8 +553,7 @@ describe('generated connected-account request-auth client source', () => {
               accountId: 'work',
             },
             credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-          },
-        },
+          } },
       }));
     });
     try {
@@ -559,84 +571,12 @@ describe('generated connected-account request-auth client source', () => {
       });
 
       await expect(client.lookupConnectedAccountRequestAuth({ purpose }))
-        .resolves.toMatchObject({ accessToken: 'exact-loopback-token' });
+        .resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('exact-loopback-token') }, facts: {},  });
       expect(brokerRequests).toBe(2);
       expect(destinationRequests).toBe(0);
     } finally {
       await Promise.all([broker.close(), destination.close()]);
     }
-  });
-
-  it.each([
-    {
-      label: 'success',
-      status: 200,
-      envelope: {
-        ok: true,
-        value: {
-          accessToken: 'oversized',
-          credentialContext: {
-            account: {
-              service: {
-                pluginId: 'happier.connected-account.test',
-                localId: 'subscription',
-              },
-              accountId: 'work',
-            },
-            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-          },
-        },
-      },
-      expected: {
-        code: 'happier_request_auth_response_too_large',
-        status: 200,
-      },
-    },
-    {
-      label: 'error',
-      status: 409,
-      envelope: {
-        ok: false,
-        error: { code: 'request_auth_not_active' },
-      },
-      expected: {
-        code: 'happier_request_auth_response_too_large',
-        status: 409,
-      },
-    },
-    {
-      label: 'unauthorized',
-      status: 401,
-      envelope: {
-        ok: false,
-        error: { code: 'request_auth_unauthorized' },
-      },
-      expected: {
-        code: 'happier_request_auth_response_too_large',
-        status: 401,
-      },
-    },
-  ])('bounds an oversized $label response before interpreting its envelope', async ({
-    status,
-    envelope,
-    expected,
-  }) => {
-    await configureFiles();
-    const body = JSON.stringify(envelope).padEnd(requestAuthResponseMaxBytes * 2, ' ');
-    const streamed = createChunkedResponse(body, status);
-    const fetchRequestAuth = vi.fn(async () => streamed.response);
-    globalThis.fetch = fetchRequestAuth as typeof fetch;
-    const client = await loadGeneratedClient();
-
-    await expect(client.lookupConnectedAccountRequestAuth({ purpose }))
-      .rejects.toMatchObject({
-        name: 'ConnectedAccountRequestAuthTransportError',
-        ...expected,
-      });
-    expect(fetchRequestAuth).toHaveBeenCalledOnce();
-    expect(streamed.producedBytes()).toBeLessThan(new TextEncoder().encode(body).byteLength);
-    expect(streamed.wasCancelled()).toBe(true);
-    expect(streamed.response.body?.locked).toBe(false);
   });
 
   it.each([
@@ -679,7 +619,7 @@ describe('generated connected-account request-auth client source', () => {
       });
   });
 
-  it('releases the response stream lock after a bounded read failure', async () => {
+  it('releases the response stream lock after a read failure', async () => {
     await configureFiles();
     let pullCount = 0;
     const response = new Response(new ReadableStream<Uint8Array>({
@@ -707,35 +647,6 @@ describe('generated connected-account request-auth client source', () => {
       });
     expect(fetchRequestAuth).toHaveBeenCalledOnce();
     expect(response.body?.locked).toBe(false);
-  });
-
-  it('accepts a valid response at the exact 256 KiB boundary', async () => {
-    await configureFiles();
-    const envelope = {
-      ok: true,
-      value: {
-        accessToken: 'boundary',
-        credentialContext: {
-          account: {
-            service: {
-              pluginId: 'happier.connected-account.test',
-              localId: 'subscription',
-            },
-            accountId: 'work',
-          },
-          credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-        },
-      },
-    };
-    const body = JSON.stringify(envelope).padEnd(requestAuthResponseMaxBytes, ' ');
-    globalThis.fetch = vi.fn(async () => new Response(body, {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    })) as typeof fetch;
-    const client = await loadGeneratedClient();
-
-    await expect(client.lookupConnectedAccountRequestAuth({ purpose }))
-      .resolves.toMatchObject({ accessToken: 'boundary' });
   });
 
   it('reclassifies an atomically replaced endpoint/capability tuple after 401 without resending', async () => {
@@ -840,9 +751,7 @@ describe('generated connected-account request-auth client source', () => {
       if (tuple.capability === replacementCapability && tuple.port === replacementPort) {
         return new Response(JSON.stringify({
           ok: true,
-          value: {
-            accessToken: 'replacement-lease',
-            credentialContext: {
+          value: { headers: { authorization: 'Bearer ' + ('replacement-lease') }, facts: {}, credentialContext: {
               account: {
                 service: {
                   pluginId: 'happier.connected-account.test',
@@ -851,8 +760,7 @@ describe('generated connected-account request-auth client source', () => {
                 accountId: 'work',
               },
               credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-            },
-          },
+            } },
         }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -883,7 +791,7 @@ describe('generated connected-account request-auth client source', () => {
       replacementPort,
     );
     await expect(client.lookupConnectedAccountRequestAuth({ purpose }))
-      .resolves.toMatchObject({ accessToken: 'replacement-lease' });
+      .resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('replacement-lease') }, facts: {},  });
     expect(observed).toEqual([
       { port: 43210, capability: capability.document.capability },
       { port: replacementPort, capability: replacementCapability },

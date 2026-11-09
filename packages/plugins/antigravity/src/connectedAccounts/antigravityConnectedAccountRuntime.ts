@@ -1,5 +1,5 @@
 import { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigravity/oauth-profile';
-import type { ConnectedAccountAuthenticationContext, ConnectedAccountAuthenticationModeRuntime, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { parseConnectedAccountTokenEndpointFailure, type ConnectedAccountAuthenticationContext, type ConnectedAccountAuthenticationModeRuntime, type ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readAntigravityQuota } from './quota.js';
 import type { readAgyNativeCredential } from './nativeCredentials.js';
 
@@ -11,7 +11,16 @@ const tokenFileId = 'antigravity-acp/acp_token.json';
 const settingsFileId = 'antigravity-acp/settings.json';
 
 function usesOauthCredentials(modeId: string) { return modeId === 'oauth-personal' || modeId === 'native-import'; }
-function diagnostic(code: string, message: string) { return { code, severity: 'error' as const, message }; }
+function diagnostic(code: string, message: string,
+  failure?: ReturnType<typeof parseConnectedAccountTokenEndpointFailure>, httpStatus?: number) {
+  return { code, severity: 'error' as const, message,
+    ...(failure === undefined ? {} : { details: {
+      credentialRefreshFailureKind: failure.kind,
+      ...(failure.providerErrorCode === undefined ? {} : { providerErrorCode: failure.providerErrorCode }),
+      ...(httpStatus === undefined ? {} : { httpStatus }),
+    } }),
+  };
+}
 function text(value: unknown) { return typeof value === 'string' ? value.trim() : ''; }
 function parseBody(body: Uint8Array): Record<string, unknown> | null {
   try { const value: unknown = JSON.parse(new TextDecoder().decode(body)); return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null; } catch { return null; }
@@ -42,7 +51,7 @@ function connected(tokens: Tokens, attempt: ConnectedAccountAuthenticationContex
   // The host matches this verified ID against the captured reconnect account.
   // Reject missing proof here before either acquisition mode stages a replacement grant.
   if (attempt.kind === 'reconnect' && !tokens.providerAccountId) return { status: 'rejected' as const, diagnostic: diagnostic('antigravity_reconnect_identity_unavailable', 'A verified Antigravity account ID is required to reconnect this account.') };
-  return { status: 'connected' as const, displayName: tokens.providerEmail || 'Google Antigravity', scopes: tokens.scopes,
+  return { status: 'connected' as const, credentialKind: 'oauth' as const, displayName: tokens.providerEmail || 'Google Antigravity', scopes: tokens.scopes,
     ...(tokens.providerAccountId ? { accountId: tokens.providerAccountId } : {}),
     ...((tokens.providerAccountId || tokens.providerEmail) ? { providerIdentity: {
       ...(tokens.providerAccountId ? { accountId: tokens.providerAccountId } : {}), ...(tokens.providerEmail ? { email: tokens.providerEmail } : {}),
@@ -62,8 +71,13 @@ async function exchange(body: Readonly<Record<string, string>>, context: Pick<Co
     if (signal.aborted) throw error;
     return { status: 'outcomeUnknown', diagnostic: diagnostic('antigravity_oauth_outcome_unknown', 'Google did not return a conclusive Antigravity OAuth result.') };
   }
-  if (response.status >= 400 && response.status < 500 && response.status !== 429) return { status: 'rejected', diagnostic: diagnostic('antigravity_oauth_rejected', 'Google rejected the Antigravity OAuth request.') };
-  if (response.status < 200 || response.status >= 300) return { status: 'outcomeUnknown', diagnostic: diagnostic('antigravity_oauth_outcome_unknown', 'Google did not return a conclusive Antigravity OAuth result.') };
+  if (response.status < 200 || response.status >= 300) {
+    const failure = parseConnectedAccountTokenEndpointFailure(response);
+    if (response.status >= 400 && response.status < 500 && response.status !== 429) return {
+      status: 'rejected', diagnostic: diagnostic('antigravity_oauth_rejected', 'Google rejected the Antigravity OAuth request.', failure, response.status),
+    };
+    return { status: 'outcomeUnknown', diagnostic: diagnostic('antigravity_oauth_outcome_unknown', 'Google did not return a conclusive Antigravity OAuth result.', failure, response.status) };
+  }
   const result = parseBody(response.body);
   const accessToken = text(result?.access_token);
   const refreshToken = text(result?.refresh_token) || fallback?.refreshToken || '';
@@ -169,23 +183,39 @@ export function createAntigravityConnectedAccountRuntime(readNativeCredential?: 
       refreshToken, accessToken: await read(context.credentials, 'accessToken', options), expiresAtMs: null, scopes: await scopes(context.credentials, options),
       providerAccountId: await read(context.credentials, 'providerAccountId', options), providerEmail: await read(context.credentials, 'providerEmail', options),
     }, options);
-    if (result.status === 'rejected') return { status: 'reconnectRequired', diagnostic: result.diagnostic };
+    if (result.status === 'rejected') return {
+      status: result.diagnostic.details?.credentialRefreshFailureKind === 'invalid_grant' ? 'reconnectRequired' : 'outcomeUnknown',
+      diagnostic: result.diagnostic,
+    };
     if (result.status !== 'success') return result;
     await writeTokens(context.stagedCredentials, result.tokens, options);
     await writeOptional(context.stagedCredentials, 'projectId', await read(context.credentials, 'projectId', options), options);
-    return { status: 'connected', displayName: result.tokens.providerEmail || 'Google Antigravity', scopes: result.tokens.scopes };
+    return { status: 'connected', credentialKind: 'oauth', displayName: result.tokens.providerEmail || 'Google Antigravity', scopes: result.tokens.scopes,
+      ...(result.tokens.expiresAtMs === null ? {} : { expiresAt: result.tokens.expiresAtMs }),
+    };
   },
   async revoke() { return { status: 'remoteUnsupported' }; },
   async status(context, options) {
     if (!usesOauthCredentials(context.configuration.target.modeId) || !await read(context.credentials, 'accessToken', options)) return { status: 'unavailable', diagnostic: diagnostic('antigravity_credentials_unavailable', 'Reconnect the Antigravity account to restore its OAuth credentials.') };
     const expiry = Number(await read(context.credentials, 'expiresAtMs', options));
-    const facts = { displayName: await read(context.credentials, 'providerEmail', options) || 'Google Antigravity', scopes: await scopes(context.credentials, options) };
+    const facts = { credentialKind: 'oauth' as const, displayName: await read(context.credentials, 'providerEmail', options) || 'Google Antigravity', scopes: await scopes(context.credentials, options),
+      ...(Number.isFinite(expiry) && expiry > 0 ? { expiresAt: expiry } : {}),
+    };
     if (Number.isFinite(expiry) && expiry > 0 && expiry <= Date.now()) return { status: 'expired', ...facts, diagnostic: diagnostic('antigravity_access_token_expired', 'The Antigravity access token has expired.') };
     return { status: 'connected', ...facts };
   },
   quota: readAntigravityQuota,
   async materialize(request, context, options) {
     if (!usesOauthCredentials(context.configuration.target.modeId)) throw new Error('Antigravity personal OAuth materialization requires its selected authentication mode.');
+    if (request.kind === 'httpHeaders') {
+      if (request.headerNames.some(name => name !== 'authorization')) throw new Error('Antigravity personal OAuth cannot materialize an unrelated header.');
+      const accessToken = await read(context.credentials, 'accessToken', options);
+      if (!accessToken) throw new Error('Antigravity OAuth credentials are unavailable.');
+      const projectId = await read(context.credentials, 'projectId', options);
+      const expiry = Number(await read(context.credentials, 'expiresAtMs', options));
+      return { kind: 'httpHeaders', headers: request.headerNames.includes('authorization') ? { authorization: `Bearer ${accessToken}` } : {},
+        facts: projectId ? { projectId } : {}, ...(Number.isSafeInteger(expiry) && expiry > 0 ? { expiresAt: expiry } : {}) };
+    }
     if (request.kind === 'environment') {
       if (request.keys.some((key) => key !== 'AGY_ACP_FORCE_FILE_STORAGE')) throw new Error('Antigravity personal OAuth cannot materialize an unrelated environment key.');
       const env: Record<string, string> = request.keys.includes('AGY_ACP_FORCE_FILE_STORAGE') ? { AGY_ACP_FORCE_FILE_STORAGE: '1' } : {};

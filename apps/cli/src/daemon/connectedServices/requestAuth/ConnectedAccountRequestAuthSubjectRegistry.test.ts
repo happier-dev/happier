@@ -112,12 +112,12 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
                 credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
                 group: { groupId: 'fallbacks', generation: 0 },
             }),
-            materializeBearer: async ({ resolved }) => ({ accessToken: `${resolved.account.accountId}-token` }),
+            materializeHeaders: async ({ resolved }) => ({ headers: { authorization: 'Bearer ' + (`${resolved.account.accountId}-token`) }, facts: {},  }),
             refreshAfterAuthFailure: async () => ({ status: 'current_unchanged' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
         const lease = await owner.lookupRequestAuth({ subject: principal!, purpose });
-        expect(lease.accessToken).toBe('requester-token');
+        expect(lease.headers.authorization!.replace(/^Bearer /u, '')).toBe('requester-token');
         expect(lease.credentialContext.account.accountId).toBe('requester');
         requesterCurrent = false;
         await expect(owner.lookupRequestAuth({ subject: principal!, purpose })).rejects.toMatchObject({ code: 'request_auth_not_active' });
@@ -212,7 +212,7 @@ describe('ConnectedAccountRequestAuthSubjectRegistry', () => {
                     }
                     : {}),
             } satisfies ConnectedAccountRequestAuthResolvedBinding),
-            materializeBearer: async () => ({ accessToken: 'secret' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('secret') }, facts: {},  }),
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_changed' }),
         });

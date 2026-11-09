@@ -52,8 +52,8 @@ type TestProvider = Readonly<{
 
 type TestRequestAuthClient = Readonly<{
   lookup: (input: Readonly<{ purpose: unknown; signal?: AbortSignal }>) => Promise<Readonly<{
-    accessToken: string;
-    requiredHeaders?: Readonly<Record<string, string>>;
+    headers: Readonly<Record<string, string>>;
+    facts: Readonly<Record<string, string | number | boolean>>;
     credentialContext: Readonly<Record<string, unknown>>;
   }>>;
   reportAuth: (input: Readonly<Record<string, unknown>>) => Promise<Readonly<{ status: string }>>;
@@ -151,7 +151,8 @@ function testModel(
 function defaultRequestAuth(overrides: Partial<TestRequestAuthClient> = {}): TestRequestAuthClient {
   return {
     lookup: async () => ({
-      accessToken: 'lease-token',
+      headers: { authorization: 'Bearer lease-token' },
+      facts: {},
       credentialContext: {
         account: {
           service: { pluginId: 'happier.connected-accounts', localId: 'service' },
@@ -318,7 +319,8 @@ describe('buildPiRequestAuthExtensionSource', () => {
         return new Response(JSON.stringify({
           ok: true,
           value: {
-            accessToken: 'asset-lease-token',
+            headers: { authorization: 'Bearer asset-lease-token' },
+            facts: {},
             credentialContext: {
               account: {
                 service: {
@@ -372,6 +374,7 @@ describe('buildPiRequestAuthExtensionSource', () => {
       expect(upstreamOptions).toEqual([
         expect.objectContaining({
           apiKey: 'asset-lease-token',
+          headers: { authorization: 'Bearer asset-lease-token' },
           maxRetries: 0,
         }),
       ]);
@@ -460,6 +463,31 @@ describe('buildPiRequestAuthExtensionSource', () => {
     },
   );
 
+  it('refuses non-Bearer material before invoking a native token provider', async () => {
+    const attempts: TestStreamOptions[] = [];
+    const base = provider('anthropic', (_model, _context, options) => {
+      attempts.push(options ?? {});
+      return events('anthropic', [])(_model, _context, options);
+    });
+    const registered = await loadExtension({
+      providers: [base],
+      purposes: { anthropic: PURPOSES.anthropic },
+      requestAuth: defaultRequestAuth({
+        lookup: async () => ({
+          ...(await defaultRequestAuth().lookup({ purpose: PURPOSES.anthropic })),
+          headers: { authorization: 'Basic fixture' },
+        }),
+      }),
+    });
+
+    const result = await collect(registered[0].stream(testModel('anthropic'), { messages: [] }));
+    expect(attempts).toEqual([]);
+    expect(result).toMatchObject([{
+      type: 'error',
+      error: { errorMessage: 'happier_pi_request_auth_bearer_unavailable' },
+    }]);
+  });
+
   it('looks up the next current lease independently for every upstream attempt', async () => {
     const seenTokens: string[] = [];
     let lookupCount = 0;
@@ -475,7 +503,8 @@ describe('buildPiRequestAuthExtensionSource', () => {
         lookup: async () => {
           lookupCount += 1;
           return {
-            accessToken: `lease-${lookupCount}`,
+            headers: { authorization: `Bearer lease-${lookupCount}` },
+            facts: {},
             credentialContext: {
               account: {
                 service: { pluginId: 'happier.connected-accounts', localId: 'anthropic' },
@@ -508,10 +537,11 @@ describe('buildPiRequestAuthExtensionSource', () => {
       purposes: { anthropic: PURPOSES.anthropic },
       requestAuth: defaultRequestAuth({
         lookup: async () => ({
-          accessToken: 'current-token',
-          requiredHeaders: {
+          headers: {
+            authorization: 'Bearer current-token',
             'X-Account-Identity': 'current-account',
           },
+          facts: {},
           credentialContext: {
             account: {
               service: { pluginId: 'happier.connected-accounts', localId: 'anthropic' },
@@ -543,6 +573,7 @@ describe('buildPiRequestAuthExtensionSource', () => {
       maxRetries: 0,
       headers: {
         'X-Unrelated': 'preserved',
+        authorization: 'Bearer current-token',
         'X-Account-Identity': 'current-account',
       },
     })]);
@@ -581,10 +612,13 @@ describe('buildPiRequestAuthExtensionSource', () => {
         lookup: async () => {
           lookupCount += 1;
           return {
-            accessToken: `header.${btoa(JSON.stringify({
-              'https://api.openai.com/auth': { chatgpt_account_id: 'account-current' },
-            }))}.signature`,
-            requiredHeaders: { 'ChatGPT-Account-ID': 'account-current' },
+            headers: {
+              authorization: `Bearer header.${btoa(JSON.stringify({
+                'https://api.openai.com/auth': { chatgpt_account_id: 'account-current' },
+              }))}.signature`,
+              'ChatGPT-Account-ID': 'account-current',
+            },
+            facts: {},
             credentialContext: {
               account: {
                 service: { pluginId: 'happier.connected-accounts', localId: 'openai-codex' },
@@ -662,7 +696,8 @@ describe('buildPiRequestAuthExtensionSource', () => {
         lookup: async () => {
           lookupCount += 1;
           return {
-            accessToken: `lease-${lookupCount}`,
+            headers: { authorization: `Bearer lease-${lookupCount}` },
+            facts: {},
             credentialContext: {
               account: {
                 service: { pluginId: 'happier.connected-accounts', localId: 'openai-codex' },
@@ -695,13 +730,7 @@ describe('buildPiRequestAuthExtensionSource', () => {
             httpStatus: 429,
             limitCategory: 'usage_limit',
             quotaScope: 'account',
-            evidenceSource: {
-              kind: 'pinnedProviderTerminal',
-              producer: 'pi',
-              producerVersion: '0.82.0',
-              provider: 'openai-codex',
-              signatureId: 'openai-codex-chatgpt-usage-limit-v1',
-            },
+            evidenceSource: { kind: 'structured' },
           },
         },
       }),
@@ -733,10 +762,13 @@ describe('buildPiRequestAuthExtensionSource', () => {
           lookupCount += 1;
           const accountId = `account-${lookupCount}`;
           return {
-            accessToken: `header.${btoa(JSON.stringify({
-              'https://api.openai.com/auth': { chatgpt_account_id: accountId },
-            }))}.signature`,
-            requiredHeaders: { 'ChatGPT-Account-ID': accountId },
+            headers: {
+              authorization: `Bearer header.${btoa(JSON.stringify({
+                'https://api.openai.com/auth': { chatgpt_account_id: accountId },
+              }))}.signature`,
+              'ChatGPT-Account-ID': accountId,
+            },
+            facts: {},
             credentialContext: {
               account: {
                 service: { pluginId: 'happier.connected-accounts', localId: 'openai-codex' },
@@ -803,10 +835,13 @@ describe('buildPiRequestAuthExtensionSource', () => {
               ? 'different-account'
               : tokenAccountId;
             return {
-              accessToken: `header.${btoa(JSON.stringify({
-                'https://api.openai.com/auth': { chatgpt_account_id: tokenAccountId },
-              }))}.signature`,
-              requiredHeaders: { 'ChatGPT-Account-ID': projectedAccountId },
+              headers: {
+                authorization: `Bearer header.${btoa(JSON.stringify({
+                  'https://api.openai.com/auth': { chatgpt_account_id: tokenAccountId },
+                }))}.signature`,
+                'ChatGPT-Account-ID': projectedAccountId,
+              },
+              facts: {},
               credentialContext: {
                 account: {
                   service: { pluginId: 'happier.connected-accounts', localId: 'openai-codex' },
@@ -855,7 +890,8 @@ describe('buildPiRequestAuthExtensionSource', () => {
         lookup: async () => {
           lookupCount += 1;
           return {
-            accessToken: `lease-${lookupCount}`,
+            headers: { authorization: `Bearer lease-${lookupCount}` },
+            facts: {},
             credentialContext: {
               account: {
                 service: { pluginId: 'happier.connected-accounts', localId: 'openai-codex' },
@@ -942,7 +978,8 @@ describe('buildPiRequestAuthExtensionSource', () => {
         lookup: async () => {
           lookupCount += 1;
           return {
-            accessToken: 'header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYSJ9fQ.signature',
+            headers: { authorization: 'Bearer header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYSJ9fQ.signature' },
+            facts: {},
             credentialContext: {
               account: {
                 service: { pluginId: 'happier.connected-accounts', localId: 'openai-codex' },
@@ -1019,13 +1056,7 @@ describe('buildPiRequestAuthExtensionSource', () => {
           httpStatus: 429,
           limitCategory: 'rate_limit',
           quotaScope: 'unknown',
-          evidenceSource: {
-            kind: 'pinnedProviderTerminal',
-            producer: 'pi',
-            producerVersion: '0.82.0',
-            provider: 'anthropic',
-            signatureId: 'anthropic-sdk-429-rate-limit-v1',
-          },
+          evidenceSource: { kind: 'structured' },
         },
       },
     })]);
@@ -1159,13 +1190,7 @@ describe('buildPiRequestAuthExtensionSource', () => {
           httpStatus: 503,
           limitCategory: 'capacity',
           quotaScope: 'unknown',
-          evidenceSource: {
-            kind: 'pinnedProviderTerminal',
-            producer: 'pi',
-            producerVersion: '0.82.0',
-            provider: 'anthropic',
-            signatureId: 'anthropic-sdk-503-api-error-v1',
-          },
+          evidenceSource: { kind: 'structured' },
         },
       },
     })]);
@@ -1383,7 +1408,8 @@ describe('buildPiRequestAuthExtensionSource', () => {
         lookup: async () => {
           lookupCount += 1;
           return {
-            accessToken: `lease-${lookupCount}`,
+            headers: { authorization: `Bearer lease-${lookupCount}` },
+            facts: {},
             credentialContext: {
               account: {
                 service: { pluginId: 'happier.connected-accounts', localId: 'anthropic' },
@@ -1414,10 +1440,7 @@ describe('buildPiRequestAuthExtensionSource', () => {
         evidence: expect.objectContaining({
           limitCategory: 'usage_limit',
           quotaScope: 'account',
-          evidenceSource: expect.objectContaining({
-            kind: 'pinnedProviderTerminal',
-            signatureId: 'anthropic-sdk-429-account-exhaustion-v1',
-          }),
+                    evidenceSource: { kind: 'structured' },
         }),
       },
     })]);

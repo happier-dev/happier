@@ -206,7 +206,6 @@ export type {
     ProviderLimitCategory,
     ProviderLimitEvidenceClassification,
     ProviderLimitEvidenceConfidence,
-    ProviderLimitEvidenceContext,
     ProviderLimitEvidenceProvenance,
 } from './cloud/providerLimitEvidence.js';
 
@@ -420,11 +419,6 @@ export type QualifiedConnectedAccountServiceRef = PluginContributionRef;
 /** @realm daemon */
 export const classifyProviderLimitEvidence: (
     value: unknown,
-    context?: Readonly<{
-        kind: 'piTerminalProviderError';
-        producerVersion: string;
-        provider: string;
-    }>,
 ) => ProviderLimitEvidenceClassification = canonicalClassifyProviderLimitEvidence;
 
 /** Runtime contract for one admitted connected-account implementation. */

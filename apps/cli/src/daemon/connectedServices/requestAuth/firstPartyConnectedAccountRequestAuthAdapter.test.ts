@@ -6,7 +6,7 @@ import {
 } from '@happier-dev/protocol';
 
 import {
-    materializeFirstPartyConnectedAccountBearer,
+    materializeFirstPartyConnectedAccountHeaders,
     projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot,
     projectConnectedServiceBindingsToQualifiedPurposeBindings,
     resolveFirstPartyConnectedAccountBinding,
@@ -350,7 +350,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
             revisionSemantics: 'revisioned' as const,
         }));
 
-        await expect(materializeFirstPartyConnectedAccountBearer({
+        await expect(materializeFirstPartyConnectedAccountHeaders({
             resolved: {
                 account: { service: codexService, accountId: 'member-a' },
                 credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
@@ -366,12 +366,8 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
                 serviceId: 'openai-codex',
             },
             resolveCredential,
-        })).resolves.toEqual({
-            accessToken: 'access-secret',
-            requiredHeaders: { 'chatgpt-account-id': 'acct_123' },
-            expiresAt: 2_000,
-        });
-        expect(JSON.stringify(await materializeFirstPartyConnectedAccountBearer({
+        })).resolves.toEqual({ headers: { authorization: 'Bearer ' + ('access-secret'), ...({ 'chatgpt-account-id': 'acct_123' }) }, facts: {}, expiresAt: 2_000 });
+        expect(JSON.stringify(await materializeFirstPartyConnectedAccountHeaders({
             resolved: {
                 account: { service: codexService, accountId: 'member-a' },
                 credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
@@ -408,7 +404,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
             },
         });
 
-        await expect(materializeFirstPartyConnectedAccountBearer({
+        await expect(materializeFirstPartyConnectedAccountHeaders({
             resolved: {
                 account: {
                     service: codexService,
@@ -431,9 +427,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
                 credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
                 revisionSemantics: 'revisioned',
             }),
-        })).resolves.toEqual({
-            accessToken: 'rotated-access',
-        });
+        })).resolves.toEqual({ headers: { authorization: 'Bearer ' + ('rotated-access') }, facts: {},  });
     });
 
     it('fails closed for a stale revision or non-OAuth credential', async () => {
@@ -453,7 +447,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
             credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
         } as const;
 
-        await expect(materializeFirstPartyConnectedAccountBearer({
+        await expect(materializeFirstPartyConnectedAccountHeaders({
             resolved,
             materialization: {
                 kind: 'httpHeaders',
@@ -471,7 +465,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
                 revisionSemantics: 'revisioned',
             }),
         })).rejects.toMatchObject({ code: 'request_auth_credential_unavailable', diagnostic: { causeCode: 'request_auth_credential_superseded' } });
-        await expect(materializeFirstPartyConnectedAccountBearer({
+        await expect(materializeFirstPartyConnectedAccountHeaders({
             resolved,
             materialization: {
                 kind: 'httpHeaders',
@@ -493,7 +487,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
 
     it('refuses the unfenced exact v0.2.1 compatibility peer', async () => {
         const resolveCredential = vi.fn();
-        await expect(materializeFirstPartyConnectedAccountBearer({
+        await expect(materializeFirstPartyConnectedAccountHeaders({
             resolved: {
                 account: { service: codexService, accountId: 'member-a' },
                 credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
@@ -552,10 +546,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
             resolveCredential,
         };
 
-        await expect(materializeFirstPartyConnectedAccountBearer(base)).resolves.toEqual({
-            accessToken: 'v4-access',
-            requiredHeaders: { 'chatgpt-account-id': 'acct-v4' },
-        });
+        await expect(materializeFirstPartyConnectedAccountHeaders(base)).resolves.toEqual({ headers: { authorization: 'Bearer ' + ('v4-access'), ...({ 'chatgpt-account-id': 'acct-v4' }) }, facts: {},  });
         expect(invokeWithReceipt).toHaveBeenCalledTimes(1);
         expect(invokeWithReceipt).toHaveBeenCalledWith({
             account: base.resolved.account,
@@ -578,7 +569,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
                 isCurrent: () => true,
             },
         });
-        await expect(materializeFirstPartyConnectedAccountBearer(base))
+        await expect(materializeFirstPartyConnectedAccountHeaders(base))
             .rejects.toMatchObject({ code: 'request_auth_credential_unavailable', diagnostic: { causeCode: 'request_auth_credential_superseded' } });
         invokeWithReceipt.mockResolvedValueOnce({
             result: {
@@ -592,7 +583,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
                 isCurrent: () => false,
             },
         });
-        await expect(materializeFirstPartyConnectedAccountBearer(base))
+        await expect(materializeFirstPartyConnectedAccountHeaders(base))
             .rejects.toMatchObject({ code: 'request_auth_credential_unavailable', diagnostic: { causeCode: 'request_auth_credential_superseded' } });
         expect(resolveCredential).not.toHaveBeenCalled();
 
@@ -609,7 +600,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
                 isCurrent: () => true,
             },
         });
-        await expect(materializeFirstPartyConnectedAccountBearer(base))
+        await expect(materializeFirstPartyConnectedAccountHeaders(base))
             .rejects.toMatchObject({ code: 'request_auth_credential_unavailable',
                 diagnostic: { causeCode: 'request_auth_materialization_invalid' } });
         expect(resolveCredential).not.toHaveBeenCalled();
@@ -626,9 +617,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
                 isCurrent: () => true,
             },
         });
-        await expect(materializeFirstPartyConnectedAccountBearer(base)).resolves.toEqual({
-            accessToken: 'rotated-v4-access',
-        });
+        await expect(materializeFirstPartyConnectedAccountHeaders(base)).resolves.toEqual({ headers: { authorization: 'Bearer ' + ('rotated-v4-access') }, facts: {},  });
     });
 
     it('forwards request-auth cancellation to the established materializer and refuses pre-aborted legacy reads', async () => {
@@ -643,7 +632,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
                 isCurrent: () => true,
             },
         }));
-        await expect(materializeFirstPartyConnectedAccountBearer({
+        await expect(materializeFirstPartyConnectedAccountHeaders({
             resolved: {
                 account: { service: codexService, accountId: 'member-a' },
                 credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
@@ -657,13 +646,13 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
             signal,
             establishedRuntimeOwner: { invokeWithReceipt },
             resolveCredential: vi.fn(),
-        })).resolves.toEqual({ accessToken: 'v4-access' });
+        })).resolves.toEqual({ headers: { authorization: 'Bearer ' + ('v4-access') }, facts: {},  });
         expect(invokeWithReceipt).toHaveBeenCalledWith(expect.objectContaining({ signal }));
 
         const aborted = new AbortController();
         aborted.abort();
         const resolveCredential = vi.fn();
-        await expect(materializeFirstPartyConnectedAccountBearer({
+        await expect(materializeFirstPartyConnectedAccountHeaders({
             resolved: {
                 account: { service: codexService, accountId: 'member-a' },
                 credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
@@ -687,19 +676,6 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
     it.each([
         {
             headers: {
-                authorization: 'Basic not-a-bearer',
-                'chatgpt-account-id': 'acct',
-            },
-            error: 'request_auth_oauth_bearer_required',
-        },
-        {
-            headers: {
-                authorization: 'bearer wrong-casing',
-            },
-            error: 'request_auth_oauth_bearer_required',
-        },
-        {
-            headers: {
                 authorization: 'Bearer token',
                 'chatgpt-account-id': 'acct',
                 'x-unrequested': 'no',
@@ -714,7 +690,7 @@ describe('first-party Connected Account request-auth compatibility adapter', () 
             error: 'request_auth_materialization_invalid',
         },
     ])('rejects malformed advertised V4 HTTP-header materialization %#', async ({ headers, error }) => {
-        await expect(materializeFirstPartyConnectedAccountBearer({
+        await expect(materializeFirstPartyConnectedAccountHeaders({
             resolved: {
                 account: { service: codexService, accountId: 'member-a' },
                 credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',

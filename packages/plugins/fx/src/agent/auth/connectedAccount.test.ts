@@ -12,7 +12,7 @@ import { FX_NATIVE_AUTH_CODEC } from './connectedAccount.js';
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); });
 
-async function fixture(expiresAt: number | null = Date.now() + 3_600_000) {
+async function fixture(expiresAt: number | null = Date.now() + 3_600_000, authorization = 'Bearer fixture-access') {
   const home = await mkdtemp(join(tmpdir(), 'fx-connected-'));
   cleanup.push(() => rm(home, { recursive: true, force: true }));
   const requests: unknown[] = [];
@@ -24,7 +24,7 @@ async function fixture(expiresAt: number | null = Date.now() + 3_600_000) {
     requests.push(JSON.parse(body));
     response.setHeader('content-type', 'application/json');
     response.end(JSON.stringify({ ok: true, value: {
-      accessToken: 'fixture-access', requiredHeaders: { 'chatgpt-account-id': 'fixture-account' },
+      headers: { Authorization: authorization, 'chatgpt-account-id': 'fixture-account' }, facts: {},
       ...(expiresAt === null ? {} : { expiresAt }),
       credentialContext: { account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'fixture-profile' }, credentialRevision: `csr_${'a'.repeat(22)}` },
     } }));
@@ -53,6 +53,12 @@ describe('FX connected-account native launch', () => {
   it('refuses a native launch when the lease cannot establish its expiry', async () => {
     const input = await fixture(null);
     await expect(FX_TERMINAL_CONTRIBUTION.resolveLaunch({ sessionId: 'session', cwd: '/workspace', metadata: {}, modelSelection: null, launchEnvironment: input.launchEnvironment })).rejects.toMatchObject({ code: 'fx_connected_account_expiry_unavailable' });
+    await expect(readFile(join(input.home, '.fx/chatgpt-auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('refuses non-Bearer material before writing native token auth', async () => {
+    const input = await fixture(Date.now() + 3_600_000, 'Basic fixture');
+    await expect(FX_TERMINAL_CONTRIBUTION.resolveLaunch({ sessionId: 'session', cwd: '/workspace', metadata: {}, modelSelection: null, launchEnvironment: input.launchEnvironment })).rejects.toMatchObject({ code: 'fx_connected_account_bearer_unavailable' });
     await expect(readFile(join(input.home, '.fx/chatgpt-auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

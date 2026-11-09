@@ -152,6 +152,7 @@ export function snapshotConnectedAccountAuthenticationResult(
     return Object.freeze({
         ...result,
         ...(Array.isArray(result.scopes) ? { scopes: Object.freeze([...result.scopes]) } : {}),
+        ...(result.completionObservation === undefined ? {} : { completionObservation: structuredClone(result.completionObservation) }),
         ...(result.providerIdentity !== null && typeof result.providerIdentity === 'object' && !Array.isArray(result.providerIdentity)
             ? { providerIdentity: Object.freeze({ ...result.providerIdentity }) } : {}),
         ...(diagnostic === undefined ? {} : { diagnostic }),
@@ -184,7 +185,9 @@ export function snapshotConnectedAccountEstablishedResult<
             }) as ConnectedAccountRuntimeEstablishedResult<TOperation, TQuota>;
         }
         return Object.freeze(result.kind === 'httpHeaders'
-            ? { ...scope, kind: result.kind, headers: Object.freeze({ ...result.headers }) }
+            ? { ...scope, kind: result.kind, headers: Object.freeze({ ...result.headers }),
+                ...(result.facts !== undefined ? { facts: Object.freeze({ ...result.facts }) } : {}),
+                ...(result.expiresAt !== undefined ? { expiresAt: result.expiresAt } : {}) }
             : { ...scope, kind: result.kind, env: Object.freeze({ ...result.env }) }) as ConnectedAccountRuntimeEstablishedResult<TOperation, TQuota>;
     }
     if (operation.kind === 'quota' || operation.kind === 'recoveryCredits.read'

@@ -13,9 +13,9 @@ empty facts map when omitted, and preserves it through the existing request-auth
 cache and SDK transport. Only plugin adapters interpret fact keys; the host and
 SDK carry strings, finite numbers and booleans. Facts are request-local data.
 
-The consuming purpose declares `origins` and `headerNames`. The managed gateway
-uses that origin list at its existing final outbound destination boundary; no
-selected origin travels with the material. Native adapters that require a
+The consuming purpose declares one `origin` and `headerNames`. The managed gateway
+keeps its private family origins list for the existing final outbound destination
+check. Native adapters that require a
 Bearer token extract it from the returned header map at their own codec boundary.
 
 ## Input options Resource queries (unreleased 0.3)
@@ -1780,7 +1780,7 @@ runtimes are separate from this Action placement contract.
 In 0.3 development, a person's settled Account Action confirmation travels with
 that relay in the existing private invocation context. It binds the exact
 `action.invoke` operand, approved target source and declaration, Account, Home,
-request and selected Machine. The receiving
+request and selected execution target. The receiving
 target consumes that consent while retaining the Plugin caller and its automation
 authority; placement does not ask the person again. This does not confer host
 authority or consent to another Action or changed input. Native execution and
@@ -8337,10 +8337,15 @@ payloads never cross this field. `terminal` ends the current Happier attempt
 through its existing lifecycle and recovery policy; it does not assert that the
 provider closed its socket. Grok request errors use this path so a rejected
 answer stops capture, preserves the admitted transcript and offers Retry instead
-of continuing to show Connected. The controller keeps the provider code as the
-failure reason. This is an additive same-realm 0.3 development contract: earlier
+of continuing to show Connected. The controller keeps the provider code as
+diagnostic metadata; the closed category still owns recovery policy and the
+displayed failure reason. This is an additive same-realm 0.3 development contract: earlier
 events without the optional code still use their category, and matching SDK,
 plugin and host source load together. It adds no persisted or wire format.
+Protocol's `normalizeVoiceFailureCode`, projected through SDK `/voice/client`,
+owns the existing code-shaped diagnostic boundary shared by provider events,
+host failure logging and mediated credential causes; unsupported strings retain
+their caller's generic fallback without exposing provider prose.
 
 Voice contribution declarations may carry an optional `mark`, projected identically
 for installed and bundled providers. `VoiceServiceMarkSchema` and `VoiceServiceMark`
@@ -9188,7 +9193,9 @@ symbolic links; POSIX symbolic links). Plain native/default launches keep their 
 top-level entries created in the selected root stay private; this recoverable
 difference is accepted rather than adding directory watchers. Revocation removes
 the selected Account's materialized homes after already-admitted runtimes release
-them, preserving unrelated Accounts and the original native root.
+them, preserving unrelated Accounts and the original native root. For the daemon's
+Account, cleanup covers both ordinary and admitted Account-qualified requester
+roots through the same scheduler.
 
 Purposes declare all credential uses, while the Connected Account runtime returns
 only leaves applicable to its credential mode. Empty environment or file results
@@ -9397,11 +9404,21 @@ existing login declare `credentialOrigin: 'native_import'`. An older or unmarked
 manual declaration leaves the original sign-in unknown. Neither reconciliation
 nor credential refresh turns its observation time into a new sign-in.
 
-Manual modes may declare `apiKey: true` as a presentation fact. The public catalog
-preserves it, and Credentials, account details and quota summaries consume the
-selected mode's declaration. Stored `kind: 'token'`, direct-save eligibility and
-missing usage do not identify an API-key mode. An absent declaration remains
-unknown; subscription status and plan labels come from observed usage.
+Manual modes may declare `apiKey: true`; the public catalog preserves it as an
+input to successful authentication settlement. The runtime may also return an
+established `accessMode: 'subscription' | 'apiKey'` fact. The authentication owner
+persists this optional fact in PresentationMetadataV4 and publishes it on account
+and attempt projections. Credentials, account details and quota summaries consume
+that metadata through one presenter-ready selector. An observed subscribed status
+can fill unknown mode; explicit key metadata wins. Stored credential `kind`,
+sign-in provenance, direct-save eligibility and missing usage do not establish
+mode. Observed usage owns subscription status and plan labels.
+
+Authentication attempt responses normalize released diagnostic aliases through
+the existing Protocol ingress before publishing their service-neutral refusal
+code. The original plugin diagnostic remains available for safe details; UI
+recovery presenters consume the public code rather than recognizing private
+service aliases.
 
 Manual methods may separately declare `accountDirectSave: true` when their form
 field ids/values already are the canonical credential payload, or

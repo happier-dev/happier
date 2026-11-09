@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseConnectedAccountRequestAuthCapabilityDocument } from '@happier-dev/agents/request-auth';
@@ -7,6 +7,7 @@ import type { TrackedSession } from '../types';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { createConnectedAccountRequestAuthService } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
 import { resolvePurposeTeamCredentialBindingIntentsFromHome } from '@/session/services/spawnConnectedServicesDefaults';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withRealForegroundAdmissionFixture } from './foregroundAdmission.testkit';
 import { createExternalConnectedAccountForegroundFixture } from './prepareForegroundAdmission.connectedServices.testkit';
 
@@ -26,13 +27,65 @@ const claimInput = {
 } as const;
 
 describe('foreground Connected Account custody through real authored Agent activation', () => {
+  it.each(['files', 'environment'] as const)('applies only the selected Account mode leaves through foreground claim (%s)', async mode => {
+    const selectedAuth = new Uint8Array([0, 255, 17, 99]);
+    const account = createExternalConnectedAccountForegroundFixture({
+      service: { pluginId: 'acme.connected-account', localId: 'credential' },
+      materializationKinds: ['files', 'environment'],
+      launch: {
+        ...nativeHomeLaunch,
+        environmentUses: [{ purpose: 'primary', environmentKey: 'ACME_TOKEN' }],
+        environmentUnsetUses: [
+          { purpose: 'primary', environmentKey: 'ACME_NATIVE_TOKEN' },
+          { purpose: 'primary', environmentKey: 'ACME_TOKEN' },
+        ],
+      },
+      materializeAccount: async ({ request }) => {
+        if (request.kind === 'environment') return { kind: 'environment', env: mode === 'environment' ? { ACME_TOKEN: 'selected-account-key' } : {} };
+        if (request.kind === 'files') return { kind: 'files', files: mode === 'files' ? { 'auth.json': selectedAuth } : {} };
+        throw new Error('Unexpected Account materialization kind');
+      },
+    });
+    const environment = createEnvKeyScope(['ACME_TOKEN']);
+    environment.patch({ ACME_TOKEN: 'ambient-account-key' });
+    try {
+      await withRealForegroundAdmissionFixture({ plugins: account.plugins, runtimeOptions: { connectedAccounts: account.owner } }, async fixture => {
+        const admitted = await fixture.prepare(account.requestFor(fixture.runtime.registry), {
+          ...account.dependencies, connectedServicesMaterializationBaseDir: join(fixture.directory, 'materialized'),
+        });
+        expect(admitted.ok).toBe(true);
+        if (!admitted.ok) throw new Error(admitted.error.code);
+        const claimed = await admitted.prepared.claim(claimInput);
+        expect(claimed.ok, claimed.ok ? undefined : claimed.error.code).toBe(true);
+        if (!claimed.ok) throw new Error(claimed.error.code);
+        expect(claimed.unsetEnvironmentVariableNames).toContain('ACME_NATIVE_TOKEN');
+        if (mode === 'files') {
+          expect(claimed.environment.ACME_TOKEN).toBeUndefined();
+          expect(claimed.unsetEnvironmentVariableNames).toContain('ACME_TOKEN');
+          await expect(readFile(join(claimed.environment.ACME_NATIVE_HOME!, 'auth.json'))).resolves.toEqual(Buffer.from(selectedAuth));
+        } else {
+          expect(claimed.environment.ACME_TOKEN).toBe('selected-account-key');
+          expect(claimed.unsetEnvironmentVariableNames).not.toContain('ACME_TOKEN');
+          expect(claimed.environment.ACME_NATIVE_HOME).toBeUndefined();
+        }
+        await admitted.prepared.cleanup();
+      });
+    } finally {
+      environment.restore();
+    }
+  });
+
   it.each([
     { label: 'a novel service', service: { pluginId: 'acme.connected-account', localId: 'credential' } },
     { label: 'a legacy-mapped service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
   ] as const)('activates an external Agent request-auth capability for $label without host-issued compatibility provenance', async ({ service }) => {
-    const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    let revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    let displayName = 'Selected Account';
     const account = createExternalConnectedAccountForegroundFixture({
       service, materializationKinds: ['httpHeaders'],
+      resolveTarget: async target => target.kind === 'account'
+        ? { displayName, account: target.account }
+        : null,
       launch: { requestAuthUses: [{ purpose: 'primary', materialization: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] } }] },
       resolveCredentialRevision: async () => revision,
       // The opaque Account materializer is a system boundary. Real purpose
@@ -68,17 +121,28 @@ describe('foreground Connected Account custody through real authored Agent activ
         resolveCurrentBinding: async ({ subject, binding }) => await account.owner.resolveCurrentRequestAuthBinding({
           subjectId: subject.subjectId, binding, signal: new AbortController().signal,
         }),
-        materializeBearer: async ({ subject, binding, resolved, materialization }) => await account.owner.materializeRequestAuthBearer({
+        materializeHeaders: async ({ subject, binding, resolved, materialization }) => await account.owner.materializeRequestAuthBearer({
           subjectId: subject.subjectId, binding, resolved, materialization, signal: new AbortController().signal,
         }),
         refreshAfterAuthFailure: async () => { throw new Error('No external auth failure occurred'); },
         reportQuotaFailure: async () => { throw new Error('No external quota failure occurred'); },
       });
       expect(JSON.stringify(claimed)).not.toContain(revision);
+      await expect(broker.lookupRequestAuth({ subject, purpose: account.purpose })).resolves.toMatchObject({ headers: { authorization: 'Bearer ' + (`selected-account-${revision}`) }, facts: {}, credentialContext: { account: { service, accountId: 'selected-account' }, credentialRevision: revision } });
+      displayName = 'Renamed Account';
+      await account.store.update(value => value);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await expect(stat(capabilityPath!)).resolves.toBeDefined();
+      expect(registry.authenticate(capability.capability)).toMatchObject({ subjectId: subject.subjectId });
       await expect(broker.lookupRequestAuth({ subject, purpose: account.purpose })).resolves.toMatchObject({
-        accessToken: `selected-account-${revision}`,
-        credentialContext: { account: { service, accountId: 'selected-account' }, credentialRevision: revision },
+        headers: { authorization: `Bearer selected-account-${revision}` },
       });
+
+      revision = 'csr_1123456789ABCDEFGHJKMNPQRS';
+      await account.store.update(value => value);
+      await vi.waitFor(() => expect(registry.authenticate(capability.capability)).toBeNull());
+      await expect(stat(capabilityPath!)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(broker.lookupRequestAuth({ subject, purpose: account.purpose })).rejects.toMatchObject({ code: 'request_auth_not_active' });
       await admitted.prepared.cleanup();
       expect(registry.authenticate(capability.capability)).toBeNull();
       await expect(stat(capabilityPath!)).rejects.toMatchObject({ code: 'ENOENT' });

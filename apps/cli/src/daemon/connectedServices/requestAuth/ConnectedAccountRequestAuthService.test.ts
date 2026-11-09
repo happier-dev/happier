@@ -1,7 +1,7 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type {
-    OAuthBearerLeaseV1,
+    RequestAuthHeadersV1,
     QualifiedConnectedAccountPurposeBindingV1,
     QualifiedConnectedAccountPurposeV1,
 } from '@happier-dev/protocol';
@@ -130,12 +130,12 @@ describe('ConnectedAccountRequestAuthService', () => {
             resolveCurrentBinding: () => resolved({
                 accountId: 'one', revision: revision1, generation: Math.min(++reads, 21),
             }),
-            materializeBearer: async () => ({ accessToken: 'current-token' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('current-token') }, facts: {},  }),
             refreshAfterAuthFailure: async () => ({ status: 'current_unchanged' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
         await expect(owner.lookupRequestAuth({ subject: subject(groupBinding()), purpose, signal: controller.signal }))
-            .resolves.toMatchObject({ accessToken: 'current-token', credentialContext: { group: { generation: 21 } } });
+            .resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('current-token') }, facts: {}, credentialContext: { group: { generation: 21 } } });
 
         reads = 0;
         const retiringOwner = createConnectedAccountRequestAuthService({
@@ -143,7 +143,7 @@ describe('ConnectedAccountRequestAuthService', () => {
                 if (++reads === 25) controller.abort();
                 return resolved({ accountId: 'one', revision: revision1, generation: reads });
             },
-            materializeBearer: async () => ({ accessToken: 'must-not-escape' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('must-not-escape') }, facts: {},  }),
             refreshAfterAuthFailure: async () => ({ status: 'current_unchanged' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
@@ -160,7 +160,7 @@ describe('ConnectedAccountRequestAuthService', () => {
             operationDeadlineMs: 25,
             authFailureOperationDeadlineMs: 100,
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async () => ({ accessToken: 'access' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('access') }, facts: {},  }),
             refreshAfterAuthFailure: async (input: Readonly<{ signal?: AbortSignal }>) => {
                 recoverySignal = input.signal;
                 return await pendingUntilAborted(input.signal);
@@ -195,7 +195,7 @@ describe('ConnectedAccountRequestAuthService', () => {
     ] as const)('fails currentness validation closed when a snapshotted %s target is removed', async (_kind, binding) => {
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => null,
-            materializeBearer: async () => {
+            materializeHeaders: async () => {
                 throw new Error('validation must not materialize a bearer');
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' as const }),
@@ -215,9 +215,9 @@ describe('ConnectedAccountRequestAuthService', () => {
         let refreshes = 0;
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async ({ resolved: { account } }) => {
+            materializeHeaders: async ({ resolved: { account } }) => {
                 reads += 1;
-                return { accessToken: `token-${account.accountId}` };
+                return { headers: { authorization: 'Bearer ' + (`token-${account.accountId}`) }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => {
                 refreshes += 1;
@@ -230,8 +230,8 @@ describe('ConnectedAccountRequestAuthService', () => {
         const first = await owner.lookupRequestAuth({ subject: capability, purpose });
         const second = await owner.lookupRequestAuth({ subject: capability, purpose });
 
-        expect(first.accessToken).toBe('token-one');
-        expect(second.accessToken).toBe('token-one');
+        expect(first.headers.authorization!.replace(/^Bearer /u, '')).toBe('token-one');
+        expect(second.headers.authorization!.replace(/^Bearer /u, '')).toBe('token-one');
         expect(reads).toBe(1);
         expect(refreshes).toBe(0);
     });
@@ -250,7 +250,7 @@ describe('ConnectedAccountRequestAuthService', () => {
                     purpose,
                     materialization: {
                         kind: 'httpHeaders',
-                        origin,
+                        origin: origin,
                         headerNames: ['authorization'],
                     },
                 },
@@ -261,7 +261,7 @@ describe('ConnectedAccountRequestAuthService', () => {
                     purpose,
                     materialization: {
                         kind: 'httpHeaders',
-                        origin,
+                        origin: origin,
                         headerNames: ['authorization'],
                     },
                 },
@@ -269,17 +269,15 @@ describe('ConnectedAccountRequestAuthService', () => {
         };
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async () => ({
-                accessToken: `token-${++materializations}`,
-            }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + (`token-${++materializations}`) }, facts: {},  }),
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
 
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken)
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-1');
         origin = 'https://different.example.test';
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken)
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-2');
         expect(materializations).toBe(2);
     });
@@ -303,13 +301,11 @@ describe('ConnectedAccountRequestAuthService', () => {
                     ? { legacyServiceKeyedCompatibility: true as const }
                     : {}),
             }),
-            materializeBearer: async ({ resolved: currentResolved }) => {
+            materializeHeaders: async ({ resolved: currentResolved }) => {
                 materializations += 1;
-                return {
-                    accessToken: currentResolved.legacyServiceKeyedCompatibility === true
+                return { headers: { authorization: 'Bearer ' + (currentResolved.legacyServiceKeyedCompatibility === true
                         ? 'legacy-adapter-token'
-                        : 'qualified-owner-token',
-                };
+                        : 'qualified-owner-token') }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -323,8 +319,8 @@ describe('ConnectedAccountRequestAuthService', () => {
             subject: legacySubject,
             purpose,
         });
-        expect(qualifiedLease.accessToken).toBe('qualified-owner-token');
-        expect(legacyLease.accessToken).toBe('legacy-adapter-token');
+        expect(qualifiedLease.headers.authorization!.replace(/^Bearer /u, '')).toBe('qualified-owner-token');
+        expect(legacyLease.headers.authorization!.replace(/^Bearer /u, '')).toBe('legacy-adapter-token');
         for (const lease of [qualifiedLease, legacyLease]) {
             expect(lease).not.toHaveProperty('legacyServiceKeyedCompatibility');
             expect(lease.credentialContext)
@@ -342,7 +338,7 @@ describe('ConnectedAccountRequestAuthService', () => {
                 resolutions += 1;
                 return resolved({ accountId: 'one', revision: revision1 });
             },
-            materializeBearer: async () => {
+            materializeHeaders: async () => {
                 materializations += 1;
                 return await fill.promise;
             },
@@ -355,10 +351,10 @@ describe('ConnectedAccountRequestAuthService', () => {
             owner.lookupRequestAuth({ subject: capability, purpose })
         ));
         await vi.waitFor(() => expect(materializations).toBe(1));
-        fill.resolve({ accessToken: 'token-one' });
+        fill.resolve({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  });
         const leases = await Promise.all(lookups);
 
-        expect(new Set(leases.map((lease) => lease.accessToken))).toEqual(new Set(['token-one']));
+        expect(new Set(leases.map((lease) => lease.headers.authorization!.replace(/^Bearer /u, '')))).toEqual(new Set(['token-one']));
         expect(materializations).toBe(1);
         expect(resolutions).toBeGreaterThanOrEqual(200);
     });
@@ -369,7 +365,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         let ownerSignal: AbortSignal | undefined;
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async (input: Readonly<{ signal?: AbortSignal }>) => {
+            materializeHeaders: async (input: Readonly<{ signal?: AbortSignal }>) => {
                 materializations += 1;
                 ownerSignal = input.signal;
                 return await fill.promise;
@@ -403,12 +399,12 @@ describe('ConnectedAccountRequestAuthService', () => {
             expect(ownerSignal).toBeDefined();
             expect(ownerSignal?.aborted).toBe(false);
         }, { timeout: 500 });
-        fill.resolve({ accessToken: 'token-one' });
+        fill.resolve({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  });
 
         await expect(cancelledResult).resolves.toMatchObject({
             code: 'request_auth_credential_unavailable',
         });
-        await expect(neededLookup).resolves.toMatchObject({ accessToken: 'token-one' });
+        await expect(neededLookup).resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  });
         expect(materializations).toBe(1);
     });
 
@@ -418,13 +414,13 @@ describe('ConnectedAccountRequestAuthService', () => {
         const dependencies = {
             operationDeadlineMs: 25,
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async (input: Readonly<{ signal?: AbortSignal }>) => {
+            materializeHeaders: async (input: Readonly<{ signal?: AbortSignal }>) => {
                 materializations += 1;
                 if (materializations === 1) {
                     firstOwnerSignal = input.signal;
                     return await pendingUntilAborted(input.signal);
                 }
-                return { accessToken: 'token-after-timeout' };
+                return { headers: { authorization: 'Bearer ' + ('token-after-timeout') }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' as const }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' as const }),
@@ -446,7 +442,7 @@ describe('ConnectedAccountRequestAuthService', () => {
             code: 'request_auth_credential_unavailable',
         });
         await expect(owner.lookupRequestAuth({ subject: capability, purpose }))
-            .resolves.toMatchObject({ accessToken: 'token-after-timeout' });
+            .resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('token-after-timeout') }, facts: {},  });
         expect(materializations).toBe(2);
     });
 
@@ -458,7 +454,7 @@ describe('ConnectedAccountRequestAuthService', () => {
                 bindingSignal = input.signal;
                 return await pendingUntilAborted(input.signal);
             },
-            materializeBearer: async () => {
+            materializeHeaders: async () => {
                 throw new Error('materialization must not begin before binding resolution');
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
@@ -483,13 +479,13 @@ describe('ConnectedAccountRequestAuthService', () => {
         const dependencies = {
             operationDeadlineMs: 1_000,
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async (input: Readonly<{ signal?: AbortSignal }>) => {
+            materializeHeaders: async (input: Readonly<{ signal?: AbortSignal }>) => {
                 materializations += 1;
                 if (materializations === 1) {
                     firstOwnerSignal = input.signal;
                     return await pendingUntilAborted(input.signal);
                 }
-                return { accessToken: 'token-after-cancellation' };
+                return { headers: { authorization: 'Bearer ' + ('token-after-cancellation') }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' as const }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' as const }),
@@ -530,7 +526,7 @@ describe('ConnectedAccountRequestAuthService', () => {
             code: 'request_auth_credential_unavailable',
         });
         await expect(owner.lookupRequestAuth({ subject: capability, purpose }))
-            .resolves.toMatchObject({ accessToken: 'token-after-cancellation' });
+            .resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('token-after-cancellation') }, facts: {},  });
         expect(materializations).toBe(2);
     });
 
@@ -540,10 +536,10 @@ describe('ConnectedAccountRequestAuthService', () => {
         const materializedAccounts: string[] = [];
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => current,
-            materializeBearer: async ({ resolved: { account } }) => {
+            materializeHeaders: async ({ resolved: { account } }) => {
                 materializedAccounts.push(account.accountId);
                 if (account.accountId === 'one') return await oldFill.promise;
-                return { accessToken: `token-${account.accountId}` };
+                return { headers: { authorization: 'Bearer ' + (`token-${account.accountId}`) }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -554,10 +550,10 @@ describe('ConnectedAccountRequestAuthService', () => {
         const overlappingWaiter = owner.lookupRequestAuth({ subject: capability, purpose });
         await Promise.resolve();
         current = resolved({ accountId: 'two', revision: revision2, generation: 8 });
-        oldFill.resolve({ accessToken: 'token-one' });
+        oldFill.resolve({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  });
 
         const leases = await Promise.all([first, overlappingWaiter]);
-        expect(leases.map((lease) => lease.accessToken)).toEqual(['token-two', 'token-two']);
+        expect(leases.map((lease) => lease.headers.authorization!.replace(/^Bearer /u, ''))).toEqual(['token-two', 'token-two']);
         expect(leases.map((lease) => lease.credentialContext.group?.generation)).toEqual([8, 8]);
         expect(materializedAccounts).toEqual(['one', 'two']);
     });
@@ -589,10 +585,10 @@ describe('ConnectedAccountRequestAuthService', () => {
                     generation: 9,
                 });
             },
-            materializeBearer: async ({ resolved: { account } }) => {
+            materializeHeaders: async ({ resolved: { account } }) => {
                 materializedAccounts.push(account.accountId);
                 if (account.accountId === 'one') return await oldFill.promise;
-                return { accessToken: `token-${account.accountId}` };
+                return { headers: { authorization: 'Bearer ' + (`token-${account.accountId}`) }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -601,16 +597,13 @@ describe('ConnectedAccountRequestAuthService', () => {
 
         const lookup = owner.lookupRequestAuth({ subject: capability, purpose });
         await Promise.resolve();
-        oldFill.resolve({ accessToken: 'token-one' });
+        oldFill.resolve({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  });
 
-        await expect(lookup).resolves.toMatchObject({
-            accessToken: 'token-two',
-            credentialContext: {
+        await expect(lookup).resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('token-two') }, facts: {}, credentialContext: {
                 account: { accountId: 'two' },
                 group: { generation: 9 },
                 credentialRevision: revision2,
-            },
-        });
+            } });
         expect(materializedAccounts).toEqual(['one', 'two']);
     });
 
@@ -620,7 +613,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         const createOwner = (readProjection: () => ConnectedAccountRequestAuthResolvedBinding) =>
             createConnectedAccountRequestAuthService({
                 resolveCurrentBinding: readProjection,
-                materializeBearer: async ({ resolved: { account } }) => ({ accessToken: `token-${account.accountId}` }),
+                materializeHeaders: async ({ resolved: { account } }) => ({ headers: { authorization: 'Bearer ' + (`token-${account.accountId}`) }, facts: {},  }),
                 refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
                 reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
             });
@@ -629,11 +622,11 @@ describe('ConnectedAccountRequestAuthService', () => {
         const capability = subject(groupBinding());
 
         daemonOneProjection = resolved({ accountId: 'two', revision: revision2, generation: 8 });
-        expect((await one.lookupRequestAuth({ subject: capability, purpose })).accessToken).toBe('token-two');
-        expect((await two.lookupRequestAuth({ subject: capability, purpose })).accessToken).toBe('token-one');
+        expect((await one.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, '')).toBe('token-two');
+        expect((await two.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, '')).toBe('token-one');
 
         daemonTwoProjection = daemonOneProjection;
-        expect((await two.lookupRequestAuth({ subject: capability, purpose })).accessToken).toBe('token-two');
+        expect((await two.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, '')).toBe('token-two');
     });
 
     it('separates subject invalidation from shared account-lease eviction', async () => {
@@ -641,9 +634,9 @@ describe('ConnectedAccountRequestAuthService', () => {
         let materializations = 0;
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async () => {
+            materializeHeaders: async () => {
                 materializations += 1;
-                return { accessToken: 'token-one' };
+                return { headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -658,7 +651,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         subjectOneCurrent = false;
         await expect(owner.lookupRequestAuth({ subject: firstSubject, purpose }))
             .rejects.toMatchObject({ code: 'request_auth_not_active' });
-        expect((await owner.lookupRequestAuth({ subject: secondSubject, purpose })).accessToken)
+        expect((await owner.lookupRequestAuth({ subject: secondSubject, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-one');
         expect(materializations).toBe(1);
     });
@@ -671,11 +664,11 @@ describe('ConnectedAccountRequestAuthService', () => {
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
             // Mirrors the daemon materializer, which refuses once the exact subject
             // it runs under stops being current.
-            materializeBearer: async (input) => {
+            materializeHeaders: async (input) => {
                 materializingSubjectIds.push(input.subject.subjectId);
                 const material = input.subject.subjectId === 'session:test'
                     ? await retiringFill.promise
-                    : { accessToken: 'token-one' };
+                    : { headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  };
                 if (!input.subject.isCurrent()) {
                     throw new ConnectedAccountRequestAuthError('request_auth_not_active');
                 }
@@ -703,9 +696,9 @@ describe('ConnectedAccountRequestAuthService', () => {
             'session:other',
         ]));
         retiringSubjectCurrent = false;
-        retiringFill.resolve({ accessToken: 'token-one' });
+        retiringFill.resolve({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  });
 
-        await expect(currentLookup).resolves.toMatchObject({ accessToken: 'token-one' });
+        await expect(currentLookup).resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  });
         await expect(retiringLookup).resolves.toMatchObject({
             code: 'request_auth_not_active',
         });
@@ -720,20 +713,20 @@ describe('ConnectedAccountRequestAuthService', () => {
                 void health;
                 return resolved({ accountId: 'one', revision: currentRevision });
             },
-            materializeBearer: async () => {
+            materializeHeaders: async () => {
                 materializations += 1;
-                return { accessToken: `token-${materializations}` };
+                return { headers: { authorization: 'Bearer ' + (`token-${materializations}`) }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
         const capability = subject(accountBinding());
 
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken).toBe('token-1');
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, '')).toBe('token-1');
         health = 'healthy';
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken).toBe('token-1');
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, '')).toBe('token-1');
         currentRevision = revision2;
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken).toBe('token-2');
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, '')).toBe('token-2');
         expect(materializations).toBe(2);
     });
 
@@ -745,11 +738,11 @@ describe('ConnectedAccountRequestAuthService', () => {
                 accountId: currentAccountId,
                 revision: revision1,
             }),
-            materializeBearer: async ({ resolved: { account } }) => {
+            materializeHeaders: async ({ resolved: { account } }) => {
                 const materializations =
                     (materializationsByAccount.get(account.accountId) ?? 0) + 1;
                 materializationsByAccount.set(account.accountId, materializations);
-                return { accessToken: `token-${account.accountId}-${materializations}` };
+                return { headers: { authorization: 'Bearer ' + (`token-${account.accountId}-${materializations}`) }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -776,7 +769,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         currentAccountId = 'account-0';
         const rematerialized = await owner.lookupRequestAuth({ subject: capability, purpose });
 
-        expect(rematerialized.accessToken).toBe('token-account-0-1');
+        expect(rematerialized.headers.authorization!.replace(/^Bearer /u, '')).toBe('token-account-0-1');
         expect(materializationsByAccount.get('account-0')).toBe(1);
     });
 
@@ -789,14 +782,11 @@ describe('ConnectedAccountRequestAuthService', () => {
                 accountId: currentAccountId,
                 revision: revision1,
             }),
-            materializeBearer: async ({ resolved: { account } }) => {
+            materializeHeaders: async ({ resolved: { account } }) => {
                 const materializations =
                     (materializationsByAccount.get(account.accountId) ?? 0) + 1;
                 materializationsByAccount.set(account.accountId, materializations);
-                return {
-                    accessToken: `token-${account.accountId}-${materializations}`,
-                    expiresAt: account.accountId === 'account-1' ? 5 : 1_000,
-                };
+                return { headers: { authorization: 'Bearer ' + (`token-${account.accountId}-${materializations}`) }, facts: {}, expiresAt: account.accountId === 'account-1' ? 5 : 1_000 };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -826,7 +816,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         await owner.lookupRequestAuth({ subject: capability, purpose });
         currentAccountId = 'account-0';
 
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken)
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-account-0-1');
         expect(materializationsByAccount.get('account-0')).toBe(1);
     });
@@ -839,11 +829,11 @@ describe('ConnectedAccountRequestAuthService', () => {
                 accountId: currentAccountId,
                 revision: revision1,
             }),
-            materializeBearer: async ({ resolved: { account } }) => {
+            materializeHeaders: async ({ resolved: { account } }) => {
                 const materializations =
                     (materializationsByAccount.get(account.accountId) ?? 0) + 1;
                 materializationsByAccount.set(account.accountId, materializations);
-                return { accessToken: `token-${account.accountId}-${materializations}` };
+                return { headers: { authorization: 'Bearer ' + (`token-${account.accountId}-${materializations}`) }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -873,13 +863,13 @@ describe('ConnectedAccountRequestAuthService', () => {
             ),
         });
 
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken)
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-two-1');
         owner.reconcileCredentialLeases({
             isCurrent: (_account, credentialRevision) => credentialRevision === revision1,
         });
         currentAccountId = 'one';
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken)
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-one-2');
         expect(materializationsByAccount).toEqual(new Map([
             ['one', 2],
@@ -896,11 +886,11 @@ describe('ConnectedAccountRequestAuthService', () => {
                 accountId: 'one',
                 revision: currentRevision,
             }),
-            materializeBearer: async ({ resolved: current }) => {
+            materializeHeaders: async ({ resolved: current }) => {
                 materializedRevisions.push(current.credentialRevision);
                 return current.credentialRevision === revision1
                     ? await oldFill.promise
-                    : { accessToken: 'token-new' };
+                    : { headers: { authorization: 'Bearer ' + ('token-new') }, facts: {},  };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -913,12 +903,12 @@ describe('ConnectedAccountRequestAuthService', () => {
         owner.reconcileCredentialLeases({
             isCurrent: (_account, credentialRevision) => credentialRevision === revision2,
         });
-        oldFill.resolve({ accessToken: 'token-old' });
+        oldFill.resolve({ headers: { authorization: 'Bearer ' + ('token-old') }, facts: {},  });
 
         await expect(oldLookup).rejects.toMatchObject({
             code: 'request_auth_credential_unavailable',
         });
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken)
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-new');
         expect(materializedRevisions).toEqual([revision1, revision2]);
     });
@@ -933,12 +923,9 @@ describe('ConnectedAccountRequestAuthService', () => {
                 if (resolutions === 4) now = 10;
                 return resolved({ accountId: 'one', revision: revision1 });
             },
-            materializeBearer: async () => {
+            materializeHeaders: async () => {
                 materializations += 1;
-                return {
-                    accessToken: `token-${materializations}`,
-                    expiresAt: materializations === 1 ? 10 : 20,
-                };
+                return { headers: { authorization: 'Bearer ' + (`token-${materializations}`) }, facts: {}, expiresAt: materializations === 1 ? 10 : 20 };
             },
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -946,9 +933,9 @@ describe('ConnectedAccountRequestAuthService', () => {
         });
         const capability = subject(accountBinding());
 
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken)
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-1');
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken)
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, ''))
             .toBe('token-2');
         expect(materializations).toBe(2);
     });
@@ -958,7 +945,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         const recovery = deferred<Readonly<{ status: 'current_changed' }>>();
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async () => ({ accessToken: 'token-one' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  }),
             refreshAfterAuthFailure: async () => {
                 recoveries += 1;
                 return await recovery.promise;
@@ -995,7 +982,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         let forcedRefreshes = 0;
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => current,
-            materializeBearer: async ({ resolved: binding }) => ({ accessToken: `token-${binding.credentialRevision}` }),
+            materializeHeaders: async ({ resolved: binding }) => ({ headers: { authorization: 'Bearer ' + (`token-${binding.credentialRevision}`) }, facts: {},  }),
             refreshAfterAuthFailure: async () => { forcedRefreshes++; return { status: 'current_changed' }; },
             refreshExpiredReplacement: async () => { replacementChecks++; await replacementCheck.promise; },
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -1010,7 +997,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         await vi.waitFor(() => expect(replacementChecks).toBe(1));
         replacementCheck.resolve();
         expect(await pending).toEqual([{ status: 'stale_context' }, { status: 'stale_context' }]);
-        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).accessToken).toBe(replacement.accessToken);
+        expect((await owner.lookupRequestAuth({ subject: capability, purpose })).headers.authorization!.replace(/^Bearer /u, '')).toBe(replacement.headers.authorization!.replace(/^Bearer /u, ''));
         expect(await owner.refreshAfterAuthFailure({ ...report, request: { ...report.request, credentialContext: {
             ...rejected.credentialContext,
             failingAccessTokenFingerprint: replacement.credentialContext.failingAccessTokenFingerprint,
@@ -1030,7 +1017,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         let started = false;
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision }),
-            materializeBearer: async () => ({ accessToken: 'bearer' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('bearer') }, facts: {},  }),
             refreshExpiredReplacement: async () => { started = true; await refresh.promise; },
             refreshAfterAuthFailure: async () => { throw new Error('A stale rejection cannot force refresh'); },
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -1057,7 +1044,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         let forcedRefreshes = 0;
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision }),
-            materializeBearer: async () => ({ accessToken: 'unchanged-bearer' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('unchanged-bearer') }, facts: {},  }),
             refreshExpiredReplacement: async () => { freshnessStarted = true; await freshnessCheck.promise; },
             refreshAfterAuthFailure: async () => { forcedRefreshes++; return { status: 'current_unchanged' }; },
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
@@ -1066,7 +1053,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         const oldLease = await owner.lookupRequestAuth({ subject: capability, purpose });
         revision = revision2;
         const currentLease = await owner.lookupRequestAuth({ subject: capability, purpose });
-        const report = (lease: OAuthBearerLeaseV1) => owner.refreshAfterAuthFailure({ subject: capability,
+        const report = (lease: RequestAuthHeadersV1) => owner.refreshAfterAuthFailure({ subject: capability,
             request: { credentialContext: lease.credentialContext,
                 normalizedFailure: { class: 'authentication', evidence: structuredAuthEvidence } } });
         const late = report(oldLease);
@@ -1090,9 +1077,7 @@ describe('ConnectedAccountRequestAuthService', () => {
             operationDeadlineMs: 25,
             authFailureOperationDeadlineMs: 25,
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async () => ({
-                accessToken: `token-${++materializations}`,
-            }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + (`token-${++materializations}`) }, facts: {},  }),
             refreshAfterAuthFailure: async (input: Readonly<{ signal?: AbortSignal }>) => {
                 if (input.signal) authSignals.push(input.signal);
                 if (authSignals.length === 1) {
@@ -1160,7 +1145,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         let secondSubjectCurrent = true;
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async () => ({ accessToken: 'token-one' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  }),
             refreshAfterAuthFailure: async () => await recovery.promise,
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
@@ -1198,7 +1183,7 @@ describe('ConnectedAccountRequestAuthService', () => {
                 revision: revision1,
                 generation: currentGeneration,
             }),
-            materializeBearer: async () => ({ accessToken: 'token-one' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  }),
             refreshAfterAuthFailure: async ({ resolved: current }) => {
                 const generation = current.group?.generation;
                 if (generation === undefined) throw new Error('expected group binding');
@@ -1259,7 +1244,7 @@ describe('ConnectedAccountRequestAuthService', () => {
                 revision: revision1,
                 generation: currentGeneration,
             }),
-            materializeBearer: async () => ({ accessToken: 'token-one' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  }),
             refreshAfterAuthFailure: async () => await recovery.promise,
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
@@ -1290,7 +1275,7 @@ describe('ConnectedAccountRequestAuthService', () => {
                 accountId: 'one',
                 revision: currentRevision,
             }),
-            materializeBearer: async () => ({ accessToken: 'token-one' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  }),
             refreshAfterAuthFailure: async () => await recovery.promise,
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
@@ -1318,9 +1303,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         let materializations = 0;
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async () => ({
-                accessToken: `token-${++materializations}`,
-            }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + (`token-${++materializations}`) }, facts: {},  }),
             refreshAfterAuthFailure: async () => await recovery.promise,
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
@@ -1337,7 +1320,7 @@ describe('ConnectedAccountRequestAuthService', () => {
             },
         });
         const replacement = await owner.lookupRequestAuth({ subject: capability, purpose });
-        expect(replacement.accessToken).toBe('token-2');
+        expect(replacement.headers.authorization!.replace(/^Bearer /u, '')).toBe('token-2');
 
         recovery.resolve({ status: 'current_changed' });
 
@@ -1352,7 +1335,7 @@ describe('ConnectedAccountRequestAuthService', () => {
                 accountId: 'one',
                 revision: currentRevision,
             }),
-            materializeBearer: async () => ({ accessToken: 'token-one' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  }),
             refreshAfterAuthFailure: async () => ({ status: 'current_unchanged' }),
             reportQuotaFailure: async () => await recovery.promise,
         });
@@ -1385,20 +1368,17 @@ describe('ConnectedAccountRequestAuthService', () => {
         };
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async () => ({
-                accessToken: 'token-one',
-                requiredHeaders: { 'chatgpt-account-id': 'acct_123' },
-            }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('token-one'), ...({ 'chatgpt-account-id': 'acct_123' }) }, facts: {},  }),
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
 
-        const lease: OAuthBearerLeaseV1 = await owner.lookupRequestAuth({
+        const lease: RequestAuthHeadersV1 = await owner.lookupRequestAuth({
             subject: capability,
             purpose,
         });
-        expect(lease.accessToken).toBe('token-one');
-        expect(registered).toEqual([['token-one', 'acct_123']]);
+        expect(lease.headers.authorization!.replace(/^Bearer /u, '')).toBe('token-one');
+        expect(registered).toEqual([expect.arrayContaining(['Bearer token-one', 'token-one', 'acct_123'])]);
     });
 
     it('preserves a valid empty required header without registering an empty redaction value', async () => {
@@ -1409,10 +1389,7 @@ describe('ConnectedAccountRequestAuthService', () => {
         };
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async () => ({
-                accessToken: 'token-one',
-                requiredHeaders: { 'x-optional-account-context': '' },
-            }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('token-one'), ...({ 'x-optional-account-context': '' }) }, facts: {},  }),
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
@@ -1420,17 +1397,30 @@ describe('ConnectedAccountRequestAuthService', () => {
         await expect(owner.lookupRequestAuth({
             subject: capability,
             purpose,
-        })).resolves.toMatchObject({
-            accessToken: 'token-one',
-            requiredHeaders: { 'x-optional-account-context': '' },
+        })).resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('token-one'), ...({ 'x-optional-account-context': '' }) }, facts: {},  });
+        expect(redactionLease.values()).toEqual(['Bearer token-one', 'token-one']);
+    });
+
+    it('sanitizes key-only values and decoded Basic secrets through the canonical redaction owner', async () => {
+        const redactionLease = createProviderRedactionLease({ values: [] });
+        const owner = createConnectedAccountRequestAuthService({
+            resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Basic dXNlcjpmaXh0dXJlLXBhc3M=', 'x-api-key': 'fixture-key' }, facts: { opaqueFact: 'fixture-seed' } }),
+            refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
+            reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });
-        expect(redactionLease.values()).toEqual(['token-one']);
+        await owner.lookupRequestAuth({ subject: { ...subject(accountBinding()), registerRedaction: redactionLease.add }, purpose });
+        const sanitized = redactionLease.redact('fixture-key Basic dXNlcjpmaXh0dXJlLXBhc3M= user:fixture-pass fixture-pass fixture-seed');
+        expect(sanitized).not.toContain('fixture-key');
+        expect(sanitized).not.toContain('dXNlcjpmaXh0dXJlLXBhc3M=');
+        expect(sanitized).not.toContain('fixture-pass');
+        expect(sanitized).not.toContain('fixture-seed');
     });
 
     it('fails closed when purpose authorization is absent', async () => {
         const owner = createConnectedAccountRequestAuthService({
             resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
-            materializeBearer: async () => ({ accessToken: 'token-one' }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('token-one') }, facts: {},  }),
             refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
             reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
         });

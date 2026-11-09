@@ -1,7 +1,7 @@
 import { chmod, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isRecord, PluginError } from '@happier-dev/plugin-sdk';
-import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV, type OAuthBearerLeaseV1 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV, type RequestAuthHeadersV1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createConnectedAccountRequestAuthClient } from '@happier-dev/plugin-sdk/connected-accounts/request-auth';
 import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/fs';
 import type { AgentLaunchEnvironment, AgentConnectedAccountNativeAuthCodecV1, AgentConnectedAccountStateSharingDescriptorV1, AgentConnectedAccountResumeReachabilityInputV1, AgentConnectedAccountRuntimeAuthAdapterV1 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -25,10 +25,13 @@ function encodeAuth(accessToken: string, accountId: string | undefined | null, e
   return { version: 1, access_token: accessToken, refresh_token: unusableRefreshToken, account_id: accountId, expires_at_ms: expiresAt };
 }
 
-function fromLease(lease: OAuthBearerLeaseV1) {
-  const account = lease.credentialContext.account;
+function fromRequestAuth(material: RequestAuthHeadersV1) {
+  const account = material.credentialContext.account;
   if (account.service.pluginId !== FX_CODEX_SERVICE.pluginId || account.service.localId !== FX_CODEX_SERVICE.localId) throw new PluginError({ code: 'fx_connected_account_service_mismatch', message: 'FX requires a ChatGPT Connected Account.' });
-  return encodeAuth(lease.accessToken, lease.requiredHeaders?.['chatgpt-account-id'], lease.expiresAt);
+  const headers = new Headers(material.headers);
+  const bearer = /^Bearer (.+)$/i.exec(headers.get('authorization') ?? '');
+  if (!bearer) throw new PluginError({ code: 'fx_connected_account_bearer_unavailable', message: 'FX requires Bearer authorization from its ChatGPT Connected Account.' });
+  return encodeAuth(bearer[1]!, headers.get('chatgpt-account-id'), material.expiresAt);
 }
 
 /** One native encoding for initial launch and host-owned account continuity. */
@@ -79,8 +82,8 @@ export async function prepareFxConnectedAccount(environment?: AgentLaunchEnviron
   const home = environment.values.HOME;
   if (!home) throw new PluginError({ code: 'fx_connected_account_home_unavailable', message: 'FX requires its host-prepared native home.' });
   const client = await createConnectedAccountRequestAuthClient({ capabilityFile });
-  const lease = await client.lookupConnectedAccountRequestAuth({ purpose, ...(signal ? { signal } : {}) });
-  const auth = fromLease(lease);
+  const material = await client.lookupConnectedAccountRequestAuth({ purpose, ...(signal ? { signal } : {}) });
+  const auth = fromRequestAuth(material);
   signal?.throwIfAborted();
   await mkdir(join(home, '.fx'), { recursive: true, mode: 0o700 });
   // The home owner may already have created this parent while copying config.

@@ -1,3 +1,4 @@
+import type { RequestAuthFactsV1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import type { ConnectedAccountMaterializationRequest } from '@happier-dev/protocol/connect/connected-account-purposes';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { ConnectedServiceQuotaRecoveryCreditsV1, ConnectedServiceQuotaRecoveryCreditDetailsByIdV1, ConnectedServiceQuotaRecoveryCreditV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
@@ -12,7 +13,7 @@ export type ConnectedAccountMaterialization = Readonly<{
      * Omission or unknown never establishes personal usage eligibility. */
     usageAccountScope?: 'personal' | 'workspace' | 'unknown';
 }> & (
-    | Readonly<{ kind: 'httpHeaders'; headers: Readonly<Record<string, string>> }>
+    | Readonly<{ kind: 'httpHeaders'; headers: Readonly<Record<string, string>>; facts?: RequestAuthFactsV1; expiresAt?: number }>
     | Readonly<{ kind: 'environment'; env: Readonly<Record<string, string>> }>
     | Readonly<{ kind: 'files'; files: Readonly<Record<string, Uint8Array>> }>
 );

@@ -8,12 +8,15 @@ Use `context.services.connectedAccounts` for host-managed account connections. A
 ## Authentication-mode presentation in development
 
 In unreleased 0.3 development source, a manual authentication mode can declare
-`apiKey: true` when it accepts an API key. The public catalog preserves this
-presentation fact so Credentials and account details identify the selected mode
-without guessing from stored token material. Leave it absent for device sign-in,
-native imports and other modes whose API-key identity is unknown. The declaration
-does not establish billing or a subscription; observed usage owns subscription
-status and plan labels.
+`apiKey: true` when it accepts an API key. The authentication owner records this
+as `accessMode: 'apiKey'` on successful completion. A runtime with an established
+subscription or key contract can return `accessMode: 'subscription' | 'apiKey'`
+directly; the public account and attempt projections preserve it. Leave the
+declaration absent for device sign-in, native imports and other modes whose key
+identity is unknown. Credentials and account details use that account metadata,
+then an observed subscribed status when the mode is unknown. Stored credential
+kind and sign-in provenance do not establish the mode. Observed usage owns plan
+labels; an explicit API-key mode does not display a subscription plan.
 
 ## Request headers in development
 
@@ -304,7 +307,7 @@ binding and credential bytes, checks the issued origin and method before
 injection, and redacts provider echoes. Declare the purpose and network access
 on the Action; this request does not select an Account or grant access.
 
-- HTTP headers for declared HTTPS origins and bounded header names
+- HTTP headers for a declared HTTPS origin and bounded header names
 - environment variables for bounded keys
 - files for bounded file ids
 
@@ -321,7 +324,7 @@ const credential = await context.services.connectedAccounts.materialize(
   'upstream',
   {
     kind: 'httpHeaders',
-    origins: ['https://api.example.com'],
+    origin: 'https://api.example.com',
     headerNames: ['authorization'],
   },
 );
@@ -336,7 +339,7 @@ forms. The host re-verifies that the account is still authorized for the
 declared purpose before and after materialization: it must still be the direct
 target or a current enabled member of the bound group. An account from the same
 service but outside that scope is rejected. For an `httpHeaders` request, an
-account with configured origins requires every requested origin to remain among
+account with configured origins requires the requested origin to remain among
 its current `connectedAccountOrigins`. The selected service's materialization
 adapter owns the credential's recipient contract, including when no configured
 origins exist. Manifest network targets do not supply a separate origin grant.
@@ -394,22 +397,20 @@ authoring alongside the target-scoped listing above:
   emits a self-contained, transport-only ESM source fragment. The fragment owns
   no selection, refresh, quota, retry, or caching decision — the host keeps all
   of those. Each call rereads the private capability file the host atomically
-  rotates, posts to the host's loopback endpoint, and returns one bounded lease
-  (access token, optional required headers, credential context) or a typed
+  rotates, posts to the host's loopback endpoint, and returns the complete
+  header map, scalar facts, optional expiry, and credential context, or a typed
   failure (`request_auth_unavailable`, a normalized authentication or quota
   failure with evidence).
 - The capability file binds the transport to one materialization: a bounded
-  materialization id, a subject-scope digest the host computes, a single-use
+  materialization id, a subject-scope digest the host computes, a private
   capability value, and the current loopback port. A valid `401` means that one
   capability tuple is retired; the fragment stays retry-safe and the next call
-  observes the rotated tuple. Responses are bounded (256 KiB) and validated
-  against the protocol-owned request-auth schema before any field is trusted.
+  observes the rotated tuple. Responses are validated against the
+  protocol-owned request-auth schema before any field is trusted.
 
-This is a generic authoring surface: it carries no first-party agent facts or
-policy of its own. Pinned provider-terminal evidence identities (for example,
-which producer versions and terminal signatures the host admits) are owned by
-the shared protocol vocabulary, and provider-specific retry classification
-stays in each Agent plugin's own provider-limit classifier.
+This is a generic authoring surface: it declares no first-party fact fields or
+provider policy. Failure reports carry structured evidence, and provider-specific
+retry classification stays in each Agent plugin's own provider-limit classifier.
 
 Import the generic listing contracts, request-auth source builder, and
 provider-limit classifier from `@happier-dev/plugin-sdk/connected-accounts`.

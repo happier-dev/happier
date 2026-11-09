@@ -1,6 +1,5 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH, CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH, ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { QualifiedConnectedAccountGroupV4Schema, QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -20,6 +19,7 @@ import type {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDaemonControlApp } from '../../../../../../../../apps/cli/src/daemon/controlServer.js';
+import { runWithServerHttpBaseUrl } from '../../../../../../../../apps/cli/src/api/client/serverHttpBaseUrl.js';
 import {
   createConnectedServiceContinuationMessageDispatcher,
 } from '../../../../../../../../apps/cli/src/daemon/connectedServices/continuation/createConnectedServiceContinuationMessageDispatcher.js';
@@ -62,6 +62,7 @@ import {
   createPiConnectedServiceRuntimeAuthAdapter,
 } from '../../../connectedServices/runtimeAuthAdapter.js';
 import { createPiRuntimeOperations } from '../../../runtime/rpc/operations.js';
+import { createPiRequestAuthTestWorkspace } from './workspace.testkit.js';
 import {
   PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS,
 } from './purposes.js';
@@ -125,6 +126,10 @@ type RealOwnerState = {
   controlRouteLookups: number;
   controlRouteLookupStatuses: number[];
   controlRouteReports: number;
+  controlRouteReportStatuses: number[];
+  recoveryApplications: number;
+  refreshCredentialReads: number;
+  recoveryError: Readonly<{ name: string; frames: readonly string[] }> | null;
   upstreamAttempts: Array<Readonly<{
     accountId: 'primary' | 'backup';
     url: string;
@@ -158,7 +163,6 @@ const CREDENTIALS = {
 const PRIMARY_REVISION = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
 const BACKUP_REVISION = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
 const STALE_PRIMARY_REVISION = 'csr_cccccccccccccccccccccc';
-const TEST_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 
 const temporaryRoots = new Set<string>();
 
@@ -252,6 +256,7 @@ function accountList(
         ref: { service, accountId: 'primary' },
         status: 'connected',
         authenticationModeId: 'oauth',
+        revisionSemantics: 'revisioned',
         credentialRevision: revisions.primary,
         configurationReady: true,
         configurationRevision: 'configuration-primary',
@@ -261,6 +266,7 @@ function accountList(
         ref: { service, accountId: 'backup' },
         status: 'connected',
         authenticationModeId: 'oauth',
+        revisionSemantics: 'revisioned',
         credentialRevision: revisions.backup,
         configurationReady: true,
         configurationRevision: 'configuration-backup',
@@ -739,6 +745,24 @@ async function waitForScenarioTerminal(
         upstreamAttempts: state.upstreamAttempts.length,
         lookupAccounts: state.lookupAccounts.length,
         lookupStatuses: state.controlRouteLookupStatuses,
+        reportStatuses: state.controlRouteReportStatuses,
+        reportFailures: state.reportBodies.map((body) => {
+          const parsed = ConnectedAccountAuthFailureRequestV1Schema.safeParse(body);
+          if (parsed.success) {
+            return {
+              class: parsed.data.normalizedFailure.class,
+              httpStatus: parsed.data.normalizedFailure.evidence.httpStatus,
+            };
+          }
+          const quota = ConnectedAccountQuotaFailureRequestV1Schema.safeParse(body);
+          return quota.success ? {
+            class: quota.data.normalizedFailure.class,
+            httpStatus: quota.data.normalizedFailure.evidence.httpStatus,
+          } : { class: 'unparsed' };
+        }),
+        recoveryApplications: state.recoveryApplications,
+        refreshCredentialReads: state.refreshCredentialReads,
+        recoveryError: state.recoveryError,
         events,
       })}`,
       { cause: error },
@@ -886,11 +910,12 @@ async function runRealOwnerScenario(
   scenario: Scenario,
 ): Promise<void> {
   const modules = await loadExactPiModules(version);
-  const root = await mkdtemp(join(TEST_DIRECTORY, '.real-owners-'));
+  const root = await createPiRequestAuthTestWorkspace('real-owners-');
   temporaryRoots.add(root);
   const agentDir = join(root, 'agent');
   await mkdir(agentDir, { recursive: true });
   const service = serviceFor(scenario.providerId);
+  const serviceId = `${service.pluginId}/${service.localId}`;
   const purpose = PI_REQUEST_AUTH_DECLARED_PURPOSES[scenario.providerId];
   const state: RealOwnerState = {
     currentAccountId: 'primary',
@@ -906,6 +931,10 @@ async function runRealOwnerScenario(
     controlRouteLookups: 0,
     controlRouteLookupStatuses: [],
     controlRouteReports: 0,
+    controlRouteReportStatuses: [],
+    recoveryApplications: 0,
+    refreshCredentialReads: 0,
+    recoveryError: null,
     upstreamAttempts: [],
     lookupAccounts: [],
     materializedAccounts: [],
@@ -915,8 +944,6 @@ async function runRealOwnerScenario(
 
   const refreshApi = {
     getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
-    getConnectedServiceCredentialPlain: vi.fn(async () => null),
-    getConnectedServiceCredentialSealed: vi.fn(async () => null),
   };
   const refreshCoordinator = new ConnectedServiceRefreshCoordinator({
     api: refreshApi as never,
@@ -1105,6 +1132,8 @@ async function runRealOwnerScenario(
       typeof applyConnectedAccountRequestAuthRecovery
     >[0]['failure'],
   ) => {
+    state.recoveryApplications += 1;
+    try {
     const before = JSON.stringify([
       resolved.account.accountId,
       resolved.credentialRevision,
@@ -1114,12 +1143,12 @@ async function runRealOwnerScenario(
       resolved,
       failure,
       refreshCredential: async (input) => Boolean(
-        await refreshCoordinator.refreshConnectedServiceCredentialForQuota({
+        await runWithServerHttpBaseUrl(address, () => refreshCoordinator.refreshConnectedServiceCredentialForQuota({
           serviceId: firstPartyServiceId(scenario.providerId),
           profileId: input.account.accountId,
           force: true,
           expectedCredentialRevision: input.expectedCredentialRevision,
-        }),
+        })),
       ),
       switchAfterClassifiedFailure: async (input) => (
         await groupSwitchCoordinator.switchAfterClassifiedFailure(input)
@@ -1156,6 +1185,13 @@ async function runRealOwnerScenario(
         ? 'current_unchanged' as const
         : 'current_changed' as const,
     };
+    } catch (error) {
+      state.recoveryError = error instanceof Error ? {
+        name: error.name,
+        frames: (error.stack ?? '').split('\n').filter((line) => line.trimStart().startsWith('at ')),
+      } : { name: typeof error, frames: [] };
+      throw error;
+    }
   };
 
   const requestAuthService = createConnectedAccountRequestAuthService({
@@ -1257,6 +1293,18 @@ async function runRealOwnerScenario(
     if (request.url === CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH) {
       state.controlRouteLookupStatuses.push(reply.statusCode);
     }
+    if (
+      request.url === CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH
+      || request.url === CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH
+    ) {
+      state.controlRouteReportStatuses.push(reply.statusCode);
+    }
+  });
+  // The current refresh owner reads qualified V4 snapshots over HTTP. An absent
+  // credential makes refresh unavailable and exercises the real group fallback.
+  app.get('/v4/connect/qualified/credential', async (_request, reply) => {
+    state.refreshCredentialReads += 1;
+    return reply.code(404).send({ error: 'not_found' });
   });
   const address = await app.listen({
     host: '127.0.0.1',
@@ -1447,7 +1495,7 @@ async function runRealOwnerScenario(
         PI_CODING_AGENT_DIR: agentDir,
         [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: capability.path,
         HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
-          serviceId: firstPartyServiceId(scenario.providerId),
+          serviceId,
         }]),
       },
       sessionId: 'happier-session-real-owner',
@@ -1596,7 +1644,7 @@ async function runRealOwnerScenario(
     expect(groupSwitchSpy).toHaveBeenCalledTimes(
       scenario.expected.switchCalls ?? scenario.expected.switchEffects,
     );
-    expect(refreshApi.getConnectedServiceCredentialPlain).toHaveBeenCalledTimes(
+    expect(state.refreshCredentialReads).toBe(
       scenario.expected.refreshReads,
     );
     expect(refreshSpy).toHaveBeenCalledTimes(scenario.expected.refreshReads);
@@ -1677,9 +1725,7 @@ async function runRealOwnerScenario(
       target: { agentId: 'pi' },
       error: lastAssistantMessage,
       selection: {
-        serviceId: scenario.providerId === 'anthropic'
-          ? 'claude-subscription'
-          : 'openai-codex',
+        serviceId,
         activeProfileId: state.currentAccountId,
         groupId: 'fallbacks',
       },
@@ -1860,8 +1906,7 @@ function recoveredScenarios(): readonly Scenario[] {
         firstPrompt: {
           attempts: 1,
           terminalKind: 'turn-failed',
-          exactTerminalDiagnostic:
-            '429 {"type":"error","error":{"type":"rate_limit_error","message":"rate limit exceeded"}}',
+          exactTerminalDiagnostic: 'rate limit exceeded',
         },
       },
     },
@@ -1882,8 +1927,7 @@ function recoveredScenarios(): readonly Scenario[] {
         quotaBackoffs: 1,
         agentSessionRetries: 0,
         terminalKind: 'turn-failed',
-        exactTerminalDiagnostic:
-          '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+        exactTerminalDiagnostic: 'Overloaded',
       },
     },
     {
@@ -1903,8 +1947,7 @@ function recoveredScenarios(): readonly Scenario[] {
         quotaBackoffs: 1,
         agentSessionRetries: 0,
         terminalKind: 'turn-failed',
-        exactTerminalDiagnostic:
-          '503 {"type":"error","error":{"type":"api_error","message":"service unavailable"}}',
+        exactTerminalDiagnostic: 'service unavailable',
       },
     },
     {
@@ -1928,8 +1971,7 @@ function recoveredScenarios(): readonly Scenario[] {
         quotaBackoffs: 0,
         agentSessionRetries: 0,
         terminalKind: 'turn-failed',
-        exactTerminalDiagnostic:
-          '408 {"type":"error","error":{"type":"request_timeout","message":"request outcome uncertain"}}',
+        exactTerminalDiagnostic: 'request outcome uncertain',
       },
     },
     {
@@ -1998,8 +2040,7 @@ function recoveredScenarios(): readonly Scenario[] {
         firstPrompt: {
           attempts: 1,
           terminalKind: 'turn-failed',
-          exactTerminalDiagnostic:
-            '429 {"type":"error","error":{"type":"insufficient_quota","message":"quota exceeded"}}',
+          exactTerminalDiagnostic: 'quota exceeded',
         },
       },
     },
@@ -2066,8 +2107,7 @@ function recoveredScenarios(): readonly Scenario[] {
         quotaBackoffs: 0,
         agentSessionRetries: 0,
         terminalKind: 'turn-failed',
-        exactTerminalDiagnostic:
-          '429 {"type":"error","error":{"type":"insufficient_quota","message":"quota exceeded"}}',
+        exactTerminalDiagnostic: 'quota exceeded',
       },
     },
     {
@@ -2253,8 +2293,7 @@ function recoveredScenarios(): readonly Scenario[] {
         quotaBackoffs: 0,
         agentSessionRetries: 0,
         terminalKind: 'turn-failed',
-        exactTerminalDiagnostic:
-          '418 {"type":"error","error":{"type":"mystery_error","message":"429 rate limit maybe; contact support"}}',
+        exactTerminalDiagnostic: '429 rate limit maybe; contact support',
       },
     },
     {
@@ -2317,8 +2356,7 @@ describe('Pi request-auth real-owner composition', () => {
           quotaBackoffs: 1,
           agentSessionRetries: 1,
           terminalKind: 'turn-cancelled',
-          exactTerminalDiagnostic:
-            '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+          exactTerminalDiagnostic: 'Overloaded',
         },
       });
     },
@@ -2329,7 +2367,6 @@ describe('Pi request-auth real-owner composition', () => {
     '0.82.1 exposes the exact final Provider diagnostic after an exhausted AgentSession retry',
     async () => {
       const first = '529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}';
-      const final = '400 {"type":"error","error":{"type":"invalid_request_error","message":"final diagnostic after retry"}}';
       await runRealOwnerScenario('0.82.1', {
         id: 'retry-final-different',
         providerId: 'anthropic',
@@ -2352,7 +2389,7 @@ describe('Pi request-auth real-owner composition', () => {
           quotaBackoffs: 1,
           agentSessionRetries: 1,
           terminalKind: 'turn-failed',
-          exactTerminalDiagnostic: final,
+          exactTerminalDiagnostic: 'final diagnostic after retry',
           absentDiagnostic: first,
         },
       });

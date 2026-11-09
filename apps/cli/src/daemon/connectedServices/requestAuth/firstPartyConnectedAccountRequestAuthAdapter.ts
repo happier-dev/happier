@@ -14,8 +14,8 @@ import type {
     QualifiedConnectedAccountPeerOperationTransport,
 } from '@/api/client/qualifiedConnectedAccountApi';
 import {
-    parseHttpHeadersRequestAuthBearer,
-} from './parseHttpHeadersRequestAuthBearer';
+    parseHttpHeadersRequestAuthMaterial,
+} from './parseHttpHeadersRequestAuthMaterial';
 import {
     projectTeamResourceSelectionToSessionPurposeBinding,
     type ConnectedAccountTeamDirectMaterialOrigin,
@@ -27,7 +27,11 @@ export type QualifiedPurposeTeamDirectMaterialOrigin = ConnectedAccountTeamDirec
  * The sole compatibility map from the released service-keyed Connected Services namespace to the
  * qualified Connected Account namespace. New purpose bindings carry the qualified ref and this
  * adapter only translates at the legacy credential/projection boundary. It never selects or writes
- * a binding. Remove each entry after the corresponding service-keyed Agent/session producers,
+ * a binding. Consumers are prepareConnectedAccountRequestAuthForSpawn,
+ * prepareForegroundAdmission and startDaemonSessionControlRuntime; their released
+ * service-keyed inputs meet qualified purposes at this ingress. OAuth/header
+ * recipes below preserve that predecessor, not modern service selection.
+ * Remove each entry after the corresponding service-keyed Agent/session producers,
  * rollback readers, and persisted inputs leave the supported release frontier.
  */
 export function resolveFirstPartyConnectedAccountServiceId(
@@ -212,7 +216,7 @@ type ConnectedAccountRequestAuthEstablishedMaterializer = Readonly<{
     }>>;
 }>;
 
-export async function materializeFirstPartyConnectedAccountBearer(input: Readonly<{
+export async function materializeFirstPartyConnectedAccountHeaders(input: Readonly<{
     resolved: ConnectedAccountRequestAuthResolvedBinding;
     materialization: QualifiedConnectedAccountRequestAuthUseV1['materialization'];
     transport: QualifiedConnectedAccountPeerOperationTransport;
@@ -224,8 +228,8 @@ export async function materializeFirstPartyConnectedAccountBearer(input: Readonl
         signal?: AbortSignal;
     }>) => Promise<FirstPartyCredentialResolution | null>;
 }>): Promise<Readonly<{
-    accessToken: string;
-    requiredHeaders?: Readonly<Record<string, string>>;
+    headers: Readonly<Record<string, string>>;
+    facts: Readonly<Record<string, string | number | boolean>>;
     expiresAt?: number;
 }>> {
     input.signal?.throwIfAborted();
@@ -249,7 +253,7 @@ export async function materializeFirstPartyConnectedAccountBearer(input: Readonl
         ) {
             throw new ConnectedAccountRequestAuthError('request_auth_credential_unavailable', { causeCode: 'request_auth_credential_superseded' });
         }
-        return parseHttpHeadersRequestAuthBearer(
+        return parseHttpHeadersRequestAuthMaterial(
             input.materialization,
             invocation.result,
         );
@@ -286,7 +290,7 @@ export async function materializeFirstPartyConnectedAccountBearer(input: Readonl
             headers[headerName] = providerAccountId;
         }
     }
-    const materialized = parseHttpHeadersRequestAuthBearer(
+    const materialized = parseHttpHeadersRequestAuthMaterial(
         input.materialization,
         { kind: 'httpHeaders', headers },
     );

@@ -43,7 +43,7 @@ import {
   createConnectedAccountRequestAuthSubjectRegistry,
 } from '../../../../../../../../apps/cli/src/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry.js';
 import {
-  materializeFirstPartyConnectedAccountBearer,
+  materializeFirstPartyConnectedAccountHeaders,
   resolveFirstPartyConnectedAccountBinding,
 } from '../../../../../../../../apps/cli/src/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter.js';
 import {
@@ -1103,9 +1103,9 @@ describe('Pi request-auth strict spawned real-owner composition', () => {
             currentBinding,
             currentProjection(),
           ),
-        materializeBearer: async ({ resolved, materialization }) => {
+        materializeHeaders: async ({ resolved, materialization }) => {
           materializations += 1;
-          return await materializeFirstPartyConnectedAccountBearer({
+          return await materializeFirstPartyConnectedAccountHeaders({
             resolved,
             materialization,
             transport: { kind: 'v4' },

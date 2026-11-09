@@ -132,15 +132,15 @@ describe('daemon requester request-auth Account callbacks', () => {
                     signal: new AbortController().signal });
                 if (!resolved) throw new Error('The genuine requester purpose binding was unavailable');
                 await expect(bob.materializeRequestAuthBearer({ subjectId: lease.subjectId, binding, resolved, materialization,
-                    signal: new AbortController().signal })).resolves.toMatchObject({ accessToken: 'bob-subscription' });
+                    signal: new AbortController().signal })).resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('bob-subscription') }, facts: {},  });
                 const owner = createConnectedAccountRequestAuthService({ ...callbacks,
                     refreshAfterAuthFailure: async () => ({ status: 'current_unchanged' }),
                     reportQuotaFailure: async () => ({ status: 'current_unchanged' }) });
                 const aliceSubject = scopeConnectedAccountPurposeBindingLease({ lease: aliceLease, subjectId: aliceLease.subjectId,
                     parentSessionId: 'alice-session', uses: [{ purpose, materialization }], registerRedaction: () => undefined });
-                await expect(owner.lookupRequestAuth({ subject: aliceSubject, purpose })).resolves.toMatchObject({ accessToken: 'alice-subscription' });
+                await expect(owner.lookupRequestAuth({ subject: aliceSubject, purpose })).resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('alice-subscription') }, facts: {},  });
                 credentialAccounts.length = 0;
-                await expect(owner.lookupRequestAuth({ subject, purpose })).resolves.toMatchObject({ accessToken: 'bob-subscription' });
+                await expect(owner.lookupRequestAuth({ subject, purpose })).resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('bob-subscription') }, facts: {},  });
                 expect(credentialAccounts).toContain('bob');
                 expect(credentialAccounts).not.toContain('alice');
                 const diagnostics = vi.spyOn(logger, 'debug').mockImplementation(() => {});
@@ -160,7 +160,7 @@ describe('daemon requester request-auth Account callbacks', () => {
                     expect(JSON.stringify(records)).not.toContain('secret-');
                 }
                 credentialFailure = 'unexpected';
-                await expect(callbacks.materializeBearer({ subject, binding, resolved: resolved!, materialization,
+                await expect(callbacks.materializeHeaders({ subject, binding, resolved: resolved!, materialization,
                     signal: new AbortController().signal })).rejects.toMatchObject({
                     code: 'request_auth_credential_unavailable', diagnostic: { causeCode: 'materialization_failed',
                         errorClass: 'TypeError', exceptionCode: null },
@@ -192,7 +192,7 @@ describe('daemon requester request-auth Account callbacks', () => {
                     const principal = registry.authenticate(capability);
                     if (!principal) throw new Error('Issued MCP capability was unavailable');
                     const client = await createConnectedAccountRequestAuthClient({ capabilityFile: issued.capabilityFile });
-                    await expect(client.lookupConnectedAccountRequestAuth({ purpose })).resolves.toMatchObject({ accessToken: 'bob-subscription' });
+                    await expect(client.lookupConnectedAccountRequestAuth({ purpose })).resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('bob-subscription') }, facts: {},  });
                     grantResource = 'https://mcp.example.test/other';
                     await expect(client.lookupConnectedAccountRequestAuth({ purpose })).rejects.toThrow('request_auth_not_active');
                     await expect(issueMcpRequestAuthCapability({ serverId: 'work', resource: 'https://mcp.example.test/path', materializationId: 'mismatched-bob' }, issuanceContext, signal)).rejects.toThrow('mcp_resource_mismatch');
@@ -223,7 +223,7 @@ describe('daemon requester request-auth Account callbacks', () => {
                         const runCapability = JSON.parse(await readFile(runIssued.capabilityFile, 'utf8')).capability;
                         const runPrincipal = registry.authenticate(runCapability);
                         if (!runPrincipal) throw new Error('Run capability unavailable');
-                        await expect(owner.lookupRequestAuth({ subject: runPrincipal, purpose })).resolves.toMatchObject({ accessToken: 'bob-subscription' });
+                        await expect(owner.lookupRequestAuth({ subject: runPrincipal, purpose })).resolves.toMatchObject({ headers: { authorization: 'Bearer ' + ('bob-subscription') }, facts: {},  });
                         expect(observedProofs[0]).toEqual({ v: 1, executionRunId: 'run-one', expectedOccurrenceId: 'occurrence-one' });
                         runParent = 'other-session';
                         await expect(owner.lookupRequestAuth({ subject: runPrincipal, purpose })).rejects.toThrow('request_auth_not_active');

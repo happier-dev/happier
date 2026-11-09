@@ -1,13 +1,15 @@
 import { PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
+import { PI_REQUEST_AUTH_PURPOSE_ROWS } from '../qualifiedPurposes.js';
 import { PI_REQUEST_AUTH_PRODUCER_VERSION_ENV } from './env.js';
+import { PI_TERMINAL_PROVIDER_EVIDENCE_V1 } from './terminalEvidence.js';
 import {
   PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS,
   PI_REQUEST_AUTH_PROVIDER_OWNED_HEADERS,
 } from './purposes.js';
 
-export type PiRequestAuthProviderId = 'anthropic' | 'openai-codex';
+export type PiRequestAuthProviderId = (typeof PI_REQUEST_AUTH_PURPOSE_ROWS)[number]['native']['providerId'];
 
 export type PiRequestAuthPurposeMap = Readonly<
   Partial<Record<PiRequestAuthProviderId, JsonValue>>
@@ -41,7 +43,7 @@ const PROVIDER_TARGET_ORIGINS = Object.freeze(${js(Object.fromEntries(
     Object.entries(PI_REQUEST_AUTH_PROVIDER_MATERIALIZATIONS)
       .map(([providerId, materialization]) => [providerId, materialization.origin]),
   ))});
-const PROVIDER_LIMIT_EVIDENCE = Object.freeze(${js(PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1)});
+const PROVIDER_LIMIT_EVIDENCE = Object.freeze(${js({ ...PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1, piTerminalProviderErrors: PI_TERMINAL_PROVIDER_EVIDENCE_V1 })});
 const PRODUCER_VERSION = String(process.env[${js(PI_REQUEST_AUTH_PRODUCER_VERSION_ENV)}] || "");
 const REQUEST_AUTH_PLACEHOLDER = "happier-connected-account-request-auth";
 const OWNED_HEADERS = Object.freeze(${js(PI_REQUEST_AUTH_PROVIDER_OWNED_HEADERS)});
@@ -71,9 +73,16 @@ function decodeBase64UrlJson(value) {
   }
 }
 
-function validateCodexAccountHeader(accessToken, requiredHeaders) {
+function requireBearerToken(headers) {
+  const authorization = new Headers(headers).get("authorization");
+  const match = /^Bearer (.+)$/i.exec(authorization || "");
+  if (!match) throw new Error("happier_pi_request_auth_bearer_unavailable");
+  return match[1];
+}
+
+function validateCodexAccountHeader(accessToken, headers) {
   let projectedAccountId = null;
-  for (const [name, value] of Object.entries(requiredHeaders || {})) {
+  for (const [name, value] of Object.entries(headers)) {
     if (name.toLowerCase() === "chatgpt-account-id") projectedAccountId = value;
   }
   if (projectedAccountId === null) return;
@@ -242,13 +251,7 @@ function parsePinnedTerminalEvidence(providerId, event) {
       quotaScope: signature.quotaScope,
       piRetryable: signature.piRetryable,
       ...(httpStatus === null ? {} : { httpStatus }),
-      evidenceSource: {
-        kind: "pinnedProviderTerminal",
-        producer: "pi",
-        producerVersion: PRODUCER_VERSION,
-        provider: providerId,
-        signatureId: signature.id,
-      },
+      evidenceSource: { kind: "structured" },
     };
   }
   return null;
@@ -397,7 +400,7 @@ function classifyFailure(structured, pinned) {
   return structured || pinned;
 }
 
-async function reportFailure(failure, exactStatus, lease, signal) {
+async function reportFailure(failure, exactStatus, material, signal) {
   const evidence = {
     ...(exactStatus === null ? {} : { httpStatus: exactStatus }),
     ...(failure.providerCode ? { providerCode: failure.providerCode } : {}),
@@ -407,7 +410,7 @@ async function reportFailure(failure, exactStatus, lease, signal) {
   };
   if (failure.category === "auth_invalid") {
     return await reportConnectedAccountAuthFailure({
-      credentialContext: lease.credentialContext,
+      credentialContext: material.credentialContext,
       normalizedFailure: {
         class: "authentication",
         evidence,
@@ -416,7 +419,7 @@ async function reportFailure(failure, exactStatus, lease, signal) {
     });
   }
   return await reportConnectedAccountQuotaFailure({
-    credentialContext: lease.credentialContext,
+    credentialContext: material.credentialContext,
     normalizedFailure: {
       class: "quota",
       evidence,
@@ -450,12 +453,13 @@ function wrapProviderStream(providerId, purpose, baseStream) {
           if (options.signal && options.signal.aborted) throw options.signal.reason;
           requireProviderTargetOrigin(providerId, model);
           // Exactly one fresh local lookup immediately before each independent upstream attempt.
-          const lease = await lookupConnectedAccountRequestAuth({
+          const material = await lookupConnectedAccountRequestAuth({
             purpose,
             signal: options.signal,
           });
+          const accessToken = requireBearerToken(material.headers);
           if (providerId === "openai-codex") {
-            validateCodexAccountHeader(lease.accessToken, lease.requiredHeaders);
+            validateCodexAccountHeader(accessToken, material.headers);
           }
 
           let response = null;
@@ -463,8 +467,8 @@ function wrapProviderStream(providerId, purpose, baseStream) {
           let responseEventEscaped = false;
           const attemptOptions = {
             ...options,
-            apiKey: lease.accessToken,
-            headers: mergeAttemptHeaders(providerId, options.headers, lease.requiredHeaders),
+            apiKey: accessToken,
+            headers: mergeAttemptHeaders(providerId, options.headers, material.headers),
             maxRetries: 0,
             ...(providerId === "openai-codex" ? { transport: "sse" } : {}),
             onPayload: replayPayload,
@@ -534,7 +538,7 @@ function wrapProviderStream(providerId, purpose, baseStream) {
               outcome = await reportFailure(
                 failure,
                 structuredHttpStatus ?? failure.httpStatus ?? null,
-                lease,
+                material,
                 options.signal,
               );
             } catch {
@@ -606,7 +610,7 @@ function requestAuthOnlyProviderAuth() {
       },
       async resolve() {
         // This value only satisfies Pi's synchronous configured-provider gate. The complete Provider
-        // wrapper replaces it with a fresh lease before invoking an upstream stream.
+        // wrapper replaces it with fresh request material before invoking an upstream stream.
         return {
           auth: { apiKey: REQUEST_AUTH_PLACEHOLDER },
           source: "Happier connected account",
@@ -635,7 +639,7 @@ export default async function HappierPiRequestAuthExtension(pi) {
   }
   const builtins = new Map(builtinProviders().map((provider) => [provider.id, provider]));
   let registered = 0;
-  for (const providerId of ["anthropic", "openai-codex"]) {
+  for (const providerId of ${js(PI_REQUEST_AUTH_PURPOSE_ROWS.map((row) => row.native.providerId))}) {
     const purpose = PROVIDER_PURPOSES[providerId];
     if (!purpose) continue;
     const base = builtins.get(providerId);

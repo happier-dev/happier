@@ -52,7 +52,7 @@ export function createDaemonQualifiedRequestAuthCallbacks<T extends RequestAuthA
     /** The Session owner verifies both captured-context identity and fresh
      * admission. Direct context checks serve only the assertion-free adapter. */
     assertSessionAccountCurrent?: (sessionId: string, expected: T | null) => Promise<void>;
-}>): Pick<ConnectedAccountRequestAuthServiceDependencies, 'resolveCurrentBinding' | 'materializeBearer' | 'reportScopeFailure'> {
+}>): Pick<ConnectedAccountRequestAuthServiceDependencies, 'resolveCurrentBinding' | 'materializeHeaders' | 'reportScopeFailure'> {
     const withSessionAccountContext = async <Result>(sessionId: string | null, operation: (context: T | null) => Promise<Result>) => {
         if (sessionId && params.withSessionAccountContext) {
             return await params.withSessionAccountContext(sessionId, operation);
@@ -111,7 +111,7 @@ export function createDaemonQualifiedRequestAuthCallbacks<T extends RequestAuthA
                 throw requestAuthFailure(error, phase, 'request_auth_binding_unavailable');
             }
         },
-        materializeBearer: async ({ subject, binding, resolved, materialization, signal }) => {
+        materializeHeaders: async ({ subject, binding, resolved, materialization, signal }) => {
             signal.throwIfAborted();
             if (!subject.isCurrent()) throw new ConnectedAccountRequestAuthError('request_auth_not_active');
             let phase: 'requester' | 'materialization' = 'requester';
@@ -125,7 +125,7 @@ export function createDaemonQualifiedRequestAuthCallbacks<T extends RequestAuthA
                     if (subject.parentSessionId) await params.assertSessionAccountCurrent?.(subject.parentSessionId, context);
                     if (context && !params.assertSessionAccountCurrent && !await context.isCurrent()) throw new ConnectedAccountRequestAuthError('request_auth_not_active');
                     phase = 'materialization';
-                    const read = () => authority.materializeBearer({ binding, resolved, materialization, signal });
+                    const read = () => authority.materializeHeaders({ binding, resolved, materialization, signal });
                     const result = await (context ? runWithServerHttpBaseUrl(context.bootstrap.serverHttpBaseUrl, read) : read());
                     signal.throwIfAborted();
                     phase = 'requester';

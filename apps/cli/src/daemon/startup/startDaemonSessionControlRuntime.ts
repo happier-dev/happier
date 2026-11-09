@@ -9289,6 +9289,11 @@ export async function startDaemonSessionControlRuntime(
   params.onComputerRoutesReady?.(() => computerRoutes);
   const browserRoutePublication = createBrowserRoutePublication({
     params, runtimeActionRouteProviderTarget, resolveServerFeaturesSnapshot,
+    readSessionAccountId: sessionId => {
+      const tracked = findTrackedSessionByHappySessionId(params.pidToTrackedSession.values(), sessionId);
+      return (tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1
+        ?? tracked?.requesterSessionRuntimeContext?.bootstrap.attribution)?.accountId ?? null;
+    },
     shutdownSignal: shutdownCancellationDomains.daemonWorkSignal,
     setGuardBrowserResourceOwner: (owner) => { guardBrowserResourceOwner = owner; },
   });

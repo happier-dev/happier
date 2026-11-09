@@ -63,10 +63,7 @@ function createApp(overrides: Record<string, unknown> = {}) {
   const authenticate = vi.fn(
     (capability: unknown) => capability === 'scoped-capability' ? subject : null,
   );
-  const lookupRequestAuth = vi.fn(async (_input: Readonly<{ signal?: AbortSignal }>) => ({
-    accessToken: 'access-token',
-    credentialContext,
-  }));
+  const lookupRequestAuth = vi.fn(async (_input: Readonly<{ signal?: AbortSignal }>) => ({ headers: { authorization: 'Bearer ' + ('access-token') }, facts: {}, credentialContext }));
   const refreshAfterAuthFailure = vi.fn(async () => ({ status: 'current_changed' as const }));
   const reportQuotaFailure = vi.fn(async () => ({ status: 'current_changed' as const }));
   const app = createDaemonControlApp({
@@ -124,7 +121,7 @@ describe('daemon private connected-account request-auth routes', () => {
       // capability, scoped purpose, cache and request lifetime owners all remain real.
       resolveCurrentBinding: () => ({ account: credentialContext.account,
         credentialRevision: credentialContext.credentialRevision }),
-      materializeBearer: async () => ({ accessToken: 'accepted-native-bearer' }),
+      materializeHeaders: async () => ({ headers: { authorization: 'Bearer ' + ('accepted-native-bearer') }, facts: {},  }),
       refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
       reportQuotaFailure: async () => ({ status: 'current_changed' }),
     });
@@ -136,9 +133,9 @@ describe('daemon private connected-account request-auth routes', () => {
     const lookup = () => app.inject({ method: 'POST', url: CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
       headers: { [CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER]: secret }, payload: { purpose } });
     try {
-      expect((await lookup()).json()).toMatchObject({ ok: true, value: { accessToken: 'accepted-native-bearer' } });
+      expect((await lookup()).json()).toMatchObject({ ok: true, value: { headers: { authorization: 'Bearer ' + ('accepted-native-bearer') }, facts: {},  } });
       const releaseDrain = admissionDrain.beginTemporaryDrain();
-      expect((await lookup()).json()).toMatchObject({ ok: true, value: { accessToken: 'accepted-native-bearer' } });
+      expect((await lookup()).json()).toMatchObject({ ok: true, value: { headers: { authorization: 'Bearer ' + ('accepted-native-bearer') }, facts: {},  } });
       releaseDrain();
       expect((await lookup()).statusCode).toBe(200);
       admissionDrain.beginShutdown();
@@ -163,10 +160,7 @@ describe('daemon private connected-account request-auth routes', () => {
       expect(ok.statusCode).toBe(200);
       expect(ok.json()).toEqual({
         ok: true,
-        value: {
-          accessToken: 'access-token',
-          credentialContext,
-        },
+        value: { headers: { authorization: 'Bearer ' + ('access-token') }, facts: {}, credentialContext },
       });
       expect(lookupRequestAuth).toHaveBeenCalledWith({
         subject: expect.objectContaining({ subjectId: 'session:test/run:wrapper' }),
@@ -230,10 +224,7 @@ describe('daemon private connected-account request-auth routes', () => {
         }
         signal.addEventListener('abort', onAbort, { once: true });
       });
-      return {
-        accessToken: 'unreachable-after-client-close',
-        credentialContext,
-      };
+      return { headers: { authorization: 'Bearer ' + ('unreachable-after-client-close') }, facts: {}, credentialContext };
     });
     try {
       await created.app.listen({ host: '127.0.0.1', port: 0 });
@@ -491,16 +482,13 @@ describe('daemon private connected-account request-auth routes', () => {
       });
 
       quiescing = true;
-      resolveLookup({
-        accessToken: 'lease-admitted-before-quiescence',
-        credentialContext,
-      });
+      resolveLookup({ headers: { authorization: 'Bearer ' + ('lease-admitted-before-quiescence') }, facts: {}, credentialContext });
 
       const response = await responsePromise;
       expect(response.statusCode).toBe(200);
       expect(response.json()).toMatchObject({
         ok: true,
-        value: { accessToken: 'lease-admitted-before-quiescence' },
+        value: { headers: { authorization: 'Bearer ' + ('lease-admitted-before-quiescence') }, facts: {},  },
       });
       expect(created.authenticate).toHaveBeenCalledOnce();
       expect(created.lookupRequestAuth).toHaveBeenCalledOnce();

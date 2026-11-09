@@ -136,14 +136,11 @@ async function prepareDaemon(input: Readonly<{
             account,
             credentialRevision: input.credentialRevision,
         }),
-        materializeBearer: async () => {
+        materializeHeaders: async () => {
             materializationCount += 1;
-            return {
-                accessToken: input.accessToken,
-                requiredHeaders: {
+            return { headers: { authorization: 'Bearer ' + (input.accessToken), ...({
                     'chatgpt-account-id': account.accountId,
-                },
-            };
+                }) }, facts: {},  };
         },
         refreshAfterAuthFailure: async () => ({ status: 'current_changed' }),
         reportQuotaFailure: async () => ({ status: 'current_changed' }),
@@ -196,12 +193,7 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
         await writeFile(join(root, 'package.json'), '{"type":"module"}\n', 'utf8');
         const originalFetch = globalThis.fetch;
         const restoredEnv = new Map<string, string | undefined>();
-        const prepared = await prepareDaemon({
-            materializedRootDir: root,
-            accessToken: 'access-token-after-commit',
-            credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-            controlToken: 'control-token-staged',
-        });
+        const prepared = await prepareDaemon({ headers: { authorization: 'Bearer ' + ('access-token-after-commit') }, facts: {}, materializedRootDir: root, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', controlToken: 'control-token-staged' });
         const stagedState: {
             descriptor:
                 Awaited<ReturnType<typeof prepared.registry.activate>>
@@ -350,12 +342,7 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
         let daemonAClosed = false;
 
         try {
-            daemonA = await startDaemon({
-                materializedRootDir: root,
-                accessToken: 'access-token-a',
-                credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-                controlToken: 'control-token-a',
-            });
+            daemonA = await startDaemon({ headers: { authorization: 'Bearer ' + ('access-token-a') }, facts: {}, materializedRootDir: root, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', controlToken: 'control-token-a' });
             const capabilityA = await readCapability(daemonA.descriptor.path);
             const materialized = await materializeOpenCodeAuthEnvironment({
                 rootDir: root,
@@ -413,12 +400,7 @@ describe('ordinary OpenCode request-auth across daemon replacement', () => {
             await daemonA.app.close();
             daemonAClosed = true;
             daemonA.markReplaced();
-            daemonB = await startDaemon({
-                materializedRootDir: root,
-                accessToken: 'access-token-b',
-                credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS',
-                controlToken: 'control-token-b',
-            });
+            daemonB = await startDaemon({ headers: { authorization: 'Bearer ' + ('access-token-b') }, facts: {}, materializedRootDir: root, credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS', controlToken: 'control-token-b' });
             const capabilityB = await readCapability(daemonB.descriptor.path);
             const second = await survivingFetch('https://chatgpt.com/backend-api/responses', {
                 method: 'POST',

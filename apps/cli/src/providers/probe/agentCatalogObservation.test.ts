@@ -22,7 +22,7 @@ const use = {
   purpose,
   materialization: {
     kind: 'httpHeaders' as const,
-    origins: ['https://api.anthropic.com'],
+    origin: 'https://api.anthropic.com',
     headerNames: ['authorization'],
   },
 };

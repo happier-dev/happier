@@ -45,6 +45,21 @@ function response(status: number, body: unknown, finalUrl = 'https://oauth2.goog
 }
 
 describe('Antigravity qualified Connected Account', () => {
+  it('materializes gateway headers with retained project and actual credential expiry', async () => {
+    const accountRuntime = await runtime();
+    const credentials = store(new Map([['accessToken', 'selected-access'], ['projectId', 'selected-project'], ['expiresAtMs', '1700003600000']]));
+    await expect(accountRuntime.materialize({ kind: 'httpHeaders', origin: 'https://daily-cloudcode-pa.googleapis.com', headerNames: ['authorization'] },
+      readContext(credentials) as Parameters<typeof accountRuntime.materialize>[1])).resolves.toEqual({
+      kind: 'httpHeaders', headers: { authorization: 'Bearer selected-access' }, facts: { projectId: 'selected-project' }, expiresAt: 1700003600000,
+    });
+    await expect(accountRuntime.materialize({ kind: 'httpHeaders', origin: 'https://daily-cloudcode-pa.googleapis.com', headerNames: ['authorization'] },
+      readContext(store(new Map([['accessToken', 'selected-access']]))) as Parameters<typeof accountRuntime.materialize>[1])).resolves.toEqual({
+      kind: 'httpHeaders', headers: { authorization: 'Bearer selected-access' }, facts: {},
+    });
+    await expect(accountRuntime.materialize({ kind: 'httpHeaders', origin: 'https://daily-cloudcode-pa.googleapis.com', headerNames: ['x-unrelated'] },
+      readContext(credentials) as Parameters<typeof accountRuntime.materialize>[1])).rejects.toThrow();
+  });
+
   it('connects with the Antigravity issuing client, registered callback and selected-token identity', async () => {
     const accountRuntime = await runtime();
     const mode = accountRuntime.authentication.modes['oauth-personal'];
@@ -151,7 +166,7 @@ describe('Antigravity qualified Connected Account', () => {
     const accountRuntime = await runtime();
     const context = readContext(store(new Map([['accessToken', 'selected-access'], ['refreshToken', 'selected-refresh']])));
     // These credential-read boundaries do not use the host services omitted by this fixture.
-    await expect(accountRuntime.status(context as Parameters<typeof accountRuntime.status>[0])).resolves.toMatchObject({ status: 'connected', scopes: [] });
+    await expect(accountRuntime.status(context as Parameters<typeof accountRuntime.status>[0])).resolves.toMatchObject({ status: 'connected', credentialKind: 'oauth', scopes: [] });
     const result = await accountRuntime.materialize({ kind: 'files', fileIds: ['antigravity-acp/acp_token.json'] }, context as Parameters<typeof accountRuntime.materialize>[1]);
     if (result.kind !== 'files') throw new Error('Expected Antigravity token materialization');
     expect(JSON.parse(new TextDecoder().decode(result.files['antigravity-acp/acp_token.json'])).scopes).toEqual([]);
@@ -164,7 +179,12 @@ describe('Antigravity qualified Connected Account', () => {
     const context = { ...readContext(credentials), operation: { operationId: 'refresh', configurationRevision: 'configuration-1' }, stagedCredentials: staged,
       services: { http: { async request() { return response(200, { access_token: 'new-access', expires_in: 3600 }); } } },
     } as Parameters<typeof accountRuntime.refresh>[0];
-    await expect(accountRuntime.refresh(context)).resolves.toMatchObject({ status: 'connected', displayName: 'selected@example.com', scopes });
+    const refreshed = await accountRuntime.refresh(context);
+    expect(refreshed).toMatchObject({ status: 'connected', credentialKind: 'oauth', displayName: 'selected@example.com', scopes });
+    expect(refreshed).toHaveProperty('expiresAt', Number(staged.values.get('expiresAtMs')));
+    await expect(accountRuntime.status(readContext(staged) as Parameters<typeof accountRuntime.status>[0])).resolves.toMatchObject({
+      status: 'connected', credentialKind: 'oauth', expiresAt: Number(staged.values.get('expiresAtMs')),
+    });
     expect(staged.values.get('accessToken')).toBe('new-access');
     expect(staged.values.get('refreshToken')).toBe('selected-refresh');
     expect(JSON.parse(staged.values.get('scopes') ?? 'null')).toEqual(scopes);
@@ -172,14 +192,26 @@ describe('Antigravity qualified Connected Account', () => {
     expect(staged.values.get('projectId')).toBe('selected-project');
   });
 
-  it.each([[401, 'reconnectRequired'], [503, 'outcomeUnknown']] as const)('retains credentials without staging after refresh HTTP %s', async (status, expected) => {
+  it.each([
+    [401, {}, 'outcomeUnknown', 'provider_401'],
+    [403, { error: 'policy_refusal' }, 'outcomeUnknown', 'provider_403'],
+    [400, { error: 'invalid_grant', error_description: 'private vendor detail' }, 'reconnectRequired', 'invalid_grant'],
+    [400, { error: 'refresh_token_expired' }, 'reconnectRequired', 'invalid_grant'],
+    [429, {}, 'outcomeUnknown', 'unknown'],
+    [503, {}, 'outcomeUnknown', 'unknown'],
+  ] as const)('retains credentials without staging after refresh HTTP %s', async (status, body, expected, kind) => {
     const accountRuntime = await runtime();
     const credentials = store(new Map([['accessToken', 'old-access'], ['refreshToken', 'old-refresh']]));
     const staged = store();
     const context = { ...readContext(credentials), operation: { operationId: 'refresh', configurationRevision: 'configuration-1' }, stagedCredentials: staged,
-      services: { http: { async request() { return response(status, {}); } } },
+      services: { http: { async request() { return response(status, body); } } },
     } as Parameters<typeof accountRuntime.refresh>[0];
-    await expect(accountRuntime.refresh(context)).resolves.toMatchObject({ status: expected });
+    const result = await accountRuntime.refresh(context);
+    expect(result).toMatchObject({ status: expected, diagnostic: { details: { credentialRefreshFailureKind: kind, httpStatus: status } } });
+    if ('error' in body && (body.error === 'invalid_grant' || body.error === 'refresh_token_expired')) {
+      expect(result).toMatchObject({ diagnostic: { details: { providerErrorCode: body.error } } });
+    }
+    expect(JSON.stringify(result)).not.toContain('private vendor detail');
     expect(staged.values.size).toBe(0);
     expect(credentials.values.get('refreshToken')).toBe('old-refresh');
   });
@@ -272,7 +304,8 @@ describe('Antigravity explicit native import', () => {
           ? response(200, { azp: '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com', sub: 'native-account', email: 'native@example.test', scope: scopes.join(' '), expires_in: '3600' }, request.url)
           : response(200, { access_token: 'native-access', expires_in: 3600 }, request.url); } } },
       } as Parameters<typeof mode.complete>[1];
-      await expect(mode.complete({ fields: { source: 'acp' } }, context)).resolves.toMatchObject({ status: 'connected', providerIdentity: { accountId: 'native-account', email: 'native@example.test' }, scopes });
+      const connected = await mode.complete({ fields: { source: 'acp' } }, context);
+      expect(connected).toMatchObject({ status: 'connected', credentialKind: 'oauth', providerIdentity: { accountId: 'native-account', email: 'native@example.test' }, scopes });
       expect(requests).toContain('https://oauth2.googleapis.com/token');
       expect(attempted.values.get('refreshToken')).toBe('native-refresh');
       expect(attempted.values.get('projectId')).toBe('native-project');

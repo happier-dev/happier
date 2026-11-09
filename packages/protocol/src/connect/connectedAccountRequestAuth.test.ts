@@ -19,7 +19,7 @@ import {
   ConnectedAccountQuotaFailureRequestV1Schema,
   ConnectedAccountRequestAuthLookupRequestV1Schema,
   ConnectedAccountRequestAuthUsesV1Schema,
-  OAuthBearerLeaseV1Schema,
+  RequestAuthHeadersV1Schema,
   RequestAuthFailureOutcomeV1Schema,
 } from './connectedAccountRequestAuth.js';
 
@@ -66,6 +66,13 @@ const credentialContext = {
 } as const;
 
 describe('private connected-account request-auth wire', () => {
+  it('accepts complete non-Bearer headers and generic scalar facts at the lookup boundary', () => {
+    const material = { headers: { 'x-api-key': 'fixture-key' }, facts: { projectId: 'fixture', enabled: true, priority: 2 }, credentialContext };
+    expect(RequestAuthHeadersV1Schema.parse(material)).toEqual(material);
+    expect(ConnectedAccountRequestAuthMaterializationV1Schema.parse({ kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['x-api-key'] }))
+      .toMatchObject({ headerNames: ['x-api-key'] });
+  });
+
   it('distinguishes an insufficient-scope challenge from authentication failure', () => {
     const failure = { class: 'insufficient_scope', requiredScopes: ['read', 'write'], evidence: {
       httpStatus: 403, providerCode: 'insufficient_scope', limitCategory: 'validation_failed',
@@ -155,13 +162,12 @@ describe('private connected-account request-auth wire', () => {
     ]) {
       expect(ConnectedAccountRequestAuthMaterializationV1Schema.safeParse({
         kind: 'httpHeaders',
-        origin,
+        origin: origin,
         headerNames: ['authorization'],
       }).success).toBe(false);
     }
     for (const headerNames of [
       [],
-      ['chatgpt-account-id'],
       ['Authorization'],
       ['authorization', 'Chatgpt-Account-Id'],
       ['authorization', 'x-account', 'x-account'],
@@ -196,16 +202,17 @@ describe('private connected-account request-auth wire', () => {
     }).success).toBe(false);
   });
 
-  it('accepts a minimal bearer lease and rejects competing Authorization header authority', () => {
+  it('accepts complete headers and rejects duplicate header authority', () => {
     const lease = {
-      accessToken: 'secret',
-      requiredHeaders: {
+      headers: {
+        authorization: 'Bearer secret',
         'chatgpt-account-id': 'acct_123',
       },
+      facts: {},
       expiresAt: 10_000,
       credentialContext,
     } as const;
-    expect(OAuthBearerLeaseV1Schema.parse(lease)).toEqual(lease);
+    expect(RequestAuthHeadersV1Schema.parse(lease)).toEqual(lease);
     expect(ConnectedAccountRequestAuthLookupSuccessResponseV1Schema.parse({
       ok: true,
       value: lease,
@@ -215,24 +222,25 @@ describe('private connected-account request-auth wire', () => {
       value: { ...lease, unexpected: true },
     }).success).toBe(false);
 
-    expect(OAuthBearerLeaseV1Schema.safeParse({
-      accessToken: 'secret',
-      requiredHeaders: { Authorization: 'Bearer competing-secret' },
+    expect(RequestAuthHeadersV1Schema.safeParse({
+      headers: { Authorization: 'Bearer competing-secret', authorization: 'Basic fixture' },
+      facts: {},
       credentialContext,
     }).success).toBe(false);
-    expect(OAuthBearerLeaseV1Schema.safeParse({
-      accessToken: 'secret',
-      requiredHeaders: {
+    expect(RequestAuthHeadersV1Schema.safeParse({
+      headers: {
         'X-Account': 'one',
         'x-account': 'two',
       },
+      facts: {},
       credentialContext,
     }).success).toBe(false);
   });
 
   it('keeps credential context bounded and contains no request/acquisition lineage', () => {
-    expect(OAuthBearerLeaseV1Schema.safeParse({
-      accessToken: 'secret',
+    expect(RequestAuthHeadersV1Schema.safeParse({
+      headers: { authorization: 'Bearer secret' },
+      facts: {},
       credentialContext: {
         ...credentialContext,
         requestId: 'request-1',
@@ -285,8 +293,8 @@ describe('private connected-account request-auth wire', () => {
     }).success).toBe(false);
   });
 
-  it('requires explicit canonical category, scope, and bounded provenance', () => {
-    expect(ConnectedAccountQuotaFailureRequestV1Schema.safeParse({
+  it('accepts normalized structured facts and rejects retired native provenance', () => {
+    const request = {
       credentialContext,
       normalizedFailure: {
         class: 'quota',
@@ -294,192 +302,32 @@ describe('private connected-account request-auth wire', () => {
           httpStatus: 529,
           limitCategory: 'capacity',
           quotaScope: 'unknown',
-          evidenceSource: {
-            kind: 'pinnedProviderTerminal',
-            producer: 'pi',
-            producerVersion: '0.81.0',
-            provider: 'anthropic',
-            signatureId: 'anthropic-sdk-529-overloaded-v1',
-          },
+          evidenceSource: { kind: 'structured' },
         },
       },
-    }).success).toBe(true);
-
+    };
+    expect(ConnectedAccountQuotaFailureRequestV1Schema.safeParse(request).success).toBe(true);
     expect(ConnectedAccountQuotaFailureRequestV1Schema.safeParse({
-      credentialContext,
+      ...request,
       normalizedFailure: {
-        class: 'quota',
+        ...request.normalizedFailure,
         evidence: {
-          httpStatus: 503,
-          limitCategory: 'capacity',
-          quotaScope: 'unknown',
-          evidenceSource: {
-            kind: 'pinnedProviderTerminal',
-            producer: 'pi',
-            producerVersion: '0.82.1',
-            provider: 'anthropic',
-            signatureId: 'anthropic-sdk-503-api-error-v1',
-          },
-        },
-      },
-    }).success).toBe(true);
-
-    expect(ConnectedAccountQuotaFailureRequestV1Schema.safeParse({
-      credentialContext,
-      normalizedFailure: {
-        class: 'quota',
-        evidence: {
-          httpStatus: 503,
-          limitCategory: 'capacity',
-          quotaScope: 'unknown',
+          ...request.normalizedFailure.evidence,
           evidenceSource: {
             kind: 'pinnedProviderTerminal',
             producer: 'pi',
             producerVersion: '0.82.0',
             provider: 'anthropic',
-            signatureId: 'anthropic-sdk-503-api-error-v1',
-          },
-        },
-      },
-    }).success).toBe(true);
-
-    expect(ConnectedAccountQuotaFailureRequestV1Schema.safeParse({
-      credentialContext,
-      normalizedFailure: {
-        class: 'quota',
-        evidence: {
-          httpStatus: 429,
-          limitCategory: 'rate_limit',
-          evidenceSource: { kind: 'structured' },
-        },
-      },
-    }).success).toBe(false);
-    expect(ConnectedAccountQuotaFailureRequestV1Schema.safeParse({
-      credentialContext,
-      normalizedFailure: {
-        class: 'quota',
-        evidence: {
-          httpStatus: 429,
-          limitCategory: 'rate_limit',
-          quotaScope: 'unknown',
-          evidenceSource: {
-            kind: 'pinnedProviderTerminal',
-            producer: 'opencode',
-            producerVersion: '1',
-            provider: 'openai',
-            signatureId: 'forged',
+            signatureId: 'anthropic-sdk-529-overloaded-v1',
           },
         },
       },
     }).success).toBe(false);
-  });
-
-  it.each([
-    {
-      label: 'unsupported producer version',
-      evidence: {
-        limitCategory: 'capacity',
-        quotaScope: 'unknown',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: '0.83.0',
-          provider: 'anthropic',
-          signatureId: 'anthropic-sdk-529-overloaded-v1',
-        },
-      },
-    },
-    {
-      label: 'case-drifted provider',
-      evidence: {
-        limitCategory: 'capacity',
-        quotaScope: 'unknown',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: '0.82.0',
-          provider: 'Anthropic',
-          signatureId: 'anthropic-sdk-529-overloaded-v1',
-        },
-      },
-    },
-    {
-      label: 'unknown signature',
-      evidence: {
-        limitCategory: 'capacity',
-        quotaScope: 'unknown',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: '0.82.0',
-          provider: 'anthropic',
-          signatureId: 'anthropic-overloaded-error-v1',
-        },
-      },
-    },
-    {
-      label: 'signature from another provider',
-      evidence: {
-        limitCategory: 'usage_limit',
-        quotaScope: 'account',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: '0.82.0',
-          provider: 'anthropic',
-          signatureId: 'openai-codex-chatgpt-usage-limit-v1',
-        },
-      },
-    },
-    {
-      label: 'category inconsistent with signature',
-      evidence: {
-        limitCategory: 'usage_limit',
-        quotaScope: 'unknown',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: '0.82.0',
-          provider: 'anthropic',
-          signatureId: 'anthropic-sdk-529-overloaded-v1',
-        },
-      },
-    },
-    {
-      label: 'scope inconsistent with signature',
-      evidence: {
-        limitCategory: 'capacity',
-        quotaScope: 'account',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: '0.82.0',
-          provider: 'anthropic',
-          signatureId: 'anthropic-sdk-529-overloaded-v1',
-        },
-      },
-    },
-    {
-      label: 'status inconsistent with signature',
-      evidence: {
-        httpStatus: 429,
-        limitCategory: 'capacity',
-        quotaScope: 'unknown',
-        evidenceSource: {
-          kind: 'pinnedProviderTerminal',
-          producer: 'pi',
-          producerVersion: '0.82.0',
-          provider: 'anthropic',
-          signatureId: 'anthropic-sdk-529-overloaded-v1',
-        },
-      },
-    },
-  ])('rejects $label instead of accepting a free-form pinned provenance bag', ({ evidence }) => {
     expect(ConnectedAccountQuotaFailureRequestV1Schema.safeParse({
-      credentialContext,
+      ...request,
       normalizedFailure: {
-        class: 'quota',
-        evidence,
+        ...request.normalizedFailure,
+        evidence: { ...request.normalizedFailure.evidence, quotaScope: undefined },
       },
     }).success).toBe(false);
   });

@@ -21,7 +21,7 @@ import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { createConnectedAccountRequestAuthService } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
-import { parseHttpHeadersRequestAuthBearer } from '@/daemon/connectedServices/requestAuth/parseHttpHeadersRequestAuthBearer';
+import { parseHttpHeadersRequestAuthMaterial } from '@/daemon/connectedServices/requestAuth/parseHttpHeadersRequestAuthMaterial';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH } from '@happier-dev/protocol/connect/connected-account-request-auth';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
@@ -48,7 +48,7 @@ async function startBridgeRequestAuth(root: string, resource: string, credential
   const registry = createConnectedAccountRequestAuthSubjectRegistry();
   const owner = createConnectedAccountRequestAuthService({
     resolveCurrentBinding: () => ({ account, credentialRevision: `csr_${String(revision).padStart(24, '0')}` }),
-    materializeBearer: async () => parseHttpHeadersRequestAuthBearer(use.materialization,
+    materializeHeaders: async () => parseHttpHeadersRequestAuthMaterial(use.materialization,
       { kind: 'httpHeaders', headers: { authorization: `Bearer bearer-${revision}`, ...credentialHeaders } }),
     refreshAfterAuthFailure: async () => { reports++; revision++; return { status: 'current_changed' }; },
     reportQuotaFailure: async () => ({ status: 'denied' }),

@@ -61,9 +61,9 @@ export async function startGatewayJourneyUpstream() {
       if (!input.subject.bindingAuthority) throw new Error('Missing real purpose lease');
       return input.subject.bindingAuthority.resolveCurrentBinding(input);
     },
-    materializeBearer: input => {
+    materializeHeaders: input => {
       if (!input.subject.bindingAuthority) throw new Error('Missing real purpose lease');
-      return input.subject.bindingAuthority.materializeBearer(input);
+      return input.subject.bindingAuthority.materializeHeaders(input);
     }, refreshAfterAuthFailure: unexpected, reportQuotaFailure: unexpected,
   });
   const emit = (response: ServerResponse, event: Record<string, unknown>) => response.write(`data: ${JSON.stringify(event)}\n\n`);
