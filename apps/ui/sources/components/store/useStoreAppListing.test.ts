@@ -20,6 +20,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readDeploymentTemplateCreationOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc/errors';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } from '@happier-dev/protocol/sessions';
 
 installPromptRegistriesCommonModuleMocks({ storage: original => original() });
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -212,19 +213,26 @@ it.each((['failed', 'succeeded'] as const).flatMap(state =>
     const partial = { ...fixture.partial, errorCode: 'action_forbidden' };
     const receiptReads: string[] = [];
     const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+    const { apiSocket } = await import('@/sync/api/session/apiSocket');
+    expect(fixture.account.accountLifetime.scope).toEqual({ serverId: fixture.account.serverIdentityId, accountId: 'owner' });
     let publishedOperation: ActionOperationSnapshotV1 | undefined;
     let reconnect = () => { throw new Error('Expected connected install receipt socket'); };
+    let homeSocketCaptured = false;
     let getAttempts = 0;
     const socket = installDisconnectedServerSocketBoundary(socket => {
         configureConnectedServerSocketBoundary(socket);
-        reconnect = () => { socket.disconnect(); socket.connect(); };
+        if (!homeSocketCaptured) {
+            homeSocketCaptured = true;
+            reconnect = () => { socket.disconnect(); socket.connect(); };
+        }
         socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, payload) => {
+            if (event === SESSION_CONSUMPTION_REPLACE_EVENT) return { ok: true, ...SessionConsumptionReplaceV1Schema.parse(payload) };
             if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object'
                 || !('method' in payload) || !('params' in payload)) throw new Error('Unexpected install receipt request');
             const created = fixture.creations[0];
             if (!created) throw new Error('Expected issued install');
             const requestId = readDeploymentTemplateCreationOperationRequestIdV1(created);
-            const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'retained-install', revision: 2,
+            const operation: ActionOperationSnapshotV1 = { version: 1, operationId: `retained-install-${requestId}`, revision: 2,
                 actionId: 'deployments.templates.instantiate', requestId, state,
                 scope: { accountId: 'owner', machineId: 'controller' }, title: 'Install app',
                 createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'unsupported',
@@ -246,6 +254,16 @@ it.each((['failed', 'succeeded'] as const).flatMap(state =>
             return { ok: true, result: { kind: 'found', operation } };
         });
     }, { serverUrl: 'https://store-app-listing-' + fixtureSequence + '.test', token: credentials.token });
+    if (recovery === 'reconnect') {
+        // The Home connection publishes recovery; a scoped RPC socket only carries reads.
+        let connected = false;
+        const unsubscribe = apiSocket.onStatusChange(status => { connected = status === 'connected'; });
+        try {
+            apiSocket.initialize({ endpoint: 'https://store-app-listing-' + fixtureSequence + '.test',
+                serverId: fixture.account.accountLifetime.scope.serverId, token: credentials.token, credentials }, null);
+            await waitForHomeGovernance(() => expect(connected).toBe(true));
+        } finally { unsubscribe(); }
+    }
     const hook = await renderHook(() => useStoreAppListing({ selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
         lifetime: fixture.account.accountLifetime, demand: { presented: true } }));
     try {
@@ -261,8 +279,9 @@ it.each((['failed', 'succeeded'] as const).flatMap(state =>
             await waitForHomeGovernance(() => expect(receiptReads).toHaveLength(recovery === 'publication' ? 1 : 2));
             if (recovery === 'publication') {
                 if (!publishedOperation) throw new Error('Expected issued install operation');
-                actionOperationStore.mergeSnapshots({ serverId: fixture.home.id, snapshots: [publishedOperation] });
+                actionOperationStore.mergeSnapshots({ serverId: fixture.account.accountLifetime.scope.serverId, snapshots: [publishedOperation] });
             } else reconnect();
+            await waitForHomeGovernance(() => expect(receiptReads).toHaveLength(recovery === 'publication' ? 2 : 3));
         }
         const outcome = await pending;
         expect(outcome).toMatchObject(state === 'failed'
@@ -272,7 +291,11 @@ it.each((['failed', 'succeeded'] as const).flatMap(state =>
         expect(receiptReads).toEqual([`controller:${ACTION_OPERATION_RPC_METHODS_V2.list}`,
             `controller:${ACTION_OPERATION_RPC_METHODS_V2.get}`,
             ...(recovery === 'reconnect' ? [`controller:${ACTION_OPERATION_RPC_METHODS_V2.get}`] : [])]);
-    } finally { await hook.unmount(); socket.dispose(); await fixture.dispose(); }
+    } finally {
+        await hook.unmount();
+        if (recovery === 'reconnect') apiSocket.disconnect();
+        socket.dispose(); await fixture.dispose();
+    }
 });
 
 it('keeps the open App across unrelated source edits with zero reloads or blank renders, but retires selected-source edits and removal', async () => {

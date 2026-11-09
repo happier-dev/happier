@@ -395,6 +395,9 @@ import { createUiProjectPagesList } from './projectPagesAction';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
 import { createUiDeploymentActionDeps } from '@/sync/api/deployments/deploymentActions';
+import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { setProjectVisibilityV1 } from '@happier-dev/protocol/projects/projectVisibilityV1';
 import { updateProjectOrganizationV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
@@ -939,11 +942,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       authority: args.context.authority, signal: args.context.signal });
     return result.ok ? result.result : result;
   });
+  const readAdmittedActionId = (actionId: string, input: unknown) =>
+    actionId === 'approval.request.create' && input !== null && typeof input === 'object'
+      && 'actionId' in input && typeof input.actionId === 'string' ? input.actionId : actionId;
   const isMachineOwnedAdmissionAction = (actionId: string, input: unknown) => {
     if (isWorkspaceSyncRelationshipWriteActionId(actionId)) return true;
-    const admittedActionId = actionId === 'approval.request.create' && input !== null && typeof input === 'object'
-      && 'actionId' in input && typeof input.actionId === 'string' ? input.actionId : actionId;
-    const parsed = ActionIdSchema.safeParse(admittedActionId);
+    const parsed = ActionIdSchema.safeParse(readAdmittedActionId(actionId, input));
     if (!parsed.success) return false;
     if (parsed.data === 'session.spawn_new') {
       const spawn = SessionSpawnNewActionInputV2Schema.safeParse(input);
@@ -978,9 +982,21 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     }
     const originalSpec = ActionIdSchema.safeParse(args.actionId);
     const demand = originalSpec.success ? getActionSpec(originalSpec.data).machineRuntimeDemandForInput?.(pluginInput, args.context) : null;
-    const requestedMachineId = workspaceSourceMachineId ?? (demand?.target.kind === 'machine' ? demand.target.machineId : pluginInput !== null && typeof pluginInput === 'object'
+    let requestedMachineId = workspaceSourceMachineId ?? (demand?.target.kind === 'machine' ? demand.target.machineId : pluginInput !== null && typeof pluginInput === 'object'
       && 'machineId' in pluginInput && typeof pluginInput.machineId === 'string'
       ? pluginInput.machineId : undefined);
+    if (readAdmittedActionId(args.actionId, args.input) === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
+      const input = DeploymentTemplateInstantiateInputV1Schema.safeParse(pluginInput);
+      if (!input.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      const readEnvironment = deploymentActionDeps?.deploymentAction;
+      if (!readEnvironment) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      const selected = await resolveDeploymentTemplateExecutionMachineIdV1(input.data, async selector => {
+        const loaded = await readEnvironment('deployments.environments.get', selector, args.context);
+        return 'errorCode' in loaded ? loaded : DeploymentEnvironmentGetResultV1Schema.parse(loaded);
+      });
+      if (!selected.ok) return selected;
+      requestedMachineId = selected.machineId;
+    }
     const mountedMachineId = args.context.executionRunTargetMachineId
       ?? (!relationshipWrite && args.context.surface !== 'plugin' ? args.context.defaultSessionMachineId : undefined);
     if (requestedMachineId && mountedMachineId && requestedMachineId !== mountedMachineId) {
