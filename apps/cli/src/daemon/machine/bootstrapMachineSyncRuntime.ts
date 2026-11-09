@@ -272,7 +272,6 @@ type PeerMediationMachineRpcBootstrapConfig = Readonly<{
   endpointTtlMs?: number;
   host?: string;
   port?: number;
-  localPerPeerMaxConcurrentCalls?: number;
   stream?: StartPeerMediationLoopbackInput['stream'] & Readonly<{
     readActiveControlLease?: (leaseInput: Readonly<{
       streamId: string;
@@ -418,9 +417,6 @@ export async function maybeStartPeerMediationLoopback(params: Readonly<{
     ...(params.config?.host ? { host: params.config.host } : {}),
     ...(typeof params.config?.port === 'number' ? { port: params.config.port } : {}),
     ...(params.config?.stream ? { stream: params.config.stream } : {}),
-    ...(typeof params.config?.localPerPeerMaxConcurrentCalls === 'number'
-      ? { localPerPeerMaxConcurrentCalls: params.config.localPerPeerMaxConcurrentCalls }
-      : {}),
     ...(params.config?.startPeerMediationLoopbackServer
       ? { startPeerMediationLoopbackServer: params.config.startPeerMediationLoopbackServer }
       : {}),

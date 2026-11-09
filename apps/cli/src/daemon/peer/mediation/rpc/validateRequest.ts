@@ -8,8 +8,6 @@ import {
     verifyDirectRouteGrantV2,
     type DirectRouteGrantTrustRoot,
 } from '../verifyDirectRouteGrant';
-import type { PeerMachineRpcCallLimiter } from './callLimits';
-import type { PeerMachineRpcVerificationQuarantine } from './quarantine';
 import type { PeerMachineRpcReplayKeyCache } from './replayKeys';
 
 export type PeerMachineRpcDirectExpectedBinding = Readonly<{
@@ -30,7 +28,6 @@ export type PeerMachineRpcDirectValidationResult =
         ok: true;
         request: PeerMachineRpcDirectRequest;
         grant: DirectRouteGrantPayload;
-        releaseCallLimit: () => void;
         commandReceiptRequired: boolean;
     }>
     | Readonly<{
@@ -44,8 +41,6 @@ export type ValidatePeerMachineRpcDirectRequestOptions = Readonly<{
     expected: PeerMachineRpcDirectExpectedBinding;
     trustRoots: readonly DirectRouteGrantTrustRoot[];
     nowMs: number;
-    callLimiter: PeerMachineRpcCallLimiter;
-    quarantine: PeerMachineRpcVerificationQuarantine;
     replayKeyCache: PeerMachineRpcReplayKeyCache;
 }>;
 
@@ -86,16 +81,6 @@ function mapGrantFailureReason(reasonCode: string): PeerMachineRpcDirectFallback
         default:
             return 'grant_scope_mismatch';
     }
-}
-
-function quarantineKey(input: Readonly<{
-    expected: PeerMachineRpcDirectExpectedBinding;
-}>) {
-    return {
-        accountId: input.expected.accountId,
-        machineId: input.expected.machineId,
-        endpointFingerprint: input.expected.endpointFingerprint,
-    };
 }
 
 function validateCommandReceipt(input: Readonly<{
@@ -153,20 +138,6 @@ export function validatePeerMachineRpcDirectRequest(
         };
     }
 
-    const qKey = quarantineKey({
-        expected: options.expected,
-    });
-    if (options.quarantine.isQuarantined(qKey)) {
-        return {
-            ok: false,
-            response: fallback({
-                requestId: request.requestId,
-                method: request.method,
-                reasonCode: 'quarantined',
-            }),
-        };
-    }
-
     const grantVerification = verifyDirectRouteGrantV2({
         grant: request.grant,
         proof: request.proof,
@@ -181,13 +152,6 @@ export function validatePeerMachineRpcDirectRequest(
         },
     });
     if (!grantVerification.valid) {
-        // A signing root can disappear during an authenticated Home refresh or while that
-        // authority is temporarily unavailable. Refuse the request, but do not convert a
-        // legitimate stale grant into a local endpoint quarantine that survives authority
-        // recovery. Bad signatures and all other verification failures still count.
-        if (grantVerification.reasonCode !== 'grant_unknown_key') {
-            options.quarantine.recordVerificationFailure(qKey);
-        }
         return {
             ok: false,
             response: fallback({
@@ -197,8 +161,6 @@ export function validatePeerMachineRpcDirectRequest(
             }),
         };
     }
-
-    options.quarantine.recordVerificationSuccess(qKey);
 
     if (request.routeKind !== grantVerification.payload.routeKind) {
         return {
@@ -281,35 +243,10 @@ export function validatePeerMachineRpcDirectRequest(
         }
     }
 
-    const acquired = options.callLimiter.tryAcquire({
-        key: {
-            accountId: grantVerification.payload.accountId,
-            machineId: grantVerification.payload.machineId,
-            endpointFingerprint: request.endpointFingerprint,
-            grantId: grantVerification.payload.grantId,
-        },
-        scope: {
-            maxCalls: scope.maxCalls,
-            maxIdleMs: scope.maxIdleMs,
-        },
-    });
-    if (!acquired.ok) {
-        return {
-            ok: false,
-            grant: grantVerification.payload,
-            response: fallback({
-                requestId: request.requestId,
-                method: request.method,
-                reasonCode: acquired.reasonCode,
-            }),
-        };
-    }
-
     return {
         ok: true,
         request,
         grant: grantVerification.payload,
-        releaseCallLimit: acquired.release,
         commandReceiptRequired: policy.commandReceiptRequired,
     };
 }

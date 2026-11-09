@@ -12,6 +12,7 @@ installHomeGovernanceBoundaries(homes);
 const { useMachineDeploymentRoles, useMachineServiceEnvironments } = await import('./useMachineServiceEnvironments');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 beforeEach(() => homes.reset());
 afterEach(() => standardCleanup());
 
@@ -207,4 +208,52 @@ it('reads the census once per page open with the Machine header and the Services
         expect(referenceReads).toBe(2);
         expect(page.getCurrent().map(roles => roles.status)).toEqual(['ready', 'ready']);
     } finally { await page.unmount(); }
+});
+
+// SIMPLIFY-RPC-1109: unchanged census publications and failed refreshes retain the producer's answer.
+it('keeps equal census refreshes quiet, retains a good value on failure, and publishes a real change', async () => {
+    const serverId = await homes.addHome({ name: 'Stable roles', serverUrl: 'https://stable-roles.test',
+        serverIdentityId: 'srv_stable_roles', accountId: 'alice', currentAccount: true });
+    let reads = 0;
+    let coverage: 'complete' | 'partial' = 'complete';
+    homes.answer(serverId, '/v1/deployments/machine-references', { select: () => {
+        reads++;
+        return { body: { homeId: 'srv_stable_roles', machineId: 'machine', coverage, references: [], nextCursor: null } };
+    } });
+    let renders = 0;
+    const hook = await renderHook(() => {
+        renders++;
+        return useMachineDeploymentRoles({ serverId, machineId: 'machine', active: true });
+    });
+    const refresh = async () => {
+        const before = reads;
+        await act(async () => hook.getCurrent().refresh());
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(reads).toBe(before + 1); });
+        await flushHookEffects();
+    };
+    try {
+        await waitForHomeGovernance(() => expect(hook.getCurrent().status).toBe('ready'));
+        const good = hook.getCurrent();
+        const settledRenders = renders;
+        for (let index = 0; index < 3; index++) await refresh();
+        expect(renders - settledRenders, 'equal census refreshes publish no new snapshot').toBe(0);
+        expect(hook.getCurrent()).toBe(good);
+        // Credential storage is the system boundary: a transient read failure must not erase the retained census.
+        const credentials = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl')
+            .mockRejectedValueOnce(new Error('credential_storage_temporarily_unavailable'));
+        try {
+            await act(async () => hook.getCurrent().refresh());
+            await flushHookEffects();
+            expect(credentials).toHaveBeenCalled();
+        } finally { credentials.mockRestore(); }
+        expect(hook.getCurrent(), 'transient failure retains the last good census').toBe(good);
+        expect(renders).toBe(settledRenders);
+        coverage = 'partial';
+        await refresh();
+        expect(hook.getCurrent().status).toBe('unavailable');
+        expect(hook.getCurrent()).not.toBe(good);
+        coverage = 'complete';
+        await refresh();
+        expect(hook.getCurrent().status).toBe('ready');
+    } finally { await hook.unmount(); }
 });

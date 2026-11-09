@@ -13,14 +13,6 @@ import {
     validatePeerMachineRpcDirectRequest,
 } from './validateRequest';
 import {
-    createPeerMachineRpcCallLimiter,
-    type PeerMachineRpcCallLimiter,
-} from './callLimits';
-import {
-    createPeerMachineRpcVerificationQuarantine,
-    type PeerMachineRpcVerificationQuarantine,
-} from './quarantine';
-import {
     createPeerMachineRpcReplayKeyCache,
     type PeerMachineRpcReplayKeyCache,
 } from './replayKeys';
@@ -40,10 +32,7 @@ export type PeerMachineRpcDirectHandlerManager = Readonly<{
 
 export type PeerMachineRpcDirectRuntimeOptions = Readonly<{
     rpcHandlerManager: PeerMachineRpcDirectHandlerManager;
-    callLimiter?: PeerMachineRpcCallLimiter;
-    quarantine?: PeerMachineRpcVerificationQuarantine;
     replayKeyCache?: PeerMachineRpcReplayKeyCache;
-    localPerPeerMaxConcurrentCalls?: number;
     /** Scope-bound PMS-9 observer supplied by the loopback composition root (P1-9). */
     observability?: DaemonPeerMediationDirectFlowObserver;
 }>;
@@ -115,13 +104,6 @@ export function registerPeerMediationMachineRpcDirectRoutes(
     app: FastifyInstance,
     options: RegisterPeerMediationMachineRpcDirectRoutesOptions,
 ): void {
-    const callLimiter = options.callLimiter ?? createPeerMachineRpcCallLimiter({
-        nowMs: options.nowMs,
-        localPerPeerMaxConcurrentCalls: options.localPerPeerMaxConcurrentCalls,
-    });
-    const quarantine = options.quarantine ?? createPeerMachineRpcVerificationQuarantine({
-        nowMs: options.nowMs,
-    });
     const replayKeyCache = options.replayKeyCache ?? createPeerMachineRpcReplayKeyCache({
         nowMs: options.nowMs,
     });
@@ -152,8 +134,6 @@ export function registerPeerMediationMachineRpcDirectRoutes(
             expected: options.expected,
             trustRoots: options.resolveTrustRoots?.() ?? options.trustRoots,
             nowMs: options.nowMs(),
-            callLimiter,
-            quarantine,
             replayKeyCache,
         });
         if (!validation.ok) {
@@ -174,7 +154,6 @@ export function registerPeerMediationMachineRpcDirectRoutes(
             })
             : null;
         if (validation.request.v === 2 && !reservation) {
-            validation.releaseCallLimit();
             observe({
                 flowId: validation.request.requestId,
                 kind: 'cap.exceeded',
@@ -190,63 +169,59 @@ export function registerPeerMediationMachineRpcDirectRoutes(
             };
         }
 
+        reservation?.commit();
+        let result: unknown;
+        let handlerFailureCode: string | undefined;
         try {
-            reservation?.commit();
-            let result: unknown;
-            let handlerFailureCode: string | undefined;
-            try {
-                result = await options.rpcHandlerManager.invokeLocal(
-                    validation.request.method,
-                    validation.request.params,
-                    { signal, verifiedPeerAccountId: validation.grant.accountId,
-                        verifiedPeerAuthority: validation.grant.callerAuthority ?? 'account_automation' },
-                );
-            } catch (error) {
-                // The route was available and dispatch already happened. Preserve
-                // the handler's typed failure in the ordinary RPC result.
-                handlerFailureCode = readRpcErrorCode(error) ?? 'handler_failed';
-                result = { error: 'Direct RPC handler failed', errorCode: handlerFailureCode };
-            }
-            if (!handlerFailureCode && isMethodNotFoundResult(result)) {
-                observe({
-                    flowId: validation.request.requestId,
-                    kind: 'flow.errored',
-                    reasonCode: 'handler_unavailable',
-                });
-                return {
-                    v: validation.request.v,
-                    ok: false,
-                    receipt: PEER_MEDIATION_RECEIPTS.rpcFellBackToServer,
-                    requestId: validation.request.requestId,
-                    method: validation.request.method,
-                    reasonCode: 'handler_unavailable',
-                };
-            }
-
-            observe({ flowId: validation.request.requestId, kind: handlerFailureCode ? 'flow.errored' : 'flow.closed',
-                ...(handlerFailureCode ? { reasonCode: handlerFailureCode } : {}) });
+            result = await options.rpcHandlerManager.invokeLocal(
+                validation.request.method,
+                validation.request.params,
+                { signal, verifiedPeerAccountId: validation.grant.accountId,
+                    verifiedPeerAuthority: validation.grant.callerAuthority ?? 'account_automation' },
+            );
+        } catch (error) {
+            // The route was available and dispatch already happened. Preserve
+            // the handler's typed failure in the ordinary RPC result.
+            handlerFailureCode = readRpcErrorCode(error) ?? 'handler_failed';
+            result = { error: 'Direct RPC handler failed', errorCode: handlerFailureCode };
+        }
+        if (!handlerFailureCode && isMethodNotFoundResult(result)) {
+            observe({
+                flowId: validation.request.requestId,
+                kind: 'flow.errored',
+                reasonCode: 'handler_unavailable',
+            });
             return {
                 v: validation.request.v,
-                ok: true,
-                receipt: PEER_MEDIATION_RECEIPTS.rpcDirectCallSucceeded,
+                ok: false,
+                receipt: PEER_MEDIATION_RECEIPTS.rpcFellBackToServer,
                 requestId: validation.request.requestId,
                 method: validation.request.method,
-                routeKind: validation.request.routeKind,
-                result,
-                ...(validation.commandReceiptRequired && validation.request.commandReceipt
-                    ? {
-                        commandReceipt: createCommandReceipt({
-                            requestHash: validation.request.commandReceipt.requestHash,
-                            replayKey: validation.request.commandReceipt.replayKey,
-                            issuedAtMs: options.nowMs(),
-                            result,
-                        }),
-                    }
-                    : {}),
+                reasonCode: 'handler_unavailable',
             };
-        } finally {
-            validation.releaseCallLimit();
         }
+
+        observe({ flowId: validation.request.requestId, kind: handlerFailureCode ? 'flow.errored' : 'flow.closed',
+            ...(handlerFailureCode ? { reasonCode: handlerFailureCode } : {}) });
+        return {
+            v: validation.request.v,
+            ok: true,
+            receipt: PEER_MEDIATION_RECEIPTS.rpcDirectCallSucceeded,
+            requestId: validation.request.requestId,
+            method: validation.request.method,
+            routeKind: validation.request.routeKind,
+            result,
+            ...(validation.commandReceiptRequired && validation.request.commandReceipt
+                ? {
+                    commandReceipt: createCommandReceipt({
+                        requestHash: validation.request.commandReceipt.requestHash,
+                        replayKey: validation.request.commandReceipt.replayKey,
+                        issuedAtMs: options.nowMs(),
+                        result,
+                    }),
+                }
+                : {}),
+        };
     };
 
     const handleRouteRequest = async (request: FastifyRequest, reply: FastifyReply) => {

@@ -204,7 +204,6 @@ function createRequest(input: Readonly<{
 function createApp(input: Readonly<{
     nowMs: () => number;
     invokeLocal: PeerMachineRpcDirectHandlerManager['invokeLocal'];
-    localPerPeerMaxConcurrentCalls?: number;
 }>) {
     const app = fastify({ logger: false });
     registerPeerMediationMachineRpcDirectRoutes(app, {
@@ -218,7 +217,6 @@ function createApp(input: Readonly<{
         },
         trustRoots: [{ keyId: 'server_key_1', publicKey: toBase64Url(serverKeyPair.publicKey) }],
         rpcHandlerManager: { invokeLocal: input.invokeLocal },
-        localPerPeerMaxConcurrentCalls: input.localPerPeerMaxConcurrentCalls,
     });
     return app;
 }
@@ -493,6 +491,50 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
             expect(JSON.stringify(response)).not.toContain('private-test-value');
         } finally { await app.close(); }
     });
+    // MACH-CHALLENGE-MECH M5/M6: one-shot consumption is the sole replay owner.
+    it('executes commands without receipts once per grant and keeps distinct grants independent', async () => {
+        const method = RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START;
+        let invoked = 0;
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine_1', encryptionMode: 'plain', logger: () => {} });
+        rpc.registerHandler(method, async () => ({ effect: ++invoked }));
+        const app = createApp({ nowMs: () => 2_000, invokeLocal: rpc.invokeLocal.bind(rpc) });
+        const signed = createGrant({ method });
+        const fresh = createGrant({ method, grantId: 'independent_grant', ephemeralSeed: 9 });
+        const post = async (grant: typeof signed, nonceByte: number) => {
+            const { commandReceipt: _receipt, ...request } = createRequest({
+                method, requestId: `command_${grant.grant.payload.grantId}_${nonceByte}`,
+                grant: grant.grant, proof: createProof({ ...grant, nonceByte }),
+            });
+            return (await app.inject({ method: 'POST', url: PEER_MACHINE_RPC_DIRECT_PATH_V2, payload: request })).json();
+        };
+        try {
+            const responses = await Promise.all([post(signed, 1), post(signed, 2), post(fresh, 3)]);
+            expect(responses.filter(response => response.ok)).toHaveLength(2);
+            expect(responses.filter(response => response.reasonCode === 'direct_call_limit_exceeded')).toHaveLength(1);
+            expect(invoked).toBe(2);
+            for (const response of responses) expect(response).not.toHaveProperty('commandReceipt');
+        } finally { await app.close(); }
+    });
+
+    it('admits a valid signed request after a burst of invalid signatures on the same endpoint', async () => {
+        const signed = createGrant();
+        let invoked = 0;
+        const app = createApp({ nowMs: () => 2_000, invokeLocal: async () => ({ effect: ++invoked }) });
+        const request = createRequest({ requestId: 'valid_after_burst', grant: signed.grant,
+            proof: createProof({ ...signed, nonceByte: 1 }) });
+        try {
+            const invalid = { ...request, grant: { ...signed.grant, signature: { ...signed.grant.signature,
+                valueBase64Url: Buffer.alloc(64).toString('base64url') } } };
+            for (let index = 0; index < 6; index++) {
+                expect((await app.inject({ method: 'POST', url: PEER_MACHINE_RPC_DIRECT_PATH_V2, payload: invalid })).json())
+                    .toMatchObject({ ok: false, reasonCode: 'grant_bad_signature' });
+            }
+            expect((await app.inject({ method: 'POST', url: PEER_MACHINE_RPC_DIRECT_PATH_V2, payload: request })).json())
+                .toMatchObject({ ok: true, result: { effect: 1 } });
+            expect(invoked).toBe(1);
+        } finally { await app.close(); }
+    });
+
     it('consumes one signed grant even when a replay uses an independently valid nonce and signature', async () => {
         const signed = createGrant();
         const app = createApp({ nowMs: () => 2_000, invokeLocal: async () => ({ ok: true }) });
@@ -548,7 +590,6 @@ describe('registerPeerMediationMachineRpcDirectRoutes V2 grant admission', () =>
         let invoked = 0;
         const app = createApp({
             nowMs: () => 2_000,
-            localPerPeerMaxConcurrentCalls: 1,
             invokeLocal: async () => {
                 invoked += 1;
                 throw new Error('local handler failed');

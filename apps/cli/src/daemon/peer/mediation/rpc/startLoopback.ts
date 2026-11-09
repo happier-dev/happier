@@ -35,7 +35,6 @@ export type StartPeerMediationLoopbackInput = Readonly<{
   endpointTtlMs?: number;
   host?: string;
   port?: number;
-  localPerPeerMaxConcurrentCalls?: number;
   /**
    * PMS-9 / P1-9: the shared daemon observability emitter. Supplying it here is what makes the
    * DIRECT routes observable at all; before this the emitter reached only the two relay
@@ -183,9 +182,6 @@ export async function startPeerMediationLoopback(
       ? {
           rpc: {
             rpcHandlerManager,
-            ...(typeof input.localPerPeerMaxConcurrentCalls === 'number'
-              ? { localPerPeerMaxConcurrentCalls: input.localPerPeerMaxConcurrentCalls }
-              : {}),
           },
         }
       : {}),

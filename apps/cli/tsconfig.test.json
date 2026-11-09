@@ -2008,8 +2008,6 @@
     "src/daemon/peer/mediation/observability/runtimeActionExecutor.test.ts",
     "src/daemon/peer/mediation/observability/sharedStore.test.ts",
     "src/daemon/peer/mediation/resolvePeerMediationTrustRoots.test.ts",
-    "src/daemon/peer/mediation/rpc/callLimits.test.ts",
-    "src/daemon/peer/mediation/rpc/quarantine.test.ts",
     "src/daemon/peer/mediation/rpc/registerRoutes.runtimeCatalog.integration.test.ts",
     "src/daemon/peer/mediation/rpc/replayKeys.test.ts",
     "src/daemon/peer/mediation/rpc/startLoopback.test.ts",

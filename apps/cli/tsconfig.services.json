@@ -407,8 +407,6 @@
     "src/daemon/peer/mediation/observability/runtimeActionExecutor.ts",
     "src/daemon/peer/mediation/observability/store.ts",
     "src/daemon/peer/mediation/resolvePeerMediationTrustRoots.ts",
-    "src/daemon/peer/mediation/rpc/callLimits.ts",
-    "src/daemon/peer/mediation/rpc/quarantine.ts",
     "src/daemon/peer/mediation/rpc/registerRoutes.ts",
     "src/daemon/peer/mediation/rpc/replayKeys.ts",
     "src/daemon/peer/mediation/rpc/validateRequest.ts",

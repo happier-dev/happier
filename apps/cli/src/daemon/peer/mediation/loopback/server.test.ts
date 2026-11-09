@@ -983,14 +983,8 @@ describe('peer mediation loopback server', () => {
     await app.close();
   });
 
-  /**
-   * Grant revocation is withdrawn — direct route grants are TTL-only (see lanes/D2.md §4) — so the
-   * internal grant-revocation notification hook this test used to spy on no longer exists. The
-   * quarantine itself is live, and is asserted where it is actually observable: the wire response.
-   * That is a stronger contract than the old callback spy, which pinned an internal call that
-   * nothing in production ever supplied.
-   */
-  it('quarantines a direct machine RPC grant on the wire after repeated proof failures', async () => {
+  // SIMPLIFY-RPC-1109: each request verifies its proof without latching endpoint policy.
+  it('refuses repeated invalid proofs and still admits a valid direct machine RPC request', async () => {
     const grantKeyPair = tweetnacl.sign.keyPair();
     const grant = createSignedMachineRpcGrant({
       signingSecretKey: grantKeyPair.secretKey,
@@ -1042,11 +1036,15 @@ describe('peer mediation loopback server', () => {
       reasonCodes.push((response.json() as { reasonCode?: string }).reasonCode ?? '');
     }
 
-    // Proof failures share grant admission's quarantine: the next request after
-    // the threshold is latched reports the established quarantine.
-    expect(reasonCodes).toContain('quarantined');
-    expect(reasonCodes[reasonCodes.length - 1]).toBe('quarantined');
-    expect(reasonCodes.every((code) => code.length > 0)).toBe(true);
+    expect(reasonCodes).toEqual(Array(6).fill('nonce_bad_signature'));
+    const response = await app.inject({
+      method: 'POST', url: '/peer-mediation/v2/rpc', payload: {
+        v: 2, requestId: 'valid_after_failures', method: RPC_METHODS.DAEMON_MEMORY_STATUS,
+        params: {}, grant, proof: createCurrentProof(grant), routeKind: 'loopback_direct',
+        flowKind: 'machine_rpc', endpointFingerprint: 'loopback_endpoint_1',
+      },
+    });
+    expect(response.json()).toMatchObject({ ok: true, result: { ok: true } });
 
     await app.close();
   });

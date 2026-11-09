@@ -521,6 +521,14 @@ they physically travel).
 | Flow kind | `bounded_transfer`, `tcp_tunnel`, `live_stream`, `machine_rpc`, `voice_media` | `packages/protocol/src/machines/peer/mediation/**` |
 | Route kind | `loopback_direct`, `lan_direct`, `tailscale_serve_direct`, `server_relay`, `iroh_peer` | same |
 
+In unreleased 0.3, direct Machine RPC authenticates each request's signed grant,
+ephemeral proof, endpoint binding and method scope. The route's atomic one-use
+reservation is the grant-consumption owner. Failed verification refuses that
+request without quarantining the endpoint; no per-grant concurrency or idle
+limiter runs alongside the reservation. The wire schema retains `maxCalls`,
+`maxIdleMs` and the existing fallback reason codes for mixed-version readers.
+The UI still requests a fresh Home route grant for each physical direct call.
+
 The five moving parts and their canonical owners:
 
 | Part | Owner |

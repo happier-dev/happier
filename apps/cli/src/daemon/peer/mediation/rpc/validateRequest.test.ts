@@ -11,8 +11,6 @@ import {
     type PeerMachineRpcDirectRequestV2,
 } from '@happier-dev/protocol';
 
-import { createPeerMachineRpcCallLimiter } from './callLimits';
-import { createPeerMachineRpcVerificationQuarantine } from './quarantine';
 import { createPeerMachineRpcReplayKeyCache } from './replayKeys';
 import { validatePeerMachineRpcDirectRequest } from './validateRequest';
 
@@ -98,14 +96,12 @@ describe('validatePeerMachineRpcDirectRequest', () => {
             },
             trustRoots: [{ keyId: 'key_1', publicKey: Buffer.alloc(32, 4).toString('base64url') }],
             nowMs,
-            callLimiter: createPeerMachineRpcCallLimiter({ nowMs: () => nowMs }),
-            quarantine: createPeerMachineRpcVerificationQuarantine({ nowMs: () => nowMs }),
             replayKeyCache: createPeerMachineRpcReplayKeyCache({ nowMs: () => nowMs }),
         });
         expect(result).toMatchObject({ ok: false, response: { v: 2, reasonCode: 'invalid_request' } });
     });
 
-    it('admits a valid V2 ephemeral proof through the same method/scope owner', () => {
+    it('validates signed method scope without consuming a per-grant call allowance', () => {
         const serverKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
         const handle = createEphemeralPeerRouteProofHandleV2({
             randomBytes: (length) => new Uint8Array(length).fill(length === 32 ? 8 : 9),
@@ -139,8 +135,6 @@ describe('validatePeerMachineRpcDirectRequest', () => {
             proof: handle.sign(grant),
         };
         const nowMs = 2_000;
-        const callLimiter = createPeerMachineRpcCallLimiter({ nowMs: () => nowMs });
-        const quarantine = createPeerMachineRpcVerificationQuarantine({ nowMs: () => nowMs });
         const replayKeyCache = createPeerMachineRpcReplayKeyCache({ nowMs: () => nowMs });
         const options = {
             body: request,
@@ -150,26 +144,19 @@ describe('validatePeerMachineRpcDirectRequest', () => {
             },
             trustRoots: [{ keyId: 'key_1', publicKey: Buffer.from(serverKeyPair.publicKey).toString('base64url') }],
             nowMs,
-            callLimiter,
-            quarantine,
             replayKeyCache,
         };
-        const result = validatePeerMachineRpcDirectRequest(options);
-
-        expect(result.ok).toBe(true);
-        if (result.ok) {
-            expect(result.request.v).toBe(2);
-            result.releaseCallLimit();
+        // Validation authenticates each request; the route's atomic reservation owns one-use consumption.
+        for (let index = 0; index < 3; index++) {
+            const result = validatePeerMachineRpcDirectRequest(options);
+            expect(result.ok).toBe(true);
+            if (result.ok) expect(result.request.v).toBe(2);
         }
-        const secondValidation = validatePeerMachineRpcDirectRequest(options);
-        expect(secondValidation.ok).toBe(true);
-        if (secondValidation.ok) secondValidation.releaseCallLimit();
+
     });
 
-    it('quarantines repeated grant verification failures by expected endpoint, not caller-supplied endpoint', () => {
+    it('keeps authenticating each request after repeated invalid signatures', () => {
         let nowMs = 2_000;
-        const callLimiter = createPeerMachineRpcCallLimiter({ nowMs: () => nowMs });
-        const quarantine = createPeerMachineRpcVerificationQuarantine({ nowMs: () => nowMs });
         const replayKeyCache = createPeerMachineRpcReplayKeyCache({ nowMs: () => nowMs });
         const baseOptions = {
             expected: {
@@ -180,8 +167,6 @@ describe('validatePeerMachineRpcDirectRequest', () => {
                 endpointFingerprint: 'endpoint_1',
             },
             trustRoots: [{ keyId: 'key_1', publicKey: Buffer.alloc(32, 4).toString('base64url') }],
-            callLimiter,
-            quarantine,
             replayKeyCache,
         };
 
@@ -198,15 +183,15 @@ describe('validatePeerMachineRpcDirectRequest', () => {
         }
 
         nowMs = 2_010;
-        const quarantined = validatePeerMachineRpcDirectRequest({
+        const rejected = validatePeerMachineRpcDirectRequest({
             ...baseOptions,
             body: createCurrentRequest('another_attacker_endpoint'),
             nowMs,
         });
 
-        expect(quarantined.ok).toBe(false);
-        if (!quarantined.ok) {
-            expect(quarantined.response.reasonCode).toBe('quarantined');
+        expect(rejected.ok).toBe(false);
+        if (!rejected.ok) {
+            expect(rejected.response.reasonCode).toBe('grant_bad_signature');
         }
     });
 });

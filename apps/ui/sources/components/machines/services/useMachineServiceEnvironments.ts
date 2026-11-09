@@ -13,6 +13,7 @@ import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccoun
 import { createUiMachineDeploymentReferenceReader } from '@/sync/ops/actions/managedMachineReferenceDeps';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 export type MachineServiceEnvironmentHeader = Readonly<{ title: string; projectSourceId: string }>;
 const NO_ENVIRONMENTS: DeploymentEnvironmentReadCollectionV1['items'] = Object.freeze([]);
@@ -41,7 +42,9 @@ function censusEntry(lifetime: ServerAccountScopeLifetime, serverId: string, mac
   let pending = false;
   const entry: CensusEntry = { read: null, listeners: new Set(), stop: null, load: () => {}, start: () => {} };
   const publish = (value: MachineDeploymentReferencesPageV1 | null) => {
-    entry.read = { value };
+    const next = retainDeep(entry.read?.value, value ?? entry.read?.value ?? null);
+    if (entry.read?.value === next) return;
+    entry.read = { value: next };
     entry.listeners.forEach(listener => listener());
   };
   entry.load = () => {
