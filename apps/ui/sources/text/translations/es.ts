@@ -1796,6 +1796,7 @@ export const es: TranslationStructure = {
             recovery: "Elige otra máquina con Ejecutar en.",
         },
         selectCount: '{count} seleccionados',
+        selectCustomValue: 'O escribe uno nuevo',
         state: {
             loading: { title: 'Cargando contenido del complemento', reason: 'Se muestra el contenido disponible mientras Happier carga la última actualización.' },
             refreshing: { title: 'Actualizando contenido del complemento', reason: 'Se muestra el último contenido disponible mientras Happier busca actualizaciones.' },

@@ -1630,6 +1630,7 @@ export const ca: TranslationStructure = {
             recovery: "Tria una altra màquina amb Executa a.",
         },
         selectCount: '{count} seleccionats',
+        selectCustomValue: 'O escriu-ne un de nou',
         state: {
             loading: { title: 'S’està carregant el contingut del connector', reason: 'Es mostra el contingut disponible mentre Happier carrega l’última actualització.' },
             refreshing: { title: 'S’està actualitzant el contingut del connector', reason: 'Es mostra l’últim contingut disponible mentre Happier comprova si hi ha actualitzacions.' },

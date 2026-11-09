@@ -13,6 +13,8 @@ export function resolvePluginUiFrameworkTranslations(): Readonly<Record<string, 
     return {
         'happier.plugin-ui.form.submit': t('common.submit'),
         'happier.plugin-ui.form.cancel': t('common.cancel'),
+        // A mixed form marks its optional fields; required ones carry no mark.
+        'happier.plugin-ui.form.optional': t('common.optional'),
         'happier.plugin-ui.action.execute': t('common.run'),
         'happier.plugin-ui.action.copy': t('common.copy'),
         'happier.plugin-ui.action.open': t('common.open'),
@@ -21,6 +23,8 @@ export function resolvePluginUiFrameworkTranslations(): Readonly<Record<string, 
         // The public `ApprovalPendingNotice`: the same words as Happier's own waiting notices.
         'happier.plugin-ui.approvalPending.title': t('settingsProvidersCollection.approvalPendingTitle'),
         'happier.plugin-ui.approvalPending.open': t('settingsProvidersCollection.openApproval'),
+        // The public `ApprovalFields`: its exact ids fold behind the same words as Happier's own approvals.
+        'happier.plugin-ui.approvalFields.technicalDetails': t('approvals.technicalDetails'),
         // What a refused Action means, for a page that shows `useExecutePluginAction`'s message.
         'happier.plugin-ui.action.error.failed': t('ui.pluginUi.actionFailed'),
         'happier.plugin-ui.action.error.unavailable': t('ui.pluginUi.actionUnavailable'),
@@ -55,8 +59,13 @@ export function resolvePluginUiFrameworkTranslations(): Readonly<Record<string, 
         'happier.plugin-ui.select.count': t('pluginSurfaces.selectCount'),
         'happier.plugin-ui.select.empty': t('settingsAgents.noOptionsAvailable'),
         'happier.plugin-ui.select.search': t('common.search'),
+        'happier.plugin-ui.select.customValue': t('pluginSurfaces.selectCustomValue'),
         'happier.plugin-ui.select.noMatches': t('common.noMatches'),
         'happier.plugin-ui.detailsPane.back': t('common.back'),
+        // The public `SessionCard`: a Session's name as Happier says it, before and after it is read.
+        'happier.plugin-ui.sessionCard.untitled': t('session.untitled'),
+        'happier.plugin-ui.sessionCard.reading': t('common.loading'),
+        'happier.plugin-ui.sessionCard.unavailable': t('errors.sessionNotFound'),
         'happier.plugin-ui.modalHeader.close': t('common.close'),
         // A segmented choice whose value follows a default announces it ("Ask, default").
         'happier.plugin-ui.segmented.inherited': t('capabilities.detail.inheritedValue'),
@@ -80,6 +89,14 @@ export function resolvePluginUiFrameworkTranslations(): Readonly<Record<string, 
         'happier.plugin-ui.returnedAnswer.askedFromHere': t('session.returnedAnswer.askedFromHere'),
         'happier.plugin-ui.returnedAnswer.openQuestion': t('session.returnedAnswer.openQuestion'),
         'happier.plugin-ui.returnedAnswer.questionUnavailable': t('session.returnedAnswer.questionUnavailable'),
+        'happier.plugin-ui.returnedAnswer.showMore': t('session.returnedAnswer.showMore'),
+        'happier.plugin-ui.returnedAnswer.showLess': t('session.returnedAnswer.showLess'),
+        // The public `AccountByline`: You, a member without a name and a former member, as core's own transcript names them.
+        'happier.plugin-ui.accountActor.you': t('message.accountActorYou'),
+        'happier.plugin-ui.accountActor.former': t('message.accountActorFormerMember'),
+        'happier.plugin-ui.accountActor.unnamed': t('message.accountActorUnnamedMember'),
+        // A template: the byline puts the localized name into `{name}`.
+        'happier.plugin-ui.accountActor.sentBy': t('message.accountActorSentBy', { name: '{name}' }),
         // The public `FollowPolicyEditor`: presets, what each means, and every Follow event's name, in the app's words.
         ...resolveFollowPolicyEditorTranslations(),
         // The Work status bucket labels, from the one label owner core's own lists read.

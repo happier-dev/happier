@@ -1803,7 +1803,7 @@ const computerUseTranslations = { 'zh-Hans': {
             screenOf: ({ machine }) => `${machine} 的整个屏幕`,
             windowsOn: ({ machine }) => `${machine} 上打开的窗口`,
             window: '一个窗口',
-            screen: '整个屏幕',
+            screen: '整个屏幕', screenInSentence: '整个屏幕',
             windows: '打开的窗口',
             typedLabel: '文字',
             keyLabel: '按键',

@@ -1310,6 +1310,7 @@ const enPluginSurfaces = {
       recovery: "Choose another machine with Run on.",
   },
   selectCount: '{count} selected',
+  selectCustomValue: 'Or type a new one',
   state: {
     loading: {
       title: 'Loading plugin content',

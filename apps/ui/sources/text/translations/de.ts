@@ -1402,6 +1402,7 @@ export const de: TranslationStructure = {
             recovery: "Wähle über Ausführen auf einen anderen Rechner.",
         },
         selectCount: '{count} ausgewählt',
+        selectCustomValue: 'Oder einen neuen eingeben',
         state: {
             loading: {
                 title: 'Plugin-Inhalt wird geladen',

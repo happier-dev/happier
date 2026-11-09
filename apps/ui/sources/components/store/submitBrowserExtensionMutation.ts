@@ -1,12 +1,19 @@
 import { BrowserExtensionMutationResultV1Schema } from '@happier-dev/protocol/actions';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { BrowserExtensionWebStoreSourceV1 } from '@happier-dev/protocol/browser/profile/extensionsV1';
 import type { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import type { ActionInputFormSubmissionResult } from '@/components/plugins/actions/actionInputForm';
+import { createActionInputForm, type ActionInputFormSubmissionResult } from '@/components/plugins/actions/actionInputForm';
+import { presentActionInputForm } from '@/components/plugins/actions/presentActionInputForm';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
-/** Store install and Updates present the browser owner's permission and restart decisions alike. */
+/**
+ * Store install, Updates and a profile's Extensions section present the browser owner's permission and
+ * restart decisions alike: one review, one restart confirmation, then the same Action again.
+ */
 export async function submitBrowserExtensionMutation(params: Readonly<{
-    actionId: 'browser.extensions.install' | 'browser.extensions.update';
+    actionId: 'browser.extensions.install' | 'browser.extensions.update' | 'browser.extensions.enable'
+        | 'browser.extensions.disable' | 'browser.extensions.remove';
     input: Readonly<Record<string, unknown>>;
     machineId: string;
     execute: ReturnType<typeof useMountedActionExecution>['execute'];
@@ -19,9 +26,8 @@ export async function submitBrowserExtensionMutation(params: Readonly<{
             { signal: params.signal, externalActionTarget: { kind: 'machine', machineId: params.machineId } });
         if (!response.ok) return { ok: false, code: response.errorCode };
         const result = BrowserExtensionMutationResultV1Schema.parse(response.result);
-        if (result.status === 'updated') return { ok: true };
+        if (result.status === 'updated' || result.status === 'removed') return { ok: true };
         if (result.status === 'unavailable') return { ok: false, code: result.code };
-        if (result.status === 'removed') return { ok: false };
         if (result.status === 'needs_review') {
             const body = [result.review.version, ...result.review.permissions, ...result.review.hostPermissions,
                 ...(result.restartRequired ? [t('capabilities.store.browserExtensionInstall.restartBody')] : [])].join('\n');
@@ -35,4 +41,38 @@ export async function submitBrowserExtensionMutation(params: Readonly<{
             input = { ...input, restartConfirmed: true };
         }
     }
+}
+
+/**
+ * The install form a Store listing and a pasted Chrome Web Store link both open: pick the Machine and the saved
+ * profile (seeded when a profile's Extensions section opened the Store), then the same install Action.
+ */
+export function presentBrowserExtensionInstallForm(params: Readonly<{
+    title: string;
+    description: string | null;
+    source: BrowserExtensionWebStoreSourceV1 | Readonly<{ kind: 'unpacked'; directory: string }>;
+    execution: Pick<ReturnType<typeof useMountedActionExecution>, 'binding' | 'execute' | 'getSignal'>;
+    seedMachineId: string | null;
+    seedProfileId: string | null;
+}>): void {
+    const { execution, source } = params;
+    if (!execution.binding) return;
+    const spec = getActionSpec('browser.extensions.install');
+    // The spec's own hint title and description are the Action's; the person reads what they are adding instead
+    // (the Store item's name, or the link it came from), so the caller's title is the sheet's title.
+    const { description: _agentFacingDescription, title: _actionTitle, ...inputHints } = spec.inputHints!;
+    const form = createActionInputForm({
+        presentation: { title: params.title, description: params.description,
+            inputHints: { ...inputHints, fields: inputHints.fields.filter(field =>
+                field.path === 'machineId' || field.path === 'profileId') } },
+        accountLifetime: execution.binding, signal: execution.getSignal(),
+        initialInput: { ...(params.seedMachineId ? { machineId: params.seedMachineId } : {}),
+            ...(params.seedProfileId ? { profileId: params.seedProfileId } : {}) },
+        submit: (candidate, { signal }) => submitBrowserExtensionMutation({
+            actionId: 'browser.extensions.install', input: { ...candidate, source },
+            machineId: typeof candidate.machineId === 'string' ? candidate.machineId : '',
+            execute: execution.execute, signal, confirmText: t('capabilities.store.add'),
+        }),
+    });
+    presentActionInputForm({ form, signal: execution.getSignal(), actionId: spec.id });
 }

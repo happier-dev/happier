@@ -21,6 +21,11 @@ export function readComputerTargetLabel(target: NonNullable<ComputerActionApprov
     return target.title.trim() || t('computerUse.picker.untitledWindow');
 }
 
+/** The same target inside a sentence: a window keeps its own title; the whole screen drops its leading capital. */
+export function readComputerTargetPhrase(target: NonNullable<ComputerActionApproval['target']>): string {
+    return target.kind === 'display' ? t('computerUse.approval.screenInSentence') : readComputerTargetLabel(target);
+}
+
 /** Acts that land somewhere in the shared target, so their one line says where ("Click in Safari?"). */
 const ACTS_IN_TARGET: ReadonlySet<ComputerActionApproval['act']> = new Set(['click', 'type', 'press', 'move', 'drag', 'wheel']);
 
@@ -98,7 +103,7 @@ export const ComputerActionApprovalCard = React.memo(function ComputerActionAppr
                     />
                 </View>
             ) : null}
-            {presentation.target && presentation.captureMedia && props.media ? <View accessibilityLabel={t('computerUse.approval.cropA11y', { target: readComputerTargetLabel(presentation.target) })}>{props.media}</View> : null}
+            {presentation.target && presentation.captureMedia && props.media ? <View accessibilityLabel={t('computerUse.approval.cropA11y', { target: readComputerTargetPhrase(presentation.target) })}>{props.media}</View> : null}
             {presentation.sent ? (
                 <View style={styles.sent}>
                     <Text style={styles.label}>

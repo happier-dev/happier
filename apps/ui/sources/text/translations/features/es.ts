@@ -1808,7 +1808,7 @@ const computerUseTranslations = { es: {
             screenOf: ({ machine }) => `Toda la pantalla de ${machine}`,
             windowsOn: ({ machine }) => `Las ventanas abiertas en ${machine}`,
             window: 'Una ventana',
-            screen: 'Toda la pantalla',
+            screen: 'Toda la pantalla', screenInSentence: 'toda la pantalla',
             windows: 'Las ventanas abiertas',
             typedLabel: 'Texto',
             keyLabel: 'Tecla',

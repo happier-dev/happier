@@ -1830,7 +1830,7 @@ const computerUseTranslations = { ru: {
             screenOf: ({ machine }) => `Весь экран ${machine}`,
             windowsOn: ({ machine }) => `Открытые окна на ${machine}`,
             window: 'Окно',
-            screen: 'Весь экран',
+            screen: 'Весь экран', screenInSentence: 'весь экран',
             windows: 'Открытые окна',
             typedLabel: 'Текст',
             keyLabel: 'Клавиша',

@@ -71,6 +71,8 @@ export function HappierChoiceField<Value = string>(
      * `onOpen` the field is a plain trigger for the type's own picker and draws no rows of its own.
      */
     reading?: string;
+    /** String suggestions share their picker with an editable value; typing never invents an option. */
+    customValue?: Readonly<{ value: string; onChange: (value: string) => void; testID?: string }>;
     onOpen?: () => void;
     /** Each new positive value shows the rows now; a host's repair or keyboard hand-off. */
     openRequest?: number;
@@ -114,7 +116,7 @@ export function HappierChoiceField<Value = string>(
     hostReading !== null && (props.onOpen !== undefined || chosen.length === 0)
       ? hostReading
       : chosen.length === 0
-        ? null
+        ? props.customValue?.value || null
         : chosen.length === 1
           ? chosen[0]!.option.label
           : (localization?.translate(
@@ -145,7 +147,7 @@ export function HappierChoiceField<Value = string>(
     if (!open) setQuery('');
   }, [open]);
   const floating = host !== null && props.onOpen === undefined;
-  const searchable = floating && plan.options.length >= CHOICE_SEARCH_MIN_OPTIONS;
+  const searchable = !props.customValue && floating && plan.options.length >= CHOICE_SEARCH_MIN_OPTIONS;
   // Choices that can be picked lead; disabled ones keep their relative order after them.
   const ordered = [
     ...plan.options.filter((entry) => !entry.disabled),
@@ -220,6 +222,23 @@ export function HappierChoiceField<Value = string>(
   ));
   const noMatches = localization?.translate('happier.plugin-ui.select.noMatches', 'No matches') ?? 'No matches';
   const searchLabel = localization?.translate('happier.plugin-ui.select.search', 'Search') ?? 'Search';
+  // A typed answer stands where the search would: a drawn field that says it takes a new value.
+  const customValuePlaceholder = props.placeholder
+    ?? localization?.translate('happier.plugin-ui.select.customValue', 'Or type a new one') ?? 'Or type a new one';
+  const customEditor = props.customValue ? (
+    <HappierTextField
+      label={props.label}
+      placeholder={customValuePlaceholder}
+      appearance="search"
+      value={props.customValue.value}
+      onChangeText={props.customValue.onChange}
+      disabled={disabled}
+      autoCapitalize="none"
+      autoCorrect={false}
+      theme={theme}
+      testID={props.customValue.testID}
+    />
+  ) : null;
   const render = ({ onOpenChange, onQueryChange }: Readonly<{
     onOpenChange: (open: boolean) => void; onQueryChange: (query: string) => void;
   }>) => (
@@ -301,7 +320,7 @@ export function HappierChoiceField<Value = string>(
                   paddingVertical: HAPPIER_MENU_ROW_METRICS.sectionPaddingVerticalPx,
                 }}
               >
-                {searchable ? (
+                {customEditor ?? (searchable ? (
                   <HappierTextField
                     label={searchLabel}
                     placeholder={searchLabel}
@@ -313,14 +332,14 @@ export function HappierChoiceField<Value = string>(
                     theme={theme}
                     {...(props.testID === undefined ? {} : { testID: `${props.testID}.search` })}
                   />
-                ) : null}
+                ) : null)}
                 <View
                   role={props.multiple ? 'group' : 'radiogroup'}
                   accessibilityLabel={props.label}
                   testID={props.testID}
                 >
                   <HappierScrollArea style={{ maxHeight: Math.max(0, Math.min(controls.maxHeight, CHOICE_LIST_MAX_HEIGHT * 1.5)) }}>
-                    {visible.length === 0 ? (
+                    {visible.length === 0 && !props.customValue ? (
                       <HappierText
                         style={{
                           ...captionStyle,
@@ -340,15 +359,18 @@ export function HappierChoiceField<Value = string>(
           })
         : null}
       {open && !floating && props.onOpen === undefined ? (
-        <View
-          role={props.multiple ? 'group' : 'radiogroup'}
-          accessibilityLabel={props.label}
-          testID={props.testID}
-          style={{ gap: 2 }}
-        >
-          <HappierScrollArea style={{ maxHeight: CHOICE_LIST_MAX_HEIGHT }}>
-            {rows('inline', onOpenChange)}
-          </HappierScrollArea>
+        <View style={{ gap: theme.spacing.small }}>
+          {customEditor}
+          <View
+            role={props.multiple ? 'group' : 'radiogroup'}
+            accessibilityLabel={props.label}
+            testID={props.testID}
+            style={{ gap: 2 }}
+          >
+            <HappierScrollArea style={{ maxHeight: CHOICE_LIST_MAX_HEIGHT }}>
+              {rows('inline', onOpenChange)}
+            </HappierScrollArea>
+          </View>
         </View>
       ) : null}
     </View>

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { LocalServicePublicExposureModeV1 } from '@happier-dev/protocol';
+import type { LocalServicePublicExposureAudienceV1, LocalServicePublicExposureModeV1 } from '@happier-dev/protocol/local/services/public/v1';
 
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -14,10 +14,15 @@ import type { TranslationKey } from '@/text/i18n';
 import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import { t } from '@/text';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+
+import { LocalServicePreviewAudienceEditor } from './LocalServicePreviewAudienceEditor';
 
 export type LocalServiceExposureDecision = Readonly<{
     mode: LocalServicePublicExposureModeV1;
     ttlMs: number;
+    /** Present for `people`: who may open it. */
+    audience?: LocalServicePublicExposureAudienceV1;
 }>;
 
 export type LocalServiceExposureModeChoice = Readonly<{
@@ -110,19 +115,21 @@ function Consequence(props: Readonly<{
 
 /**
  * Who can open the link, per link type — the one consequence that differs between them. The server
- * decides it (`public/runtime.ts`): a secret link opens for anyone holding it; a signed-in link only
- * for a signed-in person who can open the Session it belongs to.
+ * decides it (`public/runtime.ts`): a secret link opens for anyone holding it; a people share only
+ * for a signed-in person in the audience chosen below.
  */
 const REACH_BY_MODE: Readonly<Record<LocalServicePublicExposureModeV1, TranslationKey>> = {
     secret_link: 'localServices.publicPreview.consequenceReach',
     public: 'localServices.publicPreview.consequenceReach',
-    authenticated: 'localServices.publicPreview.consequenceReachSignedIn',
+    people: 'localServices.publicPreview.consequenceReachPeople',
 };
 
 type ExposureSheetProps = CustomModalInjectedProps & Readonly<{
     modeChoices: readonly LocalServiceExposureModeChoice[];
     ttlChoices: readonly LocalServiceExposureTtlChoice[];
     testIDPrefix: string;
+    /** The Home whose people directory a people share picks from. */
+    serverId?: string;
     onResolve: (decision: LocalServiceExposureDecision | null) => void;
 }>;
 
@@ -142,16 +149,24 @@ type ExposureSheetProps = CustomModalInjectedProps & Readonly<{
  * the tablist semantics), and the commit is `RoundButton`. This is not a second consent gate — it
  * IS the gate, and the daemon still rejects any create that does not carry the acknowledgement.
  */
+/** The order link types read in, and the first is the default (lab K): the secret link leads whatever order the server lists. */
+const LINK_TYPE_ORDER: readonly LocalServicePublicExposureModeV1[] = ['secret_link', 'people', 'public'];
+
 const LocalServiceExposureSheet: React.FC<ExposureSheetProps> = (props) => {
     const styles = stylesheet;
+    const modeChoices = React.useMemo(() => [...props.modeChoices]
+        .sort((a, b) => LINK_TYPE_ORDER.indexOf(a.mode) - LINK_TYPE_ORDER.indexOf(b.mode)), [props.modeChoices]);
     const [mode, setMode] = React.useState<LocalServicePublicExposureModeV1>(
-        () => props.modeChoices[0]?.mode ?? 'secret_link',
+        () => modeChoices[0]?.mode ?? 'secret_link',
     );
     const [ttlMs, setTtlMs] = React.useState<number>(() => props.ttlChoices[0]?.ttlMs ?? 0);
+    const [audience, setAudience] = React.useState<LocalServicePublicExposureAudienceV1>([]);
+    const scope = useActiveServerAccountScope(props.serverId);
+    const peopleIncomplete = mode === 'people' && audience.length === 0;
 
     const modeTabs = React.useMemo(
-        () => props.modeChoices.map((choice) => ({ id: choice.mode, label: choice.label })),
-        [props.modeChoices],
+        () => modeChoices.map((choice) => ({ id: choice.mode, label: choice.label })),
+        [modeChoices],
     );
     const ttlTabs = React.useMemo(
         () => props.ttlChoices.map((choice) => ({ id: String(choice.ttlMs), label: choice.label })),
@@ -161,9 +176,10 @@ const LocalServiceExposureSheet: React.FC<ExposureSheetProps> = (props) => {
     const fixedTtlLabel = props.ttlChoices.length === 1 ? props.ttlChoices[0]?.label ?? null : null;
 
     const commit = React.useCallback(() => {
-        props.onResolve({ mode, ttlMs });
+        if (mode === 'people' && audience.length === 0) return;
+        props.onResolve(mode === 'people' ? { mode, ttlMs, audience } : { mode, ttlMs });
         props.onClose();
-    }, [mode, props, ttlMs]);
+    }, [audience, mode, props, ttlMs]);
 
     const cancel = React.useCallback(() => {
         props.onResolve(null);
@@ -206,6 +222,11 @@ const LocalServiceExposureSheet: React.FC<ExposureSheetProps> = (props) => {
                 </View>
             ) : null}
 
+            {mode === 'people' && scope ? (
+                <LocalServicePreviewAudienceEditor scope={scope} draft={audience} onChange={setAudience}
+                    testID={`${props.testIDPrefix}-audience`} />
+            ) : null}
+
             {ttlTabs.length > 1 ? (
                 <View style={styles.choice}>
                     <Text style={styles.choiceLabel}>{t('localServices.publicPreview.lifetimeLabel')}</Text>
@@ -233,13 +254,15 @@ const LocalServiceExposureSheet: React.FC<ExposureSheetProps> = (props) => {
                     testID={`${props.testIDPrefix}-commit`}
                     title={t('localServices.publicPreview.confirmCta')}
                     size="normal"
+                    disabled={peopleIncomplete}
                     onPress={commit}
                 />
                 <RoundButton
                     testID={`${props.testIDPrefix}-cancel`}
                     title={t('common.cancel')}
                     size="normal"
-                    display="secondary"
+                    // Backing out is the quiet way, under the one filled commit (lab K).
+                    display="inverted"
                     onPress={cancel}
                 />
             </View>
@@ -256,6 +279,7 @@ export async function showLocalServiceExposureSheet(params: Readonly<{
     modeChoices: readonly LocalServiceExposureModeChoice[];
     ttlChoices: readonly LocalServiceExposureTtlChoice[];
     testIDPrefix?: string;
+    serverId?: string;
 }>): Promise<LocalServiceExposureDecision | null> {
     const testIDPrefix = params.testIDPrefix ?? 'local-service-exposure-sheet';
     const deferred = createDeferredOnce<LocalServiceExposureDecision | null>();
@@ -266,6 +290,7 @@ export async function showLocalServiceExposureSheet(params: Readonly<{
             modeChoices: params.modeChoices,
             ttlChoices: params.ttlChoices,
             testIDPrefix,
+            ...(params.serverId ? { serverId: params.serverId } : {}),
             onResolve: deferred.resolve,
         },
         onRequestClose: () => deferred.resolve(null),

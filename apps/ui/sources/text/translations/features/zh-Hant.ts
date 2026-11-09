@@ -1803,7 +1803,7 @@ const computerUseTranslations = { 'zh-Hant': {
             screenOf: ({ machine }) => `${machine} 的整個螢幕`,
             windowsOn: ({ machine }) => `${machine} 上開啟的視窗`,
             window: '一個視窗',
-            screen: '整個螢幕',
+            screen: '整個螢幕', screenInSentence: '整個螢幕',
             windows: '開啟的視窗',
             typedLabel: '文字',
             keyLabel: '按鍵',

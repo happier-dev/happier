@@ -1819,7 +1819,7 @@ const computerUseTranslations = { pl: {
             screenOf: ({ machine }) => `Cały ekran ${machine}`,
             windowsOn: ({ machine }) => `Otwarte okna na ${machine}`,
             window: 'Okno',
-            screen: 'Cały ekran',
+            screen: 'Cały ekran', screenInSentence: 'całego ekranu',
             windows: 'Otwarte okna',
             typedLabel: 'Tekst',
             keyLabel: 'Klawisz',

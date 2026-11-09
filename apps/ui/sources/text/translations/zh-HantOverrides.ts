@@ -1601,6 +1601,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         recovery: "請透過「執行於」選擇另一台機器。",
     },
       selectCount: '已選擇 {count} 項',
+      selectCustomValue: '或輸入新的',
     state: {
       loading: { title: '正在載入外掛內容', reason: 'Happier 載入最新更新時，將顯示目前可用的內容。' },
       refreshing: { title: '正在重新整理外掛內容', reason: 'Happier 檢查更新時，將顯示上次可用的內容。' },

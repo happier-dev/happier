@@ -31,7 +31,7 @@ import { useItemDensityInputs } from '@/components/ui/lists/useResolvedItemDensi
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
-import { resolveHappierFocusRingVisible, useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, resolveHappierFocusRingVisible, useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import {
     ITEM_CHEVRON_SIZE,
@@ -912,6 +912,17 @@ export const Item = React.memo<ItemProps>((props) => {
     const handlePressOut = React.useCallback(() => {
         setIsSplitPrimaryPressed(false);
     }, []);
+    // A split row's activation is only part of the row: its keyboard ring is drawn on the whole row (with
+    // the trailing control inside it), so the row hears the activation's focus rather than ringing it alone.
+    const [isSplitPrimaryFocused, setIsSplitPrimaryFocused] = React.useState(false);
+    const handleSplitFocus = React.useCallback(() => {
+        setIsSplitPrimaryFocused(true);
+        onFocus?.();
+    }, [onFocus]);
+    const handleSplitBlur = React.useCallback(() => {
+        setIsSplitPrimaryFocused(false);
+        onBlur?.();
+    }, [onBlur]);
     
     const webDoublePressHandledAtMsRef = React.useRef<number>(0);
     const webLastPressAtMsRef = React.useRef<number | null>(null);
@@ -2038,7 +2049,7 @@ export const Item = React.memo<ItemProps>((props) => {
         ) : primary;
         return (
             <>
-                <View style={[containerCore, style, resolveInteractiveRowStyle(isSplitPrimaryPressed)]} onLayout={measuresRowWidth ? handleRowLayout : undefined}>
+                <View style={[containerCore, style, resolveInteractiveRowStyle(isSplitPrimaryPressed, isSplitPrimaryFocused)]} onLayout={measuresRowWidth ? handleRowLayout : undefined}>
                     {withOutsideLeading(<ListOptionPressable
                         readsListOptionSetSize={readsListOptionSetSize}
                         readsListOptionPosition={readsListOptionPosition}
@@ -2073,8 +2084,8 @@ export const Item = React.memo<ItemProps>((props) => {
                         } : undefined}
                         onMouseDownCapture={isWeb ? (onMouseDownCapture as any) : undefined}
                         onContextMenu={isWeb ? (onContextMenu as any) : undefined}
-                        onFocus={onFocus}
-                        onBlur={onBlur}
+                        onFocus={handleSplitFocus}
+                        onBlur={handleSplitBlur}
                         {...(isWeb ? { 'aria-level': accessibilityLevel, 'aria-keyshortcuts': webKeyShortcuts } : undefined)}
                         onKeyDown={isWeb ? (event: Parameters<NonNullable<ItemProps['onKeyDown']>>[0]) => {
                             onKeyDown?.(event);
@@ -2097,7 +2108,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         aria-disabled={disabled || loading ? true : undefined}
                         tabIndex={interactiveTabIndex as 0 | -1 | undefined}
                         disabled={disabled || loading}
-                        style={[styles.splitPressable, stackAccessory ? styles.splitPressableStacked : null]}
+                        style={[styles.splitPressable, stackAccessory ? styles.splitPressableStacked : null, HAPPIER_FOCUS_RING_DELEGATED_STYLE]}
                         android_ripple={(isAndroid || isWeb) ? {
                             color: theme.colors.surface.ripple,
                             borderless: false,

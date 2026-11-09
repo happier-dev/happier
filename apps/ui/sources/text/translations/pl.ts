@@ -1623,6 +1623,7 @@ export const pl: TranslationStructure = {
             recovery: "Wybierz inną maszynę za pomocą Uruchom na.",
         },
         selectCount: 'Wybrano: {count}',
+        selectCustomValue: 'Lub wpisz nowy',
         state: {
             loading: { title: 'Ładowanie treści wtyczki', reason: 'Wyświetlana jest dostępna treść, podczas gdy Happier ładuje najnowszą aktualizację.' },
             refreshing: { title: 'Odświeżanie treści wtyczki', reason: 'Wyświetlana jest ostatnia dostępna treść, podczas gdy Happier sprawdza aktualizacje.' },

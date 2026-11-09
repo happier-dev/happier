@@ -1808,7 +1808,7 @@ const computerUseTranslations = { ja: {
             screenOf: ({ machine }) => `${machine} の画面全体`,
             windowsOn: ({ machine }) => `${machine} で開いているウィンドウ`,
             window: 'ウィンドウ',
-            screen: '画面全体',
+            screen: '画面全体', screenInSentence: '画面全体',
             windows: '開いているウィンドウ',
             typedLabel: 'テキスト',
             keyLabel: 'キー',

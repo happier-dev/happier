@@ -1609,6 +1609,7 @@ export const it: TranslationStructure = {
             recovery: "Scegli un’altra macchina con Esegui su.",
         },
         selectCount: '{count} selezionati',
+        selectCustomValue: 'Oppure scrivine uno nuovo',
         state: {
             loading: { title: 'Caricamento del contenuto del plugin', reason: 'Viene mostrato il contenuto disponibile mentre Happier carica l’ultimo aggiornamento.' },
             refreshing: { title: 'Aggiornamento del contenuto del plugin', reason: 'Viene mostrato l’ultimo contenuto disponibile mentre Happier verifica la presenza di aggiornamenti.' },

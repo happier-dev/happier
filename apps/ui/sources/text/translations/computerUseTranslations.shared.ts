@@ -41,6 +41,8 @@ export type ComputerUseTranslations = Readonly<{
         windowsOn: (params: MachineParams) => string;
         window: string;
         screen: string;
+        /** The whole screen inside a sentence ("The latest picture of the whole screen"). */
+        screenInSentence: string;
         windows: string;
         typedLabel: string;
         keyLabel: string;
@@ -48,6 +50,9 @@ export type ComputerUseTranslations = Readonly<{
         seeConsequence: string;
         useConsequence: string;
         targetOn: (params: Readonly<{ machine: string; target: string }>) => string;
+        /** The one act line of a Computer ask that lands in a window, or on a whole display. */
+        actIn: (params: Readonly<{ act: string; target: string }>) => string;
+        actOnScreen: (params: Readonly<{ act: string }>) => string;
         chooseFirst: string;
         cropA11y: (params: Readonly<{ target: string }>) => string;
         suggestsWindow: (params: Readonly<{ agent: string; target: string }>) => string;
@@ -142,11 +147,9 @@ export type ComputerUseTranslations = Readonly<{
         granted: string;
         unknown: string;
         checkAgain: string;
-        captureTitle: (params: Readonly<{ machine: string }>) => string;
-        inputTitle: (params: Readonly<{ machine: string }>) => string;
+        title: (params: Readonly<{ machine: string }>) => string;
+        body: (params: Readonly<{ machine: string }>) => string;
         unknownTitle: (params: Readonly<{ machine: string }>) => string;
-        separateBody: (params: Readonly<{ machine: string }>) => string;
-        onMachineBody: (params: Readonly<{ machine: string }>) => string;
         openPrivacy: (params: Readonly<{ machine: string }>) => string;
     }>;
     presentation: Readonly<{
@@ -270,7 +273,7 @@ export const computerUseTranslationsEnglish = { en: {
             screenOf: ({ machine }) => `The whole screen of ${machine}`,
             windowsOn: ({ machine }) => `The open windows on ${machine}`,
             window: 'A window',
-            screen: 'The whole screen',
+            screen: 'The whole screen', screenInSentence: 'the whole screen',
             windows: 'The open windows',
             typedLabel: 'Text',
             keyLabel: 'Key',
@@ -278,6 +281,8 @@ export const computerUseTranslationsEnglish = { en: {
             seeConsequence: 'Screenshots are shared with this session. No clicking or typing.',
             useConsequence: 'Input that reaches the machine can’t be undone. You can stop it at any time.',
             targetOn: ({ machine, target }) => `${target} on ${machine}`,
+            actIn: ({ act, target }) => `${act} in ${target}?`,
+            actOnScreen: ({ act }) => `${act} on the screen?`,
             chooseFirst: 'Choose the window first',
             cropA11y: ({ target }) => `The latest picture of ${target}`,
             suggestsWindow: ({ agent, target }) => `${agent} suggests “${target}”`,
@@ -368,11 +373,9 @@ export const computerUseTranslationsEnglish = { en: {
             granted: 'Allowed',
             unknown: 'Not checked',
             checkAgain: 'Check again',
-            captureTitle: ({ machine }) => `Allow Screen Recording on ${machine} to watch its windows or display.`,
-            inputTitle: ({ machine }) => `Allow Accessibility on ${machine} to use its mouse and keyboard.`,
+            title: ({ machine }) => `${machine} needs your permission first`,
+            body: ({ machine }) => `Happier can see and use its windows only after you allow it in privacy settings on ${machine} itself.`,
             unknownTitle: ({ machine }) => `Couldn’t check screen permissions on ${machine}. Check again before sharing.`,
-            separateBody: ({ machine }) => `Accessibility is separate: it lets you use the mouse and keyboard there. Each is granted on ${machine}, not on this device.`,
-            onMachineBody: ({ machine }) => `It is granted on ${machine}, not on this device.`,
             openPrivacy: ({ machine }) => `Open privacy settings on ${machine}`,
         },
         presentation: {

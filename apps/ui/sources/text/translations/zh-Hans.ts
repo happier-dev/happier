@@ -1608,6 +1608,7 @@ export const zhHans: TranslationStructure = {
             recovery: "请通过“运行于”选择另一台机器。",
         },
         selectCount: '已选择 {count} 项',
+        selectCustomValue: '或输入新的',
         state: {
             loading: { title: '正在加载插件内容', reason: 'Happier 加载最新更新时，将显示当前可用内容。' },
             refreshing: { title: '正在刷新插件内容', reason: 'Happier 检查更新时，将显示上次可用的内容。' },
