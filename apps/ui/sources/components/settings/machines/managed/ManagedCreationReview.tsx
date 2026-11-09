@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 
-import { useSoftwareOptions } from '@/components/store/catalog/storeSoftware';
+import { useMachineSetupRecipeOptions } from '@/components/store/catalog/storeSoftware';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -9,11 +10,13 @@ import { Modal } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { t } from '@/text';
 
 import { machineSetupItemPresentation } from './machineSetupItems';
 import { describeMachineSetup, machineSetupItemReadRow } from './MachineSetupSection';
 import { MachineSetupReviewFooter } from './MachineSetupPlanReview';
+import { readMachineSetupRecipeInputState } from './machineSetupRecipeInputs';
 
 export type ManagedCreationReviewProps = Readonly<{
     name: string;
@@ -21,6 +24,8 @@ export type ManagedCreationReviewProps = Readonly<{
     preset: Readonly<{ name: string; revision: number }>;
     setup: MachineSetupV1;
     scope: ServerAccountScope | null;
+    projection: PluginUiProjectionModel | null;
+    onEditSetup: () => void;
     administrator?: string;
     confirmLabel: string;
     /** The one acquire. The review closes first: progress, approval and failure read on the configurator. */
@@ -34,16 +39,19 @@ export function showManagedCreationReview(props: ManagedCreationReviewProps) {
 
 function ManagedCreationReview(props: ManagedCreationReviewProps & CustomModalInjectedProps) {
     const { onClose, onConfirm } = props;
+    const inputsValid = readMachineSetupRecipeInputState(props.setup, props.projection).valid;
     const items = props.setup.items ?? [];
     const recipes = items.filter(item => item.kind !== 'app');
     const apps = items.filter(item => item.kind === 'app');
     const target = React.useMemo(() => props.scope ? { scope: props.scope, machine: null } : null, [props.scope]);
-    const software = useSoftwareOptions(target, { presented: recipes.length > 0 });
-    const offers = software.state.status === 'ready' ? software.state.options : null;
+    const recipeOptions = useMachineSetupRecipeOptions(target, { presented: recipes.length > 0 });
+    const offers = recipeOptions.state.status === 'ready' ? recipeOptions.state.options : null;
     const footer = React.useMemo(() => (
         <MachineSetupReviewFooter onCancel={onClose} cancelTestID="managed-config.review.cancel"
-            primary={{ label: props.confirmLabel, testID: 'managed-config.review.confirm', onPress: () => { onClose(); onConfirm(); } }} />
-    ), [onClose, onConfirm, props.confirmLabel]);
+            primary={{ label: props.confirmLabel, testID: 'managed-config.review.confirm', disabled: !inputsValid,
+                disabledReason: !inputsValid ? t('managedMachines.creationReview.inputsHelp') : undefined,
+                onPress: () => { if (inputsValid) { onClose(); onConfirm(); } } }} />
+    ), [inputsValid, onClose, onConfirm, props.confirmLabel]);
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,
         title: t('managedMachines.creationReview.title', { name: props.name }),
@@ -58,8 +66,22 @@ function ManagedCreationReview(props: ManagedCreationReviewProps & CustomModalIn
         return <Item key={`${item.kind}:${read.title}`} {...read} subtitleLines={0} mode="info" showChevron={false} />;
     };
     const setupFacts = describeMachineSetup(props.setup).filter(fact => fact.id !== 'setup-items');
+    const recipesOf = (kind: 'setupRecipe' | 'softwareRecipe') => recipes.filter(item => item.kind === kind).length;
+    const summary = joinHappierFacts(...([
+        ['machinePresets.setup.tab.recipesSetup', recipesOf('setupRecipe') + setupFacts.length],
+        ['machinePresets.setup.tab.recipesSoftware', recipesOf('softwareRecipe')],
+        ['machinePresets.setup.tab.recipesApps', apps.length],
+    ] as const).flatMap(([label, count]) => count > 0 ? [`${t(label)} ${count}`] : []));
     return (
-        <ItemList presentation="grouped" keyboardShouldPersistTaps="handled" testID="managed-config.review">
+        <ItemList presentation="page" keyboardShouldPersistTaps="handled" testID="managed-config.review">
+            <ItemGroup>
+                <Item testID="managed-config.review.summary" title={t('managedMachines.creationReview.summary')} subtitleLines={0} mode="info" showChevron={false}
+                    subtitle={summary} />
+            </ItemGroup>
+            {!inputsValid ? <ItemGroup description={t('managedMachines.creationReview.inputsHelp')}>
+                <Item testID="managed-config.review.edit-inputs" title={t('machinePresets.editSetup')}
+                    onPress={() => { onClose(); props.onEditSetup(); }} />
+            </ItemGroup> : null}
             <ItemGroup title={t('managedMachines.creationReview.server')}>
                 <Item testID="managed-config.review.server" icon={props.server.mark} title={props.server.title} subtitle={props.server.spec}
                     subtitleLines={0} mode="info" showChevron={false} />

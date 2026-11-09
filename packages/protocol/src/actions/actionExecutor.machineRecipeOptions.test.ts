@@ -36,16 +36,38 @@ function createDeps(machineRecipesRead: NonNullable<ActionExecutorDeps['machineR
 }
 
 describe('Action executor Machine recipe options', () => {
+  it('presents declared Setup recipes alongside Software without admitting them to Software browsing', async () => {
+    const { software: _software, ...definition } = selected.definition;
+    const setup = PluginProjectedMachineRecipeEntryV1Schema.parse({ ...selected, id: `${ref.pluginId}/ssh`,
+      definition: { ...definition, id: 'ssh', title: 'SSH hardening', icon: 'shield',
+        description: 'Configure secure access.' } });
+    const executor = createActionExecutor(createDeps(async request => {
+      expect(request).toEqual({ offerings: true });
+      return { entries: [setup, selected] };
+    }));
+    const result = await executor.execute('action.options.resolve', {
+      optionsSourceId: 'machines.setup.recipes.available', draftInput: {},
+    }, context);
+    expect(result).toMatchObject({ ok: true, result: { options: [
+      { value: { ...ref, recipeId: 'ssh' }, label: 'SSH hardening', icon: 'shield', description: 'Configure secure access.' },
+      { value: ref, label: 'Fonts' },
+    ] } });
+    if (!result.ok) throw new Error('Expected declared recipes');
+    expect(PUBLIC_ACTION_OUTPUT_SCHEMAS['action.options.resolve'].parse(result.result).options).toHaveLength(2);
+  });
+
   it('browses inert native offerings without a Machine or target support claims', async () => {
     vi.useFakeTimers();
     onTestFinished(() => vi.useRealTimers());
     let reads = 0;
+    const { software: _software, ...setupDefinition } = selected.definition;
     const executor = createActionExecutor(createDeps(async request => {
       reads++;
       expect(request).toEqual({ offerings: true });
       return { entries: [{ ...selected, definition: { ...selected.definition,
         title: { key: 'fonts.title', fallback: 'Fonts' }, icon: 'file', description: 'Readable screenshots.' } },
-        { ...selected, id: `${ref.pluginId}/setup`, definition: { ...selected.definition, id: 'setup', software: false } }] };
+        PluginProjectedMachineRecipeEntryV1Schema.parse({ ...selected, id: `${ref.pluginId}/setup`,
+          definition: { ...setupDefinition, id: 'setup' } })] };
     }));
     const result = await executor.execute('action.options.resolve', {
       optionsSourceId: 'machines.setup.software.available', draftInput: {},

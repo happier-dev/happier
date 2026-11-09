@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { MachineSetupRecipeInputs } from './MachineSetupRecipeInputs';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { MachinePresetItemV1, MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
@@ -30,7 +32,7 @@ import { groupMachineSetupItems, machineSetupItemPresentation, moveMachineSetupI
   type MachineSetupItemKind } from './machineSetupItems';
 import { openMachineSetupAddItems } from './MachineSetupAddItems';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
-import { useSoftwareOptions } from '@/components/store/catalog/storeSoftware';
+import { useMachineSetupRecipeOptions } from '@/components/store/catalog/storeSoftware';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 export { normalizeMachineSetup } from './normalizeMachineSetup';
 
@@ -72,6 +74,7 @@ export const MachineSetupSection = React.memo(
     }>,
   ) {
     const { theme } = useUnistyles();
+    const projection = useAppShellPluginUiDeclarationProjection();
     const setup: MachineSetupV1 = props.setup ?? {};
     const catalog = useSavedSecretCatalog({ scope: props.scope });
     const adapters = React.useMemo(setupAdapters, []);
@@ -162,10 +165,10 @@ export const MachineSetupSection = React.memo(
     };
     const items = setup.items ?? [];
     const groups = groupMachineSetupItems(items);
-    // Recipe items are named from the Account's offered Software (no Machine), the options Add items lists too.
+    // Presentation reads all Account recipe declarations, including recipes outside Software browsing.
     const offerTarget = React.useMemo(() => props.scope ? { scope: props.scope, machine: null } : null, [props.scope]);
-    const software = useSoftwareOptions(offerTarget, { presented: items.some((item) => item.kind !== 'app') });
-    const offers = software.state.status === 'ready' ? software.state.options : null;
+    const recipeOptions = useMachineSetupRecipeOptions(offerTarget, { presented: items.some((item) => item.kind !== 'app') });
+    const offers = recipeOptions.state.status === 'ready' ? recipeOptions.state.options : null;
     const addItems = props.editable && props.scope ? () => openMachineSetupAddItems({ scope: props.scope!,
       name: props.name ?? t('machinePresets.setup.itemsTitle'), setup: props.setup, onChange: (next) => props.onChange(next) }) : null;
     const addAction = addItems ? <SectionActionButton testID={`${props.testID}.items.add`} icon="plus"
@@ -217,6 +220,8 @@ export const MachineSetupSection = React.memo(
           })}
         </ItemGroup>
       ))}
+      {props.editable ? <MachineSetupRecipeInputs setup={setup} projection={projection} scope={props.scope}
+        onChange={props.onChange} testID={`${props.testID}.recipe-inputs`} /> : null}
       <ItemGroup
         title={t('machinePresets.setup.title')}
         description={t('machinePresets.setup.description')}

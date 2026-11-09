@@ -1,4 +1,4 @@
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, DOCKER_ENGINE_RECIPE_REF_V1 } from '@happier-dev/plugin-sdk';
 import { binfmtQemu } from './binfmtQemu.js';
 import { installPackage } from './installPackage.js';
 import { googleChrome } from './googleChrome.js';
@@ -8,17 +8,31 @@ import { JOURNAL_READER_RECIPE } from './journalReader.js';
 import { dockerEngine } from './dockerEngine.js';
 import { coolify } from './coolify.js';
 import { dokploy } from './dokploy.js';
+import { caddy } from './caddy.js';
+import { firewall } from './firewall.js';
+import { automaticSecurityUpdates } from './automaticSecurityUpdates.js';
+import { sshHardening } from './sshHardening.js';
+import { sshFail2ban } from './sshFail2ban.js';
+import { auditLogging } from './auditLogging.js';
+import { boundedJournal } from './boundedJournal.js';
 
 /** Cold recipe declarations; native support and effects remain host-owned. */
 export const MACHINE_RECIPES_PLUGIN = definePlugin({
-  id: 'happier.machine.recipes',
+  id: DOCKER_ENGINE_RECIPE_REF_V1.pluginId,
   version: '0.0.0',
   displayName: 'Machine recipes',
   description: 'Declarative software choices for machine setup.',
   machineRecipes: {
-    'docker-engine': dockerEngine,
+    'automatic-security-updates': automaticSecurityUpdates,
+    'ssh-hardening': sshHardening,
+    'ssh-fail2ban': sshFail2ban,
+    'audit-logging': auditLogging,
+    'bounded-journal': boundedJournal,
+    [DOCKER_ENGINE_RECIPE_REF_V1.recipeId]: dockerEngine,
     coolify,
     dokploy,
+    caddy,
+    firewall,
     'binfmt-qemu': binfmtQemu,
     'backup-receiver': BACKUP_RECEIVER_RECIPE,
     'journal-reader': JOURNAL_READER_RECIPE,
@@ -28,7 +42,7 @@ export const MACHINE_RECIPES_PLUGIN = definePlugin({
       revision: '1',
       title: 'Fonts',
       icon: 'file',
-      description: 'DejaVu fonts for tools running on this Machine.',
+      description: 'Fonts so screenshots and rendered pages read properly.',
       software: true,
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       steps: [{ id: 'fonts', kind: 'package', manager: 'apt', packages: [{ name: 'fonts-dejavu-core' }] }],
@@ -38,7 +52,7 @@ export const MACHINE_RECIPES_PLUGIN = definePlugin({
       revision: '1',
       title: 'FFmpeg',
       icon: 'asset',
-      description: 'Media tools for software running on this Machine.',
+      description: 'Record, convert and cut audio and video.',
       software: true,
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       steps: [{ id: 'ffmpeg', kind: 'package', manager: 'apt', packages: [{ name: 'ffmpeg' }] }],
@@ -48,7 +62,7 @@ export const MACHINE_RECIPES_PLUGIN = definePlugin({
       revision: '1',
       title: 'Virtual display',
       icon: 'desktop',
-      description: 'Xvfb, Openbox and accessibility support for an on-demand bot desktop managed by the Happier daemon.',
+      description: 'A desktop for bots that need a screen. It starts only when one asks for it.',
       software: true,
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       steps: [{ id: 'display-packages', kind: 'package', manager: 'apt', packages: [

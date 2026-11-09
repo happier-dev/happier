@@ -11,13 +11,25 @@ import { useInstalledScope } from './storeAccountAdmission';
 export type StoreSoftwareTarget = Pick<StoreInstalledInput, 'scope' | 'machine'>;
 export type StoreSoftwareItem = ActionFieldOption;
 const SOFTWARE_FIELD = { path: 'software', optionsSourceId: 'machines.setup.software.available' } as const;
+const RECIPE_FIELD = { path: 'recipes', optionsSourceId: 'machines.setup.recipes.available' } as const;
 
 /**
  * Demand only. The Action input-options owner retains loading, exact selection and row identity. A target with an
  * Account and `machine: null` reads the inert offerings (what the Account's Software declares, with no Machine and no
- * support claim), which preset editing names items from and adds them with.
+ * support claim).
  */
 export function useSoftwareOptions(target: StoreSoftwareTarget | null | undefined, demand: StoreDemand,
+    values?: readonly ActionFieldOption['value'][], refreshKey?: string) {
+    return useMachineSetupOptions(SOFTWARE_FIELD, target, demand, values, refreshKey);
+}
+
+/** Preset presentation names every declared recipe, including Setup recipes outside Software browsing. */
+export function useMachineSetupRecipeOptions(target: StoreSoftwareTarget | null | undefined, demand: StoreDemand) {
+    return useMachineSetupOptions(RECIPE_FIELD, target, demand);
+}
+
+function useMachineSetupOptions(field: typeof SOFTWARE_FIELD | typeof RECIPE_FIELD,
+    target: StoreSoftwareTarget | null | undefined, demand: StoreDemand,
     values?: readonly ActionFieldOption['value'][], refreshKey?: string) {
     const admission = useInstalledScope({ scope: target?.scope ?? null, machine: target?.machine ?? null });
     const { scope, binding } = admission;
@@ -31,7 +43,7 @@ export function useSoftwareOptions(target: StoreSoftwareTarget | null | undefine
     const declarations = React.useMemo(() => accountDeclarations?.readInstalledPlugins() ?? null, [accountDeclarations]);
     const awaitingDeclarations = inert && declarations?.kind === 'unavailable' && declarations.code === 'account_availability_not_loaded';
     const available = demand.presented && admitted && (inert ? !awaitingDeclarations : presence.reachability === 'reachable');
-    const request = { field: SOFTWARE_FIELD, draftInput: inert ? {} : { homeId: machine?.serverIdentityId, machineId: machine?.machineId },
+    const request = { field, draftInput: inert ? {} : { homeId: machine?.serverIdentityId, machineId: machine?.machineId },
         ...(values === undefined ? {} : { values }) };
     const options = useInputFieldOptions({ requests: [request], enabled: available, serverId: scope?.serverId,
         accountLifetime: admitted ? binding : null, refreshKey });
@@ -39,7 +51,7 @@ export function useSoftwareOptions(target: StoreSoftwareTarget | null | undefine
         : presence.reachability === 'unknown' ? 'unknown' : null;
     const state: InputFieldOptionsState = !demand.presented ? { status: 'ready', options: EMPTY_INPUT_OPTIONS }
         : awaitingDeclarations ? { status: 'loading', options: EMPTY_INPUT_OPTIONS }
-        : reason ? { status: 'failed', options: EMPTY_INPUT_OPTIONS, errorCode: reason } : options.state(SOFTWARE_FIELD);
+        : reason ? { status: 'failed', options: EMPTY_INPUT_OPTIONS, errorCode: reason } : options.state(field);
     return { state, refresh: options.retry, target: admitted ? target : null, accountLifetime: admitted ? binding : null };
 }
 

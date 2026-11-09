@@ -18,12 +18,13 @@ export const MachineSetupSoftwareChoiceV1Schema = z.union([
 ]);
 export type MachineSetupSoftwareChoiceV1 = z.infer<typeof MachineSetupSoftwareChoiceV1Schema>;
 
-/** The same native offerings serve inert browsing and the reviewed target's cold family. */
+/** The same declaration family serves recipe presentation, Software browsing and reviewed target selections. */
 export async function resolveMachineSetupSoftwareOptions(params: Readonly<{
   deps: Pick<ActionExecutorDeps, 'machineRecipesRead'>;
   ctx: ActionExecutorContext;
   actionId: ActionId | null;
   input: Readonly<Record<string, unknown>>;
+  softwareOnly: boolean;
   values?: readonly JsonValue[];
 }>): Promise<ActionExecuteFailure | Readonly<{
   ok: true;
@@ -39,7 +40,7 @@ export async function resolveMachineSetupSoftwareOptions(params: Readonly<{
   if (params.values !== undefined) {
     recipeRefs = [];
     for (const [index, value] of params.values.entries()) {
-      const parsed = (recipeField ? MachineRecipeReferenceV1Schema : MachineSetupSoftwareChoiceV1Schema).safeParse(value);
+      const parsed = (recipeField || !params.softwareOnly ? MachineRecipeReferenceV1Schema : MachineSetupSoftwareChoiceV1Schema).safeParse(value);
       if (!parsed.success) return actionInputIssueFailure({ code: 'invalid_selection', path: ['values', index] });
       if ('kind' in parsed.data) pickedToolchain = true;
       else recipeRefs.push(parsed.data);
@@ -60,11 +61,11 @@ export async function resolveMachineSetupSoftwareOptions(params: Readonly<{
   ctx.signal?.throwIfAborted();
   // Direct software discovery includes native configuration entries; a recipe-ref
   // field cannot accept them. Never substitute the caller's OS for target facts.
-  const includeToolchains = !recipeField && (params.values === undefined || pickedToolchain);
+  const includeToolchains = params.softwareOnly && !recipeField && (params.values === undefined || pickedToolchain);
   if (!offerings && includeToolchains && (!catalog.target || pickedToolchain && !readNonEmptyString(catalog.target.arch))) return unavailable;
   const toolchains = includeToolchains
     ? projectMachineSetupToolchainSoftwareOptionsV1(offerings ? undefined : catalog.target) : [];
-  const available = catalog.entries.filter(entry => entry.definition.software === true);
+  const available = catalog.entries.filter(entry => !params.softwareOnly || entry.definition.software === true);
   let chosen = available;
   if (recipeRefs !== undefined) {
     const byId = new Map(available.map(entry => [entry.id, entry]));
@@ -84,5 +85,5 @@ export async function resolveMachineSetupSoftwareOptions(params: Readonly<{
     ...(entry.brand ? { brand: entry.brand } : {}),
     ...(entry.definition.description ? { description: typeof entry.definition.description === 'string'
       ? entry.definition.description : entry.definition.description.fallback } : {}),
-  })), ...toolchains], ...(offerings || recipeRefs === undefined || recipeRefs.length === 0 ? {} : { machineRecipeDetails: chosen }) };
+  })), ...toolchains], ...(!params.softwareOnly || offerings || recipeRefs === undefined || recipeRefs.length === 0 ? {} : { machineRecipeDetails: chosen }) };
 }

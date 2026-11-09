@@ -1,6 +1,31 @@
 import { expect, it } from 'vitest';
+import { DOCKER_ENGINE_RECIPE_REF_V1 } from '@happier-dev/plugin-sdk';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { PLUGIN_MANIFEST } from './manifest.js';
+
+it('publishes the Docker recipe under the reference used to prepare a deployment host', () => {
+  const parsed = parsePluginManifest(PLUGIN_MANIFEST);
+  if (!parsed.ok) throw new Error('First-party recipe declaration was refused');
+  expect(parsed.manifest.id).toBe(DOCKER_ENGINE_RECIPE_REF_V1.pluginId);
+  expect(parsed.manifest.contributes.machineRecipes?.find(entry => entry.id === DOCKER_ENGINE_RECIPE_REF_V1.recipeId))
+    .toMatchObject({ id: DOCKER_ENGINE_RECIPE_REF_V1.recipeId, revision: DOCKER_ENGINE_RECIPE_REF_V1.revision, software: true });
+});
+
+it('publishes both server installers with literal reviewed bodies, native first-presence footprints and scoped removals', () => {
+  const parsed = parsePluginManifest(PLUGIN_MANIFEST);
+  if (!parsed.ok) throw new Error('First-party recipe declaration was refused');
+  for (const [id, directory] of [['coolify', '/data/coolify'], ['dokploy', '/etc/dokploy']] as const) {
+    const recipe = parsed.manifest.contributes.machineRecipes?.find(entry => entry.id === id);
+    expect(recipe).toMatchObject({ revision: '1', software: true });
+    expect(recipe?.steps.find(step => step.kind === 'directory')).toMatchObject({ kind: 'directory', path: directory });
+    const install = recipe?.steps.find(step => step.id === 'install');
+    expect(install?.kind).toBe('script');
+    if (install?.kind !== 'script') throw new Error('Missing literal installer');
+    expect(install.check).toBeDefined();
+    const removal = recipe?.removeSteps?.find(step => step.kind === 'script');
+    if (removal?.kind !== 'script') throw new Error('Missing declared scoped removal');
+  }
+});
 
 it('installs and removes the managed desktop prerequisites through the virtual-display recipe', () => {
   const parsed = parsePluginManifest(PLUGIN_MANIFEST);

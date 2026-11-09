@@ -387,8 +387,9 @@ export async function resolveInputOptions(params: Readonly<{
     ] };
   }
 
-  if (optionsSourceId === 'machines.setup.software.available') {
-    return resolveMachineSetupSoftwareOptions({ deps, ctx, actionId, input, values: params.values });
+  if (optionsSourceId === 'machines.setup.software.available' || optionsSourceId === 'machines.setup.recipes.available') {
+    return resolveMachineSetupSoftwareOptions({ deps, ctx, actionId, input, values: params.values,
+      softwareOnly: optionsSourceId === 'machines.setup.software.available' });
   }
 
   if (optionsSourceId === 'usage.query.period' || optionsSourceId === inputTypeOptionsSourceId({ hostType: 'usageQuery', field: 'period' })) {

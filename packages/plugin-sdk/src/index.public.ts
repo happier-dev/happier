@@ -29,7 +29,13 @@ export { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_EVENT_REFS_V1, HealthCh
 export type { HealthCheckSetupInputV1, HealthCheckSetupDraftV1 } from './healthCheckKinds.js';
 export type { MachineRecipeV1, MachineRecipeStepV1, MachineRecipeSelectionV1, MachineSetupV1, MachineSetupScriptV1, MachinePresetItemV1, MachineSetupPresetContributionV1, StoredAppPresetInputV1 } from './machineSetup.js';
 export { createDockerMembershipStep } from './machineSetup.js';
+export { DOCKER_ENGINE_RECIPE_REF_V1 } from './machineSetup.js';
+export { createCaddyContainerSetupDeclarations, nativeCaddyProfile } from './machineSetup.js';
+export { getMachineFirewallExposureInputSchemaV1 } from './machineSetup.js';
 export { createDockerEngineSetupSteps, dockerEnginePresenceCheck } from './machineSetup.js';
+export { createTailscaleJoinSteps, tailscaleMembershipPrograms } from './machineSetup.js';
+export { SharedSavedSecretReferenceSelectionV1Schema } from './accessProviders.js';
+export { machineConnectorCredentialDirectory } from './machineSetup.js';
 export type { PluginActionAuthorConfirmation } from './definePlugin.js';
 export { summarizeUsageRunLengthObservations, resolveUsageCalendarInstant, PUBLIC_PROFILE_FACT_FIELDS_V1 } from './usage.js';
 export type { UsageRunLengthObservation, UsageRunLengthObservationSummary, UsageRunLengthSummary, PublicProfileSnapshotV1, PublicUsageFactsV1,

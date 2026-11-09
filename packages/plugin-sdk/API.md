@@ -49,6 +49,7 @@
 | `.` | `ComposerValueSchema` | type | any |
 | `.` | `ContributionOperationContracts` | type | any |
 | `.` | `ContributionSurfaceHandles` | type | any |
+| `.` | `DOCKER_ENGINE_RECIPE_REF_V1` | value | any |
 | `.` | `DefinePluginInput` | type | any |
 | `.` | `DefinedContributionPointRef` | type | any |
 | `.` | `DefinedContributionPoints` | type | any |
@@ -262,6 +263,7 @@
 | `.` | `ReadonlyAuthorDeclaration` | type | any |
 | `.` | `SavedHealthCheckSelectorV1` | type | any |
 | `.` | `SavedHealthCheckSelectorV1ProtocolSchema` | value | any |
+| `.` | `SharedSavedSecretReferenceSelectionV1Schema` | value | any |
 | `.` | `StoreKindContributionV1` | type | any |
 | `.` | `StoreKindLaunchInputV1` | type | any |
 | `.` | `StoredAppPresetInputV1` | type | any |
@@ -295,10 +297,12 @@
 | `.` | `arePluginMachineMaterializationRefsEqual` | value | any |
 | `.` | `computeCanonicalDomainSeparatedDigest` | value | any |
 | `.` | `computeSha256HexDigest` | value | any |
+| `.` | `createCaddyContainerSetupDeclarations` | value | any |
 | `.` | `createCanonicalJsonSigningInput` | value | any |
 | `.` | `createDockerEngineSetupSteps` | value | any |
 | `.` | `createDockerMembershipStep` | value | any |
 | `.` | `createPluginStoreItemHref` | value | any |
+| `.` | `createTailscaleJoinSteps` | value | any |
 | `.` | `defineComposerAttachment` | value | any |
 | `.` | `defineComposerControl` | value | any |
 | `.` | `defineComposerReference` | value | any |
@@ -306,11 +310,14 @@
 | `.` | `definePlugin` | value | any |
 | `.` | `defineUiSurfaceDefinition` | value | any |
 | `.` | `dockerEnginePresenceCheck` | value | any |
+| `.` | `getMachineFirewallExposureInputSchemaV1` | value | any |
 | `.` | `getPluginMachineExecutionOriginRef` | value | any |
 | `.` | `hasDeploymentTargetPreparationCoordinatesV1` | value | any |
 | `.` | `isHealthCheckLoopbackRefusedV1` | value | any |
 | `.` | `isPluginError` | value | any |
 | `.` | `isRecord` | value | any |
+| `.` | `machineConnectorCredentialDirectory` | value | any |
+| `.` | `nativeCaddyProfile` | value | any |
 | `.` | `parseJsonLine` | value | any |
 | `.` | `parseTimestampMs` | value | any |
 | `.` | `projectPluginFailureText` | value | any |
@@ -321,6 +328,7 @@
 | `.` | `resolveUsageCalendarInstant` | value | any |
 | `.` | `selectCurrentTargetedContribution` | value | any |
 | `.` | `summarizeUsageRunLengthObservations` | value | any |
+| `.` | `tailscaleMembershipPrograms` | value | any |
 | `.` | `trimBugReportTextToMaxBytes` | value | any |
 | `./access-providers` | `AccessCredentialPurposeRefV1` | type | any |
 | `./access-providers` | `AccessProviderAuthorDefinitionV1` | type | any |
@@ -832,6 +840,7 @@
 | `./agents/runtime` | `AcpLoadSessionRequestV1` | type | daemon |
 | `./agents/runtime` | `AcpLoadSessionResultV1` | type | daemon |
 | `./agents/runtime` | `AcpSessionOperationsV1` | type | daemon |
+| `./agents/runtime` | `AgentAccountSettingsContributionV1` | type | daemon |
 | `./agents/runtime` | `AgentAccountUsageAdoptProvisionalRecordInput` | type | daemon |
 | `./agents/runtime` | `AgentAccountUsageAdoptProvisionalRecordResult` | type | daemon |
 | `./agents/runtime` | `AgentAccountUsageAdoptionProof` | type | daemon |
@@ -1559,6 +1568,7 @@
 | `./contributions` | `defineContributionPoint` | value | any |
 | `./contributions` | `defineContributionProtocol` | value | any |
 | `./errors` | `ActionFailureCauseV1` | type | any |
+| `./errors` | `ActionFailureCauseV1ProtocolSchema` | value | any |
 | `./errors` | `ActionFailureCauseV1Schema` | value | any |
 | `./errors` | `PluginError` | value | any |
 | `./errors` | `isPluginError` | value | any |
@@ -1772,6 +1782,7 @@
 | `./machine-provisioners` | `MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1` | value | any |
 | `./machine-provisioners` | `MachineProvisionerAcquireResultV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerAcquireResultV1Schema` | value | any |
+| `./machine-provisioners` | `MachineProvisionerApiKeyAccountDefinition` | type | any |
 | `./machine-provisioners` | `MachineProvisionerAuthorDefinitionV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerBootstrapCarrierV1` | type | any |
 | `./machine-provisioners` | `MachineProvisionerBootstrapCarrierV1Schema` | value | any |
@@ -1825,6 +1836,7 @@
 | `./machine-provisioners` | `buildMachineProvisionerShellCommand` | value | any |
 | `./machine-provisioners` | `classifyManagedMachineAllocationV1` | value | any |
 | `./machine-provisioners` | `computeSshHostKeyFingerprint` | value | any |
+| `./machine-provisioners` | `createMachineProvisionerApiKeyAccount` | value | any |
 | `./machine-provisioners` | `createMachineProvisionerFetch` | value | any |
 | `./machine-provisioners` | `createMachineProvisionerMaterializedFetch` | value | any |
 | `./machine-provisioners` | `defineMachineProvisionerReconciliationSchemas` | value | any |
@@ -2064,6 +2076,7 @@
 | `./protocol` | `ProtocolCurrentUiContextSnapshotV1Schema` | value | any |
 | `./protocol` | `ProtocolDeploymentEnvironmentGetResultV1Schema` | value | any |
 | `./protocol` | `ProtocolDeploymentPreviewProvenanceV1Schema` | value | any |
+| `./protocol` | `ProtocolDeploymentReceiptOperationV1Schema` | value | any |
 | `./protocol` | `ProtocolDeploymentSourceIntentV1Schema` | value | any |
 | `./protocol` | `ProtocolEnvVarRequirementV1Schema` | value | any |
 | `./protocol` | `ProtocolJsonValue` | type | any |
@@ -2109,6 +2122,7 @@
 | `./protocol` | `TranscriptAnnotationV1` | type | any |
 | `./protocol` | `TriageCollisionScopeV1ProtocolSchema` | value | any |
 | `./protocol` | `TriageEntryRefV1` | type | any |
+| `./protocol` | `TriageEntryRefV1Fields` | value | any |
 | `./protocol` | `TriageEntryRefV1JsonSchema` | value | any |
 | `./protocol` | `TriageEntryRefV1Schema` | value | any |
 | `./protocol` | `TriageIdentifierV1ProtocolSchema` | value | any |
@@ -2136,6 +2150,7 @@
 | `./protocol` | `pluginJsonValuesEqual` | value | any |
 | `./protocol` | `projectNativeJsonValueForTransport` | value | any |
 | `./protocol` | `readDeploymentArtifactJsonBodyV1` | value | any |
+| `./protocol` | `readDeploymentDomainServingUrlV1` | value | any |
 | `./protocol` | `readDeploymentReceiptArtifactV1` | value | any |
 | `./protocol` | `readDeploymentTargetLinkArtifactV1` | value | any |
 | `./protocol` | `readDiscussionMessagePartsV1` | value | any |
@@ -3267,6 +3282,7 @@
 | `./ui` | `OpenAutomationEventRequest` | type | any |
 | `./ui` | `OpenConnectedAccountsRequest` | type | any |
 | `./ui` | `OpenConnectedAccountsResult` | type | any |
+| `./ui` | `OpenDeploymentRequest` | type | any |
 | `./ui` | `OpenManagedMachineConfigurationRequest` | type | any |
 | `./ui` | `OpenNewSessionOptions` | type | any |
 | `./ui` | `OpenNewSessionRequest` | type | any |

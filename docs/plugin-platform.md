@@ -540,6 +540,10 @@ Recipes bind exact plugin/local-id/revision references and strict inputs to
 typed setup effects. Bundled Presets carry the same `MachineSetupV1` setup part
 as the existing Account/Team Preset record, without another record or CRUD owner.
 
+The bundled Docker recipe declaration and deployment-host setup selection share
+Protocol's `DOCKER_ENGINE_RECIPE_REF_V1`, also exposed from the SDK root. Its
+plugin id, recipe id and revision are declared once and consumed by both paths.
+
 Setup scripts are an ordered `scripts` list of exact `body` values with optional
 `affects` and `check` on each entry. The stored reader translates a retained
 single-script record to a list of one; new writes emit only the list, without a
@@ -617,6 +621,18 @@ template. Template variables accept reviewed strings and finite numbers; numbers
 render as text. Secret-backed files retain `secretGrant` references, and their
 `grantRef` can bind a reviewed input without exposing secret bytes.
 
+Authored `secretGrant` content can instead declare `credentialSelection` using
+the shared `AccessProviderSelectionV1` provider/config/credentialRefs contract,
+exclusive with `grantRef`. Only saved-secret `ref` and `resourceRevision` leaves
+accept input references; their reviewed value uses the shared
+`{ ref, resourceRevision }` selection. `prepareMachineRecipeProgramV1` validates
+the bound selection and reuses the exact Machine/installation connector subject.
+Plan acquires no credential bytes. Approved Setup Apply currently consumes the
+`network.join` saved-secret purpose through requester-aware
+`withReachabilityJoinCredential`, existing SavedSecret custody and encrypted Home
+grant set/read/remove. The `invocation.credentialFile` target fact supplies the
+host-generated installation path rather than a caller-selected path or key.
+
 Authored fields and template variables can also bind target facts. The
 `daemon.primaryGroup` and `daemon.username` facts retain P10's existing
 daemon-identity observation, once per Plan request. OS security-update facts
@@ -625,9 +641,8 @@ and `os.securityOrigins`) come on demand from `nativeSecurityTargetFacts`;
 they do not change daemon identity or become caller-selected inputs. Missing
 requested evidence blocks Plan with `machine_recipe_target_fact_unavailable`,
 never guessed values. Resolved facts and rendered content enter the existing
-effect-plan digest, and Apply replans through the same owner. Connector
-credentials remain admitted `secretGrant` references, not target facts or
-template plaintext.
+effect-plan digest, and Apply replans through the same owner. Credential bytes
+remain outside target facts and template plaintext.
 
 `serviceUnit` declarations accept `.service` and `.timer` units. Omitting
 `enabled` preserves native enablement while `running` still declares the desired
@@ -3606,6 +3621,15 @@ managed Docker dependency directly, with Podman as a runtime choice; the Dev
 Containers CLI is used for advanced file or inline configuration. Remote Docker
 hosts and contexts are outside this flow. Presets, Team presets, pools and retention
 remain on the existing managed Machine owners.
+
+Local acquire/rebuild role inputs can carry the transient `guestHome` fact:
+the selected application origin and controller-resolved IP addresses. The
+controller uses the existing Home carrier policy and OS resolver; these addresses
+are not settings or retained resource identity. The image provider consumes this
+fact through Docker/Podman `--add-host`, preserving the hostname for TLS and the
+native bridge network. Advanced native configuration retains its reviewed
+networking authority. Home reachability still belongs to guest enrollment,
+not the native bootstrap transport.
 
 For advanced configuration, Devcontainer options accept the controller
 `workspaceFolder` and `configPath`, or a saved `configuration` with `kind: inline`
@@ -8173,7 +8197,7 @@ not change read results or failure semantics.
 
 ### Voice schema composition (0.3 development)
 
-Conversation provider declarations remain discoverable before their executable modules load. Saved selection stays descriptor-only; Start admits executable demand and retains the attempt's provider through preparation, cancellation and recovery. Generated first-party Voice entries import only a demanded provider; its import settles before the existing synchronous public `activate(api)` registration transaction. The lifecycle owner remains mounted after its first activation to handle media cleanup and Account retirement. Speech model catalogs acquire only for presented setup/settings/read-aloud controls or an active speech operation, through the shared catalog owner. This describes 0.3 development source; live web, Hermes and desktop replay remains separate validation.
+Conversation provider declarations remain discoverable before their executable modules load. Saved selection stays descriptor-only; Start admits executable demand and retains the attempt's provider through preparation, cancellation and recovery; a deliberate provider change during a stoppable attempt also demands its handoff target. Generated first-party Voice entries import only a demanded provider; its import settles before the existing synchronous public `activate(api)` registration transaction. The lifecycle owner remains mounted after its first activation to handle media cleanup and Account retirement. Speech model catalogs acquire only for presented setup/settings/read-aloud controls or an active speech operation, through the shared catalog owner. This describes 0.3 development source; live web, Hermes and desktop replay remains separate validation.
 
 Realtime Voice runtimes may implement optional `playHostText({text, signal})`
 from `@happier-dev/plugin-sdk/voice/client`. This plays the host's exact prepared

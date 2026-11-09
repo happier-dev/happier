@@ -328,7 +328,8 @@ export function createUsageSessionFactRecordsV1(
     const coach: UsageSessionCoachFactsV1 = { v: 1, kind: 'coach', seq: work.seq,
         ...(work.metadataVersion === undefined ? {} : { metadataVersion: work.metadataVersion }),
         ...(work.agentStateVersion === undefined ? {} : { agentStateVersion: work.agentStateVersion }),
-        ...(evidence.coach === undefined ? {} : { evidence: evidence.coach }) };
+        // The schema infers mutable arrays; this record retains the admitted read-only evidence without mutation.
+        ...(evidence.coach === undefined ? {} : { evidence: evidence.coach as UsageSessionCoachFactsV1['evidence'] }) };
     return [work, coach];
 }
 
@@ -470,6 +471,9 @@ export function hasSameUsageQueryWorkEvidenceMembership(input: Readonly<{
 }>): boolean {
     if (input.contributions === undefined && input.admittedTurns === undefined && input.sessionMembership === undefined
         || input.previousContributions === undefined && input.previousAdmittedTurns === undefined && input.previousSessionMembership === undefined) return false;
+    if (input.contributions === input.previousContributions
+        && input.admittedTurns === input.previousAdmittedTurns
+        && input.sessionMembership === input.previousSessionMembership) return true;
     const current = resolveAccountingWorkMembership(input.query, input.contributions, input.admittedTurns, input.sessionMembership);
     const previous = resolveAccountingWorkMembership(input.query, input.previousContributions, input.previousAdmittedTurns, input.previousSessionMembership);
     return current.accountingWork.size === previous.accountingWork.size
