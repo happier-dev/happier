@@ -296,7 +296,6 @@ it.each([
             // operational owner or its addressed slot.
             const source = { kind: 'secret' as const, ref, resourceRevision: 1 };
             const unadmitted: EnvironmentSecretBindingV1[] = [
-                { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword', source },
                 { purpose: 'domainCredential', domainId: 'unadmitted-domain', role: 'privateKey', source },
                 { purpose: 'dataRole', service: 'unadmitted-database', role: 'readOnlyPassword', source },
                 { purpose: 'dataRole', targetLinkId: 'unadmitted-managed-database', role: 'readOnlyPassword', source },
@@ -308,6 +307,20 @@ it.each([
                 expect(writes).toHaveLength(beforeIncompleteWrites);
             }
             put('candidate', content);
+            const backupBindings = (['repositoryPassword', 'accessKeyId', 'secretAccessKey'] as const).map(role => ({
+                purpose: 'backupDestination' as const, configKey: 'destination' as const, role,
+                source: { kind: 'secret' as const, ref, resourceRevision: 1 },
+            }));
+            const backupResult = await prepare({ input: { serverId: 'home', environmentId: environment.id,
+                expectedRevision: environment.revision, set: backupBindings,
+                remove: [{ purpose: 'variable', name: 'SECRET', phase: 'runtime' }] }, context: {} });
+            expect(backupResult).not.toHaveProperty('errorCode');
+            if ('errorCode' in backupResult) throw new Error(backupResult.errorCode);
+            expect(readDeploymentEnvironmentArtifactV1(backupResult,
+                await createCredentialedAccountArtifactStore(credentials).read(backupResult.contentArtifactId,
+                    { prepareRecipients: false, includeSharedAudience: false })))
+                .toMatchObject({ ok: true, content: { bindings: backupBindings } });
+            expect(backupResult.grants).toHaveLength(1);
             const authored = { serverId: 'home', environmentId: environment.id, expectedRevision: environment.revision,
                 set: [{ purpose: 'variable' as const, name: 'SELECTED', phase: 'runtime' as const,
                     source: { kind: 'secret' as const, ref: 'person_selects' as const } }], remove: [] };
@@ -322,8 +335,8 @@ it.each([
             expect(authoredResult).not.toHaveProperty('errorCode');
             if ('errorCode' in authoredResult) throw new Error(authoredResult.errorCode);
             expect(environmentReads - beforeAuthoredReads).toBe(1);
-            expect(artifactWrites).toHaveLength(1);
-            expect(authoredResult.contentArtifactId).toBe(artifactWrites[0]);
+            expect(artifactWrites).toHaveLength(2);
+            expect(authoredResult.contentArtifactId).toBe(artifactWrites.at(-1));
             expect(authoredResult.contentArtifactId).not.toBe(environment.contentArtifactId);
             const opened = readDeploymentEnvironmentArtifactV1(authoredResult,
                 await createCredentialedAccountArtifactStore(credentials).read(authoredResult.contentArtifactId,

@@ -14,7 +14,8 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { createDeploymentActions } from './deploymentActions';
 import { deploymentDataTargetOperands } from './deploymentRestore';
-import { useDeploymentChangePress } from './deploymentActionOutcome';
+import { readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
+import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import type { DeploymentBackupTestResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import type { DeploymentBackupHistoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupHistoryV1';
@@ -232,7 +233,12 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
     if (!actions || !target || running) return;
     setRunning(true);
     try { setTested(testOutcome(await actions.testBackupDestination(target))); }
-    catch { setTested({ ok: false, line: t('projects.deployments.settingsSections.destinationRetry') }); }
+    catch (error) {
+      const outcome = readDeploymentActionError(error);
+      const failure = outcome.kind === 'refused' ? presentActionFailureOutcome(outcome.failure
+        ?? { ok: false, errorCode: outcome.code, error: outcome.code }, 'deployment') : null;
+      setTested({ ok: false, line: failure?.reason ?? t('projects.deployments.settingsSections.destinationRetry') });
+    }
     finally { setRunning(false); }
   };
   return (

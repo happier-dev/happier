@@ -9,12 +9,14 @@ export type EnvironmentSecretRequiredUsesProjectionV1 = Readonly<{
 }>;
 type Installation = Readonly<{ machineId: string; installationId: string }>;
 
-/** Shared placement selection. Operational purposes need their private exact owner. */
+/** Shared placement selection. Backup processes run on the admitted runtime members;
+ * Domain and data-role purposes need their private exact owner. */
 export function environmentSecretBindingInstallationsV1<T extends Installation>(
     binding: EnvironmentSecretBindingRoutingV1,
     destinations: Readonly<{ runtimeInstallations: readonly T[] | null; buildInstallation?: T | null }>,
 ): readonly T[] | null {
     switch (binding.purpose) {
+        case 'backupDestination': return destinations.runtimeInstallations;
         case 'variable': return binding.phase === 'runtime' ? destinations.runtimeInstallations
             : destinations.buildInstallation ? [destinations.buildInstallation] : [];
         case 'registry': return destinations.runtimeInstallations && destinations.buildInstallation !== null

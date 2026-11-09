@@ -4,6 +4,19 @@ import { projectEnvironmentSecretBindingRequiredUsesV1 } from './projectEnvironm
 describe('current Environment secret requirements', () => {
     const runtime = { machineId: 'runtime', installationId: 'runtime-current' };
     const builder = { machineId: 'builder', installationId: 'builder-current' };
+    it('projects backup credentials to every current backup runtime recipient, excluding the builder', () => {
+        const second = { machineId: 'second-runtime', installationId: 'second-current' };
+        const input = { runtimeInstallations: [runtime, second], buildInstallation: builder,
+            referencedSavedSecretRevisions: [{ resourceId: 'backup-secret', revision: 1,
+                requiredBindings: [{ purpose: 'backupDestination' }] }] };
+        expect(projectEnvironmentSecretBindingRequiredUsesV1(input)).toEqual({ status: 'complete', requiredSecretUses: [
+            { resourceId: 'backup-secret', resourceRevision: 1, ...runtime },
+            { resourceId: 'backup-secret', resourceRevision: 1, ...second },
+        ] });
+        expect(projectEnvironmentSecretBindingRequiredUsesV1({ ...input, runtimeInstallations: null })).toEqual({
+            status: 'incomplete', requiredSecretUses: [],
+        });
+    });
     it('keeps build-only and runtime requirements separate and emits only installed subjects', () => {
         const result = projectEnvironmentSecretBindingRequiredUsesV1({ runtimeInstallations: [runtime], buildInstallation: builder,
             referencedSavedSecretRevisions: [
@@ -34,12 +47,12 @@ describe('current Environment secret requirements', () => {
             { resourceId: 'registry-secret', resourceRevision: 1, ...builder },
         ] });
     });
-    it('marks legacy, unavailable placement and every operational summary incomplete', () => {
+    it('marks legacy, unavailable placement and private operational summaries incomplete', () => {
         const project = (requiredBindings?: unknown) => projectEnvironmentSecretBindingRequiredUsesV1({ runtimeInstallations: [runtime],
             referencedSavedSecretRevisions: [{ resourceId: 'secret', revision: 1,
                 ...(requiredBindings ? { requiredBindings } : {}) }] });
         expect(project()).toEqual({ status: 'incomplete', requiredSecretUses: [] });
-        for (const purpose of ['backupDestination', 'domainCredential', 'dataRole']) {
+        for (const purpose of ['domainCredential', 'dataRole']) {
             expect(project([{ purpose }])).toEqual({ status: 'incomplete', requiredSecretUses: [] });
         }
         expect(project([{ purpose: 'variable', phase: 'build' }]).status).toBe('incomplete');

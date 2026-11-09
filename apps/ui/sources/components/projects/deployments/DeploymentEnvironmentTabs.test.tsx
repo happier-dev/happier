@@ -915,12 +915,20 @@ describe('Environment → Settings: checks, backups, previews', () => {
       configRevision: 1, repositoryId: 'c'.repeat(64), snapshot, totalBytesProcessed: 123,
       totalFilesProcessed: 1, producerChecksumSha256: 'd'.repeat(64) };
     const effects: Array<{ actionId: string; input: unknown }> = [];
+    let destinationTests = 0;
     const { DEPLOYMENT_BACKUP_ACTION_IDS_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
     for (const actionId of DEPLOYMENT_BACKUP_ACTION_IDS_V1) {
       // Only the remote transport/native boundary is substituted; the UI's real Action executor runs.
       await answerExternalActionAccountForHome(homes, serverId, { actionId, machineId: 'machine-a',
-        installationId: 'installation-a', tokenEpoch: 0, execute: input => {
+        installationId: 'installation-a', tokenEpoch: 0,
+        failure: result => {
+          const code = result && typeof result === 'object' ? Reflect.get(result, 'errorCode') : null;
+          return typeof code === 'string' ? { errorCode: code, error: code } : null;
+        }, execute: input => {
         effects.push({ actionId, input });
+        if (actionId === 'deployments.backups.test' && destinationTests++ > 0) {
+          return { errorCode: destinationTests === 2 ? 'backup_required' : 'secret_missing' };
+        }
         const result = actionId === 'deployments.backups.run' ? { kind: 'verified', operationId: 'backup-operation', manifests: [manifest] }
           : actionId === 'deployments.backups.test' ? { kind: 'failed', step: 'repository', reason: 'repository_password_incorrect',
             nativeExitCode: 12, remedy: 'review_credentials' }
@@ -988,6 +996,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(effects.at(-1)).toMatchObject({ actionId: 'deployments.backups.test', input: {
         environmentId: detail.environment.id, configRevision: 1, targetLinkId: 'target-link', deploymentId: 'deployment-a' } });
       expect(screen.getTextContent()).toContain("The repository password doesn't match");
+      await screen.pressByTestIdAsync(`${id}.destination.test`);
+      expect(screen.getTextContent()).toContain('Configure and run a backup');
+      await screen.pressByTestIdAsync(`${id}.destination.test`);
+      expect(screen.getTextContent()).toContain('A required secret is missing');
       // Remove old backups now forgets what is past the saved counts, through the agent's prune Action.
       await screen.pressByTestIdAsync(`${id}.prune.run`);
       expect(effects.at(-1)).toMatchObject({ actionId: 'deployments.backups.prune', input: {

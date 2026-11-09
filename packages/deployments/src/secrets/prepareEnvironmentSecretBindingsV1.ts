@@ -53,7 +53,7 @@ function orderedUses(bindings: readonly EnvironmentSecretBindingV1[]) {
 }
 function destinationsFor(binding: EnvironmentSecretBindingV1, destinations: Destinations,
     operational: ReadonlyMap<string, OperationalDestination>) {
-    if (binding.purpose === 'variable') return environmentSecretBindingInstallationsV1(binding, destinations)!
+    if (binding.purpose === 'variable' || binding.purpose === 'backupDestination') return environmentSecretBindingInstallationsV1(binding, destinations)!
         .map(installation => ({ installation, use: binding }));
     if (binding.purpose === 'registry') {
         const pull = { ...binding, access: 'pull' as const };
