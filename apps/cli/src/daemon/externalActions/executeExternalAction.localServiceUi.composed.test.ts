@@ -3,16 +3,20 @@ import axios from 'axios';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import type { IModal } from '../../../../ui/sources/modal/types';
 import { primeServerFeaturesSnapshot } from '../../../../ui/sources/sync/api/capabilities/serverFeaturesClient';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '../../../../ui/sources/dev/testkit/harness/syncSingletonLoader';
 import { createHarness, resetFilesystemApprovalSocketBoundary } from './executeExternalAction.filesystemApprovals.testkit';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
-import { publishHomeAccountChange } from '../../../../ui/sources/sync/runtime/orchestration/homeAccountChange';
 
 const machineTransport = vi.hoisted(() => vi.fn());
+const confirmModal = vi.hoisted(() => vi.fn<IModal['confirm']>());
+vi.mock('../../../../ui/sources/modal', async () => (
+  await import('../../../../ui/sources/dev/testkit/mocks/modal')
+).createModalModuleMock({ spies: { confirm: (...args) => confirmModal(...args) } }).module);
 vi.mock('../../../../ui/sources/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
   machineRpcWithServerScope: machineTransport,
 }));
@@ -23,7 +27,12 @@ await loadSyncSingletonForTests();
 const { createDefaultActionExecutor } = await import('../../../../ui/sources/sync/ops/actions/defaultActionExecutor');
 const { executeLocalServiceActionViaMachineRpc } = await import('../../../../ui/sources/sync/domains/local/services/actions/machineRpc');
 
-beforeEach(async () => { await homes.reset(); resetServerFeaturesClientForTests(); });
+beforeEach(async () => {
+  await homes.reset();
+  resetServerFeaturesClientForTests();
+  machineTransport.mockReset();
+  confirmModal.mockReset();
+});
 afterEach(() => { vi.restoreAllMocks(); resetFilesystemApprovalSocketBoundary(); withdrawActiveProjectAccountRowsSnapshot(); });
 
 it('preserves the real WORKER handler refusal at the UI control decoder', async () => {
@@ -63,21 +72,6 @@ it.each(['localServices.actions.stopManaged', 'machines.services.control'] as co
     const serverId = await homes.addHome({ name: 'Service Home', serverUrl: 'https://home.example.test',
       serverIdentityId: 'srv_n2', accountId: 'account', credentials: { token: h.humanToken }, currentAccount: true });
     await homes.requireUiApproval(serverId, actionId);
-    homes.answer(serverId, 'POST /v1/artifacts', { select: async input => {
-      const result = await axios.post('https://home.example.test/v1/artifacts', input,
-        { headers: { Authorization: 'Bearer ' + h.humanToken } });
-      const artifactId = result.data.id as string;
-      const path = '/v1/artifacts/' + artifactId;
-      homes.answer(serverId, 'GET ' + path, { select: async () => ({ body:
-        (await axios.get('https://home.example.test' + path,
-          { headers: { Authorization: 'Bearer ' + h.humanToken } })).data }) });
-      homes.answer(serverId, 'POST ' + path, { select: async body => {
-        const updated = await axios.post('https://home.example.test' + path, body,
-          { headers: { Authorization: 'Bearer ' + h.humanToken } });
-        return { status: updated.status, body: updated.data };
-      } });
-      return { status: result.status, body: result.data };
-    } });
     const features = FeaturesResponseSchema.parse(await (await fetch('https://home.example.test/v1/features')).json());
     for (const path of ['/v1/features', '/v1/features/authenticated']) homes.answer(serverId, path, { body: features });
     primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
@@ -90,6 +84,13 @@ it.each(['localServices.actions.stopManaged', 'machines.services.control'] as co
     }
     for (const path of [`/v1/actions/${actionId}/execution-authorization`, `/v1/actions/${actionId}`]) {
       homes.answer(serverId, path, { select: async input => {
+        if (path === `/v1/actions/${actionId}`) {
+          const signed = ExternalActionExecutionAuthorizationRequestV1Schema.parse(input);
+          expect(signed.executionAuthorization?.binding).toMatchObject({
+            accountId: 'account', custodianAccountId: 'host', authentication: { kind: 'account' },
+            actionId, requestId: signed.envelope.requestId,
+          });
+        }
         const result = await axios.post('https://home.example.test' + path, input,
           { headers: { Authorization: 'Bearer ' + h.humanToken } });
         return { status: result.status, body: result.data };
@@ -97,31 +98,32 @@ it.each(['localServices.actions.stopManaged', 'machines.services.control'] as co
     }
     const request = workspace ? { requestId: 'ui-stop-on-worker', action: 'stop_managed' as const,
       target: workspace.request.currentTarget, force: false } : null;
-    let pendingApproval!: (artifactId: string) => void;
-    const approvalPending = new Promise<string>(resolve => { pendingApproval = resolve; });
-    const execution = createDefaultActionExecutor({
-      onBlockingApprovalPending: ({ artifactId }) => pendingApproval(artifactId),
-    }).execute(actionId, native
+    let confirm!: (confirmed: boolean) => void;
+    const decision = new Promise<boolean>(resolve => { confirm = resolve; });
+    let showConfirmation!: () => void;
+    const confirmationPending = new Promise<void>(resolve => { showConfirmation = resolve; });
+    confirmModal.mockImplementation(() => { showConfirmation(); return decision; });
+    const execution = createDefaultActionExecutor().execute(actionId, native
       ? { ...native.target, operation: 'stop' }
       : { ...request!, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request!) },
       { surface: 'ui', authority: 'present_user', serverId });
-    // UI Ask may retain its invocation while the independent CLI approves it.
-    // Observe that existing pending hook instead of awaiting the effect first.
-    const artifactId = await Promise.race([approvalPending, execution.then(result => {
-      expect(result, JSON.stringify({ result, networkPaths: h.networkPaths })).toMatchObject({ ok: true });
-      if (!result.ok) throw new Error(result.errorCode);
-      return ActionApprovalRequestCreatedResultSchema.parse(result.result).artifactId;
+    // Own UI Ask is answered by the native confirmation. Hold only that
+    // presentation boundary; the Account Action and signed ingress stay real.
+    await Promise.race([confirmationPending, execution.then(result => {
+      throw new Error('UI Action settled before confirmation: ' + JSON.stringify(result));
     })]);
+    expect(confirmModal).toHaveBeenCalledTimes(1);
+    expect(machineTransport).not.toHaveBeenCalled();
     expect(seeded.snapshot().state).not.toBe('stopped');
     expect(seeded.stopCalls()).toBe(0);
-    expect(await h.runPublicCli({ artifactId, decision: 'approve' }, 'approval.request.decide', { yes: true }))
-      .toMatchObject({ ok: true });
-    publishHomeAccountChange(serverId, [artifactId], { changeKinds: ['artifact'] });
+    expect(h.hasApproval()).toBe(false);
+    confirm(true);
     expect(await execution).toMatchObject({ ok: true });
     expect(seeded.snapshot().state).toBe('stopped');
     expect(seeded.stopCalls()).toBe(1);
+    expect(confirmModal).toHaveBeenCalledTimes(1);
+    expect(h.hasApproval()).toBe(false);
     expect(h.networkPaths.filter(path => path === `POST /v1/actions/${actionId}`)).toHaveLength(1);
-    expect((await h.approval()).execution).toMatchObject({ ok: true });
   } finally {
     await Promise.all(h.serviceInstances().map(service => service.stop()));
     await h.close();
