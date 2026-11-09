@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { t } from '@/text';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -37,7 +38,7 @@ installHomeGovernanceBoundaries(home);
 const { ModalProvider } = await import('@/modal');
 const { deleteServerFeaturesSnapshot, primeServerFeaturesSnapshot } =
   await import('@/sync/api/capabilities/serverFeaturesClient');
-const { BrowserLocalPreviewPublicLinkControls } =
+const { BrowserLocalPreviewElsewhere, BrowserLocalPreviewPublicLinkControls } =
   await import('./BrowserLocalPreviewElsewhere');
 
 type Rpc = Readonly<{ method: string; payload?: Record<string, unknown> }>;
@@ -81,17 +82,22 @@ describe('BrowserLocalPreviewPublicLinkControls', () => {
     const statusReads = () => transport.rpc.mock.calls.filter(([rpc]: readonly unknown[]) => typeof rpc === 'object' && rpc !== null
       && 'method' in rpc && rpc.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS).length;
     const baseline = featureReads();
-    const renderControls = (presented: boolean, sessionBound: boolean) => <ModalProvider>
+    const renderControls = (presented: boolean, sessionBound: boolean, pageShown = true) => <ModalProvider>
       <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
         <BrowserLocalPreviewPublicLinkControls
           target={sessionBound ? target : { kind: 'localServicePreview', targetId: target.targetId, machineId: target.machineId }}
-          serviceTitle="web" serverId={serverId} testID="browser-public-demand" />
+          pageShown={pageShown} serviceTitle="web" serverId={serverId} testID="browser-public-demand" />
       </PluginSurfaceFocusEligibilityProvider>
     </ModalProvider>;
     const screen = await renderScreen(renderControls(true, false));
     try {
       await flushHookEffects({ cycles: 4, turns: 4 });
       expect(featureReads()).toBe(baseline);
+      expect(statusReads()).toBe(0);
+      // An ended or unreachable page offers no link to it: sharing what cannot open reads wrong.
+      await screen.update(renderControls(true, true, false));
+      await flushHookEffects({ cycles: 4, turns: 4 });
+      expect(screen.findByTestId('browser-public-demand-target:preview-1-create')).toBeNull();
       expect(statusReads()).toBe(0);
       await screen.update(renderControls(true, true));
       await waitForHomeGovernance(() => expect(screen.findByTestId('browser-public-demand-target:preview-1-create')).not.toBeNull());
@@ -173,6 +179,7 @@ describe('BrowserLocalPreviewPublicLinkControls', () => {
       <ModalProvider>
         <BrowserLocalPreviewPublicLinkControls
           target={target}
+          pageShown
           serviceTitle="web"
           serverId={serverId}
           testID="browser-public-link"
@@ -229,5 +236,32 @@ describe('BrowserLocalPreviewPublicLinkControls', () => {
     ).resolves.toMatchObject({ ok: true });
     await waitForHomeGovernance(() => expect(creating()).toBe(false));
     expect(creates).toHaveLength(0);
+  });
+});
+
+describe('BrowserLocalPreviewElsewhere', () => {
+  // The recovery line names a way that exists: sharing is offered only when this Home allows public links.
+  it.each([
+    [true, 'browserShell.unavailable.previewElsewhere'],
+    [false, 'browserShell.unavailable.previewElsewhereSharingOff'],
+  ] as const)('qualifies its recovery by Home public-preview availability (enabled: %s)', async (publicPreview, reason) => {
+    const serverId = await home.addHome({ name: `Elsewhere Home ${publicPreview}`,
+      serverUrl: `https://browser-elsewhere-${publicPreview}.test`, accountId: 'owner', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse({ features: { localServices: {
+      enabled: true, inventory: { enabled: true }, managed: { enabled: true }, launcher: { enabled: true },
+      actions: { enabled: true, terminate: { enabled: true } }, preview: { enabled: true }, publicPreview: { enabled: publicPreview },
+    } } });
+    home.answer(serverId, '/v1/features', { body: features });
+    home.answer(serverId, '/v1/features/authenticated', { body: features });
+    const screen = await renderScreen(
+      <BrowserLocalPreviewElsewhere testID="browser-elsewhere" serviceTitle="web" machineId="machine" serverId={serverId} />,
+    );
+    try {
+      const shownReason = () => screen.findAllByTestId('browser-elsewhere-elsewhere')
+        .map(node => node.props.reason).find(value => typeof value === 'string');
+      await waitForHomeGovernance(() => expect(shownReason()).toBe(t(reason)));
+    } finally {
+      await screen.unmount();
+    }
   });
 });

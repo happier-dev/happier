@@ -5,6 +5,7 @@ import { createBrowserRuntimeActionExecutor } from '@/sync/domains/browser/actio
 import { buildInjectedBrowserDiagnosticsScript, buildInjectedBrowserDiagnosticsEvalCommandScript,
     buildInjectedBrowserDiagnosticsGetPropertiesCommandScript, parseInjectedBrowserDiagnosticsMessage } from '../diagnostics/injectedPage';
 import { createInjectedPageAutomationOwner } from './injectedPageRuntime';
+import type { BrowserAutomationJavaScriptDialogResponseV1 } from '@happier-dev/protocol/browser/automation/v1';
 
 const identity = { browserSessionId: 'browser', viewId: 'view', navigationGeneration: 0,
     collectorId: 'collector', nonce: 'nonce', capabilityVersion: '1.0.0' } as const;
@@ -31,12 +32,13 @@ function mountCollector() {
     return {
         service,
         messages,
-        run(actionKind: 'queryElements' | 'setValue' | 'type' | 'waitFor' | 'upload', payload: Record<string, unknown>, timeoutMs = 10_000) {
+        run(actionKind: 'queryElements' | 'setValue' | 'type' | 'waitFor' | 'upload', payload: Record<string, unknown>, timeoutMs = 10_000,
+            dialogResponse?: BrowserAutomationJavaScriptDialogResponseV1) {
             seq += 1;
             return execute({ actionId: `browser.automation.${actionKind}`, input: { v: 1,
                 browserSessionId: identity.browserSessionId, viewId: identity.viewId, navigationGeneration: identity.navigationGeneration,
                 automationRequestId: `request_${seq}`, requestedBy: 'agent', requesterRef: { kind: 'session', id: 'session' },
-                actionKind, timeoutMs, payload }, context: { surface: 'agent', authority: 'account_automation' } });
+                actionKind, timeoutMs, payload, ...(dialogResponse ? { dialogResponse } : {}) }, context: { surface: 'agent', authority: 'account_automation' } });
         },
     };
 }
@@ -69,6 +71,54 @@ describe('mounted browser Action to installed collector', () => {
         complete({ late: true });
         await Promise.resolve();
         expect(results()).toHaveLength(1);
+    });
+
+    it.each([
+        { response: { kind: 'alert', message: 'Continue?', accept: true }, expected: undefined },
+        { response: { kind: 'confirm', message: 'Continue?', accept: true }, expected: true },
+        { response: { kind: 'confirm', message: 'Continue?', accept: false }, expected: false },
+        { response: { kind: 'prompt', message: 'Continue?', accept: true, promptText: 'Approved answer' }, expected: 'Approved answer' },
+        { response: { kind: 'prompt', message: 'Continue?', accept: true }, expected: 'Page default' },
+        { response: { kind: 'prompt', message: 'Continue?', accept: false }, expected: null },
+    ] satisfies ReadonlyArray<{ response: BrowserAutomationJavaScriptDialogResponseV1; expected: unknown }>)('answers the approved $response.kind dialog through the Action and collector', async ({ response, expected }) => {
+        const host = mountCollector();
+        const field = document.querySelector<HTMLInputElement>('#field')!;
+        const original = window[response.kind];
+        let answer: unknown = 'not called';
+        field.addEventListener('input', () => {
+            answer = response.kind === 'prompt' ? window.prompt(response.message, 'Page default')
+                : response.kind === 'confirm' ? window.confirm(response.message) : window.alert(response.message);
+        });
+        expect(await host.run('setValue', { selector: '#field', value: 'after' }, 10_000, response))
+            .toMatchObject({ status: 'succeeded', resultSummary: { javascriptDialogs: {
+                count: 1, kinds: [response.kind], handling: response.accept ? 'accepted' : 'dismissed',
+            } } });
+        expect(answer).toBe(expected);
+        expect(window[response.kind]).toBe(original);
+    });
+
+    it('answers one exact matching question, dismisses others and never retains the answer for a later Action', async () => {
+        const host = mountCollector();
+        const field = document.querySelector<HTMLInputElement>('#field')!;
+        const answers: unknown[] = [];
+        field.addEventListener('input', () => {
+            answers.push(window.prompt('Other question', 'Private default'));
+            answers.push(window.confirm('Continue?'));
+            answers.push(window.prompt('Continue?', 'Private default'));
+            answers.push(window.prompt('Continue?', 'Private default'));
+        });
+        expect(await host.run('setValue', { selector: '#field', value: 'after' }, 10_000,
+            { kind: 'prompt', message: 'Continue?', accept: true, promptText: 'Approved answer' }))
+            .toMatchObject({ status: 'succeeded', resultSummary: { javascriptDialogs: {
+                count: 4, kinds: ['prompt', 'confirm'], handling: 'mixed',
+            } } });
+        expect(answers).toEqual([null, false, 'Approved answer', null]);
+        expect(host.messages.join(' ')).not.toContain('Approved answer');
+        expect(host.messages.join(' ')).not.toContain('Private default');
+        expect(await host.run('setValue', { selector: '#field', value: 'again',
+            dialogResponse: { kind: 'prompt', message: 'Continue?', accept: true, promptText: 'Forged answer' } }))
+            .toMatchObject({ status: 'succeeded', resultSummary: { javascriptDialogs: { count: 4, handling: 'dismissed' } } });
+        expect(answers.slice(4)).toEqual([null, false, null, null]);
     });
 
     it('returns full eval values and expands every retained property through the diagnostics reader', () => {

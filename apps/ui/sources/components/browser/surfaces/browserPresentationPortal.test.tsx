@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { describe, expect, it } from 'vitest';
+import { Platform, StyleSheet, Text, View } from 'react-native';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ReactTestRenderer } from 'react-test-renderer';
 
@@ -53,6 +53,168 @@ function PortalBinder(props: Readonly<{ slotId: string; label: string }>): React
 }
 
 describe('browser presentation portal (UX-6 webview-above-router)', () => {
+    it('moves an explicitly placed picture outside its former pane clip without remounting', async () => {
+        const originalPlatform = Object.getOwnPropertyDescriptor(Platform, 'OS');
+        const globals = { window: globalThis.window, HTMLElement: globalThis.HTMLElement };
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        class WebNode {
+            parentElement: WebNode | null = null;
+            clientLeft = 0;
+            clientTop = 0;
+            clientWidth = 200;
+            clientHeight = 100;
+            getBoundingClientRect() { return { x: 20, y: 30, width: 200, height: 100 }; }
+            measureInWindow(callback: (x: number, y: number, width: number, height: number) => void) { callback(20, 30, 200, 100); }
+        }
+        // Only the DOM/window measurement boundary is substituted; placement and retention are real.
+        vi.stubGlobal('HTMLElement', WebNode);
+        vi.stubGlobal('window', Object.assign(new EventTarget(), {
+            innerWidth: 1440, innerHeight: 900, getComputedStyle: () => ({ overflow: 'hidden' }),
+        }));
+        const placeholder = new WebNode();
+        placeholder.parentElement = new WebNode();
+        const store = createRetainedPresentationSlotsStore();
+        const body = <MountCountingWebview label="moving picture" />;
+        type Rect = { x: number; y: number; width: number; height: number };
+        function Harness(props: Readonly<{ geometry?: Rect | null; clip?: Rect | null }>) {
+            return <RetainedPresentationSlotsProvider store={store}>
+                <RetainedPresentationSlotBinder slotId="explicit-placement" enabled
+                    windowGeometry={props.geometry} windowClipGeometry={props.clip}>{body}</RetainedPresentationSlotBinder>
+            </RetainedPresentationSlotsProvider>;
+        }
+        webviewMountCount = 0;
+        const screen = await renderScreen(<Harness />, { createNodeMock: () => placeholder });
+        const placement = () => StyleSheet.flatten(screen.findHostByTestId('browser-presentation-portal-slot-explicit-placement')!.props.style);
+        try {
+            await act(async () => { invokeTestInstanceHandler(screen.findByTestId('browser-keepalive-placeholder-explicit-placement'), 'onLayout', {}); });
+            expect(store.getPortalSnapshot()[0]?.clipGeometry).toEqual({ x: 20, y: 30, width: 200, height: 100 });
+            const geometry = { x: 600, y: 400, width: 150, height: 100 };
+            await screen.update(<Harness geometry={geometry} />);
+            expect(placement()).toMatchObject({ width: 150, height: 100 });
+            expect(placement().opacity).not.toBe(0);
+            await screen.update(<Harness geometry={null} />);
+            expect(placement()).toMatchObject({ width: 150, height: 100 });
+            await screen.update(<Harness geometry={geometry} clip={{ x: 600, y: 400, width: 50, height: 50 }} />);
+            expect(placement()).toMatchObject({ width: 50, height: 50 });
+            await screen.update(<Harness geometry={geometry} clip={null} />);
+            expect(placement()).toMatchObject({ width: 150, height: 100 });
+            await screen.update(<Harness />);
+            expect(placement()).toMatchObject({ width: 200, height: 100 });
+            expect(webviewMountCount).toBe(1);
+        } finally {
+            await screen.unmount();
+            for (const [key, value] of Object.entries(globals)) vi.stubGlobal(key, value);
+            if (originalPlatform) Object.defineProperty(Platform, 'OS', originalPlatform);
+        }
+    });
+
+    it('tracks a retained picture during ancestor scrolling without replacing its source', async () => {
+        const originalWindow = globalThis.window;
+        const originalPlatform = Object.getOwnPropertyDescriptor(Platform, 'OS');
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        const scrollEvents = new EventTarget();
+        vi.stubGlobal('window', scrollEvents);
+        const store = createRetainedPresentationSlotsStore();
+        let measured = { x: 1050, y: 250, width: 300, height: 300 };
+        webviewMountCount = 0;
+        const screen = await renderScreen(<RetainedPresentationSlotsProvider store={store}>
+            <RetainedPresentationSlotBinder slotId="scrolling-picture" enabled
+                windowClipGeometry={{ x: 1000, y: 200, width: 500, height: 200 }}>
+                <MountCountingWebview label="retained picture" />
+            </RetainedPresentationSlotBinder>
+        </RetainedPresentationSlotsProvider>, {
+            // Window measurement and scroll events are the platform boundary; the binder,
+            // store, portal and physical-source lifetime remain real.
+            createNodeMock: () => ({ measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) =>
+                callback(measured.x, measured.y, measured.width, measured.height) }),
+        });
+        try {
+            await act(async () => {
+                invokeTestInstanceHandler(screen.findByTestId('browser-keepalive-placeholder-scrolling-picture'), 'onLayout', {});
+            });
+            expect(store.getPortalSnapshot()[0]?.geometry?.y).toBe(250);
+            measured = { ...measured, y: 80 };
+            // An ancestor scroll does not emit another layout event for this placeholder.
+            await act(async () => { scrollEvents.dispatchEvent(new Event('scroll')); });
+            expect(store.getPortalSnapshot()[0]?.geometry?.y).toBe(80);
+            expect(store.getPortalSnapshot()[0]?.clipGeometry).toEqual({ x: 1000, y: 200, width: 500, height: 200 });
+            expect(webviewMountCount).toBe(1);
+        } finally {
+            await screen.unmount();
+            vi.stubGlobal('window', originalWindow);
+            if (originalPlatform) Object.defineProperty(Platform, 'OS', originalPlatform);
+        }
+    });
+
+
+    it('remeasures hydration ancestor layout without a window event or remount, and parks layout observation', async () => {
+        const originalPlatform = Object.getOwnPropertyDescriptor(Platform, 'OS');
+        const globals = { window: globalThis.window, HTMLElement: globalThis.HTMLElement, ResizeObserver: globalThis.ResizeObserver };
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        let measured = { x: 300, y: 96, width: 380, height: 600 };
+        class WebNode {
+            parentElement: WebNode | null = null;
+            clientLeft = 0;
+            clientTop = 0;
+            clientWidth = 1000;
+            clientHeight = 800;
+            constructor(readonly placeholder = false) {}
+            getBoundingClientRect() { return this.placeholder ? measured : { x: 0, y: 0, width: this.clientWidth, height: this.clientHeight }; }
+            measureInWindow(callback: (x: number, y: number, width: number, height: number) => void) {
+                const rect = this.getBoundingClientRect(); callback(rect.x, rect.y, rect.width, rect.height);
+            }
+        }
+        // ResizeObserver and the DOM/native measurement ports are genuine platform boundaries.
+        const live = new Set<{ callback: () => void }>();
+        class LayoutObserver {
+            constructor(readonly callback: () => void) { live.add(this); }
+            observe(_target: unknown) {}
+            disconnect() { live.delete(this); }
+        }
+        vi.stubGlobal('HTMLElement', WebNode);
+        vi.stubGlobal('ResizeObserver', LayoutObserver);
+        vi.stubGlobal('window', Object.assign(new EventTarget(), {
+            innerWidth: 1440, innerHeight: 900, getComputedStyle: () => ({ overflow: 'visible' }),
+        }));
+        const ancestor = new WebNode();
+        const placeholder = new WebNode(true);
+        placeholder.parentElement = ancestor;
+        const overlay = new WebNode();
+        const store = createRetainedPresentationSlotsStore();
+        const body = <MountCountingWebview label="retained reload page" />;
+        function Harness({ visible }: { visible: boolean }) {
+            return <RetainedPresentationSlotsProvider store={store}>
+                <RetainedPresentationSlotBinder slotId="hydration-layout" enabled visible={visible}>{body}</RetainedPresentationSlotBinder>
+            </RetainedPresentationSlotsProvider>;
+        }
+        webviewMountCount = 0;
+        const screen = await renderScreen(<Harness visible />, {
+            createNodeMock: element => String(element.props.testID ?? '').startsWith('browser-keepalive-placeholder') ? placeholder : overlay,
+        });
+        try {
+            await act(async () => { invokeTestInstanceHandler(screen.findByTestId('browser-keepalive-placeholder-hydration-layout'), 'onLayout', {}); });
+            expect(store.getPortalSnapshot()[0]?.geometry?.x).toBe(300);
+            // Hydration changes the enclosing pane, while the fixed-width picture keeps its own size.
+            ancestor.clientWidth -= 108;
+            measured = { ...measured, x: 192 };
+            await act(async () => { for (const observer of [...live]) observer.callback(); });
+            expect(store.getPortalSnapshot()[0]?.geometry).toEqual(measured);
+            expect(webviewMountCount).toBe(1);
+            const listener = vi.fn();
+            const release = store.subscribePortal(listener);
+            try {
+                for (let echo = 0; echo < 139; echo++) await act(async () => { for (const observer of [...live]) observer.callback(); });
+                expect(listener).not.toHaveBeenCalled();
+            } finally { release(); }
+            await screen.update(<Harness visible={false} />);
+            expect(live.size).toBe(0);
+        } finally {
+            await screen.unmount();
+            for (const [key, value] of Object.entries(globals)) vi.stubGlobal(key, value);
+            if (originalPlatform) Object.defineProperty(Platform, 'OS', originalPlatform);
+        }
+    });
+
     it('does not republish unchanged content or layout echoes and still delivers changed content', async () => {
         const store = createRetainedPresentationSlotsStore();
         let presses = '';
@@ -169,7 +331,8 @@ describe('browser presentation portal (UX-6 webview-above-router)', () => {
             return <BrowserPresentationRetentionProvider>
                 {props.visible ? <DestinationInstanceHost tabId="session-a" ref={{ kind: 'session', params: { id: 'A' } }}
                     pathname="/session/A" focused visible navigation={{ push: () => { opened.push('A'); }, replace: () => {}, back: () => {} }}>
-                    <RetainedPresentationSlotBinder slotId="destination-a" enabled><DestinationProbe /></RetainedPresentationSlotBinder>
+                    <RetainedPresentationSlotBinder slotId="destination-a" enabled
+                        windowGeometry={{ x: 0, y: 0, width: 320, height: 400 }}><DestinationProbe /></RetainedPresentationSlotBinder>
                 </DestinationInstanceHost> : null}
             </BrowserPresentationRetentionProvider>;
         }
@@ -187,13 +350,45 @@ describe('browser presentation portal (UX-6 webview-above-router)', () => {
         expect(probe().props.current).toBe(true);
         await result.unmount();
     });
+    it('carries the enclosing pane scope right-sidebar chooser into the body it hosts above the router', async () => {
+        const { RightSidebarActionsContext } = await import('@/components/appShell/rightSidebar/rightSidebarActions');
+        const sideActions = { current: { tabs: ['services'], selectTab: () => {} } };
+        function ChooserProbe() {
+            return React.createElement('RetainedChooserProbe', { owner: React.useContext(RightSidebarActionsContext) });
+        }
+        const result = await renderWithAppProviders(<BrowserPresentationRetentionProvider>
+            <RightSidebarActionsContext.Provider value={sideActions}>
+                <RetainedPresentationSlotBinder slotId="chooser" enabled><ChooserProbe /></RetainedPresentationSlotBinder>
+            </RightSidebarActionsContext.Provider>
+        </BrowserPresentationRetentionProvider>);
+        expect(result.tree.root.findByType('RetainedChooserProbe').props.owner).toBe(sideActions);
+        await result.unmount();
+    });
+    it("keeps its slot's bottom-chrome reservation for the body it hosts above the router", async () => {
+        // A phone cockpit screen already reserves the floating tab bar and zeroes it for what it holds;
+        // the retained body must read that, not the shell's raw height, or its bottom bar reserves it twice.
+        const { SessionCockpitBottomChromeHeightContext, useSessionCockpitBottomChromeHeight } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
+        function ReservationProbe() {
+            return React.createElement('RetainedReservationProbe', { height: useSessionCockpitBottomChromeHeight() });
+        }
+        const result = await renderWithAppProviders(<SessionCockpitBottomChromeHeightContext.Provider value={56}>
+            <BrowserPresentationRetentionProvider>
+                <SessionCockpitBottomChromeHeightContext.Provider value={0}>
+                    <RetainedPresentationSlotBinder slotId="reservation" enabled><ReservationProbe /></RetainedPresentationSlotBinder>
+                </SessionCockpitBottomChromeHeightContext.Provider>
+            </BrowserPresentationRetentionProvider>
+        </SessionCockpitBottomChromeHeightContext.Provider>);
+        expect(result.tree.root.findByType('RetainedReservationProbe').props.height).toBe(0);
+        await result.unmount();
+    });
     it('retires presentation demand inside a retained body while its binder is parked', async () => {
         function DemandProbe(): React.ReactElement {
             return React.createElement('RetainedDemandProbe', { testID: 'retained-demand', active: useLayoutPresentationActive() });
         }
         function Harness(props: Readonly<{ visible: boolean }>): React.ReactElement {
             return <BrowserPresentationRetentionProvider>
-                {props.visible ? <RetainedPresentationSlotBinder slotId="demand-slot" enabled visible>
+                {props.visible ? <RetainedPresentationSlotBinder slotId="demand-slot" enabled visible
+                    windowGeometry={{ x: 0, y: 0, width: 320, height: 400 }}>
                     <DemandProbe />
                 </RetainedPresentationSlotBinder> : null}
             </BrowserPresentationRetentionProvider>;

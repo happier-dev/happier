@@ -562,6 +562,50 @@ describe('BrowserShell', () => {
     expect(await menuItemIds(true)).toEqual(expect.arrayContaining(['new-tab', 'close-tab']));
   });
 
+  it('keeps the Session annotation owner after a second Browser panel for the same page closes', async () => {
+    const { BrowserShell } = await import('./BrowserShell');
+    const { useSessionBrowserContextRuntime } = await import('@/components/sessions/browser/sessionBrowserContextRuntime');
+    const scope = { serverId: (await addBrowserHome('https://browser-panel-context.example.test')).id, accountId: 'viewer-account' };
+    const shellState = await createAnnotationCapableShellState();
+    const view = shellState.viewsById.view_1!;
+    const captureScreenshot = vi.fn(async () => ({ ok: true as const,
+      snapshot: { bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png' as const, width: 40, height: 30, sizeBytes: 3 } }));
+    const captureProvider = createBrowserAnnotationCaptureProvider({ captureScreenshot });
+    installImageAnnotationCanvasBoundary();
+    let runtime: ReturnType<typeof useSessionBrowserContextRuntime>;
+    function Harness({ panelOpen }: { panelOpen: boolean }) {
+      runtime = useSessionBrowserContextRuntime({ enabled: true, sessionId: 'session_1', accountScope: scope,
+        attachmentsUploadsEnabled: true, annotationCaptureProvider: captureProvider });
+      return <>
+        <BrowserShell browserSessionId={view.browserSessionId} platform="web" state={shellState}
+          onCommand={vi.fn()} testID="browser-main" browserContext={runtime?.browserShellContext} />
+        {panelOpen ? <BrowserShell browserSessionId={view.browserSessionId} platform="web" state={shellState}
+          onCommand={vi.fn()} testID="browser-panel" browserContext={runtime?.browserShellContext} /> : null}
+      </>;
+    }
+    const screen = await renderScreen(<Harness panelOpen={false} />);
+    try {
+      await screen.update(<Harness panelOpen />);
+      await screen.update(<Harness panelOpen={false} />);
+      await screen.pressByTestIdAsync('browser-main-attach-page');
+      await flushHookEffects();
+      expect(runtime!.state.attachmentOrder).toHaveLength(1);
+      expect(runtime!.state.itemsById[runtime!.state.itemOrder[0]!]).toMatchObject({
+        kind: 'browserPageReference', sourceViewId: view.viewId,
+      });
+      await screen.pressByTestIdAsync('browser-main-mark-up');
+      await flushHookEffects();
+      expect(runtime!.state.annotationDraftByViewId[view.viewId]?.document.image).toMatchObject({ width: 40, height: 30 });
+      expect(captureScreenshot).toHaveBeenCalledOnce();
+      const result = await runtime!.browserShellContext.annotationRuntimeActionExecute!({
+        actionId: 'browser.context.annotation.cancel', input: { browserSessionId: view.browserSessionId, viewId: view.viewId },
+        context: { surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId },
+      });
+      expect(result).toMatchObject({ status: 'cancelled' });
+      expect(runtime!.browserShellContext.readState!().annotationDraftByViewId[view.viewId]).toBeUndefined();
+    } finally { await screen.unmount(); }
+  });
+
   it('composes shared browser marks through the mounted Action owner into one flattened annotation and badge', async () => {
     const { BrowserShell } = await import('./BrowserShell');
     const { BrowserAnnotatorBar } = await import('./annotation/BrowserAnnotator');
@@ -593,6 +637,7 @@ describe('BrowserShell', () => {
     let contextState = createBrowserContextState();
     let startEnabled = false;
     let commentEnabled = false;
+    const onAttachUnavailable = vi.fn();
     const executor = createDefaultActionExecutor({
       isActionEnabled: id => id === 'browser.context.annotation.start' ? startEnabled
         : id !== 'browser.context.annotation.setDraftComment' || commentEnabled,
@@ -605,7 +650,7 @@ describe('BrowserShell', () => {
           state, readState: () => contextState, contextCapabilities: capabilities, attachmentsUploadsEnabled: true,
           annotationCaptureProvider: createBrowserAnnotationCaptureProvider({ captureScreenshot }),
           commitAnnotation, queryElementAtPoint,
-          annotationRuntimeActionExecute: execute, onStateChange: next => {
+          annotationRuntimeActionExecute: execute, onAttachUnavailable, onStateChange: next => {
             contextState = next; publish(next); if (next.attachmentOrder.length === 1) attached.resolve();
           } }} />;
     }
@@ -613,6 +658,7 @@ describe('BrowserShell', () => {
     try {
       await screen.pressByTestIdAsync('browser-shell-mark-up');
       expect(captureScreenshot).not.toHaveBeenCalled();
+      expect(onAttachUnavailable).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: 'action_disabled' }));
       startEnabled = true;
       await screen.pressByTestIdAsync('browser-shell-mark-up');
       await flushHookEffects();
@@ -738,17 +784,14 @@ describe('BrowserShell', () => {
       }, { actionExecute: admittedExecute.actionExecute });
       await act(async () => {
         const result = await screen.tree.root.findByType(BrowserAnnotatorMount).props.session.onAttach();
-        expect(pending).toMatchObject({ kind: 'approval_request_created', actionId: 'browser.context.annotation.attachDraft' });
-        expect(ActionApprovalRequestCreatedResultSchema.safeParse(pending).success).toBe(true);
-        expect(result).toEqual({ ok: false });
+        expect(getActionSpec('browser.context.annotation.attachDraft').outputSchema?.safeParse(pending).success).toBe(true);
+        expect(pending).toMatchObject({ actionId: 'browser.context.annotation.attachDraft', status: 'committed' });
+        expect(result).toEqual({ ok: true });
       });
-      await screen.pressByTestIdAsync('browser-annotator-attach');
-      await waitForAttachIdle();
-      expect(contextState).toBe(initial);
-      expect(screen.findByTestId('browser-annotator-stage')).toBeTruthy();
-      expect(contextState.annotationDraftByViewId[view.viewId]?.comment).toBe('Keep the original caption.');
-      expect(commitAnnotation).not.toHaveBeenCalled();
-      // Successful UI delivery is covered by the composed marks-and-badge case above.
+      expect(contextState.annotationDraftByViewId[view.viewId]).toBeUndefined();
+      expect(contextState.itemOrder.map(id => contextState.itemsById[id]!.kind)).toEqual(['browserAnnotation']);
+      expect(commitAnnotation).toHaveBeenCalledTimes(1);
+      expect(captureScreenshot).not.toHaveBeenCalled();
       await screen.unmount();
       return;
     }

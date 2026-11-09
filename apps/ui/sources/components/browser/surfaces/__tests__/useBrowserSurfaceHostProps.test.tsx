@@ -1,10 +1,14 @@
+import * as React from 'react';
 import type {
-    BrowserViewTargetV1,
+    BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import type {
     LocalServiceLauncherSnapshotV1,
-} from '@happier-dev/protocol';
-import { afterEach, describe, expect, it } from 'vitest';
+} from '@happier-dev/protocol/local/services/launcher/v1';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook } from '@/dev/testkit';
+import { act, renderHook } from '@/dev/testkit';
+import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { createPluginUiTranslationRuntime, PluginUiTranslationRuntimeProvider } from '@/sync/domains/plugins/ui/i18n';
 import {
     applyLocalServiceLauncherSnapshot,
     createLocalServiceLauncherState,
@@ -39,7 +43,8 @@ const runningLauncherSnapshot = {
     updatedAt: 1_000,
     targets: [{
         id: 'launcher_preview',
-        source: 'registered_preview',
+        source: 'inventory_entry',
+        sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'entry_vite' },
         machineId: 'machine_1',
         sessionId: 'session_1',
         title: 'Vite app',
@@ -47,7 +52,7 @@ const runningLauncherSnapshot = {
         kind: 'vite',
         confidence: 'high',
         state: 'available',
-        actions: ['open_preview'],
+        actions: ['open_preview', 'register_preview'],
         browserTarget: runningServiceTarget,
     }],
 } satisfies LocalServiceLauncherSnapshotV1;
@@ -155,6 +160,76 @@ describe('resolveBrowserSurfacePlatform', () => {
 });
 
 describe('useBrowserSurfaceHostProps', () => {
+    it('keeps an access-only preview out of the Running launchpad', async () => {
+        const registration = { ...runningLauncherSnapshot.targets[0], source: 'registered_preview',
+            sourceClass: { kind: 'registered_preview', previewId: runningServiceTarget.targetId }, actions: ['open_preview'],
+        } satisfies LocalServiceLauncherSnapshotV1['targets'][number];
+        const launcherState = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+            ...runningLauncherSnapshot, targets: [registration],
+        });
+        const hook = await renderHook(() => useBrowserSurfaceHostProps({ scope: 'sessionSidebar', sessionId: 'session_1',
+            machineId: 'machine_1', launcherState, localServicePreviewState: createLocalServicePreviewState() }));
+        expect(hook.getCurrent().launchpadRows).toEqual([]);
+        await hook.unmount();
+    });
+
+    it('carries failed Services and their output through the existing feed without adding them to Running', async () => {
+        const failed = { ...runningLauncherSnapshot, targets: [{
+            ...runningLauncherSnapshot.targets[0], source: 'managed_service' as const,
+            sourceClass: { kind: 'managed_service' as const, managedServiceId: 'web' },
+            serviceState: 'failed' as const, actions: ['manage' as const],
+            diagnostics: [{ code: 'native_service_output', severity: 'info' as const, message: 'Address already in use' }],
+        }] } satisfies LocalServiceLauncherSnapshotV1;
+        const launcherState = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), failed);
+        const hook = await renderHook(() => useBrowserSurfaceHostProps({ scope: 'sessionSidebar', sessionId: 'session_1',
+            machineId: 'machine_1', launcherState, localServicePreviewState: createLocalServicePreviewState() }));
+        expect(hook.getCurrent().launchpadRows).toEqual([]);
+        expect(hook.getCurrent().localServiceTargets).toEqual(failed.targets);
+        expect(hook.getCurrent().localServiceTargets).toBe(hook.getCurrent().feed.localServiceTargets);
+        await hook.unmount();
+    });
+    it('loads the visible plugin target title and refreshes the feed without replacing browser identity', async () => {
+        const projection: PluginUiProjectionModel = {
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            translationsByPluginId: {
+                'acme.preview': {
+                    id: 'translations:acme.preview', pluginId: 'acme.preview', contributionKind: 'translations',
+                    locales: ['en', 'fr'], resourceIdsByLocale: { en: 'copy.en', fr: 'copy.fr' },
+                },
+            },
+        };
+        const target = hostedPluginProjection.targetsById['browserTarget:acme.preview:pane'];
+        const browserProjection: PluginBrowserProjectionModel = {
+            ...hostedPluginProjection,
+            targetsById: { [target.id]: { ...target, display: {
+                ...target.display, title: { key: 'preview.title', fallback: 'Preview fallback' },
+            } } },
+        };
+        let finishRead!: (bytes: Uint8Array) => void;
+        const readResourceBytes = vi.fn<Parameters<typeof createPluginUiTranslationRuntime>[0]['readResourceBytes']>(
+            () => new Promise<Uint8Array>((resolve) => { finishRead = resolve; }),
+        );
+        const runtime = createPluginUiTranslationRuntime({ projection, readResourceBytes });
+        expect(readResourceBytes).not.toHaveBeenCalled();
+        const launcherState = buildRunningLauncherState();
+        const localServicePreviewState = createLocalServicePreviewState();
+        const rendered = await renderHook(() => useBrowserSurfaceHostProps({
+            scope: 'projectSidebar', workspaceRefId: 'workspace_1', machineId: 'machine_1', serverId: 'server_1',
+            launcherState, localServicePreviewState, pluginBrowserProjection: browserProjection,
+            pluginUiProjection: projection, nowMs: () => 1_500,
+        }), { wrapper: ({ children }) => React.createElement(PluginUiTranslationRuntimeProvider, { runtime }, children) });
+        const first = rendered.getCurrent();
+        expect(first.launchpadRows.find(row => row.target?.kind === 'hostedPluginWeb')?.title).toBe('Preview fallback');
+        expect(readResourceBytes.mock.calls.map(call => call[2])).toEqual(['copy.en']);
+        await act(async () => { finishRead(new TextEncoder().encode(JSON.stringify({ 'preview.title': 'Loaded preview' }))); });
+        const ready = rendered.getCurrent();
+        expect(ready.launchpadRows.find(row => row.target?.kind === 'hostedPluginWeb')?.title).toBe('Loaded preview');
+        expect(ready.surfaceKey).toBe(first.surfaceKey);
+        expect(ready.initialBrowserState).toBe(first.initialBrowserState);
+        expect(readResourceBytes).toHaveBeenCalledTimes(1);
+        await rendered.unmount();
+    });
+
     it('resolves platform, derives stable keys, and assembles a non-empty launchpad feed', async () => {
         const rendered = await renderHook(() => useBrowserSurfaceHostProps({
             scope: 'sessionMobile',

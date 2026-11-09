@@ -110,6 +110,28 @@ describe('BrowserShellPresence daemon takeover', () => {
         await screen.update(<Tree presentation={null} />);
         expect(store?.get('browser')).toBeNull();
     });
+    it('publishes the page\'s own shape to the viewer, so its frame and phone dock hold the picture without letterboxing', async () => {
+        let controller: ReturnType<typeof useOptionalSessionViewerController> = null;
+        function ReadFacts() { controller = useOptionalSessionViewerController(); return null; }
+        const currentView = view('agent', 1);
+        // Drawn contain-fitted into a squarer box; the page itself is 780 x 493.
+        const fitted = { x: 0, y: 40.5, width: 356, height: 225 };
+        function Tree({ pageSize }: Readonly<{ pageSize: { width: number; height: number } | null }>) {
+            return <SessionViewerControllerProvider sessionId="session_1" serverId="server_1"
+                phone={false} canPresentSource={() => true} openDocked={() => {}}>
+                <ReadFacts />
+                <SessionViewerBodyPresentation presentation="viewer">
+                    <BrowserShellPresence view={currentView} controlService={null} agent={null} testID="p"
+                        pageRect={{ ...fitted, pageSize }} />
+                </SessionViewerBodyPresentation>
+            </SessionViewerControllerProvider>;
+        }
+        const screen = await renderScreen(<Tree pageSize={{ width: 780, height: 493 }} />);
+        expect(controller!.facts.browser?.aspectRatio).toBeCloseTo(780 / 493);
+        // Before the first frame is measured the page has no shape yet: the frame keeps its default.
+        await screen.update(<Tree pageSize={null} />);
+        expect(controller!.facts.browser?.aspectRatio ?? null).toBeNull();
+    });
     it('reserves its own footer below the page instead of floating over the streamed input controls', async () => {
         const screen = await renderScreen(<Surface currentView={view('human', 5)} />);
         // A dock over the page covers the stream's control bar (Escape, keyboard) along the page's

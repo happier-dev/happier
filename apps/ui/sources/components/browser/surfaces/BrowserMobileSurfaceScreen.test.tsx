@@ -197,6 +197,36 @@ describe('BrowserMobileSurfaceScreen (scoped workspace)', () => {
         });
     });
 
+    it('lets an open page fill the phone pane: no large header, no one-tab strip, + and × in the page (lab Qp)', async () => {
+        const slot = await import('@/components/appShell/panes/paneHeaderSlot');
+        function HeaderProbe(): React.ReactElement {
+            return React.createElement('HeaderProbe', { immersive: slot.usePublishedPaneHeaderContent('browser')?.immersive ?? null });
+        }
+        const render = () => (
+            <slot.PaneHeaderSlotProvider>
+                <HeaderProbe />
+                <slot.PaneHeaderSlotScope slotKey="browser">
+                    <BrowserMobileSurfaceScreen sessionId="session_1" scopeId="session:session_1:mobile-browser" />
+                </slot.PaneHeaderSlotScope>
+            </slot.PaneHeaderSlotProvider>
+        );
+        const pane = paneWithBrowserView();
+        paneStub.current = pane;
+        const screen = await renderScreen(render());
+        expect(screen.root.findAllByType('HeaderProbe')[0]?.props.immersive).toBe(true);
+        expect(screen.findByTestId('session-mobile-browser-new-tab')).toBeNull();
+        const host = screen.root.findAllByType('BrowserSurfaceHostMock')[0];
+        host?.props.onCloseTab();
+        expect(pane.closeDetailsTab).toHaveBeenCalledWith(pane.scopeState!.details.tabs[0]!.key);
+        host?.props.onOpenNewTab();
+        expect(pane.openDetailsTab).toHaveBeenCalledWith(expect.objectContaining({ key: expect.any(String) }), { intent: 'pinned' });
+
+        // The launchpad keeps its large header (lab Lp).
+        paneStub.current = { ...basePane(), scopeState: { details: buildDetailsWorkspaceStateView(createEmptyPaneDetailsState()) } } as AppPaneScopeApi;
+        const launchpad = await renderScreen(render());
+        expect(launchpad.root.findAllByType('HeaderProbe')[0]?.props.immersive).toBe(false);
+    });
+
     it('tells its pane header where the previews come from (session-tabs lab Wp)', async () => {
         paneStub.current = {
             ...basePane(),

@@ -1,7 +1,8 @@
 import type {
-    BrowserPlatformV1,
+    BrowserPlatformV1} from '@happier-dev/protocol/browser/view/v1';
+import type {
     BrowserViewTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/target/v1';
 import type { PluginUiChannelV1 } from '@happier-dev/protocol/plugins/ui';
 import * as React from 'react';
 import { View } from 'react-native';

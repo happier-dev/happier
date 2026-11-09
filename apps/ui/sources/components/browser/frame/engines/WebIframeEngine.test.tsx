@@ -93,7 +93,7 @@ function diagnosticBatch(overrides: Record<string, unknown> = {}): Record<string
 }
 
 describe('WebIframeEngine diagnostics wiring', () => {
-it('admits a diagnostics-only relay collector from its exact-source ready handshake', async () => {
+    it('admits a diagnostics-only relay collector from its exact-source ready handshake', async () => {
         const host = installTestWindow();
         const frame = { postMessage: vi.fn() };
         const availability = vi.fn();
@@ -136,7 +136,7 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
                 frames.push(frame);
                 const identity = { browserSessionId: 'bs', viewId: `pane-${index}`, navigationGeneration: 1,
                     collectorId: `collector-${index}`, nonce: `nonce-${index}` };
-                screens.push(await renderScreen(<WebIframeEngine title="Preview" url="https://preview.example.test/" sandbox="allow-scripts allow-same-origin" testID={`preview-pane-${index}`}
+                screens.push(await renderScreen(<WebIframeEngine localPreview title="Preview" url="https://preview.example.test/" sandbox="allow-scripts allow-same-origin" testID={`preview-pane-${index}`}
                     onNavigationStateChange={observed[index]}
                     diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://preview.example.test', webPostMessageTargetOrigin: 'https://app.example.test', onEvents: vi.fn() }}
                     automation={{ ...identity, capabilityVersion: '1.0.0', sourceOrigin: 'https://preview.example.test', adapterKind: 'localPreview', supportedActions: ['click'], controlService: createBrowserAutomationControlService({ nowMs: Date.now }) }}
@@ -186,7 +186,7 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
         const identity = { browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 6, collectorId: 'collector_1', nonce: 'nonce_1' };
         const service = createBrowserAutomationControlService({ nowMs: Date.now });
         const observed = vi.fn();
-        const element = (url: string, navigationKey?: string) => <WebIframeEngine title="Cooperative" url={url} navigationKey={navigationKey} sandbox="allow-scripts allow-same-origin" testID="cooperative"
+        const element = (url: string, navigationKey?: string) => <WebIframeEngine localPreview title="Cooperative" url={url} navigationKey={navigationKey} sandbox="allow-scripts allow-same-origin" testID="cooperative"
             onNavigationStateChange={observed}
             diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://preview.example.test', webPostMessageTargetOrigin: 'https://app.example.test', onEvents: vi.fn() }}
             automation={{ ...identity, capabilityVersion: '1.0.0', sourceOrigin: 'https://preview.example.test', adapterKind: 'localPreview', supportedActions: ['click', 'press'], controlService: service }}
@@ -262,13 +262,18 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
         const host = installTestWindow();
         const navigation = Object.assign(new EventTarget(), { canGoBack: false, canGoForward: false });
         const history: string[] = [];
-        const posted: string[] = [];
         const frame = Object.assign(new EventTarget(), {
             location: { origin: 'https://preview.example.test', href: 'https://preview.example.test/' },
             navigation, parent: host, stop: () => history.push('stop'),
             // The parent cannot reach a cross-origin frame's history; only its own document can.
             history: { back: () => history.push('back'), forward: () => history.push('forward') },
-            postMessage: (data: string) => { posted.push(data); queueMicrotask(() => dispatchMessage(frame, { data, origin: 'https://app.example.test', source: host })); },
+            postMessage: (data: string) => { queueMicrotask(() => dispatchMessage(frame, { data, origin: 'https://app.example.test', source: host })); },
+        });
+        const messageListeners = new Set<EventListenerOrEventListenerObject>();
+        const addFrameListener = frame.addEventListener.bind(frame);
+        vi.spyOn(frame, 'addEventListener').mockImplementation((kind, listener, options) => {
+            if (kind === 'message' && listener) messageListeners.add(listener);
+            addFrameListener(kind, listener, options);
         });
         host.postMessage = (data: string) => queueMicrotask(() => dispatchMessage(host, { data, origin: 'https://preview.example.test', source: frame as unknown as WindowProxy }));
         Object.defineProperty(frame, 'document', { get: () => { throw new DOMException('Cross origin', 'SecurityError'); } });
@@ -277,7 +282,7 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
         const service = createBrowserAutomationControlService({ nowMs: Date.now });
         const element = (generation: number, extra: Readonly<{ navigationKey?: string; navigationCommand?: { commandId: string; kind: 'goBack' | 'goForward' | 'reload' | 'stop' } }> = {}) => {
             const identity = identityFor(generation);
-            return <WebIframeEngine title="Relay" url="https://preview.example.test/?signed=a%20b" sandbox="allow-scripts allow-same-origin" testID="relay"
+            return <WebIframeEngine localPreview title="Relay" url="https://preview.example.test/?signed=a%20b" sandbox="allow-scripts allow-same-origin" testID="relay"
                 onNavigationStateChange={onNavigationStateChange}
                 diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://preview.example.test', webPostMessageTargetOrigin: 'https://app.example.test', onEvents: vi.fn() }}
                 automation={{ ...identity, capabilityVersion: '1.0.0', sourceOrigin: 'https://preview.example.test', adapterKind: 'localPreview', supportedActions: ['click'], controlService: service }}
@@ -287,6 +292,9 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
         const sourceUrl = new URL(screen.findByType('iframe').props.src);
         // The document the pane loaded with its own identity installs the collector's reporter.
         const install = (href: string) => {
+            // A real new document clears its old Window listeners while retaining WindowProxy identity.
+            for (const listener of messageListeners) frame.removeEventListener('message', listener);
+            messageListeners.clear();
             frame.location.href = href;
             new Function('window', 'document', buildCooperativeNavigationRuntimeScript(JSON.stringify({ ...JSON.parse(sourceUrl.searchParams.get('__happierCollector')!), cooperativePreview: true })))(frame, { readyState: 'complete' });
         };
@@ -321,7 +329,7 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
             await act(async () => undefined);
             expect(history.at(-1)).toBe(expected);
         }
-        expect(posted).toHaveLength(3);
+        expect(history).toEqual(['back', 'forward', 'stop']);
 
         // Reload keeps the page the preview is on and arrives under the new identity, never at the opening page.
         await screen.update(element(7, { navigationKey: 'reload_1' }));
@@ -340,16 +348,19 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
     it.each(['collector_blocked_by_csp', 'runtime_unavailable'] as const)('reports cooperative refusal %s through the authorized metadata-only probe, without admitting an owner', async (state) => {
         installTestWindow();
         const rejection = vi.fn();
+        const diagnosticsAvailability = vi.fn();
         const fetchBoundary = vi.fn(async (url: string) => ({ ok: true, url, json: async () => ({ state }) }));
         vi.stubGlobal('fetch', fetchBoundary);
         const identity = { browserSessionId: 'bs', viewId: 'v', navigationGeneration: 1, collectorId: 'c', nonce: 'n' };
         const service = createBrowserAutomationControlService({ nowMs: Date.now });
-        const screen = await renderScreen(<WebIframeEngine title="Blocked" url="https://preview.example.test/" sandbox="allow-scripts allow-same-origin" testID="blocked"
-            diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://preview.example.test', webPostMessageTargetOrigin: 'https://app.example.test', onEvents: vi.fn() }}
+        const screen = await renderScreen(<WebIframeEngine localPreview title="Blocked" url="https://preview.example.test/" sandbox="allow-scripts allow-same-origin" testID="blocked"
+            diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://preview.example.test', webPostMessageTargetOrigin: 'https://app.example.test', onEvents: vi.fn(), onAvailability: diagnosticsAvailability }}
             automation={{ ...identity, capabilityVersion: '1.0.0', sourceOrigin: 'https://preview.example.test', adapterKind: 'localPreview', supportedActions: ['click'], controlService: service, onRegistrationRejected: rejection }}
-        />, { createNodeMock: (element) => element.type === 'iframe' ? { contentWindow: {} } : null });
+        />, { createNodeMock: (element) => element.type === 'iframe' ? { contentWindow: { postMessage: vi.fn() } } : null });
         await act(async () => screen.findByType('iframe').props.onLoad());
         expect(rejection).toHaveBeenCalledWith(state);
+        expect(diagnosticsAvailability).toHaveBeenLastCalledWith({ status: 'unavailable',
+            reasonCode: state === 'runtime_unavailable' ? 'collector_unavailable' : 'collector_blocked_by_csp' });
         expect(screen.findAllByType('iframe')).toHaveLength(1);
         expect(screen.findHostByTestId('blocked-unavailable')).toBeNull();
         const probe = new URL(fetchBoundary.mock.calls[0]![0]);
@@ -364,10 +375,11 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
         const page = new EventTarget();
         const clicked = vi.fn();
         const diagnosticEvents = vi.fn();
+        const diagnosticsAvailability = vi.fn();
         const button = Object.assign(new EventTarget(), { getAttribute: () => null, innerText: 'Click' });
         button.addEventListener('click', clicked);
         const scriptNodes: Array<{ textContent: string; remove: () => void }> = [];
-        const documentBoundary = {
+        const documentBoundary = Object.assign(new EventTarget(), {
             title: 'Accessible preview',
             readyState: 'complete',
             documentElement: { nodeType: 1 },
@@ -383,7 +395,7 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
                     );
                 },
             },
-        };
+        });
         const frame = Object.assign(page, {
             document: documentBoundary,
             location: { href: 'https://app.example.test/preview', origin: 'https://app.example.test' },
@@ -401,12 +413,13 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
         const screen = await renderScreen(<WebIframeEngine
             title="Accessible preview" url="https://app.example.test/preview"
             sandbox="allow-scripts allow-same-origin" testID="accessible-frame"
-            diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://app.example.test', webPostMessageTargetOrigin: 'https://app.example.test', onEvents: diagnosticEvents }}
+            diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://app.example.test', webPostMessageTargetOrigin: 'https://app.example.test', onEvents: diagnosticEvents, onAvailability: diagnosticsAvailability }}
             automation={{ ...identity, capabilityVersion: '1.0.0', sourceOrigin: 'https://app.example.test', adapterKind: 'localPreview', supportedActions: ['click'], controlService: service }}
         />, { createNodeMock: (element) => element.type === 'iframe' ? { contentWindow: frame } : null });
         expect(scriptNodes).toHaveLength(0);
         await act(async () => screen.findByType('iframe').props.onLoad());
         expect(scriptNodes).toHaveLength(1);
+        expect(diagnosticsAvailability).toHaveBeenLastCalledWith({ status: 'available' });
         expect(diagnosticEvents).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({
             browserSessionId: identity.browserSessionId, viewId: identity.viewId,
             navigationGeneration: identity.navigationGeneration,
@@ -425,7 +438,7 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
         const result = await service.executeAction({ v: 1, ...identity, automationRequestId: 'click_1', actionKind: 'click', requestedBy: 'agent', requesterRef: { kind: 'session', id: 'session_1' }, timeoutMs: 1_000, payload: { locator: { kind: 'css', value: '#button' } } });
         expect(result.status).toBe('succeeded');
         expect(clicked).toHaveBeenCalledOnce();
-        Object.defineProperty(frame, 'document', { value: { ...documentBoundary } });
+        Object.defineProperty(frame, 'document', { value: Object.assign(new EventTarget(), documentBoundary) });
         const staleDocumentResult = await service.executeAction({ v: 1, ...identity, automationRequestId: 'click_stale', actionKind: 'click', requestedBy: 'agent', requesterRef: { kind: 'session', id: 'session_1' }, timeoutMs: 1_000, payload: { locator: { kind: 'css', value: '#button' } } });
         expect(staleDocumentResult.errorCode).toBe('cross_origin_frame_unavailable');
         expect(clicked).toHaveBeenCalledOnce();
@@ -437,18 +450,21 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
     it.each(['opaque sandbox', 'cross-origin document', 'blocked script'] as const)('refuses automation promptly for an unreachable collector: %s', async (failure) => {
         installTestWindow();
         const rejection = vi.fn();
-        const frame = { postMessage: vi.fn(), location: { origin: 'https://app.example.test' }, document: {
+        const diagnosticsAvailability = vi.fn();
+        const frame = { postMessage: vi.fn(), location: { origin: 'https://app.example.test' }, document: Object.assign(new EventTarget(), {
             createElement: () => ({ textContent: '', remove: vi.fn() }), head: { appendChild() {} },
-        } };
+        }) };
         if (failure === 'cross-origin document') Object.defineProperty(frame, 'document', { get: () => { throw new DOMException('Blocked', 'SecurityError'); } });
         const service = createBrowserAutomationControlService({ nowMs: Date.now });
         const identity = { browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 6, collectorId: 'collector_1', nonce: 'nonce_1' };
         const screen = await renderScreen(<WebIframeEngine title="Unreachable" url="https://app.example.test/preview" sandbox={failure === 'opaque sandbox' ? 'allow-scripts' : 'allow-scripts allow-same-origin'} testID="unreachable-frame"
-            diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://app.example.test', webPostMessageTargetOrigin: 'https://app.example.test', onEvents: vi.fn() }}
+            diagnostics={{ ...identity, collectorVersion: '1.0.0', sourceOrigin: 'https://app.example.test', webPostMessageTargetOrigin: 'https://app.example.test', onEvents: vi.fn(), onAvailability: diagnosticsAvailability }}
             automation={{ ...identity, capabilityVersion: '1.0.0', sourceOrigin: 'https://app.example.test', adapterKind: 'localPreview', supportedActions: ['click'], controlService: service, onRegistrationRejected: rejection }}
         />, { createNodeMock: (element) => element.type === 'iframe' ? { contentWindow: frame } : null });
         await act(async () => screen.findByType('iframe').props.onLoad());
         expect(rejection).toHaveBeenCalledWith(failure === 'blocked script' ? 'runtime_unavailable' : 'cross_origin_frame_unavailable');
+        expect(diagnosticsAvailability).toHaveBeenLastCalledWith({ status: 'unavailable',
+            reasonCode: failure === 'blocked script' ? 'collector_unavailable' : 'cross_origin_frame_unavailable' });
         const result = await service.executeAction({ v: 1, ...identity, automationRequestId: 'unreachable_1', actionKind: 'click', requestedBy: 'agent', requesterRef: { kind: 'session', id: 'session_1' }, timeoutMs: 1_000 });
         expect(result.status).not.toBe('timed_out');
         expect(frame.postMessage).not.toHaveBeenCalled();
@@ -457,6 +473,8 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
     it.each(['unmount', 'navigation', 'source replacement'] as const)('does not deliver a pending bridge response after %s retirement', async (retirement) => {
         const testWindow = installTestWindow();
         const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
+        // The real allow-scripts sandbox has an opaque origin and denies document access.
+        Object.defineProperty(iframeSource, 'document', { get() { throw new DOMException('Opaque sandbox', 'SecurityError'); } });
         let finish!: (response: unknown) => void;
         const pending = new Promise((resolve) => { finish = resolve; });
         const webMessageBridge = {
@@ -614,7 +632,7 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
                         navigationGeneration: 6,
                         tier: 'injectedPage',
                         expression: 'document.title',
-                        timeoutMs: 2_000,
+
                         objectGroupId: 'group_1',
                         diagnosticsInteractionEnabled: true,
                     },
@@ -1141,7 +1159,7 @@ it('admits a diagnostics-only relay collector from its exact-source ready handsh
                         navigationGeneration: 6,
                         tier: 'injectedPage',
                         expression: '({ ok: true })',
-                        timeoutMs: 2_000,
+
                         objectGroupId: 'group_1',
                         diagnosticsInteractionEnabled: true,
                     },

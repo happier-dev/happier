@@ -24,11 +24,9 @@ export type BrowserKeyboardShortcutLabels = Partial<Record<BrowserKeyboardComman
  * owner (`@/keyboard`) so they appear in Settings, respect user rebinding, and take part in the
  * same conflict/priority model as every other command. No second key listener is created here.
  *
- * **Guest↔host policy.** These are HOST shortcuts. The page under the browser frame renders in a
- * sandboxed iframe or a native child webview, so its key events are delivered to that frame's own
- * document (or the native view) and never reach the host listener — a focused guest simply does not
- * see these bindings fire, and they cannot steal a key from it. Symmetrically, `when:
- * !isEditableTarget` on each command keeps them out of the address bar and every other host field.
+ * Embedded engines receive these active command signatures through the keyboard owner. A
+ * matching guest chord returns to the same dispatcher, including from a guest field; unrelated
+ * keys remain with the guest. There is no independent guest shortcut registry.
  *
  * A shortcut is registered ONLY while the active engine can actually fulfil it (the same
  * capability truth the toolbar buttons use). An engine with no history producer never claims

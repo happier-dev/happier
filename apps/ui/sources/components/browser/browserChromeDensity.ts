@@ -1,8 +1,7 @@
 import * as React from 'react';
-import { Platform, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { isTouchPrimaryPointer, resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { resolveViewportClass } from '@/utils/platform/viewportClass';
 
 /**
@@ -58,11 +57,6 @@ export type BrowserChromeControlMetrics = Readonly<{
     /** The drawn size of a chrome icon control. */
     size: number;
     iconSize: number;
-    /**
-     * The press target a control grows to (`IconButton minimumInteractiveTargetSize`): the platform's
-     * finger floor under touch, none under a precise pointer (the shared target-size owner decides).
-     */
-    touchTargetFloorPx: number | null;
     /** The address field's geometry (`BrowserUrlField` density). */
     addressDensity: 'toolbar' | 'toolbarPrecise' | 'capsule';
     /** The chrome row's vertical padding around its 28/34 px controls. */
@@ -73,29 +67,31 @@ export type BrowserChromeControlMetrics = Readonly<{
  * The browser chrome's one metric owner, reconciling the lab's desktop-dense scale with touch.
  *
  * - Precise pointer (desktop web, Tauri), any non-phone density: the lab `browser` Q scale — 28 px
- *   controls with 16 px glyphs beside a 30 px address field, in a 44 px row, and no touch floor (a
- *   hover tint the size of a finger target reads as a mobile control on a desktop).
- * - Touch pointer, `pane`/`wide` (a tablet): 34 px controls, the 34 px field, the platform touch floor.
- * - `phone`: the bottom bar is a thumb surface — 44 px controls, the standard header glyph.
+ *   controls with 16 px glyphs beside a 30 px address field, in a 44 px row.
+ * - Touch pointer, `pane`/`wide` (a tablet): 34 px controls beside the 34 px field.
+ * - `phone`: the bottom bar keeps those 34 px controls with the standard header glyph.
  *
- * `touch` defaults to the shared pointer owner (`isTouchPrimaryPointer`), the same decision the
- * configuration-page rows use for their desktop vs touch metrics.
+ * No density draws a control larger to reach the platform touch target: a finger reaches it through
+ * the shared hit area (DESIGN.md → touch targets are hit areas, not drawn sizes).
+ *
+ * Callers pass the shared pointer hook's fact, as configuration-page rows do for their metrics.
  */
 export function resolveBrowserChromeControlMetrics(
     density: BrowserChromeDensity,
-    options?: Readonly<{ touch?: boolean }>,
+    options: Readonly<{ touch: boolean }>,
 ): BrowserChromeControlMetrics {
-    const touch = options?.touch ?? isTouchPrimaryPointer();
-    const floor = touch ? resolveMinimumInteractiveTargetSize(Platform.OS) : null;
-    if (density === 'phone') return { size: 44, iconSize: ICON_SIZE.md, touchTargetFloorPx: floor, addressDensity: 'capsule', rowPaddingVerticalPx: 6 };
+    const touch = options.touch;
+    if (density === 'phone') return { size: TOUCH_CHROME_CONTROL_PX, iconSize: ICON_SIZE.md, addressDensity: 'capsule', rowPaddingVerticalPx: 6 };
     if (!touch) return PRECISE_CHROME_METRICS;
-    return { size: 34, iconSize: ICON_SIZE.sm, touchTargetFloorPx: floor, addressDensity: 'toolbar', rowPaddingVerticalPx: 6 };
+    return { size: TOUCH_CHROME_CONTROL_PX, iconSize: ICON_SIZE.sm, addressDensity: 'toolbar', rowPaddingVerticalPx: 6 };
 }
+
+/** The touch chrome's control: the 34 px chrome row's own step, the same on a tablet and a phone. */
+const TOUCH_CHROME_CONTROL_PX = 34;
 
 const PRECISE_CHROME_METRICS: BrowserChromeControlMetrics = Object.freeze({
     size: 28,
     iconSize: ICON_SIZE.sm,
-    touchTargetFloorPx: null,
     addressDensity: 'toolbarPrecise',
     rowPaddingVerticalPx: 7,
 });

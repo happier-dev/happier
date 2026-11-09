@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationAddressKey } from '@/sync/domains/actionOperations/qualifiedActionOperation';

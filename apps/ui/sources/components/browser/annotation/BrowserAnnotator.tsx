@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { ActivityIndicator, Image, Platform, ScrollView, View, type LayoutChangeEvent } from 'react-native';
+import { Image, Platform, ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import Animated, { FadeIn, ReduceMotion } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import { isEmptyEdit, type ImageMarksDocumentV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 
@@ -173,7 +175,7 @@ export function BrowserAnnotatorPendingGlyph() {
     const { theme } = useUnistyles();
     return (
         <Animated.View entering={FadeIn.delay(motionTokens.durationMs.fast).duration(motionTokens.durationMs.fast).reduceMotion(ReduceMotion.Never)}>
-            <ActivityIndicator size="small" color={theme.colors.text.secondary} />
+            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
         </Animated.View>
     );
 }

@@ -1,11 +1,13 @@
 import type {
-    BrowserDiagnosticFidelityV1,
-    BrowserRecordingCapabilities,
+    BrowserDiagnosticFidelityV1} from '@happier-dev/protocol/browser/diagnostics/v1';
+import type {
+    BrowserRecordingCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import type {
     BrowserRecordingCaptureKindV1,
     BrowserRecordingPolicyStateV1,
     BrowserRecordingRetentionClassV1,
     BrowserRecordingSessionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/recording/v1';
 import { resolveBrowserRecordingCaptureProfile } from '@happier-dev/protocol/browser/recording/captureProfiles';
 
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';

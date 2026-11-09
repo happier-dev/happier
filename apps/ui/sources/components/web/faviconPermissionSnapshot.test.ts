@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
+import { storage } from '@/sync/domains/state/storageStore';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { Message } from "@happier-dev/session-core/messages";
 import { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '@/sync/domains/session/attention/runtimePresentation';
@@ -70,12 +70,17 @@ function createTrackedMessagesById(message: Message, onRead: () => void): Record
 }
 
 function createState(overrides: Partial<StorageState>): StorageState {
-    return createStorageStoreMock({
+    storage.setState({
+        ...initialStorageState,
         sessions: {},
         sessionMessages: {},
         ...overrides,
-    }).getState();
+    }, true);
+    return storage.getState();
 }
+
+const initialStorageState = storage.getState();
+afterEach(() => { storage.setState(initialStorageState, true); });
 
 function createSessionMessages(overrides: Partial<SessionMessages> = {}): SessionMessages {
     return {
@@ -159,6 +164,34 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         expect(snapshot.nextRefreshDelayMs).toBeNull();
     });
 
+    it('retires the runtime freshness deadline without expiring an unresolved pre-viewer request', () => {
+        vi.setSystemTime(new Date(1_000));
+        const selector = createFaviconPermissionSnapshotSelector();
+        const state = createState({ sessions: { permission: createSession({
+            id: 'permission', active: true, activeAt: 1_000, presence: undefined,
+            agentState: { controlledByUser: null, requests: {
+                request: { tool: 'Bash', kind: 'permission', arguments: {}, createdAt: 1_000 },
+            }, completedRequests: null },
+        }) } });
+        expect(selector(state)).toEqual({
+            hasFreshPermission: true, nextRefreshDelayMs: SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1,
+        });
+        vi.setSystemTime(new Date(1_000 + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1));
+        expect(selector(state)).toEqual({ hasFreshPermission: true, nextRefreshDelayMs: null });
+    });
+
+    it('keeps the published snapshot when a Session signature moves but the permission answer does not', () => {
+        vi.setSystemTime(new Date(1_000));
+        const selector = createFaviconPermissionSnapshotSelector();
+        const first = selector(createState({
+            sessions: { session1: createSession({ id: 'session1', activeAt: 1 }) },
+        }));
+        const second = selector(createState({
+            sessions: { session1: createSession({ id: 'session1', activeAt: 2 }) },
+        }));
+        expect(second).toBe(first);
+    });
+
     it('reuses the previous snapshot for unrelated session updates', () => {
         vi.setSystemTime(new Date(1_000));
         const selector = createFaviconPermissionSnapshotSelector();
@@ -203,9 +236,10 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         const sessionMessages = countAccess<StorageState['sessionMessages']>({});
 
         const first = selector(createState({ sessions, sessionMessages }));
+        const nextState = createState({ sessions, sessionMessages, isDataReady: true });
         recordAccesses = 0;
 
-        const second = selector(createState({ sessions, sessionMessages, isDataReady: true }));
+        const second = selector(nextState);
 
         expect(second).toBe(first);
         expect(recordAccesses).toBe(0);

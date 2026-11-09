@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { BrowserPlatformV1 } from '@happier-dev/protocol';
+import type { BrowserPlatformV1 } from '@happier-dev/protocol/browser/view/v1';
 
 import {
     resolvePluginUiClientActionRegistration,

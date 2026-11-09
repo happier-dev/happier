@@ -65,7 +65,10 @@ export function BrowserPrivacyPopover(props: Readonly<{
                 >
                     {({ maxHeight }) => (
                         <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme" scrollEnabled={!props.model.management}>
-                            <View testID={`${props.testID}-panel`} style={[stylesheet.body, { maxHeight }]}>
+                            <View testID={`${props.testID}-panel`} style={[stylesheet.body, {
+                                maxHeight,
+                                height: props.model.management ? maxHeight : undefined,
+                            }]}>
                                 <BrowserProfileStatus
                                     testID={`${props.testID}-status`}
                                     model={props.model}

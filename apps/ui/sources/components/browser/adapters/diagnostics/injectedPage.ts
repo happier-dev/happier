@@ -1,3 +1,4 @@
+import { redactBrowserDiagnosticDataForDestination } from '@happier-dev/protocol/browser/diagnostics/egress/classifier';
 import { SAFE_TELEMETRY_HEADER_NAMES, redactDiagnosticsHeaders } from '@happier-dev/protocol/browser/diagnostics/egress/headers';
 import { BrowserDiagnosticEventBatchV1Schema, BrowserDiagnosticsElementPickerCommandMessageV1Schema, BrowserDiagnosticsElementPickerResultMessageV1Schema, BrowserDiagnosticsEvalCommandMessageV1Schema, BrowserDiagnosticsEvalResultMessageV1Schema, BrowserDiagnosticsGetPropertiesCommandMessageV1Schema, BrowserDiagnosticsGetPropertiesResultMessageV1Schema, BrowserDiagnosticsReleaseObjectGroupCommandMessageV1Schema, BrowserDiagnosticsReleaseObjectGroupResultMessageV1Schema, type BrowserDiagnosticEventV1, type BrowserDiagnosticsElementPickerCommandMessageV1, type BrowserDiagnosticsElementPickerRequestV1, type BrowserDiagnosticsElementPickerResultV1, type BrowserDiagnosticsEvalCommandMessageV1, type BrowserDiagnosticsEvalRequestV1, type BrowserDiagnosticsEvalResultV1, type BrowserDiagnosticsGetPropertiesCommandMessageV1, type BrowserDiagnosticsGetPropertiesRequestV1, type BrowserDiagnosticsGetPropertiesResultV1, type BrowserDiagnosticsReleaseObjectGroupCommandMessageV1, type BrowserDiagnosticsReleaseObjectGroupRequestV1, type BrowserDiagnosticsReleaseObjectGroupResultV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { stripUrlValuesInString } from '@happier-dev/protocol/browser/diagnostics/egress/url';
@@ -185,7 +186,7 @@ function sanitizeOwnerHeaderBag(value: unknown): Record<string, string> | undefi
 
 function sanitizeOwnerStorageEntries(value: unknown): readonly Record<string, unknown>[] | undefined {
     if (!Array.isArray(value)) return undefined;
-    const entries = value.slice(0, 200).flatMap((entry) => {
+    const entries = value.flatMap((entry) => {
         if (!isRecord(entry)) return [];
         const key = typeof entry.key === 'string' ? entry.key.slice(0, 256) : '';
         const valueText = ownerValueText(entry.value);
@@ -346,7 +347,7 @@ function sanitizeInjectedDiagnosticDataForEvent(
             ...(data.storageType === 'localStorage' || data.storageType === 'sessionStorage' ? { storageType: data.storageType } : {}),
             ...(Number.isInteger(data.keyCount) ? { keyCount: data.keyCount } : {}),
             keysTruncated: data.keysTruncated === true,
-            ...(Array.isArray(data.keys) ? { keys: data.keys.filter((key): key is string => typeof key === 'string').slice(0, 200) } : {}),
+            ...(Array.isArray(data.keys) ? { keys: data.keys.filter((key): key is string => typeof key === 'string') } : {}),
             ...(entries ? { entries } : {}),
         };
     }
@@ -424,51 +425,6 @@ function sanitizeRawInjectedDiagnosticBatch(
         events: Array.isArray(value.events)
             ? value.events.map((event) => sanitizeRawInjectedDiagnosticEvent(event, options))
             : value.events,
-    };
-}
-
-function sanitizeDiagnosticEvent(
-    event: BrowserDiagnosticEventV1,
-    options?: InjectedDiagnosticsSanitizeOptions,
-): BrowserDiagnosticEventV1 {
-    const data = sanitizeDiagnosticData(event.data);
-    if (
-        isRecord(data)
-        && event.fidelity === 'injectedPage'
-        && (event.family === 'console' || event.family === 'pageError')
-    ) {
-        const sanitized = sanitizeInjectedDiagnosticDataForEvent(event, data, options);
-        const ownerConsoleText = event.family === 'console' && typeof sanitized.text === 'string';
-        return {
-            ...event,
-            data: sanitized,
-            redaction: {
-                ...event.redaction,
-                level: ownerConsoleText ? 'none' : 'valuesRedacted',
-            },
-        };
-    }
-    if (
-        isRecord(data)
-        && event.fidelity === 'injectedPage'
-        && event.family === 'network'
-        && event.kind === 'network.failed'
-    ) {
-        return {
-            ...event,
-            data: {
-                requestAvailable: data.requestAvailable === true || (typeof data.requestId === 'string' && data.requestId.length > 0),
-                errorAvailable: data.errorAvailable === true || (typeof data.errorCode === 'string' && data.errorCode.length > 0),
-            },
-            redaction: {
-                ...event.redaction,
-                level: 'valuesRedacted',
-            },
-        };
-    }
-    return {
-        ...event,
-        data: isRecord(data) ? data : {},
     };
 }
 
@@ -595,10 +551,11 @@ export function parseInjectedBrowserDiagnosticsMessage(
 
     return {
         ok: true,
-        events: parsedBatch.data.events.map((event, index) => sanitizeDiagnosticEvent({
+        events: parsedBatch.data.events.map((event, index) => ({
             ...event,
             eventId: sanitizedInjectedEventId(event, index),
-        }, options)),
+            data: redactBrowserDiagnosticDataForDestination(event, 'localOwner'),
+        })),
     };
 }
 

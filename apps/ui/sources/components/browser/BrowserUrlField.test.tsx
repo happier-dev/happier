@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, installBrowserClipboardBoundary, renderScreen } from '@/dev/testkit';
 
 import { BrowserUrlField } from './BrowserUrlField';
+
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -15,11 +17,12 @@ const clipboardSpies = vi.hoisted(() => ({
     setClipboardStringSafe: vi.fn(async (_value: string) => true),
 }));
 
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: clipboardSpies.setClipboardStringSafe,
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: clipboardSpies.setClipboardStringSafe,
 }));
 
 const TEST_ID = 'browser-address';
+beforeEach(() => installBrowserClipboardBoundary(async text => { await clipboardSpies.setClipboardStringSafe(text); }));
 
 describe('BrowserUrlField — toolbar address density', () => {
     it('keeps Copy out of sight until the address is hovered or focused (lab browser Q)', async () => {

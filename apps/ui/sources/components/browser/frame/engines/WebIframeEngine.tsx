@@ -1,3 +1,4 @@
+import { fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import * as React from 'react';
 import { useEmbeddedBrowserKeyboard, normalizeKeyboardEvent, readKeyboardContextFromEventTarget } from '@/keyboard';
 import { parseBrowserGuestKeyboardEvent } from '@/sync/domains/browser/adapters/guestKeyboard';
@@ -34,7 +35,7 @@ import {
     type CooperativeNavigationCommand,
 } from '@happier-dev/peer-mediation/browser/collector/cooperative';
 import { withoutPreviewAdmission } from '@/sync/domains/local/services/preview/url';
-import { resolveBrowserPreviewRefusal, type BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/adapters/targets/localPreview';
+import { resolveBrowserPreviewRefusal, type BrowserPreviewRefusal, type BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/adapters/targets/localPreview';
 
 const iframeStyle: React.CSSProperties = {
     border: 0,
@@ -42,6 +43,12 @@ const iframeStyle: React.CSSProperties = {
     height: '100%',
     width: '100%',
 };
+/**
+ * A hosted document declares `color-scheme: light dark` (`buildArtifactHtmlDocumentV1`), so its scheme is the
+ * viewer's. Its frame (and the navigation shell between) declares the same, so the two always agree and the
+ * browser keeps the page transparent over its card instead of painting an opaque canvas behind it.
+ */
+const hostedDocumentIframeStyle: React.CSSProperties = { ...iframeStyle, colorScheme: 'light dark' };
 
 function normalizePostMessageOrigin(origin: string | undefined): string | null {
     if (!origin) {
@@ -117,7 +124,7 @@ type WebIframeEngineProps = Readonly<{
 // opaque guest's srcdoc, never executed in the shell. Its frame-src policy
 // prevents the opaque guest's own navigation before a request can leave; a
 // policy inside the guest or an iframe csp attribute cannot do that.
-const navigationShellDocument = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_HTML_SHELL_CSP_V1.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"><style>html,body,body>div{height:100%;margin:0;overflow:hidden}</style></head><body></body></html>`;
+const navigationShellDocument = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_HTML_SHELL_CSP_V1.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"><meta name="color-scheme" content="light dark"><style>html,body,body>div{height:100%;margin:0;overflow:hidden}</style></head><body></body></html>`;
 
 export function WebIframeEngine(props: WebIframeEngineProps): React.ReactElement {
     return props.html !== undefined && props.revokeOnUnexpectedNavigation
@@ -129,7 +136,7 @@ function NavigationContainedIframe(props: WebIframeEngineProps): React.ReactElem
     const [shellDocument, setShellDocument] = React.useState<Document | null>(null);
     return <View testID={`${props.testID}-shell-container`} style={browserFrameStyles.root}>
         <iframe title={props.title} data-testid={`${props.testID}-navigation-shell`}
-            srcDoc={navigationShellDocument} referrerPolicy="no-referrer" style={iframeStyle}
+            srcDoc={navigationShellDocument} referrerPolicy="no-referrer" style={hostedDocumentIframeStyle}
             onError={props.onError}
             onLoad={event => setShellDocument(event.currentTarget.contentDocument)} />
         {shellDocument?.body ? createPortal(<WebIframeGuest {...props} />, shellDocument.body) : null}
@@ -150,7 +157,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
     const hasLoadedCurrentNavigationRef = React.useRef(false);
     const [loadedDocumentRevision, setLoadedDocumentRevision] = React.useState(0);
     const [cooperativeReadyUrl, setCooperativeReadyUrl] = React.useState<string | null>(null);
-    const [previewRefusal, setPreviewRefusal] = React.useState<BrowserPreviewRefusalReasonCode | null>(null);
+    const [previewRefusal, setPreviewRefusal] = React.useState<BrowserPreviewRefusal | null>(null);
     const onPreviewRefusedRef = React.useRef(props.onPreviewRefused);
     onPreviewRefusedRef.current = props.onPreviewRefused;
     const cooperativeDocumentRetiredRef = React.useRef(false);
@@ -349,13 +356,13 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
                 diagnosticsRef.current?.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
             }
         };
-        void fetch(url.href, { credentials: 'include', signal: controller.signal }).then(async (response) => {
+        void fetchWithCredentialRedirectRefusal(url.href, { credentials: 'include', signal: controller.signal }).then(async (response) => {
             if (new URL(response.url).origin !== url.origin) { rejectUnavailable(); return; }
             const result: unknown = await response.json();
             const refusal = resolveBrowserPreviewRefusal(response.status, result);
             if (!controller.signal.aborted && refusal) {
                 setPreviewRefusal(refusal);
-                onPreviewRefusedRef.current?.(refusal);
+                onPreviewRefusedRef.current?.(refusal.reasonCode);
                 rejectUnavailable();
                 return;
             }
@@ -631,7 +638,6 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         const sourceOrigin = normalizePostMessageOrigin(diagnostics.sourceOrigin);
         if (!sourceOrigin) {
             diagnostics.onRejectedMessage?.('unsupported_web_post_message');
-            diagnostics.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
             return;
         }
 
@@ -658,7 +664,6 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
         const sourceOrigin = normalizePostMessageOrigin(diagnostics.sourceOrigin);
         if (!sourceOrigin) {
             diagnostics.onRejectedMessage?.('unsupported_web_post_message');
-            diagnostics.onAvailability?.({ status: 'unavailable', reasonCode: 'collector_unavailable' });
             return;
         }
 
@@ -867,8 +872,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
     }, [props.onLoad, props.onUnexpectedNavigation, props.revokeOnUnexpectedNavigation, cooperativeNavigation]);
 
     if (previewRefusal) {
-        return <BrowserFrameUnavailable testID={props.testID} reasonCode={previewRefusal}
-            recovery={props.recovery} />;
+        return <BrowserFrameUnavailable testID={props.testID} reasonCode={previewRefusal.reasonCode} port={previewRefusal.port} recovery={props.recovery} />;
     }
 
     return (
@@ -884,7 +888,7 @@ function WebIframeGuest(props: WebIframeEngineProps): React.ReactElement {
                 ...(props.csp ? { csp: props.csp } : {}),
                 sandbox: props.sandbox,
                 ...(props.html === undefined ? { src: cooperativeNavigation?.url ?? navigationUrl } : { srcDoc: props.html }),
-                style: iframeStyle,
+                style: props.html === undefined ? iframeStyle : hostedDocumentIframeStyle,
                 title: props.title,
             })}
         </View>

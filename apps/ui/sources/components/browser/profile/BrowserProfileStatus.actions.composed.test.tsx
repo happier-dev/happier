@@ -50,9 +50,12 @@ it('creates, selects and deletes saved profiles from the mounted controls throug
         } });
     }
     network.setHttpResponder(async (input, init) => new URL(String(input)).pathname.startsWith('/v1/machines/') ? null : homes.request(input, init));
-    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: {
+    const features = FeaturesResponseSchema.parse({ features: {
         browser: { enabled: true, internal: { enabled: true }, viewTargets: { enabled: true } },
-    } }) } });
+    } });
+    homes.answer(serverId, '/v1/features', { body: features });
+    homes.answer(serverId, '/v1/features/authenticated', { body: features });
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
     const disposeLoader = await installRealActionExecutorModuleLoader();
     // Modal presentation is the human-input boundary; the mounted Action execution stays real.
     vi.spyOn(Modal, 'prompt').mockResolvedValue('Work');

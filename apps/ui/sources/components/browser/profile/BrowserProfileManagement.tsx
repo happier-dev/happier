@@ -28,9 +28,9 @@ export type BrowserProfileManagementModel = Readonly<{
 }>;
 
 const stylesheet = StyleSheet.create(theme => ({
-    root: { width: '100%', gap: theme.space.s6, flexShrink: 1, minHeight: 0 },
+    root: { width: '100%', gap: theme.space.s6, flex: 1, minHeight: 0 },
     row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s6 },
-    list: { width: '100%', flexGrow: 0, flexShrink: 1, minHeight: 0 },
+    list: { width: '100%', flex: 1, minHeight: 0 },
 }));
 const profileKey = (profile: BrowserProfileV1) => profile.profileId;
 

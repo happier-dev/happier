@@ -2763,14 +2763,24 @@ describe('BrowserSurfaceHost', () => {
         });
     });
 
-    it('opens the running Service preview for a localhost port typed in the toolbar address, not the managed Browser', async () => {
+    it.each(['registered Session', 'unregistered Project'] as const)('opens the running Service preview for a localhost port typed in the toolbar address (%s)', async scope => {
+        const project = scope === 'unregistered Project';
+        browserFeatures = createRootLayoutFeaturesResponse({ features: { browser: {
+            enabled: true, internal: { enabled: true }, viewTargets: { enabled: true },
+        } } });
+        const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        expect((await getServerFeaturesSnapshot({ force: true })).status).toBe('ready');
+        const declaration = { workspaceRefId: 'project-web', selection: { kind: 'manifest', name: 'web' } } as const;
+        const serviceTarget = { kind: 'managed_service', managedServiceId: 'project-web',
+            machineId: 'machine_1', cwd: '/repo/project', declaration } as const;
+        const previewTarget = project ? { ...target, sessionId: undefined, serviceTarget } : target;
         const registeredUrl = 'https://preview.happier.test/typed-port';
         const resource: LocalServicePreviewResourceV1 = {
-            previewId: 'preview_1', sessionId: 'session_1', machineId: 'machine_1',
-            owner: { kind: 'session', id: 'session_1' },
+            previewId: 'preview_1', ...(project ? { serviceTarget } : { sessionId: 'session_1' }), machineId: 'machine_1',
+            owner: project ? { kind: 'user', id: 'account-1' } : { kind: 'session', id: 'session_1' },
             target: { scheme: 'https', host: 'localhost', port: 5173 },
             initialPath: { pathname: '/', search: '' },
-            display: target.display, originMode: 'host', browserTarget: target,
+            display: target.display, originMode: 'host', browserTarget: previewTarget,
         };
         const preview = { previewId: resource.previewId, resource, accessUrl: registeredUrl, expiresAt: null, diagnostics: [] };
         browserPreviewBoundary.response = { protocolVersion: 1, status: 'existing', preview,
@@ -2781,23 +2791,46 @@ describe('BrowserSurfaceHost', () => {
             if (new URL(String(input)).pathname === '/v1/actions/browser.view.open') opens.push(input);
             return null;
         };
-        const launchpadRows = [{
+        const localServiceTargets = project ? [{ id: 'managed:project-web', source: 'managed_service',
+            sourceClass: { kind: 'managed_service', managedServiceId: 'project-web' },
+            machineId: 'machine_1', cwd: '/repo/project', declaration, title: 'Project Web',
+            confidence: 'high', state: 'available', serviceState: 'running',
+            endpointUrl: 'http://127.0.0.1:5173/', actions: ['register_preview'],
+        } satisfies import('@happier-dev/protocol/local/services/launcher/v1').LocalServiceLaunchTargetV1] : undefined;
+        const { buildBrowserLaunchpadRows } = await import('@/sync/domains/browser/targets');
+        const launchpadRows = localServiceTargets ? buildBrowserLaunchpadRows({ launcherSnapshot: {
+            v: 1, machineId: 'machine_1', updatedAt: 100, targets: localServiceTargets,
+        } }) : [{
             id: 'localService:preview_1', section: 'running', sourceKind: 'localService', title: 'Preview',
             subtitle: 'localhost:5173', detail: 'vite', target, currentUrl: 'https://preview.happier.test/',
             disabledReason: null, lastSeenAt: 100,
         }] as const;
-        const screen = await renderScreen(
-            <BrowserSurfaceHost browserSessionId="browser_session_default" platform="web"
+        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
+        const { createBrowserLaunchpadDetailsTab } = await import('./browserSurfaceDetailsTabModel');
+        const workspaceScope = { kind: 'project', workspaceRefId: 'project-web', serverId: BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId,
+            machineId: 'machine_1', rootPath: '/repo/project', activeRootPath: '/repo/project' } as const;
+        const renderer = createBrowserViewDetailsSurfaceRenderer({ machineId: workspaceScope.machineId,
+            serverId: workspaceScope.serverId, pluginAccountLifetime: captureActiveServerAccountScopeLifetime(), platform: 'web',
+            launchpadRows, localServiceTargets, localServicePreviewState: createLocalServicePreviewState(),
+            browserFeatureDecision: enabledBrowserDecision });
+        const screen = await renderScreen(project ? <>{renderer.render({
+            tab: { ...createBrowserLaunchpadDetailsTab(), isPinned: true, isPreview: false },
+            scope: workspaceScope, region: 'details', active: true, callbacks: {},
+            descriptor: { surfaceId: 'project-web:browser', resourceKey: 'browser-launchpad',
+                scope: workspaceScope, region: 'details', status: 'available' },
+        })}</> : <BrowserSurfaceHost browserSessionId="browser_session_default" platform="web"
                 initialBrowserState={createBrowserViewState()}
                 policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
-                launchpadRows={launchpadRows} localServicePreviewState={createLocalServicePreviewState()}
+                launchpadRows={launchpadRows} localServiceTargets={localServiceTargets}
+                localServicePreviewState={createLocalServicePreviewState()}
                 browserFeatureDecision={enabledBrowserDecision}
                 pluginBrowserActionContext={{ sessionId: 'session_1', machineId: 'machine_1', serverId: BROWSER_CLIENT_ACTION_ORIGIN.serverIdentityId }}
                 testID="browser-surface" />,
         );
-        screen.changeTextByTestId('browser-surface-address', 'localhost:5173');
+        const addressId = project ? 'browser-view-details-surface-address' : 'browser-surface-address';
+        await act(async () => { screen.changeTextByTestId(addressId, 'localhost:5173'); });
         await act(async () => {
-            (screen.findByTestId('browser-surface-address')?.props as { onSubmitEditing?: () => void }).onSubmitEditing?.();
+            (screen.findByTestId(addressId)?.props as { onSubmitEditing?: () => void }).onSubmitEditing?.();
         });
         await vi.waitFor(() => expect(screen.findByType('iframe').props.src).toBe(registeredUrl));
         expect(opens).toEqual([]);

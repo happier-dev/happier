@@ -4,6 +4,7 @@ import type { BrowserEditableTargetV1 } from '@happier-dev/protocol';
 import type { TextInput } from 'react-native';
 
 import { useBrowserSoftKeyboard } from './useBrowserSoftKeyboard';
+import { useBrowserViewerViewport } from './useBrowserViewerViewport';
 
 describe('browser viewer geometry and soft keyboard', () => {
     it('offers an explicitly summoned computer keyboard without browser editable metadata', async () => {
@@ -25,6 +26,21 @@ describe('browser viewer geometry and soft keyboard', () => {
             expect(calls.at(-1)).toBe('blur');
         } finally { await hook.unmount(); }
     });
+    it('publishes only actual geometry/control changes, independently of frame renders and callback identity', async () => {
+        const sent: unknown[] = [];
+        const viewport = { width: 390, height: 844, deviceScaleFactor: 3 };
+        const hook = await renderHook(({ controlling, size }) => useBrowserViewerViewport({ controlling, viewport: size,
+            sendViewport: value => { sent.push(value); } }), { initialProps: { controlling: true, size: viewport } });
+        try {
+            for (let i = 0; i < 20; i++) await hook.rerender({ controlling: true, size: { ...viewport } });
+            expect(sent).toEqual([viewport]);
+            await hook.rerender({ controlling: false, size: { ...viewport, width: 1440 } });
+            expect(sent).toHaveLength(1);
+            await hook.rerender({ controlling: true, size: { ...viewport, height: 400 } });
+            expect(sent).toEqual([viewport, { ...viewport, height: 400 }]);
+        } finally { await hook.unmount(); }
+    });
+
     it('relays committed Unicode text and deletion while withholding IME candidates and disabled input', async () => {
         const sent: Array<{ text: string } | { key: string }> = [];
         const target: BrowserEditableTargetV1 = { editable: true, inputMode: 'text', secret: true, multiline: false };

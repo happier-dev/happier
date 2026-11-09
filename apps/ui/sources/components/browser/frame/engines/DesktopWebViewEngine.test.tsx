@@ -18,11 +18,12 @@ import type {
 } from '@/sync/domains/browser/adapters/desktopWebViewBridge';
 
 import { DesktopWebViewEngine, type DesktopWebViewEngineBridge } from './DesktopWebViewEngine';
-import { KeyboardShortcutProvider } from '@/keyboard/KeyboardShortcutProvider';
-import { storage } from '@/sync/domains/state/storage';
+import { LocalPreviewTarget } from '../../adapters/LocalPreviewTarget.web';
 import { buildInjectedBrowserDiagnosticsScript } from '@/components/browser/adapters/diagnostics';
 import { applyBrowserControlEvent, createBrowserControlState } from '@/sync/domains/browser/control/reducer';
 import { browserViewLifecycleEvent, type BrowserViewLifecycleSignal } from '@/sync/domains/browser/control/lifecycle';
+import { KeyboardShortcutProvider } from '@/keyboard/KeyboardShortcutProvider';
+import { storage } from '@/sync/domains/state/storage';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -140,6 +141,10 @@ function createBridge() {
 }
 
 describe('DesktopWebViewEngine', () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+    });
+
     it('returns address focus from a guest field through the configured keyboard owner and releases hidden views', async () => {
         const host = new JSDOM('<input id="address">', { url: 'https://host.test' });
         const guest = new JSDOM('<input id="page-field">', { url: 'https://page.test', runScripts: 'outside-only' });
@@ -191,9 +196,63 @@ describe('DesktopWebViewEngine', () => {
         }
     });
 
+    it('publishes native bounds only after the view has opened', async () => {
+        vi.useFakeTimers();
+        const bridge = createBridge();
+        const opened = createDeferred<DesktopBrowserCommandResult>();
+        bridge.openView.mockImplementation(() => opened.promise);
+        const screen = await renderScreen(<DesktopWebViewEngine view={createExternalDesktopView()}
+            profileId="profile_1" testID="opening-native" bridge={bridge} />, {
+            createNodeMock: () => ({ getBoundingClientRect: () => ({ x: 0, y: 0, width: 640, height: 480 }) }),
+        });
+        try {
+            await flushHookEffects({ runOnlyPendingTimers: true });
+            expect(bridge.setBounds).not.toHaveBeenCalled();
+            await act(async () => opened.resolve({ ok: true, availability: availableDesktopWebView }));
+            await flushHookEffects({ runOnlyPendingTimers: true });
+            expect(bridge.setBounds).toHaveBeenCalledWith(expect.objectContaining({ visible: true }));
+            await act(async () => bridge.emitNativeEvent('pageInfoChanged', { loadingState: 'crashed' }));
+            await flushHookEffects({ runOnlyPendingTimers: true });
+            expect(bridge.setBounds).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
+        } finally {
+            await screen.unmount();
+            vi.useRealTimers();
+        }
+    });
 
-    beforeEach(() => {
-        vi.restoreAllMocks();
+    it('settles native preview connection failure with the typed transport reason and recovers on a fresh load', async () => {
+        const bridge = createBridge();
+        const view = createExternalDesktopView({
+            target: { kind: 'localServicePreview', targetId: 'preview_1', machineId: 'machine_1' },
+            adapterKind: 'localPreview',
+        });
+        let state = { ...createBrowserControlState(), viewsById: { [view.viewId]: view } };
+        const onLifecycle = (signal: BrowserViewLifecycleSignal) => {
+            const event = browserViewLifecycleEvent(view, signal);
+            if (event) state = applyBrowserControlEvent(state, event);
+        };
+        const screen = await renderScreen(<LocalPreviewTarget view={view} title="Preview" url="https://example.com/next"
+            profileId="profile_1" testID="native-preview-failure" bridge={bridge} onLifecycle={onLifecycle} />);
+        await flushHookEffects();
+        expect(bridge.openView).toHaveBeenCalledWith(expect.objectContaining({ localPreview: true }));
+        bridge.emitNativeEvent('pageInfoChanged', {
+            loadingState: 'failed',
+            requestedUrl: 'https://example.com/next',
+            currentUrl: 'https://example.com/',
+            lastError: { url: 'https://example.com/next', reason: 'webview_load_failed' },
+        });
+        await flushHookEffects();
+        expect(state.viewsById[view.viewId]).toMatchObject({
+            loadingState: 'failed', lastError: 'preview_transport_unavailable',
+        });
+        // Failure settles without retrying either the document or its native page-info read.
+        expect(bridge.navigateView).not.toHaveBeenCalled();
+        expect(bridge.readPageInfo).toHaveBeenCalledTimes(1);
+        bridge.emitNativeEvent('pageInfoChanged', { loadingState: 'loading', lastError: undefined });
+        bridge.emitNativeEvent('pageInfoChanged', { loadingState: 'finished', lastError: undefined });
+        await flushHookEffects();
+        expect(state.viewsById[view.viewId]).toMatchObject({ loadingState: 'ready', lastError: null });
+        await screen.unmount();
     });
 
     it('preserves the native capture generation across same-document URL changes', async () => {
@@ -642,10 +701,9 @@ describe('DesktopWebViewEngine', () => {
 
         expect(bridge.closeView).not.toHaveBeenCalled();
 
-        // A genuine unmount while hide-latched is the tab/split-canvas owner's teardown, not the
-        // engine's — so the engine still does not close here.
+        // Hidden is retained only while mounted; a recovery-card replacement releases the guest.
         await screen.unmount();
-        expect(bridge.closeView).not.toHaveBeenCalled();
+        expect(bridge.closeView).toHaveBeenCalledOnce();
     });
 
     it('keeps the native view mounted when page-info diagnostics are unavailable after open succeeds', async () => {
@@ -975,7 +1033,7 @@ describe('DesktopWebViewEngine', () => {
                 navigationGeneration: 0,
                 tier: 'injectedPage',
                 expression: 'document.title',
-                timeoutMs: 2_000,
+
                 objectGroupId: 'group_1',
                 diagnosticsInteractionEnabled: true,
             },

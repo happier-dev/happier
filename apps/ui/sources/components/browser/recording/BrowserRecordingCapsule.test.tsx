@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
+import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol/browser/recording/v1';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 

@@ -33,6 +33,7 @@ export function WebCryptoUnsupportedScreen(props: Readonly<{ snapshot: WebCrypto
             snapshot.missing.length > 0 ? `missing=${snapshot.missing.join(',')}` : null,
         ].filter(Boolean).join('\n');
 
+        // This browser startup gate replaces AppBoot/AuthProvider when required crypto is unavailable.
         void Clipboard.setStringAsync(details)
             .then(() => setCopied(true))
             .catch(() => {});

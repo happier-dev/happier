@@ -1,4 +1,4 @@
-import type { BrowserViewTargetV1 } from '@happier-dev/protocol';
+import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
 import { describe, expect, it } from 'vitest';
 
 import {

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { BrowserViewTargetV1, FeatureDecision } from '@happier-dev/protocol';
+import type { BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -337,6 +338,18 @@ describe('browser-view details surface renderer — single view', () => {
             },
         });
         expect(options).toEqual({ intent: 'default' });
+    });
+
+    it('closes this tab through the Details host closeTab owner, the same as the strip\'s ×', async () => {
+        const { createBrowserViewDetailsSurfaceRenderer } = await import('./browserDetailsSurfaceRenderer');
+        const closeTab = vi.fn();
+        const renderer = createBrowserViewDetailsSurfaceRenderer({ platform: 'web' });
+        const input = { ...browserViewInput(), callbacks: { closeTab } };
+
+        const screen = await renderScreen(<>{renderer.render(input)}</>);
+        screen.findByTestId('browser-view-details-surface')?.props.onCloseTab?.();
+
+        expect(closeTab).toHaveBeenCalledWith(input.tab.key);
     });
 
     it('OWNER-OPEN mount-and-render: an opened web external URL materializes a viewsById entry (no "No view")', async () => {

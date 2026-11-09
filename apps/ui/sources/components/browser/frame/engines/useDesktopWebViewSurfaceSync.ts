@@ -177,8 +177,7 @@ export function useDesktopWebViewSurfaceSync(
     const frameHandleRef = React.useRef<unknown>(null);
     const passthroughEngagedRef = React.useRef(false);
 
-    // Keep-mounted: latch a hide once the lifecycle parks the view so the rAF loop keeps it hidden
-    // (visible:false) without churning IPC, and so a final unmount that follows a hide does not close.
+    // Keep-mounted: a hidden/parked engine retains its page until a genuine unmount.
     const lifecycleHiddenRef = React.useRef(lifecycleHidesWithoutClosing(input.lifecycleState));
     lifecycleHiddenRef.current = lifecycleHidesWithoutClosing(input.lifecycleState);
 
@@ -229,6 +228,8 @@ export function useDesktopWebViewSurfaceSync(
     // stable-frame early-out inside `publishBounds` suppressing redundant IPC while idle.
     React.useEffect(() => {
         if (!active) {
+            const rect = lastPublishedRectRef.current;
+            if (rect) publishBounds(rect, false);
             return undefined;
         }
         requestSyncRef.current();
@@ -242,7 +243,7 @@ export function useDesktopWebViewSurfaceSync(
                 frameHandleRef.current = null;
             }
         };
-    }, [active, runtime]);
+    }, [active, publishBounds, runtime]);
 
     // Re-evaluate visibility whenever the lifecycle/occlusion/drag inputs change identity.
     React.useEffect(() => {
@@ -317,15 +318,11 @@ export function useDesktopWebViewSurfaceSync(
         }
     }, [lifecycleState]);
 
-    // Genuine engine teardown: close the native view on final unmount UNLESS the view is being kept
-    // mounted across a hide (the tab/split-canvas owner keeps the engine mounted on hide, so an
-    // unmount that is not hide-latched is a real teardown — not a tab switch). This is the only
-    // unmount-driven close, and it never fires for a hidden/parked lifecycle.
+    // The host keeps hidden/parked engines mounted. An actual unmount (including replacement by
+    // Ended/Can't reach) releases the native guest even if its last presentation was hidden.
     React.useEffect(() => () => {
-        if (!lifecycleHiddenRef.current) {
-            closeNativeViewRef.current();
-        }
-    }, []);
+        closeNativeView();
+    }, [closeNativeView]);
 
     return React.useMemo(() => ({ requestSync }), [requestSync]);
 }

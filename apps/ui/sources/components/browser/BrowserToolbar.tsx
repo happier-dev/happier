@@ -1,15 +1,14 @@
-import { withShortcut } from '@/keyboard/withShortcut';
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import type { BrowserToolbarModel } from '@/sync/domains/browser/shell';
 import { t } from '@/text';
 
 import type { BrowserKeyboardShortcutLabels } from './useBrowserKeyboardShortcuts';
+import { withShortcut } from '@/keyboard/withShortcut';
 
 const stylesheet = StyleSheet.create(() => ({
     root: {
@@ -34,8 +33,6 @@ export function BrowserToolbar(props: Readonly<{
     /** Visible control size and glyph (`resolveBrowserChromeControlMetrics`); the dense row by default. */
     controlSize?: number;
     iconSize?: number;
-    /** The press target the controls grow to; none under a precise pointer. */
-    touchTargetFloorPx?: number | null;
     /** Spread the controls (and `children`, the bar's other controls) evenly across the row. */
     spread?: boolean;
     children?: React.ReactNode;
@@ -43,9 +40,8 @@ export function BrowserToolbar(props: Readonly<{
 }>): React.ReactElement {
     const controlSize = props.controlSize ?? 34;
     const iconSize = props.iconSize ?? ICON_SIZE.sm;
-    const touchTargetFloorPx = props.touchTargetFloorPx === undefined
-        ? resolveMinimumInteractiveTargetSize(Platform.OS)
-        : props.touchTargetFloorPx ?? undefined;
+    // Packed controls split a 2 px gap; a spread bar has the free space between them.
+    const targetGapPx = props.spread ? undefined : 2;
     const shortcutLabels = props.shortcutLabels;
     const loading = props.model.isLoading;
     const testIDPrefix = props.testID ?? 'browser-toolbar';
@@ -72,8 +68,7 @@ export function BrowserToolbar(props: Readonly<{
                         variant="plain"
                         iconSize={iconSize}
                         size={controlSize}
-                        minimumInteractiveTargetSize={touchTargetFloorPx}
-                        interactiveTargetGapPx={2}
+                        interactiveTargetGapPx={targetGapPx}
                         disabled={!props.model.canGoBack}
                         disabledReason={historyReason}
                         onPress={props.onBack}
@@ -86,8 +81,7 @@ export function BrowserToolbar(props: Readonly<{
                         variant="plain"
                         iconSize={iconSize}
                         size={controlSize}
-                        minimumInteractiveTargetSize={touchTargetFloorPx}
-                        interactiveTargetGapPx={2}
+                        interactiveTargetGapPx={targetGapPx}
                         disabled={!props.model.canGoForward}
                         disabledReason={historyReason}
                         onPress={props.onForward}
@@ -105,8 +99,7 @@ export function BrowserToolbar(props: Readonly<{
                     variant="plain"
                     iconSize={iconSize}
                     size={controlSize}
-                    minimumInteractiveTargetSize={touchTargetFloorPx}
-                    interactiveTargetGapPx={2}
+                    interactiveTargetGapPx={targetGapPx}
                     disabled={loading ? !props.model.canStop : !props.model.canReload}
                     disabledReason={loading ? stopReason : undefined}
                     onPress={loading ? props.onStop : props.onReload}

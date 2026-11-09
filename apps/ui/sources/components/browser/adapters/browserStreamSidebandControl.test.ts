@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildBrowserStreamSidebandControl } from './browserStreamSidebandControl';
+import { buildBrowserStreamSidebandControl, buildBrowserViewerInput } from './browserStreamSidebandControl';
 import { MachineLiveStreamControlSidebandV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 
 const ids = { sourceId: 'browser-view:s:v', streamId: 'browser-live:m:s:v:tab', eventId: 'event_1' } as const;
@@ -17,6 +17,14 @@ describe('buildBrowserStreamSidebandControl', () => {
         expect(MachineLiveStreamControlSidebandV1Schema.safeParse(click).success).toBe(true);
     });
 
+    it('maps held browser pointer input and native wheel and drag without dropping their coordinates', () => {
+        expect(buildBrowserViewerInput({ kind: 'pointer', phase: 'down', point: { x: 0.5, y: 0.5 }, ...geometry }))
+            .toMatchObject({ kind: 'pointer', action: 'down', x: 0.5, y: 0.5 });
+        expect(buildBrowserStreamSidebandControl({ ...ids, gesture: { kind: 'wheel', point: { x: 0.5, y: 0.5 }, deltaX: 4, deltaY: -10, ...geometry } }))
+            .toMatchObject({ kind: 'wheel', x: 0.5, y: 0.5, deltaX: 4, deltaY: -10 });
+        expect(buildBrowserStreamSidebandControl({ ...ids, gesture: { kind: 'drag', from: { x: 0.5, y: 0.5 }, to: { x: 0.75, y: 1 }, ...geometry } }))
+            .toMatchObject({ kind: 'drag', fromX: 0.5, fromY: 0.5, toX: 1, toY: 1 });
+    });
     it('normalizes hover within the drawn page and drops letterbox hover', () => {
         expect(buildBrowserStreamSidebandControl({ ...ids, gesture: { kind: 'move', point: { x: 0.25, y: 0.2 }, ...geometry } }))
             .toEqual({ v: 1, ...ids, kind: 'move', x: 0, y: 0.2 });

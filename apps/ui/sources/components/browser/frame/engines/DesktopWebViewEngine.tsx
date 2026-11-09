@@ -443,6 +443,7 @@ export function DesktopWebViewEngine(props: Readonly<{
                 ...commandTarget,
                 profileId: props.profileId,
                 url: openUrl,
+                localPreview: props.view.target.kind === 'localServicePreview',
                 ...(diagnosticsInitScript ? { diagnosticsInitScript } : {}),
             });
         }).then((result) => {
@@ -470,7 +471,7 @@ export function DesktopWebViewEngine(props: Readonly<{
             // effect therefore no longer unconditionally closes on every unmount/re-open. Re-open
             // (a viewKey change) is handled natively — `open_view` replaces and drops the old view.
         };
-    }, [bridge, buildDiagnosticsInitScript, commandTarget, props.profileId, syncCollectorPresentation, viewKey]);
+    }, [bridge, buildDiagnosticsInitScript, commandTarget, props.profileId, props.view.target.kind, syncCollectorPresentation, viewKey]);
 
     React.useEffect(() => {
         if (openedViewKey !== viewKey) return;
@@ -694,7 +695,7 @@ export function DesktopWebViewEngine(props: Readonly<{
     const surfaceSync = useDesktopWebViewSurfaceSync({
         bridge,
         commandTarget,
-        active: !!desiredUrl && !unavailableReason,
+        active: openedViewKey === viewKey && !!desiredUrl && !unavailableReason && !crashedUrl,
         lifecycleState: props.lifecycleState,
         measureRect,
         occlusionProbe: props.occlusionProbe,

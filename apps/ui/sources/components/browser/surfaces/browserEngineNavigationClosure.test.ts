@@ -1,12 +1,16 @@
 import type {
-    BrowserAdapterCapabilitiesV1,
-    BrowserCommandV1,
-    BrowserEventV1,
+    BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
+import type {
+    BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
+import type {
+    BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
+import type {
     BrowserRenderEngineKindV1,
-    BrowserSemanticAdapterKindV1,
+    BrowserSemanticAdapterKindV1} from '@happier-dev/protocol/browser/adapters/kinds';
+import type {
     BrowserViewTargetV1,
-} from '@happier-dev/protocol';
-import { BrowserRenderEngineKindV1Schema } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/target/v1';
+import { BrowserRenderEngineKindV1Schema } from '@happier-dev/protocol/browser/adapters/kinds';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';

@@ -653,10 +653,7 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
         accountLifetime: browserActionAccountLifetime,
         readState: () => isBrowserActionCurrent() && !browserActionFactsRef.current.unavailableReason ? surfaceStateRef.current.browserState : null,
         readAddressFacts: () => openExternalFactsRef.current,
-        saveDownload: async args => {
-            if (!downloadOwnerRef.current) throw new Error('browser_download_unavailable');
-            return downloadOwnerRef.current(args);
-        },
+        get saveDownload() { return downloadOwnerRef.current ?? undefined; },
         resolveOpenExternalUrl: async (view, signal) => {
             if (!isBrowserActionCurrent() || !browserActionAccountLifetime) return { ok: false, reasonCode: 'browser_view_unavailable' };
             return resolveBrowserOpenExternalUrl({ ...openExternalFactsRef.current, view,

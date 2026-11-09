@@ -32,6 +32,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.inset,
         paddingHorizontal: theme.space.s10,
     },
+    management: {
+        flex: 1,
+        minHeight: 0,
+    },
     segment: {
         minWidth: 0,
     },
@@ -135,7 +139,7 @@ export function BrowserProfileStatus(props: Readonly<{
     const permissionStatusId = statusIdForPermission(props.model);
 
     return (
-        <View testID={testID} style={stylesheet.root} accessibilityLabel={t('browserShell.profile.title')}>
+        <View testID={testID} style={[stylesheet.root, props.model.management ? stylesheet.management : null]} accessibilityLabel={t('browserShell.profile.title')}>
             <View style={stylesheet.facts}>
             <Segment
                 testID={`${testID}-mode-${mode ?? 'unavailable'}`}

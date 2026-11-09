@@ -1,6 +1,24 @@
-import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 
 import { mapLiveStreamPointToContent, type LiveStreamInputGesture } from '@/sync/domains/machines/peer/mediation/stream/inputGesture';
+import type { BrowserViewerInputEvent } from './BrowserStreamedTarget';
+
+/** Browser's existing input contract carries wheel deltas and key modifiers losslessly. */
+export function buildBrowserViewerInput(gesture: LiveStreamInputGesture): BrowserViewerInputEvent | null {
+    if (gesture.kind === 'keyboard_key') {
+        if (gesture.modifiers?.includes('fn')) return null;
+        return { kind: 'key', key: gesture.key, modifiers: [...(gesture.modifiers ?? [])].filter(modifier => modifier !== 'fn') };
+    }
+    if (gesture.kind === 'pointer') {
+        const point = mapLiveStreamPointToContent(gesture);
+        return point ? { kind: 'pointer', action: gesture.phase, x: point.x, y: point.y } : null;
+    }
+    if (gesture.kind === 'wheel') {
+        const point = mapLiveStreamPointToContent(gesture);
+        return point ? { kind: 'wheel', x: point.x, y: point.y, deltaX: gesture.deltaX, deltaY: gesture.deltaY } : null;
+    }
+    return null;
+}
 
 /** A viewer gesture as the browser source's sideband control, normalized to the drawn page. */
 export function buildBrowserStreamSidebandControl(input: Readonly<{

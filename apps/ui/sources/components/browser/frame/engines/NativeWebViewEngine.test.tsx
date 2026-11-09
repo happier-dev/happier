@@ -456,7 +456,7 @@ describe('NativeWebViewEngine', () => {
                         navigationGeneration: 5,
                         tier: 'injectedPage',
                         expression: '({ ok: true })',
-                        timeoutMs: 2_000,
+
                         objectGroupId: 'group_1',
                         diagnosticsInteractionEnabled: true,
                     },

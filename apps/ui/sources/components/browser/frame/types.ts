@@ -8,7 +8,7 @@ import type {
     BrowserDiagnosticsGetPropertiesResultV1,
     BrowserDiagnosticsReleaseObjectGroupRequestV1,
     BrowserDiagnosticsReleaseObjectGroupResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/diagnostics/v1';
 import type { BrowserAutomationControlService } from '@/sync/domains/browser/automation';
 import type { BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/adapters/targets/localPreview';
 import type { BrowserDiagnosticsAvailability } from '@/sync/domains/browser/adapters/capabilities';

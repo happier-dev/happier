@@ -1,12 +1,16 @@
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-    type BrowserLocalServicePreviewTargetV1,
-    type ActionExecuteResult,
+    type BrowserLocalServicePreviewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import {
+    type ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import {
     PluginProjectionInstalledPackageV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -224,14 +228,14 @@ async function withBrowserPanelHarness(
         reason: null, attempt: 0, nextRetryAt: null, lastConnectedAt: Date.now(),
         lastDisconnectedAt: null, lastErrorMessage: null });
     (globalThis as { window: unknown }).window = new EventTarget();
-    storage.getState().applyLocalSettings({ appPaneScopesV1: options.panelOpen === false ? {} : {
+    (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse(options.panelOpen === false ? {} : {
         'browser-panels:browser-test': {
             mainHidden: false,
             right: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: { [browserPanelPlacement.id]: { isOpen: true } } },
             details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
             bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
         },
-    } });
+    })), storage.getState().applyLocalSettings({ }));
 
     const panelTree = (key: number) => (
             <AppPaneProvider key={key}><PanelStateProbe /><BrowserPluginSurfacePlacements
@@ -316,13 +320,13 @@ describe('BrowserPluginSurfacePlacements', () => {
             expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
             await act(async () => readPane().setRightTabState(browserPanelPlacement.id, { isOpen: true }));
             expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
-            expect(storage.getState().localSettings.appPaneScopesV1['browser-panels:browser-test']?.right.tabState)
+            expect(paneUiState.readAll()['browser-panels:browser-test']?.right.tabState)
                 .toMatchObject({ [browserPanelPlacement.id]: { isOpen: true } });
             await remount();
             expect(screen.findByTestId('plugin-hosted-web-frame')).toBeTruthy();
             await act(async () => readPane().setRightTabState(browserPanelPlacement.id, { isOpen: false }));
             expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();
-            expect(storage.getState().localSettings.appPaneScopesV1['browser-panels:browser-test']?.right.tabState)
+            expect(paneUiState.readAll()['browser-panels:browser-test']?.right.tabState)
                 .toMatchObject({ [browserPanelPlacement.id]: { isOpen: false } });
             await remount();
             expect(screen.findByTestId('plugin-hosted-web-frame')).toBeNull();

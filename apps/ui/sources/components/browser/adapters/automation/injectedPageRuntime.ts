@@ -234,7 +234,9 @@ export function createInjectedPageAutomationOwner(
         supportedActions: input.supportedActions,
         executeAction(request: BrowserAutomationRequest, context: Parameters<BrowserAutomationOwner['executeAction']>[1]) {
             const startedAtMs = input.nowMs();
-            const payload = { ...request.payload, deadlineMs: context.deadlineMs ?? startedAtMs + request.timeoutMs };
+            // Only the containing Action can supply an answer; generic page payloads cannot.
+            const payload = { ...request.payload, dialogResponse: request.dialogResponse,
+                deadlineMs: context.deadlineMs ?? (request.timeoutMs === undefined ? undefined : startedAtMs + request.timeoutMs) };
             const command = buildInjectedBrowserAutomationCommandMessage({
                 ...expected,
                 commandId: request.automationRequestId,

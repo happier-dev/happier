@@ -12,6 +12,7 @@ import type {
     BrowserDiagnosticsReleaseObjectGroupResultV1,
 } from '@happier-dev/protocol/browser/diagnostics/v1';
 import type { BrowserControlViewState } from '@/sync/domains/browser/control';
+import { isDaemonAuthoritativeBrowserView } from '@/sync/domains/browser/control/commands';
 import { resolveBrowserInjectedDiagnosticsTransport, type BrowserDiagnosticsAvailability } from '@/sync/domains/browser/adapters/capabilities';
 import type {
     BrowserDiagnosticsEvalConsoleControls,
@@ -34,7 +35,9 @@ import type { BrowserDiagnosticsInteractionControls } from './BrowserDiagnostics
 import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { BrowserRuntimeDiagnosticsAdapter } from '@/sync/domains/browser/actions/runtimeActionExecutor';
 import { BrowserDiagnosticsEvalRequestV1Schema, BrowserDiagnosticsGetPropertiesRequestV1Schema,
-    BrowserDiagnosticsReleaseObjectGroupRequestV1Schema, BrowserDiagnosticsElementPickerRequestV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
+    BrowserDiagnosticsReleaseObjectGroupRequestV1Schema, BrowserDiagnosticsElementPickerRequestV1Schema,
+    BrowserDiagnosticsEvalResultV1Schema, BrowserDiagnosticsGetPropertiesResultV1Schema,
+    BrowserDiagnosticsReleaseObjectGroupResultV1Schema, BrowserDiagnosticsElementPickerResultV1Schema } from '@happier-dev/protocol/browser/diagnostics/v1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const DEFAULT_COLLECTOR_VERSION = '1.0.0';
@@ -343,14 +346,10 @@ export function useBrowserDiagnosticsRuntime(
             : AVAILABLE_DIAGNOSTICS
         : daemonSnapshot ? AVAILABLE_DIAGNOSTICS : UNAVAILABLE_DIAGNOSTICS;
 
-    // Interactive diagnostics (eval / element-picker) push command scripts INTO the page. Native
-    // WebView injected surfaces deliver them through their bridge; the desktop engine evals them via
-    // the host `desktop_browser_eval_script` command (results return over the same ipc/drain channel).
-    // Collector-enabled iframes use the engine's nonce-bound command channel. Without that
-    // existing automation opt-in, keep iframe interaction unavailable rather than inventing a bridge.
+    // Injected engines use their admitted bridge; managed pages use the Machine's CDP Actions.
+    const interactionTier = isDaemonAuthoritativeBrowserView(input.view) ? 'cdp' : 'injectedPage';
     const interactionSupported = input.enabled === true
-        && !!input.view
-        && (canAttachInjectedDiagnostics(input.view) || canAttachDesktopInjectedDiagnostics(input.view))
+        && !!(bridgeBase || (daemonSnapshot && interactionTier === 'cdp'))
         && diagnosticsAvailability.status !== 'unavailable';
 
     const currentRef = React.useRef({ input, interactionEnabled, bridgeBase, interactionSupported });
@@ -434,138 +433,6 @@ export function useBrowserDiagnosticsRuntime(
         for (const requestId of pendingResults.current.keys()) settleResult(requestId, unavailable);
     }, [viewKey, settleResult, unavailable]);
 
-    const dispatchUi = React.useCallback((actionId: Parameters<FrontDoorActionExecute>[0], request: BrowserDiagnosticsEvalRequestV1 | BrowserDiagnosticsGetPropertiesRequestV1 | BrowserDiagnosticsReleaseObjectGroupRequestV1 | BrowserDiagnosticsElementPickerRequestV1) => {
-        const view = input.view;
-        if (!view) return;
-        const showRefusal = (errorCode: string) => {
-            if (!currentRef.current.interactionEnabled || currentRef.current.input.isCurrent?.() === false
-                || runtimeViewKey(currentRef.current.input.view) !== runtimeViewKey(view)) return;
-            if ('evalRequestId' in request) setEvalEntries(entries => {
-                const entry = { evalRequestId: request.evalRequestId, expression: request.expression,
-                    objectGroupId: request.objectGroupId, status: 'blocked' as const, errorCode };
-                return entries.some(current => current.evalRequestId === request.evalRequestId)
-                    ? entries.map(current => current.evalRequestId === request.evalRequestId ? entry : current)
-                    : [...entries, entry];
-            });
-            if ('propertyRequestId' in request) setObjectProperties(entries => ({ ...entries,
-                [request.objectId]: { status: 'failed', properties: [], errorCode } }));
-        };
-        void actionExecute(actionId, { ...request, browserSessionId: view.browserSessionId }, {
-            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, ...input.actionContext,
-        }).then(result => {
-            if (!result.ok) showRefusal(result.errorCode);
-            else if (ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) showRefusal('approval_request_created');
-        }, () => showRefusal('action_failed'));
-    }, [actionExecute, input.actionContext, input.view]);
-
-    const nextRequestId = React.useCallback((prefix: string): string | null => {
-        const view = input.view;
-        if (!view) return null;
-        requestOrdinalRef.current += 1;
-        return `${prefix}:${view.viewId}:${view.navigationGeneration}:${requestOrdinalRef.current}`;
-    }, [input.view]);
-
-    const getInteractiveView = React.useCallback((): BrowserControlViewState | null => {
-        if (input.enabled !== true || !interactionEnabled || !bridgeBase || !interactionSupported) return null;
-        return input.view;
-    }, [bridgeBase, input, interactionEnabled, interactionSupported]);
-
-    const requestEval = React.useCallback((requestInput: BrowserDiagnosticsEvalCommandInput): boolean => {
-        const view = getInteractiveView();
-        if (!view) return false;
-        const evalRequestId = nextRequestId('eval');
-        if (!evalRequestId) return false;
-
-        const objectGroupId = requestInput.objectGroupId ?? defaultObjectGroupId(view);
-        const request: BrowserDiagnosticsEvalRequestV1 = {
-            v: 1,
-            evalRequestId,
-            viewId: view.viewId,
-            navigationGeneration: view.navigationGeneration,
-            tier: 'injectedPage',
-            expression: requestInput.expression,
-            objectGroupId,
-            diagnosticsInteractionEnabled: true,
-        };
-        dispatchUi('browser.diagnostics.eval', request);
-        return true;
-    }, [dispatchUi, getInteractiveView, nextRequestId]);
-
-    const requestGetProperties = React.useCallback((requestInput: BrowserDiagnosticsGetPropertiesCommandInput): boolean => {
-        const view = getInteractiveView();
-        if (!view) return false;
-        const propertyRequestId = nextRequestId('properties');
-        if (!propertyRequestId) return false;
-
-        const request: BrowserDiagnosticsGetPropertiesRequestV1 = {
-            v: 1,
-            propertyRequestId,
-            viewId: view.viewId,
-            navigationGeneration: view.navigationGeneration,
-            tier: 'injectedPage',
-            objectId: requestInput.objectId,
-            objectGroupId: requestInput.objectGroupId,
-            diagnosticsInteractionEnabled: true,
-        };
-        dispatchUi('browser.diagnostics.getProperties', request);
-        return true;
-    }, [dispatchUi, getInteractiveView, nextRequestId]);
-
-    const requestReleaseObjectGroup = React.useCallback((requestInput: BrowserDiagnosticsReleaseObjectGroupCommandInput): boolean => {
-        const view = getInteractiveView();
-        if (!view) return false;
-        const releaseRequestId = nextRequestId('release');
-        if (!releaseRequestId) return false;
-
-        const request: BrowserDiagnosticsReleaseObjectGroupRequestV1 = {
-            v: 1,
-            releaseRequestId,
-            viewId: view.viewId,
-            navigationGeneration: view.navigationGeneration,
-            tier: 'injectedPage',
-            objectGroupId: requestInput.objectGroupId,
-            diagnosticsInteractionEnabled: true,
-        };
-        dispatchUi('browser.diagnostics.releaseObjectGroup', request);
-        return true;
-    }, [dispatchUi, getInteractiveView, nextRequestId]);
-
-    const startElementPicker = React.useCallback(() => {
-        const view = getInteractiveView();
-        if (!view) return;
-        const pickerRequestId = nextRequestId('picker');
-        if (!pickerRequestId) return;
-
-        const request: BrowserDiagnosticsElementPickerRequestV1 = {
-            v: 1,
-            pickerRequestId,
-            viewId: view.viewId,
-            navigationGeneration: view.navigationGeneration,
-            tier: 'injectedPage',
-            action: 'start',
-            diagnosticsInteractionEnabled: true,
-        };
-        dispatchUi('browser.diagnostics.elementPicker.start', request);
-    }, [dispatchUi, getInteractiveView, nextRequestId]);
-
-    const cancelElementPicker = React.useCallback(() => {
-        const view = getInteractiveView();
-        if (!view) return;
-        const pickerRequestId = nextRequestId('picker');
-        if (!pickerRequestId) return;
-
-        const request: BrowserDiagnosticsElementPickerRequestV1 = {
-            v: 1,
-            pickerRequestId,
-            viewId: view.viewId,
-            navigationGeneration: view.navigationGeneration,
-            tier: 'injectedPage',
-            action: 'cancel',
-            diagnosticsInteractionEnabled: true,
-        };
-        dispatchUi('browser.diagnostics.elementPicker.cancel', request);
-    }, [dispatchUi, getInteractiveView, nextRequestId]);
-
     const handleEvalResult = React.useCallback((result: BrowserDiagnosticsEvalResultV1) => {
         if (!pendingResults.current.has(result.evalRequestId)) return;
         settleResult(result.evalRequestId, result);
@@ -581,22 +448,6 @@ export function useBrowserDiagnosticsRuntime(
                 : entry
         )));
     }, [settleResult]);
-
-    const expandObject = React.useCallback((objectId: string, objectGroupId: string): boolean => {
-        // Mark the node loading first so the inspector renders a spinner even if the request is async.
-        setObjectProperties((current) => ({
-            ...current,
-            [objectId]: { status: 'loading', properties: [] },
-        }));
-        const dispatched = requestGetProperties({ objectId, objectGroupId });
-        if (!dispatched) {
-            setObjectProperties((current) => ({
-                ...current,
-                [objectId]: { status: 'failed', properties: [], errorCode: 'collector_unavailable' },
-            }));
-        }
-        return dispatched;
-    }, [requestGetProperties]);
 
     const handlePropertiesResult = React.useCallback((result: BrowserDiagnosticsGetPropertiesResultV1) => {
         if (!pendingResults.current.has(result.propertyRequestId)) return;
@@ -638,6 +489,189 @@ export function useBrowserDiagnosticsRuntime(
         onElementPickerResultBridge?.(result);
     }, [onElementPickerResultBridge, settleResult]);
 
+    const dispatchUi = React.useCallback(function dispatchUi(actionId: Parameters<FrontDoorActionExecute>[0], request: BrowserDiagnosticsEvalRequestV1 | BrowserDiagnosticsGetPropertiesRequestV1 | BrowserDiagnosticsReleaseObjectGroupRequestV1 | BrowserDiagnosticsElementPickerRequestV1) {
+        const view = input.view;
+        if (!view) return;
+        const requestId = 'evalRequestId' in request ? request.evalRequestId
+            : 'propertyRequestId' in request ? request.propertyRequestId
+            : 'releaseRequestId' in request ? request.releaseRequestId : request.pickerRequestId;
+        if (request.tier === 'cdp' && !pendingResults.current.has(requestId)) {
+            const pendingRequest = 'evalRequestId' in request ? { evalRequest: request }
+                : 'propertyRequestId' in request ? { getPropertiesRequest: request }
+                : 'releaseRequestId' in request ? { releaseObjectGroupRequest: request } : { elementPickerRequest: request };
+            pendingResults.current.set(requestId, { request: pendingRequest, settle: () => {}, dispose: () => {},
+                cancel: () => {
+                    if ('evalRequestId' in request) dispatchUi(actionId, { ...request, action: 'cancel' });
+                } });
+            if ('evalRequestId' in request) setEvalEntries(entries => [...entries, {
+                evalRequestId: request.evalRequestId, expression: request.expression,
+                objectGroupId: request.objectGroupId, status: 'pending',
+            }]);
+            if ('pickerRequestId' in request && request.action === 'start') setPickerActive(true);
+        }
+        const showRefusal = (errorCode: string) => {
+            if (request.tier === 'cdp') settleResult(requestId, unavailable);
+            if (!currentRef.current.interactionEnabled || currentRef.current.input.isCurrent?.() === false
+                || runtimeViewKey(currentRef.current.input.view) !== runtimeViewKey(view)) return;
+            if ('evalRequestId' in request) setEvalEntries(entries => {
+                const entry = { evalRequestId: request.evalRequestId, expression: request.expression,
+                    objectGroupId: request.objectGroupId, status: 'blocked' as const, errorCode };
+                return entries.some(current => current.evalRequestId === request.evalRequestId)
+                    ? entries.map(current => current.evalRequestId === request.evalRequestId ? entry : current)
+                    : [...entries, entry];
+            });
+            if ('propertyRequestId' in request) setObjectProperties(entries => ({ ...entries,
+                [request.objectId]: { status: 'failed', properties: [], errorCode } }));
+            if ('pickerRequestId' in request) setPickerActive(false);
+        };
+        void actionExecute(actionId, { ...request, browserSessionId: view.browserSessionId }, {
+            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, ...input.actionContext,
+        }).then(result => {
+            if (!result.ok) showRefusal(result.errorCode);
+            else if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) showRefusal('approval_request_created');
+            else if (request.tier === 'cdp') {
+                if ('evalRequestId' in request) {
+                    const parsed = BrowserDiagnosticsEvalResultV1Schema.safeParse(result.result);
+                    if (parsed.success) handleEvalResult(parsed.data); else showRefusal('browser_diagnostics_unavailable');
+                } else if ('propertyRequestId' in request) {
+                    const parsed = BrowserDiagnosticsGetPropertiesResultV1Schema.safeParse(result.result);
+                    if (parsed.success) handlePropertiesResult(parsed.data); else showRefusal('browser_diagnostics_unavailable');
+                } else if ('releaseRequestId' in request) {
+                    const parsed = BrowserDiagnosticsReleaseObjectGroupResultV1Schema.safeParse(result.result);
+                    if (parsed.success) handleReleaseObjectGroupResult(parsed.data); else showRefusal('browser_diagnostics_unavailable');
+                } else {
+                    const parsed = BrowserDiagnosticsElementPickerResultV1Schema.safeParse(result.result);
+                    if (parsed.success) handleElementPickerResult(parsed.data); else showRefusal('browser_diagnostics_unavailable');
+                }
+            }
+        }, () => showRefusal('action_failed'));
+    }, [actionExecute, input.actionContext, input.view, settleResult, unavailable,
+        handleEvalResult, handlePropertiesResult, handleReleaseObjectGroupResult, handleElementPickerResult]);
+
+    const nextRequestId = React.useCallback((prefix: string): string | null => {
+        const view = input.view;
+        if (!view) return null;
+        requestOrdinalRef.current += 1;
+        return `${prefix}:${view.viewId}:${view.navigationGeneration}:${requestOrdinalRef.current}`;
+    }, [input.view]);
+
+    const getInteractiveView = React.useCallback((): BrowserControlViewState | null => {
+        if (input.enabled !== true || !interactionEnabled || !interactionSupported) return null;
+        return input.view;
+    }, [input, interactionEnabled, interactionSupported]);
+
+    const requestEval = React.useCallback((requestInput: BrowserDiagnosticsEvalCommandInput): boolean => {
+        const view = getInteractiveView();
+        if (!view) return false;
+        const evalRequestId = nextRequestId('eval');
+        if (!evalRequestId) return false;
+
+        const objectGroupId = requestInput.objectGroupId ?? defaultObjectGroupId(view);
+        const request: BrowserDiagnosticsEvalRequestV1 = {
+            v: 1,
+            evalRequestId,
+            viewId: view.viewId,
+            navigationGeneration: view.navigationGeneration,
+            tier: interactionTier,
+            expression: requestInput.expression,
+            objectGroupId,
+            diagnosticsInteractionEnabled: true,
+        };
+        dispatchUi('browser.diagnostics.eval', request);
+        return true;
+    }, [dispatchUi, getInteractiveView, nextRequestId, interactionTier]);
+
+    const requestGetProperties = React.useCallback((requestInput: BrowserDiagnosticsGetPropertiesCommandInput): boolean => {
+        const view = getInteractiveView();
+        if (!view) return false;
+        const propertyRequestId = nextRequestId('properties');
+        if (!propertyRequestId) return false;
+
+        const request: BrowserDiagnosticsGetPropertiesRequestV1 = {
+            v: 1,
+            propertyRequestId,
+            viewId: view.viewId,
+            navigationGeneration: view.navigationGeneration,
+            tier: interactionTier,
+            objectId: requestInput.objectId,
+            objectGroupId: requestInput.objectGroupId,
+            diagnosticsInteractionEnabled: true,
+        };
+        dispatchUi('browser.diagnostics.getProperties', request);
+        return true;
+    }, [dispatchUi, getInteractiveView, nextRequestId, interactionTier]);
+
+    const requestReleaseObjectGroup = React.useCallback((requestInput: BrowserDiagnosticsReleaseObjectGroupCommandInput): boolean => {
+        const view = getInteractiveView();
+        if (!view) return false;
+        const releaseRequestId = nextRequestId('release');
+        if (!releaseRequestId) return false;
+
+        const request: BrowserDiagnosticsReleaseObjectGroupRequestV1 = {
+            v: 1,
+            releaseRequestId,
+            viewId: view.viewId,
+            navigationGeneration: view.navigationGeneration,
+            tier: interactionTier,
+            objectGroupId: requestInput.objectGroupId,
+            diagnosticsInteractionEnabled: true,
+        };
+        dispatchUi('browser.diagnostics.releaseObjectGroup', request);
+        return true;
+    }, [dispatchUi, getInteractiveView, nextRequestId, interactionTier]);
+
+    const startElementPicker = React.useCallback(() => {
+        const view = getInteractiveView();
+        if (!view) return;
+        const pickerRequestId = nextRequestId('picker');
+        if (!pickerRequestId) return;
+
+        const request: BrowserDiagnosticsElementPickerRequestV1 = {
+            v: 1,
+            pickerRequestId,
+            viewId: view.viewId,
+            navigationGeneration: view.navigationGeneration,
+            tier: interactionTier,
+            action: 'start',
+            diagnosticsInteractionEnabled: true,
+        };
+        dispatchUi('browser.diagnostics.elementPicker.start', request);
+    }, [dispatchUi, getInteractiveView, nextRequestId, interactionTier]);
+
+    const cancelElementPicker = React.useCallback(() => {
+        const view = getInteractiveView();
+        if (!view) return;
+        const pickerRequestId = nextRequestId('picker');
+        if (!pickerRequestId) return;
+
+        const request: BrowserDiagnosticsElementPickerRequestV1 = {
+            v: 1,
+            pickerRequestId,
+            viewId: view.viewId,
+            navigationGeneration: view.navigationGeneration,
+            tier: interactionTier,
+            action: 'cancel',
+            diagnosticsInteractionEnabled: true,
+        };
+        dispatchUi('browser.diagnostics.elementPicker.cancel', request);
+    }, [dispatchUi, getInteractiveView, nextRequestId, interactionTier]);
+
+    const expandObject = React.useCallback((objectId: string, objectGroupId: string): boolean => {
+        // Mark the node loading first so the inspector renders a spinner even if the request is async.
+        setObjectProperties((current) => ({
+            ...current,
+            [objectId]: { status: 'loading', properties: [] },
+        }));
+        const dispatched = requestGetProperties({ objectId, objectGroupId });
+        if (!dispatched) {
+            setObjectProperties((current) => ({
+                ...current,
+                [objectId]: { status: 'failed', properties: [], errorCode: 'collector_unavailable' },
+            }));
+        }
+        return dispatched;
+    }, [requestGetProperties]);
+
     const bridge = React.useMemo<BrowserDiagnosticsEngineBridgeConfig | null>(() => {
         if (!bridgeBase) return null;
         return {
@@ -660,7 +694,7 @@ export function useBrowserDiagnosticsRuntime(
     ]);
 
     const interaction = React.useMemo<BrowserDiagnosticsInteractionControls>(() => {
-        if (!bridgeBase || !interactionSupported) {
+        if (!interactionSupported) {
             return {
                 state: 'unavailable',
                 ownerOnly: true,

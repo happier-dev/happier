@@ -1,4 +1,4 @@
-import type { BrowserRecordingCapabilities } from '@happier-dev/protocol';
+import type { BrowserRecordingCapabilities } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 import { describe, expect, it, vi } from 'vitest';
 
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';

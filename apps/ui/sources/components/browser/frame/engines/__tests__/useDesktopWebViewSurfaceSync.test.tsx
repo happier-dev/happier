@@ -315,7 +315,26 @@ describe('useDesktopWebViewSurfaceSync', () => {
         });
     });
 
-    it('does not close the native view when a kept-mounted (hidden) engine unmounts', async () => {
+    it('hides the incumbent guest when the engine becomes unavailable without unmounting', async () => {
+        const bridge = createBridge();
+        const manual = createManualRuntime();
+        const input = {
+            bridge, commandTarget: { browserSessionId: 'browser_session_1', viewId: 'view_1' },
+            active: true, measureRect: () => RECT_A, runtime: manual.runtime,
+        };
+        const hook = await renderSurfaceSync(input);
+        manual.flushFrame();
+        expect(bridge.setBounds).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }));
+        await hook.rerender({ ...input, active: false, measureRect: () => null });
+        expect(bridge.setBounds).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
+        expect(bridge.closeView).not.toHaveBeenCalled();
+        await hook.rerender(input);
+        manual.flushFrame();
+        expect(bridge.setBounds).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }));
+        await hook.unmount();
+    });
+
+    it('closes a hidden native view when its engine unmounts for a recovery card', async () => {
         const bridge = createBridge();
         const manual = createManualRuntime();
         const hook = await renderSurfaceSync({
@@ -330,7 +349,25 @@ describe('useDesktopWebViewSurfaceSync', () => {
 
         await hook.unmount();
 
-        expect(bridge.closeView).not.toHaveBeenCalled();
+        expect(bridge.closeView).toHaveBeenCalledOnce();
+        expect(bridge.closeView).toHaveBeenCalledWith({ browserSessionId: 'browser_session_1', viewId: 'view_1' });
+    });
+
+    it('releases the prior native target when the same engine presents a different view', async () => {
+        const bridge = createBridge();
+        const manual = createManualRuntime();
+        const input = {
+            bridge, commandTarget: { browserSessionId: 'browser_session_1', viewId: 'view_1' },
+            active: true, measureRect: () => RECT_A, runtime: manual.runtime,
+        };
+        const hook = await renderSurfaceSync(input);
+        manual.flushFrame();
+        await hook.rerender({ ...input, commandTarget: { ...input.commandTarget, viewId: 'view_2' } });
+        manual.flushFrame();
+        expect(bridge.closeView).toHaveBeenCalledWith(input.commandTarget);
+        expect(bridge.setBounds).toHaveBeenLastCalledWith(expect.objectContaining({ viewId: 'view_2', visible: true }));
+        await hook.unmount();
+        expect(bridge.closeView).toHaveBeenLastCalledWith({ browserSessionId: 'browser_session_1', viewId: 'view_2' });
     });
 
     it('closes the native view on a suspended/closed/orphaned lifecycle transition', async () => {

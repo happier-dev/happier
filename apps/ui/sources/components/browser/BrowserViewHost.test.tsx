@@ -338,6 +338,72 @@ describe('BrowserViewHost', () => {
     beforeEach(() => {
         simulatorTargetProps.length = 0;
         desktopWebViewTargetProps.length = 0;
+        previewHttp.fetch.mockReset();
+    });
+
+    it('ends a mounted preview when its authoritative snapshot removes it without another access request', async () => {
+        const home = await upsertServerProfile({ serverUrl: 'http://localhost:3030' });
+        const view = createLocalPreviewView();
+        const resource = { previewId: 'preview_1', sessionId: 'session_1', machineId: 'machine_1',
+            owner: { kind: 'session' as const, id: 'session_1' },
+            target: { scheme: 'http' as const, host: '127.0.0.1', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Preview', addressLabel: 'localhost:5173' }, originMode: 'host' as const };
+        const before = applyLocalServicePreviewSnapshot(createLocalServicePreviewState(), {
+            generatedAt: 1, refreshState: 'idle', diagnostics: [], previews: [{ previewId: resource.previewId,
+                resource, accessUrl: view.currentUrl, expiresAt: null, diagnostics: [] }],
+        });
+        previewHttp.fetch.mockImplementation(async () => Response.json({ v: 1, kind: 'server_preview',
+            previewId: resource.previewId, machineId: resource.machineId,
+            accessUrl: view.currentUrl, expiresAt: 2_000_000_000_000 }));
+        const onViewLifecycle = vi.fn();
+        const render = (state: typeof before | null) => <BrowserViewHost view={view} localServicePreviewState={state}
+            localServicePreviewServerId={home.id} onViewLifecycle={onViewLifecycle} testID="revoked-preview" />;
+        const screen = await renderScreen(render(before));
+        await flushHookEffects({ cycles: 40 });
+        expect(screen.findAllByType('iframe')).toHaveLength(1);
+        const requests = previewHttp.fetch.mock.calls.length;
+        await act(async () => screen.update(render(null)));
+        await flushHookEffects();
+        expect(screen.findAllByType('iframe')).toHaveLength(1);
+        expect(onViewLifecycle).not.toHaveBeenCalledWith(expect.anything(), { kind: 'loadFailed', errorCode: 'preview_ended' });
+        const removed = applyLocalServicePreviewSnapshot(before, {
+            generatedAt: 2, refreshState: 'idle', diagnostics: [], previews: [],
+        });
+        await act(async () => screen.update(render(removed)));
+        await flushHookEffects({ cycles: 40 });
+        expect(screen.findAllByType('iframe')).toHaveLength(0);
+        expect(screen.findHostByTestId('revoked-preview-unavailable-diagnostic-preview_ended')).not.toBeNull();
+        expect(onViewLifecycle).toHaveBeenCalledWith({ browserSessionId: view.browserSessionId, viewId: view.viewId },
+            { kind: 'loadFailed', errorCode: 'preview_ended' });
+        expect(previewHttp.fetch.mock.calls).toHaveLength(requests);
+        await screen.unmount();
+    });
+
+    it('shows Can\u2019t reach with Retry for a preview that failed in transport, even while its access URL remains', async () => {
+        const home = await upsertServerProfile({ serverUrl: 'http://localhost:3030' });
+        const base = createLocalPreviewView();
+        const view = { ...base, loadingState: 'failed' as const, lastError: 'preview_transport_unavailable' };
+        const resource = { previewId: 'preview_1', sessionId: 'session_1', machineId: 'machine_1',
+            owner: { kind: 'session' as const, id: 'session_1' },
+            target: { scheme: 'http' as const, host: '127.0.0.1', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Lumen web', addressLabel: 'localhost:5173' }, originMode: 'host' as const };
+        const state = applyLocalServicePreviewSnapshot(createLocalServicePreviewState(), {
+            generatedAt: 1, refreshState: 'idle', diagnostics: [], previews: [{ previewId: resource.previewId,
+                resource, accessUrl: base.currentUrl, expiresAt: null, diagnostics: [] }],
+        });
+        previewHttp.fetch.mockImplementation(async () => Response.json({ v: 1, kind: 'server_preview',
+            previewId: resource.previewId, machineId: resource.machineId,
+            accessUrl: base.currentUrl, expiresAt: 2_000_000_000_000 }));
+        const onTryAgain = vi.fn();
+        const screen = await renderScreen(<BrowserViewHost view={view} localServicePreviewState={state}
+            localServicePreviewServerId={home.id} recovery={{ onTryAgain, onClose: vi.fn() }} testID="unreachable-preview" />);
+        try {
+            await flushHookEffects({ cycles: 40 });
+            expect(screen.findAllByType('iframe')).toHaveLength(0);
+            expect(screen.findHostByTestId('unreachable-preview-unavailable-diagnostic-preview_transport_unavailable')).not.toBeNull();
+            await screen.pressByTestIdAsync('unreachable-preview-try-again');
+            expect(onTryAgain).toHaveBeenCalledTimes(1);
+        } finally { await screen.unmount(); }
     });
 
     it('admits a sessionless web frame through the actual viewer Home credential without a native descriptor', async () => {
@@ -392,10 +458,11 @@ describe('BrowserViewHost', () => {
     ])('reports the preview admission refusal rather than an unavailable desktop engine ($status)', async ({ status, error, reasonCode }) => {
         const home = await upsertServerProfile({ serverUrl: 'https://refused-preview-home.example.test' });
         const view = { ...createLocalPreviewView(), currentUrl: null, securityOrigin: null };
+        const onViewLifecycle = vi.fn();
         previewHttp.fetch.mockImplementation(async (url) => url.endsWith('/v1/local-services/preview/preview_1/access')
             ? Response.json({ error }, { status }) : Response.json({ ok: true }));
         const screen = await renderScreen(<BrowserViewHost view={view} localServicePreviewServerId={home.id}
-            testID="refused-preview" />);
+            onViewLifecycle={onViewLifecycle} testID="refused-preview" />);
         try {
             await flushHookEffects({ cycles: 40 });
             const desktopDiagnostic = screen.findHostByTestId('refused-preview-unavailable-diagnostic-desktop_engine_unavailable');
@@ -403,6 +470,67 @@ describe('BrowserViewHost', () => {
                 `obsolete desktop diagnostic present: ${Boolean(desktopDiagnostic)}`).not.toBeNull();
             expect(desktopDiagnostic).toBeNull();
             expect(screen.findAllByType('iframe')).toHaveLength(0);
+            expect(onViewLifecycle).toHaveBeenCalledTimes(1);
+            expect(onViewLifecycle).toHaveBeenCalledWith({ browserSessionId: view.browserSessionId, viewId: view.viewId },
+                { kind: 'loadFailed', errorCode: reasonCode });
+            await act(async () => screen.update(<BrowserViewHost view={{ ...view, title: 'Updated preview title' }}
+                localServicePreviewServerId={home.id} onViewLifecycle={onViewLifecycle} testID="refused-preview" />));
+            await flushHookEffects();
+            // A settled admission outcome is one lifecycle fact, independent of presentation renders.
+            expect(onViewLifecycle).toHaveBeenCalledTimes(1);
+        } finally { await screen.unmount(); }
+    });
+
+    it('reacquires refused preview access after a real reload command and preserves its last location', async () => {
+        const { createBrowserViewState, openBrowserTarget } = await import('@/sync/domains/browser/store');
+        const { applyBrowserControlEvent, browserViewLifecycleEvent, dispatchBrowserControlCommand } = await import('@/sync/domains/browser/control');
+        type BrowserControlState = import('@/sync/domains/browser/control').BrowserControlState;
+        type BrowserViewLifecycleSignal = import('@/sync/domains/browser/control').BrowserViewLifecycleSignal;
+        type BrowserViewLifecycleTarget = import('@/sync/domains/browser/control').BrowserViewLifecycleTarget;
+        const home = await upsertServerProfile({ serverUrl: 'https://retry-preview-home.example.test' });
+        const initialView = createLocalPreviewView();
+        const initial = openBrowserTarget(createBrowserViewState(), initialView.target, {
+            browserSessionId: initialView.browserSessionId, viewId: initialView.viewId, platform: 'web', currentUrl: '/last-page?query=1#section',
+        });
+        let accessRequests = 0;
+        previewHttp.fetch.mockImplementation(async (url) => {
+            if (!url.endsWith('/v1/local-services/preview/preview_1/access')) return Response.json({ ok: true });
+            accessRequests += 1;
+            return accessRequests === 1
+                ? Response.json({ error: 'preview_transport_unavailable' }, { status: 503 })
+                : Response.json({ v: 1, kind: 'server_preview', previewId: 'preview_1', machineId: 'machine_1',
+                    accessUrl: 'https://preview.example.test/?previewToken=fresh-viewer', expiresAt: 2_000_000_000_000 });
+        });
+        let current: BrowserControlState = initial;
+        let reload: (() => void) | undefined;
+        function Preview() {
+            const [state, setState] = React.useState<BrowserControlState>(initial);
+            const [navigationEffect, setNavigationEffect] = React.useState<React.ComponentProps<typeof BrowserViewHost>['navigationEffect']>();
+            current = state;
+            const onViewLifecycle = React.useCallback((target: BrowserViewLifecycleTarget, signal: BrowserViewLifecycleSignal) => {
+                const event = browserViewLifecycleEvent(target, signal);
+                if (event) setState(previous => applyBrowserControlEvent(previous, event));
+            }, []);
+            reload = () => {
+                const result = dispatchBrowserControlCommand(state, { kind: 'reload', commandId: 'retry-preview:reload',
+                    browserSessionId: initialView.browserSessionId, viewId: initialView.viewId });
+                setState(result.state);
+                setNavigationEffect(result.effects.find(effect => effect.kind === 'clientLocalNavigation'));
+            };
+            return <BrowserViewHost view={state.viewsById[initialView.viewId] ?? null} localServicePreviewServerId={home.id}
+                onViewLifecycle={onViewLifecycle} navigationEffect={navigationEffect} testID="retry-preview" />;
+        }
+        const screen = await renderScreen(<Preview />);
+        try {
+            await flushHookEffects({ cycles: 40 });
+            expect(current.viewsById[initialView.viewId]).toMatchObject({ loadingState: 'failed', lastError: 'preview_transport_unavailable' });
+            expect(accessRequests).toBe(1);
+            await act(async () => reload?.());
+            await flushHookEffects({ cycles: 40 });
+            expect(accessRequests).toBe(2);
+            expect(new URL(screen.findByType('iframe').props.src).pathname).toBe('/last-page');
+            await act(async () => screen.findByType('iframe').props.onLoad());
+            expect(current.viewsById[initialView.viewId]).toMatchObject({ loadingState: 'ready', lastError: null });
         } finally { await screen.unmount(); }
     });
 
@@ -467,7 +595,13 @@ describe('BrowserViewHost', () => {
      * the way that works — never a generic "unavailable" or "Page failed to load".
      */
     it('says where a private preview runs when this device has no way to open it', async () => {
+        const home = await upsertServerProfile({ serverUrl: 'https://private-preview-home.example.test' });
+        previewHttp.fetch.mockImplementation(async (url) => url.endsWith('/v1/local-services/preview/preview_1/access')
+            // The server's typed refusal (registerRoutes: no isolated preview origin on this Home).
+            ? Response.json({ error: 'preview_transport_unavailable', reasonCode: 'preview_private_route_unavailable' }, { status: 503 })
+            : Response.json({ ok: true }));
         const view = { ...createLocalPreviewView(), currentUrl: null, securityOrigin: null };
+        const onViewLifecycle = vi.fn();
         const {
             applyLocalServicePreviewSnapshot,
             createLocalServicePreviewState,
@@ -504,12 +638,20 @@ describe('BrowserViewHost', () => {
         });
 
         const screen = await renderScreen(
-            <BrowserViewHost view={view} localServicePreviewState={registeredWithoutAccess} testID="browser-view" />,
+            <BrowserViewHost view={view} localServicePreviewState={registeredWithoutAccess}
+                localServicePreviewServerId={home.id} onViewLifecycle={onViewLifecycle} testID="browser-view" />,
         );
 
+        await flushHookEffects({ cycles: 40 });
         expect(screen.findByTestId('browser-view-frame')).toBeNull();
-        expect(screen.findByTestId('browser-view-elsewhere')).not.toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('browser-view-elsewhere')).not.toBeNull());
         expect(screen.getTextContent()).toContain('browserShell.unavailable.previewElsewhere');
+        // The view settles as "no private route on this Home", never as "Can't reach this preview",
+        // which would replace this card once the shell reduces the failure.
+        await vi.waitFor(() => expect(onViewLifecycle).toHaveBeenCalledWith(expect.anything(),
+            { kind: 'loadFailed', errorCode: 'preview_private_route_unavailable' }));
+        expect(onViewLifecycle).not.toHaveBeenCalledWith(expect.anything(),
+            { kind: 'loadFailed', errorCode: 'preview_transport_unavailable' });
     });
 
     it('does not claim a preview runs elsewhere before its registration is known', async () => {

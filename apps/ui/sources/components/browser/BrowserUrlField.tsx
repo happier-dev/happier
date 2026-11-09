@@ -6,7 +6,6 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
-import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import {
@@ -15,7 +14,7 @@ import {
     type BrowserAddressNormalizationResult,
 } from '@/sync/domains/browser/shell';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 /**
  * How much room the field has. `toolbar` is the 34px chrome row above a rendered page; `panel` is
@@ -203,6 +202,7 @@ export type BrowserUrlFieldProps = Readonly<{
  * one focus ring, and one less pill in a toolbar that had six.
  */
 export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement {
+    const writeClipboard = useClipboardWrite();
     const densityKey = props.density ?? 'toolbar';
     const density = DENSITY[densityKey];
     const trailingAction = props.trailingAction ?? 'none';
@@ -309,11 +309,11 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
 
     const handleCopyUrl = React.useCallback(async () => {
         if (!props.value || props.disabled) return;
-        const copied = await setClipboardStringSafe(props.value);
+        const copied = await writeClipboard(props.value);
         if (copied) {
             copyFeedback.markCopied('url');
         }
-    }, [copyFeedback, props.disabled, props.value]);
+    }, [copyFeedback, props.disabled, props.value, writeClipboard]);
 
     const fieldRowStyle = React.useMemo(() => ({
         // `minHeight`, not `height`: Q2 measured that the app's `uiFontScale` GROWS the line box, so a
@@ -382,7 +382,6 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
                             variant="plain"
                             size={density.button}
                             iconSize={density.iconSize}
-                            minimumInteractiveTargetSize={resolveTouchTargetFloorPx() ?? undefined}
                             interactiveTargetGapPx={density.paddingRight * 2}
                             disabled={!props.value || props.disabled}
                             onPress={handleCopyUrl}
@@ -398,7 +397,6 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
                         tone="primary"
                         size={density.button}
                         iconSize={density.iconSize}
-                        minimumInteractiveTargetSize={resolveTouchTargetFloorPx() ?? undefined}
                         interactiveTargetGapPx={density.paddingRight * 2}
                         disabled={props.disabled}
                         onPress={submit}

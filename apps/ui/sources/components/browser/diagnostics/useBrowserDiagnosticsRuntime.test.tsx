@@ -79,6 +79,26 @@ it('cancels the active console eval invocation and sends an engine cancellation'
     expect(hook.getCurrent()?.interaction?.evalConsole?.entries[0]?.status).toBe('cancelled');
 });
 
+it('offers iframe diagnostics independently of automation and exposes the collector result for this document only', async () => {
+    stubCryptoRandomUuid();
+    const view: BrowserControlViewState = { ...createLocalPreviewView({ adapterKind: 'externalUrl' }),
+        target: { kind: 'externalUrl', targetId: 'external', url: 'https://preview.happier.test/' } };
+    const hook = await renderHook(({ currentView }) => useBrowserDiagnosticsRuntime({
+        view: currentView, enabled: true, parentOrigin: 'https://app.happier.test',
+    }), { initialProps: { currentView: view } });
+    const bridge = hook.getCurrent()?.bridge;
+    expect(bridge).toBeTruthy();
+    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'pending' });
+    await act(async () => bridge?.onAvailability?.({ status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' }));
+    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' });
+    await hook.rerender({ currentView: { ...view, navigationGeneration: view.navigationGeneration + 1 } });
+    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'pending' });
+    await act(async () => bridge?.onAvailability?.({ status: 'available' }));
+    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'pending' });
+    await act(async () => hook.getCurrent()?.bridge?.onAvailability?.({ status: 'available' }));
+    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'available' });
+});
+
 it.each(['console', 'signal'] as const)('cancels an incoming eval Action from its %s cancellation owner', async owner => {
     stubCryptoRandomUuid();
     const view = createLocalPreviewView({ engineKind: 'nativeWebView', navigationGeneration: 0 });
@@ -101,6 +121,34 @@ it.each(['console', 'signal'] as const)('cancels an incoming eval Action from it
     expect(hook.getCurrent()?.bridge?.evalRequest).toMatchObject({ evalRequestId: 'incoming_eval', action: 'cancel' });
     expect(await pending).toMatchObject({ ok: true, result: { status: 'cancelled' } });
     expect(hook.getCurrent()?.interaction?.evalConsole?.entries[0]).toMatchObject({ status: 'cancelled' });
+});
+
+it.each(['webIframe', 'desktopWebView'] as const)('settles a %s element-at-point Action without starting interactive picking or invoking the capture bridge', async engineKind => {
+    stubCryptoRandomUuid();
+    const view = createLocalPreviewView({ navigationGeneration: 0, engineKind,
+        adapterKind: engineKind === 'desktopWebView' ? 'externalUrl' : 'localPreview' });
+    const onElementPickerResult = vi.fn();
+    const hook = await renderHook(() => useBrowserDiagnosticsRuntime({ view, enabled: true,
+        automationEnabled: true, parentOrigin: 'https://app.happier.test', onElementPickerResult }));
+    const request = { v: 1 as const, pickerRequestId: 'hover-point', browserSessionId: 'browser_session_1', viewId: 'view_1',
+        navigationGeneration: 0, tier: 'injectedPage' as const, action: 'start' as const,
+        point: { x: 20, y: 30 }, diagnosticsInteractionEnabled: true as const };
+    let result!: ReturnType<typeof executor.execute>;
+    let refusalCode: string | null = null;
+    await act(async () => {
+        result = executor.execute('browser.diagnostics.elementPicker.start', request,
+            { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, bypassApprovals: true });
+        void result.then(value => { if (!value.ok) refusalCode = value.errorCode; });
+    });
+    await flushHookEffects({ cycles: 2, turns: 2 });
+    expect(hook.getCurrent()?.bridge?.elementPickerRequest, refusalCode ?? 'Action pending').toMatchObject({ point: request.point });
+    expect(hook.getCurrent()?.interaction?.pickerState).not.toBe('active');
+    const selected = { v: 1 as const, pickerRequestId: request.pickerRequestId, viewId: request.viewId,
+        navigationGeneration: 0, tier: 'injectedPage' as const, audited: true as const, status: 'selected' as const,
+        selectorPath: 'button', rect: { x: 10, y: 20, width: 40, height: 30 } };
+    await act(async () => { hook.getCurrent()?.bridge?.onElementPickerResult?.(selected); });
+    expect(await result).toMatchObject({ ok: true, result: selected });
+    expect(onElementPickerResult).not.toHaveBeenCalled();
 });
 
 function stubCryptoRandomUuid(): void {
@@ -240,26 +288,6 @@ function createDaemonDiagnosticsSnapshot(
         }],
     };
 }
-
-it('offers iframe diagnostics independently of automation and exposes the collector result for this document only', async () => {
-    stubCryptoRandomUuid();
-    const view: BrowserControlViewState = { ...createLocalPreviewView({ adapterKind: 'externalUrl' }),
-        target: { kind: 'externalUrl', targetId: 'external', url: 'https://preview.happier.test/' } };
-    const hook = await renderHook(({ currentView }) => useBrowserDiagnosticsRuntime({
-        view: currentView, enabled: true, parentOrigin: 'https://app.happier.test',
-    }), { initialProps: { currentView: view } });
-    const bridge = hook.getCurrent()?.bridge;
-    expect(bridge).toBeTruthy();
-    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'pending' });
-    await act(async () => bridge?.onAvailability?.({ status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' }));
-    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'unavailable', reasonCode: 'cross_origin_frame_unavailable' });
-    await hook.rerender({ currentView: { ...view, navigationGeneration: view.navigationGeneration + 1 } });
-    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'pending' });
-    await act(async () => bridge?.onAvailability?.({ status: 'available' }));
-    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'pending' });
-    await act(async () => hook.getCurrent()?.bridge?.onAvailability?.({ status: 'available' }));
-    expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'available' });
-});
 
 describe('useBrowserDiagnosticsRuntime', () => {
     it('retains an Ask-first console invocation until approval and receives the actual mounted engine result', async () => {
@@ -650,7 +678,7 @@ describe('useBrowserDiagnosticsRuntime', () => {
         expect(eventCount()).toBe(0);
     });
 
-    it('does not create a fake injected bridge for local-preview web iframes but still ingests daemon snapshots', async () => {
+    it('keeps iframe collector admission pending while ingesting daemon snapshots independently', async () => {
         stubCryptoRandomUuid();
         const snapshotClient = vi.fn(async () => ({
             ok: true as const,
@@ -674,10 +702,11 @@ describe('useBrowserDiagnosticsRuntime', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        expect(hook.getCurrent()?.bridge).toBeNull();
+        expect(hook.getCurrent()?.bridge).toBeTruthy();
+        expect(hook.getCurrent()?.diagnosticsAvailability).toEqual({ status: 'pending' });
         expect(hook.getCurrent()?.interaction).toEqual(expect.objectContaining({
-            state: 'unavailable',
-            pickerState: 'unavailable',
+            state: 'disabled',
+            pickerState: 'idle',
         }));
         expect(snapshotClient).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine_1',

@@ -23,6 +23,48 @@ import type {
 } from '../frame/types';
 import type { BrowserSurfaceLifecycleState } from '../surfaces/browserSurfaceLifecycle';
 
+// Zero-size and invisible but still loading: `display: none` would skip the load it exists for.
+const refusalProbeStyle = {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    border: 0,
+    visibility: 'hidden',
+    pointerEvents: 'none',
+} as const;
+
+/**
+ * The refusal probe of {@link useWebIframeFramability}: hidden, inert, gone once it answers. React wires
+ * only `load` on an `<object>`, never `error`, so both are listened to on the element itself, before the
+ * browser can answer (a layout effect runs in the commit that inserts it).
+ */
+function IframeRefusalProbe(props: Readonly<{
+    probe: NonNullable<ReturnType<typeof useWebIframeFramability>['probe']>;
+}>): React.ReactElement {
+    const ref = React.useRef<HTMLObjectElement | null>(null);
+    const { onLoad, onError } = props.probe;
+    React.useLayoutEffect(() => {
+        const node = ref.current;
+        if (!node) return undefined;
+        node.addEventListener('load', onLoad);
+        node.addEventListener('error', onError);
+        return () => {
+            node.removeEventListener('load', onLoad);
+            node.removeEventListener('error', onError);
+        };
+    }, [onLoad, onError]);
+    return (
+        <object
+            ref={ref}
+            data={props.probe.url}
+            type="text/html"
+            aria-hidden
+            tabIndex={-1}
+            style={refusalProbeStyle}
+        />
+    );
+}
+
 function resolveExternalUrl(view: BrowserControlViewState): string | null {
     if (view.target.kind !== 'externalUrl') {
         return null;
@@ -143,6 +185,12 @@ export function ExternalUrlTarget(props: Readonly<{
                         ...(props.automation ? { automation: props.automation } : {}),
                     }}
                 />
+                {framability.probe ? (
+                    <IframeRefusalProbe
+                        key={`${framability.probe.url}:${props.navigationKey ?? ''}`}
+                        probe={framability.probe}
+                    />
+                ) : null}
                 <BrowserFrameStatusCapsule
                     visible={framability.verdict === 'slow'}
                     testID={`${props.testID}-slow-hint`}

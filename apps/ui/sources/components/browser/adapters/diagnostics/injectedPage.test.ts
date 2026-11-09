@@ -1,7 +1,7 @@
 import {
     SANITIZE_URL_PARITY_VECTORS,
     stripBrowserDiagnosticUrlValues,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/diagnostics/egress/url';
 import { describe, expect, it } from 'vitest';
 
 type InjectedPageModule = Readonly<{
@@ -76,6 +76,7 @@ type InjectedPageModule = Readonly<{
             navigationGeneration: number;
             tier: 'injectedPage';
             action: 'start' | 'cancel';
+            point?: Readonly<{ x: number; y: number }>;
             diagnosticsInteractionEnabled: true;
         }>;
     }>) => string;
@@ -253,6 +254,7 @@ type FakeDiagnosticsDocument = {
     readyState: string;
     documentElement: FakeDiagnosticsNode;
     getElementsByTagName?: (tagName: string) => { readonly length: number };
+    elementFromPoint?: (x: number, y: number) => unknown;
 };
 
 type FakeDiagnosticsPerformance = {
@@ -377,6 +379,14 @@ function executeInjectedDiagnosticsScript(
 }
 
 describe('injected browser diagnostics collector', () => {
+    it('keeps admitted local-owner console URL text intact through ingress', async () => {
+        const { parseInjectedBrowserDiagnosticsMessage } = await import('./injectedPage');
+        const envelope = JSON.parse(batch());
+        envelope.events[0].data = { level: 'log', textAvailable: true, text: 'https://example.test/?token=owner-value' };
+        const parsed = parseInjectedBrowserDiagnosticsMessage(JSON.stringify(envelope), expectedCollector, { consoleValueCapture: true });
+        expect(parsed.ok && parsed.events?.[0]?.data.text).toBe('https://example.test/?token=owner-value');
+    });
+
     it('parses nonce-bound injected diagnostics batches into protocol events', async () => {
         const mod = await loadInjectedPageModule();
 
@@ -1839,6 +1849,34 @@ describe('injected browser diagnostics collector', () => {
                 objectGroupId: 'group_1',
             },
         });
+    });
+
+    it('runs a nonce-bound point query through the injected picker without starting interactive inspect', async () => {
+        const mod = await loadInjectedPageModule();
+        if (!mod?.buildInjectedBrowserDiagnosticsScript || !mod.parseInjectedBrowserDiagnosticsMessage) throw new Error('Missing collector');
+        const points: unknown[] = [];
+        const node = { nodeType: 1, tagName: 'BUTTON', parentElement: null, previousElementSibling: null,
+            getAttribute: (key: string) => key === 'aria-label' ? 'Checkout' : null,
+            getBoundingClientRect: () => ({ x: 10, y: 20, width: 80, height: 30 }) };
+        const messages = executeInjectedDiagnosticsScript(mod.buildInjectedBrowserDiagnosticsScript({ ...expectedCollector, version: '1.0.0' }), {
+            document: { elementFromPoint: (x, y) => { points.push({ x, y }); return node; } },
+            afterRun: ({ window, dispatchWindowEvent }) => {
+                const diagnostics = window.__happierBrowserDiagnostics as { elementPicker: (message: unknown) => void };
+                diagnostics.elementPicker({ v: 1, kind: 'browser.diagnostics.elementPickerRequest',
+                    browserSessionId: expectedCollector.browserSessionId, viewId: expectedCollector.viewId,
+                    navigationGeneration: expectedCollector.navigationGeneration,
+                    collector: { collectorId: expectedCollector.collectorId, nonce: expectedCollector.nonce, version: '1.0.0' },
+                    request: { v: 1, pickerRequestId: 'point-1', viewId: expectedCollector.viewId,
+                        navigationGeneration: expectedCollector.navigationGeneration, tier: 'injectedPage', action: 'start',
+                        point: { x: 25, y: 35 }, diagnosticsInteractionEnabled: true } });
+                dispatchWindowEvent('click');
+            },
+        });
+        expect(points).toEqual([{ x: 25, y: 35 }]);
+        const results = messages.map(message => mod.parseInjectedBrowserDiagnosticsMessage!(message, expectedCollector))
+            .flatMap(message => message?.elementPickerResult ? [message.elementPickerResult] : []);
+        expect(results).toEqual([expect.objectContaining({ status: 'selected', selectorPath: 'button:nth-of-type(1)',
+            accessibleName: 'Checkout', rect: { x: 10, y: 20, width: 80, height: 30 } })]);
     });
 
     it('builds element-picker command scripts and parses selected element results', async () => {

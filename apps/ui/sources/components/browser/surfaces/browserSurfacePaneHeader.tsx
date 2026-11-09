@@ -10,6 +10,8 @@ type BrowserSurfacePaneHeaderProps = Readonly<{
     presentation?: 'workspace' | 'viewer';
     serverId: string | null;
     machineId: string | null;
+    /** A page is open: the page and its address lead, so the large header steps aside (lab Qp vs Lp). */
+    pageOpen?: boolean;
 }>;
 
 function WorkspacePaneHeader(props: BrowserSurfacePaneHeaderProps): null {
@@ -26,7 +28,8 @@ function WorkspacePaneHeader(props: BrowserSurfacePaneHeaderProps): null {
                 ? t('browserLaunchpad.pane.previewsFrom', { machine: machineName })
                 : t('browserLaunchpad.pane.previews')],
         },
-    }), [machineMark, machineName]));
+        immersive: props.pageOpen === true,
+    }), [machineMark, machineName, props.pageOpen]));
     return null;
 }
 

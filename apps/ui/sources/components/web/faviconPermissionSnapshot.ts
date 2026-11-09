@@ -135,15 +135,9 @@ function deriveFaviconPermissionSnapshotFromSessions(
 type SessionMessagesValue = StorageState['sessionMessages'][string] | undefined;
 
 /**
- * The favicon indicator is mounted at the web app root, so this selector runs on
- * every store notification for the whole account.
- *
- * It used to answer "did anything that could move the favicon change?" by
- * rebuilding sorted, joined signature strings over every session — a sort plus
- * three account-sized joins per evaluation, allocating a string per session.
- * `sessionAttentionSignatureLedger` answers the same question with a revision
- * counter, where an unchanged session costs one identity comparison and
- * allocates nothing.
+ * The Messages owner publishes tool and transcript-lifecycle changes separately
+ * from assistant text. Only those changes can alter transcript permission facts;
+ * ordinary text must not walk the Account's Sessions or replace this snapshot.
  *
  * Runtime freshness is the one input that moves without the store moving, so the
  * freshness ledger's recorded boundary — not a `Date.now()` read inside a
@@ -158,27 +152,25 @@ export function createFaviconPermissionSnapshotSelector(): (state: StorageState)
     let previousRevisions: string | null = null;
     let previousSnapshot: FaviconPermissionSnapshot | null = null;
     let previousSessions: StorageState['sessions'] | null = null;
-    let previousSessionMessages: StorageState['sessionMessages'] | null = null;
+    let previousToolVersion: number | null = null;
 
     return (state) => {
         const nowMs = Date.now();
         const isFreshnessStable = isBeforeFreshnessBoundary(nowMs, [
             freshnessLedger.readNextBoundaryAtMs(),
         ]);
-        // A store notification that moved neither record cannot move this
-        // snapshot, so it must cost O(1) rather than an account-sized pass. The
-        // reuse only holds inside the earliest freshness boundary the ledger
-        // recorded, because freshness expiry moves the value with no store write.
+        // Freshness expiry still re-derives without a store write, using the
+        // existing runtime boundary rather than a second attention policy.
         if (
             previousSnapshot !== null
             && previousSessions === state.sessions
-            && previousSessionMessages === state.sessionMessages
+            && previousToolVersion === state.sessionMessageToolVersion
             && isFreshnessStable
         ) {
             return previousSnapshot;
         }
         previousSessions = state.sessions;
-        previousSessionMessages = state.sessionMessages;
+        previousToolVersion = state.sessionMessageToolVersion;
 
         // The favicon selector is evaluated against partial states in tests and
         // during early hydration, where the messages record may not exist yet.
@@ -200,11 +192,19 @@ export function createFaviconPermissionSnapshotSelector(): (state: StorageState)
         }
 
         previousRevisions = revisions;
-        previousSnapshot = deriveFaviconPermissionSnapshotFromSessions(
+        const derived = deriveFaviconPermissionSnapshotFromSessions(
             state,
             collectRecordIds(state.sessions),
             nowMs,
         );
+        // A Session signature moves far more often than the answer does: publish a new snapshot
+        // only when the answer or its refresh deadline differs, so the always-mounted indicator
+        // does not re-render for it.
+        if (previousSnapshot === null
+            || previousSnapshot.hasFreshPermission !== derived.hasFreshPermission
+            || previousSnapshot.nextRefreshDelayMs !== derived.nextRefreshDelayMs) {
+            previousSnapshot = derived;
+        }
         return previousSnapshot;
     };
 }

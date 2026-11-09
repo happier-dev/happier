@@ -8,6 +8,7 @@ import { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '@/sync/domains/session/a
 import { getStorage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
+import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -95,6 +96,56 @@ beforeEach(() => {
 });
 
 describe('FaviconPermissionIndicator', () => {
+    it('does no favicon commits or unrelated Session traversal for a real text-only delta', async () => {
+        setGlobalWindow({});
+        setGlobalDocument({});
+        let unrelatedReads = 0;
+        // UI-CORE F6 measured nineteen Sessions; keep its account shape while counting work, not time.
+        const sessions = new Proxy(Object.fromEntries(Array.from({ length: 19 }, (_, index) => [
+            `text-${index}`, createSessionFixture({ id: `text-${index}`, active: true }),
+        ])), {
+            get(target, key, receiver) {
+                if (typeof key === 'string' && key.startsWith('text-') && key !== 'text-0') unrelatedReads++;
+                return Reflect.get(target, key, receiver);
+            },
+        });
+        seedStorage({ sessions });
+        const delta = (text: string, updatedAtMs: number): NormalizedMessage => ({
+            id: 'favicon-stream', localId: 'favicon-stream', createdAt: 1, role: 'agent', isSidechain: false,
+            content: [{ type: 'text', text, uuid: 'favicon-stream', parentUUID: null }],
+            meta: { happierStreamSegmentV1: { v: 1, segmentKind: 'assistant', segmentLocalId: 'favicon-stream',
+                segmentState: 'streaming', startedAtMs: 1, updatedAtMs } },
+        });
+        storage.getState().applyMessages('text-0', [delta('start', 1)]);
+        const { FaviconPermissionIndicator } = await import('./FaviconPermissionIndicator');
+        let commits = 0;
+        await renderScreen(<React.Profiler id="favicon" onRender={() => { commits++; }}>
+            <FaviconPermissionIndicator />
+        </React.Profiler>);
+        commits = 0;
+        unrelatedReads = 0;
+        await act(async () => { storage.getState().applyMessages('text-0', [delta('next token', 2)]); });
+        expect({ commits, unrelatedReads }).toEqual({ commits: 0, unrelatedReads: 0 });
+
+        await act(async () => {
+            const current = storage.getState();
+            storage.setState({ sessions: { ...current.sessions, 'text-0': {
+                ...current.sessions['text-0'], agentState: { controlledByUser: null, requests: {
+                    permission: { tool: 'Bash', kind: 'permission', arguments: { command: 'ls' }, createdAt: 3 },
+                }, completedRequests: null },
+            } } });
+            storage.getState().applyMessagesLoaded('text-0');
+        });
+        expect(updateFaviconWithNotification).toHaveBeenCalledTimes(1);
+        resetFavicon.mockClear();
+        await act(async () => { storage.getState().applyMessages('text-0', [{
+            id: 'permission-result', localId: null, createdAt: 4, role: 'agent', isSidechain: false,
+            content: [{ type: 'tool-result', tool_use_id: 'permission', content: 'done', is_error: false,
+                uuid: 'permission-result', parentUUID: null, permissions: { date: 4, result: 'approved' } }],
+        }]); });
+        expect(resetFavicon).toHaveBeenCalledTimes(1);
+    });
+
     it('does not signal permissions for inactive sessions', async () => {
         setGlobalWindow({});
         setGlobalDocument({});

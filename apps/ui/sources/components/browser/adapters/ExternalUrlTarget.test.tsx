@@ -69,9 +69,12 @@ function openInSystemBrowser(view: BrowserControlViewState) {
 describe('ExternalUrlTarget (web)', () => {
     beforeEach(() => {
         openExternalUrlMock.mockClear();
+        // The app's own origin (a browser environment fact); external pages are cross-origin to it.
+        vi.stubGlobal('location', { origin: 'https://app.happier.test' });
     });
     afterEach(() => {
         vi.useRealTimers();
+        vi.unstubAllGlobals();
     });
 
     it('fails closed until a policy-backed external browsing adapter exists', async () => {
@@ -121,6 +124,49 @@ describe('ExternalUrlTarget (web)', () => {
             await vi.runOnlyPendingTimersAsync();
         });
         expect(screen.findHostByTestId('external-url-slow-hint')).toBeNull();
+    });
+
+    it('settles a site that refuses embedding into the failed card even though the iframe fired load (RU2 J1)', async () => {
+        // Chromium fires the iframe `load` for a frame it blocks (X-Frame-Options / frame-ancestors) and
+        // paints its broken-frame page; only an <object> load of the same URL reports `error` for it.
+        const view = createExternalUrlView();
+        const probeElement = new EventTarget();
+        const screen = await renderScreen(
+            <ExternalUrlTarget testID="external-url" view={view} onOpenInSystemBrowser={openInSystemBrowser(view)} />,
+            { createNodeMock: (element) => (element.type === 'object' ? probeElement : null) },
+        );
+        await act(async () => {
+            (screen.findByType('iframe').props as { onLoad?: () => void }).onLoad?.();
+        });
+        expect(screen.findByTestId('external-url-non-framable')).toBeNull();
+
+        expect((screen.findByType('object').props as { data?: string }).data).toBe('https://example.com/');
+        await act(async () => {
+            probeElement.dispatchEvent(new Event('error'));
+        });
+
+        expect(screen.findAllByType('iframe')).toHaveLength(0);
+        const action = screen.findByTestId('external-url-non-framable-action');
+        await act(async () => {
+            (action?.props as { onPress?: () => void }).onPress?.();
+        });
+        await vi.waitFor(() => {
+            expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/');
+        });
+    });
+
+    it('keeps an embeddable site inline and drops the refusal check once it loads', async () => {
+        const probeElement = new EventTarget();
+        const screen = await renderScreen(
+            <ExternalUrlTarget testID="external-url" view={createExternalUrlView()} />,
+            { createNodeMock: (element) => (element.type === 'object' ? probeElement : null) },
+        );
+        await act(async () => {
+            probeElement.dispatchEvent(new Event('load'));
+            (screen.findByType('iframe').props as { onLoad?: () => void }).onLoad?.();
+        });
+        expect(screen.findAllByType('object')).toHaveLength(0);
+        expect(screen.findAllByType('iframe')).toHaveLength(1);
     });
 
     it('shows the non-framable fallback and opens the system browser when the frame reports an error', async () => {

@@ -1,10 +1,12 @@
 import * as React from 'react';
 import type {
-    BrowserAdapterCapabilitiesV1,
-    BrowserEventV1,
+    BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
+import type {
+    BrowserEventV1} from '@happier-dev/protocol/browser/events/v1';
+import type {
     BrowserViewTargetV1,
-} from '@happier-dev/protocol';
-import { AccountProfileSchema } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/target/v1';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,7 +26,7 @@ import type { BrowserAutomationControlService } from '@/sync/domains/browser/aut
 import { createDefaultRuntimeActionExecutor } from '@/sync/ops/actions/defaultRuntimeActionExecutor';
 import { BrowserSurfaceHost } from './BrowserSurfaceHost';
 import { apiSocket } from '@/sync/api/session/apiSocket';
-import { uiBrowserAutomationDispatchMethod } from '@happier-dev/protocol';
+import { uiBrowserAutomationDispatchMethod } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
 
 // Static browser imports reach Socket consumers; retain the canonical network boundary.
 vi.mock('socket.io-client', async (importOriginal) =>

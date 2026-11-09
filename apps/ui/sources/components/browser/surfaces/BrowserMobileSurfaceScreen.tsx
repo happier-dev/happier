@@ -83,9 +83,11 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
         browserRecording: recordingRuntime?.browserShellRecording ?? null,
     }), [browserContext, recordingRuntime?.browserShellRecording]);
 
+    const renderPaneHeader = React.useCallback((state: Readonly<{ pageOpen: boolean }>) => (
+        <BrowserSurfacePaneHeader presentation={props.presentation} serverId={serverId} machineId={machineId} pageOpen={state.pageOpen} />
+    ), [machineId, props.presentation, serverId]);
+
     return (
-        <>
-            <BrowserSurfacePaneHeader presentation={props.presentation} serverId={serverId} machineId={machineId} />
             <BrowserScopedWorkspace
                 scopeId={scopeId}
                 presentation={props.presentation}
@@ -103,14 +105,16 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
                 localServicePreviewState={hostProps.localServicePreviewState}
                 localServicePreviewServerId={hostProps.localServicePreviewServerId}
                 launchpadRows={hostProps.launchpadRows}
+                localServiceTargets={hostProps.localServiceTargets}
                 launchpadRefreshStatus={hostProps.launchpadRefreshStatus}
                 launchpadRefreshError={hostProps.launchpadRefreshError}
                 onRefreshLaunchpad={hostProps.onRefreshLaunchpad}
                 productModels={productModels}
                 pluginProjection={pluginProjection}
                 pluginBrowserActionSessionId={props.sessionId}
+                collapseSingleTab
+                renderPaneHeader={renderPaneHeader}
                 testID={props.testID ?? 'session-mobile-browser'}
             />
-        </>
     );
 }

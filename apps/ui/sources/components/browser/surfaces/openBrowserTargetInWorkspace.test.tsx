@@ -11,6 +11,8 @@ import { createBrowserWorkspaceOpeningFixture } from '@/dev/testkit/fixtures/bro
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { clearBrowserRuntimeControlRegistryForTests } from '@/sync/domains/browser/actions/runtimeControlRegistry';
+import { createBrowserRuntimeActionExecutor } from '@/sync/domains/browser/actions/runtimeActionExecutor';
+import { createLocalServicesRuntimeActionExecutor } from '@/sync/domains/local/services/actions/runtimeActionExecutor';
 
 // The OS-tab handoff is a genuine platform boundary (`window.open` / `Linking.openURL`); the
 // selection and fulfilment logic beneath it stays real.
@@ -375,12 +377,22 @@ describe('openBrowserTargetInWorkspace', () => {
                 generatedAt: 1_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [] } };
         });
         const opened: BrowserViewTargetV1[] = [];
-        const open = bindServicesOpenInBrowser({ onOpenTarget: target => { opened.push(target); }, platform: 'web', sessionId: 'viewing-session' });
+        const owner = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web', openDetailsTab: () => {} }, {
+            runtimeActionExecute: createLocalServicesRuntimeActionExecutor({ fallback: createBrowserRuntimeActionExecutor({}) }),
+        });
+        const accountLifetime = owner.open.runtimeAdapter.accountLifetime;
+        const deps = { onOpenTarget: (target: BrowserViewTargetV1) => { opened.push(target); }, platform: 'web' as const,
+            sessionId: 'viewing-session', accountLifetime,
+            actionExecute: (...args: Parameters<typeof owner.executor.execute>) => owner.executor.execute(args[0], args[1],
+                { ...args[2], ...owner.context }) };
+        const open = bindServicesOpenInBrowser(deps);
         expect(await open({ ...serviceTargetWithBrowserTarget, source: 'managed_service', id: 'service-row', sessionId: undefined,
             sourceClass: { kind: 'managed_service', managedServiceId: serviceTarget.managedServiceId }, workspaceId: serviceTarget.workspaceId,
             cwd: serviceTarget.cwd, declaration: serviceTarget.declaration, browserTarget: undefined, actions: ['open_preview'] }))
             .toEqual({ status: 'succeeded' });
         expect(opened).toEqual([browserTarget]);
+        expect(machineRpcMock.mock.calls[0]?.[0].serverId).toBe(accountLifetime?.scope.serverId);
+        owner.dispose();
     });
     it('resolves a target into BOTH a details-workspace tab AND a live content record (one identity)', () => {
         const resolved = resolveBrowserViewTargetOpen({
@@ -471,6 +483,15 @@ describe('openBrowserTargetInWorkspace', () => {
         } as LocalServiceLaunchTargetV1)).toBeNull();
     });
 
+    it('refuses a Service open while its admitted Account binding is unavailable', async () => {
+        const onOpenTarget = vi.fn();
+        const open = bindServicesOpenInBrowser({ onOpenTarget, platform: 'web', accountLifetime: null });
+        expect(await open({ ...serviceTargetWithBrowserTarget, source: 'registered_preview' }))
+            .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+        expect(machineRpcMock).not.toHaveBeenCalled();
+        expect(onOpenTarget).not.toHaveBeenCalled();
+    });
+
     it('refuses inventory registration without a projected inventory identity', async () => {
         const open = bindServicesOpenInBrowser({ onOpenTarget: vi.fn(), platform: 'web' });
         expect(await open({ ...serviceTargetWithBrowserTarget, sourceClass: undefined,
@@ -478,9 +499,58 @@ describe('openBrowserTargetInWorkspace', () => {
         expect(machineRpcMock).not.toHaveBeenCalled();
     });
 
+    it.each([
+        { enabled: false, sameMachine: true, rowsPresent: true },
+        { enabled: true, sameMachine: true, rowsPresent: true },
+        { enabled: true, sameMachine: false, rowsPresent: true },
+        { enabled: true, sameMachine: true, rowsPresent: false },
+    ])('admits port preview registration through the Action owner (enabled=$enabled, sameMachine=$sameMachine, rowsPresent=$rowsPresent)', async ({ enabled, sameMachine, rowsPresent }) => {
+        const resource = {
+            previewId: 'preview_123', sessionId: 'session_123', machineId: 'machine_123',
+            owner: { kind: 'session', id: 'session_123' }, target: { scheme: 'http', host: '127.0.0.1', port: 5173 },
+            initialPath: { pathname: '/', search: '' }, display: { title: 'Kitchen Sink', addressLabel: 'localhost:5173' },
+            originMode: 'host', browserTarget: localServicePreviewTarget,
+        } as const;
+        const preview = { previewId: resource.previewId, resource, accessUrl: 'https://preview-123.preview.test/',
+            expiresAt: 61_000, diagnostics: [] };
+        machineRpcMock.mockResolvedValueOnce({ protocolVersion: 1, status: 'created', preview,
+            snapshot: { v: 1, machineId: sameMachine ? resource.machineId : 'another-machine', generatedAt: 1_000, refreshState: 'idle',
+                resources: [resource], ...(rowsPresent ? { previews: [preview] } : {}), diagnostics: [] } });
+        const openDetailsTab = vi.fn();
+        const fixture = createBrowserWorkspaceOpeningFixture({ openDetailsTab, scope: 'sessionDetails', platform: 'web' }, {
+            isActionEnabled: id => id !== 'localServices.preview.openOrCreate' || enabled,
+            runtimeActionExecute: createLocalServicesRuntimeActionExecutor({ fallback: createBrowserRuntimeActionExecutor({}) }),
+        });
+        const deps = { onOpenTarget: fixture.open, platform: 'web' as const,
+            actionExecute: (...args: Parameters<typeof fixture.executor.execute>) => fixture.executor.execute(args[0], args[1],
+                { ...args[2], ...fixture.context }) };
+        const open = bindServicesOpenInBrowser(deps);
+        const result = await open({ ...serviceTargetWithBrowserTarget, browserTarget: undefined,
+            actions: ['register_preview'], sourceClass: { kind: 'inventory_entry', inventoryEntryId: 'svc_1' } });
+        if (enabled && sameMachine && rowsPresent) {
+            expect(result).toEqual({ status: 'succeeded' });
+            expect(machineRpcMock).toHaveBeenCalledTimes(1);
+            expect(readTabTarget(openDetailsTab.mock.calls[0][0])).toEqual(localServicePreviewTarget);
+        } else if (!enabled) {
+            expect(result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+            expect(machineRpcMock).not.toHaveBeenCalled();
+            expect(openDetailsTab).not.toHaveBeenCalled();
+        } else {
+            expect(result).toEqual({ status: 'denied', reasonCode: 'preview_registration_failed' });
+            expect(machineRpcMock).toHaveBeenCalledTimes(1);
+            expect(openDetailsTab).not.toHaveBeenCalled();
+        }
+        fixture.dispose();
+    });
+
     it('registers a detected service through the server preview owner before opening its returned URL', async () => {
+        const openDetailsTab = vi.fn();
+        const fixture = createBrowserWorkspaceOpeningFixture({ openDetailsTab, scope: 'sessionDetails', platform: 'web' }, {
+            runtimeActionExecute: createLocalServicesRuntimeActionExecutor({ fallback: createBrowserRuntimeActionExecutor({}) }),
+        });
+        const previewScope = { machineId: 'machine_123', serverId: fixture.context.serverId };
         // The loaded Browser/Services surface subscribes to this canonical store key.
-        const unsubscribe = subscribeLocalServicePreviewStore({ machineId: 'machine_123' }, () => {}, {
+        const unsubscribe = subscribeLocalServicePreviewStore(previewScope, () => {}, {
             snapshotClient: async () => ({ ok: true, snapshot: { generatedAt: 0, refreshState: 'idle', previews: [], diagnostics: [] } }),
         });
         await Promise.resolve();
@@ -493,23 +563,24 @@ describe('openBrowserTargetInWorkspace', () => {
         } as const;
         const preview = { previewId: resource.previewId, resource, accessUrl: 'https://preview-123.preview.test/?previewToken=fresh', expiresAt: 61_000, diagnostics: [] };
         machineRpcMock.mockResolvedValueOnce({ protocolVersion: 1, status: 'created', preview, snapshot: { v: 1, machineId: resource.machineId, generatedAt: 1_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [] } });
-        const openDetailsTab = vi.fn();
-        const { open } = createBrowserWorkspaceOpeningFixture({ openDetailsTab, scope: 'sessionDetails', platform: 'web' });
-        const openInBrowser = bindServicesOpenInBrowser({ onOpenTarget: open, platform: 'web' });
+        const deps = { onOpenTarget: fixture.open, platform: 'web' as const,
+            actionExecute: (...args: Parameters<typeof fixture.executor.execute>) => fixture.executor.execute(args[0], args[1],
+                { ...args[2], ...fixture.context }) };
+        const openInBrowser = bindServicesOpenInBrowser(deps);
         expect(await openInBrowser(target)).toEqual({ status: 'succeeded' });
         expect(machineRpcMock).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine_123', payload: { machineId: 'machine_123', sessionId: 'session_123', inventoryEntryId: 'svc_1' } }));
         const [tab] = openDetailsTab.mock.calls[0] as [DetailsTab];
         expect(readTabTarget(tab)).toEqual(localServicePreviewTarget);
-        expect(getLocalServicePreviewState({ machineId: 'machine_123' }).previewsById.get('preview_123')?.accessUrl).toBe(preview.accessUrl);
+        expect(getLocalServicePreviewState(previewScope).previewsById.get('preview_123')?.accessUrl).toBe(preview.accessUrl);
 
         // Reopening must ask the same owner for a new admission, never reuse the snapshot URL.
         const reopenedPreview = { ...preview, accessUrl: 'https://preview-123.preview.test/?previewToken=reopened' };
         machineRpcMock.mockResolvedValueOnce({ protocolVersion: 1, status: 'existing', preview: reopenedPreview, snapshot: { v: 1, machineId: resource.machineId, generatedAt: 62_000, refreshState: 'idle', resources: [resource], previews: [reopenedPreview], diagnostics: [] } });
         const onOpenTarget = vi.fn();
-        const reopen = bindServicesOpenInBrowser({ onOpenTarget, platform: 'web' });
+        const reopen = bindServicesOpenInBrowser({ ...deps, onOpenTarget });
         expect(await reopen({ ...target, browserTarget: localServicePreviewTarget, actions: ['open_preview'] })).toEqual({ status: 'succeeded' });
         expect(onOpenTarget).toHaveBeenCalledWith(localServicePreviewTarget, { platform: 'web', currentUrl: reopenedPreview.accessUrl });
-        expect(getLocalServicePreviewState({ machineId: 'machine_123' }).previewsById.get('preview_123')?.accessUrl).toBe(reopenedPreview.accessUrl);
+        expect(getLocalServicePreviewState(previewScope).previewsById.get('preview_123')?.accessUrl).toBe(reopenedPreview.accessUrl);
 
         // The typed no-private-domain response preserves the existing Elsewhere + Share surface.
         const elsewherePreview = { ...preview, accessUrl: null, expiresAt: null, accessUnavailableReasonCode: 'preview_private_route_unavailable' };
@@ -517,12 +588,14 @@ describe('openBrowserTargetInWorkspace', () => {
         onOpenTarget.mockClear();
         expect(await reopen(target)).toEqual({ status: 'succeeded' });
         expect(onOpenTarget).toHaveBeenCalledWith(localServicePreviewTarget, { platform: 'web' });
-        expect(getLocalServicePreviewState({ machineId: 'machine_123' }).previewsById.get('preview_123')?.accessUnavailableReasonCode).toBe('preview_private_route_unavailable');
+        expect(getLocalServicePreviewState(previewScope).previewsById.get('preview_123')?.accessUnavailableReasonCode).toBe('preview_private_route_unavailable');
 
         machineRpcMock.mockRejectedValueOnce(new Error('local_service_preview_lifecycle_refused:preview_registration_failed'));
         onOpenTarget.mockClear();
-        expect(await reopen(target)).toEqual({ status: 'denied', reasonCode: 'preview_registration_failed' });
+        expect(await reopen(target)).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled',
+            error: 'runtime_action_disabled:localServices:local_services_preview_refused:preview_registration_failed' });
         expect(onOpenTarget).not.toHaveBeenCalled();
+        fixture.dispose();
         unsubscribe();
     });
 
@@ -561,7 +634,13 @@ describe('openBrowserTargetInWorkspace', () => {
             const preview = { previewId: resource.previewId, resource, accessUrl: 'https://preview-123.preview.test/?previewToken=fresh', expiresAt: 61_000, diagnostics: [] };
             machineRpcMock.mockResolvedValueOnce({ protocolVersion: 1, status: 'existing', preview, snapshot: { v: 1, machineId: resource.machineId, generatedAt: 1_000, refreshState: 'idle', resources: [resource], previews: [preview], diagnostics: [] } });
             const onOpenTarget = vi.fn();
-            const open = bindServicesOpenInBrowser({ onOpenTarget, platform: 'web', sessionId: 'viewing_session' });
+            const fixture = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web', openDetailsTab: () => {} }, {
+                runtimeActionExecute: createLocalServicesRuntimeActionExecutor({ fallback: createBrowserRuntimeActionExecutor({}) }),
+            });
+            const deps = { onOpenTarget, platform: 'web' as const, sessionId: 'viewing_session',
+                actionExecute: (...args: Parameters<typeof fixture.executor.execute>) => fixture.executor.execute(args[0], args[1],
+                    { ...args[2], ...fixture.context }) };
+            const open = bindServicesOpenInBrowser(deps);
             expect(await open({
                 ...serviceTargetWithBrowserTarget, source: 'registered_preview', browserTarget, sessionId,
             })).toEqual({ status: 'succeeded' });
@@ -569,6 +648,7 @@ describe('openBrowserTargetInWorkspace', () => {
                 payload: { machineId: 'machine_123', ...(sessionId ? { sessionId } : {}), launchTargetId: 'preview_123' },
             }));
             expect(onOpenTarget).toHaveBeenCalledWith(browserTarget, { platform: 'web', currentUrl: preview.accessUrl });
+            fixture.dispose();
         }
     });
 

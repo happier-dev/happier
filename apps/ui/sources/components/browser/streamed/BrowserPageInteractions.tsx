@@ -10,6 +10,7 @@ import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { Icon } from '@/components/ui/icons/Icon';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
@@ -97,16 +98,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.text.secondary,
     fontVariant: ['tabular-nums'],
   },
-  progressTrack: {
-    height: 2,
+  downloadProgress: {
     marginTop: theme.space.s4,
-    borderRadius: 1,
-    overflow: 'hidden',
-    backgroundColor: theme.colors.border.default,
-  },
-  progressFill: {
-    height: 2,
-    backgroundColor: theme.colors.text.primary,
   },
 }));
 
@@ -505,16 +498,14 @@ function BrowserDownloads(
                   {downloadMeta(download)}
                 </Text>
                 {download.state === 'inProgress' && download.totalBytes > 0 ? (
-                  <View style={stylesheet.progressTrack}>
-                    <View
-                      style={[
-                        stylesheet.progressFill,
-                        {
-                          width: `${Math.min(100, (download.receivedBytes / download.totalBytes) * 100)}%`,
-                        },
-                      ]}
-                    />
-                  </View>
+                  <MeterBar
+                    tone="neutral"
+                    height={4}
+                    animated
+                    fillFraction={download.receivedBytes / download.totalBytes}
+                    progressAccessibilityLabel={download.name}
+                    style={stylesheet.downloadProgress}
+                  />
                 ) : null}
               </View>
               {download.state === 'completed' && props.onSave ? (
