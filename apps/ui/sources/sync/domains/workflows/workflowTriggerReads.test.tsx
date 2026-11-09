@@ -69,6 +69,18 @@ function listed(row: ReturnType<typeof automation>) {
 }
 
 describe('Account trigger reads through real Action and Automation owners', () => {
+    it('preserves an HTTP authorization failure cause through the trigger Action', async () => {
+        // app.authenticate supplies this existing envelope before the Automation route runs.
+        const failureCause = { phase: 'execution_authorization', errorClass: 'Error',
+            errorCode: 'credential_scope_denied', httpStatus: 403 };
+        home.answer(serverId, 'GET /v3/automations/denied-trigger', { status: 403,
+            body: { error: 'credential_scope_denied', failureCause } });
+        await expect(listWorkflowTriggerSets({ automationId: 'denied-trigger', review: true })).rejects.toMatchObject({
+            name: 'WorkflowActionError', code: 'run_access_denied',
+            failure: { ok: false, errorCode: 'run_access_denied', failureCause },
+        });
+    });
+
     it('opens one exact private Event definition without publishing a partial list census', async () => {
         const automationId = 'private-event';
         const triggerId = '00000000-0000-4000-8000-000000000001';

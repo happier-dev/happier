@@ -1,5 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
+import { automationOccurrenceRequest, type AutomationOccurrenceActionId, type AutomationOccurrenceInput } from '@happier-dev/protocol/automations/occurrenceActions';
+import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import {
     AutomationAssignmentUpdateRequestSchema,
     AutomationV3ClearRunHistoryResponseSchema,
@@ -14,7 +16,6 @@ import {
     AutomationDefinitionReconcileRequestSchema,
     AutomationV3RunDetailSchema,
     AutomationV3RunMutationResponseSchema,
-    AutomationV3RunReplyHandoffRedeliverRequestSchema,
     AutomationV3SettingsSchema,
     AutomationV3SettingsUpdateRequestSchema,
     type AutomationV3ClearRunHistoryResponse,
@@ -68,8 +69,15 @@ function requestAutomation(
 
 /** Once sent, a missing or invalid write acknowledgement cannot prove rollback. */
 async function readAutomationMutationReceipt<T>(response: Promise<Response>, parse: (raw: unknown) => T): Promise<T> {
+    const received = await response.catch((cause: unknown) => {
+        throw Object.assign(new Error('workflow_outcome_unresolved', { cause }), { code: 'workflow_outcome_unresolved' });
+    });
+    if (received.status === 503) {
+        const rollback = readHomeDomainConfirmedRollbackV1(received.status, await received.clone().json().catch(() => null));
+        if (rollback) throw Object.assign(new Error(rollback.code), rollback);
+    }
     try {
-        return parse(await readAutomationJsonOrThrow(await response));
+        return parse(await readAutomationJsonOrThrow(received));
     } catch (cause) {
         if (cause instanceof AutomationApiError && cause.status !== undefined && cause.status < 500) throw cause;
         throw Object.assign(new Error('workflow_outcome_unresolved', { cause }), { code: 'workflow_outcome_unresolved' });
@@ -291,60 +299,18 @@ export async function clearAutomationRunHistory(
 }
 
 /** Cancellation remains one Run mutation; callers receive the refreshed bounded Run projection. */
-export async function cancelAutomationRun(
+export async function mutateAutomationOccurrence(
     credentials: AuthCredentials,
-    runId: string,
+    actionId: AutomationOccurrenceActionId,
+    input: AutomationOccurrenceInput,
     context?: AutomationRequestContext,
 ): Promise<AutomationV3RunListItem> {
-    const response = await requestAutomation(credentials, context, `/v3/automations/runs/${encodeURIComponent(runId)}/cancel`, {
+    const { path, body } = automationOccurrenceRequest(actionId, input);
+    const response = await requestAutomation(credentials, context, path, {
         method: 'POST',
-        headers: getAutomationAuthHeaders(credentials),
+        headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: body !== undefined }),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    const raw = await readAutomationJsonOrThrow(response);
-    return AutomationV3RunMutationResponseSchema.parse(raw).run;
-}
-
-/** Requeues the existing frozen reply handoff; the server preserves its custody identity. */
-export async function retryAutomationReplyHandoff(
-    credentials: AuthCredentials,
-    runId: string,
-    context?: AutomationRequestContext,
-): Promise<AutomationV3RunListItem> {
-    const response = await requestAutomation(
-        credentials, context,
-        `/v3/automations/runs/${encodeURIComponent(runId)}/retry-reply-handoff`,
-        {
-            method: 'POST',
-            headers: getAutomationAuthHeaders(credentials),
-        },
-    );
-    const raw = await readAutomationJsonOrThrow(response);
-    return AutomationV3RunMutationResponseSchema.parse(raw).run;
-}
-
-/**
- * Authorizes one further delivery of an accepted result. The exact revision the
- * user acted on travels with the request: the server mints the Run's next
- * distinct delivery identity only for that revision, so a repeated press or a
- * lost response cannot turn one decision into two messages.
- */
-export async function deliverAutomationResultAgain(
-    credentials: AuthCredentials,
-    input: Readonly<{ runId: string; expectedRevision: number }>,
-    context?: AutomationRequestContext,
-): Promise<AutomationV3RunListItem> {
-    const body = AutomationV3RunReplyHandoffRedeliverRequestSchema.parse({
-        expectedRevision: input.expectedRevision,
-    });
-    const response = await requestAutomation(
-        credentials, context,
-        `/v3/automations/runs/${encodeURIComponent(input.runId)}/deliver-result-again`,
-        {
-            method: 'POST',
-            headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
-            body: JSON.stringify(body),
-        },
-    );
     const raw = await readAutomationJsonOrThrow(response);
     return AutomationV3RunMutationResponseSchema.parse(raw).run;
 }

@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 import { createServerFetchForActiveServer, StaleServerGenerationError, type ServerFetch, type ServerFetchOptions } from '@/sync/http/client';
@@ -74,6 +75,7 @@ export type AutomationApiErrorPayload = Readonly<{
     code: string;
     status: number;
     message?: string;
+    failureCause?: ActionFailureCauseV1;
 }>;
 
 export class AutomationApiError extends HappyError {
@@ -85,6 +87,7 @@ export class AutomationApiError extends HappyError {
                 code: payload.code,
                 status: payload.status,
                 kind: 'server',
+                ...(payload.failureCause === undefined ? {} : { failureCause: payload.failureCause }),
             },
         );
         this.name = 'AutomationApiError';
@@ -100,6 +103,7 @@ export async function readAutomationJsonOrThrow(response: Response): Promise<unk
     if (!response.ok) {
         let message = `Automation API request failed: ${response.status}`;
         let code = 'automation_api_request_failed';
+        let failureCause: ActionFailureCauseV1 | undefined;
         try {
             const error = await response.json();
             const record = error && typeof error === 'object'
@@ -109,10 +113,13 @@ export async function readAutomationJsonOrThrow(response: Response): Promise<unk
                 message = record.error;
                 code = message;
             }
+            const parsedCause = ActionFailureCauseV1Schema.safeParse(record?.failureCause);
+            if (parsedCause.success) failureCause = parsedCause.data;
         } catch {
             // ignore
         }
-        throw new AutomationApiError({ code, status: response.status, message });
+        throw new AutomationApiError({ code, status: response.status, message,
+            ...(failureCause === undefined ? {} : { failureCause }) });
     }
     return await response.json();
 }

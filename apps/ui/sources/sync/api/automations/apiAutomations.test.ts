@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
-    cancelAutomationRun,
     clearAutomationRunHistory,
     getAutomationSettings,
     deleteAutomationDefinition,
@@ -11,7 +10,7 @@ import {
     listAutomationDefinitions,
     pauseAutomationDefinition,
     replaceAutomationDefinitionAssignments,
-    retryAutomationReplyHandoff,
+    mutateAutomationOccurrence,
     resumeAutomationDefinition,
     runAutomationDefinitionNow,
     updateAutomationSettings,
@@ -52,6 +51,20 @@ it('refuses an unsupported selected read without falling back to an Account cens
 });
 
 describe('Automation write receipt certainty', () => {
+    it.each(['read', 'write'] as const)('preserves the HTTP owner failure cause on a refused %s', async kind => {
+        const failureCause = { phase: 'execution_authorization', errorClass: 'Error',
+            errorCode: 'credential_scope_denied', httpStatus: 403 };
+        const request = vi.fn(async () => Response.json({ error: 'credential_scope_denied', failureCause }, { status: 403 }));
+        const context = { serverId: 'test', request };
+        const result = kind === 'read' ? getAutomationDefinition(credentials, 'set-one', context)
+            : reconcileAutomationDefinition(credentials, 'set-one', {
+                expectedTemplateVersion: 1, name: 'Triggers', description: null, enabled: true,
+                assignments: [], triggers: [], removedTriggers: [],
+            }, context);
+        await expect(result).rejects.toMatchObject({ code: 'credential_scope_denied', status: 403, failureCause });
+        expect(request).toHaveBeenCalledTimes(1);
+    });
+
     it.each(['lost', 'invalid', 'server'] as const)('keeps a %s mutation receipt unresolved', async kind => {
         const request = vi.fn(async () => {
             if (kind === 'lost') throw new Error('transport lost');
@@ -334,19 +347,9 @@ describe('apiAutomations', () => {
         ]));
     });
 
-    it('reads one direct Run detail and cancels a Run through the incumbent owner', async () => {
-        const cancelledRun = { ...runSummary, state: 'cancelled' as const, finishedAt: 1_786_257_601_000 };
+    it('reads one direct Run detail by its Automation and Run ids', async () => {
         const fetchSpy = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async (input, init) => {
             const url = toUrlString(input);
-            if (url.endsWith('/v3/automations/runs/run-1/cancel')) {
-                expect(init?.method).toBe('POST');
-                return {
-                    ok: true,
-                    status: 200,
-                    headers: new Headers(),
-                    json: async () => ({ run: cancelledRun }),
-                } as Response;
-            }
             expect(url).toContain('/v3/automations/automation-event-1/runs/run-1');
             expect(init?.method).toBeUndefined();
             return {
@@ -359,13 +362,10 @@ describe('apiAutomations', () => {
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
         const detail = await getAutomationRunDetail(credentials, 'automation-event-1', 'run-1');
-        const cancelled = await cancelAutomationRun(credentials, 'run-1');
 
         expect(detail).toEqual(runDetail);
-        expect(cancelled).toEqual(cancelledRun);
         expect(fetchSpy.mock.calls.map(([input]) => toUrlString(input))).toEqual([
             expect.stringContaining('/v3/automations/automation-event-1/runs/run-1'),
-            expect.stringContaining('/v3/automations/runs/run-1/cancel'),
         ]);
     });
 
@@ -389,7 +389,7 @@ describe('apiAutomations', () => {
         );
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        await expect(retryAutomationReplyHandoff(credentials, 'run-1')).resolves.toEqual(readyRun);
+        await expect(mutateAutomationOccurrence(credentials, 'automation.run.reply_handoff.retry', { runId: 'run-1' })).resolves.toEqual(readyRun);
     });
 
     it('reads and replaces strict account Automation settings, then clears one definition history', async () => {
