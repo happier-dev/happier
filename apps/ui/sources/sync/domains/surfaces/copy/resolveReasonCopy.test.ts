@@ -2,12 +2,107 @@ import { describe, expect, it } from 'vitest';
 
 import type { BrowserAdapterUnavailableReasonCode } from '@/sync/domains/browser/adapters/availability';
 import type { BrowserSurfaceUnavailableReason } from '@/components/browser/surfaces/BrowserSurfaceFallback';
-import { t } from '@/text';
+import { preloadTranslations, setPreferredLanguageFromSettings, SUPPORTED_LANGUAGE_CODES, t } from '@/text';
 
 import {
+  isLocalServiceActionRefusedByPolicy,
   resolvePluginSurfaceStatePresentation,
   resolveReasonCopy,
 } from './resolveReasonCopy';
+
+describe('Preview sharing policy refusal copy', () => {
+  it.each(SUPPORTED_LANGUAGE_CODES)('names only the refused port in %s', async language => {
+    await preloadTranslations(language);
+    setPreferredLanguageFromSettings(language);
+    try {
+      const copy = resolveReasonCopy({ kind: 'browserFrame', reasonCode: 'destination_port_not_allowed', port: 5173 });
+      expect(copy.body).toContain('5173');
+      expect(copy.body).not.toContain('destination_port_not_allowed');
+      expect(copy.body).not.toBe(resolveReasonCopy({ kind: 'browserFrame', reasonCode: 'preview_transport_unavailable' }).body);
+      expect(copy.diagnosticCode).toBe('destination_port_not_allowed');
+    } finally { setPreferredLanguageFromSettings('en'); }
+  });
+});
+
+describe('Service refusal recovery copy', () => {
+  it('presents an ineligible people audience as a refusal rather than a retryable failure', () => {
+    const copy = resolveReasonCopy({ kind: 'localServiceAction', reasonCode: 'audience_not_eligible' });
+    expect(copy.body).toBe(t('localServices.actions.failure.unavailable'));
+    expect(copy.diagnosticCode).toBe('audience_not_eligible');
+  });
+  it.each(SUPPORTED_LANGUAGE_CODES)('presents a named start failure without repeating recovery in %s', async language => {
+    await preloadTranslations(language);
+    setPreferredLanguageFromSettings(language);
+    try {
+      const copy = resolveReasonCopy({ kind: 'localServiceAction', reasonCode: 'plugin_managed_service_establishment_failed',
+        serviceName: 'Lumen web', servicesActionOffered: true });
+      const withDetails = resolveReasonCopy({ kind: 'localServiceAction', reasonCode: 'plugin_managed_service_establishment_failed',
+        serviceName: 'Lumen web', servicesActionOffered: true,
+        establishmentFailure: { cause: 'process_exited', exitCode: 1 } });
+      expect(withDetails.body).toBe(copy.body);
+      expect(copy.body).toContain('Lumen web');
+      expect(copy.body).not.toContain(t('localServices.row.reviewOutput'));
+      expect(copy.body).not.toContain('plugin_managed_service_establishment_failed');
+      expect(copy.body).not.toContain(':');
+      expect(copy.title).not.toBe(resolveReasonCopy({ kind: 'browserFrame', reasonCode: 'preview_ended' }).title);
+      expect(copy.title).not.toBe(resolveReasonCopy({ kind: 'localServiceAction', reasonCode: null }).title);
+      if (language === 'en') {
+        expect(copy.title).toBe('Service couldn’t start');
+        expect(copy.body).toBe('Lumen web stopped before it was ready.');
+      }
+    } finally { setPreferredLanguageFromSettings('en'); }
+  });
+  it.each(SUPPORTED_LANGUAGE_CODES)('keeps guidance only without a Services action (%s)', async language => {
+    await preloadTranslations(language);
+    setPreferredLanguageFromSettings(language);
+    try {
+      for (const reasonCode of [
+        'service_not_listening', 'unknown_managed_service', 'preview_target_unresolved',
+        'preview_registration_failed', 'preview_hostname_collision', 'preview_server_unavailable',
+        'permission_denied', 'action_outcome_unknown', 'unmapped_preview_failure',
+      ]) {
+        const input = { kind: 'localServiceAction' as const, reasonCode, serviceName: 'Reading desk' };
+        const guided = resolveReasonCopy(input);
+        const card = resolveReasonCopy({ ...input, servicesActionOffered: true });
+        expect(card.body, reasonCode).toContain(input.serviceName);
+        expect(card.body, reasonCode).not.toBe(guided.body);
+        expect(card.body.length, reasonCode).toBeLessThan(guided.body.length);
+        expect(card.diagnosticCode).toBe(reasonCode);
+        expect(resolveReasonCopy({ ...input, servicesActionOffered: false }).body).toBe(guided.body);
+        if (language === 'en') expect(card.body).not.toMatch(/check Services|try again|permissions and/iu);
+      }
+      if (language === 'en') {
+        expect(resolveReasonCopy({ kind: 'localServiceAction', reasonCode: 'service_not_listening',
+          serviceName: 'Reading desk', servicesActionOffered: true }).body).toBe('Reading desk isn’t running anymore.');
+      }
+    } finally {
+      setPreferredLanguageFromSettings('en');
+    }
+  });
+});
+
+describe('Service action failure naming', () => {
+  it.each(SUPPORTED_LANGUAGE_CODES)('says the in-app browser view is missing, not the Service or the Machine (%s)', async language => {
+    await preloadTranslations(language);
+    setPreferredLanguageFromSettings(language);
+    try {
+      const view = resolveReasonCopy({ kind: 'localServiceAction', reasonCode: 'browser_view_unavailable' });
+      expect(view.body).not.toBe(resolveReasonCopy({ kind: 'localServiceAction', reasonCode: 'browser_adapter_unavailable' }).body);
+      expect(view.body).not.toBe(resolveReasonCopy({ kind: 'localServiceAction', reasonCode: null }).body);
+      expect(view.diagnosticCode).toBe('browser_view_unavailable');
+    } finally { setPreferredLanguageFromSettings('en'); }
+  });
+  it('does not repeat the Service as a prefix under a title that already names it', () => {
+    const input = { kind: 'localServiceAction' as const, reasonCode: 'preview_registration_failed', serviceName: 'Lumen web' };
+    expect(resolveReasonCopy(input).body.startsWith('Lumen web: ')).toBe(true);
+    expect(resolveReasonCopy({ ...input, serviceNamedByTitle: true }).body.startsWith('Lumen web')).toBe(false);
+  });
+  it('treats only a policy the person can change as a refusal', () => {
+    expect(isLocalServiceActionRefusedByPolicy('permission_denied')).toBe(true);
+    expect(isLocalServiceActionRefusedByPolicy('browser_view_unavailable')).toBe(false);
+    expect(isLocalServiceActionRefusedByPolicy(null)).toBe(false);
+  });
+});
 
 // The full BrowserAdapterUnavailableReasonCode enum, restated as a const tuple so
 // this test breaks (typecheck) if the source enum grows and the mapper does not.

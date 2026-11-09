@@ -4,6 +4,8 @@ import type { BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/ada
 import { t } from '@/text';
 import type { PluginMachineOriginRejectionReasonV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import type { LocalServiceNativePrerequisiteV1, LocalServiceEstablishmentFailureV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import type { LocalServicePublicPreviewCreateFailureReasonV1 } from '@happier-dev/protocol/local/services/public/v1';
+import type { TranslationKey } from '@/text/i18n';
 
 /**
  * The surface family a reason code is rendered into. Each kind selects the
@@ -235,6 +237,31 @@ const LOCAL_SERVICE_INVENTORY_KEYS = {
  * of silently joining the wrong family. The raw code is never rendered; it stays on
  * `diagnosticCode` (see `noInternalCodesInPrimaryUi.test.ts`).
  */
+const PUBLIC_PREVIEW_POLICY_REASON_KEYS = {
+    audit_sink_unavailable: 'localServices.publicPreview.disabledReason.auditUnavailable',
+    dns_tls_unavailable: 'localServices.publicPreview.disabledReason.dnsTlsUnavailable',
+    invalid_policy: 'localServices.publicPreview.disabledReason.policyInvalid',
+    invalid_public_base_url: 'localServices.publicPreview.disabledReason.publicBaseUrlUnavailable',
+    mode_not_allowed: 'localServices.actions.failure.unavailable',
+    preview_not_eligible: 'localServices.publicPreview.disabledReason.previewNotEligible',
+    public_preview_disabled: 'localServices.publicPreview.disabledPolicySubtitle',
+    public_token_secret_missing: 'localServices.publicPreview.disabledReason.secretLinkUnavailable',
+    rate_limit_checker_unavailable: 'localServices.publicPreview.disabledReason.rateLimitUnavailable',
+    rate_limit_profile_not_allowed: 'localServices.publicPreview.disabledReason.rateLimitUnavailable',
+    session_not_authorized: 'localServices.publicPreview.disabledReason.sessionNotAuthorized',
+    too_many_public_exposures: 'localServices.publicPreview.disabledLimitSubtitle',
+    public_origin_unavailable: 'localServices.publicPreview.disabledReason.publicBaseUrlUnavailable',
+    confirmation_required: 'localServices.actions.failure.refused',
+    preview_binding_mismatch: 'localServices.actions.failure.unavailable',
+    audience_not_eligible: 'localServices.actions.failure.unavailable',
+} as const satisfies Record<LocalServicePublicPreviewCreateFailureReasonV1, TranslationKey>;
+
+/** The same server refusal has one sentence in a disabled control and an Action failure. */
+export function resolveLocalServicePublicPreviewPolicyReasonText(reasonCode: string): string | null {
+    const key = PUBLIC_PREVIEW_POLICY_REASON_KEYS[reasonCode as LocalServicePublicPreviewCreateFailureReasonV1];
+    return key ? t(key) : null;
+}
+
 const LOCAL_SERVICE_ACTION_KEYS = {
     action_outcome_unknown: 'localServices.actions.failure.outcomeUnknown',
     // Preview admission can race Stop before custody is removed. No endpoint
@@ -799,7 +826,7 @@ function resolveKnownMessage(kind: ReasonCopyKind, reasonCode: string, servicesA
             const key = LOCAL_SERVICE_ACTION_KEYS[reasonCode as keyof typeof LOCAL_SERVICE_ACTION_KEYS];
             return key === 'localServices.actions.failure.unavailable' || key === 'localServices.actions.failure.browserViewUnavailable'
                 || key === 'actionConfirmations.turnedOffUnnamedMessage' ? t(key)
-                : key ? t(key, { servicesActionOffered }) : null;
+                : key ? t(key, { servicesActionOffered }) : resolveLocalServicePublicPreviewPolicyReasonText(reasonCode);
         }
         case 'simulatorPreview': {
             const key = SIMULATOR_PREVIEW_KEYS[reasonCode as keyof typeof SIMULATOR_PREVIEW_KEYS];

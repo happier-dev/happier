@@ -243,7 +243,7 @@ function readExposureIdFromInput(input: unknown): string | null {
 
 function previewLifecycleFailureResult(reason: LocalServicePreviewLifecycleFailureReason) {
     // Transport failures reuse the preview route-failure code; a daemon domain refusal carries a
-    // `refused:<code>` reason → surface it as a stable `preview_<reason>` disabled code.
+    // `refused:<code>` → preserve the producer code inside the typed preview-refusal namespace.
     if (reason === 'unavailable' || reason === 'request_failed' || reason === 'invalid_response') {
         return routeFailureResult('preview', reason);
     }
@@ -596,7 +596,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('public_preview', result.reason);
+            if (!result.ok) return routeFailureResult('public_preview', result.reason, result.reasonCode);
             publishPublicPreviewSnapshot(onPublicPreviewSnapshot, {
                 machineId,
                 serverId,
@@ -624,7 +624,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('public_preview', result.reason);
+            if (!result.ok) return routeFailureResult('public_preview', result.reason, result.reasonCode);
             publishPublicPreviewSnapshot(onPublicPreviewSnapshot, {
                 machineId,
                 serverId,
@@ -651,7 +651,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 serverId,
                 signal: args.context.signal,
             });
-            if (!result.ok) return routeFailureResult('public_preview', result.reason);
+            if (!result.ok) return routeFailureResult('public_preview', result.reason, result.reasonCode);
             publishPublicPreviewSnapshot(onPublicPreviewSnapshot, {
                 machineId,
                 serverId,
@@ -679,7 +679,7 @@ export function createLocalServicesRuntimeActionExecutor(
                 serverId,
                 signal: args.context.signal,
             });
-            return result.ok ? result.response : routeFailureResult('public_preview', result.reason);
+            return result.ok ? result.response : routeFailureResult('public_preview', result.reason, result.reasonCode);
         }
 
         if (args.actionId.startsWith('localServices.actions.')) {

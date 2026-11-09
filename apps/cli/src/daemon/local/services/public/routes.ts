@@ -11,13 +11,13 @@ import type {
     LocalServicePublicPreviewSnapshotV1,
 } from '@happier-dev/protocol';
 import { DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema, DaemonLocalServicePublicPreviewStatusResponseV1Schema, LocalServicePublicExposureV1Schema, LocalServicePublicPreviewCreateFailureV1Schema, type LocalServicePublicPreviewCreateFailureReasonV1 } from '@happier-dev/protocol/local/services/public/v1';
-import axios from 'axios';
+import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
 
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { assertLocalServiceCredentialAdmission } from '../credentialAdmission';
+import { assertLocalServiceCredentialAdmission, assertLocalServiceReadCustody } from '../credentialAdmission';
 
 /** Positive refusal of the create request, never a later status-read failure. */
 export class LocalServicePublicPreviewCreateRefusal extends RpcError {
@@ -164,14 +164,14 @@ export function createLocalServicePublicPreviewServerRoutes(
         request: DaemonLocalServicePublicPreviewStatusRequestV1,
         context?: RpcHandlerContext,
     ): Promise<LocalServicePublicPreviewSnapshotV1> {
-        await assertCredentialAdmission(request.machineId, context);
+        await assertLocalServiceReadCustody({ accountId: input.accountId, machineId: request.machineId, context });
         const response = await http.post(
             endpoint(resolveBaseUrl(), '/v1/local-services/public/status'),
             request,
             { headers },
         ).catch((error: unknown) => throwPublicPreviewHttpFailure(error));
         const snapshot = DaemonLocalServicePublicPreviewStatusResponseV1Schema.parse(response.data).snapshot;
-        await assertCredentialAdmission(request.machineId, context);
+        await assertLocalServiceReadCustody({ accountId: input.accountId, machineId: request.machineId, context });
         assertStatusSnapshotBinding(snapshot, request);
         return snapshot;
     }
@@ -182,16 +182,7 @@ export function createLocalServicePublicPreviewServerRoutes(
             await assertCredentialAdmission(request.machineId, context);
             const response = await http.post(
                 endpoint(resolveBaseUrl(), '/v1/local-services/public'),
-                {
-                    machineId: request.machineId,
-                    sessionId: request.sessionId,
-                    ...(request.serviceTarget ? { serviceTarget: request.serviceTarget } : {}),
-                    previewId: request.previewId,
-                    mode: request.mode,
-                    ttlMs: request.ttlMs,
-                    ...(request.rateLimitProfileId ? { rateLimitProfileId: request.rateLimitProfileId } : {}),
-                    ...(request.confirmation ? { confirmation: request.confirmation } : {}),
-                },
+                request,
                 { headers },
             ).catch((error: unknown) => throwPublicPreviewHttpFailure(error, true));
             const rawExposure = typeof response.data === 'object' && response.data !== null
@@ -217,22 +208,10 @@ export function createLocalServicePublicPreviewServerRoutes(
                 endpoint(resolveBaseUrl(), `/v1/local-services/public/${encodeURIComponent(request.exposureId)}`),
                 {
                     headers,
-                    data: {
-                        machineId: request.machineId,
-                        sessionId: request.sessionId,
-                        ...(request.serviceTarget ? { serviceTarget: request.serviceTarget } : {}),
-                        previewId: request.previewId,
-                        exposureId: request.exposureId,
-                    },
+                    data: request,
                 },
             ).catch((error: unknown) => throwPublicPreviewHttpFailure(error));
-            const snapshot = await getStatus({
-                machineId: request.machineId,
-                sessionId: request.sessionId,
-                ...(request.serviceTarget ? { serviceTarget: request.serviceTarget } : {}),
-                previewId: request.previewId,
-                exposureId: request.exposureId,
-            }, context);
+            const snapshot = await getStatus(request, context);
             const exposure = findBoundExposure(snapshot, request);
             if (!exposure || exposure.state !== 'revoked' || typeof exposure.revokedAt !== 'number') {
                 throw new Error('local_services_public_preview_revoke_not_confirmed');
@@ -245,13 +224,7 @@ export function createLocalServicePublicPreviewServerRoutes(
             });
         },
         async copyUrl(request, context) {
-            const snapshot = await getStatus({
-                machineId: request.machineId,
-                sessionId: request.sessionId,
-                ...(request.serviceTarget ? { serviceTarget: request.serviceTarget } : {}),
-                previewId: request.previewId,
-                exposureId: request.exposureId,
-            }, context);
+            const snapshot = await getStatus(request, context);
             const exposure = findBoundExposure(snapshot, request);
             if (!exposure || !isExposureSafeToCopy(snapshot, exposure)) {
                 throw new Error('local_services_public_preview_exposure_unavailable');

@@ -43,6 +43,29 @@ const snapshot: LocalServicePublicPreviewSnapshotV1 = {
 };
 
 describe('createLocalServicePublicPreviewServerRoutes', () => {
+    it.each(['session', 'managed_service'] as const)('forwards selected people through the strict HTTP create contract (%s)', async binding => {
+        const audience = [{ kind: 'account' as const, accountId: 'recipient_1' },
+            { kind: 'team' as const, teamId: 'team_1' },
+            { kind: 'group' as const, teamId: 'team_1', groupId: 'group_1' }];
+        const peopleExposure: LocalServicePublicExposureV1 = { ...exposure, mode: 'people', audience,
+            ...(binding === 'managed_service' ? { sessionId: undefined, serviceTarget: { kind: 'managed_service',
+                machineId: exposure.machineId, managedServiceId: 'instance_1', cwd: '/workspace/app',
+                declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest', name: 'web' } } } } : {}) };
+        const peopleSnapshot = { ...snapshot, sessionId: peopleExposure.sessionId, exposures: [peopleExposure] };
+        const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', serverBaseUrl: 'https://home.example.test', http: {
+            async post(url, body) {
+                if (url.endsWith('/status')) return { data: { protocolVersion: 1, snapshot: peopleSnapshot } };
+                // The remote server uses this strict schema; missing people are rejected,
+                // rather than replaced by a successful canned HTTP response.
+                const request = DaemonLocalServicePublicPreviewCreateRequestV1Schema.parse(body);
+                return { data: { exposure: { ...peopleExposure, audience: request.audience } } };
+            }, async delete() { throw new Error('Unexpected revoke'); },
+        } });
+        await expect(routes.createExposure({ machineId: peopleExposure.machineId, sessionId: peopleExposure.sessionId,
+            ...(peopleExposure.serviceTarget ? { serviceTarget: peopleExposure.serviceTarget } : {}), previewId: peopleExposure.previewId,
+            mode: 'people', audience, ttlMs: 60_000, rateLimitProfileId: 'default', confirmation: { acknowledged: true } }))
+            .resolves.toMatchObject({ exposure: { mode: 'people', audience }, snapshot: { exposures: [{ audience }] } });
+    });
     it.each(['create', 'later_status'] as const)('retains the positive create-refusal phase and code (%s)', async phase => {
         const refusal = { isAxiosError: true, response: { status: 503,
             data: { error: 'public_preview_unavailable', reasonCode: 'audit_sink_unavailable' } } };
@@ -121,6 +144,16 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
         httpReached = false;
         await expect(routes.getStatus({ machineId: exposure.machineId, sessionId: exposure.sessionId },
             { ...ownContext, verifyMachineAdmissionCurrent: async () => false }))
+            .resolves.toEqual(snapshot);
+        expect(httpReached).toBe(true);
+        httpReached = false;
+        const cancelled = new AbortController();
+        cancelled.abort();
+        await expect(routes.getStatus({ machineId: exposure.machineId, sessionId: exposure.sessionId },
+            { ...ownContext, signal: cancelled.signal })).rejects.toThrow('requester_credentials_unavailable');
+        await expect(routes.revokeExposure({ machineId: exposure.machineId, sessionId: exposure.sessionId,
+            previewId: exposure.previewId, exposureId: exposure.exposureId },
+        { ...ownContext, verifyMachineAdmissionCurrent: async () => false }))
             .rejects.toThrow('requester_credentials_unavailable');
         expect(httpReached).toBe(false);
     });

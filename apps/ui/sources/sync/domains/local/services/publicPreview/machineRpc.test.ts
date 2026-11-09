@@ -2,7 +2,7 @@ import type {
     DaemonLocalServicePublicPreviewCreateResponseV1,
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/public/v1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -93,12 +93,20 @@ describe('local service public-preview machine RPC client', () => {
         if (carrier === 'throw') machineRpcWithServerScopeMock.mockRejectedValue({ rpcErrorCode: 'public_preview_disabled' });
         else machineRpcWithServerScopeMock.mockResolvedValue({ errorCode: 'public_preview_disabled', error: 'public_preview_disabled' });
         for (const operation of await publicOperations()) {
-            await expect(operation()).resolves.toEqual({ ok: false, reason: 'feature_disabled' });
+            await expect(operation()).resolves.toEqual({ ok: false, reason: 'feature_disabled', reasonCode: 'public_preview_disabled' });
+        }
+    });
+
+    it.each(['throw', 'result'] as const)('preserves the typed people-audience refusal (%s)', async carrier => {
+        if (carrier === 'throw') machineRpcWithServerScopeMock.mockRejectedValue({ rpcErrorCode: 'audience_not_eligible' });
+        else machineRpcWithServerScopeMock.mockResolvedValue({ errorCode: 'audience_not_eligible', error: 'audience_not_eligible' });
+        for (const operation of await publicOperations()) {
+            await expect(operation()).resolves.toEqual({ ok: false, reason: 'request_failed', reasonCode: 'audience_not_eligible' });
         }
     });
 
     it.each([{ error: 'HTTP request failed' }, { error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN },
-        { error: 'session_not_authorized', errorCode: 'session_not_authorized' }])('recognizes refusal envelopes before success parsing: %j', async refusal => {
+        ])('recognizes refusal envelopes before success parsing: %j', async refusal => {
         machineRpcWithServerScopeMock.mockResolvedValue(refusal);
         for (const operation of await publicOperations()) {
             await expect(operation()).resolves.toEqual({ ok: false, reason: 'request_failed' });

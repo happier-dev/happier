@@ -8,7 +8,8 @@ import type {
     DaemonLocalServicePublicPreviewStatusRequestV1,
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
-} from '@happier-dev/protocol';
+    LocalServicePublicPreviewCreateFailureReasonV1,
+} from '@happier-dev/protocol/local/services/public/v1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { LocalServicePreviewServiceTargetV1 } from '@happier-dev/protocol/local/services/preview/v1';
 
@@ -17,6 +18,12 @@ export type LocalServicePublicPreviewFailureReason =
     | 'feature_disabled'
     | 'request_failed'
     | 'invalid_response';
+
+type LocalServicePublicPreviewFailureResult = Readonly<{
+    ok: false;
+    reason: LocalServicePublicPreviewFailureReason;
+    reasonCode?: LocalServicePublicPreviewCreateFailureReasonV1;
+}>;
 
 export type LocalServicePublicPreviewStatusClientInput = Readonly<{
     request: DaemonLocalServicePublicPreviewStatusRequestV1;
@@ -44,19 +51,19 @@ export type LocalServicePublicPreviewCopyUrlClientInput = Readonly<{
 
 export type LocalServicePublicPreviewStatusClientResult =
     | Readonly<{ ok: true; snapshot: LocalServicePublicPreviewSnapshotV1 }>
-    | Readonly<{ ok: false; reason: LocalServicePublicPreviewFailureReason }>;
+    | LocalServicePublicPreviewFailureResult;
 
 export type LocalServicePublicPreviewCreateClientResult =
     | Readonly<{ ok: true; response: DaemonLocalServicePublicPreviewCreateResponseV1 }>
-    | Readonly<{ ok: false; reason: LocalServicePublicPreviewFailureReason }>;
+    | LocalServicePublicPreviewFailureResult;
 
 export type LocalServicePublicPreviewRevokeClientResult =
     | Readonly<{ ok: true; response: DaemonLocalServicePublicPreviewRevokeResponseV1 }>
-    | Readonly<{ ok: false; reason: LocalServicePublicPreviewFailureReason }>;
+    | LocalServicePublicPreviewFailureResult;
 
 export type LocalServicePublicPreviewCopyUrlClientResult =
     | Readonly<{ ok: true; response: DaemonLocalServicePublicPreviewCopyUrlResponseV1 }>
-    | Readonly<{ ok: false; reason: LocalServicePublicPreviewFailureReason }>;
+    | LocalServicePublicPreviewFailureResult;
 
 function exposureMatchesRequest(
     exposure: LocalServicePublicExposureV1,
