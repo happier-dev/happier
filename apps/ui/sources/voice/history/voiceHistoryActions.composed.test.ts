@@ -6,12 +6,13 @@ import { createVoiceHistoryConsumer, VoiceHistoryOperationSupersededError, type 
 import { buildRealtimeConversationTurnMeta } from '@/voice/transcript/VoiceTranscriptProjector';
 import { VoiceConversationActionOutputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
-import { encodeV2SessionListCursorV1 } from '@happier-dev/protocol/sessions/control/contract';
+import { encodeV2SessionListCursorV1, V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { createSessionFixture } from '@/dev/testkit';
 import { createVoiceHistoryListRowFixture } from './voiceConversationHistory.testkit';
 import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { SESSION_LIST_PAGE_DEFAULT_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
+import { encodeBase64 } from '@/encryption/base64';
 
 vi.mock('socket.io-client', async original =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -165,19 +166,22 @@ describe('History through the default Action composition', () => {
     const row = await createVoiceHistoryListRowFixture(createSessionFixture({ id: 'unreadable-voice',
       metadata: { ...createSessionFixture().metadata!,
         ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) } }),
-      { credentials: account.credentials, mode: 'e2ee' });
+      { credentials: { ...account.credentials, secret: encodeBase64(new Uint8Array(32).fill(52)) }, mode: 'e2ee' });
+    // A canonical envelope sealed for another key passes transport admission but
+    // cannot be opened by this Account; malformed ciphertext would test parsing.
+    const page = V2SessionListResponseSchema.parse({ sessions: [row], nextCursor: null, hasNext: false });
     const request = account.request.getMockImplementation()!;
     let transcriptReads = 0;
-    account.request.mockImplementation(async (input, init) => {
-      const path = new URL(String(input)).pathname;
-      if (path === '/v2/sessions' || path === '/v2/sessions/archived') return Response.json({
-        sessions: path.endsWith('/archived') ? [] : [{ ...row, displayProjectionV1: {
-          ...row.displayProjectionV1, owner: { t: 'encrypted', c: 'unreadable-ciphertext' },
-        } }], nextCursor: null, hasNext: false,
-      });
+    // An unreadable sidecar may use the canonical metadata-only batch fallback.
+    // Keep its missing detail as a component outcome, not an unsupported route.
+    account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      if (path === '/v2/sessions') return Response.json(page);
+      if (path === '/v2/sessions/archived') return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+      if (path === '/v2/sessions/unreadable-voice') return Response.json({ error: 'not_found' }, { status: 404 });
       if (path.endsWith('/messages')) transcriptReads += 1;
       return request(input, init);
-    });
+    }));
     const result = await createDefaultActionExecutor().execute('ui.voice_global.conversations.list', {}, {
       surface: 'agent', authority: 'account_automation', serverId: account.scope.serverId,
       expectedAccountId: account.scope.accountId,

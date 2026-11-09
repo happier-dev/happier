@@ -2751,10 +2751,11 @@ export async function fetchAndApplySessions(params: {
                     return buildFetchResult();
                 }
                 hydratedSessionBatcher.flush('required');
-                // A containing hydration owner decides which settled failures
-                // reject its operation (explicit repair) or remain additive
-                // (personal pins). Standalone reads keep the strict contract.
-                if (requiredRowsNeedingHydration.length > 0 && !params.hydrateRequiredSessions) {
+                // List projections settle unreadable summaries as unavailable;
+                // they do not require an opened Session entity. A containing
+                // hydration owner decides which full-document failures reject
+                // its operation; standalone document reads stay strict.
+                if (!isListProjectionDemand && requiredRowsNeedingHydration.length > 0 && !params.hydrateRequiredSessions) {
                     const hydratedSessionIds = new Set(
                         hydratedSessions
                             .filter((session): session is HydratedSession => Boolean(session))
