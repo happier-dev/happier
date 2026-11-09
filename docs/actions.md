@@ -6803,7 +6803,9 @@ position and setup expansion. An absent owner returns typed unavailability;
 these controls neither start audio nor change saved preferences. Brief Close
 retires pending delivery and closes the mounted list without ending Voice.
 Open conversation uses the captured attempt's exact destination: saved
-conversation, coding target, or Voice History for a targetless runtime attempt.
+conversation, coding target, or retained transcript carrier for a targetless
+direct-media call. Opening that carrier does not make the call executable through
+Voice New or Continue.
 An ended attempt from another Account is unavailable, never redirected to focus.
 The conversation header names the service from its exact binding or the same
 Account's captured ended attempt, never from the provider selected for the next Start.

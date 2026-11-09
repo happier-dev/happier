@@ -933,7 +933,7 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'completed' } });
             await screen.update(await createRealAppRouteElement(hosted, credentials));
             const destination = scenario === 'ended' ? `/session/saved-conversation?serverId=${serverId}`
-                : scenario === 'history' ? '/settings/voice/history'
+                : scenario === 'history' ? `/session/saved-conversation?serverId=${serverId}`
                 : scenario === 'companion' ? hrefForDestinationRef(catalog, { kind: 'session', params: { serverId, id: 'session-original', mobileSurface: 'companion' } })
                 : `${SETTINGS_ROUTES.voiceConversations}?setting=${encodeURIComponent(VOICE_CONVERSATIONS_SETTINGS.settings.provider.anchor)}`;
             expect(screen.findByTestId('voice-action-hosted-destination')?.props.children).toBe(destination);
@@ -963,7 +963,7 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         } finally { await lifecycle.dispose(); }
     });
     it.each([
-        { lifetime: 'runtime_attempt' as const, target: null, destination: SETTINGS_ROUTES.voiceHistory },
+        { lifetime: 'runtime_attempt' as const, target: null, destination: '/session/saved-conversation?serverId=ended-home' },
         { lifetime: 'runtime_attempt' as const, target: { serverId: 'ended-home', sessionId: 'coding-target' }, destination: '/session/coding-target?serverId=ended-home' },
         { lifetime: undefined, target: null, destination: '/session/saved-conversation?serverId=ended-home' },
     ])('opens the captured ended conversation destination $destination after focus changes', async ({ lifetime, target, destination }) => {
