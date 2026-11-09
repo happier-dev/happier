@@ -7956,6 +7956,14 @@ container exit and the admitted operation's cancellation. Existing owned Caddy
 state remains available for reconciliation after refusal. This correction needs
 a guest daemon refresh; it adds no server reload, Action envelope or storage change.
 
+On a subsequent admitted Domain setup, a stopped owned Caddy container whose
+Docker state reports a deleted primary network is recreated on the admitted
+route network. This uses the existing publication reconciliation after ownership
+and mount checks, retaining its mounted data, configuration, autosave and surviving
+network attachments. Public listener additions run against the resumed container.
+The correction is daemon-side, introduces no timer or automatic retry, and does
+not remove the mounted state directories.
+
 Unreleased 0.3 Machine isolation unavailable status adds optional
 `prerequisite: { reason, requiredFact, remedy }` for preparation refusals before
 native CHECK. The reason and required fact are closed; the remedy is non-secret

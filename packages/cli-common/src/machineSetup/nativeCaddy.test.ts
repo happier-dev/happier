@@ -180,7 +180,7 @@ async function fixture(privateNetwork = true, socketFixture = true, deferredAdmi
     const commands: MachineSetupNativeCommand[] = [];
     type Container = { Id: string; Name: string; Config: { Image: string; Cmd: string[]; User: string; Labels: Record<string, string> };
         HostConfig: { NetworkMode: string; RestartPolicy: { Name: string }; Binds: null; Mounts: Array<{ Type: string; Source: string; Target: string; ReadOnly: boolean }>; PortBindings: Record<string, Array<{ HostIp: string; HostPort: string }>> };
-        NetworkSettings: { Networks: Record<string, object>; Ports: Record<string, Array<{ HostIp: string; HostPort: string }>> }; State: { Running: boolean; Status?: string; ExitCode?: number } };
+        NetworkSettings: { Networks: Record<string, object>; Ports: Record<string, Array<{ HostIp: string; HostPort: string }>> }; State: { Running: boolean; Status?: string; ExitCode?: number; Error?: string } };
     let container: Container | undefined;
     let exitCode: number | undefined, exited: (() => void) | undefined;
     let loseCreateResponse = false;
@@ -222,6 +222,9 @@ async function fixture(privateNetwork = true, socketFixture = true, deferredAdmi
             return ok();
         }
         if (args[0] === 'container' && args[1] === 'start') {
+            if (container!.State.Error?.includes('could not find a network matching network mode ')) {
+                return { code: 1, stdout: '', stderr: container!.State.Error };
+            }
             exitCode = undefined;
             container!.State.Running = true;
             if (!deferredAdmin && !adminServer && !await lstat(join(input.adminDirectory, 'admin.sock')).then(() => true, () => false)) {
@@ -722,6 +725,32 @@ it('consumes the setup owner result and preserves the owned running container an
     expect(await readFile(autosave, 'utf8')).toBe('{"retainedDomain":"other-app.example"}');
     expect(f.commands.slice(previous).every(command => command.args[3] === 'ls' || command.args[3] === 'inspect')).toBe(true);
     expect(readCaddyContainerFirewallExposures(f.input)).toEqual([f.input.privateBinding!.exposure]);
+});
+
+it.each([false, true])('reconciles an owned Caddy whose primary network was deleted, preserving durable state and attachments (public=%s)', async publicIngress => {
+    const f = await fixture(false); await f.setup();
+    const input = { ...f.input, ...(publicIngress ? { publicBindings: [{ requirementId: 'https', exposure: 'public' as const,
+        hostAddress: '0.0.0.0', hostPort: 443, containerPort: 443, protocol: 'tcp' as const }] } : {}) };
+    expect(await ensureNativeCaddyContainer(input, f.options())).toMatchObject({ status: 'ready' });
+    await f.closeAdmin();
+    const retained = f.readContainer();
+    retained.HostConfig.NetworkMode = 'deleted-app_default';
+    retained.NetworkSettings.Networks['incumbent-draining'] = {};
+    retained.State = { Running: false, Status: 'created', ExitCode: 128,
+        Error: 'failed to set up container networking: could not find a network matching network mode deleted-app_default: network deleted-app_default not found' };
+    const autosave = join(input.stateDirectory, 'config', 'caddy', 'autosave.json');
+    const saved = '{"retainedDomain":"other-app.example"}';
+    await writeFile(autosave, saved);
+    expect(await ensureNativeCaddyContainer(input, f.options())).toMatchObject({ status: 'ready' });
+    expect(f.readContainer()).not.toBe(retained);
+    expect(f.readContainer().HostConfig.NetworkMode).toBe('routed-a');
+    expect(f.readContainer().HostConfig.Mounts).toEqual(retained.HostConfig.Mounts);
+    expect(f.readContainer().HostConfig.PortBindings).toEqual(retained.HostConfig.PortBindings);
+    expect(Object.keys(f.readContainer().NetworkSettings.Networks).sort()).toEqual(['incumbent-draining', 'routed-a', 'routed-b']);
+    expect(await readFile(autosave, 'utf8')).toBe(saved);
+    const before = f.commands.length;
+    expect(await ensureNativeCaddyContainer(input, f.options())).toMatchObject({ status: 'ready' });
+    expect(f.commands.slice(before).every(command => command.args[3] === 'ls' || command.args[3] === 'inspect')).toBe(true);
 });
 
 it('keeps no-network origins container-only and refuses a foreign or incompatible owned container without replacing it', async () => {
