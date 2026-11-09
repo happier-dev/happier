@@ -2470,7 +2470,7 @@ describe('voiceInferenceWorker', () => {
         reloadConfiguration();
         const { getFirstPartyComponentCatalogEntry, resolveFirstPartyVersionInstallPath } = await import('@happier-dev/cli-common/firstPartyRuntime');
         const { BUILT_IN_INSTALLABLES_REGISTRY } = await import('@happier-dev/protocol/installables');
-        const { INSTALLABLE_KEYS } = await import('@happier-dev/protocol/installables/codexAcp');
+        const { INSTALLABLE_KEYS } = await import('@happier-dev/protocol/installables/keys');
         const source = BUILT_IN_INSTALLABLES_REGISTRY.descriptorsByKey[INSTALLABLE_KEYS.LOCAL_VOICE_RUNTIME]?.descriptor.source;
         if (source?.kind !== 'first_party_runtime') throw new Error('Voice worker fixture requires its canonical runtime component');
         const entry = getFirstPartyComponentCatalogEntry(source.componentId).nodeEntrypointRelativePath;

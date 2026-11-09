@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { GH_DEP_ID, GH_GITHUB_REPO, GH_RUNTIME_INSTALLABLE_POLICY } from '@happier-dev/protocol/installables/definitions/gh';
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/keys';
 import { fetchGitHubLatestRelease } from '@/capabilities/cliUpdate/githubReleaseLookup';
 import {
   ghInstallDir as sharedGhInstallDir, ghBinPath as sharedGhBinPath,

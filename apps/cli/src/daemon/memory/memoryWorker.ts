@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises';
 import type { AgentExternalSessionsTranscriptPage } from '@happier-dev/plugin-sdk/sessions/external';
 import type { MemoryExternalTranscriptSourceV1, MemorySearchQueryV1 } from '@happier-dev/protocol/memory/memorySearch';
 import type { MemoryIndexSourceStatusV1, MemoryWorkerStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/keys';
 
 import { configuration } from '@/configuration';
 import type { StoredCredentials } from '@/persistence';

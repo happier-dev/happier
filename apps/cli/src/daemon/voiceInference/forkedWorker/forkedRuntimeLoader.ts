@@ -10,7 +10,7 @@
  * no inference child process is leaked when the daemon shuts down.
  */
 
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/keys';
 import type { HappierProcessRootSource } from '@/daemon/processes/roots/listHappierProcessRoots';
 
 import { ensureOptionalRuntime } from '@/packagedRuntime/installables/optionalRuntimes';

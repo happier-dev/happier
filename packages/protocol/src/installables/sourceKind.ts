@@ -32,10 +32,15 @@ export const GitHubReleaseBinaryInstallableSourceSchema = lazyZodSchema(() => z.
   assetNamePrefix: z.optional(z.string().check(z.trim(), z.minLength(1))),
   targetByPlatform: z.optional(z.record(z.string(), z.string().check(z.trim(), z.minLength(1)))),
   launch: z.optional(z.strictObject({
-    kind: z.literal('codexAcp'),
+    kind: z.literal('configured_binary'),
     overrideEnvironmentKey: z.string().check(z.trim(), z.minLength(1)),
     configOverridesEnvironmentKey: z.string().check(z.trim(), z.minLength(1)),
     configOverrideArgument: z.string().check(z.trim(), z.minLength(1)),
+    legacyExecutables: z.optional(z.array(z.strictObject({
+      relativePath: z.string().check(z.trim(), z.minLength(1)),
+      platforms: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
+      requiresManagedJavaScriptRuntime: z.optional(z.boolean()),
+    }))),
   })),
 }));
 

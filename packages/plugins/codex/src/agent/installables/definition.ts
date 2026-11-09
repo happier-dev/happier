@@ -23,10 +23,15 @@ export const CODEX_ACP_MANAGED_DEPENDENCY = {
       'linux-x64-musl': 'x86_64-unknown-linux-musl',
     },
     launch: {
-      kind: 'codexAcp',
+      kind: 'configured_binary',
       overrideEnvironmentKey: 'HAPPIER_CODEX_ACP_BIN',
       configOverridesEnvironmentKey: 'HAPPIER_CODEX_ACP_CONFIG_OVERRIDES',
       configOverrideArgument: '-c',
+      legacyExecutables: [
+        { relativePath: 'node_modules/.bin/codex-acp.cmd', platforms: ['win32'], requiresManagedJavaScriptRuntime: true },
+        { relativePath: 'node_modules/.bin/codex-acp.exe', platforms: ['win32'], requiresManagedJavaScriptRuntime: true },
+        { relativePath: 'node_modules/.bin/codex-acp', requiresManagedJavaScriptRuntime: true },
+      ],
     },
   }],
 } as const satisfies ManagedDependencyContribution;

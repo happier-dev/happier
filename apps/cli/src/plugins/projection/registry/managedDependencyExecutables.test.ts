@@ -74,7 +74,7 @@ describe('selectExecutableManagedDependencies', () => {
                     assetNamePrefix: 'codex-acp',
                     targetByPlatform: { 'linux-x64-gnu': 'x86_64-unknown-linux-gnu' },
                     launch: {
-                        kind: 'codexAcp',
+                        kind: 'configured_binary',
                         overrideEnvironmentKey: 'HAPPIER_CODEX_ACP_BIN',
                         configOverridesEnvironmentKey: 'HAPPIER_CODEX_ACP_CONFIG_OVERRIDES',
                         configOverrideArgument: '-c',

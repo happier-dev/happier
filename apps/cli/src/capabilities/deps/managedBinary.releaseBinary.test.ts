@@ -109,7 +109,7 @@ describe('codexAcp release-binary installer', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const { codexAcpBinPath, getCodexAcpDepStatus } = await import('./codexAcp');
+    const { managedBinaryBinPath, getManagedBinaryDepStatus } = await import('./managedBinary');
     const { CODEX_ACP_INSTALLABLE_DESCRIPTOR } = await import('@happier-dev/plugins-codex/agent/installables/codexAcp');
     const { getGitHubReleaseBinaryRuntimeInstallableAdapter } = await import(
       '@/packagedRuntime/installables/sourceAdapters/githubReleaseBinary'
@@ -118,11 +118,11 @@ describe('codexAcp release-binary installer', () => {
 
     await expect(adapter?.installOrUpgrade()).resolves.toEqual(expect.objectContaining({ ok: true }));
 
-    const binPath = codexAcpBinPath();
+    const binPath = managedBinaryBinPath(CODEX_ACP_INSTALLABLE_DESCRIPTOR);
     await expect(readFile(binPath, 'utf8')).resolves.toContain('codex-acp');
     await expect(stat(binPath)).resolves.toEqual(expect.objectContaining({ isFile: expect.any(Function) }));
 
-    await expect(getCodexAcpDepStatus({ includeLatestVersion: true, descriptor: CODEX_ACP_INSTALLABLE_DESCRIPTOR })).resolves.toEqual(
+    await expect(getManagedBinaryDepStatus(CODEX_ACP_INSTALLABLE_DESCRIPTOR, { includeLatestVersion: true })).resolves.toEqual(
       expect.objectContaining({
         installed: true,
         binPath,
@@ -166,15 +166,15 @@ describe('codexAcp release-binary installer', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const { codexAcpBinPath, codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
-    await mkdir(dirname(codexAcpBinPath()), { recursive: true });
-    await writeFile(codexAcpBinPath(), 'echo off\r\n', 'utf8');
-    await writeFile(join(codexAcpInstallDir(), 'install-state.json'), JSON.stringify({
+    const { managedBinaryBinPath, managedBinaryInstallDir, getManagedBinaryDepStatus } = await import('./managedBinary');
+    await mkdir(dirname(managedBinaryBinPath(CODEX_ACP_INSTALLABLE_DESCRIPTOR)), { recursive: true });
+    await writeFile(managedBinaryBinPath(CODEX_ACP_INSTALLABLE_DESCRIPTOR), 'echo off\r\n', 'utf8');
+    await writeFile(join(managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR), 'install-state.json'), JSON.stringify({
       installedVersion: '0.9.5',
-      lastInstallLogPath: join(dirname(codexAcpBinPath()), 'install.log'),
+      lastInstallLogPath: join(dirname(managedBinaryBinPath(CODEX_ACP_INSTALLABLE_DESCRIPTOR)), 'install.log'),
     }), 'utf8');
 
-    await expect(getCodexAcpDepStatus({ includeLatestVersion: true, descriptor: CODEX_ACP_INSTALLABLE_DESCRIPTOR })).resolves.toEqual(
+    await expect(getManagedBinaryDepStatus(CODEX_ACP_INSTALLABLE_DESCRIPTOR, { includeLatestVersion: true })).resolves.toEqual(
       expect.objectContaining({
         installed: true,
         binPath: expect.stringMatching(/codex-acp\.exe$/),
@@ -227,13 +227,13 @@ describe('codexAcp release-binary installer', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const { codexAcpInstallDir } = await import('./codexAcp');
+    const { managedBinaryInstallDir } = await import('./managedBinary');
     const { CODEX_ACP_INSTALLABLE_DESCRIPTOR } = await import('@happier-dev/plugins-codex/agent/installables/codexAcp');
     const { getGitHubReleaseBinaryRuntimeInstallableAdapter } = await import(
       '@/packagedRuntime/installables/sourceAdapters/githubReleaseBinary'
     );
     const adapter = await getGitHubReleaseBinaryRuntimeInstallableAdapter(CODEX_ACP_INSTALLABLE_DESCRIPTOR);
-    const installDir = codexAcpInstallDir();
+    const installDir = managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR);
     await mkdir(join(installDir, 'node_modules', '.bin'), { recursive: true });
     await writeFile(join(installDir, 'node_modules', '.bin', 'codex-acp'), '#!/bin/sh\necho legacy\n', {
       encoding: 'utf8',
@@ -258,9 +258,9 @@ describe('codexAcp release-binary installer', () => {
     process.env.HAPPIER_HOME_DIR = home;
     await createFakeManagedJavaScriptRuntime(home);
 
-    const { codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
+    const { managedBinaryInstallDir, getManagedBinaryDepStatus } = await import('./managedBinary');
     const legacyBinPath = join(
-      codexAcpInstallDir(),
+      managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR),
       'node_modules',
       '.bin',
       process.platform === 'win32' ? 'codex-acp.cmd' : 'codex-acp',
@@ -271,12 +271,12 @@ describe('codexAcp release-binary installer', () => {
       mode: 0o755,
     });
     await writeFile(
-      join(codexAcpInstallDir(), 'install-state.json'),
+      join(managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR), 'install-state.json'),
       JSON.stringify({ installedVersion: '0.9.4', lastInstallLogPath: '/tmp/codex-acp.log' }),
       'utf8',
     );
 
-    await expect(getCodexAcpDepStatus()).resolves.toEqual(
+    await expect(getManagedBinaryDepStatus(CODEX_ACP_INSTALLABLE_DESCRIPTOR)).resolves.toEqual(
       expect.objectContaining({
         installed: true,
         binPath: legacyBinPath,
@@ -292,9 +292,9 @@ describe('codexAcp release-binary installer', () => {
     process.env.HAPPIER_HOME_DIR = home;
     process.env.PATH = '';
 
-    const { codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
+    const { managedBinaryInstallDir, getManagedBinaryDepStatus } = await import('./managedBinary');
     const legacyBinPath = join(
-      codexAcpInstallDir(),
+      managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR),
       'node_modules',
       '.bin',
       process.platform === 'win32' ? 'codex-acp.cmd' : 'codex-acp',
@@ -305,7 +305,7 @@ describe('codexAcp release-binary installer', () => {
       mode: 0o755,
     });
 
-    await expect(getCodexAcpDepStatus()).resolves.toEqual(
+    await expect(getManagedBinaryDepStatus(CODEX_ACP_INSTALLABLE_DESCRIPTOR)).resolves.toEqual(
       expect.objectContaining({
         installed: false,
         binPath: null,
@@ -328,9 +328,9 @@ describe('codexAcp release-binary installer', () => {
     if (process.platform !== 'win32') await chmod(nodePath, 0o755);
     process.env.PATH = pathDir;
 
-    const { codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
+    const { managedBinaryInstallDir, getManagedBinaryDepStatus } = await import('./managedBinary');
     const legacyBinPath = join(
-      codexAcpInstallDir(),
+      managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR),
       'node_modules',
       '.bin',
       process.platform === 'win32' ? 'codex-acp.cmd' : 'codex-acp',
@@ -341,7 +341,7 @@ describe('codexAcp release-binary installer', () => {
       mode: 0o755,
     });
 
-    await expect(getCodexAcpDepStatus()).resolves.toEqual(
+    await expect(getManagedBinaryDepStatus(CODEX_ACP_INSTALLABLE_DESCRIPTOR)).resolves.toEqual(
       expect.objectContaining({
         installed: false,
         binPath: null,
@@ -369,12 +369,12 @@ describe('codexAcp release-binary installer', () => {
       tempDirs.add(home);
       process.env.HAPPIER_HOME_DIR = home;
 
-      const { codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
-      const legacyExePath = join(codexAcpInstallDir(), 'node_modules', '.bin', 'codex-acp.exe');
+      const { managedBinaryInstallDir, getManagedBinaryDepStatus } = await import('./managedBinary');
+      const legacyExePath = join(managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR), 'node_modules', '.bin', 'codex-acp.exe');
       await mkdir(dirname(legacyExePath), { recursive: true });
       await writeFile(legacyExePath, 'MZ', 'utf8');
 
-      await expect(getCodexAcpDepStatus()).resolves.toEqual(
+      await expect(getManagedBinaryDepStatus(CODEX_ACP_INSTALLABLE_DESCRIPTOR)).resolves.toEqual(
         expect.objectContaining({
           installed: false,
           binPath: null,
@@ -404,9 +404,9 @@ describe('codexAcp release-binary installer', () => {
     if (process.platform !== 'win32') await chmod(managedNodePath, 0o755);
     process.env.HAPPIER_MANAGED_NODE_BIN = managedNodePath;
 
-    const { codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
+    const { managedBinaryInstallDir, getManagedBinaryDepStatus } = await import('./managedBinary');
     const legacyBinPath = join(
-      codexAcpInstallDir(),
+      managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR),
       'node_modules',
       '.bin',
       process.platform === 'win32' ? 'codex-acp.cmd' : 'codex-acp',
@@ -417,7 +417,7 @@ describe('codexAcp release-binary installer', () => {
       mode: 0o755,
     });
 
-    await expect(getCodexAcpDepStatus()).resolves.toEqual(
+    await expect(getManagedBinaryDepStatus(CODEX_ACP_INSTALLABLE_DESCRIPTOR)).resolves.toEqual(
       expect.objectContaining({
         installed: true,
         binPath: legacyBinPath,
@@ -441,9 +441,9 @@ describe('codexAcp release-binary installer', () => {
     process.env.PATH = pathDir;
     process.env.HAPPIER_MANAGED_NODE_BIN = join(home, 'missing-node-runtime');
 
-    const { codexAcpInstallDir, getCodexAcpDepStatus } = await import('./codexAcp');
+    const { managedBinaryInstallDir, getManagedBinaryDepStatus } = await import('./managedBinary');
     const legacyBinPath = join(
-      codexAcpInstallDir(),
+      managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR),
       'node_modules',
       '.bin',
       process.platform === 'win32' ? 'codex-acp.cmd' : 'codex-acp',
@@ -454,7 +454,7 @@ describe('codexAcp release-binary installer', () => {
       mode: 0o755,
     });
 
-    await expect(getCodexAcpDepStatus()).resolves.toEqual(
+    await expect(getManagedBinaryDepStatus(CODEX_ACP_INSTALLABLE_DESCRIPTOR)).resolves.toEqual(
       expect.objectContaining({
         installed: false,
         binPath: null,
@@ -468,24 +468,24 @@ describe('codexAcp release-binary installer', () => {
     process.env.HAPPIER_HOME_DIR = home;
 
     const {
-      codexAcpBinPath,
-      codexAcpInstallDir,
-      getCodexAcpDepStatus,
-    } = await import('./codexAcp');
+      managedBinaryBinPath,
+      managedBinaryInstallDir,
+      getManagedBinaryDepStatus,
+    } = await import('./managedBinary');
     const { writeRuntimeInstallableLastCheckAtMs } = await import('@/packagedRuntime/installables/updateState');
 
     const lastBackgroundUpdateCheckAtMs = 1_773_164_020_808;
-    await mkdir(dirname(codexAcpBinPath()), { recursive: true });
-    await writeFile(codexAcpBinPath(), '#!/bin/sh\necho codex-acp\n', { encoding: 'utf8', mode: 0o755 });
-    if (process.platform !== 'win32') await chmod(codexAcpBinPath(), 0o755);
+    await mkdir(dirname(managedBinaryBinPath(CODEX_ACP_INSTALLABLE_DESCRIPTOR)), { recursive: true });
+    await writeFile(managedBinaryBinPath(CODEX_ACP_INSTALLABLE_DESCRIPTOR), '#!/bin/sh\necho codex-acp\n', { encoding: 'utf8', mode: 0o755 });
+    if (process.platform !== 'win32') await chmod(managedBinaryBinPath(CODEX_ACP_INSTALLABLE_DESCRIPTOR), 0o755);
     await writeFile(
-      join(codexAcpInstallDir(), 'install-state.json'),
+      join(managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR), 'install-state.json'),
       JSON.stringify({ installedVersion: '0.9.5', lastInstallLogPath: '/tmp/codex-acp.log' }),
       'utf8',
     );
     await writeRuntimeInstallableLastCheckAtMs('codex-acp', lastBackgroundUpdateCheckAtMs);
 
-    await expect(getCodexAcpDepStatus()).resolves.toEqual(
+    await expect(getManagedBinaryDepStatus(CODEX_ACP_INSTALLABLE_DESCRIPTOR)).resolves.toEqual(
       expect.objectContaining({
         installed: true,
         installedVersion: '0.9.5',

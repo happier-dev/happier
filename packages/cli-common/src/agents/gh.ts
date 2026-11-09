@@ -2,7 +2,7 @@ import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { join, delimiter as PATH_DELIMITER } from 'node:path';
 import { GH_BINARY_NAME } from '@happier-dev/protocol/installables/definitions/gh';
-import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/codexAcp';
+import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/keys';
 import { execFileWithDeadline, resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '../process/index.js';
 import { resolveManagedToolsRoot } from './managedToolsRoot.js';
 

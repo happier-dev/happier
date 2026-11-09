@@ -11,4 +11,5 @@ export const INSTALLABLE_KEYS = {
 
 export type InstallableKey = string;
 
+/** Frozen 0.2 public constant; live runtime dependencies come from plugin declarations. */
 export const CODEX_ACP_DEP_ID = 'dep.codex-acp' as const satisfies CapabilityId;
