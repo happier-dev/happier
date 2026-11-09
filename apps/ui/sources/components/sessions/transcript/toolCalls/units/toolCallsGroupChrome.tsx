@@ -3,6 +3,7 @@ import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import type { HappierHitReach } from '@happier-dev/plugin-ui/environment';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import type { ToolCallMessage } from "@happier-dev/session-core/messages";
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -12,7 +13,7 @@ import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedbac
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { readCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { useCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 
@@ -26,6 +27,7 @@ import { shouldShowToolCallsGroupStatusIndicator } from '../resolveToolCallsGrou
 export type ToolCallsGroupChromeVariant = 'cards' | 'feed' | 'feed_background';
 export type ToolCallsGroupUnitPosition = 'header' | 'middle' | 'footer';
 import type { ToolCallsGroupStatus, ToolCallsGroupSummary } from '../resolveToolCallsGroupPresentation';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 export { resolveToolCallsGroupSummary, type ToolCallsGroupStatus, type ToolCallsGroupSummary } from '../resolveToolCallsGroupPresentation';
 
 export function resolveToolCallsGroupChromeVariant(
@@ -134,6 +136,7 @@ export function ToolCallsGroupUnitRowScaffold(props: Readonly<{ children: React.
 /** One word per outcome: the header says what the failed row says, and both outcomes when the group has both. */
 function resolveGroupFailureLabel(outcomes: ToolCallsGroupSummary | undefined): string {
     if (outcomes && outcomes.failed > 0 && outcomes.refused > 0) {
+        if (outcomes.refusalLabel) return `${t('toolView.actionOutcome.failed')}: ${outcomes.failed} · ${outcomes.refusalLabel}: ${outcomes.refused}`;
         return t('toolView.actionOutcome.mixed', { failed: outcomes.failed, refused: outcomes.refused });
     }
     return outcomes?.failuresAreActionOutcomes ? t('toolView.actionOutcome.failed') : t('common.error');
@@ -156,7 +159,7 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
         props.status === 'error'
             ? resolveGroupFailureLabel(props.outcomes)
             : props.status === 'refused'
-                ? t('toolView.actionOutcome.refused')
+                ? props.outcomes?.refusalLabel ?? t('toolView.actionOutcome.refused')
                 : props.status === 'permission_denied'
                 ? t('errors.permissionDenied')
                 : props.status === 'permission_canceled'
@@ -203,13 +206,11 @@ export const ToolCallsGroupHeaderChrome = React.memo(function ToolCallsGroupHead
                         </View>
                     )
                 ) : null}
-                {/* The header is the group's disclosure in both states, so its caret says which way it goes:
-                    the quietest mark in the header (lab `.l12-tg .cu`), one glyph per state. */}
-                <Icon
+                {/* The header is the group's disclosure in both states: the one disclosure caret, turned by its state. */}
+                <DisclosureCaret
                     testID="transcript-tool-calls-header-caret"
-                    name={props.expanded ? 'caret-up' : 'caret-down'}
+                    expanded={props.expanded}
                     size={GROUP_CARET_SIZE_PX}
-                    color={theme.colors.text.tertiary}
                 />
             </View>
         </HappierPressable>
@@ -224,13 +225,14 @@ export const ToolCallsGroupExpandMoreChrome = React.memo(function ToolCallsGroup
     hiddenCount: number;
     onExpand: () => void;
 }>) {
+    const coarsePrimaryPointer = useCoarsePrimaryPointer();
     return (
         <HappierPressable
             testID="transcript-tool-calls-preview-more"
             onPress={props.onExpand}
             style={({ pressed }) => [
                 chromeStyles.previewMore,
-                Platform.OS === 'web' && !readCoarsePrimaryPointer() ? chromeStyles.previewMoreDesktop : null,
+                Platform.OS === 'web' && !coarsePrimaryPointer ? chromeStyles.previewMoreDesktop : null,
                 pressed && chromeStyles.previewMorePressed,
             ]}
         >
@@ -332,7 +334,7 @@ const unitStyles = StyleSheet.create((theme) => ({
         marginBottom: 22,
     },
     unitCards: {
-        backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors),
     },
     unitCardsHeaderCap: {
         borderTopLeftRadius: theme.borderRadius.xl,
@@ -348,7 +350,7 @@ const unitStyles = StyleSheet.create((theme) => ({
         backgroundColor: 'transparent',
     },
     unitFeedBackground: {
-        backgroundColor: theme.colors.feed?.card?.background ?? theme.colors.surface.elevated,
+        backgroundColor: glassContentFill(theme.colors.feed?.card?.background ?? theme.colors.surface.elevated, theme.colors),
         paddingHorizontal: theme.space.s10,
     },
     unitFeedBackgroundHeaderCap: {

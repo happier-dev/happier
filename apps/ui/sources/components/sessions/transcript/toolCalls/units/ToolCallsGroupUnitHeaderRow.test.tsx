@@ -2,8 +2,10 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createToolCallMessageFixture, renderScreen } from '@/dev/testkit';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { installToolCallsGroupViewCommonModuleMocks } from '@/components/sessions/transcript/turns/toolCalls/toolCallsGroupViewTestHelpers';
 import { createTranscriptSessionCommonPropsFixture, flattenStyleProp } from './toolCallsGroupUnitsTestFixtures';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -86,7 +88,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         const { lightTheme } = await import('@/theme');
         expect(screen.findAllByProps({ name: 'check-circle' })[0]!.props.color).toBe(lightTheme.colors.text.secondary);
         expect(screen.findAllByProps({ name: 'stack-simple' }).length).toBeGreaterThan(0);
-        expect(screen.findAllByProps({ name: 'caret-up' })).toHaveLength(0);
+        expect(screen.findByType(DisclosureCaret).props.expanded).toBe(false);
     });
 
     it('derives a running status spinner when any tool is still running', async () => {
@@ -234,6 +236,21 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
         });
     };
 
+    it.each([
+        ['approval_rejected', 'approvals.status.rejected'],
+        ['approval_canceled', 'approvals.status.canceled'],
+    ])('uses the decision label for a %s group and a mixed summary', async (code, label) => {
+        for (const mixed of [false, true]) {
+            const screen = await renderHeaderRow({ toolMessages: [
+                actionToolMessage('decision', 1, { errorCode: code, error: code }),
+                ...(mixed ? [actionToolMessage('failure', 2, { errorCode: 'target_unavailable', error: 'target_unavailable' })] : []),
+            ] });
+            const status = screen.findByTestId(`tool-calls-group-status:${mixed ? 'error' : 'refused'}`);
+            expect(status?.props.accessibilityLabel).toContain(label);
+            expect(status?.props.accessibilityLabel).not.toContain('toolView.actionOutcome.refused');
+        }
+    });
+
     it('says a failed Action call failed in the header, in the word its row uses', async () => {
         const screen = await renderHeaderRow({
             toolMessages: [actionToolMessage('m1', 1, { errorCode: 'target_unavailable', error: 'target_unavailable' })],
@@ -253,9 +270,8 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             ],
         });
 
-        expect(screen.findByTestId('tool-calls-group-status:error')).toMatchObject({
-            props: { accessible: true, accessibilityLabel: 'toolView.actionOutcome.mixed' },
-        });
+        expect(screen.findByTestId('tool-calls-group-status:error')?.props.accessibilityLabel)
+            .toBe('toolView.actionOutcome.mixed(failed=1,refused=1)');
         expect(screen.findAllByProps({ name: 'check-circle' })).toHaveLength(0);
         expect(screen.findAllByProps({ name: 'warning-circle' }).length).toBeGreaterThan(0);
     });
@@ -304,7 +320,7 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
             setExpanded,
         });
 
-        expect(expanded.findAllByProps({ name: 'caret-up' }).length).toBeGreaterThan(0);
+        expect(expanded.findByType(DisclosureCaret).props.expanded).toBe(true);
         await expanded.pressByTestIdAsync('transcript-tool-calls-header');
         expect(setExpanded).toHaveBeenCalledWith(false);
     });
@@ -373,7 +389,6 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
     // The header follows a message's action row, whose buttons overhang their band into the card's inset; the
     // header's hit area must not reach up into them (it keeps its full reach below, where nothing contends).
     it('keeps the header hit area off the message-action row above it', async () => {
-        const { act } = await import('react-test-renderer');
         const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
         const screen = await renderScreen(React.createElement(HappierUiPlatformProvider, { platform: { platform: 'ios', colorScheme: 'light' } },
             React.createElement(ToolCallsGroupUnitHeaderRowWithSessionCommon, {
@@ -381,12 +396,9 @@ describe('ToolCallsGroupUnitHeaderRow', () => {
                 ...createTranscriptSessionCommonPropsFixture(),
                 toolMessages: [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })],
             } as any)));
-        await act(async () => {
-            screen.findByTestId('transcript-tool-calls-header')?.props.onLayout({ nativeEvent: { layout: { width: 338, height: 28 } } });
-        });
-        const slop = screen.findByTestId('transcript-tool-calls-header')?.props.hitSlop as Record<'top' | 'bottom', number>;
-        expect(slop.top).toBeLessThanOrEqual(1.5);
-        expect(slop.bottom).toBe(8);
+        const area = await layoutHitArea(() => screen.findByTestId('transcript-tool-calls-header'), { width: 338, height: 28 });
+        expect(area.insets.top).toBeLessThanOrEqual(1.5);
+        expect(area.insets.bottom).toBe(8);
     });
 
     it('renders nothing for an empty group', async () => {

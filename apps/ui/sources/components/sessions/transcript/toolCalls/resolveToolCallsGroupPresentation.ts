@@ -1,7 +1,8 @@
 import type { ToolCallMessage } from '@happier-dev/session-core/messages';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
-import { resolveToolActionFailure } from '@/components/tools/shell/presentation/resolveToolActionFailure';
+import { formatApprovalDecisionFailureLabel, formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import { resolveToolActionFailure, toolActionOutcomeLabel } from '@/components/tools/shell/presentation/resolveToolActionFailure';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import { readDeclinedApprovalAtToolCall } from '@/components/tools/shell/views/toolApprovalPromptMatching';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
@@ -14,6 +15,8 @@ export type ToolCallsGroupSummary = Readonly<{
     status: ToolCallsGroupStatus;
     failed: number;
     refused: number;
+    /** Decision words come from the same presenter as the tool row. Absent for ordinary policy refusals. */
+    refusalLabel?: string;
     /** True when a typed Action failure is among the failures, so the header uses the row's word ("Failed"). */
     failuresAreActionOutcomes: boolean;
 }>;
@@ -28,6 +31,8 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
 }>): ToolCallsGroupSummary {
     let failed = 0;
     let refused = 0;
+    const refusalLabels = new Set<string>();
+    let hasDecisionRefusal = false;
     let failuresAreActionOutcomes = false;
     let sawPermissionDenied = false;
     let sawPermissionCanceled = false;
@@ -48,8 +53,12 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
         if (kind === 'error') {
             // A refused call is the product saying no, not a break: it outranks nothing that failed.
             const actionFailure = resolveToolActionFailure(tool);
-            if (actionFailure?.outcome === 'refused') refused += 1;
-            else {
+            if (actionFailure?.outcome === 'refused') {
+                refused += 1;
+                const decisionLabel = formatApprovalDecisionFailureLabel(actionFailure.code);
+                hasDecisionRefusal ||= decisionLabel !== null;
+                refusalLabels.add(decisionLabel ?? toolActionOutcomeLabel('refused'));
+            } else {
                 failed += 1;
                 if (actionFailure) failuresAreActionOutcomes = true;
             }
@@ -58,7 +67,13 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
             if (tool.permission?.status === 'denied') sawPermissionDenied = true;
             else if (tool.permission?.status === 'canceled') sawPermissionCanceled = true;
             // A declined Action approval has no permission request: the Action was refused by the person.
-            else refused += 1;
+            else {
+                refused += 1;
+                if (declinedApproval) {
+                    hasDecisionRefusal = true;
+                    refusalLabels.add(formatApprovalStatusLabel(declinedApproval));
+                } else refusalLabels.add(toolActionOutcomeLabel('refused'));
+            }
         }
     }
     const status: ToolCallsGroupStatus =
@@ -69,7 +84,9 @@ export function resolveToolCallsGroupSummary(params: Readonly<{
                         : sawPermissionCanceled ? 'permission_canceled'
                             : sawRunning ? 'running'
                                 : 'completed';
-    return { status, failed, refused, failuresAreActionOutcomes };
+    return { status, failed, refused, failuresAreActionOutcomes,
+        ...(hasDecisionRefusal ? { refusalLabel: [...refusalLabels].join(' · ') } : {}),
+    };
 }
 
 /** Shared row visibility for virtualized groups and whole-group transcript hosts. */

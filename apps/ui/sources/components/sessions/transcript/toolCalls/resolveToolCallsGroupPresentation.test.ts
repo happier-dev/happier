@@ -1,11 +1,51 @@
 import { describe, expect, it } from 'vitest';
+import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
 import { resolveToolCallsGroupPresentation, resolveToolCallsGroupSummary, shouldShowToolCallsGroupStatusIndicator } from './resolveToolCallsGroupPresentation';
 import { createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
+import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
+import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
+import type { ToolCall } from '@happier-dev/session-core/messages';
 
 const groupStatus = (params: Parameters<typeof resolveToolCallsGroupSummary>[0]) => resolveToolCallsGroupSummary(params).status;
 
 describe('hidden tool group presentation', () => {
+    it.each([undefined, 'approved', 'pending'] as const)('stops an unsettled tool glyph on a stopped Session with permission %s', (permissionStatus) => {
+        const tool: ToolCall = { ...createToolCallMessageFixture().tool,
+            ...(permissionStatus ? { permission: { id: 'permission', status: permissionStatus } } : {}) };
+        const interaction = deriveTranscriptInteractionFromSession({ active: false });
+        const projected = resolveInactiveSessionToolCallFailure({ tool, ...interaction });
+
+        expect(projected.state).toBe('error');
+        expect(resolveToolStatusIndicatorKind(projected)).toBe(permissionStatus === 'pending' ? 'permission_blocked' : 'error');
+        expect(projected.result).toBe(tool.result);
+        expect(projected.permission?.status).toBe(permissionStatus === 'pending' ? 'canceled' : permissionStatus);
+        expect(tool.state).toBe('running');
+        expect(tool.permission?.status).toBe(permissionStatus);
+    });
+
+    it('preserves live calls and settled results at the shared Session projection', () => {
+        const running = createToolCallMessageFixture().tool;
+        const live = deriveTranscriptInteractionFromSession({ active: true });
+        expect(resolveInactiveSessionToolCallFailure({ tool: running, ...live })).toBe(running);
+        expect(resolveToolStatusIndicatorKind(running)).toBe('running');
+        const stopped = deriveTranscriptInteractionFromSession({ active: false });
+        for (const state of ['completed', 'error'] as const) {
+            const settled: ToolCall = { ...running, state, completedAt: 2, result: state === 'completed' ? { value: 'done' } : { error: 'failed' } };
+            const projected = resolveInactiveSessionToolCallFailure({ tool: settled, ...stopped });
+            expect(projected).toBe(settled);
+            expect(resolveToolStatusIndicatorKind(projected)).toBe(state);
+        }
+    });
+
+    it('uses the same stopped-call projection in the group summary', () => {
+        const running = createToolCallMessageFixture();
+        const stopped = deriveTranscriptInteractionFromSession({ active: false });
+        expect(groupStatus({ toolMessages: [running], ...stopped })).toBe('error');
+        expect(groupStatus({ toolMessages: [running] })).toBe('running');
+    });
+
     it('settles a published review group while preserving other running tool activity', () => {
         const ordinary = createToolCallMessageFixture({ id: 'ordinary' });
         const review = createToolCallMessageFixture({ id: 'review', tool: { ...ordinary.tool, id: 'review-call',
@@ -95,6 +135,10 @@ describe('hidden tool group presentation', () => {
         const group = { toolMessages: [ok, declinedCall], sessionId: 's1' } as const;
         expect(groupStatus({ ...group, approvalRequests: approvalRequests('rejected') })).toBe('refused');
         expect(groupStatus({ ...group, approvalRequests: approvalRequests('canceled') })).toBe('refused');
+        for (const status of ['rejected', 'canceled'] as const) {
+            expect(resolveToolCallsGroupSummary({ ...group, approvalRequests: approvalRequests(status) }).refusalLabel)
+                .toBe(formatApprovalStatusLabel(status));
+        }
         expect(groupStatus({ ...group, approvalRequests: approvalRequests('open') })).toBe('completed');
         expect(groupStatus({ ...group })).toBe('completed');
     });
