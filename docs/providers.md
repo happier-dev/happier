@@ -66,6 +66,46 @@ The composer offers the existing Machine Agent sign-in recovery; the Action
 diagnostic also explains selecting a Connected Account or configuring its default.
 Neither refusal changes the committed target or discards pending input.
 
+### Native subscription consumers (0.3 development)
+
+Agent declarations own which Connected Account purposes appear in the shared
+UI and Actions. Their declared credential kinds also determine account
+availability through the shared inventory projection. An unknown kind is
+unavailable when a purpose restricts kinds; an unrestricted purpose retains it.
+The server derives known built-in kinds from the canonical authentication-mode
+classifier when retained credential metadata omits the kind. Older unknown-kind
+rows remain visible as unavailable until a compatible producer can classify them.
+
+Kilo uses its native OpenAI auth-loader hook with Happier's
+qualified request-auth client: each Responses request obtains an access token,
+and Happier retains refresh ownership. Native ACP resume remains available;
+pre-switch reachability cannot be attested from Kilo's current SQLite store.
+
+Oh My Pi's Claude purpose accepts OAuth, native-import and setup-token accounts
+through `ANTHROPIC_OAUTH_TOKEN`. Its native ACP and model commands are `omp acp`
+and `omp models --json`. DeepSec's finite Claude reviews use the same access-only
+materialization contract, mapped to the native Claude SDK environment; an
+explicit Codex or mixed harness is refused for a Claude binding. Both audit
+stages share the admitted launch material. Neither integration receives refresh
+tokens. These static credentials are rematerialized on a new or restarted run;
+they do not renew inside an already-running native process.
+
+FX uses the host-prepared native home and shared session state. Its released
+0.0.14 parser requires an auth file containing account identity, expiry and a
+nonempty refresh field, so the codec writes the access token with an unusable
+refresh sentinel. Only Happier can refresh the account. FX requires restart and
+rematerialization after expiry; writing a new file does not prove live adoption.
+ACP, detached and terminal launches use the same preparation owner.
+
+Devin retains its vendor-managed login. Its documented
+[authentication](https://docs.devin.ai/cli/enterprise/devin-auth) uses a Devin
+account and vendor credential file; the current public contract supplies no
+Claude or ChatGPT bearer injection seam. DeepSec's native Codex login is also
+retained: managed ChatGPT home acquisition is not exposed to that delegated
+execution runtime. These paths do not advertise unsupported Connected Accounts.
+Account-backed turns, renewal and resume remain live validation work; native
+source inspection and dummy probes do not establish billing or entitlement.
+
 ### Vercel AI Gateway (0.3 development)
 
 The development Provider plugin in `packages/plugins/vercel-ai-gateway` declares
@@ -924,6 +964,44 @@ configuration support alone does not establish a safe generic binding for Qwen,
 Pi, Oh My Pi, Kimi, CodeBuddy, Grok, FX or an arbitrary Custom ACP definition. See the
 [Agent catalog](agents-catalog.md#additional-provider-bindings-03-development)
 and the published Agent pages for each native constraint.
+
+The 0.3 development ChatGPT Connected Account routes are separate from generic
+Provider connections. Copilot CLI, Droid and CodeBuddy declare an optional
+qualified `happier.agent.codex/openai-codex` purpose. Their normal Session and
+Execution Run factories acquire only bearer access and account-id headers from
+the existing Connected Account owner. Select an explicit ChatGPT model; arbitrary
+model IDs use the Agent's ordinary freeform model selector. The upstream remains
+the authority on entitlement, and the host retains its existing known model
+eligibility blockers for account groups. These routes do not discover a new
+per-account model catalog.
+
+OpenCode's native model inventory likewise does not establish ChatGPT account
+entitlement. In 0.3 development, its native route decoder and shared catalog
+owner withhold unproven ChatGPT rows and return the existing typed unavailable
+preflight result; other usable Provider rows remain available. A running Session
+retains its explicit model when only unproven inventory exists, and explicit
+model selection still reaches the upstream authority. The current runtime model
+snapshot has no typed catalog-reason presentation field; its existing diagnostic
+warning carries that limitation without expanding the SDK contract.
+
+Copilot writes a private temporary providers file, Droid writes private temporary
+custom-model settings referencing a child-only access-token environment value,
+and CodeBuddy supplies its native process configuration through environment
+values. None receives a refresh token or adds a refresher, request proxy, or
+shared authentication file. Renewed access takes effect on a new process.
+Resume reachability is reported by each Agent's continuity hook; an unproven
+native home produces an unavailable result rather than claiming continuity.
+Real subscription acceptance and loaded-runtime account switching remain live
+validation obligations; a dummy endpoint proves serialization, not entitlement.
+
+Claude subscription routes remain undeclared for these Agents, Kimi and Qwen:
+the inspected native paths cannot preserve the required subscription request
+contract across all Agent calls. Kimi's ChatGPT route also remains undeclared:
+its custom Responses model requires an authoritative context size, while the
+current host launch input supplies only a selected model ID. Qwen's inspected
+Responses driver appends `/v1/responses`, which does not reach the ChatGPT Codex
+endpoint from its required base URL. Unsupported routes are not represented as
+Connected Account choices.
 
 Protocol intersection is necessary but not sufficient. Compatibility also accounts for the minimum behaviors an Agent needs:
 
