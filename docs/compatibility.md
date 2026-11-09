@@ -7461,6 +7461,20 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 permission occurrences add closed optional `nativeChoices`, with
+canonical offered response payloads, and answer carriers add `nativeChoice`.
+The latter may carry an answer without a legacy `approved` alias. Current
+responses resolve the stored choice before deriving decision and grant fields;
+an answer without a valid selection cannot approve a native-choice occurrence.
+Matching Protocol, SDK, daemon and UI readers reload together. Stored occurrences
+without offered choices retain the frozen reader and existing response codecs;
+there is no new permission request kind, wire epoch or persistence store.
+The inspected `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has neither the current
+`respondRpcParamsV1.ts` nor `runtime/session/scopedServices.ts` module, including
+scoped local changes. This does not establish old-host support for native-choice
+answers: their opaque selection must reach a current application owner.
+
 Unreleased 0.3 startup diagnostics add `model_selection_required` to the existing
 closed `SessionRuntimeFailureCauseV1.failureReason` vocabulary. Pi's refusal of
 an unverified ChatGPT default keeps the existing model reconciliation code and

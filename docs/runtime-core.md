@@ -4,6 +4,23 @@ The host owns the executable Session and turn lifecycle. An Agent plugin supplie
 
 This page describes **0.3 development source**, not a shipped release or a completed live-validation gate. It is the standing architecture reference; approved plans remain the execution contract for their assigned work.
 
+Native permission requests use the existing Session permission occurrence. A runtime
+publishes `nativeChoices` with its requirement identity, readable offered labels,
+scopes and canonical response payloads. Clients answer with `nativeChoice`
+(`requirementId`, `choiceId`, optional permitted feedback); they do not choose the
+effective decision or grant payload. The permission response owner resolves the
+stored offer, refuses missing or stale native answers, and applies the native
+decision before reporting success. Application failure leaves the occurrence pending.
+
+The same response owner requires the attributed Account owner for durable grant
+carriers, including rule, mode and execution-policy changes. Shared approvers may
+answer once or Session choices that carry no such grant. Caller-specific pending
+availability is a projection of this authority, never a globally stored native
+fact. Old occurrences without `nativeChoices` retain their frozen reader; current
+plugin producers own offered choices. Ask captures the selected occurrence's safe
+label and scope through the existing Session status read, without retaining its
+executable response payload as presentation data.
+
 Session sends, Session runtime events and finite Run events preserve complete
 valid text and strict JSON without an aggregate candidate byte ceiling. Their
 schemas retain the closed event grammar and identity bounds; transport,
