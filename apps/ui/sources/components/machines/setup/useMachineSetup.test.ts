@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 
-import { readMachineSetupRecipes } from './useMachineSetup';
+import { readMachineSetupApps, readMachineSetupRecipes } from './useMachineSetup';
 
 const docker = {
   pluginId: 'happier.machine-recipes',
@@ -16,6 +16,17 @@ const firewall = {
 const item = (ref: typeof docker) => ({
   kind: 'setupRecipe' as const,
   selection: { ref, inputs: {} },
+});
+
+describe('readMachineSetupApps', () => {
+  it('lists each app the sources hold, in source order, with where it came from', () => {
+    const app = (name: string) => ({ kind: 'app' as const, definition: { name, project: { kind: 'create' as const } } });
+    const rows = readMachineSetupApps([
+      { kind: 'accountPreset', presetId: 'web', presetRevision: 3, setup: { items: [item(docker), app('Status page')] as never } },
+      { kind: 'direct', setup: { items: [app('Analytics')] as never } },
+    ]);
+    expect(rows.map(row => [row.key, row.item.definition.name, row.sourceIndex])).toEqual([['0.1', 'Status page', 0], ['1.0', 'Analytics', 1]]);
+  });
 });
 
 describe('readMachineSetupRecipes', () => {

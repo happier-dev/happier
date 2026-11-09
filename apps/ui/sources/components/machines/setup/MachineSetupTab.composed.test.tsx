@@ -52,6 +52,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 const routerHandle = vi.hoisted(() => ({ current: null as null | { spies: { push: { mock: { calls: unknown[][] } } } } }));
 installApprovalCommonModuleMocks({
   text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ renderCustomModals: true }).module;
+  },
   router: async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const router = createExpoRouterMock();
@@ -80,6 +84,21 @@ beforeEach(async () => {
 });
 afterEach(() => standardCleanup());
 
+// The Machine page owns this already-hydrated inventory before rendering a tab.
+async function publishManagedDevbox(serverId: string, role?: 'use') {
+  const { storage } = await import('@/sync/domains/state/storage');
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const scope = { serverId, accountId: 'owner' };
+  await act(async () => {
+    storage.setState({ settingsScope: scope, profileScope: scope });
+    storage.getState().applyMachines([createMachineFixture({ id: 'devbox', isShared: role !== undefined, activeAt: Date.now(),
+      ...(role ? { access: { role, resourceMode: 'plain' as const, accessState: 'ready' as const, custodian: { accountId: 'owner', displayName: 'Owner' } } } : {}) })],
+      true, { sourceServerId: serverId, sourceAccountId: scope.accountId });
+    observeMachinePresenceForTest(scope, ['devbox']);
+  });
+}
+
 const preset = (id: string, name: string, creation = false) => ({
   id,
   homeId: 'srv_build',
@@ -97,6 +116,21 @@ const preset = (id: string, name: string, creation = false) => ({
 });
 
 describe('Machine setup preparation', () => {
+  it('attaches a bundled preset through the existing Plan and Apply source program without changing recipe order or inputs', async () => {
+    const { prepareMachineSetupPresetApplyInput } = await import('@/components/settings/machines/managed/machineSetupApply');
+    const ref = { pluginId: 'example.setup', localId: 'secure', revision: '1' };
+    const setup = { items: ['firewall', 'ssh'].map(recipeId => ({ kind: 'setupRecipe' as const,
+      selection: { ref: { pluginId: ref.pluginId, recipeId, revision: '1' }, inputs: {} } })) };
+    const current = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0, sources: [{ kind: 'direct', setup: {} }], exclusions: [], support: [] });
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
+      const request = MachineSetupPlanInputV1Schema.parse(input);
+      return request.mode ? { ...current, sources: request.sources, recipePlans: [] } : current;
+    } }));
+    expect(await prepareMachineSetupPresetApplyInput({ executeAction: executor.execute, context: { surface: 'ui' },
+      homeId: 'srv_build', machineId: 'devbox', preset: { kind: 'bundledPreset', ref, setup }, isCurrent: () => true })).toMatchObject({
+      ok: true, input: { targets: [{ sources: [{ kind: 'bundledPreset', ref, setup }, { kind: 'direct', setup: {} }] }] },
+    });
+  });
   it.each([false, true])('retains reviewed removals through Plan and Apply, rejecting a substituted selection (combined=%s)', async combined => {
     const { prepareMachineSetupSourcesApplyInput } = await import('@/components/settings/machines/managed/machineSetupReview');
     const sources = [{ kind: 'direct' as const, setup: {} }];
@@ -294,6 +328,98 @@ describe('Machine setup preparation', () => {
 });
 
 describe('Machine → Setup tab (P-M1)', () => {
+  it('uses a bundled Store preset through the existing enrolled-machine picker and review without applying during selection', async () => {
+    const home = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example',
+      serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+    const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
+    const setup = { scripts: [{ body: 'echo bundled' }] };
+    const plans: unknown[] = [];
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+      const request = MachineSetupPlanInputV1Schema.parse(envelope.input);
+      plans.push(request);
+      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true,
+        result: MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0, exclusions: [], support: [],
+          sources: request.sources ?? [{ kind: 'direct', setup: {} }], ...(request.mode === 'effects' ? { recipePlans: [] } : {}) }) } } };
+    } });
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { StorePresetsShelf } = await import('@/components/store/presets/StorePresetsShelf');
+    const { ModalProvider } = await import('@/modal');
+    const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, machineSetupPresetsById: {
+      'example.setup/secure': { id: 'example.setup/secure', pluginId: 'example.setup', pluginVersion: '1', occurrenceId: 'example',
+        definition: { id: 'secure', revision: '2', title: 'Secure', description: 'Security setup', setup } },
+    } };
+    const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection,
+      pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, machineId: null, serverId,
+      platform: 'web', accountLifetime: null, clientExecutableActivation: { status: 'ready' },
+      reloadClientExecutables() {}, reloadConnectedAccountProjection() {} }}>
+      <StorePresetsShelf presented query="" /><ModalProvider />
+    </AppShellPluginUiProjectionValueProvider>);
+    const rowId = `store.kind.software.row.preset:${serverId}:example.setup/secure`;
+    await waitForHomeGovernance(() => expect(screen.findByTestId(rowId)).not.toBeNull());
+    expect(plans).toHaveLength(0);
+    await screen.pressByTestIdAsync(rowId);
+    const pickerOf = () => screen.tree.findAll(node => node.props?.testID === 'store.software.review.machine'
+      && typeof node.props.onSelect === 'function')[0];
+    await waitForHomeGovernance(() => expect(pickerOf()?.props.machines.targets).toHaveLength(1));
+    const picker = pickerOf()!;
+    expect(plans).toHaveLength(0);
+    await act(async () => { picker.props.onSelect(picker.props.machines.targets[0]); });
+    await waitForHomeGovernance(() => expect({
+      errorCode: screen.findByTestId('store.software.review.error')?.props.diagnosticCode,
+      plans,
+      reviewFound: screen.findByTestId('store.software.review.target.devbox') !== null,
+    }).toMatchObject({ errorCode: undefined, plans: expect.arrayContaining([expect.objectContaining({ mode: 'effects' })]), reviewFound: true }));
+    expect(plans.at(-1)).toMatchObject({ machineId: 'devbox', mode: 'effects', sources: [
+      { kind: 'bundledPreset', ref: { pluginId: 'example.setup', localId: 'secure', revision: '2' }, setup }, { kind: 'direct' },
+    ] });
+    expect(harness.requests.some(request => request.path === '/v1/actions/machines.setup.apply')).toBe(false);
+    await screen.pressByTestIdAsync('store.software.review.cancel');
+    await screen.unmount();
+  });
+  it('lists bundled setup presets beside saved presets and reviews their exact source through the existing tab', async () => {
+    const home = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example',
+      serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+    const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset('web', 'Web box')] } });
+    const setup = { scripts: [{ body: 'echo bundled' }] };
+    const current = MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0, exclusions: [], support: [], sources: [{ kind: 'direct', setup: {} }] });
+    const plans: unknown[] = [];
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+      const request = MachineSetupPlanInputV1Schema.parse(envelope.input);
+      plans.push(request);
+      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true,
+        result: request.mode === 'effects' ? { ...current, sources: request.sources, recipePlans: [] } : current } } };
+    } });
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { MachineSetupTab } = await import('./MachineSetupTab');
+    const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, machineSetupPresetsById: {
+      'example.setup/secure': { id: 'example.setup/secure', pluginId: 'example.setup', pluginVersion: '1', occurrenceId: 'example',
+        definition: { id: 'secure', revision: '2', title: 'Secure', description: 'Security setup', setup } },
+    } };
+    const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection,
+      pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, machineId: null, serverId,
+      platform: 'web', accountLifetime: null, clientExecutableActivation: { status: 'ready' },
+      reloadClientExecutables() {}, reloadConnectedAccountProjection() {} }}>
+      <MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online params={{ id: 'setup' }} setParams={vi.fn()} />
+    </AppShellPluginUiProjectionValueProvider>);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-preset-review:example.setup/secure')).not.toBeNull());
+    expect(screen.findByTestId('machine-setup-preset-review:web')).not.toBeNull();
+    await screen.pressByTestIdAsync('machine-setup-preset-review:example.setup/secure');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-review')).not.toBeNull());
+    expect(plans.at(-1)).toMatchObject({ mode: 'effects', sources: [
+      { kind: 'bundledPreset', ref: { pluginId: 'example.setup', localId: 'secure', revision: '2' }, setup }, { kind: 'direct', setup: {} },
+    ] });
+    await screen.unmount();
+  });
   it.each([{ kind: 'creation-bearing', creation: true }, { kind: 'setup-only', creation: false }])(
     'changes to a $kind Preset from the tab: one check on open, review in place, Apply as operation rows', async ({ creation }) => {
     let phase = 'save Home';
@@ -319,6 +445,7 @@ describe('Machine → Setup tab (P-M1)', () => {
       return { status: request.status, execution: request.execution };
     });
     const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
     phase = 'use the default setup approval policy';
     harness.answer(home, '/v1/machines/devbox', {
       body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) },
@@ -537,6 +664,7 @@ describe('Machine → Setup tab (P-M1)', () => {
       name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
     });
     const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
     harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
     harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [
       preset('web', 'Web box'), preset('build', 'Build box'), { ...preset('other', 'Other box'), revision: 3 },
@@ -598,11 +726,39 @@ describe('Machine → Setup tab (P-M1)', () => {
     await screen.unmount();
   });
 
+  it('tells a Can use person who changes setup, without running a check the Machine would refuse', async () => {
+    const home = await harness.addHome({
+      name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
+    });
+    const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId, 'use');
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
+    const plans: unknown[] = [];
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
+      plans.push(input);
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId,
+        execution: { ok: false, errorCode: 'setup_manage_required', error: 'setup_manage_required' } } };
+    } });
+    const { MachineSetupTab } = await import('./MachineSetupTab');
+    const screen = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+      params={{ id: 'setup' }} setParams={vi.fn()} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-read-only')).not.toBeNull());
+    expect(plans).toHaveLength(0);
+    for (const absent of ['machine-setup-error', 'machine-setup-check-again', 'machine-setup-loading', 'machine-setup-recipes-none']) {
+      expect(screen.findByTestId(absent), absent).toBeNull();
+    }
+    expect(screen.findByTestId('machine-setup-tools-section')).not.toBeNull();
+    await screen.unmount();
+  });
+
   it('leads from no preset to making one, from the tab', async () => {
     const home = await harness.addHome({
       name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
     });
     const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
     harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
     harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
     harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
@@ -622,11 +778,78 @@ describe('Machine → Setup tab (P-M1)', () => {
     await screen.unmount();
   });
 
+  it('saves this Machine as an inert preset: one create, no plan or apply, then the editor', async () => {
+    const home = await harness.addHome({
+      name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
+    });
+    const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset('web', 'Web server')] } });
+    const docker = { kind: 'softwareRecipe', selection: { ref: { pluginId: 'p', recipeId: 'docker', revision: '1' }, inputs: {} } };
+    const firewall = { kind: 'setupRecipe', selection: { ref: { pluginId: 'p', recipeId: 'firewall', revision: '1' }, inputs: {} } };
+    const keep = { kind: 'softwareRecipe', selection: { ref: { pluginId: 'p', recipeId: 'node', revision: '1' }, inputs: {} } };
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+      return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true,
+        result: MachineSetupPlanResultV1Schema.parse({ desiredRevision: 2, exclusions: [], support: [], sources: [
+          { kind: 'accountPreset', presetId: 'web', presetRevision: 2, setup: { items: [firewall, docker] } },
+          { kind: 'direct', setup: { items: [keep] } },
+        ] }) } } };
+    } });
+    let created: { id: string; name: string; setup: { items?: unknown[] } } | undefined;
+    harness.answer(home, '/v1/machines/presets/create', { select: input => {
+      created = input as NonNullable<typeof created>;
+      return { body: { kind: 'saved', preset: { ...(input as object), revision: 1 } } };
+    } });
+    const { Modal } = await import('@/modal');
+    const show = vi.mocked(Modal.show);
+    show.mockClear();
+    const { MachineSetupTab } = await import('./MachineSetupTab');
+    const screen = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+      params={{ id: 'setup' }} setParams={vi.fn()} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-save-preset')).not.toBeNull());
+    const planned = harness.requestsFor('/v1/actions/machines.setup.plan').length;
+    await screen.pressByTestIdAsync('machine-setup-save-preset');
+    const shown = show.mock.calls.at(-1)![0] as unknown as Readonly<{ component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> }>;
+    const setChrome = vi.fn();
+    const onClose = vi.fn();
+    const modal = await renderScreen(<shown.component {...shown.props} setChrome={setChrome} onClose={onClose} />);
+    await waitForHomeGovernance(() => expect(modal.findByTestId('machine-save-preset.item:0.0')).not.toBeNull());
+    // Unticking drops one item from the copy; the Machine's own setup is not edited.
+    await modal.pressByTestIdAsync('machine-save-preset.item:0.0');
+    const save = () => (setChrome.mock.calls.at(-1)![0] as { footer: React.ReactElement<{ primary: { onPress(): void } }> }).footer.props.primary;
+    await act(async () => save().onPress());
+    await waitForHomeGovernance(() => expect(created).toBeDefined());
+    expect(created!.setup.items).toEqual([docker, keep]);
+    expect(created!.name).toContain('devbox');
+    expect(harness.requestsFor('/v1/actions/machines.setup.plan')).toHaveLength(planned);
+    expect(harness.requestsFor('/v1/actions/machines.setup.apply')).toHaveLength(0);
+    await waitForHomeGovernance(() => expect(routerHandle.current?.spies.push.mock.calls.at(-1)?.[0])
+      .toBe(`/settings/machines/presets/${encodeURIComponent(created!.id)}?serverId=${encodeURIComponent(serverId)}`));
+    expect(onClose).toHaveBeenCalled();
+    await modal.unmount();
+    await screen.unmount();
+  });
+
+  it('omits the provenance choice when no preset is attached and leaves preset items out when asked', async () => {
+    const { projectMachineSetupCapture } = await import('./machineSetupCapture');
+    const docker = { kind: 'softwareRecipe' as const, selection: { ref: { pluginId: 'p', recipeId: 'docker', revision: '1' }, inputs: {} } };
+    const sources = [
+      { kind: 'accountPreset' as const, presetId: 'web', presetRevision: 2, setup: { items: [docker] } },
+      { kind: 'direct' as const, setup: {} },
+    ];
+    expect(projectMachineSetupCapture(sources, 'everything', new Set()).sources).toHaveLength(2);
+    expect(projectMachineSetupCapture(sources, 'own', new Set()).sources).toEqual([{ kind: 'direct', setup: {} }]);
+    expect(projectMachineSetupCapture(sources, 'own', new Set()).leftOut.map(entry => entry.kind)).toEqual(['accountPreset']);
+  });
+
   it('pushes Tools inside the tab and comes back to Setup', async () => {
     const home = await harness.addHome({
       name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
     });
     const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
     harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
     harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
     const { MachineSetupTab } = await import('./MachineSetupTab');

@@ -14,8 +14,8 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
 import { actionOperationAddress } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import {
-    useServerScopedMachine,
-    useSessionListRenderableWithServerScope,
+  useServerScopedMachine,
+  useSessionListRenderableWithServerScope,
 } from '@/sync/domains/state/storage';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
@@ -30,498 +30,723 @@ import { useManagedMachineName } from '@/components/approvals/approvalReferenceR
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 
 import {
-    describeActionOperationStatusLabel,
-    formatActionOperationAge,
-    readActionOperationDestinationSessionId,
-    readActionOperationDestinationServerId,
-    readActionOperationPluginIdentity,
-    resolveActionOperationStatus,
+  describeActionOperationStatusLabel,
+  formatActionOperationAge,
+  readActionOperationDestinationSessionId,
+  readActionOperationDestinationServerId,
+  readActionOperationPluginIdentity,
+  resolveActionOperationStatus,
 } from './actionOperationPresentation';
 import {
-    projectActionOperationDetail,
-    readActionOperationOutputAttachment,
-    type ActionOperationDetailField,
-    type ActionOperationDetailProjection,
+  projectActionOperationDetail,
+  readActionOperationOutputAttachment,
+  type ActionOperationDetailField,
+  type ActionOperationDetailProjection,
 } from './actionOperationDetailPresentation';
 import { resumeActionOperationHandoff } from './resumeActionOperationHandoff';
 import { ActionOperationDetailControls } from './ActionOperationDetailControls';
+import {
+  AgentIsolationRecovery,
+  AgentIsolationReview,
+} from './AgentIsolationReview';
+import {
+  isAgentIsolationOutcomeUnknown,
+  useAgentIsolationRecovery,
+} from './useAgentIsolationRecovery';
 import { ProjectCommandOutputPane } from './ProjectCommandOutputPane';
+import { MachineSetupStepsChecklist } from './MachineSetupStepsChecklist';
 import { projectActionOperationSourceContext } from './actionOperationSourceContext';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { ActionOperationSudoQuestion } from './ActionOperationSudoQuestion';
+import { readActionOperationSudoPrompt } from '@/sync/domains/actionOperations/actionOperationSelectors';
 
 function translateDetailField(field: ActionOperationDetailField): string {
-    switch (field.id) {
-        case 'strategy': return t('inbox.actionOperations.detailFields.strategy');
-        case 'result': return t('inbox.actionOperations.detailFields.result');
-        case 'session': return t('inbox.actionOperations.detailFields.createdSession');
-        case 'phase': return t('inbox.actionOperations.detailFields.phase');
-        case 'reference': return t('inbox.actionOperations.reference');
-    }
+  switch (field.id) {
+    case 'strategy':
+      return t('inbox.actionOperations.detailFields.strategy');
+    case 'result':
+      return t('inbox.actionOperations.detailFields.result');
+    case 'session':
+      return t('inbox.actionOperations.detailFields.createdSession');
+    case 'phase':
+      return t('inbox.actionOperations.detailFields.phase');
+    case 'reference':
+      return t('inbox.actionOperations.reference');
+  }
 }
 
 function translateDetailFieldValue(
-    field: ActionOperationDetailField,
-    kind: ActionOperationDetailProjection['kind'],
+  field: ActionOperationDetailField,
+  kind: ActionOperationDetailProjection['kind'],
 ): string {
-    if (field.id === 'strategy') {
-        switch (field.value) {
-            case 'native': return t('inbox.actionOperations.forkStrategies.native');
-            case 'provider_native': return t('inbox.actionOperations.forkStrategies.providerNative');
-            case 'acp_fork_latest': return t('inbox.actionOperations.forkStrategies.acpNative');
-            case 'replay': return t('inbox.actionOperations.forkStrategies.replay');
-            case 'auto': return t('inbox.actionOperations.forkStrategies.auto');
-        }
+  if (field.id === 'strategy') {
+    switch (field.value) {
+      case 'native':
+        return t('inbox.actionOperations.forkStrategies.native');
+      case 'provider_native':
+        return t('inbox.actionOperations.forkStrategies.providerNative');
+      case 'acp_fork_latest':
+        return t('inbox.actionOperations.forkStrategies.acpNative');
+      case 'replay':
+        return t('inbox.actionOperations.forkStrategies.replay');
+      case 'auto':
+        return t('inbox.actionOperations.forkStrategies.auto');
     }
-    if (field.id === 'result' && kind === 'spawn') {
-        if (field.value === 'created') return t('inbox.actionOperations.spawnResults.created');
-        if (field.value === 'rejoined') return t('inbox.actionOperations.spawnResults.rejoined');
-    }
-    if (field.id === 'result' && kind === 'handoff' && field.value === 'completed') {
-        return t('inbox.actionOperations.handoffResults.completed');
-    }
-    return field.value;
+  }
+  if (field.id === 'result' && kind === 'spawn') {
+    if (field.value === 'created')
+      return t('inbox.actionOperations.spawnResults.created');
+    if (field.value === 'rejoined')
+      return t('inbox.actionOperations.spawnResults.rejoined');
+  }
+  if (
+    field.id === 'result' &&
+    kind === 'handoff' &&
+    field.value === 'completed'
+  ) {
+    return t('inbox.actionOperations.handoffResults.completed');
+  }
+  return field.value;
 }
 
-function translateRecovery(detail: ActionOperationDetailProjection): string | null {
-    switch (detail.recovery?.kind) {
-        case 'fork_lineage': return t('inbox.actionOperations.recovery.forkLineage');
-        case 'spawn_custody': return t('inbox.actionOperations.recovery.spawnCustody');
-        case 'handoff': return t('inbox.actionOperations.recovery.handoff', {
-            actions: detail.recovery.actions.join(', '),
-        });
-        case undefined: return null;
-    }
+function translateRecovery(
+  detail: ActionOperationDetailProjection,
+): string | null {
+  switch (detail.recovery?.kind) {
+    case 'fork_lineage':
+      return t('inbox.actionOperations.recovery.forkLineage');
+    case 'spawn_custody':
+      return t('inbox.actionOperations.recovery.spawnCustody');
+    case 'handoff':
+      return t('inbox.actionOperations.recovery.handoff', {
+        actions: detail.recovery.actions.join(', '),
+      });
+    case undefined:
+      return null;
+  }
 }
 
-function describeProjectCommandPurpose(purpose: 'setup' | 'teardown' | 'script' | 'exec'): string {
-    switch (purpose) {
-        case 'setup': return t('projects.scripts.output.purpose.setup');
-        case 'teardown': return t('projects.scripts.output.purpose.teardown');
-        case 'exec': return t('projects.scripts.output.purpose.exec');
-        case 'script': return t('projects.scripts.output.purpose.script');
-    }
+function describeProjectCommandPurpose(
+  purpose: 'setup' | 'teardown' | 'script' | 'exec',
+): string {
+  switch (purpose) {
+    case 'setup':
+      return t('projects.scripts.output.purpose.setup');
+    case 'teardown':
+      return t('projects.scripts.output.purpose.teardown');
+    case 'exec':
+      return t('projects.scripts.output.purpose.exec');
+    case 'script':
+      return t('projects.scripts.output.purpose.script');
+  }
 }
 
-export type ActionOperationDetailModalProps = CustomModalInjectedProps & Readonly<{
+export type ActionOperationDetailModalProps = CustomModalInjectedProps &
+  Readonly<{
     serverId: string | null;
     operationId: string;
-}>;
+  }>;
 
-export const ActionOperationDetailModal = React.memo(function ActionOperationDetailModal(
-    props: ActionOperationDetailModalProps,
-) {
+export const ActionOperationDetailModal = React.memo(
+  function ActionOperationDetailModal(props: ActionOperationDetailModalProps) {
     const { theme } = useUnistyles();
     const router = useRouter();
     useServerProfilesGeneration();
-    const operation = useActionOperation(actionOperationAddress(props.serverId, props.operationId));
+    const operation = useActionOperation(
+      actionOperationAddress(props.serverId, props.operationId),
+    );
+    const isRecordingVisible = useSessionRecordingVisibility();
+    const isolationCheck = useAgentIsolationRecovery(operation);
     const sessionId = operation?.snapshot.scope.sessionId ?? null;
     const exactServerId = operation?.serverId ?? null;
     const session = useSessionListRenderableWithServerScope(
-        exactServerId,
-        exactServerId && sessionId ? sessionId : '',
+      exactServerId,
+      exactServerId && sessionId ? sessionId : '',
     );
-    const projectCommandRef = operation ? readActionOperationOutputAttachment(operation.snapshot) : null;
+    const projectCommandRef = operation
+      ? readActionOperationOutputAttachment(operation.snapshot)
+      : null;
     const machine = useServerScopedMachine(
-        projectCommandRef?.serverId ?? exactServerId,
-        projectCommandRef?.machineId ?? (exactServerId ? operation?.snapshot.scope.machineId ?? '' : ''),
+      projectCommandRef?.serverId ?? exactServerId,
+      projectCommandRef?.machineId ??
+        (exactServerId ? (operation?.snapshot.scope.machineId ?? '') : ''),
     );
-    const sessionAddresses = React.useMemo(() => exactServerId && sessionId
-        ? [{ serverId: exactServerId, sessionId }]
-        : [], [exactServerId, sessionId]);
+    const sessionAddresses = React.useMemo(
+      () =>
+        exactServerId && sessionId
+          ? [{ serverId: exactServerId, sessionId }]
+          : [],
+      [exactServerId, sessionId],
+    );
     const audienceContext = useSessionAudienceContext(sessionAddresses);
     const homeObservations = useSessionListHomeObservations();
-    const projectCommandMachineName = projectCommandRef && machine ? getMachineDisplayName(machine) ?? null : null;
+    const projectCommandMachineName =
+      projectCommandRef && machine
+        ? (getMachineDisplayName(machine) ?? null)
+        : null;
     // A managed power operation runs on its controller but concerns the managed guest, which the Machine row names.
-    const managedMachineName = useManagedMachineName(exactServerId,
-        operation?.snapshot.domainRef?.kind === 'managedMachine' ? operation.snapshot.domainRef.id : null);
+    const managedMachineName = useManagedMachineName(
+      exactServerId,
+      operation?.snapshot.domainRef?.kind === 'managedMachine'
+        ? operation.snapshot.domainRef.id
+        : null,
+    );
     const [resumePending, setResumePending] = React.useState(false);
-    const [resumeFeedback, setResumeFeedback] = React.useState<string | null>(null);
+    const [resumeFeedback, setResumeFeedback] = React.useState<string | null>(
+      null,
+    );
     const resumeControllerRef = React.useRef<AbortController | null>(null);
 
     React.useEffect(() => {
-        setResumePending(false);
-        setResumeFeedback(null);
-        return () => {
-            resumeControllerRef.current?.abort();
-        };
+      setResumePending(false);
+      setResumeFeedback(null);
+      return () => {
+        resumeControllerRef.current?.abort();
+      };
     }, [props.operationId, props.serverId]);
 
     React.useEffect(() => {
-        props.setChrome?.({
-            kind: 'card',
-            title: operation?.snapshot.title ?? t('inbox.actionOperations.unavailableTitle'),
-            testID: 'action-operation-detail',
-            titleTestID: 'action-operation-detail-heading',
-            dimensions: { size: 'dialog' },
-        });
-        return () => props.setChrome?.(null);
+      props.setChrome?.({
+        kind: 'card',
+        title:
+          operation?.snapshot.title ??
+          t('inbox.actionOperations.unavailableTitle'),
+        testID: 'action-operation-detail',
+        titleTestID: 'action-operation-detail-heading',
+        dimensions: { size: 'dialog' },
+      });
+      return () => props.setChrome?.(null);
     }, [operation?.snapshot.title, props.setChrome]);
 
+    const previousOperation = React.useRef(operation);
     React.useEffect(() => {
-        if (operation && isActionOperationTerminal(operation.snapshot.state)) {
-            acknowledgeActionOperationPresented(operation.snapshot, operation.serverId);
-        }
+      const previous = previousOperation.current;
+      previousOperation.current = operation;
+      if (operation && previous && previous.serverId === operation.serverId
+        && previous.snapshot.operationId === operation.snapshot.operationId
+        && !isActionOperationTerminal(previous.snapshot.state)
+        && isActionOperationTerminal(operation.snapshot.state)) {
+        acknowledgeActionOperationPresented(operation.snapshot, operation.serverId);
+      }
     }, [operation]);
 
     if (!operation) {
-        return (
-            <View style={styles.body}>
-                <Text style={styles.message}>{t('inbox.actionOperations.unavailableDescription')}</Text>
-                <RoundButton title={t('common.done')} onPress={props.onClose} testID="action-operation-done" />
-            </View>
-        );
+      return (
+        <View style={styles.body}>
+          <Text style={styles.message}>
+            {t('inbox.actionOperations.unavailableDescription')}
+          </Text>
+          <RoundButton
+            title={t('common.done')}
+            onPress={props.onClose}
+            testID="action-operation-done"
+          />
+        </View>
+      );
     }
 
     const { snapshot, observation } = operation;
     const sourceContext = projectActionOperationSourceContext({
-        serverId: operation.serverId,
-        snapshot,
-        session,
-        machine,
-        managedMachineName,
-        serverProfile: operation.serverId ? getServerProfileById(operation.serverId) : null,
-        audienceScope: operation.serverId ? audienceContext.scopes.get(operation.serverId) : null,
-        homeObservation: operation.serverId ? homeObservations[operation.serverId] ?? null : null,
+      isRecordingVisible,
+      serverId: operation.serverId,
+      snapshot,
+      session,
+      machine,
+      managedMachineName,
+      serverProfile: operation.serverId
+        ? getServerProfileById(operation.serverId)
+        : null,
+      audienceScope: operation.serverId
+        ? audienceContext.scopes.get(operation.serverId)
+        : null,
+      homeObservation: operation.serverId
+        ? (homeObservations[operation.serverId] ?? null)
+        : null,
     });
     const status = resolveActionOperationStatus(snapshot, observation);
     const statusLabel = describeActionOperationStatusLabel(status.label);
-    const destinationSessionId = readActionOperationDestinationSessionId(snapshot);
+    const destinationSessionId =
+      readActionOperationDestinationSessionId(snapshot);
     const terminal = isActionOperationTerminal(snapshot.state);
+    const sudoPrompt = readActionOperationSudoPrompt(snapshot);
+    const isolationUnknown = isAgentIsolationOutcomeUnknown(operation);
+    // The receipt only states what happened, as one quiet line; the CHECK's row beneath is the one status
+    // (checking, can't check yet, still applying, nothing left, or what to apply again).
+    const isolationReceipt = isolationUnknown
+      ? { quiet: true, text: t('inbox.actionOperations.isolationRecovery.receiptChecked') }
+      : null;
     const pluginIdentity = readActionOperationPluginIdentity(snapshot.actionId);
     const detail = projectActionOperationDetail(snapshot, observation);
     const recoveryDescription = translateRecovery(detail);
-    const showStatusDetail = status.label.kind === 'producer'
-        || status.label.value === 'reconnecting'
-        || status.label.value === 'unavailable';
-    const openSessionId = detail.nextAction?.kind === 'open_session'
+    const showStatusDetail =
+      status.label.kind === 'producer' ||
+      status.label.value === 'reconnecting' ||
+      status.label.value === 'unavailable';
+    const openSessionId =
+      detail.nextAction?.kind === 'open_session'
         ? detail.nextAction.sessionId
         : destinationSessionId;
 
     const requestHandoffResume = () => {
-        if (detail.nextAction?.kind !== 'resume_handoff' || resumePending) return;
-        setResumePending(true);
-        setResumeFeedback(null);
-        const controller = new AbortController();
-        resumeControllerRef.current?.abort();
-        resumeControllerRef.current = controller;
-        const isCurrentRequest = () => !controller.signal.aborted && resumeControllerRef.current === controller;
-        void resumeActionOperationHandoff({
-            serverId: operation.serverId,
-            handoffId: detail.nextAction.handoffId,
-            sessionId: detail.nextAction.sessionId,
-            targetMachineId: detail.nextAction.targetMachineId,
-            signal: controller.signal,
-        }).then((result) => {
-            if (!isCurrentRequest()) return;
-            setResumeFeedback(result.kind === 'requested'
-                ? t('inbox.actionOperations.recovery.resumeRequested')
-                : result.kind === 'not_available'
-                    ? t('inbox.actionOperations.recovery.resumeNoLongerAvailable')
-                    : result.message);
-        }).catch(() => {
-            if (isCurrentRequest()) {
-                setResumeFeedback(t('inbox.actionOperations.recovery.resumeFailed'));
-            }
-        }).finally(() => {
-            if (isCurrentRequest()) setResumePending(false);
+      if (detail.nextAction?.kind !== 'resume_handoff' || resumePending) return;
+      setResumePending(true);
+      setResumeFeedback(null);
+      const controller = new AbortController();
+      resumeControllerRef.current?.abort();
+      resumeControllerRef.current = controller;
+      const isCurrentRequest = () =>
+        !controller.signal.aborted &&
+        resumeControllerRef.current === controller;
+      void resumeActionOperationHandoff({
+        serverId: operation.serverId,
+        handoffId: detail.nextAction.handoffId,
+        sessionId: detail.nextAction.sessionId,
+        targetMachineId: detail.nextAction.targetMachineId,
+        signal: controller.signal,
+      })
+        .then((result) => {
+          if (!isCurrentRequest()) return;
+          setResumeFeedback(
+            result.kind === 'requested'
+              ? t('inbox.actionOperations.recovery.resumeRequested')
+              : result.kind === 'not_available'
+                ? t('inbox.actionOperations.recovery.resumeNoLongerAvailable')
+                : result.message,
+          );
+        })
+        .catch(() => {
+          if (isCurrentRequest()) {
+            setResumeFeedback(
+              t('inbox.actionOperations.recovery.resumeFailed'),
+            );
+          }
+        })
+        .finally(() => {
+          if (isCurrentRequest()) setResumePending(false);
         });
     };
 
     return (
-        <View style={styles.body}>
-            <View accessibilityLiveRegion="polite" style={styles.hero}>
-                {!terminal && observation === 'available' && status.label.kind === 'host' && status.label.value !== 'outcome_uncertain' ? (
-                    <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-                ) : (
-                    <Icon
-                        name={snapshot.state === 'succeeded' ? 'check-circle' : snapshot.state === 'failed' ? 'warning-circle' : 'clock'}
-                        size={18}
-                        color={status.tone === 'danger' ? theme.colors.status.error : theme.colors.text.secondary}
-                    />
-                )}
-                <View style={styles.heroCopy}>
-                    <Text style={[styles.status, status.tone === 'danger' ? styles.danger : undefined]}>
-                        {describeActionOperationStatusLabel(status.label.kind === 'host' && status.label.value === 'outcome_uncertain'
-                            ? status.label : { kind: 'host', value: snapshot.state })}
-                    </Text>
-                    {showStatusDetail ? <Text style={styles.progress}>{statusLabel}</Text> : null}
-                    {snapshot.progress?.kind === 'determinate' ? (
-                        <Text style={styles.numeric}>
-                            {t('inbox.actionOperations.progress', {
-                                current: snapshot.progress.current,
-                                total: snapshot.progress.total,
-                            })}
-                        </Text>
-                    ) : null}
-                </View>
-            </View>
-
-            <ItemGroup title={t('inbox.actionOperations.details')}>
-                {pluginIdentity ? (
-                    <Item
-                        mode="info"
-                        title={t('inbox.actionOperations.pluginAction')}
-                        subtitle={pluginIdentity}
-                    />
-                ) : null}
-                <Item
-                    mode="info"
-                    title={t('inbox.actionOperations.machine')}
-                    subtitle={joinHappierFacts(
-                        sourceContext.machineTitle ?? projectCommandRef?.machineId ?? snapshot.scope.machineId,
-                        sessionId ? null : sourceContext.contextLine,
-                    )}
-                />
-                {sessionId ? (
-                    <Item
-                        mode="info"
-                        title={t('inbox.actionOperations.session')}
-                        subtitle={joinHappierFacts(
-                            sourceContext.sessionTitle ?? sessionId,
-                            sourceContext.contextLine,
-                        )}
-                    />
-                ) : null}
-                <Item
-                    mode="info"
-                    title={terminal ? t('inbox.actionOperations.settled') : t('inbox.actionOperations.elapsed')}
-                    subtitle={formatActionOperationAge(snapshot)}
-                />
-                {detail.fields.map((field) => (
-                    <Item
-                        key={field.id}
-                        testID={`action-operation-field.${field.id}`}
-                        mode="info"
-                        title={translateDetailField(field)}
-                        subtitle={translateDetailFieldValue(field, detail.kind)}
-                    />
-                ))}
-            </ItemGroup>
-
-            {detail.projectCommand || detail.machineEnvironment ? (
-                <ItemGroup title={t('projects.scripts.output.title')}>
-                    <Item
-                        testID="action-operation-project-command.target"
-                        mode="info"
-                        title={t('projects.scripts.output.ranOn')}
-                        subtitle={detail.projectCommand ? joinHappierFacts(projectCommandMachineName ?? detail.projectCommand.machineId, detail.projectCommand.cwd)
-                            : projectCommandMachineName ?? detail.machineEnvironment!.machineId}
-                    />
-                    <View style={styles.output}>
-                        <ProjectCommandOutputPane operation={operation} ownerStatesExit title={detail.projectCommand ? describeProjectCommandPurpose(detail.projectCommand.purpose)
-                            : t('managedMachines.creation.setup')} height={280} />
-                    </View>
-                </ItemGroup>
-            ) : null}
-
-            {detail.warning ? (
-                <View
-                    testID="action-operation-warning"
-                    accessibilityLiveRegion="polite"
-                    role="status"
-                    style={styles.warning}
-                >
-                    <Icon name="warning" size={18} color={theme.colors.state.warning.foreground} />
-                    <View style={styles.noticeCopy}>
-                        <Text style={styles.warningTitle}>{t('inbox.actionOperations.warning.cleanupTitle')}</Text>
-                        <Text style={styles.warningBody}>{t('inbox.actionOperations.warning.cleanupDescription')}</Text>
-                        <Text style={styles.warningDetail}>{detail.warning.message}</Text>
-                    </View>
-                </View>
-            ) : null}
-
-            {operation.followUpAttention ? (
-                <View
-                    testID="action-operation-follow-up-attention"
-                    accessibilityLiveRegion="polite"
-                    role="status"
-                    style={styles.warning}
-                >
-                    <Icon name="warning" size={18} color={theme.colors.state.warning.foreground} />
-                    <View style={styles.noticeCopy}>
-                        <Text style={styles.warningTitle}>{operation.followUpAttention}</Text>
-                    </View>
-                </View>
-            ) : null}
-
-            {recoveryDescription ? (
-                <View
-                    testID="action-operation-recovery"
-                    accessibilityLiveRegion="polite"
-                    role="status"
-                    style={styles.recovery}
-                >
-                    <Icon name="info" size={18} color={theme.colors.text.secondary} />
-                    <View style={styles.noticeCopy}>
-                        <Text style={styles.recoveryTitle}>{t('inbox.actionOperations.recovery.title')}</Text>
-                        <Text style={styles.recoveryBody}>{recoveryDescription}</Text>
-                    </View>
-                </View>
-            ) : null}
-
-            {resumeFeedback ? (
-                <Text
-                    testID="action-operation-resume-feedback"
-                    accessibilityLiveRegion="polite"
-                    role="status"
-                    style={styles.cancelFeedback}
-                >
-                    {resumeFeedback}
-                </Text>
-            ) : null}
-
-            {detail.resultSummary.length > 0 ? (
-                <ItemGroup title={t('inbox.actionOperations.resultSummary')}>
-                    {detail.resultSummary.map((row) => (
-                        <Item
-                            key={row.label}
-                            testID={`action-operation-result.${row.label}`}
-                            mode="info"
-                            title={row.label}
-                            subtitle={row.value}
-                            subtitleLines={0}
-                        />
-                    ))}
-                </ItemGroup>
-            ) : null}
-
-            {detail.failure ? (
-                <ItemGroup title={t('common.error')}>
-                    <Item
-                        testID="action-operation-failure"
-                        mode="info"
-                        title={detail.failure.reason}
-                        titleLines={0}
-                    />
-                    {detail.failure.technicalLines.length > 0 ? (
-                        <TechnicalDetailsDisclosure
-                            testID="action-operation-technical-details"
-                            title={t('approvals.technicalDetails')}
-                            lines={detail.failure.technicalLines}
-                        />
-                    ) : null}
-                </ItemGroup>
-            ) : null}
-
-            <ActionOperationDetailControls
-                operation={operation}
-                terminal={terminal}
-                canCancel={Boolean(operation.serverId) && detail.canCancel}
-                onClose={props.onClose}
-                leading={(
-                    <>
-                        {operation.serverId && detail.nextAction?.kind === 'resume_handoff' ? (
-                            <RoundButton
-                                title={t('inbox.actionOperations.recovery.resumeAction')}
-                                testID="action-operation-resume-handoff"
-                                loading={resumePending}
-                                disabled={resumePending || resumeFeedback === t('inbox.actionOperations.recovery.resumeRequested')}
-                                onPress={requestHandoffResume}
-                            />
-                        ) : null}
-                        {openSessionId && readActionOperationDestinationServerId(snapshot, operation.serverId) ? (
-                            <RoundButton
-                                title={t('runs.openSession')}
-                                testID="action-operation-open-session"
-                                onPress={() => {
-                                    router.push(createActivitySurfaceSessionRoute(
-                                        openSessionId,
-                                        readActionOperationDestinationServerId(snapshot, operation.serverId),
-                                    ));
-                                    props.onClose();
-                                }}
-                            />
-                        ) : null}
-                    </>
-                )}
+      <View style={styles.body}>
+        <View
+          accessibilityLiveRegion="polite"
+          style={[
+            styles.hero,
+            isolationReceipt?.quiet ? styles.heroQuiet : undefined,
+          ]}
+        >
+          {!terminal &&
+          observation === 'available' &&
+          status.label.kind === 'host' &&
+          status.label.value !== 'outcome_uncertain' &&
+          status.label.value !== 'needs_review' ? (
+            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+          ) : (
+            <Icon
+              name={
+                snapshot.state === 'succeeded'
+                  ? 'check-circle'
+                  : snapshot.state === 'failed'
+                    ? 'warning-circle'
+                    : 'clock'
+              }
+              size={18}
+              color={
+                status.tone === 'danger'
+                  ? theme.colors.status.error
+                  : theme.colors.text.secondary
+              }
             />
+          )}
+          <View style={styles.heroCopy}>
+            <Text
+              testID={
+                isolationReceipt
+                  ? 'action-operation-isolation-receipt'
+                  : undefined
+              }
+              style={[
+                styles.status,
+                status.tone === 'danger' ? styles.danger : undefined,
+                isolationReceipt?.quiet ? styles.statusQuiet : undefined,
+              ]}
+            >
+              {isolationReceipt
+                ? isolationReceipt.text
+                : describeActionOperationStatusLabel(
+                    status.label.kind === 'host' &&
+                      (status.label.value === 'outcome_uncertain' ||
+                        status.label.value === 'needs_review')
+                      ? status.label
+                      : { kind: 'host', value: snapshot.state },
+                  )}
+            </Text>
+            {showStatusDetail ? (
+              <Text style={styles.progress}>{statusLabel}</Text>
+            ) : null}
+            {snapshot.progress?.kind === 'determinate' ? (
+              <Text style={styles.numeric}>
+                {t('inbox.actionOperations.progress', {
+                  current: snapshot.progress.current,
+                  total: snapshot.progress.total,
+                })}
+              </Text>
+            ) : null}
+          </View>
         </View>
+
+        {isolationUnknown ? (
+          <AgentIsolationRecovery
+            operation={operation}
+            check={isolationCheck}
+          />
+        ) : null}
+
+        {/* Keyed by the Machine's question: a new question never inherits a draft, error or receipt. */}
+        {sudoPrompt ? (
+          <ActionOperationSudoQuestion key={sudoPrompt.id} operation={operation} />
+        ) : null}
+
+        <ItemGroup title={t('inbox.actionOperations.details')}>
+          {pluginIdentity ? (
+            <Item
+              mode="info"
+              title={t('inbox.actionOperations.pluginAction')}
+              subtitle={pluginIdentity}
+            />
+          ) : null}
+          <Item
+            mode="info"
+            title={t('inbox.actionOperations.machine')}
+            subtitle={joinHappierFacts(
+              sourceContext.machineTitle ??
+                projectCommandRef?.machineId ??
+                snapshot.scope.machineId,
+              sessionId ? null : sourceContext.contextLine,
+            )}
+          />
+          {sessionId ? (
+            <Item
+              mode="info"
+              title={t('inbox.actionOperations.session')}
+              subtitle={joinHappierFacts(
+                sourceContext.sessionTitle ?? sessionId,
+                sourceContext.contextLine,
+              )}
+            />
+          ) : null}
+          <Item
+            mode="info"
+            title={
+              terminal
+                ? t('inbox.actionOperations.settled')
+                : t('inbox.actionOperations.elapsed')
+            }
+            subtitle={formatActionOperationAge(snapshot)}
+          />
+          {detail.fields.map((field) => (
+            <Item
+              key={field.id}
+              testID={`action-operation-field.${field.id}`}
+              mode="info"
+              title={translateDetailField(field)}
+              subtitle={translateDetailFieldValue(field, detail.kind)}
+            />
+          ))}
+        </ItemGroup>
+
+        {detail.agentIsolationReview ? (
+          <AgentIsolationReview
+            operation={operation}
+            detail={detail.agentIsolationReview}
+          />
+        ) : null}
+
+        {detail.machineSetup ? <MachineSetupStepsChecklist attachment={detail.machineSetup} /> : null}
+
+        {/* Setup without attached output would only restate the status and Machine shown above. */}
+        {detail.projectCommand || detail.machineSetup?.terminalId ? (
+          <ItemGroup title={t('projects.scripts.output.title')}>
+            <Item
+              testID="action-operation-project-command.target"
+              mode="info"
+              title={t('projects.scripts.output.ranOn')}
+              subtitle={
+                detail.projectCommand
+                  ? joinHappierFacts(
+                      projectCommandMachineName ??
+                        detail.projectCommand.machineId,
+                      detail.projectCommand.cwd,
+                    )
+                  : (projectCommandMachineName ??
+                    detail.machineSetup!.machineId)
+              }
+            />
+            <View style={styles.output}>
+              <ProjectCommandOutputPane
+                operation={operation}
+                ownerStatesExit
+                title={
+                  detail.projectCommand
+                    ? describeProjectCommandPurpose(
+                        detail.projectCommand.purpose,
+                      )
+                    : t('managedMachines.creation.setup')
+                }
+                height={280}
+              />
+            </View>
+          </ItemGroup>
+        ) : null}
+
+        {detail.warning ? (
+          <View
+            testID="action-operation-warning"
+            accessibilityLiveRegion="polite"
+            role="status"
+            style={styles.warning}
+          >
+            <Icon
+              name="warning"
+              size={18}
+              color={theme.colors.state.warning.foreground}
+            />
+            <View style={styles.noticeCopy}>
+              <Text style={styles.warningTitle}>
+                {t('inbox.actionOperations.warning.cleanupTitle')}
+              </Text>
+              <Text style={styles.warningBody}>
+                {t('inbox.actionOperations.warning.cleanupDescription')}
+              </Text>
+              <Text style={styles.warningDetail}>{detail.warning.message}</Text>
+            </View>
+          </View>
+        ) : null}
+
+        {operation.followUpAttention ? (
+          <View
+            testID="action-operation-follow-up-attention"
+            accessibilityLiveRegion="polite"
+            role="status"
+            style={styles.warning}
+          >
+            <Icon
+              name="warning"
+              size={18}
+              color={theme.colors.state.warning.foreground}
+            />
+            <View style={styles.noticeCopy}>
+              <Text style={styles.warningTitle}>
+                {operation.followUpAttention}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {recoveryDescription ? (
+          <View
+            testID="action-operation-recovery"
+            accessibilityLiveRegion="polite"
+            role="status"
+            style={styles.recovery}
+          >
+            <Icon name="info" size={18} color={theme.colors.text.secondary} />
+            <View style={styles.noticeCopy}>
+              <Text style={styles.recoveryTitle}>
+                {t('inbox.actionOperations.recovery.title')}
+              </Text>
+              <Text style={styles.recoveryBody}>{recoveryDescription}</Text>
+            </View>
+          </View>
+        ) : null}
+
+        {resumeFeedback ? (
+          <Text
+            testID="action-operation-resume-feedback"
+            accessibilityLiveRegion="polite"
+            role="status"
+            style={styles.cancelFeedback}
+          >
+            {resumeFeedback}
+          </Text>
+        ) : null}
+
+        {detail.resultSummary.length > 0 ? (
+          <ItemGroup title={t('inbox.actionOperations.resultSummary')}>
+            {detail.resultSummary.map((row) => (
+              <Item
+                key={row.label}
+                testID={`action-operation-result.${row.label}`}
+                mode="info"
+                title={row.label}
+                subtitle={row.value}
+                subtitleLines={0}
+              />
+            ))}
+          </ItemGroup>
+        ) : null}
+
+        {detail.failure ? (
+          <ItemGroup title={t('common.error')}>
+            <Item
+              testID="action-operation-failure"
+              mode="info"
+              title={detail.failure.reason}
+              titleLines={0}
+            />
+            {detail.failure.technicalLines.length > 0 ? (
+              <TechnicalDetailsDisclosure
+                testID="action-operation-technical-details"
+                title={t('approvals.technicalDetails')}
+                lines={detail.failure.technicalLines}
+              />
+            ) : null}
+          </ItemGroup>
+        ) : null}
+
+        <ActionOperationDetailControls
+          operation={operation}
+          terminal={terminal}
+          canCancel={Boolean(operation.serverId) && detail.canCancel}
+          onClose={props.onClose}
+          leading={
+            <>
+              {operation.serverId &&
+              detail.nextAction?.kind === 'resume_handoff' ? (
+                <RoundButton
+                  title={t('inbox.actionOperations.recovery.resumeAction')}
+                  testID="action-operation-resume-handoff"
+                  loading={resumePending}
+                  disabled={
+                    resumePending ||
+                    resumeFeedback ===
+                      t('inbox.actionOperations.recovery.resumeRequested')
+                  }
+                  onPress={requestHandoffResume}
+                />
+              ) : null}
+              {openSessionId &&
+              readActionOperationDestinationServerId(
+                snapshot,
+                operation.serverId,
+              ) ? (
+                <RoundButton
+                  title={t('runs.openSession')}
+                  testID="action-operation-open-session"
+                  onPress={() => {
+                    router.push(
+                      createActivitySurfaceSessionRoute(
+                        openSessionId,
+                        readActionOperationDestinationServerId(
+                          snapshot,
+                          operation.serverId,
+                        ),
+                      ),
+                    );
+                    props.onClose();
+                  }}
+                />
+              ) : null}
+            </>
+          }
+        />
+      </View>
     );
-});
+  },
+);
 
 const styles = StyleSheet.create((theme) => ({
-    body: {
-        paddingHorizontal: theme.space.s20,
-        paddingTop: theme.space.s12,
-        paddingBottom: theme.space.s20,
-        gap: theme.space.s12,
-    },
-    hero: {
-        borderRadius: 14,
-        paddingHorizontal: theme.space.s16,
-        paddingVertical: theme.space.s12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s12,
-        backgroundColor: theme.colors.surface.elevated,
-    },
-    heroCopy: {
-        flex: 1,
-        minWidth: 0,
-        gap: 3,
-    },
-    status: {
-        color: theme.colors.text.primary,
-        fontWeight: '700',
-    },
-    danger: {
-        color: theme.colors.status.error,
-    },
-    progress: {
-        color: theme.colors.text.secondary,
-    },
-    numeric: {
-        color: theme.colors.text.secondary,
-        fontVariant: ['tabular-nums'],
-    },
-    message: {
-        color: theme.colors.text.secondary,
-    },
-    warning: {
-        minHeight: 44,
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s10,
-        padding: theme.space.s16,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: theme.colors.state.warning.border,
-        backgroundColor: theme.colors.state.warning.background,
-    },
-    recovery: {
-        minHeight: 44,
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s10,
-        padding: theme.space.s16,
-        borderRadius: 14,
-        backgroundColor: theme.colors.surface.elevated,
-    },
-    noticeCopy: {
-        flex: 1,
-        gap: 3,
-    },
-    warningTitle: {
-        color: theme.colors.state.warning.foreground,
-        fontWeight: '700',
-    },
-    warningBody: {
-        color: theme.colors.text.primary,
-    },
-    warningDetail: {
-        color: theme.colors.text.secondary,
-    },
-    recoveryTitle: {
-        color: theme.colors.text.primary,
-        fontWeight: '700',
-    },
-    recoveryBody: {
-        color: theme.colors.text.secondary,
-    },
-    output: {
-        paddingHorizontal: theme.space.s12,
-        paddingBottom: theme.space.s12,
-    },
-    cancelFeedback: {
-        color: theme.colors.text.primary,
-    },
+  body: {
+    paddingHorizontal: theme.space.s20,
+    paddingTop: theme.space.s12,
+    paddingBottom: theme.space.s20,
+    gap: theme.space.s12,
+  },
+  hero: {
+    borderRadius: 14,
+    paddingHorizontal: theme.space.s16,
+    paddingVertical: theme.space.s12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s12,
+    backgroundColor: theme.colors.surface.elevated,
+  },
+  heroQuiet: {
+    backgroundColor: 'transparent',
+    paddingVertical: 0,
+  },
+  heroCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  status: {
+    color: theme.colors.text.primary,
+    fontWeight: '700',
+  },
+  statusQuiet: {
+    color: theme.colors.text.secondary,
+    fontWeight: '400',
+  },
+  danger: {
+    color: theme.colors.status.error,
+  },
+  progress: {
+    color: theme.colors.text.secondary,
+  },
+  numeric: {
+    color: theme.colors.text.secondary,
+    fontVariant: ['tabular-nums'],
+  },
+  message: {
+    color: theme.colors.text.secondary,
+  },
+  warning: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: theme.space.s10,
+    padding: theme.space.s16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.state.warning.border,
+    backgroundColor: theme.colors.state.warning.background,
+  },
+  recovery: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: theme.space.s10,
+    padding: theme.space.s16,
+    borderRadius: 14,
+    backgroundColor: theme.colors.surface.elevated,
+  },
+  noticeCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  warningTitle: {
+    color: theme.colors.state.warning.foreground,
+    fontWeight: '700',
+  },
+  warningBody: {
+    color: theme.colors.text.primary,
+  },
+  warningDetail: {
+    color: theme.colors.text.secondary,
+  },
+  recoveryTitle: {
+    color: theme.colors.text.primary,
+    fontWeight: '700',
+  },
+  recoveryBody: {
+    color: theme.colors.text.secondary,
+  },
+  output: {
+    paddingHorizontal: theme.space.s12,
+    paddingBottom: theme.space.s12,
+  },
+  cancelFeedback: {
+    color: theme.colors.text.primary,
+  },
 }));

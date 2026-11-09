@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { act, createSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
-import { storage } from '@/sync/domains/state/storageStore';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -11,7 +12,6 @@ import { consumeActionOperationSnapshotPush } from '@/sync/domains/actionOperati
 import { getActionOperation, type ActionOperationRpc } from '@/sync/ops/actionOperations';
 
 const routerPush = vi.hoisted(() => vi.fn());
-const initialState = storage.getState();
 const resumeRpc = vi.hoisted(() => ({ signals: [] as (AbortSignal | undefined)[] }));
 // The RPC transport is the external boundary; modal, operation projection and resume adapter stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -39,13 +39,20 @@ vi.mock('expo-router', async () => {
     return createExpoRouterMock({ router: { push: routerPush } }).module;
 });
 
-beforeEach(() => storage.setState(initialState, true));
-afterEach(() => {
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
+const { storage } = await import('@/sync/domains/state/storageStore');
+const initialState = storage.getState();
+
+beforeEach(async () => { await homes.reset(); storage.setState(initialState, true); });
+afterEach(async () => {
     standardCleanup();
     routerPush.mockReset();
     storage.setState(initialState, true);
     actionOperationStore.reset();
     resumeRpc.signals.length = 0;
+    await homes.reset();
 });
 
 const { ActionOperationDetailModal } = await import('./ActionOperationDetailModal');
@@ -80,17 +87,56 @@ describe('ActionOperationDetailModal', () => {
         expect([...actionOperationStore.getSnapshot().operationsByKey.values()]).toEqual([{ serverId, snapshot: terminal }]);
     });
 
-    it('cancels an unanswered handoff resume when its modal closes', async () => {
+    it('shows a Setup operation\u2019s reviewed steps as the Setup checklist', async () => {
+        const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'setup-steps', revision: 1,
+            actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1, state: 'running', scope: { accountId: 'account-1', machineId: 'machine-1' },
+            title: 'Set up', createdAt: 100, startedAt: 110, cancellation: 'supported',
+            domainRef: { kind: 'machineSetup', serverId: 'home-a', machineId: 'machine-1', steps: [
+                { planIndex: 0, stepId: 'docker', label: { key: 'x', fallback: 'Install Docker' }, state: 'succeeded' },
+                { planIndex: 0, stepId: 'firewall', label: { key: 'y', fallback: 'Open the firewall' }, state: 'running' },
+            ] } });
+        actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [operation] });
+        const screen = await renderScreen(<ActionOperationDetailModal serverId="home-a" operationId="setup-steps" onClose={() => {}} />);
+        expect(screen.findByTestId('action-operation-setup-steps')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Install Docker');
+        expect(screen.getTextContent()).toContain('Open the firewall');
+        await screen.unmount();
+    });
+
+    it('acknowledges the active operation settling while its detail remains open', async () => {
+        const active = { version: 1 as const, operationId: 'settles-open', revision: 1, actionId: 'session.spawn_new',
+            state: 'running' as const, scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Create session',
+            createdAt: 100, startedAt: 110, cancellation: 'unsupported' as const };
+        actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [active] });
+        await renderScreen(<ActionOperationDetailModal serverId="home-a" operationId="settles-open" onClose={() => {}} />);
+        await act(async () => actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [{ ...active,
+            revision: 2, state: 'failed', settledAt: 200, error: { errorCode: 'internal_error', error: 'Failed' } }] }));
+        expect([...actionOperationStore.getSnapshot().seenAtByOperationKey.values()]).toMatchObject([{ revision: 2 }]);
+    });
+
+    it('does not acknowledge terminal outcomes from mounting the detail component', async () => {
         actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [{
+            version: 1, operationId: 'mount-only', revision: 1, actionId: 'session.spawn_new', state: 'failed',
+            scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Create session',
+            createdAt: 100, settledAt: 200, cancellation: 'unsupported',
+        }] });
+        await renderScreen(<ActionOperationDetailModal serverId="home-a" operationId="mount-only" onClose={() => {}} />);
+        expect(actionOperationStore.getSnapshot().seenAtByOperationKey.size).toBe(0);
+    });
+
+
+    it('cancels an unanswered handoff resume when its modal closes', async () => {
+        const serverId = await homes.addHome({ name: 'Recovery Home', serverUrl: 'https://modal-recovery.test', accountId: 'account-1' });
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [{
             version: 1, operationId: 'handoff-operation', revision: 3, actionId: 'session.handoff', state: 'running',
             scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'session-1' },
             title: 'Hand off session', createdAt: 1_000, startedAt: 1_100,
             progress: { kind: 'phase', phase: 'awaiting_user_resume', label: 'Resume' },
             domainRef: { kind: 'handoff', id: 'handoff-1', targetMachineId: 'machine-2' }, cancellation: 'unsupported',
         }] });
-        const screen = await renderScreen(<ActionOperationDetailModal serverId="home-a" operationId="handoff-operation" onClose={vi.fn()} />);
+        const screen = await renderScreen(<ActionOperationDetailModal serverId={serverId} operationId="handoff-operation" onClose={vi.fn()} />);
         await screen.pressByTestIdAsync('action-operation-resume-handoff');
-        expect(resumeRpc.signals).toHaveLength(1);
+        await vi.waitFor(() => expect(resumeRpc.signals).toHaveLength(1));
         await screen.unmount();
         expect(resumeRpc.signals[0]?.aborted).toBe(true);
     });

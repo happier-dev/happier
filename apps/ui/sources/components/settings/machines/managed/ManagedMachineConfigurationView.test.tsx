@@ -205,6 +205,101 @@ const provisioner: MachineProvisionersListResultV1['provisioners'][number] = {
 };
 
 describe('mounted managed configurator', () => {
+  it.each([false, true])('requires saved recipe inputs before creation or composer use (composer: %s)', async composer => {
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://recipe-inputs-${composer}.example.test`,
+      serverIdentityId: 'srv_recipe_inputs', accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: defaultController.machineId,
+      installationId: defaultController.installationId })] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+    const { MachineRecipeV1Schema } = await import('@happier-dev/protocol/machines/setup/machineRecipeV1');
+    const ref = { pluginId: 'example.setup', recipeId: 'journal', revision: '1' };
+    const recipe = { id: 'example.setup/journal', pluginId: ref.pluginId, pluginVersion: '1', definition: MachineRecipeV1Schema.parse({
+      id: ref.recipeId, revision: ref.revision, title: 'Journal', inputSchema: { type: 'object',
+        properties: { maximumUse: { type: 'string', minLength: 1 } }, required: ['maximumUse'], additionalProperties: false },
+      inputHints: { fields: [{ path: 'maximumUse', title: 'Maximum disk use', widget: 'text', required: true }] }, steps: [],
+    }) };
+    onTestFinished(publishCommittedAppShellPluginUiProjection(() => ({ ...EMPTY_PLUGIN_UI_PROJECTION,
+      machineRecipesById: { [recipe.id]: recipe } })));
+    const saved = { id: 'needs-inputs', homeId: 'srv_recipe_inputs', revision: 1, name: 'Saved machine',
+      owner: { kind: 'account', accountId: 'owner' }, controller: defaultController,
+      launch: { provider: provisioner.contribution, schemaVersion: 1, name: 'Saved machine', choices: { cpu: 2 } },
+      setup: { items: [{ kind: 'setupRecipe', selection: { ref, inputs: {} } }] } };
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
+    for (const [actionId, result] of [
+      ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
+      ['machines.provisioners.check', { available: true }],
+      ['machines.provisioners.options', createManagedCpuOptionsFixture([{ id: 'small', title: 'Small', cpu: 2 }])],
+    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+    } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const onUse = vi.fn();
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} presetId={saved.id}
+      initialController={defaultController} {...(composer ? { onUse } : {})} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.recipe-inputs')).not.toBeNull());
+      expect(screen.findByTestId(composer ? 'managed-config.use' : 'managed-config.create')?.props.disabled).toBe(true);
+      expect(onUse).not.toHaveBeenCalled();
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
+  it('keeps a settled options failure through Retry and publishes only a changed answer', async () => {
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://options-retry.example.test',
+      serverIdentityId: 'srv_options_retry', accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ profileScope: { serverId, accountId: 'owner' } });
+    storage.getState().applyMachines([createMachineFixture({
+      id: defaultController.machineId, installationId: defaultController.installationId,
+    })], true, { sourceServerId: serverId, sourceAccountId: 'owner' });
+    storage.getState().markMachineListSettled(serverId);
+    for (const [actionId, result] of [
+      ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
+      ['machines.provisioners.check', { available: true }],
+    ] as const) harness.answer(serverId, `/v1/actions/${actionId}`, { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
+    } });
+    let reply = createDeferred<void>();
+    let succeeds = false;
+    harness.answer(serverId, '/v1/actions/machines.provisioners.options', { select: async value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      await reply.promise;
+      return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId,
+        execution: succeeds ? { ok: true, result: createManagedCpuOptionsFixture([{ id: 'small', title: 'Small', cpu: 2 }]) }
+          : { ok: false, errorCode: 'action_failed', error: 'action_failed' } } };
+    } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const commits = vi.fn();
+    const screen = await renderScreen(<React.Profiler id="options-retry" onRender={commits}>
+      <ManagedMachineConfigurationView serverId={serverId}
+        provisioner={buildQualifiedPluginContributionKey(provisioner.contribution)} initialController={defaultController} />
+    </React.Profiler>);
+    await act(async () => reply.resolve());
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.error')).not.toBeNull());
+    await flushHookEffects();
+    reply = createDeferred<void>();
+    commits.mockClear();
+    await screen.pressByTestIdAsync('managed-config.error-action');
+    expect.soft(screen.findByTestId('managed-config.error')).not.toBeNull();
+    expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+    expect.soft(commits).toHaveBeenCalledTimes(1);
+    commits.mockClear();
+    await act(async () => reply.resolve());
+    await flushHookEffects();
+    expect(screen.findByTestId('managed-config.error')).not.toBeNull();
+    expect.soft(commits).toHaveBeenCalledTimes(0);
+    reply = createDeferred<void>();
+    succeeds = true;
+    await screen.pressByTestIdAsync('managed-config.error-action');
+    expect(screen.findByTestId('managed-config.error')).not.toBeNull();
+    await act(async () => reply.resolve());
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.error')).toBeNull());
+    await screen.unmount();
+  });
   it('does not render a named controller page for another Machine publication and updates its controller name', () => withPopoverWebGlobals(async () => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://controller-selection.example.test',
       serverIdentityId: 'srv_controller_selection', accountId: 'owner', currentAccount: true });
@@ -1326,6 +1421,36 @@ describe('mounted managed configurator', () => {
     await review.unmount();
     await screen.unmount();
   });
+  it('reviews what a preset sets up on the composer Use path before handing over the draft', async () => {
+    const launch = { provider: provisioner.contribution, schemaVersion: 1, name: 'web-2', choices: { cpu: 2 } };
+    const setup = { items: [MachinePresetItemV1Schema.parse({ kind: 'softwareRecipe', selection: {
+      ref: { pluginId: 'tools.example', recipeId: 'editor', revision: 'pinned' }, inputs: {} } })] };
+    const mounted = await mountAddRoute('use-review', 'server', 'linux', undefined, true, false, [
+      { id: 'hardened', homeId: 'srv_add_server', revision: 3, name: 'Hardened server', owner: { kind: 'account', accountId: 'owner' },
+        controller: defaultController, launch, setup },
+    ]);
+    await mounted.unmount();
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const onUse = vi.fn();
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={route.params.serverId as string}
+      provisioner={route.params.provisioner as string} initialController={defaultController} presetId="hardened" onUse={onUse} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(false));
+    const { Modal } = await import('@/modal');
+    const show = vi.mocked(Modal.show);
+    show.mockClear();
+    await act(async () => screen.pressByTestIdAsync('managed-config.use'));
+    expect(onUse).not.toHaveBeenCalled();
+    expect(show).toHaveBeenCalledTimes(1);
+    const shown = show.mock.calls[0]![0] as unknown as Readonly<{ component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> }>;
+    const setChrome = vi.fn();
+    const review = await renderScreen(<shown.component {...shown.props} setChrome={setChrome} onClose={() => {}} />);
+    const chrome = setChrome.mock.calls.at(-1)![0] as { footer: React.ReactElement<{ primary: { onPress(): void } }> };
+    await act(async () => chrome.footer.props.primary.onPress());
+    expect(onUse).toHaveBeenCalledTimes(1);
+    expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    await review.unmount();
+    await screen.unmount();
+  });
   it('makes a free-form host\u2019s own size fields its one Size choice instead of echoing them as a one-row table', async () => {
     const viewport = vi
       .spyOn(Dimensions, 'get')
@@ -1642,6 +1767,79 @@ describe('mounted managed configurator', () => {
     await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:store')).not.toBeNull());
     // Open, the driver offers its other choice too.
     expect(screen.getTextContent()).toContain('VZ');
+    await screen.unmount();
+  });
+  // Like the Docker editor: one blank required field leads the form, the provider's defaults are details.
+  const arrangeImageForm = async (name: string) => {
+    const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
+    restoreViewport = () => viewport.mockRestore();
+    const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://${name}.example`, serverIdentityId: `srv_${name}`,
+      accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
+    const optionsSchema = { type: 'object', properties: { image: { type: 'string', minLength: 1 }, runtime: { type: 'string', enum: ['docker', 'podman'] },
+      folder: { type: 'string' } }, required: ['image'], additionalProperties: false };
+    const native = { ...provisioner, descriptor: { ...provisioner.descriptor, billing: { location: 'local', stoppedBilling: 'not-billed' },
+      launchSchema: optionsSchema } };
+    const action = PluginProjectedActionV2Schema.parse({ id: 'options', pluginId: provisioner.contribution.pluginId,
+      occurrenceId: provisioner.occurrenceId, title: 'Native options', scopes: ['machine'], surfaces: ['cli', 'plugin'],
+      execution: { target: 'daemon' }, available: true, dangerLevel: 'safe',
+      inputHints: { fields: [
+        { path: 'image', title: 'Container image', widget: 'text', required: true },
+        { path: 'runtime', title: 'Container runtime', widget: 'select', defaultValue: 'docker',
+          options: [{ value: 'docker', label: 'Docker' }, { value: 'podman', label: 'Podman' }] },
+        { path: 'folder', title: 'Project folder', widget: 'text' },
+      ] } });
+    const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
+      ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {}, diagnostics: [],
+      installedPackagesById: { [action.pluginId]: { ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE.installedPackagesById['acme.review'], id: action.pluginId } },
+      actionsById: { [buildQualifiedPluginContributionKey({ pluginId: action.pluginId, localId: action.id })]: action } } });
+    nativeBoundary.rpc.mockImplementation(async (request: { method: string }) =>
+      request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE ? projection
+        : request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ ? { ok: true, inputSchema: optionsSchema }
+          : { ok: false, code: 'unsupported' });
+    const answer = (actionId: string, result: (input: unknown) => unknown) => harness.answer(serverId, `/v1/actions/${actionId}`, {
+      select: (value) => { const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result: result(request.input) } } }; } });
+    answer('machines.provisioners.list', () => ({ controller: defaultController, provisioners: [native] }));
+    answer('machines.provisioners.check', () => ({ available: true }));
+    answer('machines.provisioners.options', () => createMachineProvisionerOptionsFixture({ base: { launch: {} } }));
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { t } = await import('@/text');
+    const props = { serverId, provisioner: buildQualifiedPluginContributionKey(provisioner.contribution), initialController: defaultController };
+    return { serverId, ManagedMachineConfigurationView, t, props };
+  };
+  it('leads with the blank required field and neither warns about nor shows the rest of an untouched form', async () => {
+    const { ManagedMachineConfigurationView, t, props } = await arrangeImageForm('image-first');
+    const screen = await renderScreen(<ManagedMachineConfigurationView {...props} onUse={vi.fn()} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:image')).not.toBeNull());
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.advanced')).not.toBeNull());
+    expect(screen.findByTestId('managed-config.field:runtime')).toBeNull();
+    expect(screen.tree.findAll(node => node.props.kind === 'warning' && node.props.title === t('managedMachines.options.unavailable'))).toEqual([]);
+    expect(screen.getTextContent()).toContain(t('session.actionsDraft.validation.requiredField', { field: 'Container image' }));
+    await screen.unmount();
+  });
+  it('says why a preset can\u2019t be saved, and names the empty audience as Yours', async () => {
+    const { ManagedMachineConfigurationView, t, props } = await arrangeImageForm('preset-reason');
+    const screen = await renderScreen(<ManagedMachineConfigurationView {...props} presetOnly />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:image')).not.toBeNull());
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true));
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('session.actionsDraft.validation.requiredField', { field: 'Container image' })));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.audience')).not.toBeNull());
+    expect(screen.getTextContent()).toContain(t('machinePresets.ownerPersonal'));
+    await screen.unmount();
+  });
+  it('holds the form in place until it knows whether Start from will sit above it', async () => {
+    const { serverId, ManagedMachineConfigurationView, t, props } = await arrangeImageForm('start-from-hold');
+    const list = createDeferred<{ body: unknown }>();
+    harness.answer(serverId, '/v1/machines/presets/list', { select: () => list.promise });
+    const screen = await renderScreen(<ManagedMachineConfigurationView {...props} />);
+    await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/list').length).toBeGreaterThan(0));
+    await flushHookEffects();
+    expect(screen.findByTestId('managed-config.field:image')).toBeNull();
+    expect(screen.getTextContent()).toContain(t('managedMachines.options.loading', { provider: 'Virtual machine' }));
+    await act(async () => list.resolve({ body: { kind: 'listed', presets: [] } }));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:image')).not.toBeNull());
     await screen.unmount();
   });
   it('says when the provider form can\'t be read and reads it again on Retry, never leaving an uneditable size (R93)', async () => {
@@ -5034,7 +5232,7 @@ describe('mounted managed configurator', () => {
       />,
     );
     await waitForHomeGovernance(() =>
-      expect(screen.findByTestId('managed-config.sizes:native')).not.toBeNull(),
+      expect(screen.findByTestId('managed-config.sizes:native'), screen.getTextContent()).not.toBeNull(),
     );
     await act(async () => screen.pressByTestId('managed-config.sizes:native'));
     const summary = screen.findByTestId('managed-config.summary')?.props

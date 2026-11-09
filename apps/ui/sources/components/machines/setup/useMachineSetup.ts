@@ -4,7 +4,7 @@ import {
   MachineSetupPlanResultV1Schema,
   type MachineSetupPlanResultV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { MachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
 import type { MachinePresetItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { machineSetupSourceOriginKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -38,7 +38,7 @@ const execute = createFrontDoorActionExecute();
 /** What the person asked to review: the reviewed change decides which Action Apply runs and how it re-plans. */
 export type MachineSetupReviewIntent =
   | Readonly<{ kind: 'reapply' }>
-  | Readonly<{ kind: 'preset'; preset: ManagedMachinePresetV1 }>
+  | Readonly<{ kind: 'preset'; preset: MachineSetupPresetChoice }>
   /** Stop using one attached preset (its source origin key); what it set up stays unless the review removes it. */
   | Readonly<{ kind: 'stop'; sourceKey: string; name: string }>
   | Readonly<{
@@ -196,7 +196,7 @@ export function useMachineSetup(
       setReview({ intent, prepared: null });
       try {
         const isCurrent = () => binding.isCurrent();
-        let prepared: MachineSetupPreparedApply | MachineSetupPreparedRemove;
+        let prepared: MachineSetupPreparedApply | MachineSetupPreparedRemove | null;
         if (intent.kind === 'preset') {
           prepared = await prepareMachineSetupPresetApplyInput({
             executeAction: execute,
@@ -264,6 +264,7 @@ export function useMachineSetup(
                   });
         }
         if (!binding.isCurrent()) return;
+        if (!prepared) { setReview(null); return; }
         if (prepared.ok) setReview({ intent, prepared });
         else {
           setReview(null);
@@ -392,6 +393,12 @@ export type MachineSetupRecipeRow = Readonly<{
 const NO_RECIPES: readonly MachineSetupRecipeRow[] = Object.freeze([]);
 const sameRef = (a: SetupItem['selection']['ref'], b: SetupItem['selection']['ref']) =>
     a.pluginId === b.pluginId && a.recipeId === b.recipeId && a.revision === b.revision;
+
+/** The apps the Machine's setup sources hold, in source order: read only, since their state lives on their Environment. */
+export function readMachineSetupApps(sources: readonly MachineSetupPlanResultV1['sources'][number][]) {
+    return sources.flatMap((source, sourceIndex) => (source.setup.items ?? []).flatMap((item, itemIndex) =>
+        item.kind === 'app' ? [{ key: `${sourceIndex}.${itemIndex}`, item, sourceIndex, source }] : []));
+}
 
 /**
  * One row per recipe the Machine's setup holds, in source order: its own name from the Plan's declaration read, and
