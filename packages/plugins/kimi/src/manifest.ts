@@ -3,7 +3,7 @@ import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sd
 import { definePlugin } from '@happier-dev/plugin-sdk';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
-import { KIMI_ACP_COMMAND } from './agent/acp/preflight.js';
+import { KIMI_ACP_COMMAND, KIMI_PREFLIGHT_SESSION_CONTROLS } from './agent/acp/preflight.js';
 import { KIMI_SYSTEM_TOOL_READINESS } from './agent/readiness/declaration.js';
 import { kimiExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { KIMI_CONNECTED_ACCOUNT_LAUNCH } from './agent/connectedAccount.js';
@@ -160,6 +160,7 @@ export const KIMI_PLUGIN = definePlugin({
       },
       factory: createKimiAgentRuntime,
       connectedAccountLaunch: KIMI_CONNECTED_ACCOUNT_LAUNCH,
+      preflightSessionControls: KIMI_PREFLIGHT_SESSION_CONTROLS,
       externalSessions: kimiExternalSessionsContribution,
       sessionRunnerFactory: {
         module: './agent/runtime/factory', export: 'createKimiAgentRuntime',
