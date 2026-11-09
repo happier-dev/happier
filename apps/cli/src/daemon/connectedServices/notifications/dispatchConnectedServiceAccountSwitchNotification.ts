@@ -2,7 +2,6 @@ import type {
   AccountSettings,
   ConnectedServiceId,
 } from '@happier-dev/protocol';
-import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import type { ExpoPushActivityNotificationSender } from '@/notifications/activity/sendExpoPushActivityNotification';
@@ -81,8 +80,7 @@ export async function dispatchConnectedServiceAccountSwitchNotificationAsync(par
   // The transcript event still commits (the visibility policy above owns full silence).
   if (params.source.reason === 'manual') return;
 
-  const canonicalServiceId =
-    readBuiltInLegacyConnectedAccountServiceKeyIngress(params.source.serviceId);
+  const serviceDisplayName = resolveConnectedServiceNotificationDisplayName(params.source.serviceId);
   const profilesById = await loadConnectedServiceNotificationProfilesById({
     serviceId: params.source.serviceId,
     listConnectedServiceProfiles: params.listConnectedServiceProfiles,
@@ -96,15 +94,12 @@ export async function dispatchConnectedServiceAccountSwitchNotificationAsync(par
       sessionId: params.source.sessionId,
       sessionTitle: params.source.sessionTitle ?? null,
       serviceId: params.source.serviceId,
-      serviceDisplayName:
-        canonicalServiceId
-          ? resolveConnectedServiceNotificationDisplayName(canonicalServiceId)
-          : null,
+      serviceDisplayName,
       groupId: params.source.groupId,
       fromProfileId: params.source.fromProfileId,
       toProfileId: params.source.toProfileId,
-      fromProfileLabel: resolveConnectedServiceNotificationProfileLabel(profilesById, params.source.fromProfileId),
-      toProfileLabel: resolveConnectedServiceNotificationProfileLabel(profilesById, params.source.toProfileId),
+      fromProfileLabel: resolveConnectedServiceNotificationProfileLabel(profilesById, params.source.fromProfileId, serviceDisplayName ?? 'Provider'),
+      toProfileLabel: resolveConnectedServiceNotificationProfileLabel(profilesById, params.source.toProfileId, serviceDisplayName ?? 'Provider'),
       fromUsagePercent: resolveUsagePercent({
         runtimeQuotaSnapshots: params.runtimeQuotaSnapshots,
         serviceId: params.source.serviceId,

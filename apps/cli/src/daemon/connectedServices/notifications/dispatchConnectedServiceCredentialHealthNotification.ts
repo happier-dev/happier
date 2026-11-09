@@ -7,6 +7,7 @@ import { dispatchActivityNotificationAsync } from '@/notifications/activity/disp
 import type { ExpoPushActivityNotificationSender } from '@/notifications/activity/sendExpoPushActivityNotification';
 import {
   loadConnectedServiceNotificationProfilesById,
+  resolveConnectedServiceNotificationDisplayName,
   resolveConnectedServiceNotificationProfileLabel,
   type ConnectedServiceNotificationProfileSummary,
 } from './connectedServiceNotificationLabels';
@@ -25,9 +26,10 @@ export type ConnectedServiceCredentialHealthNotificationSource = Readonly<{
 
 export async function dispatchConnectedServiceCredentialHealthNotificationAsync(params: Readonly<{
   settings: AccountSettings | null | undefined;
+  signal?: AbortSignal;
   settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
   expoPushSender?: ExpoPushActivityNotificationSender | null;
-  listConnectedServiceProfiles(input: Readonly<{ serviceId: ConnectedServiceId }>): Promise<Readonly<{
+  listConnectedServiceProfiles(input: Readonly<{ serviceId: ConnectedServiceId; signal?: AbortSignal }>): Promise<Readonly<{
     serviceId: ConnectedServiceId;
     profiles: ReadonlyArray<ConnectedServiceNotificationProfileSummary>;
   }>>;
@@ -35,11 +37,14 @@ export async function dispatchConnectedServiceCredentialHealthNotificationAsync(
   nowMs?: () => number;
   dedupeWindowMs?: number;
 }> & Pick<Parameters<typeof dispatchActivityNotificationAsync>[0], 'operationContext' | 'secretSources'>): Promise<void> {
+  const serviceDisplayName = resolveConnectedServiceNotificationDisplayName(params.source.serviceId);
   const profilesById = await loadConnectedServiceNotificationProfilesById({
+    signal: params.signal,
     serviceId: params.source.serviceId,
     listConnectedServiceProfiles: params.listConnectedServiceProfiles,
   });
   await dispatchActivityNotificationAsync({
+    signal: params.signal,
     settings: params.settings,
     operationContext: params.operationContext,
     secretSources: params.secretSources,
@@ -50,8 +55,9 @@ export async function dispatchConnectedServiceCredentialHealthNotificationAsync(
       sessionId: params.source.sessionId,
       sessionTitle: params.source.sessionTitle ?? null,
       serviceId: params.source.serviceId,
+      serviceDisplayName,
       profileId: params.source.profileId,
-      profileLabel: resolveConnectedServiceNotificationProfileLabel(profilesById, params.source.profileId),
+      profileLabel: resolveConnectedServiceNotificationProfileLabel(profilesById, params.source.profileId, serviceDisplayName ?? 'Provider'),
       status: params.source.status,
       reason: params.source.reason ?? null,
       providerStatus: params.source.providerStatus ?? null,

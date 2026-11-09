@@ -1,9 +1,11 @@
 import {
   ConnectedServiceIdSchema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
   readBuiltInLegacyConnectedServiceIdForQualifiedService,
 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceId } from '@happier-dev/protocol';
+import { resolveConnectedAccountPrimaryNameV1 } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 
@@ -24,18 +26,24 @@ export function readConnectedServiceNotificationDisplayText(value: unknown): str
 export function resolveConnectedServiceNotificationProfileLabel(
   profilesById: ReadonlyMap<string, ConnectedServiceNotificationProfileSummary>,
   profileId: string | null,
+  serviceTitle: string = 'Provider',
 ): string | null {
   if (!profileId) return null;
   const profile = profilesById.get(profileId);
-  return readConnectedServiceNotificationDisplayText(profile?.displayName)
-    ?? readConnectedServiceNotificationDisplayText(profile?.providerEmail)
-    ?? readConnectedServiceNotificationDisplayText(profileId);
+  return readConnectedServiceNotificationDisplayText(resolveConnectedAccountPrimaryNameV1({
+    serviceTitle,
+    displayName: profile?.displayName,
+    email: profile?.providerEmail,
+    providerAccountId: profile?.providerAccountId,
+    accountId: profileId,
+  }).name) ?? 'Connected account';
 }
 
 export function resolveConnectedServiceNotificationDisplayName(
-  serviceId: ConnectedAccountServiceKey,
+  serviceId: string,
 ): string | null {
-  const service = parseQualifiedPluginContributionKey(serviceId);
+  const qualifiedServiceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+  const service = qualifiedServiceId ? parseQualifiedPluginContributionKey(qualifiedServiceId) : null;
   if (!service) return null;
   const contribution = readCurrentContributionRegistry()
     .connectedAccountDescriptors
@@ -58,17 +66,21 @@ export function readLegacyConnectedServiceNotificationServiceId(value: string): 
 
 export async function loadConnectedServiceNotificationProfilesById(input: Readonly<{
   serviceId: string;
-  listConnectedServiceProfiles(input: Readonly<{ serviceId: ConnectedServiceId }>): Promise<Readonly<{
+  signal?: AbortSignal;
+  listConnectedServiceProfiles(input: Readonly<{ serviceId: ConnectedServiceId; signal?: AbortSignal }>): Promise<Readonly<{
     serviceId: ConnectedServiceId;
     profiles: ReadonlyArray<ConnectedServiceNotificationProfileSummary>;
   }>>;
 }>): Promise<ReadonlyMap<string, ConnectedServiceNotificationProfileSummary>> {
+  input.signal?.throwIfAborted();
   const serviceId = readLegacyConnectedServiceNotificationServiceId(input.serviceId);
   if (!serviceId) return new Map();
   try {
-    const result = await input.listConnectedServiceProfiles({ serviceId });
+    const result = await input.listConnectedServiceProfiles({ serviceId, ...(input.signal ? { signal: input.signal } : {}) });
+    input.signal?.throwIfAborted();
     return new Map(result.profiles.map((profile) => [profile.profileId, profile]));
   } catch {
+    input.signal?.throwIfAborted();
     return new Map();
   }
 }

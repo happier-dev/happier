@@ -179,6 +179,23 @@ describe('commitConnectedServiceAccountSwitchSessionEvent', () => {
     expect(mutationCustody.stageTranscriptEvent).not.toHaveBeenCalled();
   });
 
+  it('commits neutral labels when stored names repeat the service title or profile id', async () => {
+    const mutationCustody = createCustody();
+    await commitConnectedServiceAccountSwitchSessionEvent({
+      mutationCustody,
+      sessionId: 'sess-neutral',
+      event: { type: 'connected_service_account_switch', serviceId: 'openai-codex',
+        fromProfileId: 'old-internal', toProfileId: 'new-internal', reason: 'manual' },
+      listConnectedServiceProfiles: async () => ({ serviceId: 'openai-codex', profiles: [
+        { profileId: 'old-internal', displayName: 'ChatGPT' },
+        { profileId: 'new-internal', displayName: 'new-internal' },
+      ] }),
+    });
+    expect(mutationCustody.stageTranscriptEvent).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ fromProfileLabel: 'Connected account', toProfileLabel: 'Connected account' }),
+    }));
+  });
+
   it('propagates journal admission failure instead of reporting a false commit', async () => {
     const mutationCustody = {
       stageTranscriptEvent: vi.fn<StageTranscriptEvent>(async (_input: StageTranscriptEventInput) => {

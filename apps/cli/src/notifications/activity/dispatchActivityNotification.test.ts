@@ -1,16 +1,18 @@
-import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { createHmac, randomBytes } from 'node:crypto';
+import { x25519 } from '@noble/curves/ed25519';
 
 import {
   deriveSettingsSecretsKeyV1,
-  sealSavedSecretResourceStoredContentV1,
   encryptSecretStringV1,
   LiveActivityRemoteUpdateRequestV1Schema,
   type LiveActivityRemoteUpdateRequestV1,
   decodePlainArtifactStoredContent,
+  sealSavedSecretResourceStoredContentV1,
 } from '@happier-dev/protocol';
-import { readAccountNoticeArtifactV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { readAccountNoticeArtifactV1, AccountNoticePushDataV1Schema, ServiceHealthNoticeNotificationV1Schema,
+  projectAccountNoticeInboxItemV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { RunFollowUpdateNotificationV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
 
 import { logger } from '@/ui/logger';
@@ -31,11 +33,12 @@ import { createWorkflowRunReviewEntryNotificationHandler } from './dispatchWorkf
 import { buildMachineGuardEpisodeNotificationEvent } from './buildMachineGuardEpisodeNotification';
 import type { MachineGuardActivityEntryV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 import { NotificationChannelRecordV1Schema, openNotificationChannelCatalogContentV1,
-  sealNotificationChannelCatalogContentV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+  sealNotificationChannelCatalogContentV1, type NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { prepareLegacyNotificationChannelCatalogV1 } from '@happier-dev/protocol/account/settings/notificationChannelCatalogV1';
 import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import { createAccountArtifactStore, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
+import { artifactListResponse } from '@/testkit/http/artifactHome';
 import { notificationSettingsFixture as accountSettingsParse, notificationCatalogFixture } from './activityNotification.testkit';
 import { clearActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot,
   resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -45,6 +48,9 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
 import { readAccountSessionDeliveryMutedScopes } from '@/api/sessionDeliveryMuteTransport';
 import { sendAgentRequestPushNotificationAsync } from '@/settings/notifications/permissionRequestPush';
+import { buildActivityNotificationContent } from './buildActivityNotificationContent';
+import { deriveSessionFollowOriginalOccurrenceKeyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 
 function dispatchActivityNotificationAsync(params: Parameters<typeof dispatchActivityNotification>[0]) {
   // The channel tests supply an unmuted HTTP-boundary result; the captured-read
@@ -134,6 +140,219 @@ describe('dispatchActivityNotificationAsync', () => {
     } finally { get.mockRestore(); }
   });
 
+  it.each(['plain', 'e2ee'] as const)('admits only committed production health openings to native push in %s mode', async mode => {
+    const accountId = 'health-owner';
+    const machineKey = new Uint8Array(randomBytes(32));
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+      encryption: mode === 'plain' ? null : { type: 'dataKey' as const, machineKey, publicKey: x25519.getPublicKey(machineKey) } };
+    const rows = new Map<string, Record<string, unknown>>();
+    let failCommit = true;
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(String(url), [...rows.values()]) };
+      if (path.endsWith('/access/recipients')) {
+        const artifactId = path.split('/').at(-3)!;
+        const row = rows.get(artifactId);
+        return { status: 200, data: { artifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
+          dataEncryptionKey: row?.dataEncryptionKey, callerDataEncryptionKey: row?.dataEncryptionKey, recipients: [] } };
+      }
+      const row = rows.get(path.split('/').at(-1)!);
+      return row ? { status: 200, data: row } : { status: 404, data: {} };
+    });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, wire) => {
+      if (failCommit) return { status: 403, data: { error: 'forbidden' } };
+      const mutation = readCarrierMutation(wire);
+      const id = typeof mutation.id === 'string' ? mutation.id : new URL(String(url)).pathname.split('/').at(-1)!;
+      const previous = rows.get(id);
+      const version = previous ? Number(previous.headerVersion) + 1 : 1;
+      rows.set(id, { ...previous, ...mutation, id, ownerAccountId: accountId, access: 'owner', publicAudience: 'none',
+        encryptionMode: mode, headerVersion: version, bodyVersion: version, seq: 1, createdAt: 1, updatedAt: version });
+      return { status: 200, data: { id, success: true, headerVersion: version, bodyVersion: version } };
+    });
+    const store = createAccountArtifactStore({ credentials, getAccountEncryptionMode: async () => mode });
+    const service = { kind: 'deployment' as const, machineId: 'machine', environmentId: 'environment',
+      environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' };
+    const notice = { accountId, source: { kind: 'host' as const, topic: 'service_health' as const, subject: service },
+      page: { kind: 'host' as const, page: 'machine_service' as const, machine: { serverId: 'home', machineId: 'machine' }, service },
+      type: 'blocked' as const, title: 'db unavailable', body: 'Native health is unhealthy', resolved: false, healthPhase: 'open' as const };
+    const delivered: unknown[][] = [];
+    const catalog = { status: 'ready' as const, revision: 1, diagnostics: [], channels: [
+      NotificationChannelRecordV1Schema.parse({ v: 1, id: 'health-push', kind: 'expo_push', topics: { machines: true } }),
+      NotificationChannelRecordV1Schema.parse({ v: 1, id: 'unselected-webhook', kind: 'webhook', url: 'https://hooks.example.test/health',
+        signingSecretRef: 'happier:shared-secret:v1:unavailable', topics: { machines: true } }),
+    ] };
+    const send = async (committed: Awaited<ReturnType<typeof store.writeNotice>>, controllerMachineId = 'machine',
+      notificationChannelCatalog: NotificationChannelCatalogSnapshotV1 = catalog, isCurrent = async () => true) => {
+      const event = ServiceHealthNoticeNotificationV1Schema.safeParse(Reflect.get(committed, 'healthOpening'));
+      if (!event.success) return;
+      return dispatchActivityNotification({ settings: accountSettingsParse({}), event: event.data,
+        notificationChannelCatalog, pluginNotifications: null, isCurrent,
+        ...{ serviceHealthCommit: { receipt: committed, machineId: 'machine', controllerMachineId } },
+        expoPushSender: { sendToAllDevicesAsync: async (...args: unknown[]) => { delivered.push(args); return true; } },
+      });
+    };
+    try {
+      await expect(store.writeNotice(notice)).rejects.toMatchObject({ code: 'create_failed' });
+      expect(delivered).toHaveLength(0);
+      failCommit = false;
+      const opened = await store.writeNotice(notice);
+      await send(opened);
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]?.[2]).toMatchObject({ topic: 'account_notice', accountId, artifactId: opened.artifactId });
+      const row = await store.read(opened.artifactId);
+      const header = row && readAccountNoticeArtifactV1(row);
+      expect(header && projectAccountNoticeInboxItemV1({ header, artifactId: opened.artifactId, serverId: 'home',
+        createdAt: 1, pageRoute: '/inbox' })).toMatchObject({ view: 'needs_you' });
+      const writes = post.mock.calls.length;
+      const equal = await store.writeNotice(notice);
+      await send(equal);
+      expect(post).toHaveBeenCalledTimes(writes);
+      await send(await store.writeNotice({ ...notice, body: 'New native evidence' }));
+      await send(await store.writeNotice({ ...notice, type: 'update', healthPhase: 'recovered', body: 'Healthy' }));
+      expect(delivered).toHaveLength(1);
+      const recovered = await store.read(opened.artifactId);
+      expect(recovered && readAccountNoticeArtifactV1(recovered)).toMatchObject({ type: 'update', healthPhase: 'recovered' });
+      expect(recovered && readAccountNoticeArtifactV1(recovered)).not.toHaveProperty('readAt');
+      const reopened = await store.writeNotice(notice);
+      expect(reopened.artifactId).toBe(opened.artifactId);
+      await expect(send(reopened, 'other-controller', { status: 'loading' })).resolves.toMatchObject({ attemptedChannels: 0 });
+      await expect(send(reopened, 'machine', { status: 'loading' }, async () => false))
+        .resolves.toMatchObject({ attemptedChannels: 0 });
+      await expect(send(reopened, 'machine', { ...catalog, channels: [
+        NotificationChannelRecordV1Schema.parse({ v: 1, id: 'disabled-health-push', kind: 'expo_push', topics: { machines: false } }),
+      ] })).resolves.toMatchObject({ attemptedChannels: 0 });
+      await send(reopened);
+      expect(delivered).toHaveLength(2);
+    } finally { get.mockRestore(); post.mockRestore(); }
+  });
+
+  it('rejects uncommitted service health without creating a second Inbox notice', async () => {
+    const service = { kind: 'deployment' as const, machineId: 'machine', environmentId: 'environment',
+      environmentInstanceId: 'instance', composeService: 'db', serviceId: 'instance/db' };
+    const data = AccountNoticePushDataV1Schema.parse({ v: 1, topic: 'account_notice', accountId: 'owner', artifactId: 'committed-notice',
+      serverId: 'home', source: { kind: 'host', topic: 'service_health', subject: service },
+      page: { kind: 'host', page: 'machine_service', machine: { serverId: 'home', machineId: 'machine' }, service } });
+    const event = { topic: 'service_health' as const, type: 'blocked' as const, title: 'db unavailable', body: 'Native health is unhealthy', data };
+    const delivered: unknown[][] = [];
+    const create = vi.fn();
+    const input = { settings: accountSettingsParse({}), pluginNotifications: null,
+      usageNoticeArtifactStore: { accountId: 'owner', store: { create } },
+      notificationChannelCatalog: { status: 'ready' as const, revision: 1, diagnostics: [], channels: [
+        NotificationChannelRecordV1Schema.parse({ v: 1, id: 'health-push', kind: 'expo_push', topics: { machines: true } }),
+      ] },
+      expoPushSender: { sendToAllDevicesAsync: async (...args: unknown[]) => { delivered.push(args); return true; } },
+    };
+    expect(buildActivityNotificationContent(event, { readyIncludeMessageText: true })).toMatchObject({ title: event.title, body: event.body, data });
+    expect(resolveActivityNotificationPolicyEvent(event)).toBe('service_health');
+    await expect(dispatchActivityNotification({ ...input, event })).resolves.toMatchObject({ attemptedChannels: 0 });
+    expect(delivered).toHaveLength(0);
+    expect(create).not.toHaveBeenCalled();
+    await expect(dispatchActivityNotification({ ...input, event,
+      notificationChannelCatalog: { ...input.notificationChannelCatalog, channels: [
+        NotificationChannelRecordV1Schema.parse({ v: 1, id: 'health-off', kind: 'expo_push', topics: { machines: false } }),
+      ] } })).resolves.toMatchObject({ attemptedChannels: 0 });
+  });
+
+  it.each(['accepted', 'refused', 'missing', 'http-failure'] as const)(
+    'records one content-free info outcome for one Follow occurrence across all channels (push %s)', async push => {
+    const settings = accountSettingsParse({ notificationChannelsV1: [{ id: 'receipt-webhook', kind: 'webhook',
+      enabled: true, url: 'https://hooks.example.test/PRIVATE_ENDPOINT', topics: { ready: true } }] });
+    const pluginNotifications = createStablePluginNotificationsOwner({ categories: [],
+      channels: [{ provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.delivery',
+        definition: { id: 'receipt', kind: 'plugin', title: 'PRIVATE_CHANNEL_TITLE', configurable: true, defaultEnabled: true } }],
+      activateChannel: async () => {}, readChannel: () => ({ occurrenceId: 'current', isCurrent: () => true,
+        send: async request => ({ deliveryId: request.deliveryId, channelId: request.channelId, status: 'accepted', evidence: 'provider' }) }),
+    });
+    const original = { sourceSessionId: 'receipt-source', sourceTurn: { id: 'receipt-turn', status: 'completed' as const } };
+    const create = vi.fn(async () => ({ artifactId: 'unwanted-notice', revision: { headerVersion: 1, bodyVersion: 1 } }));
+    const result = await dispatchActivityNotificationAsync({ settings, pluginNotifications, webhookNetwork,
+      fetchSessionNotificationContext: async () => ({ ...await fetchSessionNotificationContext(original.sourceSessionId),
+        metadata: JSON.stringify({ name: 'PRIVATE_SOURCE_TITLE', path: '/PRIVATE_PATH' }) }),
+      admittedRulePolicies: [{ preset: 'everything' }], acceptSourceFollowDelivery: async () => true,
+      usageNoticeArtifactStore: { accountId: 'receipt-owner', store: { create } },
+      event: { topic: 'follow_update', sessionId: original.sourceSessionId,
+        follow: { sourceTurn: original.sourceTurn, event: { kind: 'finished' } } },
+      ...(push === 'missing' ? {} : { expoPushSender: { sendToAllDevicesAsync: async () => {
+        if (push === 'http-failure') throw createHttpStatusError(401, 'PRIVATE_RESPONSE_BODY', 'not_authenticated');
+        return push === 'accepted';
+      } } }),
+    });
+    const deliveredChannels = push === 'accepted' ? 3 : 2;
+    expect(result).toEqual({ attemptedChannels: 3, deliveredChannels });
+    expect(create).not.toHaveBeenCalled(); // Follow Inbox rows remain derived, never notification copies.
+    const outcomes = vi.mocked(logger.infoFile).mock.calls.filter(([message]) => message === '[activityNotifications] Dispatch outcome');
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.[1]).toMatchObject({ occurrenceId: deriveSessionFollowOriginalOccurrenceKeyV1(original),
+      topic: 'follow_update', sourceSessionId: original.sourceSessionId, sourceTurnId: original.sourceTurn.id,
+      attemptedChannels: 3, deliveredChannels, failedChannels: 3 - deliveredChannels,
+      channels: expect.arrayContaining([
+        expect.objectContaining({ channelId: 'receipt-webhook', kind: 'webhook', status: 'delivered' }),
+        expect.objectContaining({ channelId: 'acme.delivery/receipt', kind: 'plugin', status: 'delivered' }),
+        expect.objectContaining({ channelId: 'builtin:expo_push', kind: 'expo_push',
+          status: push === 'accepted' ? 'delivered' : 'failed', ...(push === 'accepted' ? {} : { cause: expect.objectContaining({
+            errorCode: push === 'http-failure' ? 'not_authenticated' : push === 'missing' ? 'sender_unavailable' : 'not_accepted',
+          }) }) }),
+      ]) });
+    expect(JSON.stringify(outcomes)).not.toContain('PRIVATE_');
+  });
+
+  it('records one typed outcome when channel preparation refuses before outward delivery', async () => {
+    await expect(dispatchActivityNotificationAsync({ settings: accountSettingsParse({}), pluginNotifications: null,
+      notificationChannelCatalog: { status: 'loading' }, event: { topic: 'notify_me', message: 'PRIVATE_BODY' },
+    })).rejects.toMatchObject({ code: 'notification_channel_catalog_unavailable' });
+    const outcomes = vi.mocked(logger.infoFile).mock.calls.filter(([message]) => message === '[activityNotifications] Dispatch outcome');
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.[1]).toMatchObject({ attemptedChannels: 0, deliveredChannels: 0, failedChannels: 0,
+      cause: { errorCode: 'notification_channel_catalog_unavailable' } });
+    expect(JSON.stringify(outcomes)).not.toContain('PRIVATE_');
+  });
+
+  it('records the HTTP refusal code from the real webhook sender without its destination or response content', async () => {
+    const settings = accountSettingsParse({ notificationChannelsV1: [{ id: 'refused-webhook', kind: 'webhook',
+      enabled: true, url: 'https://hooks.example.test/PRIVATE_ENDPOINT' }] });
+    const result = await dispatchActivityNotificationAsync({ settings, pluginNotifications: null,
+      channels: ['refused-webhook'], event: { topic: 'notify_me', message: 'PRIVATE_BODY' },
+      webhookNetwork: { resolveAddresses: async () => ['93.184.216.34'], openPinnedStream: async () => ({
+        status: 503, headers: {}, contentLength: 0, read: async () => null, cancel() {},
+      }) },
+    });
+    expect(result).toEqual({ attemptedChannels: 1, deliveredChannels: 0 });
+    const outcomes = vi.mocked(logger.infoFile).mock.calls.filter(([message]) => message === '[activityNotifications] Dispatch outcome');
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.[1]).toMatchObject({ attemptedChannels: 1, deliveredChannels: 0, failedChannels: 1,
+      channels: [{ channelId: 'refused-webhook', kind: 'webhook', status: 'failed',
+        cause: { errorCode: 'server_error', httpStatus: 503, retryable: true } }] });
+    expect(JSON.stringify(outcomes)).not.toContain('PRIVATE_');
+  });
+
+  it.each(['ready', 'follow_update'] as const)('records a quiet Important %s completion as zero attempted channels, not as an absent receipt', async topic => {
+    const context = createSessionNotificationContextFixture('quiet-receipt-source');
+    const event: ActivityNotificationEvent = topic === 'ready'
+      ? { topic, sessionId: context.id, waitingForCommandLabel: 'PRIVATE_LABEL',
+        committedLocalId: 'PRIVATE_AUTHORED_ID', committedSequence: 5 }
+      : { topic, sessionId: context.id, follow: { sourceTurn: { id: 'quiet-turn', status: 'completed' }, event: { kind: 'finished' } } };
+    await dispatchActivityNotificationAsync({ settings: accountSettingsParse({}), pluginNotifications: null,
+      fetchSessionNotificationContext: async () => context,
+      admittedRulePolicies: [{ preset: 'important' }], acceptSourceFollowDelivery: async () => true,
+      expoPushSender: { sendToAllDevicesAsync: async () => { throw new Error('Quiet completion must not push'); } },
+      event,
+    });
+    const outcomes = vi.mocked(logger.infoFile).mock.calls.filter(([message]) => message === '[activityNotifications] Dispatch outcome');
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0]?.[1]).toMatchObject({ sourceSessionId: context.id,
+      ...(topic === 'ready' ? { sourceMessageSeq: 5 } : { sourceTurnId: 'quiet-turn' }),
+      occurrenceId: expect.any(String), attemptedChannels: 0, deliveredChannels: 0, failedChannels: 0, channels: [] });
+    expect(JSON.stringify(outcomes)).not.toContain('PRIVATE_');
+  });
+  it('keeps a detached Run output notification bound to its actual Machine source', () => {
+    const event = RunFollowUpdateNotificationV1Schema.parse({ topic: 'follow_update', follow: {
+      original: { source: { kind: 'execution_run', machineId: 'machine-output', runId: 'detached-output' },
+        output: { outputRef: { kind: 'scm_diff_summary', output: 'walkthrough', comparisonId: 'comparison', resultId: 'result' },
+          revision: 3, state: 'complete' } }, event: { kind: 'update_posted' } } });
+    const content = buildActivityNotificationContent(event, { readyIncludeMessageText: false });
+    expect(content.data).toMatchObject({ machineId: 'machine-output', executionRunId: 'detached-output', followOriginal: event.follow.original });
+    expect(content.data).not.toHaveProperty('sessionId');
+  });
   it.each([
     { original: { source: { kind: 'workflow_run', runId: 'followed-workflow' }, revision: 2 }, event: { kind: 'update_posted' } },
     { original: { source: { kind: 'execution_run', sessionId: 'run-session', runId: 'followed-execution' }, terminalEventId: 'terminal-1' },
@@ -940,6 +1159,7 @@ describe('dispatchActivityNotificationAsync', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', fetchSpy);
     vi.mocked(logger.debug).mockReset();
+    vi.mocked(logger.infoFile).mockReset();
     fetchSpy.mockReset();
     webhookRequests.length = 0;
   });
@@ -1089,7 +1309,7 @@ describe('dispatchActivityNotificationAsync', () => {
     expect(result, JSON.stringify(vi.mocked(logger.debug).mock.calls)).toEqual({ attemptedChannels: sessionId ? 3 : 2, deliveredChannels: sessionId ? 3 : 2 });
     expect(sendToAllDevicesAsync.mock.calls[0]).toEqual([
       expect.stringContaining('reset credit used'),
-      expect.stringContaining('primary in pool team'),
+      expect.stringContaining('the selected account in the account pool'),
       expect.objectContaining({ recoveryReason: 'automatic_quota_reset', issueFingerprint: event.issueFingerprint, sessionId }),
       expect.any(Object),
     ]);
@@ -1760,8 +1980,8 @@ describe('dispatchActivityNotificationAsync', () => {
       expect(calls[1]?.[2]).toMatchObject({ profileId: 'profile-id', status: 'reconnect_required' });
       expect(JSON.stringify(calls[1]).includes(privateDiagnostic)).toBe(previewBehavior === 'include_preview');
       expect(calls[2]?.[2]).toMatchObject({ profileId: 'profile-id', groupId: 'pool-id', issueFingerprint: 'issue-id', recoveryReason: 'automatic_quota_reset' });
-      expect(calls[2]?.[1].includes('profile-id')).toBe(previewBehavior === 'include_preview');
-      expect(calls[2]?.[1].includes('pool-id')).toBe(previewBehavior === 'include_preview');
+      expect(calls[2]?.[1]).not.toContain('profile-id');
+      expect(calls[2]?.[1]).not.toContain('pool-id');
     },
   );
 

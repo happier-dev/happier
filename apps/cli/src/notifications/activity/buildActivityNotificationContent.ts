@@ -65,10 +65,8 @@ function resolveDisplayText(value: string | null | undefined): string | null {
   return normalized ? normalized : null;
 }
 
-function resolveConnectedServiceDisplayName(serviceId: string, explicit?: string | null): string {
-  const normalizedExplicit = resolveDisplayText(explicit);
-  if (normalizedExplicit) return normalizedExplicit;
-  return resolveDisplayText(serviceId) ?? 'Provider';
+function resolveConnectedServiceDisplayName(explicit?: string | null): string {
+  return resolveDisplayText(explicit) ?? 'Provider';
 }
 
 function buildSwitchReasonSentence(reason: string, serviceDisplayName: string): string {
@@ -312,13 +310,9 @@ export function buildActivityNotificationContent(
         },
       };
     }
-    const serviceDisplayName = resolveConnectedServiceDisplayName(event.serviceId, event.serviceDisplayName);
-    const fromProfile = typeof event.fromProfileLabel === 'string' && event.fromProfileLabel.trim()
-      ? event.fromProfileLabel.trim()
-      : event.fromProfileId;
-    const toProfile = typeof event.toProfileLabel === 'string' && event.toProfileLabel.trim()
-      ? event.toProfileLabel.trim()
-      : event.toProfileId;
+    const serviceDisplayName = resolveConnectedServiceDisplayName(event.serviceDisplayName);
+    const fromProfile = resolveDisplayText(event.fromProfileLabel);
+    const toProfile = resolveDisplayText(event.toProfileLabel);
     const accountClause = fromProfile && toProfile
       ? ` from ${fromProfile} to ${toProfile}`
       : toProfile
@@ -381,12 +375,10 @@ export function buildActivityNotificationContent(
         },
       };
     }
-    const serviceDisplayName = resolveConnectedServiceDisplayName(event.serviceId, event.serviceDisplayName);
-    const resetAccount = redactNotificationText(event.profileId ?? 'selected account');
-    const resetPool = redactNotificationText(event.groupId ?? 'account pool');
+    const serviceDisplayName = resolveConnectedServiceDisplayName(event.serviceDisplayName);
     return {
       title: automaticReset ? `${serviceDisplayName} reset credit used` : sessionTitle ?? (event.topic === 'connected_service_quota_recovered' ? `${serviceDisplayName} quota recovered` : `${serviceDisplayName} quota blocked`),
-      body: automaticReset ? `Happier automatically used a reset credit for ${resetAccount} in pool ${resetPool}.` : event.topic === 'connected_service_quota_recovered'
+      body: automaticReset ? 'Happier automatically used a reset credit for the selected account in the account pool.' : event.topic === 'connected_service_quota_recovered'
         ? `Quota is available again for ${serviceDisplayName}.`
         : `Waiting for quota availability for ${serviceDisplayName}.`,
       data: {
@@ -423,17 +415,16 @@ export function buildActivityNotificationContent(
         },
       };
     }
-    const serviceDisplayName = resolveConnectedServiceDisplayName(event.serviceId, event.serviceDisplayName);
-    const profileLabel = typeof event.profileLabel === 'string' && event.profileLabel.trim()
-      ? event.profileLabel.trim()
-      : event.profileId;
+    const serviceDisplayName = resolveConnectedServiceDisplayName(event.serviceDisplayName);
+    const profileLabel = resolveDisplayText(event.profileLabel);
+    const accountLabel = profileLabel ? `account ${profileLabel}` : 'account';
     const safeReason = sanitizeProviderDiagnostic(event.providerErrorCode)
       ?? sanitizeProviderDiagnostic(event.reason);
     const safeAction = sanitizeNotificationAction(event.action);
     const reasonClause = safeReason ? ` Provider code: ${safeReason}.` : '';
     const body = event.status === 'reconnect_required'
-      ? `${serviceDisplayName} account ${profileLabel} needs to be reconnected before Happier can use it again.${reasonClause}`
-      : `${serviceDisplayName} account ${profileLabel} could not be refreshed. Happier will retry automatically.${reasonClause}`;
+      ? `${serviceDisplayName} ${accountLabel} needs to be reconnected before Happier can use it again.${reasonClause}`
+      : `${serviceDisplayName} ${accountLabel} could not be refreshed. Happier will retry automatically.${reasonClause}`;
     return {
       title: sessionTitle ?? (event.status === 'reconnect_required' ? `${serviceDisplayName} account needs reconnect` : `${serviceDisplayName} account refresh failed`),
       body,

@@ -6,6 +6,7 @@ import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSna
 
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { dispatchConnectedServiceAccountSwitchNotificationAsync } from './dispatchConnectedServiceAccountSwitchNotification';
+import { dispatchConnectedServiceCredentialHealthNotificationAsync } from './dispatchConnectedServiceCredentialHealthNotification';
 
 describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
     let settings: ReturnType<typeof accountSettingsParse>;
@@ -164,12 +165,44 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
             expect.not.stringContaining('private@example.test'),
             expect.objectContaining({
                 serviceId: 'acme.custom/openai-codex',
-                fromProfileLabel: 'primary',
+                fromProfileLabel: 'Connected account',
                 fromUsagePercent: null,
                 toUsagePercent: null,
             }),
             expect.anything(),
         );
+    });
+
+    it.each(['copied identifiers', 'lookup failure'] as const)('delivers neutral account names for %s', async (scenario) => {
+        const sendToAllDevicesAsync = vi.fn(async (_title: string, _body: string) => true);
+        const listConnectedServiceProfiles = async () => {
+            if (scenario === 'lookup failure') throw new Error('profile transport unavailable');
+            return {
+                serviceId: 'openai-codex' as const,
+                profiles: [
+                    { profileId: 'from-internal', displayName: 'from-internal' },
+                    { profileId: 'to-internal', displayName: 'provider-internal', providerAccountId: 'provider-internal' },
+                ],
+            };
+        };
+        await dispatchConnectedServiceAccountSwitchNotificationAsync({
+            settings, expoPushSender: { sendToAllDevicesAsync }, listConnectedServiceProfiles,
+            runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+            source: { sessionId: `switch-${scenario}`, serviceId: 'openai-codex', groupId: 'main',
+                fromProfileId: 'from-internal', toProfileId: 'to-internal', reason: 'usage_limit' },
+            dedupeWindowMs: 0,
+        });
+        await dispatchConnectedServiceCredentialHealthNotificationAsync({
+            settings, expoPushSender: { sendToAllDevicesAsync }, listConnectedServiceProfiles,
+            source: { sessionId: `health-${scenario}`, serviceId: 'openai-codex',
+                profileId: 'to-internal', status: 'reconnect_required' },
+            dedupeWindowMs: 0,
+        });
+        expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(2);
+        for (const [title, body] of sendToAllDevicesAsync.mock.calls) {
+            expect(`${title} ${body}`).toContain('Connected account');
+            expect(`${title} ${body}`).not.toMatch(/from-internal|to-internal|provider-internal|openai-codex/);
+        }
     });
 
     it('dispatches the preventive copy for a preemptive soft-threshold switch', async () => {

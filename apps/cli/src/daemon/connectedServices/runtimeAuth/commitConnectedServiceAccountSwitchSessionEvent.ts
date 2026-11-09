@@ -4,6 +4,7 @@ import type { ConnectedServiceId, ConnectedServiceUxDiagnosticV1 } from '@happie
 
 import {
   loadConnectedServiceNotificationProfilesById,
+  resolveConnectedServiceNotificationDisplayName,
   resolveConnectedServiceNotificationProfileLabel,
   type ConnectedServiceNotificationProfileSummary,
 } from '../notifications/connectedServiceNotificationLabels';
@@ -552,16 +553,16 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
   if (!parsed || !reason) return;
   if (isSameProfileRuntimeSwitchEvent(parsed)) return;
 
-  // Event-carried labels are the contract for clients without hydrated profile-label
-  // settings; the UI prefers them over settings labels and falls back to raw ids.
+  // Event-carried labels preserve human names for clients without hydrated profiles.
   const profilesById = params.listConnectedServiceProfiles
     ? await loadConnectedServiceNotificationProfilesById({
       serviceId: parsed.serviceId,
       listConnectedServiceProfiles: params.listConnectedServiceProfiles,
     })
     : new Map<string, ConnectedServiceNotificationProfileSummary>();
-  const fromProfileLabel = resolveConnectedServiceNotificationProfileLabel(profilesById, parsed.fromProfileId);
-  const toProfileLabel = resolveConnectedServiceNotificationProfileLabel(profilesById, parsed.toProfileId);
+  const serviceTitle = resolveConnectedServiceNotificationDisplayName(parsed.serviceId) ?? 'Provider';
+  const fromProfileLabel = resolveConnectedServiceNotificationProfileLabel(profilesById, parsed.fromProfileId, serviceTitle);
+  const toProfileLabel = resolveConnectedServiceNotificationProfileLabel(profilesById, parsed.toProfileId, serviceTitle);
 
   await commitConnectedServiceLifecycleEvent({
     mutationCustody: params.mutationCustody,
