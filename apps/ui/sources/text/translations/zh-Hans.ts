@@ -15979,6 +15979,7 @@ settingsSession: {
             factReported: "智能体上报的费用",
             factEstimated: "已记录的估算",
             factUnpriced: "无 API 价格",
+            costRowPartUnpriced: "部分无 API 价格",
             factApiTokens: ({ tokens }: { tokens: string | number }) => `${tokens} 个有当前价格的 token`,
             factUnpricedOverlap: "已记录的估算或报告仍可能涵盖这些 token",
             factsOverlap: "这些数字相互重叠，请勿相加。",

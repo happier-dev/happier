@@ -7,12 +7,15 @@ import { t } from '@/text';
 /**
  * A row names its actual reported/priced/estimated basis, including a labelled mixed aggregate. A row whose total
  * is unavailable says why in the Daily legend's and Cost facts' words ("Without an API price"), so the row, the
- * hatched day and the missing total read as one (R138).
+ * hatched day and the missing total read as one (R138). A row that still carries some known money says only part
+ * of it has no price (R139).
  */
 export function usagePageCostRow(cost: UsageObservationCost, selection: UsagePageCostSelection | null) {
   const basis = resolveUsageCostBasisForSelection(cost, selection);
-  return basis ? { ...basis, label: usageCostKindPhrase(basis.kind) }
-    : selection ? { label: t('usage.board.page.factUnpriced') } : null;
+  if (basis) return { ...basis, label: usageCostKindPhrase(basis.kind) };
+  if (!selection) return null;
+  const partlyPriced = cost.reportedUsd > 0 || cost.estimatedUsd > 0 || (cost.apiEquivalentUsd ?? 0) > 0 || (cost.invoiceUsd ?? 0) > 0;
+  return { label: t(partlyPriced ? 'usage.board.page.costRowPartUnpriced' : 'usage.board.page.factUnpriced') };
 }
 
 /** Chart coordinates of the same selected page facts; unavailable money stays unavailable. */

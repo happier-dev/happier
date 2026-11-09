@@ -51,6 +51,17 @@ export function resolveUsageSourceDismiss(input: UsageSourceActionInputById['usa
         ? 'dismissed' : 'unavailable' };
 }
 
+/**
+ * The last sources each Machine answered, per Account scope (stale-while-revalidate, R139): a revisit opens on
+ * them while its own read refreshes them, never on loading rows. Keyed by the scope's lifetime, so another Account
+ * (a new lifetime) never sees them and they go with it.
+ */
+const lastKnownSources = new WeakMap<ServerAccountScopeLifetime, Map<string, readonly UsageSourceV1[]>>();
+
+export function readUsageSourcesLastKnown(lifetime: ServerAccountScopeLifetime | null, machineId: string): readonly UsageSourceV1[] | null {
+    return lifetime?.isCurrent() ? lastKnownSources.get(lifetime)?.get(machineId) ?? null : null;
+}
+
 /** Mounted UI state only. The Action owner admits effects; the Machine owns capture/status. */
 
 export function createUsageSourcesController(options: Readonly<{
@@ -61,7 +72,8 @@ export function createUsageSourcesController(options: Readonly<{
     const target = USAGE_SOURCE_ACTION_INPUT_SCHEMAS['usage.sources.discover'].parse({
         serverId: options.lifetime.scope.serverId, machineId: options.machineId,
     });
-    let snapshot: UsageSourcesSnapshot = { sources: [], loaded: false, retired: false, pending: [], error: null,
+    const lastKnown = readUsageSourcesLastKnown(options.lifetime, options.machineId);
+    let snapshot: UsageSourcesSnapshot = { sources: lastKnown ?? [], loaded: lastKnown !== null, retired: false, pending: [], error: null,
         approval: null, dismissedSourceIds: [], historyDeletion: null };
     const listeners = new Set<() => void>();
     const operations = new Map<AbortController, UsageSourcesOperation>();
@@ -70,6 +82,11 @@ export function createUsageSourcesController(options: Readonly<{
     let refreshRequested = false;
     const publish = (next: UsageSourcesSnapshot) => {
         snapshot = next;
+        if (!next.retired && options.lifetime.isCurrent()) {
+            const known = lastKnownSources.get(options.lifetime) ?? new Map<string, readonly UsageSourceV1[]>();
+            if (next.loaded) known.set(options.machineId, next.sources); else known.delete(options.machineId);
+            lastKnownSources.set(options.lifetime, known);
+        }
         for (const listener of listeners) listener();
     };
     const dispose = () => {

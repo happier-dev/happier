@@ -16613,6 +16613,7 @@ settingsSession: {
             factReported: "エージェント報告のコスト",
             factEstimated: "記録された見積もり",
             factUnpriced: "API 価格なし",
+            costRowPartUnpriced: "一部は API 価格なし",
             factApiTokens: ({ tokens }: { tokens: string | number }) => `現在の価格がある ${tokens} トークン`,
             factUnpricedOverlap: "記録された見積もりやレポートがこれらのトークンを含む場合があります",
             factsOverlap: "これらの数値は重複しています。合算しないでください。",

@@ -292,11 +292,15 @@ describe('Usage Sources body', () => {
     await screen.update(<UsageSourcesMachines {...props} machines={[]} />);
     boundary.failDiscovery();
     await screen.update(<UsageSourcesMachines {...props} machines={[machine]} />);
-    // A machine that can't be read says so once, grouped with its Retry, never also "Looking for files".
+    // A revisit keeps the sources it read a moment ago while its re-read fails (stale-while-revalidate, R139).
+    await vi.waitFor(() => expect(screen.findByTestId('sources.machine.mac.source.claude-default')).toBeTruthy());
+    expect(screen.findByTestId('sources.unreadableMachines')).toBeFalsy();
+    // A machine never read before that can't be read says so once, grouped with its Retry, never also "Looking for files".
+    await screen.update(<UsageSourcesMachines {...props} machines={[{ ...machine, id: 'fresh' }]} />);
     await vi.waitFor(() => expect(screen.findByTestId('sources.unreadableMachines')).toBeTruthy());
     expect(screen.getTextContent()).not.toContain(t('usage.board.sources.machineLooking'));
     expect(screen.findByTestId('sources.emptyMachines')).toBeFalsy();
-    expect(screen.findAllHostsByTestId('sources.machine.mac')).toHaveLength(0);
+    expect(screen.findAllHostsByTestId('sources.machine.fresh')).toHaveLength(0);
     boundary.failDiscovery(false);
     boundary.setDiscovery([]);
     await screen.pressByTestIdAsync('sources.unreadableMachines-action');
@@ -307,8 +311,10 @@ describe('Usage Sources body', () => {
   it('holds a still-looking machine\'s room with its header and the shared loading rows (R138 Sources)', async () => {
     const boundary = machineBoundary(found, [found]);
     boundary.holdDiscovery();
-    const screen = await mount(boundary.executor);
-    await vi.waitFor(() => expect(screen.findByTestId('sources.machine.mac.looking')).toBeTruthy());
+    // A machine this Account scope has not read yet (a revisit opens on its last-known sources instead).
+    const screen = await renderScreen(<UsageSourcesMachines lifetime={lifetime} serverId="home" executor={boundary.executor} testID="sources"
+      input={{ agents: [], machines: [], sources: [] }} machines={[{ id: 'unread', name: 'MacBook Pro', online: true }]} />);
+    await vi.waitFor(() => expect(screen.findByTestId('sources.machine.unread.looking')).toBeTruthy());
     expect(screen.getTextContent()).toContain('MacBook Pro');
     // The grouped "Looking" line is replaced by the held section, never said twice.
     expect(screen.findByTestId('sources.lookingMachines')).toBeFalsy();

@@ -19830,6 +19830,7 @@ const enUsage = {
       factReported: "Agent-reported cost",
       factEstimated: "Recorded estimates",
       factUnpriced: "Without an API price",
+      costRowPartUnpriced: "Part without an API price",
       factApiTokens: ({ tokens }: { tokens: string | number }) => `${tokens} tokens with a current price`,
       factUnpricedOverlap: "Recorded estimates or reports may still cover these tokens",
       factsOverlap: "These figures overlap; don't add them.",

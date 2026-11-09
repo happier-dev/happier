@@ -16282,6 +16282,7 @@ settingsSession: {
             factReported: "Стоимость по данным агентов",
             factEstimated: "Записанные оценки",
             factUnpriced: "Без цены API",
+            costRowPartUnpriced: "Частично без цены API",
             factApiTokens: ({ tokens }: { tokens: string | number }) => `${tokens} токенов с текущей ценой`,
             factUnpricedOverlap: "Записанные оценки или отчёты всё же могут покрывать эти токены",
             factsOverlap: "Эти значения пересекаются, не складывайте их.",

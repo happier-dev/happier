@@ -103,6 +103,20 @@ describe('SurfaceFreshnessLine placement', () => {
 });
 
 
+describe('SurfaceFreshnessLine inline', () => {
+    it('reads as a header facts line: no strip, no block height, its Retry right after the words with reach in its hit area (R139)', async () => {
+        const screen = await renderScreen(<SurfaceFreshnessLine testID="line" presentation="inline" asOf={Date.now()}
+            reason="Pull requests and branches aren't available right now." action={{ label: 'Retry', onPress: () => {}, testID: 'line-retry' }} />);
+        const style = flattenStyle(screen.findByTestId('line')!.props.style);
+        expect(style.backgroundColor).toBe('transparent');
+        expect(style.minHeight ?? 0).toBe(0);
+        expect(style.paddingTop ?? style.paddingVertical ?? 0).toBe(0);
+        const retry = screen.findByTestId('line-retry')!;
+        // Drawn at the words' height; the finger reaches past it through the hit area (SurfaceFreshnessLine.touch.test).
+        expect(flattenStyle(retry.props.style({ pressed: false, focused: false })).minHeight ?? 0).toBe(0);
+    });
+});
+
 describe('SurfaceFreshnessLine chip', () => {
     it('is an inline status (no strip) whose steady, checking and behind states share the line\'s recovery', async () => {
         const live = await renderScreen(<SurfaceFreshnessLine testID="chip" presentation="chip" signal="live" lead="Sampled while you look" reason="Live" />);

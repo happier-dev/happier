@@ -16449,6 +16449,7 @@ settingsSession: {
       factReported: "Koszt zgłoszony przez agentów",
       factEstimated: "Zapisane szacunki",
       factUnpriced: "Bez ceny API",
+      costRowPartUnpriced: "Częściowo bez ceny API",
       factApiTokens: ({ tokens }: { tokens: string | number }) => `${tokens} tokenów z aktualną ceną`,
       factUnpricedOverlap: "Zapisane szacunki lub raporty mogą nadal obejmować te tokeny",
       factsOverlap: "Te wartości się pokrywają; nie sumuj ich.",

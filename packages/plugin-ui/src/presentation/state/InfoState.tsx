@@ -211,26 +211,28 @@ export function HappierFreshnessLine(props: Readonly<{
   /**
    * `line` (default): the strip under a surface's header. `chip`: the same facts as one inline status at a
    * header's or tab bar's end ("● Live", "As of 10:42 · Retry"), sized to its words, with no strip.
+   * `inline`: a page header's facts line, as tall as its words; the recovery follows the sentence and wraps with it.
    */
-  presentation?: 'line' | 'chip';
+  presentation?: 'line' | 'chip' | 'inline';
   /** Chip only: a quiet clause before the glyph ("Sampled only while you're looking"). */
   lead?: ReactNode;
 }>) {
   const metrics = HAPPIER_FRESHNESS_LINE_METRICS;
   const paintColor = useHappierMaterialColorResolver();
   const chip = props.presentation === 'chip';
-  const plain = chip || props.onSheet === true;
+  const inline = props.presentation === 'inline';
+  const plain = chip || inline || props.onSheet === true;
   return (
     <View testID={props.testID} accessibilityRole="text" accessibilityLiveRegion="polite" role="status" aria-live="polite" aria-busy={props.busy || undefined} style={{
       flexDirection: 'row',
       alignItems: 'center',
       gap: chip ? metrics.chip.gapPx : metrics.gapPx,
-      minHeight: chip ? metrics.chip.minHeightPx : metrics.minHeightPx,
+      minHeight: inline ? undefined : chip ? metrics.chip.minHeightPx : metrics.minHeightPx,
       flexShrink: chip ? 1 : undefined,
       minWidth: chip ? 0 : undefined,
       paddingLeft: plain ? 0 : metrics.paddingStartPx,
       paddingRight: plain ? 0 : metrics.paddingEndPx,
-      paddingVertical: chip ? 0 : metrics.paddingVerticalPx,
+      paddingVertical: chip || inline ? 0 : metrics.paddingVerticalPx,
       backgroundColor: plain ? 'transparent' : paintColor(props.colors.background),
       borderTopWidth: plain ? 0 : StyleSheet.hairlineWidth,
       borderBottomWidth: plain ? 0 : StyleSheet.hairlineWidth,
@@ -240,7 +242,13 @@ export function HappierFreshnessLine(props: Readonly<{
       flexWrap: chip ? undefined : 'wrap',
     }}>
       {chip ? props.lead ?? null : null}
-      {chip ? (
+      {inline ? (
+        <>
+          {props.icon}
+          <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>
+          {props.action ?? null}
+        </>
+      ) : chip ? (
         <>
           {props.icon}
           <View style={{ flexShrink: 1, minWidth: 0 }}>{props.children}</View>

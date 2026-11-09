@@ -37,3 +37,26 @@ it("keeps the recovery link's finger reach inside the line's own padding, so the
   // The 44 px target alone would reach 10 above and below; the strip's block padding is 6.
   expect([-frame.props.style.top, -frame.props.style.bottom]).toEqual([6, 6]);
 });
+
+it("lets an inline (page header) Retry reach a line's target height through its hit area, not its drawn height (R139)", async () => {
+  vi.stubGlobal('navigator', { maxTouchPoints: 1 });
+  const screen = await renderScreen(
+    <SurfaceFreshnessLine
+      testID="line"
+      presentation="inline"
+      reason="Couldn't read"
+      action={{ testID: 'line-retry', label: 'Retry', onPress: () => {} }}
+    />,
+  );
+  const retry = screen.findHostByTestId('line-retry')!;
+  await act(async () =>
+    retry.props.onLayout({
+      nativeEvent: { layout: { x: 0, y: 0, width: 39, height: 16 } },
+    }),
+  );
+  const frame = screen.root.findAll(
+    (node) => node.props?.dataSet?.happierHitArea === 'true',
+  )[0]!;
+  // Drawn at the words' 16 px; the hit area reaches 8 above and below, to the line's 32 px target.
+  expect([-frame.props.style.top, -frame.props.style.bottom]).toEqual([8, 8]);
+});

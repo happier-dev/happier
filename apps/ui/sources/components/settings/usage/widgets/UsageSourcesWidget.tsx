@@ -40,6 +40,7 @@ import type {
   UsageSourcesSnapshot,
 } from './usageSourcesController';
 import { useUsageSourcesController, type UsageSourcesHookOptions } from './useUsageSources';
+import { readUsageSourcesLastKnown } from './usageSourcesController';
 import { OutsideBrowsePage, UsageExternalSessionCandidates } from './UsageExternalSessionCandidates';
 import { useOptionalPluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import { useMeasuredNearViewport } from '@/components/widgets/nearViewport';
@@ -357,7 +358,8 @@ const MachineSources = React.memo(function MachineSources(
         <Text style={styles.machineName} numberOfLines={1}>{props.machineName}</Text>
         <ActivitySpinner size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
       </View>
-      <ItemLoadStateRows state={{ kind: 'loading' }} rows={3} lines={2}
+      {/* A revisit's controller opens on the last-known sources a frame later; until then the rows hold their count. */}
+      <ItemLoadStateRows state={{ kind: 'loading' }} rows={readUsageSourcesLastKnown(props.lifetime, props.machineId)?.length || 3} lines={2}
         accessibilityLabel={`${props.machineName} · ${t('usage.board.sources.machineLooking')}`} />
     </View>
   );

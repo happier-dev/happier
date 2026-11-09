@@ -60,7 +60,8 @@ export function SurfaceFreshnessLine(props: Readonly<{
      * "● Live", "Paused", "As of 10:42 · Checking…", "As of 10:42 · Retry". Its glyph is the `signal` dot
      * while nothing is behind, the ring while `busy`, else the clock of held content.
      */
-    presentation?: 'line' | 'chip';
+    /** `inline`: a page header's facts line, as tall as its words, its recovery right after the sentence (R139). */
+    presentation?: 'line' | 'chip' | 'inline';
     /** Chip only: the steady state's dot, `live` (sampling) or `quiet` (paused, offline). */
     signal?: 'live' | 'quiet';
     /** Chip only: a quiet clause before the glyph ("Sampled only while you're looking"). */
@@ -70,6 +71,7 @@ export function SurfaceFreshnessLine(props: Readonly<{
     const onSheet = React.useContext(SurfaceFreshnessOnSheetContext);
     const pageSection = useHappierPageSection();
     const chip = props.presentation === 'chip';
+    const inline = props.presentation === 'inline';
     const actions = props.actions ?? (props.action ? [props.action] : []);
     const parts = resolveHappierFreshnessText({
         asOf: props.asOf,
@@ -87,7 +89,7 @@ export function SurfaceFreshnessLine(props: Readonly<{
             // The tint carries the warning; its edges stay ink hairlines (an amber rule read heavier than the words).
             colors={{ background: props.tone === 'warning' ? theme.colors.state.warning.background : theme.colors.surface.inset,
                 border: theme.colors.border.default }}
-            presentation={chip ? 'chip' : 'line'}
+            presentation={props.presentation ?? 'line'}
             lead={chip && props.lead ? (
                 <Text testID={props.testID ? `${props.testID}-lead` : undefined} style={[stylesheet.text, stylesheet.lead]} numberOfLines={1}>{props.lead}</Text>
             ) : undefined}
@@ -106,7 +108,7 @@ export function SurfaceFreshnessLine(props: Readonly<{
                 />
             ) : (
                 <Icon
-                    name={props.glyph ?? (props.tone === 'warning' ? 'warning' : chip ? 'clock' : 'arrow-clockwise')}
+                    name={props.glyph ?? (props.tone === 'warning' ? 'warning' : chip || inline ? 'clock' : 'arrow-clockwise')}
                     size={HAPPIER_FRESHNESS_LINE_METRICS.glyphPx}
                     color={props.tone === 'warning' ? theme.colors.state.warning.foreground : theme.colors.text.tertiary}
                 />
@@ -114,7 +116,7 @@ export function SurfaceFreshnessLine(props: Readonly<{
             action={actions.length > 0 ? (
                 <View style={stylesheet.actions}>
                 {/* A chip reads as one phrase, "As of 10:42 · Retry" (lab `.rs-live`); the strip ends with its link instead. */}
-                {chip && text ? <Text style={stylesheet.text} aria-hidden accessibilityElementsHidden importantForAccessibility="no">·</Text> : null}
+                {(chip || inline) && text ? <Text style={stylesheet.text} aria-hidden accessibilityElementsHidden importantForAccessibility="no">·</Text> : null}
                 {actions.map((action, index) => (
                     <HappierPressable
                         key={action.testID ?? action.label}
@@ -123,11 +125,13 @@ export function SurfaceFreshnessLine(props: Readonly<{
                         accessibilityLabel={action.label}
                         // The link's finger reach stays inside the line's own block padding (a chip has none): past
                         // it lies the next row, whose own target it would take taps from.
-                        hitReach={{ top: chip ? 0 : HAPPIER_FRESHNESS_LINE_METRICS.paddingVerticalPx, bottom: chip ? 0 : HAPPIER_FRESHNESS_LINE_METRICS.paddingVerticalPx }}
+                        // An inline link is drawn at its words' height and reaches a line's target height through its hit area.
+                        hitReach={inline ? { top: INLINE_LINK_REACH_PX, bottom: INLINE_LINK_REACH_PX }
+                            : { top: chip ? 0 : HAPPIER_FRESHNESS_LINE_METRICS.paddingVerticalPx, bottom: chip ? 0 : HAPPIER_FRESHNESS_LINE_METRICS.paddingVerticalPx }}
                         disabled={action.disabled}
                         busy={action.busy}
                         onPress={action.onPress}
-                        style={({ focused }) => [stylesheet.link, chip ? stylesheet.chipLink : null, focusRingStyle({ focused, color: theme.colors.border.focus })]}
+                        style={({ focused }) => [inline ? stylesheet.inlineLink : stylesheet.link, chip ? stylesheet.chipLink : null, focusRingStyle({ focused, color: theme.colors.border.focus })]}
                     >
                         <Text style={[stylesheet.linkLabel, action.emphasis === 'primary' ? stylesheet.primaryLabel : null,
                             action.disabled ? stylesheet.disabledLabel : null]}>{action.label}</Text>
@@ -159,7 +163,7 @@ export function SurfaceFreshnessLine(props: Readonly<{
     );
     // In a page section the strip spans the section's content, on its rows' inset like the rows and
     // sub-headings beside it, never the full sheet past them (Session Info Habits, Context).
-    return pageSection && !chip ? <View style={{ marginHorizontal: pageSection.rowInsetPx }}>{line}</View> : line;
+    return pageSection && !chip && !inline ? <View style={{ marginHorizontal: pageSection.rowInsetPx }}>{line}</View> : line;
 }
 
 function renderEmphasis(text: string, emphasis: string | undefined): React.ReactNode {
@@ -167,6 +171,9 @@ function renderEmphasis(text: string, emphasis: string | undefined): React.React
     if (!emphasis || at < 0) return text;
     return <>{text.slice(0, at)}<Text style={stylesheet.emphasis}>{emphasis}</Text>{text.slice(at + emphasis.length)}</>;
 }
+
+/** What an inline link adds above and below its words to reach a freshness line's target height. */
+const INLINE_LINK_REACH_PX = (HAPPIER_FRESHNESS_LINE_METRICS.minHeightPx - HAPPIER_FRESHNESS_LINE_METRICS.text.lineHeight) / 2;
 
 const stylesheet = StyleSheet.create((theme) => ({
     actions: {
@@ -201,6 +208,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: HAPPIER_FRESHNESS_LINE_METRICS.chip.minHeightPx,
         justifyContent: 'center',
         paddingHorizontal: theme.space.s4,
+    },
+    // Drawn at its words' height; the finger reaches it through the hit area, so the line keeps its height.
+    inlineLink: {
+        paddingHorizontal: theme.space.s2,
+        borderRadius: theme.space.s4,
     },
     // The tab's clause stands apart from the status it qualifies (lab `rp` H: clause, then "● Live").
     lead: {

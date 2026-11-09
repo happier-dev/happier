@@ -50,6 +50,7 @@ import {
   type UsageWidgetPresetId,
 } from './usageWidgetPresets';
 import { useUsageWidgetAreaBinding } from './useUsageWidgetAreaBinding';
+import { resolveUsagePresetLine } from './usagePresetLine';
 import {
   usePublishUsageWidgetPageContext,
   useUsageWidgetPageContext,
@@ -388,6 +389,8 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const drill = React.useMemo(() => usageDrillFromPageFilters(admittedFilters), [admittedFilters]);
 
   const selected = tabs.find((tab) => tab.id === selectedLayoutId) ?? null;
+  // Drawn on first paint from the view list's local edited fact, so the line never arrives late and pushes the widgets.
+  const presetLine = resolveUsagePresetLine(ready ? { preset: ready.preset ?? null, surface: ready.surface } : null, selected, props.port.surface);
   const viewName = selected?.name ?? null;
   // The area's items take every area prop; an unchanged view keeps the same dashboard copy.
   const dashboard = React.useMemo(() => ({
@@ -411,7 +414,6 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     }),
     [],
   );
-  const preset = ready?.preset ?? null;
   const metricPending = layoutLoading || pendingMetric?.lifetime === metricLifetime;
   const changeMetric = layoutLoading || (usageWidgets.length && ready?.canEdit) ? onMetricChange : null;
   const filterBar = React.useMemo(() => <UsageFilterBar
@@ -449,10 +451,10 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         testID="usage-views"
       />}
       {filterBar}
-      {preset?.isEdited && ready ? (
+      {presetLine ? (
         <WidgetAreaPresetLine
-          preset={preset}
-          surface={ready.surface}
+          preset={presetLine.preset}
+          surface={presetLine.surface}
           presetActions={binding}
           testID="usage-area.preset"
         />

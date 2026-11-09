@@ -66,6 +66,19 @@ function harness(rpc: Parameters<typeof createUsageSourceActionPort>[0]['rpc'], 
 }
 
 describe('Usage Sources consent controller', () => {
+    it('opens a revisit on the machine\'s last-known sources while it re-reads them, within the same Account scope (R139)', async () => {
+        const first = harness(async () => ({ sources: [source] }));
+        await first.controller.discover();
+        expect(first.controller.getSnapshot()).toMatchObject({ loaded: true, sources: [source] });
+        first.controller.dispose();
+        const revisit = createUsageSourcesController({ machineId: 'machine', lifetime: first.lifetime, executor: first.executor });
+        // Shown at once, before any read: the list it read seconds earlier, never loading rows over it.
+        expect(revisit.getSnapshot()).toMatchObject({ loaded: true, sources: [source] });
+        // Another Account scope never sees it.
+        const other = lifetimeHarness();
+        expect(createUsageSourcesController({ machineId: 'machine', lifetime: other.lifetime, executor: first.executor })
+            .getSnapshot()).toMatchObject({ loaded: false, sources: [] });
+    });
     it('retains agent restrictions for mounted metadata retry and folder changes', async () => {
         const requests: string[] = [];
         const { controller } = harness(async request => {
