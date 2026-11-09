@@ -16,6 +16,28 @@ const input: ManagedWakeProjectionInput = {
 };
 
 describe('managed wake observed projection', () => {
+    it.each([
+        { observedAt: 10, availability: 'present' as const },
+        { observedAt: 10, availability: 'present' as const, power: 'running' as const },
+        { observedAt: 10, availability: 'present' as const, storage: 'retained' as const },
+    ])('uses actual reachability when a present provider omits optional facts: %j', (observation) => {
+        const present = { ...input, managed: { ...resource, observation }, machineReachable: true };
+        expect(deriveManagedWakeProjection(present)).toMatchObject({ kind: 'waiting', canResumeRuntime: true });
+        expect(deriveManagedWakeProjection({ ...present, runtimeResuming: true })).toMatchObject({ kind: 'resuming' });
+        expect(deriveManagedWakeProjection({ ...present, machineReachable: false })).toMatchObject({
+            kind: 'connecting', canResumeRuntime: false,
+        });
+        expect(deriveManagedWakeProjection({ ...present, machineReachable: null })).toMatchObject({
+            kind: 'unknown', canResumeRuntime: false,
+        });
+        expect(deriveManagedWakeProjection({ ...present, managed: { ...present.managed,
+            submittedNativeEffect: { intentRevision: 2, requestId: 'start-a', intent: 'start', controller },
+        } })).toMatchObject({ kind: 'waiting', canResumeRuntime: true });
+        expect(deriveManagedWakeProjection({ ...present, activation: {
+            status: 'failed', requestId: 'request-a', requestedAt: 10, failureCode: 'runtime_start_failed',
+        } })).toMatchObject({ kind: 'agentStartFailed', canRetryAgentStart: true });
+    });
+
     it('reads daemon readiness from Machine reachability instead of native provider observations', () => {
         const running = { ...input, machineReachable: true, managed: { ...resource,
             observation: { observedAt: 10, availability: 'present' as const, power: 'running' as const, storage: 'retained' as const } } };

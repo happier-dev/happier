@@ -55,9 +55,12 @@ export function deriveManagedWakeProjection(input: ManagedWakeProjectionInput): 
     if (!managed && !target) return null;
     const queued = pending?.source === 'server_pending' && pending.pendingDeliveryStatus === 'server_queued';
     const observation = managed?.observation;
-    const ready = observation?.availability === 'present'
-        && observation.power === 'running'
-        && observation.storage === 'retained'
+    // Providers may omit power and storage. The Machine's actual reachability
+    // owns daemon readiness; missing optional provider facts do not contradict it.
+    const canConnect = observation?.availability === 'present'
+        && (observation.power === undefined || observation.power === 'running');
+    const ready = canConnect
+        && (observation.storage === undefined || observation.storage === 'retained')
         && input.machineReachable === true;
     const base = {
         inputCustody: queued ? 'queued' as const : 'unknown' as const,
@@ -84,7 +87,7 @@ export function deriveManagedWakeProjection(input: ManagedWakeProjectionInput): 
     if (ready && input.runtimeResuming) return { ...base, kind: 'resuming' };
     // A submitted native Start outlives a failed activation until its own
     // observation advances; it cannot be unsent or retried by the queue.
-    if (managed.submittedNativeEffect?.intent === 'start' && observation?.power !== 'running') {
+    if (managed.submittedNativeEffect?.intent === 'start' && !ready && observation?.power !== 'running') {
         return { ...base, kind: 'starting' };
     }
     // An authorization is accepted input, not proof of an outstanding native
@@ -103,7 +106,7 @@ export function deriveManagedWakeProjection(input: ManagedWakeProjectionInput): 
             canRequestWake };
     }
     if (!observation) return { ...base, kind: 'unknown' };
-    if (observation.power === 'running') {
+    if (canConnect) {
         if (input.machineReachable === false) return { ...base, kind: 'connecting' };
         if (ready) return { ...base, kind: 'waiting', canResumeRuntime: activation?.status === 'waiting' };
     }
