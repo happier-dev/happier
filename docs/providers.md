@@ -994,6 +994,8 @@ Copilot writes a private temporary providers file, Droid writes private temporar
 custom-model settings referencing a child-only access-token environment value,
 and CodeBuddy supplies its native process configuration through environment
 values plus private temporary settings that override saved account headers.
+CodeBuddy's native product cache is disabled for this route because it would
+otherwise persist the access token from the merged model configuration.
 None receives a refresh token or adds a refresher, request proxy, or
 shared authentication file. Renewed access takes effect on a new process.
 Resume reachability is reported by each Agent's continuity hook; an unproven
