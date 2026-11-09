@@ -1248,8 +1248,9 @@ describe('Environment → Settings: checks, backups, previews', () => {
         { engine: 'mysql', version: '8.4', service: 'mysql', port: 3306 },
       ],
     } } });
+    const openDatabase = vi.fn();
     const { screen, controller, settle } = await renderTab('overview', detail, {}, {
-      serverId, lifetime: account.accountLifetime,
+      serverId, lifetime: account.accountLifetime, onOpenDatabase: openDatabase,
     });
     try {
       expect(await settle('project-deployments.environment.data')).not.toBeNull();
@@ -1258,6 +1259,9 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(screen.getTextContent()).toContain('MySQL');
       expect(screen.findByTestId('project-deployments.environment.data.database.database')).not.toBeNull();
       expect(screen.findByTestId('project-deployments.environment.data.database.mysql')).not.toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.environment.data.database.database');
+      await screen.pressByTestIdAsync('project-deployments.environment.data.database.mysql');
+      expect(openDatabase.mock.calls).toEqual([['database'], ['mysql']]);
       routerMock.spies.push.mockClear();
       const { Modal } = await import('@/modal');
       vi.mocked(Modal.show).mockClear();

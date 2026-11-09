@@ -779,7 +779,9 @@ it('applies admitted Project defaults and preserves Team content audience throug
         expect(bindingWrites).toBe(1);
         expect(templateWrites).toBe(kind === 'existing' ? 1 : 0);
         if (kind === 'existing') {
-            const opened = await runWithServerHttpBaseUrl('https://home.test', () => createAccountArtifactStore({ credentials })
+            const opened = await runWithServerHttpBaseUrl('https://home.test', () => createAccountArtifactStore({ credentials,
+                // This HTTP fixture authors plain Account artifacts above.
+                getAccountEncryptionMode: async () => 'plain' })
                 .read(environment.environment.contentArtifactId));
             const stored = DeploymentEnvironmentContentV1Schema.parse(JSON.parse(opened!.body!));
             expect(stored.template?.data).toEqual([{ engine: 'postgres', service: 'postgres', port: 5432 }]);

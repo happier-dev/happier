@@ -639,7 +639,7 @@ describe('Environment → Data → Database page (P9)', () => {
   it('resolves each retained database by its service after a second database was added', async () => {
     const view = await renderDatabase({ database: 'mysql' });
     try {
-      expect(await view.settle('project-deployments.database.connect')).not.toBeNull();
+      expect(await view.settle('project-deployments.database')).not.toBeNull();
       expect(view.screen.getTextContent()).toContain('MySQL');
       expect(view.screen.getTextContent()).toContain('3306');
     } finally { await view.dispose(); }
