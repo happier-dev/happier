@@ -72,6 +72,8 @@ export type HappierDocEditProposalState =
        * states the version, so one card says it once.
        */
       basedOn?: string;
+      /** A short caller-owned explanation of the scope shown in the diff. */
+      note?: string;
       reason?: string;
       footer: HappierDocEditProposalFooter;
     }>
@@ -92,7 +94,7 @@ export type HappierDocEditProposalTextProps = Readonly<{
 
 export type HappierDocEditProposalButtonProps = HappierDocEditProposalAction &
   Readonly<{
-    /** `plain`: a line's own way forward (Undo, Open document), quieter than the decision buttons. */
+    /** `plain`: a line's own way forward (Undo, Open history), quieter than the decision buttons. */
     emphasis: 'primary' | 'secondary' | 'plain';
   }>;
 
@@ -127,6 +129,9 @@ export type HappierDocEditProposalProps = Readonly<{
   space?: Readonly<Record<'s6' | 's8' | 's10' | 's12', number>>;
 }>;
 
+/** The room a status sentence keeps before its action wraps beneath it. */
+const STATUS_TEXT_BASIS = 160;
+
 /**
  * A suggested edit to a Doc passage: the before/after, why it was suggested, the version it is based
  * on, and the decision buttons for the person reading it. Shared by core and plugins. Everything here
@@ -158,27 +163,34 @@ export function HappierDocEditProposal(
     flexWrap: 'wrap',
     gap: space.s8,
   } as const;
+  // Decline and Accept stay at the end of the foot, also when a narrow margin wraps them under the status.
   const buttons = {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.s6,
+    marginLeft: 'auto',
   } as const;
-  const line = (value: HappierDocEditProposalLine, strong = false) => (
+  const line = (value: HappierDocEditProposalLine, strong = false) => {
+    // A receipt keeps its action at the end of its line (the text wraps inside itself); a status line's
+    // action drops beneath its sentence when the margin is too narrow for both.
+    const wraps = !strong && value.action !== undefined;
+    return (
     <View
       key={value.testID ?? value.text}
       testID={value.testID}
-      style={row}
+      style={wraps ? { ...row, flexWrap: 'wrap' } : row}
       accessibilityLiveRegion="polite"
     >
       <Mark mark={value.mark} tone={value.tone ?? 'neutral'} />
-      <View style={{ flex: 1, minWidth: 0 }}>
+      <View style={wraps ? { flexGrow: 1, flexShrink: 1, flexBasis: STATUS_TEXT_BASIS, minWidth: 0 } : { flex: 1, minWidth: 0 }}>
         <Text role={strong ? 'receipt' : 'line'} tone={value.tone ?? 'neutral'}>
           {value.text}
         </Text>
       </View>
       {value.action ? <Button {...value.action} emphasis="plain" /> : null}
     </View>
-  );
+    );
+  };
   const card = [{ gap: space.s10 }, props.style];
 
   if (decision.state === 'settled') {
@@ -210,6 +222,7 @@ export function HappierDocEditProposal(
         beforeLabel={props.labels.before}
         afterLabel={props.labels.after}
       />
+      {decision.note ? <Text role="meta" testID={id('note')}>{decision.note}</Text> : null}
       {reason ? (
         <View style={{ ...row, alignItems: 'flex-start' }}>
           <Mark mark="reason" tone="muted" />

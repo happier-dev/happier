@@ -119,6 +119,60 @@ it.each(['captured', 'legacy'] as const)('proposes and applies whole sentences f
 });
 
 describe('Doc collaboration Actions', () => {
+  it.each(['same-paragraph', 'accepted-undo', 'selection-changed', 'ambiguous-selection'] as const)(
+    'resolves redo from the retained selection in the current paragraph (%s)', async scenario => {
+      const sentence = 'Alex can join the early shift, which ends by two.';
+      const source = `# Plans\n\n${sentence}\n\nOther work.`;
+      const selected = 'can join the early shift';
+      const start = source.indexOf(selected);
+      const passage = captureDocPassageV1({ ref, revision, source, range: { start, end: start + selected.length } });
+      const currentRevision = { ...revision, bodyVersion: revision.bodyVersion + 2 };
+      const currentSentence = scenario === 'accepted-undo' ? sentence
+        : scenario === 'selection-changed' ? sentence.replace(selected, 'will work late').replace('two', 'three')
+          : scenario === 'ambiguous-selection' ? `${sentence.replace('two', 'three')} Alex ${selected} too.`
+            : sentence.replace('two', 'three');
+      const currentSource = source.replace(sentence, currentSentence);
+      const root = { ...rootMessage, content: { ...rootMessage.content, passage } };
+      const accepted = { ...rootMessage, id: 'accepted', seq: 2,
+        messageRef: { ...rootMessage.messageRef, messageId: 'accepted' },
+        content: { kind: 'doc_edit_proposal', proposal: {
+          target: { ref, revision, range: { start: source.indexOf(sentence), end: source.indexOf(sentence) + sentence.length }, quote: sentence },
+          baseRevision: revision, before: sentence, after: 'Alex is welcome on the morning team.', reason: '' } },
+        docEditProposalDispositionV1: { state: 'accepted', acceptedRevision: { ...revision, bodyVersion: revision.bodyVersion + 1 },
+          decidedBy: { accountId: 'reader', atMs: 2 } } };
+      let published = 0;
+      const after = currentSentence.replace(selected, 'is welcome to join the early shift');
+      const executor = createActionExecutor({
+        // Authenticated opened-resource transports are the boundaries; resolution, publication and apply stay real.
+        artifactAction: async () => ({ artifact: { ...artifact, body: currentSource, revision: currentRevision } }),
+        discussionAction: async ({ actionId, input }) => {
+          if (actionId === 'discussion.list') return { v: 1, serverId: 'home', discussions: [], nextCursor: null };
+          if (actionId === 'discussion.read') return { v: 1, serverId: 'home', discussionId: 'thread', messageSeq: 2,
+            hasMoreOlder: false, incomplete: false, messages: scenario === 'accepted-undo' ? [root, accepted] : [root] };
+          const post = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'].parse(input);
+          published++;
+          return DiscussionPostResultV1Schema.parse({ v: 1, serverId: 'home', messageSeq: 3,
+            message: { ...rootMessage, id: 'candidate', seq: 3, localId: post.localId, content: post.content,
+              replyTarget: post.replyTarget, messageRef: proposalRef } });
+        },
+      });
+      const result = await executor.execute('doc.edit.propose', { discussionRef, localId: 'redo', after }, person);
+      if (scenario === 'selection-changed' || scenario === 'ambiguous-selection') {
+        expect(result).toMatchObject({ ok: false, errorCode: 'doc_passage_mismatch' });
+        expect(published).toBe(0);
+        return;
+      }
+      expect(result).toMatchObject({ ok: true, result: { message: { content: { kind: 'doc_edit_proposal',
+        proposal: { before: currentSentence, after, baseRevision: currentRevision } } } } });
+      if (!result.ok) throw new Error('Expected a redo suggestion');
+      const content = DiscussionPostResultV1Schema.parse(result.result).message.content;
+      if (!content || !('kind' in content) || content.kind !== 'doc_edit_proposal') throw new Error('Expected a Doc suggestion');
+      expect(prepareDocEditBodyV1({ ref, revision: currentRevision, source: currentSource, proposal: content.proposal }))
+        .toBe(currentSource.replace(currentSentence, after));
+      expect(() => prepareDocEditBodyV1({ ref, revision: { ...currentRevision, bodyVersion: currentRevision.bodyVersion + 1 },
+        source: currentSource, proposal: content.proposal })).toThrow('version_mismatch');
+    });
+
   it.each(['direct', 'explicit-approval'] as const)('resolves a thread-addressed proposal before review and preserves that basis on replay (%s)', async path => {
     let stored: ApprovalRequest | undefined;
     let reads = 0;

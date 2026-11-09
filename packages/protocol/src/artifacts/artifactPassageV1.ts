@@ -60,10 +60,11 @@ export type DocPassageLocationV1 = Readonly<{ state: 'exact' | 'relocated'; rang
 export type DocPassageThreadLocationV1 = DocPassageLocationV1
   | Readonly<{ state: 'revised'; range: PassageRangeV1 }>;
 
-/** One placement basis for the margin and subsequent proposals in an existing thread. */
+/** One placement owner; new proposals may recover the retained selection after surrounding edits or Undo. */
 export function locateDocPassageThreadV1<M extends Pick<DiscussionOpenedMessageV1,
   'seq' | 'content' | 'replyTarget' | 'docEditProposalDispositionV1'>>(input: Readonly<{
     target: DocPassageRefV1; source: string; revision: ArtifactRevisionV1; messages: readonly M[];
+    purpose?: 'display' | 'propose';
   }>): Readonly<{ location: DocPassageThreadLocationV1; quote: string; quoteRevision: ArtifactRevisionV1; acceptedProposal: M | null }> {
   const anchor = selectDocPassageThreadAnchorMessageV1(input.messages);
   let acceptedProposal: M | null = null;
@@ -85,16 +86,28 @@ export function locateDocPassageThreadV1<M extends Pick<DiscussionOpenedMessageV
       const location = locateDocPassageV1({ source: input.source, revision: input.revision,
         target: { ...target, revision: disposition.acceptedRevision,
           range: { start, end: start + after.length }, quote: after } });
-      return { location: location.state === 'detached' ? location : { state: 'revised', range: location.range },
-        quote: after, quoteRevision: disposition.acceptedRevision, acceptedProposal };
+      if (location.state !== 'detached' || input.purpose !== 'propose') {
+        return { location: location.state === 'detached' ? location : { state: 'revised', range: location.range },
+          quote: after, quoteRevision: disposition.acceptedRevision, acceptedProposal };
+      }
     }
-    // An accepted deletion has no remaining range. It still replaced the original passage.
-    return { location: { state: 'detached' }, quote: after, quoteRevision: disposition.acceptedRevision, acceptedProposal };
+    // Display retains an accepted deletion's receipt even though it has no remaining range.
+    if (input.purpose !== 'propose') {
+      return { location: { state: 'detached' }, quote: after, quoteRevision: disposition.acceptedRevision, acceptedProposal };
+    }
   }
-  return { location: locateDocPassageV1(input), quote: input.target.quote, quoteRevision: input.target.revision, acceptedProposal };
+  let location = locateDocPassageV1(input);
+  if (location.state === 'detached' && input.purpose === 'propose'
+    && (input.target.revision.headerVersion !== input.revision.headerVersion
+      || input.target.revision.bodyVersion !== input.revision.bodyVersion)) {
+    // Context is a capture of the old paragraph, not part of the person's selection.
+    // The locator still refuses missing or ambiguous quotes; Accept never uses this recovery.
+    location = locateDocPassageV1({ ...input, target: { ...input.target, prefix: undefined, suffix: undefined } });
+  }
+  return { location, quote: input.target.quote, quoteRevision: input.target.revision, acceptedProposal };
 }
 
-/** Relocation is display-only and never changes the immutable acceptance basis. */
+/** Locating a passage never changes a proposal's immutable acceptance basis. */
 export function locateDocPassageV1(input: Readonly<{ target: DocPassageRefV1; source: string; revision: ArtifactRevisionV1 }>): DocPassageLocationV1 {
   const target = DocPassageRefV1Schema.parse(input.target);
   if (target.revision.headerVersion === input.revision.headerVersion && target.revision.bodyVersion === input.revision.bodyVersion) {

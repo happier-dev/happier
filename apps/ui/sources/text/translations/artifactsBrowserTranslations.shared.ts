@@ -198,6 +198,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
         someone: string;
         askRedo: string;
         redoRequest: string;
+        outsideSelection: string;
     }>;
 }>;
 
@@ -402,5 +403,6 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             someone: 'Someone',
             askRedo: 'Ask to redo',
             redoRequest: 'The document changed after your suggestion. Could you suggest it again on the current version?',
+            outsideSelection: 'Also changes text outside the selection.',
         },
     } } satisfies Pick<Record<'en' | 'fr' | 'de' | 'es' | 'it' | 'pt' | 'ca' | 'ru' | 'pl' | 'ja' | 'zh-Hans' | 'zh-Hant', ArtifactsBrowserTranslations>, "en">;

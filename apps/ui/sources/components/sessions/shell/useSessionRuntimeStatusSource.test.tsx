@@ -5,19 +5,26 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { buildUpdatedSessionFromSocketUpdate } from '@/sync/engine/sessions/syncSessions';
 import { useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { useSessionRuntimeStatusSource } from './useSessionRuntimeStatusSource';
+import type { NormalizedMessage } from '@happier-dev/session-core/raw';
+import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 afterEach(() => standardCleanup());
 
-it('settles the retained composer after Stop cancels a pending Shell permission', async () => {
+it.each(['zero', 'absent', 'retained'] as const)('settles the retained composer after Stop cancels a pending Shell permission (%s counts)', async (counts) => {
     const previous = storage.getState();
     const now = Date.now();
     const session = createSessionFixture({ id: 'stopped-permission-status', serverId: 'home',
         active: true, activeAt: now, presence: 'online', metadataLayoutVersion: 1,
         ownerMetadataView: { path: '/workspace', host: 'qa' },
         agentStateVersion: 4, updatedAt: now, thinking: true, thinkingAt: now,
-        pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: now,
+        ...(counts === 'absent' ? {} : { pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: now }),
         agentState: { requests: { shell: { tool: 'Bash', arguments: { command: 'sleep 92' }, createdAt: now } } } });
     storage.getState().applySessions([session]);
+    const pending: NormalizedMessage = { id: 'shell-message', localId: null, createdAt: now,
+        role: 'agent', isSidechain: false, content: [{ type: 'tool-call', id: 'shell', name: 'Bash',
+            input: { command: 'sleep 92', permissionId: 'shell', status: 'pending' },
+            description: null, uuid: 'shell-message', parentUUID: null }] };
+    storage.getState().applyMessages(session.id, [pending]);
     const hook = await renderHook(() => useSessionStatus(useSessionRuntimeStatusSource(session), {
         subscribeToSession: false, subscribeToTranscript: false,
     }));
@@ -28,7 +35,7 @@ it('settles the retained composer after Stop cancels a pending Shell permission'
                 updateSeq: 2, updateCreatedAt: now + 1, sessionEncryption: null,
                 updateBody: {
                     thinking: false, latestTurnStatus: 'cancelled', latestTurnStatusObservedAt: now + 1,
-                    pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, pendingRequestObservedAt: null,
+                    ...(counts === 'zero' ? { pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, pendingRequestObservedAt: null } : {}),
                     agentState: { version: 5, value: JSON.stringify({ requests: {}, completedRequests: { shell: {
                         tool: 'Bash', arguments: { command: 'sleep 92' }, createdAt: now,
                         completedAt: now + 1, status: 'canceled', decision: 'abort',
@@ -36,6 +43,9 @@ it('settles the retained composer after Stop cancels a pending Shell permission'
                 },
             });
             storage.getState().applySessions([nextSession]);
+        });
+        expect(derivePendingRequestFlagsFromSession(storage.getState().sessions[session.id]!)).toEqual({
+            hasPendingPermissionRequests: false, hasPendingUserActionRequests: false,
         });
         expect(hook.getCurrent()?.state).not.toBe('permission_required');
         expect(hook.getCurrent()?.state).not.toBe('thinking');

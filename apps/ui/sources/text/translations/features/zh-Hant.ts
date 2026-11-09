@@ -12914,6 +12914,7 @@ const sidebarFooterTranslations = { 'zh-Hant': {
         linkToService: ({ service }) => `連結到 ${service}`,
         addHomeOrSignIn: '新增 Home 或登入',
         usageNoAccounts: '連接一個帳戶即可查看其剩餘額度。',
+        usageUnavailableAccounts: ({ count }: { count: string | number }) => `${count} 個帳戶沒有用量資料`,
         usageHealthy: '所有額度都還很充裕',
         homeUnreachableTitle: ({ home }) => `無法連線 ${home}`,
         homeUnreachableBody: '它回應後，你的機器和工作階段會重新顯示在這裡。',

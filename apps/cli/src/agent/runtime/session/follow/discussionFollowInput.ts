@@ -217,8 +217,9 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
         } } : {}),
         suggestEdit: { actionId: 'doc.edit.propose', discussionRef: doc.threadRef.discussion,
           ...(attachedPassage?.prefix !== undefined && attachedPassage.suffix !== undefined
-            ? { before: docPassageEditTargetV1(attachedPassage).quote } : {}),
-          replacementScope: 'Rewrite the complete paragraph(s) in suggestEdit.before; after replaces that entire text, including unchanged words. documentPassage.quote is the person\'s highlight within it. These are the attached version, not a claim about current document text. If before is absent or the Doc changed, use doc.read and rewrite the complete current paragraph(s) containing the passage.',
+            ? { before: docPassageEditTargetV1(attachedPassage).quote,
+              beforeWithSelection: `${attachedPassage.prefix}<selected_passage>${attachedPassage.quote}</selected_passage>${attachedPassage.suffix}` } : {}),
+          replacementScope: 'Supply the complete paragraph(s) in suggestEdit.before as after, editing the selected span and keeping all text outside it verbatim unless the request asks otherwise. suggestEdit.beforeWithSelection marks the person\'s highlight with <selected_passage> tags; omit those annotation tags from after. documentPassage.quote is the selected text. after replaces the entire before verbatim. These are the attached version, not a claim about current document text. If before is absent or the Doc changed, use doc.read and apply the same selection-only edit to the complete current paragraph(s) containing the passage.',
         },
       }) });
       // Keep selected identity in the incumbent Pending metadata so dispatch

@@ -275,10 +275,13 @@ describe('web painted suggestion', () => {
     const screen = await renderScreen(<ArtifactPassageSelection artifactId="runbook" markdown={doc}
       revision={{ headerVersion: 1, bodyVersion: 1 }} margin={{
         passages: [{ id: 'sug', location: { state: 'exact', range: { start, end: start + 8 } } }],
-        focusedId: null, onFocus, onOpen, renderCard: id => <View testID={`card:${id}`} />, paint,
+        focusedId: 'sug', onFocus, onOpen, renderCard: id => <View testID={`card:${id}`} />, paint,
       }} />, { createNodeMock: () => body });
     const painted = screen.findAllHostsByTestId('artifact:passage-suggestion:sug');
     expect(painted).toHaveLength(1);
+    // Focusing the thread must not tint the entire paragraph over the word-level diff.
+    const { StyleSheet } = await import('react-native');
+    expect(StyleSheet.flatten(painted[0]!.props.style)?.backgroundColor).toBeUndefined();
     expect(screen.findAllHostsByTestId('artifact:passage-suggestion:sug.diff.removed').map(textOf).join('')).toContain('two');
     expect(screen.findAllHostsByTestId('artifact:passage-suggestion:sug.diff.added').map(textOf).join('')).toContain('one');
     // The rest of the Doc is still read as written, before and after the painted paragraph.

@@ -586,7 +586,6 @@ function WebPassageSelection(
               <PaintedSuggestion
                 segment={segment}
                 wide={wide}
-                focused={margin?.focusedId === segment.id}
                 onPress={() => activatePassageThreads([segment.id], marginRef.current, wideRef.current)}
               />
             )}
@@ -675,7 +674,6 @@ function PaintedSuggestion(props: Readonly<{
   segment: Extract<DocBodySegment, { kind: 'suggestion' }>;
   /** Beside a margin the pencil hangs in the gutter; without one (a phone) it stays inside the column. */
   wide: boolean;
-  focused: boolean;
   onPress: () => void;
 }>) {
   const { theme } = useUnistyles();
@@ -686,8 +684,7 @@ function PaintedSuggestion(props: Readonly<{
       accessibilityRole="button"
       accessibilityLabel={t('artifacts.browser.proposal.title')}
       onPress={props.onPress}
-      style={[styles.suggestion, props.wide ? null : styles.suggestionInset,
-        props.focused ? { backgroundColor: theme.colors.state.active.background } : null]}
+      style={[styles.suggestion, props.wide ? null : styles.suggestionInset]}
     >
       <View style={[styles.gutter, props.wide ? null : styles.gutterInset]} pointerEvents="none">
         <Icon name="pencil-simple" size={ICON_SIZE.sm} color={theme.colors.text.tertiary} />

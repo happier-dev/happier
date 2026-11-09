@@ -12956,6 +12956,7 @@ const sidebarFooterTranslations = { ca: {
         linkToService: ({ service }) => `Vincula amb ${service}`,
         addHomeOrSignIn: 'Afegeix una Home o inicia sessió',
         usageNoAccounts: 'Connecta un compte per veure quant li queda dels seus límits.',
+        usageUnavailableAccounts: ({ count }: { count: string | number }) => `${count} comptes sense dades d’ús`,
         usageHealthy: 'Queda marge de sobres a tots els límits',
         homeUnreachableTitle: ({ home }) => `No es pot connectar amb ${home}`,
         homeUnreachableBody: 'Les teves màquines i sessions tornaran a aparèixer aquí quan respongui.',

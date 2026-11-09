@@ -12966,6 +12966,7 @@ const sidebarFooterTranslations = { ru: {
         linkToService: ({ service }) => `Связать с ${service}`,
         addHomeOrSignIn: 'Добавить Home или войти',
         usageNoAccounts: 'Подключите аккаунт, чтобы видеть, сколько осталось от его лимитов.',
+        usageUnavailableAccounts: ({ count }: { count: string | number }) => `Аккаунтов без данных об использовании: ${count}`,
         usageHealthy: 'Во всех лимитах ещё много запаса',
         homeUnreachableTitle: ({ home }) => `Не удаётся подключиться к ${home}`,
         homeUnreachableBody: 'Ваши машины и сессии снова появятся здесь, когда он ответит.',

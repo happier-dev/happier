@@ -207,8 +207,7 @@ installation signs the leaf input using existing custody; replay resolves the
 admitted Run and invocation without admitting the original principal again.
 Ordinary origins still require the root request ID, and protected original
 envelopes retain exact digest, target and runtime-demand binding.
-A forwarded child keeps its receiving Machine's proof, and
-open-ended terminal access keeps `verifyMachineAuthorityCurrent`.
+A forwarded child keeps its receiving Machine's proof.
 
 The unreleased Files & Editor work adds workspace replace preview/apply and SCM
 blame intents through this same catalog. Preview and blame are safe reads;
@@ -9998,12 +9997,19 @@ comment (including an explicit reattachment), then reads the current Doc through
 `doc.read`. The shared passage owner places both the margin and the next proposal
 on an accepted suggestion's replacement, including unambiguous relocation in later
 revisions using the original quote-placement rule. A later explicit reattachment
-takes precedence over an older acceptance; otherwise the anchor quote is located
-unambiguously. This is development source behavior. The passage owner expands
+takes precedence over an older acceptance. When preparing a new suggestion,
+changed paragraph context does not detach an unchanged, unambiguous selection;
+after Undo removes an accepted replacement, the retained selection can locate
+the current paragraph again. Historical margin receipts keep their accepted quote.
+This is development source behavior. The passage owner expands
 the located highlight to its complete containing paragraph(s), then the adapter
 binds that text, range and full revision before approval. A missing or ambiguous
 passage returns `doc_passage_mismatch`. `after` replaces the entire paragraph span
-verbatim; the original comment keeps its selected quote and offsets. Approval replay keeps that reviewed basis
+verbatim; the original comment keeps its selected quote and offsets. Tool guidance
+marks the selected span within the paragraph and asks the agent to preserve all
+other text verbatim unless the person requests otherwise. The preview tints changed
+words and notes changes outside the selection when that original span can be located
+in the reviewed text. Approval replay keeps that reviewed basis
 without another anchor or Doc read. The explicit `target`, `baseRevision` and
 `before` form remains supported and retains its authored basis. Acceptance still
 checks the exact reviewed revision and quote.

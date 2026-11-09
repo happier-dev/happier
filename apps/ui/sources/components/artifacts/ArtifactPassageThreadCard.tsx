@@ -26,6 +26,7 @@ import { readDocPassageThreadQuote, type DocPassageMarginThread } from './docPas
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { artifactViewRoute } from './artifactBrowserModel';
+import { docProposalSelections } from './docProposalSelection';
 
 /**
  * One passage thread beside its passage in the Doc (C5 lab K1-A/R/ST): the passage it is about, the
@@ -95,6 +96,7 @@ export function ArtifactPassageThreadCard(
     () => [root, ...thread.replies],
     [root, thread.replies],
   );
+  const proposalSelections = React.useMemo(() => docProposalSelections(speakerMessages), [speakerMessages]);
   const speakerSessionIds = React.useMemo(
     () => [
       ...new Set(
@@ -318,6 +320,7 @@ export function ArtifactPassageThreadCard(
           docRead={props.docRead}
           proposalRef={thread.proposal.messageRef ?? null}
           proposal={proposalContent}
+          selectedPassage={proposalSelections.get(thread.proposal.id)}
           disposition={thread.proposal.docEditProposalDispositionV1}
           viewerAccountId={props.viewerAccountId}
           resolveAccountLabel={resolveAccountLabel}

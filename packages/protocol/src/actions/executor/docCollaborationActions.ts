@@ -157,7 +157,7 @@ export async function prepareDocEditProposalInputV1(input: unknown, context: Act
   const { artifact } = DocReadResultV1Schema.parse(read.result);
   if (typeof artifact.body !== 'string') return refuse('content_unavailable');
   const { location } = locateDocPassageThreadV1({ target: passage, source: artifact.body,
-    revision: artifact.revision, messages });
+    revision: artifact.revision, messages, purpose: 'propose' });
   if (location.state === 'detached') return refuse('doc_passage_mismatch');
   const target = docPassageEditTargetV1(captureDocPassageV1({ ref, revision: artifact.revision,
     source: artifact.body, range: location.range }));

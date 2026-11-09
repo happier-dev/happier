@@ -989,15 +989,20 @@ export function createDiscussionRepository(options: Readonly<{
         return pending;
     };
 
-    const refreshDiscussion = async (discussionId: string, signal?: AbortSignal): Promise<void> => {
+    const refreshDiscussion = async (discussionId: string, signal?: AbortSignal, demand?: Readonly<{ includeFirstMessage?: boolean }>): Promise<void> => {
         if (!await refreshSummary(discussionId, signal)) return;
         await refreshMessages(discussionId, signal);
+        const thread = snapshot.threads[discussionId];
+        if (demand?.includeFirstMessage && (thread?.status === 'ready' || thread?.status === 'locked')
+            && !thread.messages.some(message => message.seq === 1)) {
+            await readMessagePage(discussionId, { afterSeq: 0 }, signal);
+        }
     };
 
-    /** Exact-message demand shares the same withdrawal owner as ordinary history. */
-    const readExactMessage = async (discussionId: string, messageId: string, signal?: AbortSignal): Promise<DiscussionOpenedMessageV1 | null> => {
+    /** Isolated message demand shares the history owner without moving its paging cursors. */
+    const readMessagePage = async (discussionId: string, query: Parameters<DiscussionRepositoryClient['read']>[1], signal?: AbortSignal): Promise<readonly DiscussionOpenedMessageV1[] | null> => {
         const operationEpoch = captureOperation(discussionId);
-        const outcome = await client.read(discussionId, { messageId }, signal);
+        const outcome = await client.read(discussionId, query, signal);
         if (!isCurrentOperation(operationEpoch)) return null;
         const current = snapshot.threads[discussionId] ?? emptyThread();
         if (outcome.kind !== 'succeeded') {
@@ -1008,10 +1013,17 @@ export function createDiscussionRepository(options: Readonly<{
         }
         const messages = mergeDiscussionMessages(current.messages, outcome.value.messages);
         const incomplete = messages.some(row => row.content === null);
-        updateThread(discussionId, { ...current, messages, messageSeq: Math.max(current.messageSeq, outcome.value.messageSeq),
+        const root = outcome.value.messages.find(message => message.seq === 1);
+        const summary = root && current.summary ? { ...current.summary, firstMessage: root } : current.summary;
+        updateThread(discussionId, { ...current, summary, messages, messageSeq: Math.max(current.messageSeq, outcome.value.messageSeq),
             status: incomplete ? 'locked' : 'ready', errorCode: null, incomplete });
-        return outcome.value.messages.some(row => row.id === messageId)
-            ? messages.find(row => row.id === messageId && row.content !== null) ?? null : null;
+        return outcome.value.messages;
+    };
+
+    const readExactMessage = async (discussionId: string, messageId: string, signal?: AbortSignal): Promise<DiscussionOpenedMessageV1 | null> => {
+        const messages = await readMessagePage(discussionId, { messageId }, signal);
+        return messages?.some(row => row.id === messageId)
+            ? snapshot.threads[discussionId]?.messages.find(row => row.id === messageId && row.content !== null) ?? null : null;
     };
 
     const loadOlderMessages = async (discussionId: string, signal?: AbortSignal): Promise<void> => {

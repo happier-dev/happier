@@ -12919,6 +12919,7 @@ const sidebarFooterTranslations = { ja: {
         linkToService: ({ service }) => `${service} にリンク`,
         addHomeOrSignIn: 'Home を追加またはサインイン',
         usageNoAccounts: 'アカウントを接続すると、上限の残りを確認できます。',
+        usageUnavailableAccounts: ({ count }: { count: string | number }) => `使用量データのないアカウント ${count} 件`,
         usageHealthy: 'すべての上限に十分な余裕があります',
         homeUnreachableTitle: ({ home }) => `${home} に接続できません`,
         homeUnreachableBody: '応答があり次第、マシンとセッションがここに再び表示されます。',

@@ -39,6 +39,7 @@ import { buildApprovalExecutionOriginV1 } from '@happier-dev/protocol/actions/ac
 import { buildApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { SavedSecretCatalogEntryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import type { SavedSecretPickerModal } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
 import { projectTargetActionApprovalInvocationV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -258,6 +259,25 @@ function createApprovalArtifact(serverId?: string) {
   };
 }
 
+async function prepareComputerAgentFixture() {
+  await prepareApprovalFixture();
+  const session = storage.getState().sessions['session-1'];
+  if (!session?.metadata) throw new Error('Expected the Computer caller Session');
+  installSessionActionFixture({ homes, storage, serverId: account.serverId,
+    session: { ...session, metadata: { ...session.metadata, machineId: 'machine-2' } } });
+  await answerExternalActionAccountForHome(homes, account.serverId, {
+    actionId: 'computer.target.get', machineId: 'machine-2', installationId: 'computer-installation', tokenEpoch: 0,
+    execute: (_input, context) => {
+      expect(context.invocation).toMatchObject({ surface: 'agent', authority: 'account_automation',
+        caller: { kind: 'host' }, defaultSessionId: 'session-1' });
+      return { consentGranted: false, sourceId: 'computer:1',
+        selectedTarget: { kind: 'window', displayId: ':77', pid: 123, windowId: 456 },
+        approvalDisplay: { machineDisplayName: 'Workstation one', requiresTargetSelection: false,
+          target: { kind: 'window', title: 'Sign in to Lumen' } } };
+    },
+  });
+}
+
 async function createBuiltInApprovalArtifact(
   input: Readonly<{
     actionId: ApprovalRequestV2['actionId'];
@@ -271,6 +291,7 @@ async function createBuiltInApprovalArtifact(
   }>,
 ) {
   await prepareApprovalFixture();
+  if (input.actionId === 'computer.input' || input.actionId === 'computer.capture') await prepareComputerAgentFixture();
   let sourceContext: Pick<ActionExecutorContext, 'defaultSessionId' | 'defaultSessionMachineId'> = {};
   if (input.sourceSessionId) {
     const { readDisplayMachineIdForSession } = await import('@/sync/ops/sessionMachineTarget');
@@ -280,19 +301,6 @@ async function createBuiltInApprovalArtifact(
       sessionId: sourceSession.id, metadata: sourceSession.metadata });
     sourceContext = { defaultSessionId: sourceSession.id,
       ...(machineId ? { defaultSessionMachineId: machineId } : {}) };
-  }
-  if (input.actionId === 'computer.input') {
-    await answerExternalActionAccountForHome(homes, account.serverId, {
-      actionId: 'computer.target.get', machineId: 'machine-2', installationId: 'computer-installation', tokenEpoch: 1,
-      execute: (_input, context) => {
-        expect(context.invocation).toMatchObject({ surface: 'agent', authority: 'account_automation',
-          caller: { kind: 'session', sessionId: 'session-1' }, defaultSessionId: 'session-1' });
-        return { consentGranted: false, sourceId: 'computer:1',
-          selectedTarget: { kind: 'window', displayId: ':77', pid: 123, windowId: 456 },
-          approvalDisplay: { machineDisplayName: 'Workstation one', requiresTargetSelection: false,
-            target: { kind: 'window', title: 'Sign in to Lumen' } } };
-      },
-    });
   }
   const producedId = await createAgentApprovalRequest({ serverId: account.serverId,
     actionId: input.actionId, actionInput: input.actionArgs, actionRequestId: 'request-built-in-1',
@@ -1078,6 +1086,16 @@ await import('@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker'
 describe('ApprovalDetailScreen', () => {
   it('opens the shared Saved Secret picker before consenting to a pending Environment binding', async () => {
     await prepareApprovalFixture();
+    const selected = { ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 3 };
+    const selectedName = 'Application API credential';
+    const { applySavedSecretCatalogPage } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+    applySavedSecretCatalogPage({
+      scope: { serverId: resolveServerProfileScopeIdForIdentifier(account.serverId), accountId: 'account-1' },
+      observedAt: 1,
+      entries: [SavedSecretCatalogEntryV1Schema.parse({ ref: selected.ref, name: selectedName,
+        source: 'shared_resource', relationship: 'recipient', kind: 'apiKey', revision: selected.resourceRevision,
+        materialStatus: 'ready', capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } })],
+    });
     const actionArgs = { serverId: account.serverId, environmentId: 'environment', expectedRevision: 7,
       set: [{ purpose: 'variable', name: 'API_TOKEN', phase: 'runtime',
         source: { kind: 'secret', ref: 'person_selects' } }], remove: [] };
@@ -1094,9 +1112,9 @@ describe('ApprovalDetailScreen', () => {
     expect(modal).toMatchObject({ props: { referenceSelection: { onSelect: expect.any(Function) } } });
     const pickerProps = modal.props;
     if (!pickerProps || !('referenceSelection' in pickerProps)) throw new Error('Expected Saved Secret reference selection');
-    const selected = { ref: formatSharedSavedSecretRefV1('credential'), resourceRevision: 3 };
     await act(async () => { pickerProps.referenceSelection.onSelect(selected); await choosing; });
-    await vi.waitFor(() => expect(readRenderedText(screen)).toContain(selected.ref));
+    await vi.waitFor(() => expect(readRenderedText(screen)).toContain(selectedName));
+    expect(readRenderedText(screen)).not.toContain(selected.ref);
     expect(artifactWrites()).toEqual([]);
     expect(clientExecutionEffects()).toEqual([]);
     expect(homes.requestsFor('/v1/deployments/environments/environment/bindings')).toEqual([]);
@@ -1105,17 +1123,61 @@ describe('ApprovalDetailScreen', () => {
   it('reviews a document suggestion as its before and after instead of raw operands', async () => {
     await prepareApprovalFixture();
     const revision = { headerVersion: 1, bodyVersion: 1 };
+    const { captureDocPassageV1, docPassageEditTargetV1 } = await import('@happier-dev/protocol/artifacts/artifactPassageV1');
+    const { deriveDocCommentDiscussionCreationLocalIdV1 } = await import('@happier-dev/protocol/artifacts/artifactCollaborationActionsV1');
+    const { answerDiscussionThreadForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const { createDiscussionClient } = await import('@/sync/api/discussions/discussionActions');
+    const before = 'Alex has agreed to join the early shift, which ends by two.';
+    const { createAccountArtifactStoredEnvelope } = await import('@/sync/domains/artifacts/accountArtifactEnvelope');
+    const envelope = await createAccountArtifactStoredEnvelope({ mode: 'plain', header: { kind: 'artifact.legacy', title: 'Opening hours' }, body: { body: before } });
+    if (!envelope) throw new Error('Expected the Plain Artifact codec');
+    const quote = 'join the early shift';
+    const start = before.indexOf(quote);
+    const passage = captureDocPassageV1({ ref: { kind: 'doc', artifactId: 'doc-private', serverId: account.serverId }, revision,
+      source: before, range: { start, end: start + quote.length } });
     currentArtifact = await createBuiltInApprovalArtifact({ actionId: 'doc.edit.propose', summary: 'Propose a document edit',
       actionArgs: {
-        target: { ref: { kind: 'doc', artifactId: 'doc-private', serverId: account.serverId }, revision,
-          range: { start: 0, end: 8 }, quote: 'Old text' },
-        baseRevision: revision, before: 'Old text', after: 'Revised passage', reason: 'Clarify the opening hours',
-        discussionRef: { serverId: account.serverId, discussionId: 'thread-private' }, localId: 'suggestion-private',
+        target: docPassageEditTargetV1(passage),
+        baseRevision: revision, before, after: 'Alex has agreed to help with the morning shift, which ends by three.', reason: 'Clarify the opening hours',
+        discussionRef: { serverId: account.serverId, discussionId: 'committed-thread' }, localId: 'suggestion-private',
       } });
+    // The approval producer retires its source fixture. Install the receiver's Doc and thread afterwards.
+    await prepareApprovalFixture();
+    homes.artifacts(account.serverId).replaceStoredRow({ ...envelope, id: 'doc-private', encryptionMode: 'plain', ownerAccountId: 'account-1',
+      access: 'owner', publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+    const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol/features/serverEnabledBit');
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const features = createRootLayoutFeaturesResponse();
+    tryWriteServerEnabledBitInPlace(features, 'sharing.session', true);
+    tryWriteServerEnabledBitInPlace(features, 'sessions.conversations', true);
+    homes.answer(account.serverId, '/v1/features', { body: features });
+    homes.answer(account.serverId, '/v1/features/authenticated', { body: features });
+    primeServerFeaturesSnapshot({ serverId: account.serverId, snapshot: { status: 'ready', features } });
+    const network = answerDiscussionThreadForTests(homes, account.serverId, { accountId: 'account-1', loseCreate: false, loseFirstRejoin: false });
+    const client = createDiscussionClient({ scope: { serverId: account.serverId, accountId: 'account-1' }, availability: 'available' });
+    const created = await client.create({ title: 'Opening hours',
+      creationLocalId: deriveDocCommentDiscussionCreationLocalIdV1({ ref: passage.ref, localId: 'opening-root' }), messageLocalId: 'opening-root',
+      anchor: { kind: 'doc', doc: { ref: passage.ref, revision } }, replyTarget: { kind: 'doc_passage', doc: { ref: passage.ref, revision } },
+      content: { kind: 'doc_passage_comment', passage, content: { v: 1, parts: [{ t: 'text', text: 'Make this warmer.' }] } } });
+    expect(created, JSON.stringify(created)).toMatchObject({ kind: 'succeeded' });
+    const thread = network.stored()!;
+    // The ordinary tail omits the original selection; the approval must request its thread's first page.
+    const tail = { ...thread.firstMessage, id: 'tail-message', seq: 101,
+      replyTarget: { kind: 'message' as const, messageId: thread.firstMessage.id } };
+    let firstPageReads = 0;
+    homes.answer(account.serverId, 'GET /v1/discussions/committed-thread/messages', { select: (_input, request) => {
+      const first = new URL(request.url).searchParams.get('afterSeq') === '0';
+      if (first) firstPageReads += 1;
+      return { body: { messages: first ? [thread.firstMessage] : [tail], hasMoreOlder: !first, messageSeq: 101 } };
+    } });
     const screen = await renderScreen(<approvalDetailScreenModule.ApprovalDetailScreen artifactId="artifact-1" />);
     await vi.waitFor(() => expect(screen.findByTestId('approvals.doc-edit-proposal.diff')).not.toBeNull());
     expect(readRenderedText(screen)).toContain('Clarify the opening hours');
-    expect(readRenderedText(screen)).toContain('Revised passage');
+    expect(readRenderedText(screen)).toContain('morning shift');
+    await vi.waitFor(() => expect(screen.findByTestId('approvals.doc-edit-proposal.note')).not.toBeNull());
+    expect(firstPageReads).toBe(1);
+    expect(homes.requests.filter(request => request.method === 'GET'
+      && new URL(request.path, 'https://fixture.test').pathname === '/v1/discussions')).toHaveLength(0);
     expect(readRenderedText(screen)).not.toContain('suggestion-private');
     expect(screen.findByTestId('approvals.approve')).not.toBeNull();
   });
@@ -2498,6 +2560,18 @@ describe('ApprovalDetailScreen', () => {
     ).toHaveLength(1);
   });
 
+  it('resolves an agent Computer target through Account Actions with automation authority and Session context intact', async () => {
+    await prepareComputerAgentFixture();
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const result = await createDefaultActionExecutor().execute('computer.target.get', { machineId: 'machine-2' }, {
+      serverId: account.serverId, surface: 'agent', authority: 'account_automation',
+      actionCaller: { kind: 'host' },
+      defaultSessionId: 'session-1', defaultSessionMachineId: 'machine-2', actionRequestId: 'computer-agent-target',
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { sourceId: 'computer:1',
+      selectedTarget: { kind: 'window', displayId: ':77', pid: 123, windowId: 456 } } });
+  });
+
   it('says what a computer input sends, and where, from the computer owner’s display facts', async () => {
     currentArtifact = await createBuiltInApprovalArtifact({
       actionId: 'computer.input',
@@ -2524,16 +2598,16 @@ describe('ApprovalDetailScreen', () => {
     expect(screen.findByTestId('approvals.computer-action')).not.toBeNull();
     expect(ApprovalRequestV2Schema.parse(JSON.parse(currentArtifact.body)).executionOriginV1).toMatchObject({
       actionId: 'computer.input', authority: 'account_automation', surface: 'agent',
-      caller: { kind: 'session', sessionId: 'session-1' },
+      caller: { kind: 'host' }, target: { kind: 'machine', machineId: 'machine-2' },
     });
     const text = readRenderedText(screen);
-    expect(text).toContain('computerUse.approval.act.type');
     expect(text).toContain('ana@lumen.dev');
     // This suite's `t` drops params, so read what the page handed the card.
     const card = screen.tree.root.findAll(
       (node) => node.props?.presentation?.machineName === 'Workstation one',
     );
     expect(card.length).toBeGreaterThan(0);
+    expect(card[0]!.props.presentation.act).toBe('type');
     expect(card[0]!.props.presentation.target).toEqual({
       kind: 'window',
       title: 'Sign in to Lumen',
@@ -2562,6 +2636,31 @@ describe('ApprovalDetailScreen', () => {
     expect(screen.findByTestId('approvals.fields-table')).toBeNull();
     // Nor does the Action's agent-facing description lead the request.
     expect(screen.findByTestId('approvals.preview')).toBeNull();
+  });
+
+  it('shows the picture an executed capture produced, on the page that says it ran', async () => {
+    currentArtifact = await createBuiltInApprovalArtifact({
+      actionId: 'computer.capture',
+      sourceSessionId: 'session-1',
+      actionArgs: { machineId: 'machine-2' },
+      summary: 'Capture computer target',
+      preview: { computerApprovalDisplay: {
+        machineDisplayName: 'Workstation one', requiresTargetSelection: false, target: { kind: 'display', title: 'primary' },
+      } },
+      executedResult: {
+        target: { kind: 'display', displayId: ':0' }, sourceId: 'computer:1', provider: 'agent-desktop', status: 'captured',
+        captureId: 'capture_1',
+        geometry: { captureWidth: 1280, captureHeight: 1024, nativeWidth: 1280, nativeHeight: 1024, originX: 0, originY: 0, scaleX: 1, scaleY: 1,
+          crop: { x: 0, y: 0, width: 1280, height: 1024 } },
+        media: { mediaId: 'media_1', mediaKind: 'image', width: 1280, height: 1024, sizeBytes: 21353,
+          file: { sessionId: 'session-1', storage: 'session', path: '.happier/media/capture.png', sha256: 'a'.repeat(64), mimeType: 'image/png' } },
+      },
+    });
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
+    expect(screen.findByTestId('approvals.computer-action')).not.toBeNull();
+    expect(screen.tree.root.findAll((node) => typeof node.props?.testID === 'string'
+      && node.props.testID.startsWith('approvals.computer-action-crop')).length).toBeGreaterThan(0);
   });
 
   it('keeps a settled Computer ask to its card, without a second facts list of raw operands', async () => {

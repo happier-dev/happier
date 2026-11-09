@@ -11,12 +11,18 @@ import {
   type HappierDocEditProposalTone,
 } from '@happier-dev/plugin-ui/components';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { DocEditProposalV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
+import type { DocEditProposalV1, DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
+import type { DocEditProposeResolvedInputV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import type { DocEditProposalDispositionV1 } from '@happier-dev/protocol/discussions/models';
 import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { buildMentionRefForKindV1, MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { buildDiscussionAccountMentionPayload } from '@/components/discussions/discussionComposerDocument';
+import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
+import { createDiscussionClient } from '@/sync/api/discussions/discussionActions';
+import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { getDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
+import { useDiscussionComposerSnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
@@ -38,6 +44,7 @@ import { publishPresentationNotice } from '@/components/sessions/presentation/pr
 import { readViewportClass } from '@/utils/platform/useViewportClass';
 import { readArtifactActionFailure, type ArtifactActionFailure, type ArtifactActionsClient } from './artifactActionsClient';
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
+import { docProposalChangesOutsideSelection, readDocProposalSelection } from './docProposalSelection';
 import {
   admitDocEditOperation, docEditOperationKey, holdDocEditApproval, readDocEditOperation, releaseDocEditOperation,
   useDocEditOperation, type DocEditOperationKind,
@@ -167,6 +174,7 @@ type ArtifactEditProposalProps = Readonly<{
     /** The committed proposal message; `null` while the post is still local. */
     proposalRef: DiscussionMessageRefV1 | null;
     proposal: DocEditProposalV1;
+    selectedPassage?: DocPassageRefV1;
     disposition: DocEditProposalDispositionV1 | undefined;
     viewerAccountId: string | null;
     resolveAccountLabel: (accountId: string) => string | null;
@@ -425,6 +433,8 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
         ? t('artifacts.browser.proposal.titleBy', { who: proposer.label })
         : t('artifacts.browser.proposal.title'),
       basedOn: t('artifacts.browser.proposal.basedOn', { n: base.bodyVersion }),
+      note: docProposalChangesOutsideSelection(proposal, props.selectedPassage)
+        ? t('artifacts.browser.proposal.outsideSelection') : undefined,
       reason: proposal.reason,
     };
     // A decision waiting on its approval is the whole story: one request, led to by Review.
@@ -513,7 +523,42 @@ export type ProposalAuthor = Readonly<{
 }>;
 
 /** Review the immutable suggestion before posting it; the approval owns Post / Deny. */
-export function ArtifactEditProposalReview(props: Readonly<{ proposal: DocEditProposalV1; testID: string }>): React.ReactElement {
+type ProposalReviewProps = Readonly<{ proposal: DocEditProposalV1 & Partial<Pick<DocEditProposeResolvedInputV1, 'discussionRef'>>; testID: string }>;
+
+export function ArtifactEditProposalReview(props: ProposalReviewProps): React.ReactElement {
+  return props.proposal.discussionRef
+    ? <ConnectedProposalReview {...props} discussionRef={props.proposal.discussionRef} />
+    : <ProposalReview {...props} />;
+}
+
+function ConnectedProposalReview(props: ProposalReviewProps & Readonly<{ discussionRef: DocEditProposeResolvedInputV1['discussionRef'] }>) {
+  const { binding } = useServerCredentialAccountScopeBinding(props.discussionRef.serverId);
+  const availability = useSessionCollaborationAvailability(props.discussionRef.serverId);
+  return binding && availability === 'available'
+    ? <AdmittedProposalReview {...props} binding={binding} /> : <ProposalReview {...props} />;
+}
+
+function AdmittedProposalReview(props: ProposalReviewProps & Readonly<{
+  discussionRef: DocEditProposeResolvedInputV1['discussionRef']; binding: ServerCredentialAccountScopeBinding;
+}>) {
+  const { binding } = props;
+  const discussionId = props.discussionRef.discussionId;
+  const repository = React.useMemo(() => getDiscussionRepository({
+    scope: binding.scope, address: { serverId: binding.scope.serverId }, accountLifetime: binding,
+    client: createDiscussionClient({ scope: binding.scope, availability: 'available' }),
+  }), [binding]);
+  const { thread } = useDiscussionComposerSnapshot(repository, discussionId);
+  React.useEffect(() => {
+    const controller = new AbortController();
+    const release = repository.mount({ discussionId });
+    void repository.refreshDiscussion(discussionId, controller.signal, { includeFirstMessage: true }).catch(() => {});
+    return () => { controller.abort(); release(); };
+  }, [discussionId, repository]);
+  const selectedPassage = React.useMemo(() => readDocProposalSelection(thread?.messages ?? []), [thread?.messages]);
+  return <ProposalReview {...props} selectedPassage={selectedPassage} />;
+}
+
+function ProposalReview(props: ProposalReviewProps & Readonly<{ selectedPassage?: DocPassageRefV1 }>): React.ReactElement {
   const { theme } = useUnistyles();
   return <HappierDocEditProposal
     testID={props.testID}
@@ -522,6 +567,8 @@ export function ArtifactEditProposalReview(props: Readonly<{ proposal: DocEditPr
     labels={{ before: t('artifacts.browser.proposal.before'), after: t('artifacts.browser.proposal.after') }}
     decision={{ state: 'open', title: t('artifacts.browser.proposal.title'),
       basedOn: t('artifacts.browser.proposal.basedOn', { n: props.proposal.baseRevision.bodyVersion }),
+      note: docProposalChangesOutsideSelection(props.proposal, props.selectedPassage)
+        ? t('artifacts.browser.proposal.outsideSelection') : undefined,
       reason: props.proposal.reason, footer: { kind: 'decide' } }}
     Text={ProposalText} Mark={ProposalMark} Button={ProposalButton} Diff={ProposalDiff} Spinner={ProposalSpinner}
     space={theme.space}

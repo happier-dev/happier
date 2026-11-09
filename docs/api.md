@@ -1509,7 +1509,6 @@ and never fall back to an unrestricted list. See
 [the encryption boundary](encryption.md#automation-managed-target-relationship-03-development).
 
 ### Sessions
-- `GET /v1/sessions`
 - `GET /v2/sessions/active?limit=...`
 - `GET /v2/sessions?cursor=cursor_v1_<id>&limit=...&changedSince=...`
 - `POST /v1/sessions` (create or load by `tag`)
@@ -3722,11 +3721,16 @@ approval, including any explicit reattachment. The margin and resolver share the
 passage owner: in development source, accepted replacement text stays placed in
 later revisions through the same unambiguous quote relocation as an original
 passage. A later explicit reattachment takes precedence over an older acceptance.
-Otherwise the anchor quote must be unambiguous. Missing or ambiguous passages return `doc_passage_mismatch`; approval
+For a new suggestion, an unchanged selection can relocate despite edits to its
+paragraph context, including after Undo removes an accepted replacement. Historical
+margin receipts retain their accepted quote. Missing or ambiguous selections return `doc_passage_mismatch`; approval
 replay retains the resolved basis. In development source, the passage owner expands
 a thread proposal to the complete paragraph(s) containing the highlight. `after`
 replaces that whole span verbatim. The original comment retains the selected
-quote and offsets; the preview diff shows the words that actually change.
+quote and offsets. Agent guidance preserves text outside that marked selection
+unless requested otherwise; the word diff shows every change and notes changes
+outside the selection when its original span can be located in the reviewed text.
+The replacement remains verbatim.
 Explicit passage inputs retain their authored basis, and acceptance still
 verifies the reviewed source.
 

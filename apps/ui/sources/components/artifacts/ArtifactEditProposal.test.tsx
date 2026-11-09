@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DocEditProposalV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
 import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
+import { captureDocPassageV1, docPassageEditTargetV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
 
 import { createRenderCommitCounter, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 
@@ -177,6 +178,27 @@ const admittedDocRead = (artifactId: string, revision: { headerVersion: number; 
 });
 
 describe('ArtifactEditProposal', () => {
+  it.each([false, true])('shows the complete word diff and notes only changes outside the retained selection (%s)', async outside => {
+    const before = 'Alex has agreed to join the early shift, which ends by two.';
+    const quote = 'join the early shift';
+    const start = before.indexOf(quote);
+    const selectedPassage = captureDocPassageV1({ ref: proposal.target.ref, revision: base, source: before,
+      range: { start, end: start + quote.length } });
+    const after = before.replace(quote, 'help with the morning shift').replace('two.', outside ? 'three.' : 'two.');
+    const edit = { ...proposal, target: docPassageEditTargetV1(selectedPassage), before, after };
+    const { client } = frontDoor({});
+    const screen = await renderScreen(<ArtifactEditProposal testID="scope-preview" client={client}
+      proposalRef={proposalRef} proposal={edit} selectedPassage={selectedPassage}
+      docRead={admittedDocRead('runbook', base)} disposition={undefined} viewerAccountId="alice" resolveAccountLabel={() => 'Ana'} />);
+    expect(screen.findAllHostsByTestId('scope-preview.note')).toHaveLength(outside ? 1 : 0);
+    const added = screen.findAllHostsByTestId('scope-preview.diff.added').map(node => node.children.join('')).join('');
+    expect(added).toContain('help');
+    expect(added.includes('three')).toBe(outside);
+    expect(added).not.toContain('Alex has agreed');
+    expect(screen.getTextContent()).toContain('Alex has agreed');
+    expect(edit.after).toBe(after);
+  });
+
   it.each(['accept', 'decline'] as const)('shows a newly pushed proposal immediately after acknowledging %s on the preceding proposal', async (decision) => {
     const accepted = { headerVersion: base.headerVersion, bodyVersion: base.bodyVersion + 1 };
     const decidedBy = { accountId: scope.accountId, atMs: 5 };
