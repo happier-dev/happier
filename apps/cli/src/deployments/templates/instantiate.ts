@@ -9,7 +9,8 @@ import type { ActionExecuteResult, HostReviewedChildrenPreparationV1 } from '@ha
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentDomainMutationResultV1Schema, DeploymentEnvironmentCreateResultV1Schema,
     DeploymentBindingsSetResultV1Schema, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { DeploymentTemplateInstantiateInputV1Schema, areDeploymentTemplateReviewFactsEqualV1,
+    readDeploymentTemplateDeployIntentV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFailureDetailsV1Schema,
     projectDeploymentReceiptSettlementAcceptedResultV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, registryContentRefEqualV1, RegistryFetchErrorV1 } from '@happier-dev/protocol/registries';
@@ -178,7 +179,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         await admitStoredComposeDefinition(definition);
         // Every install root reviews selected-Domain deployment before allocating its Environment.
         if (input.environment.kind === 'create' && !input.deploy && prepared.domains.length) {
-            input = { ...input, deploy: creationReview?.deploy ?? { requestKey: input.environment.requestKey } };
+            input = { ...input, deploy: creationReview?.deploy ?? readDeploymentTemplateDeployIntentV1(input) };
         }
         const name = current?.content.name ?? (input.environment.kind === 'create' ? input.environment.name : '');
         const projectOwner = input.newProject?.owner ?? source?.source.owner

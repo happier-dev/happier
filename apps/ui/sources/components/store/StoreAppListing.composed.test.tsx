@@ -251,9 +251,12 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
   };
   let receiver: ReturnType<typeof createActionExecutor> | null = null;
   const receiverOutcomes: { mode: 'preview' | 'apply'; ok: boolean; errorCode?: string; resultKind?: string }[] = [];
+  const receiverAdmissions: unknown[] = [];
   const templateBoundary = await answerExternalActionAccountForHome(homes, serverId, {
     actionId: 'deployments.templates.instantiate', machineId: 'target', installationId: 'installed', tokenEpoch: 0, failure,
     execute: async (raw, transport) => {
+      receiverAdmissions.push({ deploymentChildRoot: transport.authorization.binding.deploymentChildRoot,
+        preparation: transport.authorization.binding.deploymentPreparationAdmission });
       if (!receiver) return templateHost(raw);
       if (!('authentication' in transport.authorization.binding) || !account.serverIdentityId)
         throw new Error('Expected the actual Account-authorized Home ingress');
@@ -370,6 +373,7 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
     preparations,
     creations,
     receiverOutcomes,
+    receiverAdmissions,
     createMode,
     mode,
     dispose: () => account.dispose(),
@@ -440,12 +444,15 @@ it('installs from the person’s Store confirmation without a self-approval Arti
     await screen.pressByTestIdAsync('store.app.prepare.confirm');
     expect(homes.artifacts(serverId).list().length).toBe(0);
     expect(fixture.creations, JSON.stringify(fixture.receiverOutcomes)).toHaveLength(1);
-    // The installed host prepares the confirmed original install. An extra
-    // unconfirmed remote preview would ask the headless host for a UI review.
-    expect(fixture.receiverOutcomes).toEqual([{ mode: 'apply', ok: true, resultKind: 'applied' }]);
     expect(fixture.creations[0]).toMatchObject({ mode: 'apply',
       newProject: { name: 'Status', owner: { kind: 'account', accountId: 'owner' } },
       environment: { kind: 'create', name: 'Status page' } });
+    // The actual Home boundary must sign first-deploy intent before the receiver
+    // starts receipt-history reads, even when original UI dispatch skips preparation.
+    expect(fixture.receiverAdmissions).toEqual([{ deploymentChildRoot: true,
+      preparation: expect.objectContaining({ operation: 'template', mode: 'apply', deploy: {
+        requestKey: (fixture.creations[0]?.environment as { requestKey: string }).requestKey,
+      } }) }]);
     expect(fixture.creations[0]).not.toHaveProperty('projectSourceId');
   } finally {
     await screen.unmount();

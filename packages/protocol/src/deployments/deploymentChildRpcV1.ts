@@ -13,7 +13,7 @@ import { deploymentChildEffectActionIdForRootV1, isDeploymentDomainRemoveActionI
 import { DeploymentDomainAddInputV1Schema, DeploymentDomainAddPreparedInputV1Schema, DeploymentDomainRemoveInputV1Schema, DeploymentDomainVerifyInputV1Schema,
     DeploymentDomainPlacementV1Schema, DeploymentDomainTopologyV1Schema } from './deploymentDomainV1.js';
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
-import { DeploymentTemplateInstantiateInputV1Schema } from './deploymentTemplateInstantiationV1.js';
+import { DeploymentTemplateInstantiateInputV1Schema, readDeploymentTemplateDeployIntentV1 } from './deploymentTemplateInstantiationV1.js';
 import { DeploymentPromoteIntentInputV1Schema } from './deploymentPromoteIntentV1.js';
 import { DeploymentTeardownInputV1Schema, DeploymentTeardownActionInputV1Schema, DeploymentTeardownStepV1Schema } from './deploymentActionsV1.js';
 import { matchesDeploymentDomainPreparedInputV1,
@@ -190,13 +190,14 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     }
     if (input.rootActionId === 'deployments.templates.instantiate') {
         const original = DeploymentTemplateInstantiateInputV1Schema.safeParse(input.rootInput);
-        if (!original.success || original.data.mode !== 'apply' || !original.data.deploy || child.actionId !== 'deployments.deploy') return false;
+        if (!original.success || original.data.mode !== 'apply' || child.actionId !== 'deployments.deploy') return false;
         const template = original.data;
-        const requestKey = original.data.deploy.requestKey;
+        const deploy = readDeploymentTemplateDeployIntentV1(template);
+        if (!deploy) return false;
         return template.serverId === child.input.serverId
             && (template.environment.kind !== 'existing' || template.environment.environmentId === child.input.environmentId)
             && (template.target.kind !== 'existing' || template.target.targetLinkId === child.input.targetLinkId)
-            && child.input.requestKey === requestKey;
+            && child.input.requestKey === deploy.requestKey;
     }
     if (child.actionId === 'deployments.deploy') {
         const semantic = DeploymentDeployIntentInputV1Schema.safeParse(input.rootInput);

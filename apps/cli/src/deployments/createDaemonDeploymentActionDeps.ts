@@ -85,6 +85,7 @@ import { assertReviewedDeploymentSource } from './reviewedSource';
 import { createDaemonDeploymentChildExecutor, readDeploymentChildResult as readChildResult } from './deploymentChild';
 import { projectDeploymentTransitionOutcomeUnknownForHost, projectDeploymentTransitionResultForHost } from './deploymentTransitionResult';
 import { createDeploymentTemplateInstantiationForHost } from './templates/instantiate';
+import { readDeploymentTemplateDeployIntentV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { readDeploymentObservationForHost } from './readObservationForHost';
 import { openDeploymentReceiptForHost, readDeploymentReceiptForHost, readOwnServerDeploymentReceiptHistoryForHost } from './readReceiptForHost';
@@ -1467,7 +1468,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 // The template parent reviews its explicit deploy effect before
                 // creating the definition. It does not carry a pre-built Deploy candidate.
                 const templateDeployment = template?.success && template.data.mode === 'apply'
-                    && template.data.deploy !== undefined && template.data.deploy.requestKey === originalInput.requestKey
+                    && readDeploymentTemplateDeployIntentV1(template.data)?.requestKey === originalInput.requestKey
                     || parent?.actionId === 'deployments.environments.create'
                         && isTemplateDeploymentRoot(originalRequest.context)
                         && originalRequest.context.actionRequestId === originalInput.requestKey;

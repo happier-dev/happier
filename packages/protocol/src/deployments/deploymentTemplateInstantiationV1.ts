@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { readRecord } from '../inputs/inputRecords.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema, DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema,
   StoredAppPresetInputV1Schema, StoredAppPresetBindingsV1Schema, EnvironmentVariableBindingV1Schema, DeploymentSecretBindingSourceV1Schema,
@@ -27,6 +28,15 @@ const existingTarget = lazyZodSchema(() => z.strictObject({ kind: z.literal('exi
 const newTarget = lazyZodSchema(() => z.strictObject({ kind: z.literal('new'), installationId: id }));
 const storedPin = lazyZodSchema(() => z.strictObject({ kind: z.literal('stored'), contentRevision: revision, composeDigest: DeploymentDigestV1Schema }));
 const deploy = lazyZodSchema(() => z.strictObject({ requestKey: id }));
+
+/** Selected Domains on a new Environment include its first deploy in the root intent. */
+export function readDeploymentTemplateDeployIntentV1(input: unknown): z.infer<typeof deploy> | undefined {
+  const value = readRecord(input);
+  if (value.deploy !== undefined) return deploy.parse(value.deploy);
+  const environment = readRecord(value.environment);
+  return environment.kind === 'create' && Array.isArray(value.domainBindings) && value.domainBindings.length > 0
+    ? deploy.parse({ requestKey: environment.requestKey }) : undefined;
+}
 
 /** Reviewed audience only; generation never widens grants or accepts credential bytes. */
 export const DeploymentTemplateGeneratedSecretAudienceV1Schema = lazyZodSchema(() => z.pick(SharedSavedSecretCreateInputV1Schema,

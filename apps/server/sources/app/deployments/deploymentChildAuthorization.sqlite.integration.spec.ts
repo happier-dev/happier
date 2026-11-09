@@ -98,7 +98,7 @@ import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRp
 import { createDeploymentInTx, transitionDeploymentInTx } from './deploymentService';
 import { setDeploymentEnvironmentControllerInTx } from './deploymentControllerService';
 import { readDeploymentMachineReferencesInTx, readDeploymentReceiptInTx } from './deploymentReadService';
-import { updateDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
+import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
 import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readDeploymentReadAuthorizationInTx } from './deploymentReadAuthorization';
@@ -681,6 +681,61 @@ describe('deployment children retain their controller Action authority', () => {
                 path: `/v1/deployments/environments/${f.environment.id}/deployments?serverId=${serverId}` }));
             expect(listing.statusCode, listing.body).toBe(200);
             expect(listing.json().items.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining([f.receipt.id, history.id]));
+        }, { authentication: 'real' });
+    });
+
+    it('binds template receipt history to the deploy intent present at Home mint', async () => {
+        const f = await fixture('account', 'account', { templateRoot: true, readableEnvironment: true });
+        const { deploy, ...unprepared } = f.templateInput;
+        const actionId = 'deployments.templates.instantiate';
+        const effectActionId = 'deployments.receipts.list';
+        const spec = getActionSpec(effectActionId);
+        const transport = spec.serverTransport;
+        if (!transport) throw new Error('Receipt history requires its canonical transport');
+        const requestKey = crypto.randomUUID();
+        const createdContent = await f.content('deployment-environment.v1');
+        const created = await inTx(tx => createDeploymentEnvironmentInTx(tx, f.account.id, { serverId, requestKey,
+            projectSourceId: f.environment.projectSourceId, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: f.controller.id, ...createdContent }));
+        if (!created.ok) throw new Error(created.error);
+        const selectedDomainInput = { ...unprepared,
+            environment: { kind: 'create' as const, requestKey, name: 'Store app', protection: 'nonProduction' as const,
+                purpose: 'standard' as const, deployerMode: 'managers' as const, controllerMachineId: f.controller.id },
+            target: { kind: 'new' as const, installationId: f.member.installationId }, destination: { kind: 'stored' as const },
+            domainBindings: [{ templateDomainId: 'web', hostname: 'web.example.test' }] };
+        const cases = [{ templateInput: unprepared, environmentId: f.environment.id, admitted: false },
+            { templateInput: { ...unprepared, deploy }, environmentId: f.environment.id, admitted: true },
+            { templateInput: selectedDomainInput, environmentId: created.environmentId, admitted: true }];
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            for (const { templateInput, environmentId, admitted } of cases) {
+                const input = spec.inputSchema.parse({ serverId, environmentId });
+                const path = bindHomeDomainHttpRequestV1({ transport, inputSchema: spec.inputSchema, input }).path;
+                const envelope = { ...f.originalActionEnvelope, requestId: crypto.randomUUID(), input: templateInput };
+                const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                    accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+                    actionId, machineId: f.controller.id, target: envelope.target, requestId: envelope.requestId,
+                    deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, templateInput),
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input: templateInput });
+                const read = () => app.inject({ method: 'GET', url: path, headers: {
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(envelope.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId, target: envelope.target,
+                        installationId: f.controller.installationId, requestId: envelope.requestId,
+                        method: 'GET', path, privateKey: f.controller.keys.secretKey }),
+                } });
+                if (admitted) {
+                    const response = await read();
+                    expect(response.statusCode, response.body).toBe(200);
+                } else {
+                    await expectHttpRefusalWarning({ phase: 'effect_family', method: 'GET', path: path.split('?')[0] }, async () => {
+                        const response = await read();
+                        expect(response.statusCode, response.body).toBe(401);
+                        expect(response.json()).toEqual({ error: 'invalid_token', authorizationRefusal: 'effect_family' });
+                    }, [authorization.token]);
+                }
+            }
         }, { authentication: 'real' });
     });
 

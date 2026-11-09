@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentEnvironmentDeployerPrincipalsV1Schema } from './deploymentEnvironmentDeployerV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
+import { readDeploymentTemplateDeployIntentV1 } from './deploymentTemplateInstantiationV1.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import { DeploymentEnvironmentCopySourceV1Schema } from './deploymentEnvironmentCopyV1.js';
@@ -117,8 +118,9 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
   }
   if (actionId === 'deployments.templates.instantiate') {
     const environment = readRecord(value.environment);
+    const deploy = readDeploymentTemplateDeployIntentV1(value);
     return DeploymentPreparationAdmissionV1Schema.parse({ operation: 'template', mode: value.mode,
-      ...(value.deploy === undefined ? {} : { deploy: value.deploy }),
+      ...(deploy === undefined ? {} : { deploy }),
       ...(value.newProject ? { newProject: value.newProject } : { source: { id: value.projectSourceId } }), machineId: value.machineId, target: value.target,
       environment: environment.kind === 'existing' ? environment : {
         kind: environment.kind, requestKey: environment.requestKey, protection: environment.protection,

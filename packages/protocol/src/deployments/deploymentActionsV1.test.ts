@@ -18,6 +18,7 @@ import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateSt
 import { DeploymentChildRpcV1Schema, doesDeploymentChildInputMatchRootV1, readDeploymentChildRpcV1 } from './deploymentChildRpcV1.js';
 import { buildDeploymentPromoteInputV1 } from './promoteInput.js';
 import { projectDeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
+import { deploymentChildEffectActionIdForRootV1 } from './deploymentActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';
 import { DeploymentChildRoutingV1Schema, projectDeploymentChildRoutingV1 } from './deploymentChildRoutingV1.js';
 import { DeploymentBindingsPreparedInputV1Schema } from './deploymentActionsV1.js';
@@ -724,6 +725,34 @@ describe('deployment semantic preparation', () => {
     const prepared = { ...preparedMetadata, contentArtifactId: 'existing', contentHeaderVersion: 1, contentBodyVersion: 1 };
     expect(schema.parse(prepared)).toEqual(prepared);
     expect(resolveActionExecutionPlacementForInput(getActionSpec('deployments.environments.create'), prepared)).toBe('account');
+  });
+
+  it('admits a selected Domain first deploy before original template preparation', () => {
+    const actionId = 'deployments.templates.instantiate';
+    const input = getActionSpec(actionId).inputSchema.parse({ mode: 'apply', serverId: 'home', machineId: 'machine',
+      projectSourceId: 'source', templateRef: { sourceId: 'apps', itemId: 'web', version: '1',
+        ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+      environment: { kind: 'create', requestKey: 'install', name: 'Web', controllerMachineId: 'machine',
+        protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' },
+      target: { kind: 'new', installationId: 'installed' }, destination: { kind: 'stored' }, bindings: [],
+      domainBindings: [{ templateDomainId: 'web', hostname: 'web.example.test' }] });
+    const admission = projectDeploymentPreparationAdmissionV1(actionId, input);
+    expect(deploymentChildEffectActionIdForRootV1(actionId, admission)).toBe('deployments.deploy');
+    expect(admission).toMatchObject({ deploy: { requestKey: 'install' } });
+    expect(deploymentChildEffectActionIdForRootV1(actionId,
+      projectDeploymentPreparationAdmissionV1(actionId, { ...input, mode: 'preview' }))).toBeUndefined();
+    expect(deploymentChildEffectActionIdForRootV1(actionId,
+      projectDeploymentPreparationAdmissionV1(actionId, { ...input, domainBindings: [] }))).toBeUndefined();
+    expect(projectDeploymentPreparationAdmissionV1(actionId, { ...input, deploy: { requestKey: 'explicit' } }))
+      .toMatchObject({ deploy: { requestKey: 'explicit' } });
+    const child = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare', actionId: 'deployments.deploy',
+      machineId: 'machine', installationId: 'installed', expectedRevision: 1, expectedTargetLinkRevision: 1,
+      input: { serverId: 'home', environmentId: 'allocated-environment', targetLinkId: 'allocated-link', requestKey: 'install' } });
+    expect(doesDeploymentChildInputMatchRootV1({ rootActionId: actionId, rootInput: input, child })).toBe(true);
+    for (const rootInput of [{ ...input, mode: 'preview' }, { ...input, domainBindings: [] },
+      { ...input, deploy: { requestKey: 'other' } }, { ...input, serverId: 'foreign' }]) {
+      expect(doesDeploymentChildInputMatchRootV1({ rootActionId: actionId, rootInput, child })).toBe(false);
+    }
   });
 
   it('admits pinned opaque template intent with a read-only preview and reviewed apply', () => {
