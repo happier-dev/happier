@@ -64,14 +64,15 @@ const MainPresentation = React.memo(function MainPresentation(props: React.Compo
         const items: SystemTabItem[] = tabs.map(tab => ({ id: tab.key, title: tab.label, sfSymbol: tab.sfSymbol,
             accessibilityLabel: tab.accessibilityLabel, badge: nativeBadge(tab.badge) }));
         if (more.available) items.push({ id: 'more', title: t('common.more'), sfSymbol: 'ellipsis', action: true });
-        if (props.activeTab === 'sessions') items.push({ id: 'newSession', title: t('newSession.title'), sfSymbol: 'square.and.pencil', action: true });
-        props.onPresentation({ items, selectedId: props.activeTab, onPress: id => {
-            if (id === 'newSession' && props.activeTab === 'sessions') { newSessionPress(); return; }
+        const selectedId = props.selectedDestinationId ?? props.activeTab;
+        if (selectedId === 'sessions') items.push({ id: 'newSession', title: t('newSession.title'), sfSymbol: 'square.and.pencil', action: true });
+        props.onPresentation({ items, selectedId, onPress: id => {
+            if (id === 'newSession' && selectedId === 'sessions') { newSessionPress(); return; }
             if (id === 'more') { more.open(); return; }
             const tab = tabs.find(tab => tab.key === id);
             if (tab) props.onTabPress(tab.key);
         } });
-    }, [tabs, newSessionPress, more.available, more.open, props.activeTab, props.onTabPress, props.onPresentation]);
+    }, [tabs, newSessionPress, more.available, more.open, props.activeTab, props.selectedDestinationId, props.onTabPress, props.onPresentation]);
     return more.menu;
 });
 

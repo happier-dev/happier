@@ -21,6 +21,8 @@ export type MainAppTabBarDestinations = Readonly<{
 
 type MainAppTabBarProps = Readonly<{
     activeTab: TabType;
+    /** The page's own destination when the route names one: a tab, one kept on the bar, or none of them (in More). */
+    selectedDestinationId?: string | null;
     onTabPress: (tab: TabType) => void;
     /**
      * A sibling capsule rendered beside the pill (see `FloatingTabBarSurface`). Deliberately not a
@@ -69,7 +71,7 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     };
     return (
         <CockpitTabBar
-            activeSurface={props.activeTab}
+            activeSurface={props.selectedDestinationId ?? props.activeTab}
             barTestId="main-app-tabbar"
             tabs={tabs}
             tabTestIdPrefix="tabbar-tab-"

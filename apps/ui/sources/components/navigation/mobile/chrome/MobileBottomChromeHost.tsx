@@ -148,11 +148,12 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     // Which section or More destination owns this page: the destination catalog's one answer, plus Home,
     // which More opens from its own row outside the catalog.
     const destinationCatalog = useCompactAppDestinations();
-    const sectionPage = React.useMemo(() => {
-        if (anchorPathname === PHONE_HOME_ROUTE) return true;
-        const destination = typeof anchorPathname === 'string' ? resolveCurrentAppDestination(destinationCatalog, anchorPathname) : null;
-        return destination !== null && destination.column !== 'settings';
-    }, [anchorPathname, destinationCatalog]);
+    const routeDestination = React.useMemo(() => (typeof anchorPathname === 'string' && anchorPathname !== PHONE_HOME_ROUTE
+        ? resolveCurrentAppDestination(destinationCatalog, anchorPathname) : null), [anchorPathname, destinationCatalog]);
+    const sectionPage = anchorPathname === PHONE_HOME_ROUTE || (routeDestination !== null && routeDestination.column !== 'settings');
+    // The root route is shared by the tabs, so the remembered tab answers there; any other page is its own destination,
+    // and on one that isn't on the bar (More's Home included) no tab claims to be here.
+    const selectedDestinationId = anchorPathname === '/' ? null : routeDestination?.id ?? (sectionPage ? PHONE_HOME_ROUTE : null);
     const model = resolveMobileBottomChromeModel({
         isAuthenticated: auth.isAuthenticated,
         pathname: anchorPathname,
@@ -264,19 +265,20 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         const node: React.ReactElement<React.ComponentProps<typeof PhoneMainAppTabBar>> = (
             <PhoneMainAppTabBar
                 activeTab={tab}
+                selectedDestinationId={selectedDestinationId}
                 onTabPress={handleMainAppTabPress}
                 // Session creation belongs to the sessions surface; the other tabs keep the bar as
                 // a pure navigation control.
-                trailingAccessory={tab === 'sessions' ? <TabBarNewSessionButton /> : undefined}
+                trailingAccessory={tab === 'sessions' && (selectedDestinationId === null || selectedDestinationId === 'sessions') ? <TabBarNewSessionButton /> : undefined}
             />
         );
         return {
             key: 'mainAppTabs',
-            signature: `mainAppTabs:${tab}`,
+            signature: `mainAppTabs:${tab}:${selectedDestinationId ?? ''}`,
             node,
             systemModel: { kind: 'mainAppTabs', props: node.props },
         };
-    }, [handleMainAppTabPress]);
+    }, [handleMainAppTabPress, selectedDestinationId]);
 
     // An overlay route (`/new`, the zen modals, …) is presented OVER the current screen rather than
     // replacing it, so it should not change which bar the chrome host is showing — it simply covers
