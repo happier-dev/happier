@@ -8,7 +8,7 @@ import {
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
   MachineProvisionerOptionsResultV1Schema,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { MachineProvisionerAuthorDefinitionV1, MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDevcontainerProvider, DEVCONTAINER_PLUGIN_ID, DEVCONTAINER_PROVISIONER_ID } from './machine/provider.js';
 import { DevcontainerLaunchSchema, DevcontainerResourceSchema, DevcontainerReviewQuerySchema, DevcontainerNativeOperationSchema, DevcontainerRuntimeSchema } from './machine/schemas.js';
 import { readDevcontainerEffectReview, readDevcontainerNativeEnvironment } from './machine/effectReview.js';
@@ -25,14 +25,16 @@ class MissingDependency extends Error {
   readonly code = 'provider_unavailable';
   constructor(readonly dependencyId: 'docker' | 'podman' | 'devcontainer-cli') { super('Container prerequisite unavailable'); }
 }
-function unavailable(error: unknown) {
-  return { available: false as const, code: code(error), ...(error instanceof MissingDependency ? { prerequisites: [{
+function unavailable(error: unknown): MachineProvisionerCheckResultV1 {
+  const failure = { available: false, code: code(error) };
+  if (!(error instanceof MissingDependency)) return failure;
+  return { ...failure, prerequisites: [{
     requirement: { kind: 'managedDependency' as const, id: { pluginId: DEVCONTAINER_PLUGIN_ID, localId: error.dependencyId } },
     status: 'unavailable' as const,
     repairAction: { action: { pluginId: DEVCONTAINER_PLUGIN_ID,
       localId: error.dependencyId === devcontainerDependencyId ? 'install-cli' : 'runtime-install-docs' },
       input: error.dependencyId === devcontainerDependencyId ? {} : { runtime: error.dependencyId } },
-  }] } : {}) };
+  }] };
 }
 async function provider(context: PluginInvocationContext, selection?: NativeSelection) {
   return createDevcontainerProvider(await nativeTools(context, selection));

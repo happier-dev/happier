@@ -43,7 +43,8 @@ function quote(value: string) { return `'${value.replace(/'/gu, `'"'"'`)}'`; }
 function mountArgument(fields: readonly string[]) {
   return fields.map(value => /[,"\r\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value).join(',');
 }
-function commandFailure(result: PluginProcessResult, command: string): MachineProvisionerNativeCauseV1 {
+function commandFailure(result: PluginProcessResult,
+  command: Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }>['command']): MachineProvisionerNativeCauseV1 {
   const observed = result.termination.observed;
   const stderr = projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim();
   return { localCause: 'native_command_failed', command,
@@ -200,14 +201,14 @@ export function createDevcontainerProvider(input: Readonly<{
             const identity = output(await childExec(launch, id, ['sh', '-c', 'id -u; id -g'], undefined, false, managedMachineId)).trim().split(/\r?\n/u);
             if (identity.length !== 2 || identity.some(value => !/^\d+$/u.test(value))) fail('child_namespace_unavailable');
             const ownership = await run(input.docker, ['exec', '--user', '0', id, 'chown', `${identity[0]}:${identity[1]}`, '/workspace']);
-            if (!completed(ownership)) { nativeCause = commandFailure(ownership, 'exec'); fail('native_setup_failed'); }
+            if (!completed(ownership)) { nativeCause = commandFailure(ownership, command); fail('native_setup_failed'); }
           }
           if (source.setupScript) {
             const setup = await childExec(launch, id, ['sh', '-c', source.setupScript], undefined, false, managedMachineId);
-            if (!completed(setup)) { nativeCause = commandFailure(setup, 'exec'); fail('native_setup_failed'); }
+            if (!completed(setup)) { nativeCause = commandFailure(setup, command); fail('native_setup_failed'); }
           }
           const ready = await childExec(launch, id, ['sh', '-c', ': > "$1"', 'sh', readyPath(managedMachineId)], undefined, false, managedMachineId);
-          if (!completed(ready)) { nativeCause = commandFailure(ready, 'exec'); fail('native_setup_failed'); }
+          if (!completed(ready)) { nativeCause = commandFailure(ready, command); fail('native_setup_failed'); }
         };
         try { await prepare(); }
         catch {

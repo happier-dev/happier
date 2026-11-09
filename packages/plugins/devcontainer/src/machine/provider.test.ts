@@ -195,9 +195,9 @@ describe('Devcontainer native roles', () => {
   it.each([false, true])('never offers a reconcileable installation after failed image setup, cleanup failure %s', async cleanupFailure => {
     const h = imageNative('docker', { setup: { ...result('', 2), stderr: new TextEncoder().encode('setup failed token=private-setup-token') }, cleanupFailure });
     const reviewed = await readDevcontainerEffectReview(h.tools, { configuration: { kind: 'image', image: 'example:latest', setupScript: 'touch /workspace/prepared' } });
-    const acquired = await h.provider.acquire(reviewed.launch, 'managed-a');
+    const acquired = DEVCONTAINER_RECONCILIATION_SCHEMAS.result.parse(await h.provider.acquire(reviewed.launch, 'managed-a'));
     expect(acquired).toMatchObject({ kind: 'unknown', recovery: { reference: containerId, reason: 'native_setup_failed' },
-      nativeCause: { command: 'exec', exitCode: 2 } });
+      nativeCause: { command: 'run', exitCode: 2 } });
     expect(acquired).not.toHaveProperty('nativeOperationRef');
     expect(h.requests.find(request => request.args?.[0] === 'rm')?.args).toEqual(['rm', '--force', containerId]);
     expect(h.requests.some(request => request.args?.at(-1) === 'id -un; pwd -P')).toBe(false);

@@ -240,7 +240,7 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
   }
   const sources: Record<string, string> = { [configPath]: configSource };
   if (lockSource !== undefined) sources[lockPath] = lockSource;
-  async function dockerfile(source: unknown, base: string, title: string) {
+  const dockerfile = async (source: unknown, base: string, title: string) => {
     if (typeof source !== 'string') return;
     const path = await contained(workspaceFolder, resolve(base, source));
     const body = await optionalSource(workspaceFolder, path);
@@ -250,7 +250,7 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
     // Full source belongs to the Files view, not a retained public choice.
     // The digest binds every instruction without exposing ENV/ARG secrets or
     // inventing a second Dockerfile parser/evaluator.
-  }
+  };
   const build = record(configuration.build);
   await dockerfile(configuration.dockerFile ?? build.dockerfile, dirname(configPath), 'Dockerfile');
   add('host', 'build', 'Build context', strings([configuration.context, build.context, build.target]));
