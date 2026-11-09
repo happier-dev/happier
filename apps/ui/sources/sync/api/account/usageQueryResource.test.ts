@@ -844,6 +844,39 @@ describe('usage query captured Resource adapter', () => {
     expect(reads, 'Returning to Usage reuses its admitted work records').toBe(2);
   });
 
+  it('reuses one complete transcript conversion across work-only and Coach fact scopes', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const id = 'shared-scope-conversion';
+    const captured = await context(request => {
+      if (request.method === 'PUT' && request.path === `/v2/sessions/${id}/system-records`) return successfulUsageFactWrite(request.body);
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      const demand = input.requests[0]!;
+      return Response.json({ requests: [{ query: demand.query, sessionIds: [id] }], results: [{ sessionId: id,
+        detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, seq: 1,
+          createdAt: 0, updatedAt: 900, active: false }) } },
+        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: 900, turns: [
+          { turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 400, updatedAt: 900 },
+        ] } }, ...(demand.query.includeTranscriptEvidence ? { messageEvidence: { acceptedInputs: [{ inputId: 'steer',
+          workId: JSON.stringify([id, 'turn']), acceptedAtMs: 200, deliveryKind: 'steer', turnId: 'turn' }] }, messagesComplete: true } : {}),
+      }] } satisfies UsageSessionEvidenceResponse);
+    });
+    const work = normalizeUsageQuery({ period: { relative: 'today' }, includeCoach: false, includeQuota: false,
+      includeWorkEvidence: false, includeTranscriptEvidence: false });
+    const opened = await readUiUsageQueryBatch(captured, { queries: [work] });
+    expect(opened.results[0]?.howYouWork?.intervals?.agentTimeMs).toBe(300);
+    const coach = await readUiUsageQueryBatch(captured, { queries: [normalizeUsageQuery({ ...work, includeCoach: true,
+      includeTranscriptEvidence: true })] });
+    expect(coach.results[0]?.howYouWork?.inputs).toMatchObject({ acceptedCount: 1, steeringCount: 1 });
+    expect(coach.results[0]?.sources).toContainEqual({ source: 'how_you_work:transcripts', status: 'available' });
+    const reads = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+      .map(request => UsageSessionEvidenceRequestSchema.parse(request.body));
+    expect(reads.filter(input => input.readWorkFacts).map(input => input.workFactKinds)).toEqual([['work'], ['work', 'coach']]);
+    expect(reads.filter(input => input.requests.some(demand => demand.query.includeTranscriptEvidence)),
+      'fact scope changes do not repeat the same Session transcript conversion').toHaveLength(1);
+  });
+
   it.each(['current', 'stale', 'malformed'] as const)('uses saved compact facts without turns and falls back to summary for $0 facts', async status => {
     const id = 'compact-without-turns';
     const record = createPlainSessionCurrentProjectionRecordFixture({

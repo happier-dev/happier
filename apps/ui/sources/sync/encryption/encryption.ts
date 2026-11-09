@@ -545,6 +545,11 @@ export class Encryption {
             // Another initializer may have committed while this entry's encryptor was opening.
             // Re-read the installed reader at the synchronous commit boundary.
             const currentExisting = this.sessionEncryptions.get(entry.sessionId);
+            const currentScope = this.sessionEncryptionScopes.get(entry.sessionId);
+            if (currentExisting && this.sessionKeyFingerprints.get(entry.sessionId) === entry.fingerprint
+                && currentScope?.accountId === scope.accountId && currentScope.serverId === scope.serverId) {
+                continue;
+            }
             if (currentExisting) {
                 this.sessionReaderGenerations.set(entry.sessionId, (this.sessionReaderGenerations.get(entry.sessionId) ?? 0) + 1);
             }

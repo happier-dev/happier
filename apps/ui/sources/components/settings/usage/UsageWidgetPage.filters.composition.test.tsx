@@ -39,7 +39,7 @@ import { UsageCoachWidget } from './widgets/UsageCoachWidget';
 import { UsageWidgetPage } from './UsageWidgetPage';
 import { buildUsageRouteParams, resolveUsagePageInitialFilters } from './usageRouteParams';
 import { describeUsageWidgetSlotValue, type UsageWidgetPageScope } from './usageWidgetPageContext';
-import { USAGE_WIDGET_PRESET_IDS } from './usageWidgetPresets';
+import { USAGE_SESSION_WIDGET_PRESET_ID, USAGE_WIDGET_PRESET_IDS } from './usageWidgetPresets';
 import * as usageAnalytics from '@/sync/api/account/usageAnalytics';
 import { UsageCostFactsWidget } from './widgets/UsageCostFactsWidget';
 import { UsageRhythmWidget } from './widgets/UsageRhythmWidget';
@@ -320,7 +320,7 @@ describe('mounted Usage page scope commands', () => {
     it.each([
         { entry: 'settings', sessionId: undefined, readFails: false, pendingCommandRegistration: false },
         { entry: 'Session', sessionId: 'session-usage-parity', readFails: false, pendingCommandRegistration: false },
-        { entry: 'Session with failed document read', sessionId: 'session-usage-parity', readFails: true, pendingCommandRegistration: false },
+        { entry: 'settings with failed document read', sessionId: undefined, readFails: true, pendingCommandRegistration: false },
         { entry: 'Session with pending command registration', sessionId: 'session-usage-parity', readFails: false, pendingCommandRegistration: true },
     ])('publishes and executes view, range and scope commands from the mounted $entry Usage entry', async ({ sessionId, readFails, pendingCommandRegistration }) => {
         currentRoute.segments = sessionId ? ['(app)', 'session', '[id]', 'usage'] : ['(app)', 'settings', 'usage'];
@@ -424,8 +424,15 @@ describe('mounted Usage page scope commands', () => {
             await flushHookEffects({ cycles: 30 });
         };
         const toolbar = () => screen.findByType(UsageFilterBar).props;
-        const viewNames = screen.findByType(WidgetAreaLayoutBar).props.layouts.map((view: { name: string }) => view.name);
+        // R134 (895758270b): a Session owns one dedicated view; Account view switching belongs to settings.
+        const viewNames = sessionId ? [t('usage.sessionUsage')]
+            : screen.findByType(WidgetAreaLayoutBar).props.layouts.map((view: { name: string }) => view.name);
         expect(reader?.readCurrentUiContext()?.commands.map(command => command.title)).toEqual(expect.arrayContaining(viewNames));
+        if (sessionId) {
+            expect(screen.findAllByType(WidgetAreaLayoutBar)).toHaveLength(0);
+            expect(reader!.readCurrentUiContext()!.detail).toContain(USAGE_SESSION_WIDGET_PRESET_ID);
+            expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === t('usage.presets.costs'))).toBe(false);
+        }
         await invoke(t(getUsagePeriodDefinition('30days').translationKey));
         expect(toolbar().page.period).toBe('30days');
         expect(toolbar().page.scope.session).toBe(sessionId ?? null);
@@ -441,10 +448,12 @@ describe('mounted Usage page scope commands', () => {
         }
         await invoke(t('usage.board.page.costBasisReported'));
         expect(toolbar().page.scope.costBasis).toBe('reported');
-        holdRead = true;
-        await invoke(t('usage.presets.costs'));
-        await waitForHomeGovernance(() => expect(screen.findByType(WidgetAreaLayoutBar).props.selectedId).toBe('costs'));
-        expect(reader!.readCurrentUiContext()!.detail).toContain('costs');
+        if (!sessionId) {
+            holdRead = true;
+            await invoke(t('usage.presets.costs'));
+            await waitForHomeGovernance(() => expect(screen.findByType(WidgetAreaLayoutBar).props.selectedId).toBe('costs'));
+            expect(reader!.readCurrentUiContext()!.detail).toContain('costs');
+        }
     });
 
     it('says once, under the page chrome, that the Home cannot be reached while bodies have nothing to show', async () => {
@@ -494,8 +503,11 @@ describe('mounted Usage page scope commands', () => {
                 <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'costs', period: '7days', metric: 'cost', costMode: 'auto', focus: null }} />
             </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
         </InjectedAuthProvider>);
-        const retryFact = () => screen.findByType(PageHeader).props.meta.find((fact: { key: string }) => fact.key === 'retry');
-        await waitForHomeGovernance(() => expect(retryFact()).toBeDefined());
+        // One notice under the purpose says what failed, when, and offers the one Retry (D23): never loose facts.
+        const retryFact = () => screen.findHostByTestId('usage-page.header.retry');
+        await waitForHomeGovernance(() => expect(retryFact()).not.toBeNull());
+        expect(screen.findAllHostsByTestId('usage-page.header.failed')).toHaveLength(1);
+        expect(screen.findByType(PageHeader).props.meta, 'the notice replaces the facts line').toBeUndefined();
         const command = reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.page.retryRead'));
         expect(command, 'the visible read Retry has a mounted command').toBeDefined();
         readFails = false;
@@ -504,7 +516,7 @@ describe('mounted Usage page scope commands', () => {
                 input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true });
         });
         await waitForHomeGovernance(() => expect(screen.findAllByType(UsageCostFactsWidget)[0]?.props.slice.accounting?.totals).toEqual(totals));
-        expect(retryFact()).toBeUndefined();
+        expect(retryFact()).toBeNull();
         expect(reader!.readCurrentUiContext()!.commands.find(row => row.id === command!.id)).toBeUndefined();
     });
 
@@ -790,7 +802,7 @@ describe('mounted Usage page scope commands', () => {
         expect(coachEvidence(), 'near Coach reuses the Summary transcript admission without another request').toHaveLength(0);
     });
 
-    it.each([false, true])('acquires one private evidence cohort through the cold Today Overview entry (quota arrival: %s)', async connected => {
+    it.each([false, true])('acquires each demanded fact scope once through the cold Today Overview entry (quota arrival: %s)', async connected => {
         const nowMs = 1_710_000_000_000;
         vi.spyOn(Date, 'now').mockReturnValue(nowMs);
         const releaseEvidence = createDeferred<void>();
@@ -869,10 +881,13 @@ describe('mounted Usage page scope commands', () => {
         await flushHookEffects({ cycles: 40 });
         const demands = evidenceReads().flatMap(request => {
             const input = UsageSessionEvidenceRequestSchema.parse(request.body);
-            return input.requests.map(demand => ({ ...demand, key: getUsageSessionEvidenceDemandKey(demand.query, input.nowMs, demand.sessionIds) }));
+            return input.requests.map(demand => ({ ...demand, workFactKinds: input.workFactKinds,
+                key: getUsageSessionEvidenceDemandKey({ ...demand.query, includeCoach: input.workFactKinds?.includes('coach') }, input.nowMs, demand.sessionIds) }));
         });
-        expect(new Set(demands.map(demand => demand.key)).size, 'Overview consumers request one canonical private fact demand').toBe(1);
-        expect(evidenceReads(), 'comparison and Work projections share one actual HTTP evidence acquisition at the page entry').toHaveLength(1);
+        // b211af730f: work-only cards never acquire Coach records; mounted Coach admits its own scoped cohort.
+        expect(demands.map(demand => demand.workFactKinds)).toEqual(expect.arrayContaining([['work'], ['work', 'coach']]));
+        expect(new Set(demands.map(demand => demand.key)).size, 'each scoped demand has a distinct canonical identity').toBe(2);
+        expect(evidenceReads(), 'duplicate cards and quota arrival add no repeated acquisition within either scope').toHaveLength(2);
     });
 
     it.each(['summary', 'transcript'] as const)('projects each opaque Overview %s record before the remaining cohort arrives without publishing an incomplete cohort', async phase => {
@@ -967,10 +982,13 @@ describe('mounted Usage page scope commands', () => {
                 expect(screen.findAllByType(UsagePeriodSummaryWidget)[0]?.props.slice.howYouWork?.intervals?.agentTimeMs).toBe(600);
             });
             expect(home.httpRequests.filter(request => request.path === '/v2/sessions/read-batch')).toHaveLength(0);
-            const demands = home.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
-                .flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
+            const reads = home.httpRequests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
+                .map(request => UsageSessionEvidenceRequestSchema.parse(request.body));
+            const demands = reads.flatMap(input => input.requests);
+            expect(reads.filter(input => input.readWorkFacts).map(input => input.workFactKinds))
+                .toEqual(expect.arrayContaining([['work'], ['work', 'coach']]));
             expect(demands.filter(demand => !demand.query.includeTranscriptEvidence),
-                'visible Summary and Coach share their equivalent Session summary admission').toHaveLength(1);
+                'Summary and Coach each acquire their demanded fact scope exactly once').toHaveLength(2);
             expect(demands.filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
         } finally { releaseTail.resolve(); syncPerformanceTelemetry.configure({ enabled: false }); }
     });
@@ -1143,7 +1161,8 @@ describe('mounted Usage page scope commands', () => {
         models.mockRestore();
         // A displayed amount can change without changing the page's header,
         // cost choices, coverage or unfiltered scope inventory.
-        const headerFacts = () => screen.findByType(PageHeader).props.meta;
+        // The header says its facts as one line, or as the one notice that replaces them.
+        const headerFacts = () => screen.findByType(PageHeader).props.meta ?? screen.findByType(PageHeader).props.details;
         const beforeFacts = headerFacts();
         const beforeToolbar = screen.findByType(UsageFilterBar).props;
         shownAccounting = { ...accounting, totals: { ...totals, eventCount: 2 } };
@@ -1359,8 +1378,8 @@ describe('mounted Usage page scope commands', () => {
         await flushHookEffects({ cycles: 40 });
         const published = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'ui' } });
         expect(published).toMatchObject({ ok: true, result: { entity: { kind: 'usage_summary' } } });
-        const invoke = async (title: string) => {
-            const descriptor = reader?.readCurrentUiContext()?.commands.find(command => command.title === title);
+        const invoke = async (title: string, occurrence = 0) => {
+            const descriptor = reader?.readCurrentUiContext()?.commands.filter(command => command.title === title)[occurrence];
             expect(descriptor, `mounted command: ${title}`).toBeDefined();
             await act(async () => {
                 const result = await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
@@ -1373,6 +1392,15 @@ describe('mounted Usage page scope commands', () => {
         const chip = (field: string) => screen.findAllByType(SelectionListFilterChip)
             .find(node => node.props.filter.id === field)!.props.filter;
         const choice = (field: string, value: string) => chip(field).options.find((option: { id: string }) => option.id === value)!.label;
+        const invokeFilter = (field: string, value: string) => {
+            const options: readonly { id: string; label: string }[] = chip(field).options;
+            const index = options.findIndex(option => option.id === value);
+            expect(index, `offered filter option: ${field}/${value}`).toBeGreaterThanOrEqual(0);
+            const label = options[index]!.label;
+            // Opaque Projects share a human fallback label; each option still owns its own command.
+            const occurrence = options.slice(0, index).filter(option => option.label === label).length;
+            return invoke(`${chip(field).label}: ${label}`, occurrence);
+        };
         const snapshot = reader!.readCurrentUiContext()!;
         const toolbarTitles = ['agents', 'machines', 'projects', 'sources'].flatMap(field =>
             chip(field).options.map((option: { label: string }) => `${chip(field).label}: ${option.label}`));
@@ -1381,14 +1409,14 @@ describe('mounted Usage page scope commands', () => {
         expect(new TextEncoder().encode(JSON.stringify(snapshot)).byteLength).toBeGreaterThan(8_192);
         // Observe the query the real body consumes after platform binding and page clauses settle.
         const bodies = () => screen.findAllByType(UsagePeriodSummaryWidget).map(node => normalizeUsageQuery(node.props.query));
-        await invoke(`${chip('machines').label}: ${choice('machines', 'machine-23')}`);
+        await invokeFilter('machines', 'machine-23');
         await waitForHomeGovernance(() => expect(bodies().map(input => input.machines)).toEqual([['machine-23'], ['machine-23']]));
         await act(async () => { await chip('machines').onChange('machine-23'); });
         await flushHookEffects({ cycles: 30 });
         await act(async () => { await chip('projects').onChange('project-23'); });
         await flushHookEffects({ cycles: 30 });
         await waitForHomeGovernance(() => expect(bodies().map(input => input.projects)).toEqual([['project-23'], ['project-23']]));
-        await invoke(`${chip('projects').label}: ${choice('projects', 'project-23')}`);
+        await invokeFilter('projects', 'project-23');
         await waitForHomeGovernance(() => expect(bodies().map(input => input.projects)).toEqual([[], []]));
         // UI scope intents must obey the same Action admission as agent commands.
         const settings = getStorage().getState().settings;
@@ -1421,13 +1449,13 @@ describe('mounted Usage page scope commands', () => {
         unregister = registerCurrentUiContextActionPort(surface => createCurrentUiContextVoiceToolPort({
             reader: currentReader, invocationSurface: surface, readProjection: () => null, readNavigationBinding: () => null,
         }));
-        const oldId = await invoke(`${chip('agents').label}: ${choice('agents', 'codex')}`);
+        const oldId = await invokeFilter('agents', 'codex');
         expect(chip('agents').options.map((option: { id: string }) => option.id)).toEqual(expect.arrayContaining(['claude', 'codex', 'pi']));
         await act(async () => { await chip('agents').onChange('claude'); });
         await flushHookEffects({ cycles: 30 });
-        await invoke(`${chip('machines').label}: ${choice('machines', 'machine-a')}`);
-        await invoke(`${chip('sources').label}: ${choice('sources', 'native')}`);
-        await invoke(`${chip('projects').label}: ${choice('projects', 'project-a')}`);
+        await invokeFilter('machines', 'machine-a');
+        await invokeFilter('sources', 'native');
+        await invokeFilter('projects', 'project-a');
         // Published Actions use the page's semantic cost-basis label, not a raw
         // translation-key interpolation (API-equivalent has no usage.<id> key).
         await invoke(choice('costBasis', 'reported'));
@@ -1472,14 +1500,14 @@ describe('mounted Usage page scope commands', () => {
         await invoke(`${chip('agents').label}: ${allAgents}`);
         await waitForHomeGovernance(() => expect(bodies().map(input => input.agents)).toEqual([[], []]));
         expect(bodies().every(input => input.machines[0] === 'machine-a')).toBe(true);
-        await invoke(`${chip('agents').label}: ${choice('agents', 'pi')}`);
-        await invoke(`${chip('agents').label}: ${choice('agents', 'pi')}`);
+        await invokeFilter('agents', 'pi');
+        await invokeFilter('agents', 'pi');
         await waitForHomeGovernance(() => expect(bodies().map(input => input.agents)).toEqual([[], []]));
         const retainedCommand = await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
             input: { commandId: oldId }, context: { surface: 'ui' } });
         expect(retainedCommand).toMatchObject({ ok: true });
         await waitForHomeGovernance(() => expect(bodies().map(input => input.agents)).toEqual([['codex'], ['codex']]));
-        await invoke(`${chip('agents').label}: ${choice('agents', 'codex')}`);
+        await invokeFilter('agents', 'codex');
         await waitForHomeGovernance(() => expect(bodies().map(input => input.agents)).toEqual([[], []]));
         // The first mounted body is pinned: changing only the page period must not
         // traverse its chart, ranked, or contribution rows just to name cost bases.

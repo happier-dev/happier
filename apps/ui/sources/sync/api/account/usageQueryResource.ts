@@ -838,7 +838,8 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
     const summaryDemandKey = getUsageSessionEvidenceDemandKey(summaryQuery, nowMs);
     // Widget output flags do not override the shared window/history read policy.
     const transcriptQuery = normalizeUsageQuery({ ...query, includeTranscriptEvidence: true });
-    const transcriptDemandKey = getUsageSessionEvidenceDemandKey(transcriptQuery, nowMs);
+    // One transcript conversion produces both work and Coach records, regardless of saved-fact read scope.
+    const transcriptDemandKey = getUsageSessionEvidenceDemandKey({ ...transcriptQuery, includeCoach: true }, nowMs);
     const readTranscript = history?.readUnconverted || readsUnconvertedTranscriptsOnOpen(query);
     let updateRequired: UsageQuerySourceState['updateRequired'];
     let projectedReadFailure: SessionPartsHttpError | undefined;

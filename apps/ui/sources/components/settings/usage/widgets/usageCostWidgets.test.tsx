@@ -318,7 +318,7 @@ describe('one selected money basis across Usage bodies', () => {
       expect(points.some(point => point.y === null)).toBe(true);
       expect(slice.costFactTotals?.find(fact => fact.kind === 'unpriced')?.tokens.total).toBe(30);
       // An unavailable whole-period amount says why, never the candidate basis's "estimated where not reported".
-      const unpriced = 'Some usage has no reported cost or price';
+      const unpriced = t('usage.board.page.costUnpricedCaption');
       expect(metrics.find(metric => metric.props.testID === 'whole-summary.hero')?.props.caption).toBe(unpriced);
       expect(metrics.find(metric => metric.props.testID === 'whole-efficiency.perMtok')?.props.caption).toBe(unpriced);
     }

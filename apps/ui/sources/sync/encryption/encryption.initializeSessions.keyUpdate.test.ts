@@ -229,6 +229,24 @@ describe('Encryption.initializeSessions (key updates)', () => {
     expect(generation.getCurrentGeneration('account-a', 'server-a')).toBe(afterInitial);
   });
 
+  it('keeps overlapping consumers of the same Session key current', async () => {
+    const encryption = await Encryption.create(new Uint8Array(32).fill(1));
+    const scope = { accountId: 'account-a', serverId: 'server-a', sessionId: 'shared' };
+    const keys = new Map([['shared', new Uint8Array(32).fill(2)]]);
+    // Both real admissions reach the asynchronous crypto opener before either installs its reader.
+    const captures = await Promise.all([
+      encryption.initializeSessions(keys, scope),
+      encryption.initializeSessions(new Map([['shared', new Uint8Array(32).fill(2)]]), scope),
+    ]);
+    for (const capture of captures) {
+      expect(capture).not.toBeNull();
+      expect(encryption.isCurrentEncryptionGenerationScope(capture!)).toBe(true);
+    }
+    const reader = encryption.getSessionEncryption('shared')!;
+    const metadata = { path: '/shared', host: 'machine' };
+    expect(await reader.decryptMetadata(1, await reader.encryptMetadata(metadata))).toEqual(metadata);
+  });
+
   it('retires only the replaced reader, not the Account generation, when a session key fingerprint changes', async () => {
     const encryption = await Encryption.create(new Uint8Array(32).fill(1));
     const generation = expectGenerationReader(encryption);
