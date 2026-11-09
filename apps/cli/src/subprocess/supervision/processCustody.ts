@@ -152,15 +152,15 @@ export type ProcessCustodySamplingResult =
     | { state: 'unavailable'; reason: 'helper_missing' | 'helper_failing' };
 export type ProcessCustodySamplingExecFile = (command: string, args: readonly string[], options: Parameters<typeof execFileWithDeadline>[2]) => Promise<Readonly<{ stdout: string | Buffer; stdoutTruncated?: boolean }>>;
 
-/** Both native samplers use this invocation owner and its minute-boundary recovery rule. */
+/** Native sampling shares invocation; only periodic vitals retain minute-boundary failure pacing. */
 export function createProcessCustodySamplingInvoker(options: Readonly<{
     execFile?: ProcessCustodySamplingExecFile;
     resolveExecutable?: () => string | null;
 }> = {}): (input: ProcessCustodySamplingInput) => Promise<ProcessCustodySamplingResult> {
-    const nextAttempt = new Map<ProcessCustodySamplingInput['command'], number>();
+    let nextVitalsAttempt = 0;
     const run = options.execFile ?? execFileWithDeadline;
     return async (input) => {
-        if (input.sampledAt < (nextAttempt.get(input.command) ?? 0)) return { state: 'unavailable', reason: 'helper_failing' };
+        if (input.command === 'vitals-sample' && input.sampledAt < nextVitalsAttempt) return { state: 'unavailable', reason: 'helper_failing' };
         const executable = (options.resolveExecutable ?? resolveProcessCustodySupportExecutable)();
         if (!executable) return { state: 'unavailable', reason: 'helper_missing' };
         try {
@@ -170,10 +170,10 @@ export function createProcessCustodySamplingInvoker(options: Readonly<{
                 ...(input.command === 'process-census' ? { maxBuffer: Infinity } : {}),
             });
             if (result.stdoutTruncated) throw new Error('Native sampling output was truncated');
-            nextAttempt.delete(input.command);
+            if (input.command === 'vitals-sample') nextVitalsAttempt = 0;
             return { state: 'ready', stdout: String(result.stdout) };
         } catch {
-            nextAttempt.set(input.command, (Math.floor(input.sampledAt / 60_000) + 1) * 60_000);
+            if (input.command === 'vitals-sample') nextVitalsAttempt = (Math.floor(input.sampledAt / 60_000) + 1) * 60_000;
             return { state: 'unavailable', reason: 'helper_failing' };
         }
     };

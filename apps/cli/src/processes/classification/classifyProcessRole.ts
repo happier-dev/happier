@@ -96,7 +96,7 @@ export function classifyProcessRole(input: Readonly<{
         : SYSTEM_LISTENER_PATTERN.test(command) ? 'database'
         : /\b(?:tsc|tsgo|mypy|pyright)\b/iu.test(command) ? 'type_checker'
         : /\b(?:typescript-language-server|rust-analyzer|gopls|clangd)\b/iu.test(command) ? 'language_server'
-        : /(?:^|[\s/\\])(?:bash|zsh|sh|fish|powershell|pwsh|cmd)(?:\.exe)?(?:\s|$)/iu.test(command) ? 'tool_shell' : undefined;
+        : /(?:^|[\s/\\])(?:bash|zsh|sh|fish|powershell|pwsh|cmd|ssh|tmux)(?:\.exe)?(?:\s|$)/iu.test(command) ? 'tool_shell' : undefined;
     const driver = input.ancestors?.find(item => /\b(?:playwright|vitest|jest|pytest)\b/iu.test(item.command));
     return {
         confidence: lowSignal ? 'low' : 'medium',

@@ -34,6 +34,7 @@ import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { resolveRunnerMcpMaterialV1 } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
 import { runnerArtifactTargetForPlatform } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
+import { ProviderModelBindingSourceV1Schema } from '@happier-dev/protocol/providers/binding-compatibility';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import tweetnacl from 'tweetnacl';
 import axios from 'axios';
@@ -56,6 +57,10 @@ import {
 } from '@/plugins/testkit/samplePackage';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { encrypt } from '@/api/encryption';
+import {
+  PROVIDER_BROKER_ENDPOINT_PATH_HEADER,
+  PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH,
+} from '@/providers/broker/providerBrokerPrivateProtocol';
 // The published SDK is the creator's client here: the protected round trip is
 // only real if the same entry point an API-token consumer uses seals it.
 import { connect } from '@happier-dev/sdk';
@@ -324,7 +329,7 @@ async function installProviderAwareSamplePlugin(input: Readonly<{
       supportsNoAuth: false,
       apiKeyTransports: [{
         protocol: 'openai-responses',
-        destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['bearer'] },
+        destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
       }],
     },
     authIsolation: {
@@ -578,6 +583,12 @@ describe('production Ephemeral Runner composition under an e2ee bootstrap', () =
         : request instanceof URL
           ? request.toString()
           : request.url;
+      if (url === `http://127.0.0.1:43123${PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH}`) {
+        return new Response(null, {
+          status: 204,
+          headers: { [PROVIDER_BROKER_ENDPOINT_PATH_HEADER]: '/v1' },
+        });
+      }
       // The managed connection supervisor probes the Home's public projection
       // before it dials the Session socket, so both projections must answer or
       // the composition never reaches its Provider broker.
@@ -793,6 +804,23 @@ describe('production Ephemeral Runner composition under an e2ee bootstrap', () =
               modelId: 'gpt-5',
             },
             descriptor: { id: 'gpt-5', name: 'GPT-5' },
+            sourceFacts: ProviderModelBindingSourceV1Schema.parse({
+              endpoint: {
+                id: 'responses',
+                protocol: 'openai-responses',
+                capabilities: {
+                  streaming: 'supported', toolRoundTrips: 'supported',
+                  statefulResponses: 'unknown', reasoningControls: 'unknown',
+                },
+              },
+              credential: {
+                kind: 'apiKey', required: true, slotId: 'apiKey',
+                transports: [{
+                  id: 'bearer', protocols: ['openai-responses'], uses: ['runtime'],
+                  destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
+                }],
+              },
+            }),
             application: applicationBinding,
             sourceRevision: 'source-3',
             availability: 'available',
@@ -881,7 +909,7 @@ describe('production Ephemeral Runner composition under an e2ee bootstrap', () =
           machineId: 'machine-1',
           capabilities: expect.objectContaining({
             finiteTransferRpc: { protocolVersions: [1] },
-            sessionInputAdmission: { protocolVersions: [1, 2] },
+            sessionInputAdmission: { protocolVersions: [1, 2, PENDING_INPUT_PROTOCOL_VERSION_V3] },
             sessionFollow: { contextV1: true },
             // Published only because the composition installed the real
             // dispatch receiver; the Home dispatcher gates on exactly this.

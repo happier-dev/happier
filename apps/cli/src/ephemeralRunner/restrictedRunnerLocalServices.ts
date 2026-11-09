@@ -84,6 +84,11 @@ export function createRestrictedRunnerLocalServicesRoutes(input: Readonly<{
   };
 
   const previewRoutes: NonNullable<DaemonLocalServicesMachineRpcRoutes['localServicesPreview']> = {
+    resolveApplication: async binding => {
+      if (binding.machineId !== input.machineId || binding.sessionId !== input.sessionId
+        || binding.owner.kind !== 'session' || binding.owner.id !== input.sessionId) scopeMismatch();
+      return await input.runtime.previewRoutes.resolveApplication(binding);
+    },
     acquireNativeApplication: async () => {
       throw new PluginError({
         code: PLUGIN_SERVICE_UNAVAILABLE_CODE,

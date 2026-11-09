@@ -6,6 +6,16 @@ const TOOL_IDLE_TIMEOUTS = [{ tool: 'agent-browser', environmentKey: 'AGENT_BROW
 
 export type MachineResourcesPolicyReader = () => MachineResourcesPolicyGetResultV1;
 
+/** Carry only documented values captured at Session birth through native launch filtering. */
+export function selectToolIdleTimeoutEnvironment(
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
+  const keys = createAllowedEnvKeySet(TOOL_IDLE_TIMEOUTS.map(({ environmentKey }) => environmentKey), platform);
+  return Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] =>
+    typeof entry[1] === 'string' && isAllowedEnvKey(entry[0], keys, platform)));
+}
+
 export function buildToolIdleTimeoutEnvironmentOverlay(input: Readonly<{
   environment: NodeJS.ProcessEnv;
   policy: MachineResourcesPolicyGetResultV1;

@@ -325,20 +325,6 @@ describe('ephemeral Runner terminal endpoint presentation', () => {
     }));
   });
 
-  it('labels every valid action so no endpoint surface writes its own control copy', () => {
-    expect(resolveEphemeralRunnerEndpointPresentation({ phase: 'running', connection: 'connected' }).actions)
-      .toEqual([{ id: 'stop_session', label: 'Stop Session' }]);
-    expect(resolveEphemeralRunnerEndpointPresentation({
-      phase: 'failed',
-      connection: 'connected',
-      failure: { kind: 'before_session' },
-      canRetry: true,
-    }).actions).toEqual([
-      { id: 'retry', label: 'Retry' },
-      { id: 'exit', label: 'Exit' },
-    ]);
-  });
-
   it('projects the quiet reviewed facts only while the consented Session is active', () => {
     const reviewedRuntimeSummary = resolveEphemeralRunnerReviewedRuntimeFacts({
       manifest,

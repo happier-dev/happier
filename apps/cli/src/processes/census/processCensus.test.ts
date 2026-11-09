@@ -336,26 +336,26 @@ describe('process census', () => {
         });
         expect(await missing({ freshness: 'fresh', verifiedJobNames: [name] })).toEqual({ status: 'unavailable', reason: 'read_failed' });
     });
-    it('shares the native invocation owner minute-boundary recovery without retaining a successful table', async () => {
+    it.each(['darwin', 'win32'] as const)('retries the next requested native census after a helper failure on %s', async platform => {
         let now = 1000;
         let failing = true;
-        const reader = createProcessCensusReader({ platform: 'win32', selfPid: 42, helperExecutablePath: '/helper', now: () => now,
+        const reader = createProcessCensusReader({ platform, selfPid: 42, helperExecutablePath: '/helper', now: () => now,
             async execFile() {
                 if (failing) throw new Error('helper failed');
                 return { stdout: JSON.stringify({ v: 1, capturedAtMs: now, logicalCpus: 1, rows: [
-                    { pid: 42, ppid: 1, start: { startTimeMs: 900 }, principal: { kind: 'sid', value: 'self' }, name: 'self', memory: null, cpuTimeUs: null },
+                    { pid: 42, ppid: 1, start: { startTimeMs: 900 }, principal: { kind: platform === 'win32' ? 'sid' : 'uid', value: 'self' }, name: 'self', memory: null, cpuTimeUs: null },
                 ] }) };
             },
         });
         expect((await reader({ freshness: 'shared' })).status).toBe('unavailable');
         failing = false;
         now = 2000;
-        expect((await reader({ freshness: 'fresh' })).status).toBe('unavailable');
-        now = 60000;
-        expect((await reader({ freshness: 'fresh' })).status).toBe('ok');
-        now = 60001;
+        const recovered = await reader({ freshness: 'fresh' });
+        expect(recovered.status).toBe('ok');
+        expect(recovered.status === 'ok' && recovered.rows[0]?.start).toEqual({ startTimeMs: 900 });
+        now = 2001;
         const next = await reader({ freshness: 'shared' });
-        expect(next.status === 'ok' && next.capturedAtMs).toBe(60001);
+        expect(next.status === 'ok' && next.capturedAtMs).toBe(2001);
     });
     it('does not share pending observations across distinct verified Job names', async () => {
         let release!: () => void;
@@ -469,7 +469,7 @@ describe('process census', () => {
         } finally { diagnostics.mockRestore(); }
     });
 
-    it.each(['darwin', 'win32'] as const)('does not report native enumerations for a missing helper or its failure backoff on %s', async platform => {
+    it.each(['darwin', 'win32'] as const)('reports requested native executions while a missing helper performs no enumeration on %s', async platform => {
         const diagnostics = vi.spyOn(logger, 'debug').mockImplementation(() => {});
         let now = 1000;
         let executions = 0;
@@ -486,12 +486,12 @@ describe('process census', () => {
             expect(captures()).toHaveLength(1);
             now = 2000;
             await failing({ freshness: 'fresh' });
-            expect(executions).toBe(1);
-            expect(captures()).toHaveLength(1);
-            now = 60000;
-            await failing({ freshness: 'fresh' });
             expect(executions).toBe(2);
             expect(captures()).toHaveLength(2);
+            now = 60000;
+            await failing({ freshness: 'fresh' });
+            expect(executions).toBe(3);
+            expect(captures()).toHaveLength(3);
             expect(JSON.stringify(captures())).not.toContain('private-native-error');
         } finally { diagnostics.mockRestore(); }
     });

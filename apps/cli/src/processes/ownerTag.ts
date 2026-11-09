@@ -1,5 +1,5 @@
-import type { ProcessOwnerRefV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { createHash } from 'node:crypto';
+import type { ProcessOwnerRefV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 
 import { configuration } from '@/configuration';
 import { resolveHappierHomeDirComparableKey } from '@/daemon/ownership/happierHomeDirComparableKey';

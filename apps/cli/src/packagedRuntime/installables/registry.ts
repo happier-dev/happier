@@ -6,6 +6,7 @@ import type { AgentInstallProgressCallback } from '@happier-dev/cli-common/agent
 import { getGitHubReleaseBinaryRuntimeInstallableAdapter } from './sourceAdapters/githubReleaseBinary';
 import { getManagedPypiWheelAssetRuntimeInstallableAdapter } from './sourceAdapters/pypiWheelAsset';
 import { getPinnedArchiveRuntimeInstallableAdapter } from './sourceAdapters/pinnedArchive';
+import { getManagedJavaScriptPackageRuntimeInstallableAdapter } from './sourceAdapters/managedJavaScriptPackage';
 import { COMPUTER_CUA_DRIVER_INSTALLABLE_KEY, getComputerCuaDriverArchiveDownloadInstallableAdapter, getComputerCuaDriverRuntimeInstallableAdapter } from './sourceAdapters/computerCuaDriver';
 import { COMPUTER_AGENT_DESKTOP_INSTALLABLE_KEY, getComputerAgentDesktopArchiveDownloadInstallableAdapter, getComputerAgentDesktopRuntimeInstallableAdapter } from './sourceAdapters/computerAgentDesktop';
 import {
@@ -134,6 +135,11 @@ export async function getRuntimeInstallableAdapterForDescriptor(
     if (adapter) {
       return adapter;
     }
+  }
+
+  if (descriptor.source.kind === 'managed_package') {
+    const adapter = getManagedJavaScriptPackageRuntimeInstallableAdapter(descriptor);
+    if (adapter) return adapter;
   }
 
   throw new Error(`Installable source kind "${descriptor.source.kind}" for "${key}" is not executable by the runtime installables adapter`);

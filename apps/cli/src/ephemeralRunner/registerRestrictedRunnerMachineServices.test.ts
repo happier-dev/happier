@@ -182,7 +182,7 @@ describe('restricted Runner ordinary Machine services', () => {
     const spawned: Array<{ cwd: string | undefined; emitData: (text: string) => void; exit: () => void; killed: boolean }> = [];
     const terminal = createTerminalPtySessionManager({ env: { SHELL: '/bin/sh' },
       config: { bufferMaxBytes: 1000, bufferMaxEvents: 10,
-        bufferRetentionMs: 60_000, urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 },
+        urlParseBufferLimit: 1000, maxWriteChunkBytes: 1000, defaultCols: 80, defaultRows: 24 },
       // Only the OS PTY/process-tree boundary is replaced. Session attribution,
       // terminal lookup, output and stop settlement use the real owner.
       ptyProvider: { spawn(input) {

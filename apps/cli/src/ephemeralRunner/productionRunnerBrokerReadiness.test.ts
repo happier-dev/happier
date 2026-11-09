@@ -18,6 +18,7 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { signRunnerClaimV1 } from '@happier-dev/protocol/ephemeralRunner/endpoint';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { TeamCredentialResourceSummaryV1Schema, verifyRunnerBrokerReadinessRequestV1 } from '@happier-dev/protocol/teams';
+import { admitTeamCredentialSourceModelRowsV1 } from '@happier-dev/protocol/rpc/providers';
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -106,7 +107,7 @@ describe('production Runner broker readiness', () => {
       return { kind: 'available' as const };
     });
 
-    const result = await checkProductionRunnerBrokerReadiness({
+    const checkInput: Parameters<typeof checkProductionRunnerBrokerReadiness>[0] = {
       binding,
       claim,
       manifest: {
@@ -148,7 +149,8 @@ describe('production Runner broker readiness', () => {
       happyHomeDir: '/runner-home',
       signal: new AbortController().signal,
       transportCheck,
-    });
+    };
+    const result = await checkProductionRunnerBrokerReadiness(checkInput);
 
     expect(result.status).toBe('ready');
     if (result.status === 'ready') {
@@ -160,6 +162,13 @@ describe('production Runner broker readiness', () => {
       });
       expect(result.readiness.payload.credentialSelectionBinding).toEqual(selection);
     }
+    const reconnect = { kind: 'source_unavailable' as const, reason: 'connected_service_credential_reconnect_required' as const };
+    transportCheck.mockClear();
+    expect(await checkProductionRunnerBrokerReadiness({ ...checkInput, projection: { ...checkInput.projection, readiness: reconnect } }))
+      .toEqual({ status: 'denied', reason: reconnect.reason });
+    expect(transportCheck).not.toHaveBeenCalled();
+    expect(await checkProductionRunnerBrokerReadiness({ ...checkInput, transportCheck: async () => reconnect }))
+      .toEqual({ status: 'denied', reason: reconnect.reason });
   });
 
   it('uses a separately installed public-SDK Provider on the broker, without installing it on the Runner, and rejects revoked sources', async () => {
@@ -278,8 +287,9 @@ describe('production Runner broker readiness', () => {
         modelSettingsMutation: async (intent) => ({ status: 'success', action: intent.action }),
       });
       const source = { v: 1 as const, kind: 'provider_connection' as const, connectionId: ProviderConnectionIdSchema.parse('fixture-connection'), connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint, credentialSlotId: 'apiKey' };
-      const projected = await services.projectModels({ machineId: 'broker-machine', agentTargetKey, providerConnection: { connectionId: source.connectionId, expectedConnectionSecurityFingerprint: source.connectionSecurityFingerprint }, refreshPolicy: 'current_only', mode: 'picker' });
+      const projected = await services.projectModels({ machineId: 'broker-machine', agentTargetKey, providerConnection: { connectionId: source.connectionId, expectedConnectionSecurityFingerprint: source.connectionSecurityFingerprint }, sourceCatalog: true, refreshPolicy: 'current_only', mode: 'picker' });
       if (projected.status !== 'success') throw new Error(`Expected broker model projection: ${JSON.stringify(projected)}`);
+      expect(admitTeamCredentialSourceModelRowsV1(projected)).toMatchObject({ status: 'success' });
       const group = projected.groups[0];
       const row = group?.rows[0];
       if (!group?.sourceRevision || !row?.application || !group.sourceAuthority) throw new Error(`Expected authoritative external Provider row: ${JSON.stringify(projected)}`);
@@ -297,7 +307,7 @@ describe('production Runner broker readiness', () => {
         readResource: async () => resource,
         resolveEligibility: services.resolveTeamCredentialBrokerEligibility,
       });
-      expect(await currentness()).toBe('available');
+      expect(await currentness()).toEqual({ kind: 'available' });
       const { activation, installation, binding, claim } = createReadinessFacts();
       const checkInput = {
         binding, claim,
@@ -313,7 +323,7 @@ describe('production Runner broker readiness', () => {
         happyHomeDir: runnerHome, signal: new AbortController().signal,
         transportCheck: async (input: Parameters<NonNullable<Parameters<typeof checkProductionRunnerBrokerReadiness>[0]['transportCheck']>>[0]) => {
           input.createRequest('c'.repeat(64));
-          return { kind: await currentness() };
+          return await currentness();
         },
       };
       const readiness = await checkProductionRunnerBrokerReadiness(checkInput);

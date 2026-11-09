@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,12 @@ import {
   prepareSourceDevSharedDepsForBundledPluginRuntimeLoad,
   prepareSourceDevSharedDepsForHappyCliSpawn,
 } from './sourceDevSharedDepsPreflight';
+
+// Observe the OS boundary while retaining the real preparation child and cancellation path.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 const tempDirs: string[] = [];
 
@@ -95,6 +102,8 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
       "writeSync(1, '[happier-source-dev-shared-deps-progress] ' + JSON.stringify({ stage: 'preparation-pending', detail: String(process.pid) }) + '\\n');",
       'setInterval(() => {}, 1000);',
     ].join('\n'));
+    const spawnProcess = vi.mocked(spawn);
+    spawnProcess.mockClear();
     const cancellation = new AbortController();
     let preparationPid: number | undefined;
     let result: Awaited<ReturnType<typeof prepareSourceDevSharedDepsForHappyCliSpawn>> | undefined;
@@ -112,6 +121,7 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
     }).then(value => { result = value; return value; });
     try {
       await waitForCondition(() => preparationPid !== undefined, { timeoutMs: 5_000, label: 'preparation process admitted' });
+      expect(spawnProcess.mock.calls.find(([command]) => command === process.execPath)?.[2]?.windowsHide).toBe(true);
       cancellation.abort();
       await waitForCondition(() => result !== undefined, { timeoutMs: 5_000, label: 'cancelled preparation settled' });
       expect(result).toMatchObject({ type: 'error', errorMessage: expect.stringMatching(/abort|cancel/i) });
@@ -119,6 +129,7 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
     } finally {
       if (preparationPid) { try { process.kill(preparationPid, 'SIGKILL'); } catch {} }
       await preparation;
+      spawnProcess.mockClear();
     }
   });
 

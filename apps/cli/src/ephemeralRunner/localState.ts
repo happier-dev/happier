@@ -5,6 +5,7 @@ import type { RunnerIsolationEnvironmentKeyV1 } from '@happier-dev/protocol/ephe
 
 import { stripInheritedConnectedServiceEnvironment } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
+import { isValidProcessEnvKey, isWindowsSystemEnvKey } from '@/utils/processEnv/environmentKeys';
 import {
   resolveCanonicalAbsolutePath,
   resolveHomeDirFromEnvironment,
@@ -32,22 +33,17 @@ const RUNNER_PROCESS_STORAGE_ENVIRONMENT_KEYS = Object.freeze([
   'TMPDIR',
 ] as const);
 
-const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const SAFE_INHERITED_ENVIRONMENT_KEYS = new Set([
   'COLORTERM',
-  'COMSPEC',
   'FORCE_COLOR',
   'LANG',
   'NO_COLOR',
   'NUMBER_OF_PROCESSORS',
   'PATH',
-  'PATHEXT',
   'PROCESSOR_ARCHITECTURE',
   'SHELL',
-  'SYSTEMROOT',
   'TERM',
   'TZ',
-  'WINDIR',
 ]);
 
 function environmentKeyIdentity(key: string): string {
@@ -102,7 +98,7 @@ function buildRunnerEnvironment(input: Readonly<{
   const safeBase = Object.fromEntries(
     Object.entries(withoutParentConnectedServices).filter(([key]) => {
       const identity = environmentKeyIdentity(key);
-      return SAFE_INHERITED_ENVIRONMENT_KEYS.has(identity) || identity.startsWith('LC_');
+      return isWindowsSystemEnvKey(key) || SAFE_INHERITED_ENVIRONMENT_KEYS.has(identity) || identity.startsWith('LC_');
     }),
   );
   const environment = buildScopedProcessEnv({
@@ -121,7 +117,7 @@ function buildRunnerEnvironment(input: Readonly<{
   });
   const retained = new Set(Object.keys(environment).map(environmentKeyIdentity));
   const unsetEnvironmentVariables = Object.keys(compactBase).filter((key) => (
-    ENVIRONMENT_VARIABLE_NAME_PATTERN.test(key)
+    isValidProcessEnvKey(key)
     && !retained.has(environmentKeyIdentity(key))
   ));
   return Object.freeze({

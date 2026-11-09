@@ -30,7 +30,8 @@ function normalizePathLike(pathLike: string): string {
 }
 
 /** A compiled source runtime retains the source role, but never imports moving TS.
- * Its explicit launch root must agree with the executing module and CLI owner.
+ * The executing src module and its CLI package establish the root even when a
+ * remote Stack command disables the ambient CLI root hint.
  */
 export function isExecutingFirstPartySourceRuntime(moduleUrl: string): boolean {
   const runtime = resolveAuthoritativePackagedRuntimeProjectRoot({ moduleUrl });
@@ -38,8 +39,6 @@ export function isExecutingFirstPartySourceRuntime(moduleUrl: string): boolean {
   if (defaultCanImportFirstPartyPluginSource()) return true;
   const modulePath = normalizeRootForEquality(fileURLToPath(moduleUrl));
   if (!modulePath.startsWith(`${normalizeRootForEquality(runtime.root)}/src/`)) return false;
-  const explicitRoot = process.env.HAPPIER_STACK_CLI_ROOT_DIR;
-  if (!explicitRoot || normalizeRootForEquality(explicitRoot) !== normalizeRootForEquality(runtime.root)) return false;
   try {
     const manifest: unknown = JSON.parse(readFileSync(join(runtime.root, 'package.json'), 'utf8'));
     return !!manifest && typeof manifest === 'object' && 'name' in manifest && manifest.name === '@happier-dev/cli';

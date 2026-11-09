@@ -668,6 +668,11 @@ export async function createProductionEphemeralRunnerApplication(input: Readonly
       let machineRpc: ReturnType<typeof createRestrictedMachineRpcClient>;
       try {
         machineRpc = createRestrictedMachineRpcClient({
+          resolvePreviewApplication: async previewBinding => {
+            const services = machineServicesRegistration.current;
+            if (!services) throw new Error('preview_target_unresolved');
+            return await services.resolvePreviewApplication(previewBinding);
+          },
           principal: materialized.principal,
           homeServerIdentityId: binding.homeServerIdentityId,
           runtimeOrigin: materialized.runtimeOrigin,

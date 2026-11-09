@@ -25,6 +25,9 @@ import {
   createEphemeralRunnerLocalState,
 } from './localState';
 
+import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
+import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
+
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -149,5 +152,32 @@ describe('ephemeral Runner local state', () => {
     })).rejects.toThrow('simulated activation-local setup failure');
 
     expect(await readdir(parent)).toEqual(['keep.txt']);
+  });
+
+  it('retains Windows installation paths through native launch while keeping the activation Home private', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'happier-runner-state-parent-'));
+    roots.push(parent);
+    const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...original, value: 'win32' });
+    try {
+      const state = await createEphemeralRunnerLocalState({
+        activationId: '00000000-0000-4000-8000-000000000017', parentDirectory: parent,
+        baseEnvironment: { HOME: 'D:\\Users\\persistent', USERPROFILE: 'D:\\Users\\persistent',
+          APPDATA: 'D:\\Users\\persistent\\AppData\\Roaming', OPENAI_API_KEY: 'ambient-secret',
+          ProgramFiles: 'D:\\Applications', 'ProgramFiles(x86)': 'D:\\Applications (x86)', pRoGrAmDaTa: 'D:\\ProgramData' },
+      });
+      const environmentVariables = Object.fromEntries(Object.entries(state.environment)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+      const launched = resolveNativeAgentLaunchEnvironment({ processEnv: state.environment,
+        environmentVariables, unsetEnvironmentVariables: state.unsetEnvironmentVariables });
+      expect(launched.values).toMatchObject({ ProgramFiles: 'D:\\Applications', 'ProgramFiles(x86)': 'D:\\Applications (x86)',
+        pRoGrAmDaTa: 'D:\\ProgramData', HOME: state.homeDirectory, USERPROFILE: state.homeDirectory });
+      expect(launched.values).not.toHaveProperty('APPDATA');
+      expect(launched.values).not.toHaveProperty('OPENAI_API_KEY');
+      expect(validateEnvVarRecordStrict(launched.values)).toEqual({ ok: true, env: launched.values });
+      await state.dispose();
+    } finally {
+      Object.defineProperty(process, 'platform', original);
+    }
   });
 });

@@ -19,10 +19,12 @@ type TaskkillInput = Readonly<{
   timeoutMs?: number;
   execFile?: TaskkillExecFile;
 }>;
-const owner = createRequire(import.meta.url)(resolveCliRuntimeAssetPath('scripts', 'process_tree.cjs')) as {
+type TaskkillOwner = {
   taskkillWindowsProcessTree(input: TaskkillInput, resolveCommand: typeof windowsSystemToolCommand, run: typeof execFileWithDeadline): Promise<void>;
 };
 
 export async function taskkillWindowsProcessTree(input: TaskkillInput): Promise<void> {
+  // The shipped owner is a large bundle; only an actual taskkill needs it.
+  const owner = createRequire(import.meta.url)(resolveCliRuntimeAssetPath('scripts', 'process_tree.cjs')) as TaskkillOwner;
   await owner.taskkillWindowsProcessTree(input, windowsSystemToolCommand, execFileWithDeadline);
 }

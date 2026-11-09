@@ -68,6 +68,7 @@ export function createRestrictedMachineRpcClient(input: Readonly<{
   installationProof: MachineInstallationProofV1;
   transport: RestrictedTransport;
   registerHandlers(rpc: RpcHandlerRegistrar): void;
+  resolvePreviewApplication?: Parameters<typeof registerMachinePeerTcpTunnelRelayRuntime>[0]['resolvePreviewApplication'];
   /** Terminal restricted-principal loss is handed to the ordinary Session Stop owner. */
   onTerminalConnectionFailure?: () => void;
   /**
@@ -199,8 +200,9 @@ export function createRestrictedMachineRpcClient(input: Readonly<{
       activeSocket = socket;
       socket.on(SOCKET_RPC_EVENTS.REQUEST, async (request: RpcRequest, callback: (response: unknown) => void) => {
         if (socket !== activeSocket) return;
-        const response = await rpc.handleRequest(request);
-        if (socket === activeSocket) callback(response);
+        await rpc.handleRequest(request, response => {
+          if (socket === activeSocket) callback(response);
+        });
       });
       socket.on('disconnect', () => {
         if (socket !== activeSocket) return;
@@ -302,6 +304,7 @@ export function createRestrictedMachineRpcClient(input: Readonly<{
               machineId: input.principal.machineId,
               serverFeatures: snapshot.features,
               nowMs: () => Date.now(),
+              resolvePreviewApplication: input.resolvePreviewApplication,
               eventPort: {
                 subscribe: (listener) => {
                   relayListeners.add(listener);

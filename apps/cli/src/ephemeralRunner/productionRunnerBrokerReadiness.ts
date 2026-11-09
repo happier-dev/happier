@@ -45,7 +45,9 @@ export async function checkProductionRunnerBrokerReadiness(input: Readonly<{
   if (input.projection.readiness.kind !== 'available') {
     return {
       status: input.projection.readiness.kind === 'broker_unavailable' ? 'unavailable' : 'denied',
-      reason: input.projection.readiness.kind,
+      reason: input.projection.readiness.kind === 'source_unavailable'
+        ? input.projection.readiness.reason ?? input.projection.readiness.kind
+        : input.projection.readiness.kind,
     };
   }
   const providerProjection = input.projection.provider;
@@ -121,7 +123,7 @@ export async function checkProductionRunnerBrokerReadiness(input: Readonly<{
   if (readiness.kind !== 'available') {
     return {
       status: readiness.kind === 'broker_unavailable' ? 'unavailable' : 'denied',
-      reason: readiness.kind,
+      reason: readiness.kind === 'source_unavailable' ? readiness.reason ?? readiness.kind : readiness.kind,
     };
   }
   if (brokerReadinessRequest === null) {

@@ -75,14 +75,23 @@ type ProcessTreeAdapters = Readonly<{
   wait?: (ms: number) => Promise<void>;
 }>;
 
-// One shipped CJS owner is consumed by both the CLI and its surviving terminal launcher.
-const moduleOwner = createRequire(import.meta.url)(resolveCliRuntimeAssetPath('scripts', 'process_tree.cjs')) as {
+type ProcessTreeModule = {
   createProcessTreeOwner(adapters: ProcessTreeAdapters): {
     terminateProcessTree(proc: ProcessTreeRoot, opts?: ProcessTreeOptions): Promise<void>;
     terminateTargets(input: ProcessTreeTerminationInput): Promise<ProcessTreeTerminationResult>;
     captureTargets(root: Readonly<{ pid: number; start?: ProcessStartIdentity }>): Promise<ProcessTreeCapture>;
   };
 };
+
+// One shipped CJS owner is consumed by both the CLI and its surviving terminal
+// launcher. It is a large self-contained bundle in packaged builds, so every
+// process that imports this module loads it only when it first needs the owner.
+let moduleOwner: ProcessTreeModule | undefined;
+function loadModuleOwner(): ProcessTreeModule {
+  moduleOwner ??= createRequire(import.meta.url)(resolveCliRuntimeAssetPath('scripts', 'process_tree.cjs')) as ProcessTreeModule;
+  return moduleOwner;
+}
+
 const adapters: ProcessTreeAdapters = {
   readProcessCensus, indexCensus, descendantsOf, protectedSet, membersOfCgroup, membersOfJob, membersOfPgid, execFileWithDeadline, isPidPresent, probeProcessGroupLiveness, taskkillWindowsProcessTree,
   terminateWindowsJob: input => terminateWindowsJob(input),
@@ -99,10 +108,16 @@ async function terminateWindowsJob(input: Readonly<{ jobName: string; timeoutMs?
   if (!executablePath) return 'unavailable';
   return await custody.terminateProcessCustodyByJob({ executablePath, ...request });
 }
-const owner = moduleOwner.createProcessTreeOwner(adapters);
+let defaultOwner: ReturnType<ProcessTreeModule['createProcessTreeOwner']> | undefined;
+function getDefaultOwner() {
+  defaultOwner ??= loadModuleOwner().createProcessTreeOwner(adapters);
+  return defaultOwner;
+}
 
 /** Observation-only native identities, for existing root/owner lifecycle retention. */
-export const captureProcessTree = owner.captureTargets;
+export async function captureProcessTree(root: Readonly<{ pid: number; start?: ProcessStartIdentity }>): Promise<ProcessTreeCapture> {
+  return await getDefaultOwner().captureTargets(root);
+}
 
 /** System adapters use the same owner with their OS boundaries, never another signal loop. */
 export function createProcessTreeTerminator(input: Readonly<{
@@ -113,7 +128,9 @@ export function createProcessTreeTerminator(input: Readonly<{
   terminateWindowsJob?: (input: Readonly<{ jobName: string; timeoutMs: number }>) => Promise<unknown>;
   terminateWindowsTree?: typeof taskkillWindowsProcessTree;
 }> = {}): (input: ProcessTreeTerminationInput) => Promise<ProcessTreeTerminationResult> {
-  const adapted = moduleOwner.createProcessTreeOwner({ ...adapters,
+  // A caller constructs its terminator with the object it owns; the owner loads on first termination.
+  let adapted: ReturnType<ProcessTreeModule['createProcessTreeOwner']> | undefined;
+  const createAdapted = () => loadModuleOwner().createProcessTreeOwner({ ...adapters,
     ...(input.platform ? { platform: input.platform } : {}),
     ...(input.kill ? { kill: input.kill } : {}),
     ...(input.wait ? { wait: input.wait } : {}),
@@ -122,15 +139,18 @@ export function createProcessTreeTerminator(input: Readonly<{
     ...(input.terminateWindowsTree ? { taskkillWindowsProcessTree: input.terminateWindowsTree } : {}),
     ...(input.censusDependencies ? { readProcessCensus: createProcessCensusReader(input.censusDependencies) } : {}),
   });
-  return adapted.terminateTargets;
+  return async (termination) => {
+    adapted ??= createAdapted();
+    return await adapted.terminateTargets(termination);
+  };
 }
 
 export function terminateProcessTree(input: ProcessTreeTerminationInput): Promise<ProcessTreeTerminationResult>;
 export function terminateProcessTree(proc: ProcessTreeRoot, opts?: ProcessTreeOptions): Promise<void>;
 export async function terminateProcessTree(proc: ProcessTreeRoot | ProcessTreeTerminationInput, opts?: ProcessTreeOptions): Promise<void | ProcessTreeTerminationResult> {
   try {
-    if ('targets' in proc) return await owner.terminateTargets(proc);
-    await owner.terminateProcessTree(proc, opts);
+    if ('targets' in proc) return await getDefaultOwner().terminateTargets(proc);
+    await getDefaultOwner().terminateProcessTree(proc, opts);
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'plugin_exec_termination_incomplete') {
       const { logger } = await import('@/ui/logger');

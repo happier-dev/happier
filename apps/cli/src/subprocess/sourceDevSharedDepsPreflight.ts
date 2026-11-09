@@ -220,6 +220,7 @@ async function runSourceDevSharedDepsSyncProcess(params: Readonly<{
       process.execPath,
       [params.scriptPath],
       {
+        windowsHide: true,
         env: buildSourceDevSharedDepsProcessEnv({
           processEnv: params.processEnv,
           lockTimeoutMs: params.lockTimeoutMs,

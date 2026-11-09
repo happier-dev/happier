@@ -82,7 +82,8 @@ export function resolveRunningCliRuntimeIdentity(
   const sourceIndex = normalizedModulePath.lastIndexOf(sourceMarker);
   if (sourceIndex >= 0) {
     return {
-      entrypoint: join(normalizedModulePath.slice(0, sourceIndex), 'src', 'index.ts'),
+      entrypoint: join(normalizedModulePath.slice(0, sourceIndex), 'src',
+        normalizedModulePath.endsWith('.mjs') || normalizedModulePath.endsWith('.js') ? 'index.mjs' : 'index.ts'),
       tree: 'source',
       builtAt: null,
       manifestVerified: false,

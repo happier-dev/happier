@@ -3,11 +3,14 @@ import { rm } from 'node:fs/promises';
 
 import { registerMachineDirectTransferExportRpcHandlers } from '@/api/machine/rpcHandlers.directTransferExports';
 import { registerMachineDirectTransferImportRpcHandlers } from '@/api/machine/rpcHandlers.directTransferImports';
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createLocalServicesDaemonRuntime, type LocalServicesDaemonRuntime } from '@/daemon/local/services/runtime';
 import { createLocalServicePublicPreviewServerRoutes, type LocalServicePublicPreviewRoutes } from '@/daemon/local/services/public/routes';
 import { registerFileSystemHandlers } from '@/rpc/handlers/fileSystem';
 import { OS_USER_FILESYSTEM_ACCESS_POLICY } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { createFilesystemEffectAdmission, createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
+import { configuration } from '@/configuration';
 import { registerMachineFileBrowserHandlers } from '@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers';
 import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
 import {
@@ -45,13 +48,28 @@ export function registerRestrictedRunnerMachineServices(input: Readonly<{
   terminalDeps?: Omit<MachineTerminalRpcHandlerDeps, 'workingDirectory' | 'accessPolicy' | 'requiredSessionId'>;
   directTransferLifecycle?: DirectTransferServerLifecycle;
 }>): Readonly<{ ensureDirectTransferListening(): Promise<number>; dispose(): Promise<void> }> {
+  const serverId = configuration.activeServerId;
+  const effectAdmission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: () => resolveServerProfileHomeIdentityId(serverId) });
+  const filesystemRpcHandlerManager = createFilesystemEffectRpcRegistrar(input.rpcHandlerManager, effectAdmission);
+  const retainFilesystemScope = (context?: RpcHandlerContext) => {
+    if (!context?.machineAdmission || !context.verifyMachineAdmissionCurrent) throw Object.assign(
+      new Error('Requester-bound filesystem IO is unavailable on this Machine'), { errorCode: 'filesystem_identity_custody_unavailable' });
+    return { rootPath: input.workingDirectory, requesterAccountId: context.machineAdmission.actorAccountId,
+      assertCurrentAuthority: async () => {
+        context.signal.throwIfAborted();
+        if (!await context.verifyMachineAdmissionCurrent!()) throw Object.assign(
+          new Error('Filesystem requester admission is no longer current'), { errorCode: 'filesystem_identity_custody_unavailable' });
+        context.signal.throwIfAborted();
+      } };
+  };
   const filesystem = registerFileSystemHandlers(
     input.rpcHandlerManager,
     input.workingDirectory,
-    { accessPolicy: OS_USER_FILESYSTEM_ACCESS_POLICY },
+    { accessPolicy: OS_USER_FILESYSTEM_ACCESS_POLICY, effectAdmission },
   );
   registerMachineFileBrowserHandlers({
     rpcHandlerManager: input.rpcHandlerManager,
+    effectAdmission,
     workingDirectory: input.workingDirectory,
     accessPolicy: OS_USER_FILESYSTEM_ACCESS_POLICY,
   });
@@ -107,8 +125,9 @@ export function registerRestrictedRunnerMachineServices(input: Readonly<{
     accessPolicy: OS_USER_FILESYSTEM_ACCESS_POLICY,
   });
   registerMachineDirectTransferImportRpcHandlers({
-    rpcHandlerManager: input.rpcHandlerManager,
-    prepareImportSession: async (request) => {
+    rpcHandlerManager: filesystemRpcHandlerManager,
+    prepareImportSession: async (request, _scope, context) => {
+      const filesystemScope = retainFilesystemScope(context);
       if (
         request.workingDirectory !== input.workingDirectory
         || (request.additionalAllowedWriteDirs?.length ?? 0) > 0
@@ -119,20 +138,23 @@ export function registerRestrictedRunnerMachineServices(input: Readonly<{
       ) {
         throw new Error('Unsupported restricted Runner direct transfer import request');
       }
+      await filesystemScope.assertCurrentAuthority();
       return await directTransferLifecycle.prepareImportSession({
         ...request,
         workingDirectory: input.workingDirectory,
         additionalAllowedWriteDirs: [],
-      });
+      }, filesystemScope);
     },
     abortImportSession: directTransferLifecycle.abortImportSession,
   });
   registerMachineDirectTransferExportRpcHandlers({
-    rpcHandlerManager: input.rpcHandlerManager,
-    prepareExportSession: async (request) => {
+    rpcHandlerManager: filesystemRpcHandlerManager,
+    prepareExportSession: async (request, _scope, context) => {
+      const filesystemScope = retainFilesystemScope(context);
       if (request.t !== 'workspace_file_download_v1' || request.workingDirectory !== input.workingDirectory) {
         throw new Error('Unsupported restricted Runner direct transfer export request');
       }
+      await filesystemScope.assertCurrentAuthority();
       const resolved = await resolveWorkspaceFileDownloadSource({
         workingDirectory: input.workingDirectory,
         path: request.path,
@@ -142,6 +164,7 @@ export function registerRestrictedRunnerMachineServices(input: Readonly<{
         sessionRpcTransferMaxBytes: null,
       });
       if (!resolved.success) throw new Error(resolved.error);
+      await filesystemScope.assertCurrentAuthority();
       const payloadSource = createFileTransferPayloadSource({
         filePath: resolved.source.filePath,
         sizeBytes: resolved.source.sizeBytes,
@@ -153,6 +176,7 @@ export function registerRestrictedRunnerMachineServices(input: Readonly<{
       const published = await directTransferLifecycle.publishTransferWhenReady({
         transferId: `workspace-file-download:${randomUUID()}`,
         payloadSource,
+        filesystemScope,
       });
       return {
         transferId: published.transferId,
@@ -167,6 +191,7 @@ export function registerRestrictedRunnerMachineServices(input: Readonly<{
 
   return Object.freeze({
     ensureDirectTransferListening: directTransferLifecycle.ensureListening,
+    resolvePreviewApplication: localServicesRoutes.localServicesPreview!.resolveApplication,
     dispose: async () => {
       try {
         await directTransferLifecycle.stop();

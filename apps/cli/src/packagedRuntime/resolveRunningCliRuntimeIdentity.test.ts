@@ -76,6 +76,16 @@ describe('resolveRunningCliRuntimeIdentity', () => {
     });
   });
 
+  it.each(['index.mjs', 'chunks/shared.mjs', 'index.js', 'chunks/shared.js'])('reports the emitted source entry from %s rather than an absent TypeScript entry', modulePath => {
+    const root = createRoot();
+    const entrypoint = join(root, 'apps', 'cli', 'src', 'index.mjs');
+    mkdirSync(join(root, 'apps', 'cli', 'src'), { recursive: true });
+    writeFileSync(entrypoint, 'export {};');
+    expect(resolveRunningCliRuntimeIdentity(pathToFileURL(join(root, 'apps', 'cli', 'src', modulePath)).href)).toMatchObject({
+      entrypoint, tree: 'source',
+    });
+  });
+
   it('reports a pinned runner snapshot as its own runtime', () => {
     const root = createRoot();
     const snapshotDir = join(root, '.runner-snapshots', 'abc123');
