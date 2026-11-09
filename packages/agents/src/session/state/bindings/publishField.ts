@@ -1,4 +1,3 @@
-import { sessionTemplateDraftRefBinding, sessionTemplateInstanceBinding } from './context.js';
 import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { SessionMetadata, SessionStateFieldId, SessionStateFieldValue } from '@happier-dev/protocol';
@@ -21,12 +20,13 @@ import { externalAgentObservationBinding } from './externalAgent.js';
 import { externalSessionOperationBinding } from './externalSessionOperation.js';
 import { sessionRunnerRuntimeBinding } from './sessionRunnerRuntime.js';
 import { sessionWorkStateBinding } from './workState.js';
+import { sessionTurnProgressBinding } from './turnProgress.js';
 import { sessionRoleBinding, sessionRoleConfigurationBinding } from './role.js';
 import { sessionUsageLimitRecoveryBinding } from './usageLimitRecovery.js';
 import { summaryTextBinding } from './summaryText.js';
 import { sessionBotBinding, sessionBotFaceBinding } from './sessionIdentity.js';
 import { sessionStatusReasonBinding } from './statusReason.js';
-import { sessionMemoryEnabledBinding, sessionContextBinding, sessionVoicePreferenceBinding } from './context.js';
+import { sessionMemoryEnabledBinding, sessionContextBinding, sessionVoicePreferenceBinding, sessionApprovalProfileBinding, sessionTemplateDraftRefBinding, sessionTemplateInstanceBinding } from './context.js';
 import { transcriptToolCallsBinding } from './transcriptToolCalls.js';
 import {
   getLegacyProviderSessionIdMetadataKeys,
@@ -41,6 +41,7 @@ const SESSION_STATE_METADATA_BINDINGS = {
   'intent.role': sessionRoleBinding,
   'intent.sessionRoles': sessionRoleConfigurationBinding,
   'intent.memoryEnabled': sessionMemoryEnabledBinding,
+  'intent.approvalProfileId': sessionApprovalProfileBinding,
   'intent.voicePreference': sessionVoicePreferenceBinding,
   'intent.templateDraftRef': sessionTemplateDraftRefBinding,
   'intent.templateInstance': sessionTemplateInstanceBinding,
@@ -54,6 +55,7 @@ const SESSION_STATE_METADATA_BINDINGS = {
   'display.statusReason': sessionStatusReasonBinding,
   'view.transcriptToolCalls': transcriptToolCallsBinding,
   'runtime.workState': sessionWorkStateBinding,
+  'runtime.turnProgress': sessionTurnProgressBinding,
   'runtime.activity': runtimeActivityBinding,
   'runtime.externalAgent': externalAgentObservationBinding,
   'runtime.externalSessionOperation': externalSessionOperationBinding,
@@ -136,6 +138,8 @@ export function clearSessionStateFieldFromMetadata(
       return sessionTemplateDraftRefBinding.write(metadata, { value: null });
     case 'intent.templateInstance':
       return sessionTemplateInstanceBinding.write(metadata, { value: null });
+    case 'intent.approvalProfileId':
+      return sessionApprovalProfileBinding.write(metadata, { value: null });
     case 'intent.sessionRoles':
       return sessionRoleConfigurationBinding.write(metadata, { value: { overrides: {}, sessionRoles: {}, notes: '' } });
     case 'intent.acpConfigOption':
@@ -156,6 +160,8 @@ export function clearSessionStateFieldFromMetadata(
     case 'runtime.workState':
       delete next.sessionWorkStateV1;
       break;
+    case 'runtime.turnProgress':
+      return sessionTurnProgressBinding.write(metadata, { value: null });
     case 'runtime.activity':
       delete next.runtimeActivityState;
       delete next.runtimeActivityActiveCount;
@@ -248,7 +254,6 @@ type PublishSessionStateFieldToMetadataParams<F extends SessionStateFieldId> = R
   | Readonly<{
     metadataPort: MetadataUpdatePort;
     reason: string;
-    maxAttempts?: number;
   }>
 )>;
 
@@ -267,7 +272,6 @@ export async function publishSessionStateFieldToMetadata<F extends SessionStateF
       updater,
       {
         reason: params.reason,
-        ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
       },
     );
     if (!result.ok) {
@@ -296,7 +300,6 @@ type PublishSessionStateFieldMutationToMetadataParams<F extends SessionStateFiel
   | Readonly<{
     metadataPort: MetadataUpdatePort;
     reason: string;
-    maxAttempts?: number;
   }>
 )>;
 
@@ -320,7 +323,6 @@ export async function publishSessionStateFieldMutationToMetadata<F extends Sessi
       updater,
       {
         reason: params.reason,
-        ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
       },
     );
     if (!result.ok) {

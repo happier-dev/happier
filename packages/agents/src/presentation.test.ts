@@ -1,20 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
-import { getNeutralAgentIdentityColor, readBundledAgentPresentation } from './presentation.js';
+import { formatAgentLikeIdForDisplay, getNeutralAgentIdentityColor, readConcreteAgentPresentation } from './presentation.js';
 
 describe('bundled Agent presentation', () => {
-    it('reads exact declared names and descriptor hues without activating an Agent', () => {
-        expect(readBundledAgentPresentation('claude')).toEqual({
+    it('formats open Agent ids with the same readable fallback in every host', () => {
+        expect(formatAgentLikeIdForDisplay('custom-acp')).toBe('Custom ACP Agent');
+        expect(formatAgentLikeIdForDisplay('qwen')).toBe('Qwen Code');
+        expect(formatAgentLikeIdForDisplay('acme.review-backend.v2')).toBe('Acme Review Backend V2');
+    });
+
+    it('reads declared catalog names and descriptor hues without guessing private definition names', () => {
+        expect(readConcreteAgentPresentation('claude')).toEqual({
             name: 'Claude',
             identityColor: { light: '#eb6834', dark: '#d95926' },
         });
-        expect(readBundledAgentPresentation('codex')).toEqual({
+        expect(readConcreteAgentPresentation('codex')).toEqual({
             name: 'Codex',
             identityColor: { light: '#2a78d6', dark: '#3987e5' },
         });
-        expect(readBundledAgentPresentation('acme/assistant')).toBeNull();
-        expect(readBundledAgentPresentation('__proto__')).toBeNull();
-        expect(readBundledAgentPresentation('qwen')).toEqual({ name: 'Qwen Code', identityColor: null });
+        expect(readConcreteAgentPresentation('custom-acp')).toEqual({ name: 'Custom ACP Agent', identityColor: null });
+        expect(readConcreteAgentPresentation('acme/assistant')).toBeNull();
+        expect(readConcreteAgentPresentation('__proto__')).toBeNull();
+        expect(readConcreteAgentPresentation('qwen')).toEqual({ name: 'Qwen Code', identityColor: null });
         expect(getNeutralAgentIdentityColor({ dark: false })).toBe('#A3A3A8');
         expect(getNeutralAgentIdentityColor({ dark: true })).toBe('#6C625D');
     });

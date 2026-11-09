@@ -63,8 +63,9 @@ export type AgentCliManagedInstallSpec =
       kind: 'managed_package';
       packageName: string;
       binaryName: string;
-      packageBinarySetup?: Readonly<{ kind: 'opencode_platform_binary' }>
-        | Readonly<{ kind: 'npm_package_bin'; packageName: string; version: string; bin?: string;
+      /** Approve this package's vendor build during managed installation. */
+      allowBuild?: boolean;
+      packageBinarySetup?: Readonly<{ kind: 'npm_package_bin'; packageName: string; version: string; bin?: string;
           managedAcpDefinition?: Readonly<{ definitionId: string; title: string }> }> | null;
     }>;
 

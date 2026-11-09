@@ -9,6 +9,7 @@ import type {
   SessionMetadata,
 } from '@happier-dev/protocol';
 import { projectSessionModelSelectionIntentToLegacyModelOverrideV1, readSessionModelSelectionIntentSourceV1, SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 import { AcpConfigOptionOverridesV1Schema, AcpSessionModeOverrideV1Schema, ModelOverrideV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
@@ -143,12 +144,19 @@ export function readModelIntentFromMetadata(metadata: SessionMetadata): SessionM
   return source.status === 'canonical' || source.status === 'legacy' ? source.intent : null;
 }
 
+/** One ordering frontier for model intent across the V1/legacy and V2 carriers. */
+export function readModelIntentUpdatedAtFromMetadata(metadata: SessionMetadata): number {
+  const v2 = SessionModelSelectionV2Schema.safeParse((metadata as MetadataRecord).modelSelectionIntentV2);
+  return Math.max(readModelIntentFromMetadata(metadata)?.updatedAt ?? 0, v2.success ? v2.data.updatedAt : 0);
+}
+
 export function writeModelIntentToMetadata(
   metadata: SessionMetadata,
   update: SessionModelSelectionIntentV1,
 ): SessionMetadata {
   const candidate = SessionModelSelectionIntentV1Schema.parse(update);
   const current = readModelIntentFromMetadata(metadata);
+  const currentUpdatedAt = readModelIntentUpdatedAtFromMetadata(metadata);
   const currentComparable = current && 'selection' in current
     ? current.selection
     : current && current.modelId !== null
@@ -156,8 +164,8 @@ export function writeModelIntentToMetadata(
       : null;
   const candidateComparable = candidate.selection;
   const result = resolveTimestampedFieldUpdate({
-    current: current
-      ? { value: currentComparable, updatedAt: current.updatedAt }
+    current: current || currentUpdatedAt > 0
+      ? { value: currentComparable, updatedAt: currentUpdatedAt }
       : null,
     candidate: { value: candidateComparable, updatedAt: candidate.updatedAt },
     staleBehavior: 'bump-if-value-changed',
@@ -173,6 +181,7 @@ export function writeModelIntentToMetadata(
     ...(metadata as MetadataRecord),
     [MODEL_SELECTION_INTENT_KEY]: nextIntent,
   };
+  delete nextMetadata.modelSelectionIntentV2;
   const legacyProjection = projectSessionModelSelectionIntentToLegacyModelOverrideV1(nextIntent);
   if (legacyProjection) {
     nextMetadata[MODEL_OVERRIDE_KEY] = legacyProjection;

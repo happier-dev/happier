@@ -1,4 +1,5 @@
 import type { SessionMetadata } from '@happier-dev/protocol';
+import { hasSessionTitleInMetadata } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { resolveTimestampedFieldUpdate, type TimestampedFieldStaleBehavior } from '../policies/timestampedFieldUpdate.js';
 import type { SessionStateBinding, SessionStateFieldWriteValue, SessionStateStoredValue } from '../_types.js';
@@ -35,7 +36,9 @@ export const summaryTextBinding: SessionStateBinding<'display.title'> = {
     const structuredValue = typeof rawValue === 'object' && rawValue !== null && !Array.isArray(rawValue)
       ? rawValue as Extract<SessionStateFieldWriteValue<'display.title'>, object>
       : null;
-    if (structuredValue?.preserveExistingValue === true && current.value !== null) return metadata;
+    // Canonical occupancy includes an explicit empty value; usable-title detection also covers legacy names.
+    if (structuredValue?.preserveExistingValue === true
+      && (current.value !== null || hasSessionTitleInMetadata(metadata))) return metadata;
     const title = structuredValue ? structuredValue.title : rawValue;
     const candidate = {
       value: title,

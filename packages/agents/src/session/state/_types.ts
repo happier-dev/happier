@@ -57,7 +57,6 @@ export interface MetadataUpdatePort {
     updater: (prev: SessionMetadata, metadataRevision?: number) => SessionMetadata,
     opts: Readonly<{
       reason: string;
-      maxAttempts?: number;
     }>,
   ): Promise<
     | Readonly<{ ok: true; version: number }>
@@ -74,7 +73,7 @@ export type SessionStateStoredValue<F extends SessionStateFieldId> = Readonly<{
 export type SessionStateFieldWriteValue<F extends SessionStateFieldId> =
   F extends 'identity.runtimeDescriptor' | 'intent.role'
     ? SessionStateFieldValue<F> | null
-    : F extends 'runtime.workState'
+    : F extends 'runtime.workState' | 'runtime.turnProgress'
       ? SessionStateFieldValue<F> | null
     : F extends 'runtime.usageLimitRecovery'
       ? SessionStateFieldValue<F> | null

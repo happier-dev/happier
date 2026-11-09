@@ -1,6 +1,6 @@
-import {
-  type SessionMetadata,
-  type SessionStateFieldValue,
+import type {
+  SessionMetadata,
+  SessionStateFieldValue,
 } from '@happier-dev/protocol';
 import { SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 

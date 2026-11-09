@@ -1315,7 +1315,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "defaultMode": "default",
     "dynamicProbe": "auto",
     "nonAcpApplyScope": "next_prompt",
-    "supportsFreeform": false,
+    "supportsFreeform": true,
     "supportsSelection": true
   },
   "sessionModeDescriptor": {
@@ -1889,6 +1889,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     ],
     "defaultMode": "default",
     "nonAcpApplyScope": "next_prompt",
+    "supportsFreeform": true,
     "supportsSelection": true
   },
   "sessionModeDescriptor": {
@@ -2438,7 +2439,7 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "defaultMode": "default",
     "dynamicProbe": "auto",
     "nonAcpApplyScope": "next_prompt",
-    "supportsFreeform": false,
+    "supportsFreeform": true,
     "supportsSelection": true
   },
   "sessionModeDescriptor": {

@@ -95,6 +95,7 @@ const AGENT_SCOPED_CURRENT_METADATA_KEYS: readonly string[] = Object.freeze([
  */
 const AGENT_SCOPED_CURRENT_STATE_FIELDS = [
   'runtime.workState',
+  'runtime.turnProgress',
   'runtime.activity',
   'runtime.externalAgent',
   'runtime.usageLimitRecovery',

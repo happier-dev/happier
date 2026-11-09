@@ -1,6 +1,7 @@
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { BotTemplateDraftRefV1Schema, BotTemplateInstanceV1Schema, readBotTemplateInstanceV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { z } from 'zod/mini';
+import { BotTemplateDraftRefV1Schema, BotTemplateInstanceV1Schema, readBotTemplateInstanceV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
 import {
   readSessionMemoryEnabledV1,
   writeSessionContextIntentV1ToMetadata,
@@ -50,6 +51,15 @@ export const sessionTemplateInstanceBinding: SessionStateBinding<'intent.templat
     if (sameStrictJsonValue(work.templateInstance ?? null, instance)) return metadata;
     const { templateInstance: _previous, ...rest } = work;
     return { ...metadata, work: instance === null ? rest : { ...rest, templateInstance: instance } };
+  },
+};
+
+export const sessionApprovalProfileBinding: SessionStateBinding<'intent.approvalProfileId'> = {
+  readMutationBasis: (metadata) => metadata.approvalProfileId ?? null,
+  read: (metadata) => ({ value: z.nullable(ApprovalProfileIdV1Schema).parse(metadata.approvalProfileId ?? null), updatedAt: null }),
+  write: (metadata, update) => {
+    const approvalProfileId = z.nullable(ApprovalProfileIdV1Schema).parse(update.value);
+    return metadata.approvalProfileId === approvalProfileId ? metadata : { ...metadata, approvalProfileId };
   },
 };
 

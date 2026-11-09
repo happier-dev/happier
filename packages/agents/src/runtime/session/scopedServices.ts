@@ -233,7 +233,7 @@ export type SubagentCompleteParamsV1 = Readonly<{
 
 export type PublicSessionStateFieldId = Exclude<
   SessionStateFieldId,
-  'runtime.activity' | 'runtime.externalAgent'
+  'runtime.activity' | 'runtime.turnProgress' | 'runtime.externalAgent'
 >;
 
 export type SessionStateFieldWriteRequestV1<F extends PublicSessionStateFieldId = PublicSessionStateFieldId> = Readonly<{

@@ -3,6 +3,7 @@ import type { SessionStateFieldId } from '@happier-dev/protocol';
 import type { SessionStateFieldDescriptor } from './_types.js';
 
 export const SESSION_STATE_FIELD_REGISTRY = {
+  'intent.approvalProfileId': { id: 'intent.approvalProfileId', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
   'intent.memoryEnabled': { id: 'intent.memoryEnabled', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
   'intent.voicePreference': { id: 'intent.voicePreference', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
   'intent.templateDraftRef': { id: 'intent.templateDraftRef', class: 'intent', conflictPolicy: 'bindingOwned', deliveryClass: 'durable_required' },
@@ -79,6 +80,12 @@ export const SESSION_STATE_FIELD_REGISTRY = {
     class: 'runtime',
     conflictPolicy: 'bindingOwned',
     deliveryClass: 'durable_required',
+  },
+  'runtime.turnProgress': {
+    id: 'runtime.turnProgress',
+    class: 'runtime',
+    conflictPolicy: 'bindingOwned',
+    deliveryClass: 'durable_best_effort',
   },
   'runtime.activity': {
     id: 'runtime.activity',

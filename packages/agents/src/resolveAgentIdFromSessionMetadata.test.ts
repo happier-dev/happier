@@ -6,12 +6,38 @@ import {
   resolveSessionMetadataAgentIdentity,
 } from './resolveAgentIdFromSessionMetadata.js';
 import { readNonAuthoritativeLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { buildCommittedLaunchMetadata } from './session/state/metadataWriters.js';
 
 function runtimeDescriptor(agentId: string) {
   return { v: 1, agentId, agent: {} };
 }
 
 describe('resolveSessionMetadataAgentIdentity', () => {
+  it.each([
+    { identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, agentId: 'codex' },
+    { identity: { pluginId: 'example.agents', localId: 'codex' }, agentId: 'example.agents/codex' },
+    { identity: { pluginId: 'happier.agent.ohmypi', localId: 'ohmypi' }, agentId: 'ohMyPi' },
+  ])('resolves a committed unlaunched birth through its exact selected contribution ($agentId)', ({ identity, agentId }) => {
+    const agentTarget = { kind: 'agent' as const, identity };
+    const metadata = buildCommittedLaunchMetadata({ options: {
+      sessionCreationCorrespondence: buildSessionCreationCorrespondence({
+        identity: { callerCreationNamespace: 'user', creationKey: 'template-copy' },
+        recipe: { execution: { machineId: 'b-owned-e3b5', directory: { kind: 'path', path: '/tmp' } },
+          organization: { folderId: null, tagIds: [] }, agentTarget },
+      }),
+    }, directory: '/tmp' });
+    expect(metadata.machineId).toBe('b-owned-e3b5');
+    expect(resolveAgentIdFromSessionMetadata(metadata)).toBe(agentId);
+    expect(resolveSessionMetadataAgentIdentity(metadata).basis).toBe('birth');
+    expect(resolveAgentExecutionTargetFromSessionMetadata(metadata)).toEqual(agentTarget);
+    expect(resolveAgentIdFromSessionMetadata({ ...metadata, runtimeDescriptorV1: runtimeDescriptor('claude') })).toBe('claude');
+    expect(resolveAgentIdFromSessionMetadata({ ...metadata, flavor: 'claude' })).toBe('claude');
+    expect(resolveAgentIdFromSessionMetadata({ ...metadata, claudeSessionId: 'current-claude' })).toBe('claude');
+    expect(resolveAgentIdFromSessionMetadata({ ...metadata, flavor: 'acp:review-bot',
+      acpConfiguredBackendV1: { v: 1, backendId: 'review-bot', title: 'Review Bot', updatedAt: 2 } })).toBeNull();
+  });
+
   it('prefers the declared runtime descriptor over flavor and flat resume keys', () => {
     const identity = resolveSessionMetadataAgentIdentity({
       runtimeDescriptorV1: runtimeDescriptor('codex'),

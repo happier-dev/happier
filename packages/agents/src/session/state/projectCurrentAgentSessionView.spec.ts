@@ -137,6 +137,7 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
 
     // Agent-scoped current projections.
     sessionWorkStateV1: SOURCE_WORK_STATE,
+    sessionTurnProgressV1: { turnId: 'turn-1', phase: 'retrying', attempt: 2, reason: 'connection_failed' },
     sessionWorkflowActivityHeadlineV1: { v: 1 },
     sessionAgentActivityHeadlineV1: { v: 1 },
     slashCommands: ['/compact'],
@@ -196,6 +197,7 @@ describe('projectCurrentAgentSessionView — state disposition (§8)', () => {
 
   const CLEARED_KEYS = [
     'sessionWorkStateV1',
+    'sessionTurnProgressV1',
     'sessionWorkflowActivityHeadlineV1',
     'sessionAgentActivityHeadlineV1',
     'slashCommands',

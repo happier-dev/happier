@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { isRuntimeConfigUpdateOutcomeApplied } from './runtimeConfigUpdateOutcome.js';
+import { isRuntimeConfigUpdateOutcomeApplied, isRuntimeConfigUpdateOutcomeDeferred } from './runtimeConfigUpdateOutcome.js';
 
 describe('isRuntimeConfigUpdateOutcomeApplied', () => {
+  it('distinguishes accepted future configuration from execution evidence across every pending timing', () => {
+    for (const timing of ['before_next_prompt', 'queued_until_safe_window', 'scheduled_for_next_prompt', 'next_idle'] as const) {
+      expect(isRuntimeConfigUpdateOutcomeDeferred({ status: 'applied', timing })).toBe(true);
+      expect(isRuntimeConfigUpdateOutcomeApplied({ status: 'applied', timing })).toBe(timing === 'before_next_prompt');
+      expect(isRuntimeConfigUpdateOutcomeDeferred({ status: 'failed', timing })).toBe(false);
+    }
+    expect(isRuntimeConfigUpdateOutcomeDeferred(undefined)).toBe(false);
+    expect(isRuntimeConfigUpdateOutcomeDeferred(null)).toBe(false);
+    expect(isRuntimeConfigUpdateOutcomeDeferred({ status: 'applied', timing: 'current_window' })).toBe(false);
+    expect(isRuntimeConfigUpdateOutcomeDeferred({ status: 'applied', timing: 'skipped_already_effective' })).toBe(false);
+  });
   it('treats legacy bare returns as applied (back-compat)', () => {
     expect(isRuntimeConfigUpdateOutcomeApplied(undefined)).toBe(true);
     expect(isRuntimeConfigUpdateOutcomeApplied(null)).toBe(true);

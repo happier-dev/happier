@@ -77,7 +77,7 @@ describe('resolveConnectedServiceSessionSelection', () => {
     });
   });
 
-  it('retains a durable null-active group in the shared option projection', () => {
+  it('retains a durable null-active group with unknown policy in the V2 option projection', () => {
     expect(buildConnectedServiceAccountGroupOptionsByServiceId({
       accountGroupsFeatureEnabled: true,
       supportedConnectedServiceIds: ['anthropic'],
@@ -97,7 +97,7 @@ describe('resolveConnectedServiceSessionSelection', () => {
         activeProfileId: null,
         memberProfileIds: ['primary', 'backup'],
         enabledMemberCount: 2,
-        autoSwitch: false,
+        autoSwitch: null,
         status: 'ready',
       }],
     });

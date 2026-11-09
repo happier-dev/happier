@@ -71,8 +71,8 @@ describe('bundledAgentDefinitions', () => {
       install: expect.objectContaining({
         managed: expect.objectContaining({
           kind: 'managed_package',
-          packageName: 'opencode-ai',
-          packageBinarySetup: { kind: 'opencode_platform_binary' },
+          packageName: '@opencode/cli',
+          allowBuild: true,
         }),
         manual: { kind: 'command' },
       }),

@@ -16,6 +16,7 @@ const FIELD_CAPABILITY_PATH = {
   'intent.role': ['intent', 'role'],
   'intent.sessionRoles': ['intent', 'sessionRoles'],
   'intent.memoryEnabled': ['intent', 'memoryEnabled'],
+  'intent.approvalProfileId': ['intent', 'approvalProfileId'],
   'intent.voicePreference': ['intent', 'voicePreference'],
   'intent.templateDraftRef': ['intent', 'templateDraftRef'],
   'intent.templateInstance': ['intent', 'templateInstance'],
@@ -29,6 +30,7 @@ const FIELD_CAPABILITY_PATH = {
   'display.botFace': ['display', 'botFace'],
   'runtime.workState': ['runtime', 'workState'],
   'runtime.activity': ['runtime', 'activity'],
+  'runtime.turnProgress': ['runtime', 'activity'],
   'runtime.externalAgent': ['runtime', 'externalAgent'],
   'runtime.externalSessionOperation': ['runtime', 'externalSessionOperation'],
   'runtime.usageLimitRecovery': ['runtime', 'usageLimitRecovery'],
@@ -39,10 +41,13 @@ const FIELD_CAPABILITY_PATH = {
 } as const satisfies Record<SessionStateFieldId, readonly [SessionStateFieldFamily, string]>;
 
 const DEFERRED_PROVIDER_SYNC_FIELDS = new Set<SessionStateFieldId>([
+  // The host lifecycle derives this fact; provider field synchronization cannot author it.
+  'runtime.turnProgress',
   'display.statusReason',
   'intent.role',
   'intent.sessionRoles',
   'intent.memoryEnabled',
+  'intent.approvalProfileId',
   'intent.voicePreference',
   'intent.templateDraftRef',
   'intent.templateInstance',

@@ -93,7 +93,6 @@ export type SessionStateSyncEngine = Readonly<{
     expectedMetadataRevision?: number;
     expectedValue?: SessionStateFieldValue<F> | null;
     ctx?: RuntimeFacetCtx;
-    maxAttempts?: number;
     mirrorToProvider?: boolean;
   }>): Promise<SessionStateMetadataWriteResult>;
 }>;
@@ -228,7 +227,6 @@ export function createSessionStateSyncEngine(
         ),
         {
           reason: params.metadataReason,
-          ...(typeof params.maxAttempts === 'number' ? { maxAttempts: params.maxAttempts } : {}),
         },
       );
       if (!result.ok) {

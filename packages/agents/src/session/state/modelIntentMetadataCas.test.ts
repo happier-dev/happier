@@ -22,6 +22,15 @@ const teamRef = {
 };
 
 describe('createModelIntentMetadataCasCandidate', () => {
+  it('replaces a Team V2 intent with ordinary intent and preserves newer Team intent on retry', () => {
+    const candidate = createModelIntentMetadataCasCandidate({ selection, nowMs: () => 20 });
+    const first = candidate.update({ modelSelectionIntentV2: { v: 2, updatedAt: 19, ref: teamRef } });
+    expect(first).not.toHaveProperty('modelSelectionIntentV2');
+    expect(first).toMatchObject({ modelSelectionIntentV1: { updatedAt: 20, selection } });
+    const newer = { modelSelectionIntentV2: { v: 2, updatedAt: 21, ref: teamRef } };
+    expect(candidate.update(newer)).toBe(newer);
+    expect(candidate.readState()).toMatchObject({ accepted: false });
+  });
   it('refuses capture of a canonical null intent without inventing a default inverse', () => {
     const metadata = { modelSelectionIntentV1: { v: 1 as const, updatedAt: 20, selection: null } };
     const candidate = createModelIntentMetadataCasCandidate({ selection, captureBefore: true, ownerScope: scope });

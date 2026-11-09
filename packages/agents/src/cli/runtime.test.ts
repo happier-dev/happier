@@ -99,7 +99,7 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
         },
         archiveExtractionLimits: {
           maxFileBytes: 384 * 1024 * 1024,
-          maxExpandedBytes: 384 * 1024 * 1024,
+          maxExpandedBytes: 512 * 1024 * 1024,
         },
       },
     });
@@ -125,9 +125,9 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
     expect(getAgentCliRuntimeSpec('opencode')).toMatchObject({
       managedInstall: {
         kind: 'managed_package',
-        packageName: 'opencode-ai',
+        packageName: '@opencode/cli',
         binaryName: 'opencode',
-        packageBinarySetup: { kind: 'opencode_platform_binary' },
+        allowBuild: true,
       },
     });
     expect(getAgentCliRuntimeSpec('gemini')).toMatchObject({
@@ -195,7 +195,7 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
 
   it('keeps provider-specific setup guide links on the runtime catalog when they differ from general docs', () => {
     expect(getAgentCliRuntimeSpec('claude').installGuideUrl).toBe('https://code.claude.com/docs/en/setup');
-    expect(getAgentCliRuntimeSpec('opencode').installGuideUrl).toBe('https://opencode.ai/docs');
+    expect(getAgentCliRuntimeSpec('opencode').installGuideUrl).toBe('https://dev.opencode.ai/v2/docs/');
     expect(getAgentCliRuntimeSpec('kimi').installGuideUrl).toBe('https://moonshotai.github.io/kimi-code/docs/en/reference/kimi-command.html');
     expect(getAgentCliRuntimeSpec('qwen').installGuideUrl).toBe('https://qwenlm.github.io/qwen-code-docs/');
     expect(getAgentCliRuntimeSpec('ohMyPi').installGuideUrl).toBe('https://github.com/can1357/oh-my-pi#via-bun-recommended');
@@ -240,9 +240,9 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
     expect(getAgentCliRuntimeSpec('opencode')).toMatchObject({
       managedInstall: {
         kind: 'managed_package',
-        packageName: 'opencode-ai',
+        packageName: '@opencode/cli',
         binaryName: 'opencode',
-        packageBinarySetup: { kind: 'opencode_platform_binary' },
+        allowBuild: true,
       },
       manualInstallKind: 'command',
       manualInstallRecipes: null,
@@ -291,6 +291,7 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
       'devin',
       'fx',
       'droid',
+      'codebuddy',
       'cursor',
       'ohMyPi',
       'pi',

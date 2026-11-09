@@ -25,6 +25,27 @@ describe('summaryTextBinding', () => {
     expect(renamed).toEqual({ summary: { text: 'My chosen title', updatedAt: 300 } });
   });
 
+  it('preserves occupied canonical titles, including empty text, during native initialization', () => {
+    const nativeTitle = createSessionStateFieldMetadataUpdater('display.title', {
+      title: 'Fresh Agent title', updatedAt: 200, staleBehavior: 'drop', preserveExistingValue: true,
+    });
+    for (const text of ['', '   ']) {
+      const metadata = { summary: { text, updatedAt: 1 } };
+      expect(nativeTitle(metadata)).toBe(metadata);
+    }
+  });
+
+  it('preserves a legacy Session name when a native Agent initializes its title', () => {
+    const metadata: SessionMetadata = { name: 'Legacy title' };
+    const nativeTitle = createSessionStateFieldMetadataUpdater('display.title', {
+      title: 'Fresh Agent title', updatedAt: 200, staleBehavior: 'drop', preserveExistingValue: true,
+    });
+    expect(nativeTitle(metadata)).toBe(metadata);
+    expect(createSessionStateFieldMetadataUpdater('display.title', {
+      title: 'Requested rename', updatedAt: 201,
+    })(metadata)).toMatchObject({ summary: { text: 'Requested rename' } });
+  });
+
   describe.each(['binding', 'metadata updater'] as const)('zero-time title arbitration through %s', (entryPoint) => {
     const writeTitle = (metadata: SessionMetadata) => entryPoint === 'binding'
       ? summaryTextBinding.write(metadata, {

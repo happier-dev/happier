@@ -1,5 +1,5 @@
-import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
+import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol';
 
 import { clearSessionStateFieldFromMetadata, createSessionStateFieldMetadataUpdater, readSessionStateFieldFromMetadata, writeSessionStateFieldToMetadata } from './publishField.js';
 
@@ -28,6 +28,59 @@ describe('readSessionStateFieldFromMetadata', () => {
     expect(next).toEqual({ work: { memoryEnabled: true, templateDraftRef: ref } });
     expect(writeSessionStateFieldToMetadata(next, 'intent.templateDraftRef', { ...ref })).toBe(next);
     expect(clearSessionStateFieldFromMetadata(next, 'intent.templateDraftRef')).toEqual(metadata);
+  });
+  it('attaches and detaches an approval profile against the reviewed Session revision', () => {
+    const metadata = { approvalProfileId: 'builtin:read-propose', path: '/repo' };
+    const stale = createSessionStateFieldMetadataUpdater('intent.approvalProfileId', 'builtin:full-trust', 4);
+    expect(() => stale(metadata, 5)).toThrowError(expect.objectContaining({ code: 'conflict' }));
+    const attach = createSessionStateFieldMetadataUpdater('intent.approvalProfileId', 'builtin:apply-safe', 4);
+    expect(attach(metadata, 4)).toEqual({ ...metadata, approvalProfileId: 'builtin:apply-safe' });
+    expect(attach({ ...metadata, path: '/renamed' }, 5)).toEqual({ path: '/renamed', approvalProfileId: 'builtin:apply-safe' });
+    expect(() => attach({ ...metadata, approvalProfileId: 'builtin:full-trust' }, 6))
+      .toThrowError(expect.objectContaining({ code: 'conflict' }));
+    expect(clearSessionStateFieldFromMetadata(metadata, 'intent.approvalProfileId')).toEqual({ ...metadata, approvalProfileId: null });
+  });
+  it('sets, reads and clears registered retry progress without publishing equal progress again', () => {
+    const progress = { turnId: 'turn-1', phase: 'retrying', attempt: 2, reason: 'connection_failed' } as const;
+    const original = { path: '/tmp/project' };
+    const updated = writeSessionStateFieldToMetadata(original, 'runtime.turnProgress', progress);
+    expect(updated).toEqual({ ...original, sessionTurnProgressV1: progress });
+    expect(readSessionStateFieldFromMetadata(updated, 'runtime.turnProgress')).toEqual(progress);
+    expect(writeSessionStateFieldToMetadata(updated, 'runtime.turnProgress', { ...progress })).toBe(updated);
+    expect(createSessionStateFieldMetadataUpdater('runtime.turnProgress', null)(updated)).toEqual(original);
+    expect(clearSessionStateFieldFromMetadata(updated, 'runtime.turnProgress')).toEqual(original);
+    expect(readSessionStateFieldFromMetadata(original, 'runtime.turnProgress')).toBeUndefined();
+  });
+  it('requires the reviewed field value and treats null as an absent nullable field', () => {
+    const metadata = { work: { memoryEnabled: false }, summary: { text: 'Before', updatedAt: 1 } };
+    const mismatch = createSessionStateFieldMetadataUpdater('intent.memoryEnabled', true, undefined, false);
+    expect(() => mismatch({ work: { memoryEnabled: true } }))
+      .toThrowError(expect.objectContaining({ code: 'conflict', retryable: false }));
+    const update = createSessionStateFieldMetadataUpdater('intent.memoryEnabled', true, undefined, false);
+    expect(update(metadata).work?.memoryEnabled).toBe(true);
+    const unrelated = { ...metadata, summary: { text: 'Concurrent title', updatedAt: 2 } };
+    expect(update(unrelated)).toEqual({ ...unrelated, work: { memoryEnabled: true } });
+    expect(() => update({ ...unrelated, work: { memoryEnabled: true } }))
+      .toThrowError(expect.objectContaining({ code: 'conflict', retryable: false }));
+    const ref = { serverId: 'home', artifactId: '7e23f798-230a-42f3-931f-e38b20736333' };
+    const initialize = createSessionStateFieldMetadataUpdater('intent.templateDraftRef', ref, undefined, null);
+    expect(initialize({ path: '/repo' })).toEqual({ path: '/repo', work: { templateDraftRef: ref } });
+    const requiresAbsent = createSessionStateFieldMetadataUpdater('intent.templateDraftRef', ref, undefined, null);
+    expect(() => requiresAbsent({ work: { templateDraftRef: ref } }))
+      .toThrowError(expect.objectContaining({ code: 'conflict', retryable: false }));
+    expect(metadata.work.memoryEnabled).toBe(false);
+  });
+  it('requires the caller revision on the first read, then preserves unrelated retry changes', () => {
+    const metadata = { work: { memoryEnabled: false }, summary: { text: 'Before', updatedAt: 1 } };
+    const stale = createSessionStateFieldMetadataUpdater('intent.memoryEnabled', true, 4);
+    expect(() => stale(metadata, 5)).toThrowError(expect.objectContaining({ code: 'conflict', retryable: false }));
+    expect(() => stale(metadata)).toThrowError(expect.objectContaining({ code: 'conflict' }));
+    const update = createSessionStateFieldMetadataUpdater('intent.memoryEnabled', true, 4);
+    expect(update(metadata, 4).work?.memoryEnabled).toBe(true);
+    const changed = { ...metadata, summary: { text: 'Concurrent title', updatedAt: 2 } };
+    expect(update(changed, 5)).toEqual({ ...changed, work: { memoryEnabled: true } });
+    expect(() => update({ ...changed, work: { memoryEnabled: true } }, 6))
+      .toThrowError(expect.objectContaining({ code: 'conflict' }));
   });
   it('compares semantic field values independently of JSON key order and snapshots an in-place competing change', () => {
     const preference = { providerContributionId: 'example.voice/speech', settingFieldPath: 'voice', value: { id: 'original', language: 'en' } };
@@ -71,37 +124,5 @@ describe('readSessionStateFieldFromMetadata', () => {
       .toEqual({ work: { memoryEnabled: true, futureWork: { retained: true }, viewPreferences: { futureView: 'retained' } } });
     expect(metadata.work.viewPreferences.showToolCalls).toBe(false);
     expect(metadata.work.memoryEnabled).toBe(false);
-  });
-
-  it('requires the reviewed field value and treats null as an absent nullable field', () => {
-    const metadata = { work: { memoryEnabled: false }, summary: { text: 'Before', updatedAt: 1 } };
-    const mismatch = createSessionStateFieldMetadataUpdater('intent.memoryEnabled', true, undefined, false);
-    expect(() => mismatch({ work: { memoryEnabled: true } }))
-      .toThrowError(expect.objectContaining({ code: 'conflict', retryable: false }));
-    const update = createSessionStateFieldMetadataUpdater('intent.memoryEnabled', true, undefined, false);
-    expect(update(metadata).work?.memoryEnabled).toBe(true);
-    const unrelated = { ...metadata, summary: { text: 'Concurrent title', updatedAt: 2 } };
-    expect(update(unrelated)).toEqual({ ...unrelated, work: { memoryEnabled: true } });
-    expect(() => update({ ...unrelated, work: { memoryEnabled: true } }))
-      .toThrowError(expect.objectContaining({ code: 'conflict', retryable: false }));
-    const ref = { serverId: 'home', artifactId: '7e23f798-230a-42f3-931f-e38b20736333' };
-    const initialize = createSessionStateFieldMetadataUpdater('intent.templateDraftRef', ref, undefined, null);
-    expect(initialize({ path: '/repo' })).toEqual({ path: '/repo', work: { templateDraftRef: ref } });
-    const requiresAbsent = createSessionStateFieldMetadataUpdater('intent.templateDraftRef', ref, undefined, null);
-    expect(() => requiresAbsent({ work: { templateDraftRef: ref } }))
-      .toThrowError(expect.objectContaining({ code: 'conflict', retryable: false }));
-    expect(metadata.work.memoryEnabled).toBe(false);
-  });
-  it('requires the caller revision on the first read, then preserves unrelated retry changes', () => {
-    const metadata = { work: { memoryEnabled: false }, summary: { text: 'Before', updatedAt: 1 } };
-    const stale = createSessionStateFieldMetadataUpdater('intent.memoryEnabled', true, 4);
-    expect(() => stale(metadata, 5)).toThrowError(expect.objectContaining({ code: 'conflict', retryable: false }));
-    expect(() => stale(metadata)).toThrowError(expect.objectContaining({ code: 'conflict' }));
-    const update = createSessionStateFieldMetadataUpdater('intent.memoryEnabled', true, 4);
-    expect(update(metadata, 4).work?.memoryEnabled).toBe(true);
-    const changed = { ...metadata, summary: { text: 'Concurrent title', updatedAt: 2 } };
-    expect(update(changed, 5)).toEqual({ ...changed, work: { memoryEnabled: true } });
-    expect(() => update({ ...changed, work: { memoryEnabled: true } }, 6))
-      .toThrowError(expect.objectContaining({ code: 'conflict' }));
   });
 });
