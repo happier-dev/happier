@@ -54,7 +54,7 @@ import {
 import { useMachineServiceEnvironments, useMachineServiceSourceName } from './useMachineServiceEnvironments';
 import { useMachineServiceActions } from './useMachineServiceActions';
 
-const SERVICE_AGENT_ACTIONS = { agentActions: 'withDefault', composerOnUnresolvedPlacement: true } as const;
+const SERVICE_AGENT_ACTIONS = { agentActions: 'withDefault' } as const;
 
 /**
  * One service on a Machine (lab `machine/services/detail`), pushed inside the Services tab like Storage's and Guard's

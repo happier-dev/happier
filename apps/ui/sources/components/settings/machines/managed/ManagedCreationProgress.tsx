@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
+import { InvestigationAgentActionButtons } from '@/components/inbox/detail/InvestigationAgentActionButtons';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { View, type ViewStyle } from 'react-native';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -7,6 +8,7 @@ import { resolveManagedConfigurationCost } from '@happier-dev/protocol/machines/
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -137,7 +139,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     const failureAction = canRetryInstallation && props.handlers?.reinstall ? { label: t('managedMachines.creation.retryInstall'),
         onPress: props.handlers.reinstall, testID: 'managed-machine.installation-retry' }
         : checkNow && !stateRowChecks ? { label: t('managedMachines.inspect.checkNow'), onPress: checkNow,
-            testID: 'managed-machine.installation-check' } : undefined;
+            testID: 'managed-machine.installation-check', busy: props.checking === true } : undefined;
     return <>
         {setup?.state === 'failed' ? <ItemGroup>
             <Item title={t('managedMachines.creation.setupFailed', { name: machine.launch.name })} titleLines={0}
@@ -183,7 +185,7 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
             <ManagedMachineStateRow name={lifecycle.word ?? name}
                 mark={props.mark ?? <Icon name="desktop" />}
                 state={state} provider={props.provider} handlers={props.handlers ?? {}}
-                pendingAction={props.starting ? 'start' : undefined}
+                pendingAction={props.starting ? 'start' : props.checking ? 'checkNow' : undefined}
                 ended={machine.allocation === 'confirmed-absent'} testID="managed-machine.progress" />
             {/* Without an operation to report, the install is a step of this same resource, not a second copy of its row. */}
             {installationRetryOnly && !failure ? <Item title={t('managedMachines.creation.install')} mode="info" showChevron={false}
@@ -222,14 +224,18 @@ function FailedInstallationCard(props: Readonly<{
     const subject = React.useMemo(() => ({ kind: 'managedMachineOperation' as const,
         operation: { serverId, machineId: snapshot.scope.machineId, operationId: snapshot.operationId } }),
     [serverId, snapshot.scope.machineId, snapshot.operationId]);
-    const investigation = useInvestigateFailure(subject);
+    const investigation = useInvestigateFailure(subject, { agentActions: 'withDefault' });
     return <>
         {/* Retry when the failed install is confirmed; while its history can't be read, Check now re-reads it. */}
-        <SurfaceStateCard kind="error" size="details" layout="inline" title={props.title}
-            diagnosticCode={props.detail} testID="managed-machine.installation-error" action={props.action}
-            secondaryAction={{ label: t('inbox.work.healthNotice.investigate'), onPress: investigation.investigate,
-                testID: 'managed-machine.installation-investigate', disabled: investigation.pending, busy: investigation.pending }} />
-        {investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={serverId}
+        <AttentionBanner tone="danger" title={props.title} testID="managed-machine.installation-error"
+            details={props.detail ? [props.detail] : undefined}
+            action={props.action ? { label: props.action.label, onPress: () => { void props.action?.onPress(); },
+                disabled: props.action.disabled, loading: props.action.busy, testID: props.action.testID } : undefined}
+            control={<InvestigationAgentActionButtons actions={investigation.actions ?? [{
+                label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: true,
+            }]} pending={investigation.pending} compact={false}
+                onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />} />
+        {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={serverId}
             testID="managed-machine.investigate" onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
     </>;
 }

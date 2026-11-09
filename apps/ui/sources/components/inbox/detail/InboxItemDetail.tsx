@@ -36,9 +36,11 @@ import { Icon } from '@/components/ui/icons/Icon';
 import type { AccountNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import {
-  readNoticeInvestigationSubject, useHealthNoticeInvestigate,
+  readNoticeInvestigationSubject,
   type BoundHealthNoticeInvestigation, type NoticeInvestigationSubject,
 } from './healthNoticeInvestigation';
+import { InvestigationAgentActionButtons } from './InvestigationAgentActionButtons';
+import { useBoundFailureInvestigation } from '@/hooks/inbox/useInvestigateFailure';
 import { t } from '@/text';
 
 import { INBOX_ITEM_DETAIL_REGISTRY, createInboxItemRoute, readInboxView, resolveInboxItemPageRoute, resolveInboxNoticeOwnPageRoute, type InboxItemFocus } from '../inboxItemFocus';
@@ -174,6 +176,8 @@ function WorkflowDetailAdapter(props: DetailBodyProps) {
 function NoticeDetailAdapter(props: DetailBodyProps) {
   const model = useOptionalInboxModel();
   const entry = model?.accountNotices.find(candidate => candidate.artifact.id === props.focus.id);
+  const investigation = React.useMemo(() => entry && model && model.noticeInvestigation.isEligible(entry)
+    ? bindNoticeInvestigation(model.noticeInvestigation, entry) : null, [model?.noticeInvestigation, entry]);
   const ownPage = resolveInboxNoticeOwnPageRoute(entry?.header
     ?? model?.openUsageNotices.find(candidate => candidate.artifact.id === props.focus.id)?.header, props.focus.serverId);
   // Its page is this Inbox item: while the notices load, wait; a notice that is gone says so.
@@ -182,7 +186,6 @@ function NoticeDetailAdapter(props: DetailBodyProps) {
   const item = model.items.find(candidate => createInboxItemRoute(candidate.focus).params.item === routeKey);
   // A failing service or an open provider alert is evidence: Investigate hands it to configured Triage.
   const subject = readNoticeInvestigationSubject(entry.header, model.noticeInvestigation.isEligible(entry));
-  const investigation = subject?.investigable ? bindNoticeInvestigation(model.noticeInvestigation, entry) : null;
   const plugin = entry.header.source.kind === 'plugin'
     ? { id: entry.header.source.pluginId, name: item?.source.displayName ?? entry.header.source.pluginId } : undefined;
   const content = ownPage ? <PageDetailAdapter {...props} plugin={plugin} /> : <InboxNoticeDetail title={item?.title ?? entry.header.title} body={item?.excerpt ?? entry.header.body ?? entry.header.excerpt ?? null}
@@ -227,7 +230,8 @@ export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Re
   const machineNames = useMachineDisplayNamesById(service ? [service.machineId] : NO_MACHINES);
   const machine = service ? machineNames[service.machineId] ?? service.machineId : null;
   const canInvestigate = subject?.investigable === true && props.investigation != null;
-  const investigation = useHealthNoticeInvestigate(canInvestigate ? props.investigation ?? null : null);
+  const investigation = useBoundFailureInvestigation(canInvestigate ? props.investigation ?? null : null,
+    { agentActions: 'withDefault' });
   const investigateHint = machine ? t('inbox.work.healthNotice.investigateHint', { machine }) : t('inbox.work.healthNotice.alertInvestigateHint');
   // One line says why an open notice offers no Investigate: the service's own section, else a quiet line.
   const ineligible = subject?.open === true && !canInvestigate ? t('inbox.work.healthNotice.investigateUnavailable') : undefined;
@@ -243,9 +247,10 @@ export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Re
         actions={(
           <>
             {canInvestigate ? (
-              <RoundButton testID="inbox.notice.investigate" title={t('inbox.work.healthNotice.investigate')}
-                loading={investigation.pending} disabled={investigation.pending} onPress={investigation.investigate}
-                accessibilityHint={investigateHint} />
+              <InvestigationAgentActionButtons actions={investigation.actions ?? [{
+                label: t('inbox.work.healthNotice.investigate'), launchMode: 'review', startable: true,
+              }]} pending={investigation.pending} compact={false}
+                onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }} />
             ) : null}
             <RoundButton testID="inbox.notice.dismiss" display="secondary" disabled={pending}
               title={t('inbox.actionOperations.dismiss')} onPress={dismiss} />
@@ -253,7 +258,7 @@ export const InboxNoticeDetail = React.memo(function InboxNoticeDetail(props: Re
         )}
         actionsPlacement="page"
       />
-      {investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId} onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
+      {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome} serverId={props.serverId} onChoosePlacement={investigation.investigateWithPlacement} pending={investigation.pending} /> : null}
       {ineligible && !service ? (
         <ItemGroup testID="inbox.notice.investigate.ineligible" surface="none" description={ineligible}>{null}</ItemGroup>
       ) : null}

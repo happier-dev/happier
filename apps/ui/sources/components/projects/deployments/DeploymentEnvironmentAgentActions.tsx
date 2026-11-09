@@ -4,7 +4,7 @@ import { InvestigationAgentActionButtons } from '@/components/inbox/detail/Inves
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 
-const ENVIRONMENT_AGENT_ACTIONS = { agentActions: 'subjectOnly', composerOnUnresolvedPlacement: true } as const;
+const ENVIRONMENT_AGENT_ACTIONS = { agentActions: 'subjectOnly' } as const;
 const NO_ACTIONS = Object.freeze([]);
 
 /**

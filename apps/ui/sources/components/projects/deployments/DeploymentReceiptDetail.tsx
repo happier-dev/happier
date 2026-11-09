@@ -79,7 +79,7 @@ import type { DeploymentReadLogs } from './useDeploymentStepLog';
  * once and never offers a blind retry.
  */
 /** The receipt draws the person's Investigate plus its own records; an unresolved placement opens the composer. */
-const RECEIPT_AGENT_ACTIONS = { agentActions: 'withDefault', composerOnUnresolvedPlacement: true } as const;
+const RECEIPT_AGENT_ACTIONS = { agentActions: 'withDefault' } as const;
 
 export const DeploymentReceiptDetail = React.memo(
   function DeploymentReceiptDetail(
@@ -163,6 +163,13 @@ export const DeploymentReceiptDetail = React.memo(
       healthServerId: props.serverId,
       health: receipt.healthFeed,
     } : null, [persistedInvestigation, investigateSubject, value?.deployment, props.serverId, receipt.healthFeed]);
+    const { onOpenReceipt, onOpenPromotionReceipt } = props;
+    // A remediation can land on another Environment of this Project; both open through this page's own receipt navigation.
+    const openOutcomeReceipt = React.useMemo(() => ({ serverId: props.serverId,
+      open: (environmentId: string, deploymentId: string) => {
+        if (environmentId === props.environmentId) onOpenReceipt(deploymentId);
+        else onOpenPromotionReceipt?.(environmentId, deploymentId);
+      } }), [props.serverId, props.environmentId, onOpenReceipt, onOpenPromotionReceipt]);
 
     if (!value) {
       return (
@@ -560,7 +567,7 @@ export const DeploymentReceiptDetail = React.memo(
               />
             )}
             {/* The agent's finding arrives after its Session is read; it closes the page, so it never moves what the receipt already drew. */}
-            {outcomeInput ? <OperationsOutcomeGroup input={outcomeInput} testID="project-deployments.receipt.outcome" /> : null}
+            {outcomeInput ? <OperationsOutcomeGroup input={outcomeInput} testID="project-deployments.receipt.outcome" openReceipt={openOutcomeReceipt} /> : null}
           </ItemList>
           {phone && pinned ? (
             <KeyboardStickyFooter>
