@@ -138,7 +138,7 @@ import { SessionCompanionHost } from "@/components/sessions/companion/SessionCom
 import { SessionCompanionRevealOwner } from "@/components/sessions/companion/presentation/SessionCompanionRevealPort";
 import { SessionViewerSourceAccountScopeProvider } from "@/components/sessions/viewer/SessionViewerSourceAccountScope";
 import { useSessionCompanionPreference } from "@/components/sessions/companion/state/useSessionCompanionPreference";
-import { useResolveSessionCompanionPlacementForDensity } from "@/components/sessions/companion/layout/useSessionCompanionPlacement";
+import { useResolveSessionCompanionPlacementForDensity, useSessionCompanionPlacement } from "@/components/sessions/companion/layout/useSessionCompanionPlacement";
 import type { SessionCompanionEdge } from "@/components/sessions/companion/state/sessionCompanionPreference";
 import { createSessionSummaryDestinations } from "@/components/sessions/companion/summary/sessionSummaryDestinations";
 import { SessionCompanionPresentationBridge } from "@/components/sessions/companion/presentation/SessionCompanionPresentationBridge";
@@ -1953,7 +1953,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                            openSessionCollaboration={openSessionCollaboration}
                            openSessionAccess={openSessionAccess}
                            companionEdge={companionPreference.preference.edge}
-                           companionRailWidthPx={companionHeaderPlacement.kind === 'reserved_rail' ? companionHeaderPlacement.widthPx : 0}
                            openWorkStateRequestKey={props.openWorkStateRequestKey ?? null}
                            embedded={embedded}
                            embeddedArrangement={props.embeddedArrangement}
@@ -2017,6 +2016,22 @@ function SessionViewLoadedContent(props: Omit<React.ComponentProps<typeof Sessio
     </SessionComposerModelContext.Provider>;
 }
 
+/**
+ * The header stands on the transcript column: a docked Companion rail's width is left beside it on the rail's
+ * side. It reads the same placement owner the Companion host reads, from inside the pane layout that owner needs.
+ */
+function SessionHeaderBesideCompanionRail(props: React.PropsWithChildren<Readonly<{
+    sessionId: string;
+    serverId: string | null;
+    paneScopeId: string;
+}>>) {
+    const placement = useSessionCompanionPlacement({ sessionId: props.sessionId, serverId: props.serverId, paneScopeId: props.paneScopeId });
+    // One View in every placement, so a rail appearing never remounts the header.
+    const railPx = placement.kind === 'reserved_rail' ? placement.widthPx : 0;
+    const edge = placement.kind === 'reserved_rail' ? placement.edge : 'trailing';
+    return <View style={edge === 'leading' ? { paddingStart: railPx } : { paddingEnd: railPx }}>{props.children}</View>;
+}
+
 const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     renderComposer,
     authSurfaceState,
@@ -2050,7 +2065,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     routeHydrationPending,
     onAppPanePluginSurfaceNavigationBindingChange,
     companionEdge,
-    companionRailWidthPx,
     embedded,
     embeddedArrangement,
     companionAddress,
@@ -2155,8 +2169,6 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     openSessionCollaboration: () => void;
     openSessionAccess: () => void;
     companionEdge: SessionCompanionEdge;
-    /** Width the docked Companion rail takes beside the transcript (`reserved_rail`), else 0. */
-    companionRailWidthPx: number;
     openWorkStateRequestKey: number | null;
 } & SessionComposerView) {
     const { theme } = useUnistyles();
@@ -2631,7 +2643,9 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
             {/* The header opens the transcript column, so a docked Companion rail's width is left beside it on the
                 rail's side: its title and controls then stand on the transcript's column, as they do without the rail. */}
             {embedded ? null : <PaneMainTopAnchor>
-                <View style={companionEdge === 'leading' ? { paddingStart: companionRailWidthPx } : { paddingEnd: companionRailWidthPx }}>{header}</View>
+                <SessionHeaderBesideCompanionRail sessionId={sessionId} serverId={companionAddress?.serverId ?? null} paneScopeId={paneScopeId}>
+                    {header}
+                </SessionHeaderBesideCompanionRail>
                 <SessionPageTabs />
             </PaneMainTopAnchor>}
             {/* The transcript's own positioning context: its floating notices anchor below the header. */}
