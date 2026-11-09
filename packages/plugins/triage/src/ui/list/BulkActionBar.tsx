@@ -120,6 +120,19 @@ const IGNORE_PRESS = (): void => undefined;
  * The configured actions a live selection is offered, in catalog order: the union across the selected subjects,
  * decided by the ONE offer owner. Both the toolbar's Action menu and the bar read it, so they never disagree.
  */
+export function planTriageBulkOfferedActionsV1(
+  actions: readonly TriageActionV1[],
+  subjects: readonly TriageSourceWorkflowSubjectV1[],
+): readonly TriageActionV1[] {
+  const offerable = planTriageOfferableActionsV1(actions);
+  if (subjects.length === 0) return offerable;
+  const applicable = new Set<TriageActionV1>();
+  for (const subject of subjects) {
+    for (const action of planTriageOfferedActionsV1(actions, subject)) applicable.add(action);
+  }
+  return offerable.filter((candidate) => applicable.has(candidate));
+}
+
 function useTriageBulkOfferedActions(
   actions: readonly TriageActionV1[],
   selectedWorkflowSubjects: TriageBulkActionBarPropsV1['selectedWorkflowSubjects'],
@@ -136,17 +149,7 @@ function useTriageBulkOfferedActions(
     () => selectedWorkflowSubjects(selectedKeys),
     [selectedKeys, selectedWorkflowSubjects],
   );
-  const offered = React.useMemo(() => {
-    const offerable = planTriageOfferableActionsV1(actions);
-    if (subjects.length === 0) return offerable;
-    // The union across the selected subjects, read back in configured catalog
-    // order — the order is a person's configuration, not something this bar reapplies.
-    const applicable = new Set<TriageActionV1>();
-    for (const subject of subjects) {
-      for (const action of planTriageOfferedActionsV1(actions, subject)) applicable.add(action);
-    }
-    return offerable.filter((candidate) => applicable.has(candidate));
-  }, [actions, subjects]);
+  const offered = React.useMemo(() => planTriageBulkOfferedActionsV1(actions, subjects), [actions, subjects]);
   return { offered, selectedKeys, isSelectionMode: snapshot.isSelectionMode };
 }
 

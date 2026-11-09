@@ -123,6 +123,7 @@ import {
   useTriagePostMutationCompletion,
   useTriageEvidenceDisclosure,
   useTriageSourcePanelIntentV1,
+  useTriageSourcePanelPagingV1,
   type TriageSourcePanelCommandV1,
   useTriageDetailRequest,
   useTriagePageRefresh,
@@ -2944,14 +2945,8 @@ function FilesPanel({
     setFocusPath(operation.itemId);
     return { status: 'applied' };
   }, openCommands);
-  const pagingCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.canLoadMore && !state.pending
-    ? [{ title: text('plugins.github.ui.loadMoreFiles', 'Load more files'), operation: { kind: 'loadMoreSourceItems', list: 'files' } }] : [],
-  [state.canLoadMore, state.pending, text]);
-  const loadMore = useTriageSourcePanelIntentV1({ kind: 'loadMoreSourceItems', list: 'files' }, async (operation) => {
-    if (operation.kind !== 'loadMoreSourceItems' || !state.canLoadMore || state.pending) return { status: 'unavailable' };
-    controller.loadMore();
-    return { status: 'applied' };
-  }, pagingCommands);
+  const loadMore = useTriageSourcePanelPagingV1('files', text('plugins.github.ui.loadMoreFiles', 'Load more files'),
+    state.canLoadMore, state.pending, controller.loadMore);
   // The reading order is a source-owned fact computed over everything read so far.
   const rows = React.useMemo(() => orderGithubChangedFiles(state.rows).map((entry) => entry.row), [state.rows]);
   const files = React.useMemo(() => rows.map((row) => toReviewChangedFile(text, row)), [rows, text]);
@@ -3044,7 +3039,7 @@ function FilesPanel({
               titleKey="plugins.github.ui.loadMoreFiles"
               variant="secondary"
               busy={state.pending}
-              onPress={() => { void loadMore({ kind: 'loadMoreSourceItems', list: 'files' }); }}
+              onPress={loadMore}
             />
           )
           : null}
@@ -4176,11 +4171,14 @@ function PagedThreadFeedbackFinding({
   firstCursor: string;
 }>): React.ReactElement {
   const replies = useGithubFeedbackThreadReplies(context.input, finding.id, firstCursor);
+  const text = usePluginTranslation();
+  const loadMore = useTriageSourcePanelPagingV1(`thread-replies:${finding.id}`, text('plugins.github.ui.loadEarlierReplies', 'Load earlier replies'),
+    replies.state.canLoadMore, replies.state.pending, replies.loadMore);
   return (
     <ThreadFeedbackFinding
       finding={finding}
       earlierReplies={replies.state.rows}
-      {...(replies.state.canLoadMore ? { loadMore: replies.loadMore } : {})}
+      {...(replies.state.canLoadMore ? { loadMore } : {})}
       pending={replies.state.pending}
       {...context}
     />

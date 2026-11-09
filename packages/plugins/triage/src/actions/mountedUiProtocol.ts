@@ -5,7 +5,7 @@ import {
   defineProtocolString,
   defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
-import { TriageEntryRefV1Schema } from '@happier-dev/triage-protocol/v1';
+import { TriageActionEditorLaunchInputV1Schema, TriageEntryRefV1Schema } from '@happier-dev/triage-protocol/v1';
 import { TriageSourcePanelSelectionV1Schema, TriageSourcePanelRevealV1Schema, TriageSourcePanelInsertV1Schema } from '@happier-dev/triage-sources/runtime';
 import { TriageSurfaceFilterSelectionV1Schema, TriageListSettledQueryV1Schema, TriageSmartPolicyV1Schema, TriageListOrderV1Schema } from './listEntriesProtocol.js';
 import { TriageSavedViewPresentationV1Schema } from './savedViewsProtocol.js';
@@ -15,6 +15,15 @@ const identifier = defineProtocolString({ minLength: 1 });
 const closed = { policy: 'closed' } as const;
 export const TriageMountedUiOperationV1Schema = defineProtocolUnion([
   TriageSourcePanelSelectionV1Schema,
+  defineProtocolObject({ kind: defineProtocolLiteral('setSourceManagementOpen'), open: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('setSourceDiagnosticExpanded'), sourceInstanceId: identifier,
+    expanded: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('setOrganizing'), organizing: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('openActionEditor'), launch: TriageActionEditorLaunchInputV1Schema }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('closeActionEditor') }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('setAddSourceOpen'), open: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('configureSource'), sourceId: identifier }, closed),
+  defineProtocolObject({ kind: defineProtocolLiteral('selectBulkAction'), actionId: identifier }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('focusRow'), entryRef: TriageEntryRefV1Schema }, closed),
   defineProtocolObject({ kind: defineProtocolLiteral('peekRow'), entryRef: TriageEntryRefV1Schema,
     expanded: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional() }, closed),

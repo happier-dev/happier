@@ -24,6 +24,23 @@ An inactive panel, unknown list/item or exhausted page returns `unavailable`.
 These mounted operations require an answering client and do not acquire a
 second source reader or persist presentation state.
 
+For a continuation button, `useTriageSourcePanelPagingV1(list, title,
+canLoadMore, pending, onLoadMore)` registers that list's mounted operation and
+returns the callback for the button. The callback and command advance the same
+source-owned controller. Give independent nested lists distinct keys, such as
+`thread-replies:<threadId>`. `TriageActivityTimeline` registers its supplied
+continuation when an enclosing source-panel binding exists; standalone timelines
+keep their ordinary continuation without requiring a Triage frame.
+
+The same unreleased mounted Action also exposes Triage's existing presentation
+controls: `setSourceManagementOpen` (including outside-source Review),
+`setSourceDiagnosticExpanded`, `setOrganizing`, `openActionEditor`,
+`closeActionEditor`, `setAddSourceOpen`, `configureSource` and `selectBulkAction`.
+Editor opening takes the existing V1 action-editor launch input. Source
+configuration opens the admitted source's settings page. Bulk choices use the
+same workflow-subject offer planner as the visible picker. Commands describe
+the current mount; they do not create another settings or selection store.
+
 Bind `createTriageSourceSettingsSurface` to the source's discovery Action, Connected
 Account service and `connectedAccountPurpose` (the discovery Action's HostAccess
 request id). Its Connect/Manage link opens Happier's existing purpose setup for
@@ -78,6 +95,79 @@ selected configured Triage investigate Action and actual Event admission (or a
 rejoin of that admission). Safely filtered or age-skipped Events may update the
 notice but never start an investigation. Retained Inbox investigation
 navigation remains an integration requirement, not a shipped claim.
+
+## Composing a source detail story
+
+The following recipe targets the 0.3 development-source contract. Import story
+components from `@happier-dev/triage-sources/ui` and semantic content from
+`@happier-dev/plugin-ui`. Mount the source renderer through `defineUiSurface`;
+it supplies the Plugin UI providers. The enclosing Triage frame supplies the
+detail navigation, page-scroll, evidence-disclosure and post-mutation providers.
+A source consumes those bindings rather than installing another host provider
+or keeping an independent copy of the aggregate entry.
+
+`TriageDetailInstance` and `TriageDetailPanel` preserve the host's active panel
+interval. When `input.panel` is present, pass it and `input.panelScrollOwner`
+through to `TriageDetailPanel`, with content keyed by your source's declared
+panels. An absent `input.panel` requests the whole detail body. Keep story reads
+in their active interval and derive the exact source request with
+`useTriageDetailRequest`. The story components render the evidence you already
+read; they fetch nothing.
+
+For a pull request with source-owned `body`, file rows and check facts:
+
+```tsx
+import { Text } from '@happier-dev/plugin-ui';
+import {
+  TriageDetailStory,
+  TriageDetailChangeSummary,
+  TriageDetailChecks,
+} from '@happier-dev/triage-sources/ui';
+
+<TriageDetailStory
+  kind="ask"
+  loading={firstReadPending && body == null}
+  notice={readNotice}
+  changes={<TriageDetailChangeSummary rows={files} more={hasMoreFiles} totals={totals} />}
+  checks={<TriageDetailChecks
+    title="Checks" titleKey="my-plugin.detail.checks"
+    rollup={checkRollup} failing={failingChecks} latestCommit={isLatestCommit}
+  />}
+>
+  <Text value={body ?? ''} />
+</TriageDetailStory>
+```
+
+Use `kind="report"` for an issue and `kind="error"` for an error group.
+For errors, pass `TriageDetailSpread` in `changes`, with source-reported `tiles`,
+an optional oldest-first `trend`, `locale` and `nowMs`. Unknown counts stay
+absent. Keep retained body text visible with its `notice` during failed reads;
+`TriageStoryLoadingLines` is available for a source-owned initial loading state.
+File rows use `TriageChangedFileV1`; `more` preserves unread pages and `totals`
+contains only provider-reported whole-change counts. `summarizeTriageChangesV1`
+provides that same summary for custom composition. A partial check rollup sets
+`incomplete: true` and reports the failing/running counts actually read. A
+complete verdict needs the provider's failing, running and passing counts;
+`latestCommit` must come from the source's commit evidence. Use
+`TriageChecksRollupLine` when your own checks list needs the shared sentence.
+
+Keep mutations in the source's declared Action path. `TriageSourceWrites` and
+`TriageSourceCommentComposer` present writes; `useTriagePostMutationCompletion`
+returns the frame's exact re-read callback. Use
+`completeTriagePostMutationIfNeeded` with the source's result classifier when a
+settled result may have changed native state, including an uncertain outcome.
+Do not treat an unknown write as rejected or automatically replay it. A primary
+header write is offered through `useTriageEvidenceDisclosure().primaryWrite`
+with `offer(write)` and cleared with `offer(null)` on cleanup. Keep the source's
+existing `execute` callback and Action operands; the frame forwards that callback
+through the ordinary confirmation path.
+
+Presentation controls such as paging and disclosure use
+`useTriageSourcePanelIntentV1` inside the active panel, as described above.
+Publish the available `commands` and call the returned intent from visible
+controls, so the mounted Action and UI share the same controller. These intents
+do not replace provider mutation Actions or the frame's evidence-disclosure
+transaction.
 
 ## Evolving the ABI
 

@@ -87,6 +87,7 @@ import {
   type TriageActivityKindV1,
   useTriagePageRefresh,
   useTriageSourcePanelIntentV1,
+  useTriageSourcePanelPagingV1,
   type TriageSourcePanelCommandV1,
 } from '@happier-dev/triage-sources/ui';
 import {
@@ -409,14 +410,8 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
   const { state } = controller;
   // The page's one refresh re-reads this diff; the panel draws no refresh of its own.
   useTriagePageRefresh(controller.refresh);
-  const pagingCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => state.canLoadMore && !state.pending
-    ? [{ title: text('plugins.bitbucket.ui.showMoreFiles', 'Show more changed files'), operation: { kind: 'loadMoreSourceItems', list: 'files' } }] : [],
-  [state.canLoadMore, state.pending, text]);
-  const loadMore = useTriageSourcePanelIntentV1({ kind: 'loadMoreSourceItems', list: 'files' }, async (operation) => {
-    if (operation.kind !== 'loadMoreSourceItems' || !state.canLoadMore || state.pending) return { status: 'unavailable' };
-    controller.loadMore();
-    return { status: 'applied' };
-  }, pagingCommands);
+  const loadMore = useTriageSourcePanelPagingV1('files', text('plugins.bitbucket.ui.showMoreFiles', 'Show more changed files'),
+    state.canLoadMore, state.pending, controller.loadMore);
   if (state.kind === 'idle' || state.kind === 'loading') {
     return <LoadingState title="Reading this diff from Bitbucket" titleKey="plugins.bitbucket.ui.readingDiff" />;
   }
@@ -446,7 +441,7 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
         state={state}
         loadMoreTitle="Show more changed files"
         loadMoreTitleKey="plugins.bitbucket.ui.showMoreFiles"
-        onLoadMore={() => { void loadMore({ kind: 'loadMoreSourceItems', list: 'files' }); }}
+        onLoadMore={loadMore}
       />
     </>
   );
@@ -536,6 +531,8 @@ function BuildsPanel({
   const text = usePluginTranslation();
   const controller = useBitbucketBuilds(input);
   const { rollup, state } = controller;
+  const loadMore = useTriageSourcePanelPagingV1('builds', text('plugins.bitbucket.ui.showMoreBuilds', 'Show more builds'),
+    state.canLoadMore, state.pending, controller.loadMore);
 
   if (state.kind === 'idle' || state.kind === 'loading') {
     return <LoadingState title="Reading the builds from Bitbucket" titleKey="plugins.bitbucket.ui.readingBuilds" />;
@@ -600,7 +597,7 @@ function BuildsPanel({
           state={state}
           loadMoreTitle="Show more builds"
           loadMoreTitleKey="plugins.bitbucket.ui.showMoreBuilds"
-          onLoadMore={controller.loadMore}
+          onLoadMore={loadMore}
           onRefresh={controller.refresh}
           refreshLabel="Re-read the builds from Bitbucket"
           refreshLabelKey="plugins.bitbucket.ui.rereadBuilds"
@@ -693,6 +690,9 @@ function ActivityStreamPanel({
     }
     return groups;
   }, [commentRows]);
+  const expandReplies = React.useCallback((parentId: string) => {
+    setExpandedParents(previous => new Set([...previous, parentId]));
+  }, []);
   const visibleComments = React.useMemo(() => {
     const precedingVisibility = new Map<string, boolean>();
     // Keep provider order, including when a later page brings another reply. Missing
@@ -710,6 +710,17 @@ function ActivityStreamPanel({
     });
   }, [commentRows, expandedParents, replyGroups]);
 
+  const replyCommands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => visibleComments
+    .filter(row => (replyGroups.get(row.id)?.length ?? 0) > 1 && !expandedParents.has(row.id))
+    .map(row => ({ title: text('plugins.bitbucket.ui.showReturnedReplies', 'Show returned replies'),
+      operation: { kind: 'setSourceItemExpanded', list: 'comment-replies', itemId: row.id, expanded: true } })),
+  [expandedParents, replyGroups, text, visibleComments]);
+  useTriageSourcePanelIntentV1({ kind: 'setSourceItemExpanded', list: 'comment-replies' }, async operation => {
+    if (operation.kind !== 'setSourceItemExpanded' || !operation.expanded
+      || !replyCommands.some(command => command.operation.kind === 'setSourceItemExpanded' && command.operation.itemId === operation.itemId)) return { status: 'unavailable' };
+    expandReplies(operation.itemId);
+    return { status: 'applied' };
+  }, replyCommands);
   const events = React.useMemo((): readonly TriageActivityEventV1[] => {
     const readComments = new Set(commentRows.map((row) => `comment:${row.id}`));
     const activityEvents = activity.state.rows
@@ -750,14 +761,14 @@ function ActivityStreamPanel({
               title="Show returned replies"
               titleKey="plugins.bitbucket.ui.showReturnedReplies"
               variant="plain"
-              onPress={() => setExpandedParents((previous) => new Set([...previous, row.id]))}
+              onPress={() => expandReplies(row.id)}
             />
           ) : null}
         </Stack>
       ),
     }));
     return [...activityEvents, ...commentEvents];
-  }, [activity.state.rows, commentRows, expandedParents, input, replyGroups, text, visibleComments]);
+  }, [activity.state.rows, commentRows, expandedParents, expandReplies, input, replyGroups, text, visibleComments]);
 
   const settling = (state: BitbucketPagedStateV1<unknown>) => state.kind === 'idle' || state.kind === 'loading';
   if (settling(activity.state) || settling(comments.state)) {

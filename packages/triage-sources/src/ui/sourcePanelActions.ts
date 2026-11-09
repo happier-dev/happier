@@ -21,3 +21,22 @@ export function useTriageSourcePanelIntentV1(
     return await panelActions.execute(operation, activeSignal);
   }, [active, activeSignal, panelActions]);
 }
+
+/** The visible continuation and the mounted command advance the same source-owned walk. */
+export function useTriageSourcePanelPagingV1(
+  list: string,
+  title: string,
+  canLoadMore: boolean,
+  pending: boolean,
+  onLoadMore: () => void,
+): () => void {
+  const commands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => canLoadMore && !pending
+    ? [{ title, operation: { kind: 'loadMoreSourceItems', list } }] : [], [canLoadMore, list, pending, title]);
+  const advance = React.useCallback((): TriageSourcePanelResultV1 => {
+    if (!canLoadMore || pending) return { status: 'unavailable' };
+    onLoadMore();
+    return { status: 'applied' };
+  }, [canLoadMore, onLoadMore, pending]);
+  useTriageSourcePanelIntentV1({ kind: 'loadMoreSourceItems', list }, async () => advance(), commands);
+  return React.useCallback(() => { advance(); }, [advance]);
+}

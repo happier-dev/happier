@@ -115,6 +115,9 @@ import {
   type TriageActivityEventV1,
   type TriageActivityKindV1,
   useTriagePageRefresh,
+  useTriageSourcePanelIntentV1,
+  useTriageSourcePanelPagingV1,
+  type TriageSourcePanelCommandV1,
 } from '@happier-dev/triage-sources/ui';
 import { GitlabDiscussionResolutionControl, GitlabMutationControls } from './detail/mutationControls.js';
 import {
@@ -773,6 +776,8 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
   const controller = useGitlabChanges(input);
   const rawDiff = useGitlabRawDiff(input);
   const { state } = controller;
+  const loadMore = useTriageSourcePanelPagingV1('files', text('plugins.gitlab.ui.showMoreFiles', 'Show more files'),
+    state.canLoadMore, state.pending, controller.loadMore);
   const changesUrl = gitlabChangesEvidenceUrlV1(input.observation.locator.webUrl);
   const { locale } = useSurfaceContext();
   // The page's one refresh re-reads these files; the panel draws no refresh of its own.
@@ -868,7 +873,7 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
         <PagedFooter
           state={state}
           loadMoreTitle={text('plugins.gitlab.ui.showMoreFiles', 'Show more files')}
-          onLoadMore={controller.loadMore}
+          onLoadMore={loadMore}
         />
       )}
       renderItem={(row) => (
@@ -906,6 +911,8 @@ function PipelinesPanel({
   const text = usePluginTranslation();
   const controller = useGitlabPipelines(input);
   const { rollup, state } = controller;
+  const loadMore = useTriageSourcePanelPagingV1('pipelines', text('plugins.gitlab.ui.showOlderPipelines', 'Show older pipelines'),
+    state.canLoadMore, state.pending, controller.loadMore);
 
   if (state.kind === 'idle' || state.kind === 'loading') {
     return <LoadingState title="Reading the pipelines from GitLab" titleKey="plugins.gitlab.ui.readingPipelines" />;
@@ -971,7 +978,7 @@ function PipelinesPanel({
         <PagedFooter
           state={state}
           loadMoreTitle={text('plugins.gitlab.ui.showOlderPipelines', 'Show older pipelines')}
-          onLoadMore={controller.loadMore}
+          onLoadMore={loadMore}
           onRefresh={controller.refresh}
           refreshLabel={text('plugins.gitlab.ui.rereadPipelines', 'Re-read the pipelines from GitLab')}
           summary={`${String(state.rows.length)} pipeline(s) read.`}
@@ -1125,6 +1132,18 @@ function DiscussionThread({ input, row, proposals }: Readonly<{
   const earlierCount = earlierGitlabDiscussionReplyCountV1(replies, visibleCount);
   const shown = projectGitlabDiscussionRepliesV1(replies, visibleCount);
   const addedCount = Math.min(GITLAB_DISCUSSION_REPLY_WINDOW_V1, earlierCount);
+  const list = `discussion-replies:${row.id}`;
+  const title = text('plugins.gitlab.ui.discussion.showEarlier', 'Show {count} earlier replies', { count: addedCount });
+  const expand = React.useCallback(() => {
+    setVisibleCount((current) => expandGitlabDiscussionRepliesV1(current, replies.length));
+  }, [replies.length]);
+  const commands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => earlierCount === 0 ? [] : [{ title,
+    operation: { kind: 'setSourceItemExpanded', list, itemId: row.id, expanded: true } }], [earlierCount, list, row.id, title]);
+  useTriageSourcePanelIntentV1({ kind: 'setSourceItemExpanded', list }, async operation => {
+    if (operation.kind !== 'setSourceItemExpanded' || operation.itemId !== row.id || !operation.expanded || earlierCount === 0) return { status: 'unavailable' };
+    expand();
+    return { status: 'applied' };
+  }, commands);
   if (row.individualNote && replies.length === 0 && row.omittedNoteCount === 0) return null;
   return (
     <Stack gap="small">
@@ -1132,15 +1151,9 @@ function DiscussionThread({ input, row, proposals }: Readonly<{
           ones already on screen, which keeps the thread chronological. */}
       {earlierCount === 0 ? null : (
         <Button
-          title={text(
-            'plugins.gitlab.ui.discussion.showEarlier',
-            'Show {count} earlier replies',
-            { count: addedCount },
-          )}
+          title={title}
           variant="plain"
-          onPress={() => {
-            setVisibleCount((current) => expandGitlabDiscussionRepliesV1(current, replies.length));
-          }}
+          onPress={expand}
         />
       )}
       {/* Each reply keeps its own author and body: a thread concatenated into

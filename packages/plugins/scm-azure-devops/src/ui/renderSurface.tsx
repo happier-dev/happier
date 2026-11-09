@@ -29,6 +29,8 @@
  */
 
 import * as React from 'react';
+import { AZURE_DEVOPS_PLUGIN_ID } from '../azureDevopsContracts.js';
+import { AZURE_DEVOPS_TRIAGE_DETAIL_RENDERER_ID, AZURE_DEVOPS_TRIAGE_KIND_ID } from '../triage/descriptor.js';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
   Action,
@@ -63,6 +65,10 @@ import {
   TriageDetailChangeSummary,
   TriageDetailChecks,
   type TriageActivityEventV1,
+  useTriagePageRefresh,
+  useTriageSourcePanelIntentV1,
+  useTriageSourcePanelPagingV1,
+  type TriageSourcePanelCommandV1,
 } from '@happier-dev/triage-sources/ui';
 import {
   TriageDetailSurfaceInputV1Schema,
@@ -200,16 +206,18 @@ function PagedFooter({
   /** Absent where the Activity stream owns this collection's continuation. */
   loadMoreTitle?: string;
   onLoadMore?: () => void;
-  onRefresh: () => void;
-  refreshLabel: string;
-  refreshLabelKey: string;
-  summary: string;
-  summaryKey: string;
-  summaryValues: Readonly<Record<string, string | number>>;
+  /** Absent where the Activity stream owns the re-read (`TriageActivityTimeline` `refresh`). */
+  onRefresh?: () => void;
+  refreshLabel?: string;
+  refreshLabelKey?: string;
+  /** Absent where the section header already carries the count. */
+  summary?: string;
+  summaryKey?: string;
+  summaryValues?: Readonly<Record<string, string | number>>;
 }>): React.ReactElement {
   return (
     <Stack gap="small">
-      <Text variant="micro" tone="neutral" valueKey={summaryKey} fallback={summary} values={summaryValues} />
+      {summary === undefined ? null : <Text variant="micro" tone="neutral" valueKey={summaryKey} fallback={summary} values={summaryValues} />}
       {state.omittedRowCount === 0
         ? null
         : (
@@ -231,15 +239,17 @@ function PagedFooter({
           />
         )
         : null}
-      <Row gap="small">
-        <Action.Refresh
-          onRefresh={onRefresh}
-          disabled={state.pending}
-          variant="plain"
-          accessibilityLabel={refreshLabel}
-          accessibilityLabelKey={refreshLabelKey}
-        />
-      </Row>
+      {onRefresh === undefined ? null : (
+        <Row gap="small">
+          <Action.Refresh
+            onRefresh={onRefresh}
+            disabled={state.pending}
+            variant="plain"
+            {...(refreshLabel === undefined ? {} : { accessibilityLabel: refreshLabel })}
+            {...(refreshLabelKey === undefined ? {} : { accessibilityLabelKey: refreshLabelKey })}
+          />
+        </Row>
+      )}
     </Stack>
   );
 }
@@ -484,6 +494,11 @@ function FilesPanel({
     : undefined;
   const controller = useAzureIterationChanges(input, currentIterationId);
   const { state } = controller;
+  const loadMore = useTriageSourcePanelPagingV1('files', 'Show more files',
+    state.canLoadMore, state.pending, controller.loadMore);
+  const { locale } = useSurfaceContext();
+  // The page's one refresh re-reads the iterations and these files; the panel draws no refresh of its own.
+  useTriagePageRefresh(() => { onRefreshIterations(); controller.refresh(); });
 
   if (iterations.kind === 'loading') {
     return <LoadingState title="Reading the iterations from Azure DevOps" titleKey="plugins.azureDevops.ui.readingIterations" />;
@@ -512,6 +527,7 @@ function FilesPanel({
       keyForItem={(row) => row.path}
       header={(
         <Stack gap="small">
+          <Text variant="label" value={`${text('plugins.azureDevops.ui.changedFiles', 'Changed files')} · ${new Intl.NumberFormat(locale).format(state.rows.length)}`} />
           <PageFailureBanner state={state} />
           <SettledReadEvidence state={iterations} />
           <Text
@@ -539,16 +555,7 @@ function FilesPanel({
         <PagedFooter
           state={state}
           loadMoreTitle="Show more files"
-          onLoadMore={controller.loadMore}
-          onRefresh={() => {
-            onRefreshIterations();
-            controller.refresh();
-          }}
-          refreshLabel="Re-read the changed files from Azure DevOps"
-          refreshLabelKey="plugins.azureDevops.ui.rereadFiles"
-          summary={`${String(state.rows.length)} file(s) read.`}
-          summaryKey="plugins.azureDevops.ui.filesRead"
-          summaryValues={{ count: state.rows.length }}
+          onLoadMore={loadMore}
         />
       )}
       renderItem={(row) => (
@@ -774,20 +781,25 @@ function ThreadControls({
   const text = usePluginTranslation();
   const earlier = Math.max(0, row.comments.length - replyWindow);
   const expansion = Math.min(earlier, AZURE_THREAD_REPLY_WINDOW_V1);
+  const list = `thread-replies:${row.id}`;
+  const title = text('plugins.azureDevops.ui.showEarlierReplies', 'Show {count} earlier replies', { count: expansion });
+  const expand = React.useCallback(() => {
+    onExpandReplies(row.id, advanceAzureThreadReplyWindow(replyWindow, row.comments.length));
+  }, [onExpandReplies, replyWindow, row.comments.length, row.id]);
+  const commands = React.useMemo<readonly TriageSourcePanelCommandV1[]>(() => earlier === 0 ? [] : [{ title,
+    operation: { kind: 'setSourceItemExpanded', list, itemId: row.id, expanded: true } }], [earlier, list, row.id, title]);
+  useTriageSourcePanelIntentV1({ kind: 'setSourceItemExpanded', list }, async operation => {
+    if (operation.kind !== 'setSourceItemExpanded' || operation.itemId !== row.id || !operation.expanded || earlier === 0) return { status: 'unavailable' };
+    expand();
+    return { status: 'applied' };
+  }, commands);
   return (
     <Row gap="small">
       {earlier === 0 ? null : (
         <Button
-          title={text(
-            'plugins.azureDevops.ui.showEarlierReplies',
-            'Show {count} earlier replies',
-            { count: expansion },
-          )}
+          title={title}
           variant="plain"
-          onPress={() => onExpandReplies(
-            row.id,
-            advanceAzureThreadReplyWindow(replyWindow, row.comments.length),
-          )}
+          onPress={expand}
         />
       )}
       <Button
@@ -992,17 +1004,18 @@ function ActivityStreamPanel({
           onLoadMore: () => setWindow((current) => current + AZURE_THREAD_WINDOW_V1),
         }] : []),
       ]}
+      // One re-read of everything the stream merges (iterations, commits, threads), beside its own paging.
+      refresh={{
+        label: text('plugins.azureDevops.ui.rereadActivity', 'Re-read this activity from Azure DevOps'),
+        pending: (commits.state.kind === 'ready' && commits.state.pending)
+          || (threadState.kind === 'ready' && threadState.pending),
+        onRefresh: () => { onRefreshIterations(); commits.refresh(); threads.refresh(); },
+      }}
       footer={(
         <Stack gap="small">
           {commits.state.kind === 'unavailable' ? null : (
             <PagedFooter
               state={commits.state}
-              onRefresh={() => {
-                onRefreshIterations();
-                commits.refresh();
-              }}
-              refreshLabel="Re-read the commits from Azure DevOps"
-              refreshLabelKey="plugins.azureDevops.ui.rereadCommits"
               summary={`${String(commits.state.rows.length)} commit(s) read.`}
               summaryKey="plugins.azureDevops.ui.commitsRead"
               summaryValues={{ count: commits.state.rows.length }}
@@ -1015,15 +1028,6 @@ function ActivityStreamPanel({
             fallback="{shown} of {total} thread(s) shown."
             values={{ shown: shownThreads.length, total: threadRows.length }}
           />
-          <Row gap="small">
-            <Action.Refresh
-              onRefresh={threads.refresh}
-              disabled={threadState.kind === 'ready' && threadState.pending}
-              variant="plain"
-              accessibilityLabel="Re-read the threads from Azure DevOps"
-              accessibilityLabelKey="plugins.azureDevops.ui.rereadThreads"
-            />
-          </Row>
         </Stack>
       )}
     />
@@ -1080,6 +1084,7 @@ function AzureDetailBody({
     return (
       <Screen safeArea>
         <TriageDetailPanel
+          scrollOwner={input.panelScrollOwner}
           panel={input.panel}
           ariaLabel={text('plugins.azureDevops.ui.tabsLabel', 'Azure DevOps pull request detail')}
           retention={Object.fromEntries(AZURE_DETAIL_TABS_V1
@@ -1109,6 +1114,8 @@ function AzureDetailBody({
   return (
     <Screen safeArea>
       <Tabs
+        presentation="page"
+        pageKind={{ pluginId: AZURE_DEVOPS_PLUGIN_ID, localId: `${AZURE_DEVOPS_TRIAGE_DETAIL_RENDERER_ID}/${AZURE_DEVOPS_TRIAGE_KIND_ID}` }}
         value={selected}
         onValueChange={(next) => {
           // The declarations are the only tab identities this body renders, so a value that is
@@ -1126,6 +1133,7 @@ function AzureDetailBody({
             key={declaration.id}
             value={declaration.id}
             title={text(declaration.titleKey, declaration.title)}
+            glyph={declaration.glyph}
             // Stated, never inherited: the shared primitive would otherwise discard a panel this
             // source means to keep, or keep one it means to discard.
             retention={declaration.retention}
@@ -1157,7 +1165,7 @@ function AzureDetailSurface(context: RenderContext): React.ReactElement {
     );
   }
 
-  return <TriageDetailInstance><AzureDetailBody input={admitted.input} /></TriageDetailInstance>;
+  return <TriageDetailInstance scrollOwner={admitted.input.panelScrollOwner}><AzureDetailBody input={admitted.input} /></TriageDetailInstance>;
 }
 
 /**

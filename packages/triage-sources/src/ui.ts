@@ -19,7 +19,7 @@ export {
   type TriageDetailPrimaryWriteHostV1,
 } from './ui/evidenceDisclosure.js';
 export * from './ui/sourcePanelProtocol.js';
-export { useTriageSourcePanelIntentV1 } from './ui/sourcePanelActions.js';
+export { useTriageSourcePanelIntentV1, useTriageSourcePanelPagingV1 } from './ui/sourcePanelActions.js';
 export { useTriagePullRequestPrimaryWriteV1, type TriagePullRequestPrimaryWriteInputV1,
   type TriagePullRequestPrimaryWriteControllerV1 } from './ui/pullRequestPrimaryWrite.js';
 export {

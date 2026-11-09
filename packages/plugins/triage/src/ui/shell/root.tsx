@@ -6,7 +6,7 @@ import type { TriageListWindowStoreV1 } from '../../projection/listWindowStore.j
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { CurrentUiCommandDeclarationV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { TriageSourceWorkflowSubjectV1, TriageLinkedSessionProjectionV1, TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
-import { formatTriageTimestampV1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, type TriageActionEditorLaunchInputV1 } from '@happier-dev/triage-protocol/v1';
+import { buildTriageActionEditorLaunchInputV1, formatTriageTimestampV1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, type TriageActionEditorLaunchInputV1 } from '@happier-dev/triage-protocol/v1';
 import { openTriageActionEditorV1 } from '../actions/openActionEditor.js';
 import {
   Banner,
@@ -101,7 +101,7 @@ import {
   type TriageListGroupIdV1,
   type TriageListItemV1,
 } from '../list/sections.js';
-import { TriageBulkActionBar, TriageBulkActionPicker } from '../list/BulkActionBar.js';
+import { TriageBulkActionBar, TriageBulkActionPicker, planTriageBulkOfferedActionsV1 } from '../list/BulkActionBar.js';
 import { useTriageRetainedComposerOriginV1 } from './retainedComposerOrigin.js';
 import {
   projectTriageBulkSelectedEntriesV1,
@@ -165,7 +165,7 @@ import {
   triageUpdateSavedViewInputV1,
 } from '../views/savedViewsCommand.js';
 import { useTriageSavedViews } from '../views/useTriageSavedViews.js';
-import type { TriageActionV1 } from '../../settings/actions.js';
+import { readTriageActionTitleKeyV1, type TriageActionV1 } from '../../settings/actions.js';
 import { resolveTriageActionTargetV1 } from '../state/actionTarget.js';
 import { readTriageLensNarrowingV1 } from '../state/narrowing.js';
 import {
@@ -443,7 +443,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     if (opened !== undefined) setEditingActions(opened.actionId === undefined ? {} : { actionId: opened.actionId });
   }, [props.actionEditor]);
   const pageLocation = props.subPath;
-  const editAction = React.useCallback((actionId?: string) => {
+  const launchActionEditor = React.useCallback((actionId?: string) => {
     openTriageActionEditorV1(hostApi, { ...(actionId === undefined ? {} : { actionId }), subPath: pageLocation ?? '' });
   }, [hostApi, pageLocation]);
   const [creatingTask, setCreatingTask] = React.useState(props.createDraft !== undefined);
@@ -1557,11 +1557,102 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const sourcesUnreachable = configuredSources.unavailableReason !== null;
   const retryConfiguredSources = configuredSources.retry;
   const sourcePanel = useTriageSourcePanelActionsV1(sharedScope, mountId, selectedKey, surfaceActivity.active, hostApi);
+  const configureOffers = React.useMemo(
+    () => (hostApi.version().methods.includes('openSurface')
+      ? planTriageConfigureSourceOffersV1(surfaceContext.targetedContributions)
+      : []),
+    [hostApi, surfaceContext.targetedContributions],
+  );
+  // The trackers the Tasks first run offers: the same destinations, only the sources that bring tasks.
+  const taskTrackerOffers = React.useMemo(
+    () => (taskAudience !== undefined && hostApi.version().methods.includes('openSurface')
+      ? [...planTriageConfigureSourceOffersV1(surfaceContext.targetedContributions, { tasks: true })].sort(
+        (left, right) => left.displayName.localeCompare(right.displayName, surfaceContext.locale))
+      : []),
+    [hostApi, surfaceContext.locale, surfaceContext.targetedContributions, taskAudience],
+  );
+  /**
+   * The source whose page the host refused to open, if one did.
+   *
+   * A press that silently does nothing is the failure `core/CORPUS.md` §4.2
+   * names for **Refresh** and it is the same failure here: the destination is
+   * admitted by the host, not by this page, and a Settings page whose renderer
+   * cannot be staged is a real refusal a reader would otherwise read as a dead
+   * button.
+   */
+  const [configureRefused, setConfigureRefused] = React.useState<string | null>(null);
+  const openConfigureSource = React.useCallback(async (
+    offer: TriageConfigureSourceOfferV1,
+  ): Promise<void> => {
+    setConfigureRefused(null);
+    try {
+      // A Settings destination carries no launch input and no sub-path; the
+      // host's one resolver refuses both, so neither is supplied.
+      await hostApi.openSurface(offer.destination);
+    } catch {
+      setConfigureRefused(offer.displayName);
+    }
+  }, [hostApi]);
+
+  /**
+   * The source-owned configuration destinations, wherever this page offers them.
+   *
+   * `core/SURFACE.md` §1.4 gives this surface two source-administration entry
+   * points — the compact **Configure sources** action of the screen with nothing
+   * usable configured, and **Manage sources** in the ordinary chrome — and routes
+   * BOTH through the same generic Plugin Settings destination. They were not the
+   * same offer: the first configured connection removed the only control that
+   * could reach a source's own page, so a reader who wanted a second connection,
+   * or who had to repair the one they had, could only get the offer back by
+   * removing it. One builder, so the two places cannot drift into two answers
+   * about which destinations exist or how they are opened.
+   */
+  const [addSourceOpen, setAddSourceOpen] = React.useState(false);
+  const addSourceLabel = text('plugins.triage.surface.sources.add', 'Add a source');
+  const addSourceOffers = React.useMemo(
+    () => [...configureOffers].sort((left, right) => left.displayName.localeCompare(
+      right.displayName,
+      surfaceContext.locale,
+    )),
+    [configureOffers, surfaceContext.locale],
+  );
+  const listWindow = state.kind === 'window' ? state : null;
+  const readSelectedBulkKeys = React.useCallback(() => bulkSelection.getSnapshot().selectedKeys, [bulkSelection]);
+  const selectedBulkKeys = React.useSyncExternalStore(bulkSelection.subscribe, readSelectedBulkKeys, readSelectedBulkKeys);
+  const bulkActionChoices = React.useMemo(() => planTriageBulkOfferedActionsV1(
+    configuredActions.actions, selectedBulkWorkflowSubjects([...selectedBulkKeys]),
+  ), [configuredActions.actions, selectedBulkKeys, selectedBulkWorkflowSubjects]);
+  const sourceHealthRows = React.useMemo(() => new Map(
+    (listWindow?.wholeScanFailure?.sources ?? []).map(failure => [failure.sourceInstanceId, readTriageSourceFailureRowV1(failure, text)]),
+  ), [listWindow?.wholeScanFailure, text]);
   const runMountedOperation = React.useCallback(async (
     operation: TriageMountedUiOperationV1, signal: AbortSignal,
   ): Promise<TriageMountedUiResultV1> => {
     if (signal.aborted) return { status: 'unavailable' };
     switch (operation.kind) {
+      case 'setSourceManagementOpen': setEditingSources(operation.open); break;
+      case 'setSourceDiagnosticExpanded':
+        if (!editingSources || sourceHealthRows.get(operation.sourceInstanceId)?.details == null) return { status: 'unavailable' };
+        setOpenSourceDetails(operation.expanded ? operation.sourceInstanceId : null);
+        break;
+      case 'setOrganizing': setOrganizing(operation.organizing); break;
+      case 'openActionEditor': launchActionEditor(operation.launch.actionId); break;
+      case 'closeActionEditor': setEditingActions(false); break;
+      case 'setAddSourceOpen':
+        if (!editingSources || addSourceOffers.length < 2) return { status: 'unavailable' };
+        setAddSourceOpen(operation.open);
+        break;
+      case 'configureSource': {
+        const offer = configureOffers.find(candidate => `${candidate.destination.pluginId}/${candidate.destination.localId}` === operation.sourceId);
+        if (offer === undefined) return { status: 'unavailable' };
+        await openConfigureSource(offer);
+        break;
+      }
+      case 'selectBulkAction':
+        if (isTriageBulkSessionsPhaseRunningV1(bulkSessions.phase)
+          || !bulkActionChoices.some(action => action.actionId === operation.actionId)) return { status: 'unavailable' };
+        setBulkActionId(operation.actionId);
+        break;
       case 'selectSourceOccurrence':
       case 'loadMoreSourceItems':
       case 'setSourceItemExpanded':
@@ -1684,7 +1775,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       }
     }
     return { status: 'applied' };
-  }, [retryConfiguredSources, sourcesUnreachable, bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, chooseDoneExpanded, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailOriginComposer, detailTabs, detailSessions, detailFixRetry, hostApi, loadMoreEntries, loadMorePins, marks.retry, pinsUnreachable, props.tasksPage, readEntryActivation, refreshPage, refreshState.kind, savedViews.retry, selectView, selectedKey, sessionActivity.retry, sessionActivityUnavailable, settleLensEditBeforeDurable, surface, taskAudience, viewsUnreachable, visibleOrder]);
+  }, [bulkActionChoices, addSourceOffers, configureOffers, editingSources, launchActionEditor, openConfigureSource, sourceHealthRows, retryConfiguredSources, sourcesUnreachable, bulkSelection, bulkSessions, chooseCollectionView, chooseDetailTab, chooseDoneExpanded, collection.actions, collection.expanded, collection.keys, collectionWindow, surfaceContext, detailOriginComposer, detailTabs, detailSessions, detailFixRetry, hostApi, loadMoreEntries, loadMorePins, marks.retry, pinsUnreachable, props.tasksPage, readEntryActivation, refreshPage, refreshState.kind, savedViews.retry, selectView, selectedKey, sessionActivity.retry, sessionActivityUnavailable, settleLensEditBeforeDurable, surface, taskAudience, viewsUnreachable, visibleOrder]);
   const mountedOperationRef = React.useRef(runMountedOperation);
   React.useLayoutEffect(() => { mountedOperationRef.current = runMountedOperation; }, [runMountedOperation]);
   React.useLayoutEffect(() => sharedScope === null || !surfaceActivity.active ? undefined : bindTriageMountedUiActions(
@@ -1693,6 +1784,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const executeMountedOperation = React.useCallback((operation: TriageMountedUiOperationV1) => {
     executeTriageMountedUiAction(hostApi, mountId, operation, text);
   }, [hostApi, mountId, text]);
+  const editAction = React.useCallback((actionId?: string) => {
+    executeMountedOperation({ kind: 'openActionEditor', launch: buildTriageActionEditorLaunchInputV1(actionId) });
+  }, [executeMountedOperation]);
+  const configureSource = React.useCallback((offer: TriageConfigureSourceOfferV1) => {
+    executeMountedOperation({ kind: 'configureSource', sourceId: `${offer.destination.pluginId}/${offer.destination.localId}` });
+  }, [executeMountedOperation]);
   const chooseLinkedSession = React.useCallback((sessionId: string) => {
     executeMountedOperation({ kind: 'selectLinkedSession', sessionId });
   }, [executeMountedOperation]);
@@ -1722,6 +1819,28 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     return [
       command(text('plugins.triage.tasks.title', 'Tasks'), pageViewOperations.tasks),
       command(TRIAGE_DISPLAY_NAME, pageViewOperations.prs),
+      command(editingSources ? text('plugins.triage.surface.close', 'Close') : text('plugins.triage.surface.sources.manage', 'Manage sources'),
+        { kind: 'setSourceManagementOpen', open: !editingSources }),
+      ...(editingSources || listWindow?.outsideSourcesAttention == null ? [] : [command(
+        text('plugins.triage.surface.sources.outsideAttention.review', 'Review'), { kind: 'setSourceManagementOpen', open: true },
+      )]),
+      ...(editingSources ? configuredSources.sources.flatMap(source => sourceHealthRows.get(source.sourceInstanceId)?.details == null ? [] : [command(
+        `${openSourceDetails === source.sourceInstanceId ? text('plugins.triage.surface.sources.hideDetails', 'Hide details') : text('plugins.triage.surface.detail.tab.details', 'Details')}: ${source.displayLabel}`,
+        { kind: 'setSourceDiagnosticExpanded', sourceInstanceId: source.sourceInstanceId, expanded: openSourceDetails !== source.sourceInstanceId },
+      )]) : []),
+      command(organizing ? text('plugins.triage.sessionLinks.done', 'Done') : text('plugins.triage.surface.organizeList', 'Organize list'),
+        { kind: 'setOrganizing', organizing: !organizing }),
+      ...(editingActions ? [command(text('plugins.triage.surface.actions.close', 'Done'), { kind: 'closeActionEditor' })]
+        : [command(text('plugins.triage.surface.actions.configure', 'Configure actions'), { kind: 'openActionEditor', launch: buildTriageActionEditorLaunchInputV1() })]),
+      ...(editingSources && addSourceOffers.length > 1 ? [command(addSourceLabel, { kind: 'setAddSourceOpen', open: !addSourceOpen })] : []),
+      ...configureOffers.map(offer => command(offer.displayName, {
+        kind: 'configureSource', sourceId: `${offer.destination.pluginId}/${offer.destination.localId}`,
+      })),
+      ...(organizing || selectedBulkKeys.size === 0 || bulkActionChoices.length < 2 || isTriageBulkSessionsPhaseRunningV1(bulkSessions.phase) ? [] : bulkActionChoices).map(action => {
+        const key = readTriageActionTitleKeyV1(action);
+        return command(`${text('plugins.triage.surface.bulk.action', 'Action')}: ${key === null ? action.label : text(key, action.label)}`,
+          { kind: 'selectBulkAction', actionId: action.actionId });
+      }),
       ...(taskAudience === undefined ? [] : [command(
         `${doneOpen ? text('plugins.triage.tasks.hideDone', 'Hide') : text('plugins.triage.tasks.showDone', 'Show')} ${text('plugins.triage.tasks.completed', 'Done')}`,
         { kind: 'setGroupExpanded', group: 'completed', expanded: !doneOpen },
@@ -1764,7 +1883,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       )]),
       ...(isTriageBulkSessionsPhaseRunningV1(bulkSessions.phase) ? [command(text('plugins.triage.surface.bulk.cancel', 'Stop'), { kind: 'cancelRun' })] : []),
     ];
-  }, [bulkSessions.phase, bulkSessions.retryable, collectionWindow, detailTabs, detailSessions, detailFixRetry, doneOpen, mountId, pageViewOperations, pinsUnreachable, refreshState.kind, selectedKey, sessionActivityUnavailable, sourcePanel.commands, surface.filters, surface.order, surface.search.query, surface.smartPolicy, taskAudience, text, viewsUnreachable]);
+  }, [selectedBulkKeys, bulkActionChoices, addSourceLabel, addSourceOffers, addSourceOpen, configureOffers, configuredSources.sources, editingActions, editingSources, listWindow?.outsideSourcesAttention, openSourceDetails, organizing, sourceHealthRows, bulkSessions.phase, bulkSessions.retryable, collectionWindow, detailTabs, detailSessions, detailFixRetry, doneOpen, mountId, pageViewOperations, pinsUnreachable, refreshState.kind, selectedKey, sessionActivityUnavailable, sourcePanel.commands, surface.filters, surface.order, surface.search.query, surface.smartPolicy, taskAudience, text, viewsUnreachable]);
   // Focus and IME composition are local reader state, not published context.
   // Keep that producer's inputs stable so moving the cursor does not retire
   // and recreate every host command address for an unchanged selection/lens.
@@ -1926,65 +2045,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * navigate at all (`openSurface` is negotiated per mount, exactly as the route
    * owner reads `replacePageLocation`), and whether a given source named a page.
    */
-  const configureOffers = React.useMemo(
-    () => (hostApi.version().methods.includes('openSurface')
-      ? planTriageConfigureSourceOffersV1(surfaceContext.targetedContributions)
-      : []),
-    [hostApi, surfaceContext.targetedContributions],
-  );
-  // The trackers the Tasks first run offers: the same destinations, only the sources that bring tasks.
-  const taskTrackerOffers = React.useMemo(
-    () => (taskAudience !== undefined && hostApi.version().methods.includes('openSurface')
-      ? [...planTriageConfigureSourceOffersV1(surfaceContext.targetedContributions, { tasks: true })].sort(
-        (left, right) => left.displayName.localeCompare(right.displayName, surfaceContext.locale))
-      : []),
-    [hostApi, surfaceContext.locale, surfaceContext.targetedContributions, taskAudience],
-  );
-  /**
-   * The source whose page the host refused to open, if one did.
-   *
-   * A press that silently does nothing is the failure `core/CORPUS.md` §4.2
-   * names for **Refresh** and it is the same failure here: the destination is
-   * admitted by the host, not by this page, and a Settings page whose renderer
-   * cannot be staged is a real refusal a reader would otherwise read as a dead
-   * button.
-   */
-  const [configureRefused, setConfigureRefused] = React.useState<string | null>(null);
-  const openConfigureSource = React.useCallback(async (
-    offer: TriageConfigureSourceOfferV1,
-  ): Promise<void> => {
-    setConfigureRefused(null);
-    try {
-      // A Settings destination carries no launch input and no sub-path; the
-      // host's one resolver refuses both, so neither is supplied.
-      await hostApi.openSurface(offer.destination);
-    } catch {
-      setConfigureRefused(offer.displayName);
-    }
-  }, [hostApi]);
-
-  /**
-   * The source-owned configuration destinations, wherever this page offers them.
-   *
-   * `core/SURFACE.md` §1.4 gives this surface two source-administration entry
-   * points — the compact **Configure sources** action of the screen with nothing
-   * usable configured, and **Manage sources** in the ordinary chrome — and routes
-   * BOTH through the same generic Plugin Settings destination. They were not the
-   * same offer: the first configured connection removed the only control that
-   * could reach a source's own page, so a reader who wanted a second connection,
-   * or who had to repair the one they had, could only get the offer back by
-   * removing it. One builder, so the two places cannot drift into two answers
-   * about which destinations exist or how they are opened.
-   */
-  const [addSourceOpen, setAddSourceOpen] = React.useState(false);
-  const addSourceLabel = text('plugins.triage.surface.sources.add', 'Add a source');
-  const addSourceOffers = React.useMemo(
-    () => [...configureOffers].sort((left, right) => left.displayName.localeCompare(
-      right.displayName,
-      surfaceContext.locale,
-    )),
-    [configureOffers, surfaceContext.locale],
-  );
   // The first run offers every source as its own tile (`./firstRun.tsx`); the ordinary chrome's
   // Manage sources keeps this compact control beside the sources already configured.
   const renderConfigureSourceOffers = (): React.ReactElement | null => {
@@ -2003,7 +2063,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               { name: offer.displayName },
             )}
             variant="secondary"
-            onPress={() => openConfigureSource(offer)}
+            onPress={() => configureSource(offer)}
           />
         </Row>
       );
@@ -2012,7 +2072,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       <Row>
         <Menu
           open={addSourceOpen}
-          onOpenChange={setAddSourceOpen}
+          onOpenChange={(open) => executeMountedOperation({ kind: 'setAddSourceOpen', open })}
           trigger={addSourceLabel}
           triggerAccessibilityLabel={addSourceLabel}
           triggerAppearance="control"
@@ -2024,7 +2084,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             const offer = addSourceOffers.find((candidate) => (
               `${candidate.destination.pluginId}/${candidate.destination.localId}` === id
             ));
-            if (offer !== undefined) void openConfigureSource(offer);
+            if (offer !== undefined) configureSource(offer);
           }}
         />
       </Row>
@@ -2041,12 +2101,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // through the existing source panel and its admitted Remove action, including when no rows remain.
   const sourceManagementAction = window.snapshot.configuredSources.some(source => !source.available) ? (
     <Button titleKey="plugins.triage.surface.sources.manage" title="Manage sources" variant="secondary"
-      onPress={() => setEditingSources(true)} />
+      onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: true })} />
   ) : undefined;
   // Beside a status line the same fix is a plain action, as Retry is beside its sentence.
   const sourceManagementStatusAction = sourceManagementAction === undefined ? undefined : (
     <TriageFailureLineAction label={text('plugins.triage.surface.sources.manage', 'Manage sources')}
-      onPress={() => setEditingSources(true)} />
+      onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: true })} />
   );
 
   /*
@@ -2256,7 +2316,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           titleKey="plugins.triage.sessionLinks.done"
           title="Done"
           variant="plain"
-          onPress={() => setOrganizing(false)}
+          onPress={() => executeMountedOperation({ kind: 'setOrganizing', organizing: false })}
         />
       ) : (
         // While rows are selected, which action a bulk press applies is one compact menu beside "Done";
@@ -2266,7 +2326,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           selectedWorkflowSubjects={selectedBulkWorkflowSubjects}
           selectedActionId={bulkActionId}
           disabled={isTriageBulkSessionsPhaseRunningV1(bulkSessions.phase)}
-          onChange={setBulkActionId}
+          onChange={(actionId) => executeMountedOperation({ kind: 'selectBulkAction', actionId })}
         />
       )}
       // Freshness is said, never implied by silence, but quietly while the list is current, so the one thing that
@@ -2286,9 +2346,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           { id: 'manage-sources', label: text('plugins.triage.surface.sources.manage', 'Manage sources') },
         ],
         onSelect: (id) => {
-          if (id === 'organize-list') setOrganizing(true);
+          if (id === 'organize-list') executeMountedOperation({ kind: 'setOrganizing', organizing: true });
           else if (id === 'configure-actions') editAction();
-          else if (id === 'manage-sources') setEditingSources(true);
+          else if (id === 'manage-sources') executeMountedOperation({ kind: 'setSourceManagementOpen', open: true });
         },
       }}
       {...(taskAudience !== undefined || nothingToArrange ? {} : { views: {
@@ -2311,7 +2371,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * and §6.2's reachability state 5, where the reader's pins are the only rows
    * and there is no window to make a freshness claim about.
    */
-  const listWindow = state.kind === 'window' ? state : null;
   const empty = readTriageListEmptyState(state, rowCount, { narrowing, text, locale: surfaceContext.locale });
   // Pins stay listed under a narrowing (applying the filter to them is a separate product call, left as is), so a
   // narrowing that removed every other row says so below them instead of ending in a blank canvas.
@@ -2516,7 +2575,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // sources, the one source-health surface (UI refinements 2026-11-08; typed by the view-health projection).
   const outsideSourcesAttention = listWindow?.outsideSourcesAttention ?? null;
   const outsideSourcesNotice = outsideSourcesAttention === null ? null : (
-    <TriageOutsideSourcesNotice attention={outsideSourcesAttention} managing={editingSources} onReview={() => setEditingSources(true)} />
+    <TriageOutsideSourcesNotice attention={outsideSourcesAttention} managing={editingSources} onReview={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: true })} />
   );
   const listFailureStatus = listWindow?.failure == null || (hostSpeaksForOutage && rowCount > 0) ? null : (
     <TriageListFailureStatus failure={listWindow.failure} manageSources={sourceManagementStatusAction}
@@ -2638,7 +2697,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           {accountNotice}
 
           {state.kind !== 'configureSources' ? null : addSourceOffers.length > 0 ? (
-            <TriageFirstRun offers={addSourceOffers} onConnect={(offer) => { void openConfigureSource(offer); }} />
+            <TriageFirstRun offers={addSourceOffers} onConnect={configureSource} />
           ) : (
             <Stack gap="small">
               <EmptyState
@@ -2701,7 +2760,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                     <TriageFailureLineAction label={retryLabel}
                       busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />
                     ) : <TriageFailureLineAction label={text('plugins.triage.surface.sources.manage', 'Manage sources')}
-                      onPress={() => setEditingSources(true)} />}
+                      onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: true })} />}
                 />
                 <PullRequestFailureDetails
                   codes={[window.snapshot.error?.code, ...(window.snapshot.error?.diagnostics ?? [])]}
@@ -2722,7 +2781,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               key={editingActions.actionId ?? ''}
               actions={configuredActions}
               {...(editingActions.actionId === undefined ? {} : { initialActionId: editingActions.actionId })}
-              onClose={() => { setEditingActions(false); }}
+              onClose={() => executeMountedOperation({ kind: 'closeActionEditor' })}
             />
           ) : null}
 
@@ -2738,7 +2797,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                   title="Close"
                   variant="secondary"
                   size="small"
-                  onPress={() => { setEditingSources(false); }}
+                  onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: false })}
                 />
               </Row>
               {configuredSources.unavailableReason === null ? null : (
@@ -2776,8 +2835,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                       source.configured.instance.source)?.displayName;
                     const subtitle = source.displayPath ?? sourceName;
                     // Each connection says its own health on its row: a quiet word and its reason, its fix at the end.
-                    const failure = listWindow?.wholeScanFailure?.sources.find((entry) => entry.sourceInstanceId === source.sourceInstanceId);
-                    const health = failure === undefined ? null : readTriageSourceFailureRowV1(failure, text);
+                    const health = sourceHealthRows.get(source.sourceInstanceId) ?? null;
                     const repair = health?.fix === 'connection'
                       ? configureOffers.find((offer) => offer.destination.pluginId === source.configured.instance.source.pluginId)
                       : undefined;
@@ -2798,7 +2856,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                           <TriageFailureLineAction label={fixLabel} accessibilityLabel={`${fixLabel} ${source.displayLabel}`}
                             busy={health?.fix === 'retry' && refreshState.kind === 'running'}
                             disabled={health?.fix === 'retry' && refreshState.kind === 'blocked'}
-                            onPress={repair === undefined ? refreshPage : () => openConfigureSource(repair)} />
+                            onPress={repair === undefined ? refreshPage : () => configureSource(repair)} />
                         ) })}
                         {...(detailsOpen ? { expanded: true, expandedContent: (
                           <Text variant="micro" tone="secondary" value={health!.details!} />
@@ -2821,7 +2879,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                           'More actions for {title}', { title: source.displayLabel })}
                         onSecondaryAction={(id) => {
                           if (id === 'details') {
-                            setOpenSourceDetails(detailsOpen ? null : source.sourceInstanceId);
+                            executeMountedOperation({ kind: 'setSourceDiagnosticExpanded', sourceInstanceId: source.sourceInstanceId, expanded: !detailsOpen });
                             return;
                           }
                           void removeConfiguredSource(source.sourceInstanceId);
@@ -2962,7 +3020,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               {...(state.detail === undefined ? {} : { details: state.detail })}
             />
           ) : empty === null ? null : empty.kind === 'taskFirstRun' ? (
-            <TriageTasksFirstRun offers={taskTrackerOffers} onConnect={(offer) => { void openConfigureSource(offer); }}
+            <TriageTasksFirstRun offers={taskTrackerOffers} onConnect={configureSource}
               onNewTask={startNewTask} />
           ) : empty.kind === 'sourceFailure' && (listFailureStatus !== null || hostSpeaksForOutage) ? (
             /*

@@ -14,11 +14,14 @@ import {
   type TextTone,
   type TimelineItemContent,
   usePluginHostApi,
+  usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 import { formatTriageCompactAgeV1, formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
 import { useTriageActivityAgent, useTriagePageRefresh } from './activityAgent.js';
 import { TriageTextPreview } from './textPreview.js';
+import { useTriageSourcePanelPagingV1 } from './sourcePanelActions.js';
+import { useTriageEvidenceDisclosure } from './evidenceDisclosure.js';
 
 /**
  * What kind of thing happened. It picks the event's marker; the sentence says the rest.
@@ -204,23 +207,40 @@ type TriageActivityRailItemV1 =
   | Readonly<{ kind: 'event'; id: string; event: TriageActivityEventV1 }>
   | Readonly<{ kind: 'tail' | 'next'; id: string; node: React.ReactNode }>;
 
+function MountedContinuationButton({ continuation }: Readonly<{ continuation: TriageActivityContinuationV1 }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const title = continuation.titleKey === undefined ? continuation.title : text(continuation.titleKey, continuation.title);
+  const loadMore = useTriageSourcePanelPagingV1(continuation.key, title, true,
+    continuation.pending, continuation.onLoadMore);
+  return <ContinuationButton continuation={continuation} onLoadMore={loadMore} />;
+}
+
+function ContinuationButton({ continuation, onLoadMore = continuation.onLoadMore }: Readonly<{
+  continuation: TriageActivityContinuationV1;
+  onLoadMore?: () => void;
+}>): React.ReactElement {
+  return <Button
+    title={continuation.title}
+    {...(continuation.titleKey === undefined ? {} : { titleKey: continuation.titleKey })}
+    variant="plain"
+    size="small"
+    busy={continuation.pending}
+    onPress={onLoadMore}
+  />;
+}
+
 function ContinuationButtons({ continuations }: Readonly<{
   continuations: readonly TriageActivityContinuationV1[];
 }>): React.ReactElement | null {
+  const { panelActions } = useTriageEvidenceDisclosure();
   if (continuations.length === 0) return null;
   // Quiet controls at the rail's edge, not full-width blocks: paging is a rare reach, the events lead.
   return (
     <Row gap="small" align="center" wrap>
       {continuations.map((continuation) => (
-        <Button
-          key={continuation.key}
-          title={continuation.title}
-          {...(continuation.titleKey === undefined ? {} : { titleKey: continuation.titleKey })}
-          variant="plain"
-          size="small"
-          busy={continuation.pending}
-          onPress={continuation.onLoadMore}
-        />
+        panelActions === undefined
+          ? <ContinuationButton key={continuation.key} continuation={continuation} />
+          : <MountedContinuationButton key={continuation.key} continuation={continuation} />
       ))}
     </Row>
   );

@@ -82,7 +82,7 @@ import { renderSurface as renderShellSurface } from './surface.js';
 import { renderSurface as renderTasksSurface } from './tasksSurface.js';
 import { TriageListShell } from './shell/root.js';
 import { closeFilters, filterFacetOption, pressToolbarMenuItem } from './shell/toolbarMenus.test-support.js';
-import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
+import { TriageMountedUiInputV1Schema, type TriageMountedUiOperationV1 } from '../actions/mountedUiProtocol.js';
 import { invokeTriageMountedUiAction } from './mountedActions.js';
 import { activate, createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
@@ -192,6 +192,7 @@ function presentObservation(input: Readonly<{
 
 function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; completedTask?: boolean; sourceBUnavailable?: boolean;
     unlinkedTaskOnFirstPage?: boolean;
+    sourceSettings?: boolean;
     /** Derived from the existing 1,000-row store fixture, not an observed F cardinality. */
     mixedFailureScale?: boolean;
     /** Source A answers one complete page that asks nothing of the reader. */
@@ -241,6 +242,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
                 v: 1,
                 purpose: 'triage-source',
                 displayName: 'Example forge',
+                ...(options.sourceSettings ? { settingsPageId: 'settings' } : {}),
                 kinds: (options.tasks ? [{ id: 'issue', workflowSubject: 'issue', displayName: 'Issue', task: true }]
                     : [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }]).map(kind => ({
                         ...kind, ...(options.details ? { detailTabs: [{ kind: 'shared', id: 'overview' }, { kind: 'shared', id: 'activity' }] } : {}),
@@ -631,7 +633,159 @@ const SOURCE_REACHING_ACTIONS: ReadonlySet<string> = new Set([
     TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
 ]);
 
+async function executePublishedPresentationCommand(
+    shell: PluginUiTestkit,
+    harness: ReturnType<typeof createHarness>,
+    matches: (operation: TriageMountedUiOperationV1, title: string) => boolean,
+): Promise<void> {
+    const command = harness.publishedContexts.at(-1)?.commands?.find(entry => {
+        if (entry.command.kind !== 'executeAction') return false;
+        const parsed = TriageMountedUiInputV1Schema.safeParse(entry.command.input);
+        return parsed.success && matches(parsed.data.operation, entry.title);
+    });
+    if (command?.command.kind !== 'executeAction') throw new Error('Missing mounted presentation command');
+    const input = command.command.input;
+    await act(async () => { expect(await shell.context.hostApi.executeAction('ui/mounted-v1', input)).toEqual({ status: 'applied' }); });
+}
+
 describe('the mounted PRs & Issues surface', () => {
+    it('selects the same applicable bulk action through the menu and mounted command', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'mounted-bulk-action', sourceContextFixture(harness));
+        await settleWindow('view', shell);
+        const command = harness.publishedContexts.at(-1)?.commands?.find(entry => entry.command.kind === 'executeAction');
+        if (command?.command.kind !== 'executeAction') throw new Error('Missing mounted address');
+        const { mountId } = TriageMountedUiInputV1Schema.parse(command.command.input);
+        const row = readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope).window?.rows[0];
+        if (row === undefined) throw new Error('Missing selectable entry');
+        await act(async () => {
+            expect(await shell.context.hostApi.executeAction('ui/mounted-v1', { mountId, operation: {
+                kind: 'setSelection', entryRefs: [row.entryRef],
+            } })).toEqual({ status: 'applied' });
+        });
+        await executePublishedPresentationCommand(shell, harness, (operation, title) => operation.kind === 'selectBulkAction' && title === 'Action: Fix');
+        await expect(shell.getByRole('button', { name: 'Action: Fix' })).resolves.toBeDefined();
+        await pressToolbarMenuItem(shell, 'Action', 'menuitemradio', 'Ask');
+        await expect(shell.getByRole('button', { name: 'Action: Ask' })).resolves.toBeDefined();
+        const choices = harness.publishedContexts.at(-1)?.commands?.filter(entry => entry.command.kind === 'executeAction'
+            && TriageMountedUiInputV1Schema.safeParse(entry.command.input).success
+            && TriageMountedUiInputV1Schema.parse(entry.command.input).operation.kind === 'selectBulkAction');
+        expect(choices?.some(entry => entry.title === 'Action: Investigate')).toBe(false);
+        await executePublishedPresentationCommand(shell, harness, (operation, title) => operation.kind === 'selectBulkAction' && title === 'Action: Fix');
+        await expect(shell.getByRole('button', { name: 'Action: Fix' })).resolves.toBeDefined();
+    });
+
+    it.each(['ui', 'agent'] as const)('opens outside-source Review through source management (%s)', async route => {
+        const harness = createHarness({ sourceBUnavailable: true });
+        const shell = await mountSurface(renderShellSurface, harness, `outside-review-${route}`);
+        await settleWindow('view', shell);
+        const command = harness.publishedContexts.at(-1)?.commands?.find(entry => entry.command.kind === 'executeAction');
+        if (command?.command.kind !== 'executeAction') throw new Error('Missing mounted address');
+        const { mountId } = TriageMountedUiInputV1Schema.parse(command.command.input);
+        await act(async () => {
+            expect(await shell.context.hostApi.executeAction('ui/mounted-v1', { mountId, operation: {
+                kind: 'setLens', query: '', order: 'smart',
+                filters: { ...TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, sources: [{ source: SOURCE_A, sourceInstanceId: INSTANCE_A }] },
+            } })).toEqual({ status: 'applied' });
+        });
+        await settleWindow('view', shell);
+        await expect(shell.getByRole('button', { name: 'Review' })).resolves.toBeDefined();
+        if (route === 'ui') await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Review' })); });
+        else await executePublishedPresentationCommand(shell, harness, (operation, title) => operation.kind === 'setSourceManagementOpen' && title === 'Review');
+        await expect(shell.getByText('Configured sources')).resolves.toBeDefined();
+    });
+
+    it.each(['ui', 'agent'] as const)('closes the launched configured-action editor (%s)', async route => {
+        const harness = createHarness();
+        const surface = defineUiSurface(() => <TriageListShell actionEditor={{ v: 1, kind: 'actionEditor' }} />);
+        const shell = await mountSurface(surface, harness, `close-editor-${route}`);
+        await settleWindow('view', shell);
+        await expect(shell.getByRole('button', { name: 'Add an action' })).resolves.toBeDefined();
+        if (route === 'ui') await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Done' })); });
+        else await executePublishedPresentationCommand(shell, harness, operation => operation.kind === 'closeActionEditor');
+        await expect(shell.queryByRole('button', { name: 'Add an action' })).resolves.toBeUndefined();
+    });
+
+    it('shares the Add source menu and source-owned settings launch', async () => {
+        const harness = createHarness({ sourceSettings: true });
+        const shell = await mountSurface(renderShellSurface, harness, 'mounted-add-source', sourceContextFixture(harness), { recordSurfaceOpens: true });
+        await settleWindow('view', shell);
+        await executePublishedPresentationCommand(shell, harness, operation => operation.kind === 'setSourceManagementOpen');
+        await executePublishedPresentationCommand(shell, harness, operation => operation.kind === 'setAddSourceOpen');
+        const choices = await shell.getAllByRole('menuitem', { name: 'Example forge' });
+        expect(choices).toHaveLength(2);
+        await executePublishedPresentationCommand(shell, harness, operation => operation.kind === 'setAddSourceOpen');
+        await expect(shell.queryByRole('menuitem', { name: 'Example forge' })).resolves.toBeUndefined();
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Add a source' })); });
+        await act(async () => { await shell.press((await shell.getAllByRole('menuitem', { name: 'Example forge' }))[0]!); });
+        expect(harness.surfaceOpens).toHaveLength(1);
+        await executePublishedPresentationCommand(shell, harness, operation => operation.kind === 'configureSource' && operation.sourceId === `${SOURCE_A.pluginId}/settings`);
+        expect(harness.surfaceOpens).toHaveLength(2);
+        expect(harness.surfaceOpens[1]).toEqual(harness.surfaceOpens[0]);
+    });
+
+    it('shares source management and organize state between published commands and controls', async () => {
+        const harness = createHarness({ mixedFailureScale: true });
+        const shell = await mountSurface(renderShellSurface, harness, 'mounted-presentation');
+        await settleWindow('view', shell);
+        const snapshot = () => readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope);
+        await act(async () => {
+            while ((snapshot().window?.rows.length ?? 0) < 1_000) {
+                const before = snapshot().window?.rows.length ?? 0;
+                expect(snapshot().loadMore).toEqual({ kind: 'available' });
+                await loadMoreTriageListWindow(shell.context.hostApi, harness.ephemeralSharedScope);
+                expect(snapshot().window?.rows.length).toBeGreaterThan(before);
+            }
+        });
+        expect(snapshot().window?.rows.length).toBeGreaterThanOrEqual(1_000);
+        const invoke = async (kind: string) => {
+            const command = harness.publishedContexts.at(-1)?.commands?.find(entry => {
+                if (entry.command.kind !== 'executeAction') return false;
+                const parsed = TriageMountedUiInputV1Schema.safeParse(entry.command.input);
+                return parsed.success && parsed.data.operation.kind === kind;
+            });
+            expect(command, `Missing mounted ${kind}`).toBeDefined();
+            if (command?.command.kind !== 'executeAction') throw new Error(`Missing mounted ${kind}`);
+            const input = command.command.input;
+            await act(async () => { expect(await shell.context.hostApi.executeAction('ui/mounted-v1', input)).toEqual({ status: 'applied' }); });
+        };
+        const before = { scans: harness.scanCalls.count, writes: harness.accountKv.setCallCount() };
+        await invoke('setSourceManagementOpen');
+        await expect(shell.getByText('Configured sources')).resolves.toBeDefined();
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Close' })); });
+        await expect(shell.queryByText('Configured sources')).resolves.toBeUndefined();
+        await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
+        await expect(shell.getByText('Configured sources')).resolves.toBeDefined();
+        await invoke('setSourceManagementOpen');
+        await expect(shell.queryByText('Configured sources')).resolves.toBeUndefined();
+        await invoke('setOrganizing');
+        await expect(shell.getByRole('button', { name: 'Done' })).resolves.toBeDefined();
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Done' })); });
+        await expect(shell.queryByRole('button', { name: 'Done' })).resolves.toBeUndefined();
+        await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Organize list');
+        await expect(shell.getByRole('button', { name: 'Done' })).resolves.toBeDefined();
+        await invoke('setOrganizing');
+        await expect(shell.queryByRole('button', { name: 'Done' })).resolves.toBeUndefined();
+        expect(harness.scanCalls.count).toBe(before.scans);
+        expect(harness.accountKv.setCallCount()).toBe(before.writes);
+    });
+
+    it('opens the configured-action editor through the same launch for control and mounted command', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'mounted-editor', {}, { recordSurfaceOpens: true });
+        await settleWindow('view', shell);
+        await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Configure actions');
+        expect(harness.surfaceOpens).toHaveLength(1);
+        const command = harness.publishedContexts.at(-1)?.commands?.find(entry => entry.command.kind === 'executeAction'
+            && TriageMountedUiInputV1Schema.parse(entry.command.input).operation.kind === 'openActionEditor');
+        expect(command).toBeDefined();
+        if (command?.command.kind !== 'executeAction') throw new Error('Missing editor command');
+        const input = command.command.input;
+        await act(async () => { expect(await shell.context.hostApi.executeAction('ui/mounted-v1', input)).toEqual({ status: 'applied' }); });
+        expect(harness.surfaceOpens).toHaveLength(2);
+        expect(harness.surfaceOpens[1]).toEqual(harness.surfaceOpens[0]);
+    });
+
     it.each([
         ['resolve', 'ui'], ['read', 'ui'], ['resolve', 'agent'], ['read', 'agent'],
     ] as const)('recovers an unavailable resource through its Retry (%s, %s)', async (failure, surface) => {
@@ -1374,6 +1528,34 @@ describe('the mounted PRs & Issues surface', () => {
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
         expect(document.body.textContent).toContain(`${LABEL_A} — ${offlineA}`);
         expect(document.body.textContent).toContain(`${LABEL_B} — ${offlineB}`);
+    });
+
+    it.each(['ui', 'agent'] as const)('discloses and hides the same source diagnostic (%s)', async route => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, `mounted-diagnostic-${route}`);
+        await settleWindow('view', shell);
+        harness.state.listInvocationFailure = () => new PluginError({ code: 'unavailable', retryable: true });
+        await settleWindow('manual', shell);
+        await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
+        const diagnostic = `${LABEL_A} — unavailable · retryable=true`;
+        expect(document.body.textContent).not.toContain(diagnostic);
+        for (const expanded of [true, false]) {
+            if (route === 'ui') {
+                await pressToolbarMenuItem(shell, `More actions for ${LABEL_A}`, 'menuitem', expanded ? 'Details' : 'Hide details');
+            } else {
+                const command = harness.publishedContexts.at(-1)?.commands?.find(entry => {
+                    if (entry.command.kind !== 'executeAction') return false;
+                    const parsed = TriageMountedUiInputV1Schema.safeParse(entry.command.input);
+                    return parsed.success && parsed.data.operation.kind === 'setSourceDiagnosticExpanded'
+                        && parsed.data.operation.sourceInstanceId === INSTANCE_A && parsed.data.operation.expanded === expanded;
+                });
+                if (command?.command.kind !== 'executeAction') throw new Error('Missing source diagnostic command');
+                const input = command.command.input;
+                await act(async () => { expect(await shell.context.hostApi.executeAction('ui/mounted-v1', input)).toEqual({ status: 'applied' }); });
+            }
+            expect(document.body.textContent?.includes(diagnostic)).toBe(expanded);
+            expect(document.body.textContent).not.toContain(`${LABEL_B} — unavailable · retryable=true`);
+        }
     });
 
     it.each([false, true])('offers source management on the list-owned source warning (Tasks=%s)', async (tasks) => {
