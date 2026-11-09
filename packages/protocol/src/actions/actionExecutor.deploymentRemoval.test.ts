@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { ApprovalRequestV1Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
+import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
 
 it.each(['delete', 'teardown', 'stop-only', 'failed'] as const)(
   'settles only pending approvals for a confirmed removed Environment: %s', async scenario => {
@@ -20,10 +21,12 @@ it.each(['delete', 'teardown', 'stop-only', 'failed'] as const)(
     ]);
     const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async () => scenario === 'failed'
       ? { ok: false, error: 'deployment_conflict' }
-      : scenario === 'delete' ? { ok: true, environmentId: 'environment', revision: 4 }
+      : scenario === 'delete' ? { ok: true, environmentId: 'environment', revision: 4, detached: false }
         : { ok: true, environmentId: 'environment', revision: 4, deploymentId: 'receipt',
           deploymentRevision: 5, state: 'succeeded', ...(scenario === 'teardown' ? { environmentRemoved: true } : {}) };
     const executor = createActionExecutor({ deploymentAction: transport, isActionApprovalRequired: () => false,
+      resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport, async () => ({ ok: true,
+        environment: { id: 'environment', projectSourceId: 'project', purpose: 'standard' } })),
       // Home transport and Artifact persistence are the only substituted boundaries.
       approvalsList: async () => ({ items: [...stored].map(([artifactId, request]) => ({ artifactId,
         status: request.status, actionId: request.actionId, summary: request.summary, serverId: 'home', updatedAtMs: request.updatedAtMs })),
