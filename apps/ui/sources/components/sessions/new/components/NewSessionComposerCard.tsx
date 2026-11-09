@@ -151,10 +151,12 @@ export function NewSessionComposerCard(input: Readonly<{
             safeAreaBottom: props.safeAreaBottom,
         });
     }, [props.headerHeight, props.safeAreaBottom, windowHeight]);
+    // A page column scrolls, so a long draft stays inside the composer and Send stays on the page.
     const maxPanelHeight = computeNewSessionComposerPanelMaxHeight({
-        mode: 'simple',
+        mode: embedded ? 'wizard' : 'simple',
         availablePanelHeight: availablePanelHeight ?? initialAvailablePanelHeight,
         reservedHeight: reservedHeight,
+        viewportHeight: windowHeight,
     });
 
     return (

@@ -136,6 +136,17 @@ describe('New workflow entry', () => {
             } finally { await screen.unmount(); }
         }); } finally { platformState.width = previousWidth; }
     });
+    it('keeps a long draft inside the embedded composer so Send stays on the page', async () => {
+        const props = { ...panelProps(), headerHeight: 56 } as NewSessionSimplePanelProps;
+        const screen = await renderScreen(<NewSessionComposerCard panelProps={props} layout="embedded" attachments={false} voiceAffordance="none" />);
+        try {
+            const maxPanelHeight = screen.findByType(AgentInput).props.maxPanelHeight as number;
+            expect(maxPanelHeight).toBeGreaterThan(0);
+            expect(maxPanelHeight).toBeLessThanOrEqual(360);
+        } finally {
+            await screen.unmount();
+        }
+    });
     it('lets an empty embedded composer hide its status without hiding the next draft or launch status', async () => {
         const props = { ...panelProps(), promptStore: createNewSessionPromptStore(''),
             connectionStatus: { text: 'Machine unavailable', color: 'red', dotColor: 'red' } };
