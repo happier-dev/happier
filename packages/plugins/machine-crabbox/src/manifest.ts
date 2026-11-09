@@ -53,7 +53,7 @@ export const CRABBOX_MACHINE_PROVISIONER = {
 /** Existing native refs stay native; new Account leases retain their own role binding. */
 export const CRABBOX_COORDINATOR_PROVISIONER = {
   ...CRABBOX_MACHINE_PROVISIONER,
-  title: 'Crabbox coordinator', bootstrapCredential: { kind: 'ssh' },
+  title: 'Crabbox coordinator', bootstrapCredential: { kind: 'ssh' }, description: machinePresentationLabel('coordinatorDescription'),
   enrollmentRole: 'server', billing: { location: 'cloud', stoppedBilling: 'unknown' },
   credentialPurposeRequirements: [],
   actions: { check: 'coordinator-check', options: 'coordinator-options', acquire: 'coordinator-acquire',
@@ -145,7 +145,7 @@ export const CRABBOX_PLUGIN = definePlugin({
     [CRABBOX_COORDINATOR_PROVISIONER_ID]: CRABBOX_COORDINATOR_PROVISIONER },
   actions: {
     ...CRABBOX_COORDINATOR_ACTIONS,
-    install: { scopes: ['machine'], surfaces: ['ui', 'plugin'], execution: { target: 'daemon' }, title: 'Install Crabbox', dangerLevel: 'writesLocal',
+    install: { scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], execution: { target: 'daemon' }, title: 'Install Crabbox', dangerLevel: 'writesLocal',
       confirmation: { title: 'Install Crabbox on this computer?', body: 'Download the complete verified Crabbox distribution for this computer.', confirmLabel: 'Install' },
       inputSchema: CRABBOX_ROLE_SCHEMAS.checkInput, resultSchema: defineProtocolLiteral(null),
       async run(_input, context) {

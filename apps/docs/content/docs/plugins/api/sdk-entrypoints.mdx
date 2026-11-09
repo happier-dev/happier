@@ -1,6 +1,6 @@
 ---
 title: SDK entrypoints
-description: Choose the public Plugin SDK import path for a capability, type annotation, build, test, or host integration.
+description: Choose the public Plugin SDK import path for a capability, type annotation, build, or test.
 ---
 
 This maintained task map is derived from the author-owned `index.public.ts`
@@ -32,17 +32,22 @@ the public surface; it does not create a separate stability tier per export.
 - The table's namespace examples identify a type-heavy module without forcing a
   runtime import. In production code, import the specific type or value you
   need from the same path.
-- `host/*` paths are intentionally public to Happier host packages, not to
-  installed plugins. `ui/build` exposes build-realm toolchain compatibility
-  facts, and `ui/client` is only for a hosted-web client.
-  Hosts recover captured Action read observers through
-  `readPluginActionReadObserver` on `/host/registration`; plugin authors declare
-  `observeRead` beside their Action handler instead.
+- `ui/build` exposes build-realm toolchain compatibility facts, and `ui/client`
+  is only for a hosted-web client. Host implementation helpers and first-party
+  Agent projections stay with their owning workspace packages; they are not
+  SDK entrypoints. Plugin authors declare `observeRead` beside their Action
+  handler.
 - A normal target or contributor imports a feature-owned protocol package. Only
   a reusable feature-protocol package imports the browser-safe `/protocol`
   schema constructors and `/contributions` contribution constructors.
 
 ## Choose a route by task
+
+For a feature handoff that carries an Artifact id, the development `/protocol`
+entrypoint exposes the canonical `artifact.get` result projection. Re-read the
+Artifact through the host Action, then apply the feature's source, audience,
+revision and target admission. The [maintained author example](https://github.com/happier-dev/happier/tree/dev/packages/plugin-sdk#fresh-artifact-reads-in-feature-handoffs-03-development-source)
+shows this boundary; carrying an id grants no access or mutation permission.
 
 | You are trying to… | Start here | Follow-on route when needed |
 | --- | --- | --- |
@@ -53,7 +58,6 @@ the public surface; it does not create a separate stability tier per export.
 | Render Plugin UI | `/ui` | exact `./happier-plugin-ui/<artifactId>` package exports, `/ui/build` for toolchain facts, or `/ui/client` only in hosted-web code |
 | Declare and use data | `/settings`, `/collections`, or `/resources` | `/storage` for daemon persistence contracts |
 | Test a Plugin module | `/testing` | use the source owner’s capability path for precise types |
-| Work on Happier host code | `/host/registration`, `/host/fs/json-owner-file-lock` | never import these paths from an installed Plugin |
 
 ## Entrypoint route map
 
@@ -71,22 +75,18 @@ the public surface; it does not create a separate stability tier per export.
 | `@happier-dev/plugin-sdk/collections` | Daemon-realm Account collection definitions, references, queries, and collection service types. | `import type * as Collections from '@happier-dev/plugin-sdk/collections';` |
 | `@happier-dev/plugin-sdk/connected-accounts` | Daemon-realm Connected Account references, purpose bindings, health, and materialization result types. | `import type * as ConnectedAccounts from '@happier-dev/plugin-sdk/connected-accounts';` |
 | `@happier-dev/plugin-sdk/connected-accounts/request-auth` | Create the daemon-realm request-auth client from its host-issued capability file. | `import { createConnectedAccountRequestAuthClient } from '@happier-dev/plugin-sdk/connected-accounts/request-auth';` |
-| `@happier-dev/plugin-sdk/errors` | Plugin errors and their type guard. | `import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';` |
+| `@happier-dev/plugin-sdk/errors` | Stable Plugin error contracts and cross-bundle guards; see [Diagnostics and errors](/plugins/testing/diagnostics). | `import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';` |
 | `@happier-dev/plugin-sdk/events` | Event contribution types, event-service types, and the Automation Event authoring helpers used by the maintained automation-event-source example: setup-result schema construction, history-gap-reset Action schemas, and checkpointed Event admission. The helpers are distinct from the plugin pub/sub `EventsService` lifecycle. | `import type * as Events from '@happier-dev/plugin-sdk/events';` |
 | `@happier-dev/plugin-sdk/exec` | Host-mediated executable and process-service types for daemon code. | `import type * as Exec from '@happier-dev/plugin-sdk/exec';` |
 | `@happier-dev/plugin-sdk/exec/protocol-clients` | Typed process-protocol client contracts used with the host exec service. | `import type * as ProtocolClients from '@happier-dev/plugin-sdk/exec/protocol-clients';` |
-| `@happier-dev/plugin-sdk/first-party/claude` | Specialist settings, model-policy, and native JSONL projections consumed by the maintained first-party Claude plugin; ordinary Agent authors use `/agents`. | `import type * as FirstPartyClaude from '@happier-dev/plugin-sdk/first-party/claude';` |
-| `@happier-dev/plugin-sdk/first-party/connected-accounts` | Focused Happier-owned Connected Account policy facts for maintained first-party integrations; ordinary plugins use `/connected-accounts`. | `import type * as FirstPartyConnectedAccounts from '@happier-dev/plugin-sdk/first-party/connected-accounts';` |
 | `@happier-dev/plugin-sdk/fs` | Daemon-realm host-mediated filesystem service types. | `import type * as FileSystem from '@happier-dev/plugin-sdk/fs';` |
 | `@happier-dev/plugin-sdk/hooks` | Daemon-realm hook contribution and handler contracts. | `import type * as Hooks from '@happier-dev/plugin-sdk/hooks';` |
-| `@happier-dev/plugin-sdk/host/fs/json-owner-file-lock` | Host-only: do not import from an installed plugin. Happier daemon packages use this scoped JSON owner-file-lock seam. | `import type * as HostFileLock from '@happier-dev/plugin-sdk/host/fs/json-owner-file-lock';` |
-| `@happier-dev/plugin-sdk/host/registration` | Host-only: do not import from an installed plugin. Happier host packages use this registration-rights seam. | `import type * as HostRegistration from '@happier-dev/plugin-sdk/host/registration';` |
 | `@happier-dev/plugin-sdk/http` | Host-mediated HTTP service types and outcomes. | `import type * as Http from '@happier-dev/plugin-sdk/http';` |
 | `@happier-dev/plugin-sdk/interactions` | Typed questions, confirmations, approvals, and present-user interaction results. | `import type * as Interactions from '@happier-dev/plugin-sdk/interactions';` |
 | `@happier-dev/plugin-sdk/machine-provisioners` | Machine provisioner contribution, native observation, reconciliation, bootstrap, and stored-schema contracts. | `import type * as MachineProvisioners from '@happier-dev/plugin-sdk/machine-provisioners';` |
 | `@happier-dev/plugin-sdk/machine-provisioners/lima` | Daemon-realm Lima inspection, lifecycle, guest execution, and file delivery through injected native I/O. | `import type * as Lima from '@happier-dev/plugin-sdk/machine-provisioners/lima';` |
 | `@happier-dev/plugin-sdk/machine-provisioners/ssh` | Resolve the SSH bootstrap carrier for a Machine provisioner. | `import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';` |
-| `@happier-dev/plugin-sdk/managed-services` | Daemon-realm host-managed service declaration and lifecycle types. | `import type * as ManagedServices from '@happier-dev/plugin-sdk/managed-services';` |
+| `@happier-dev/plugin-sdk/managed-services` | Daemon-realm host-managed service declaration and lifecycle types, including development [bounded log reads and watch callbacks](/plugins/guides/background-services#read-bounded-native-logs-in-development). The [native service example](/plugins/guides/background-services#control-an-existing-native-service-in-development) shows optional discovery, Start/Restart and accounting callbacks; Machine consumers remain under integration. | `import type * as ManagedServices from '@happier-dev/plugin-sdk/managed-services';` |
 | `@happier-dev/plugin-sdk/managed-services/native` | Daemon-realm managed-dependency command, launch, and release types, with command resolution, validation, and release-asset selection helpers used by the maintained Codex ACP integration. | `import { resolveManagedDependencyCommand } from '@happier-dev/plugin-sdk/managed-services/native';` |
 | `@happier-dev/plugin-sdk/manifest` | Plugin Manifest V2 parsing, validation, and declaration types. | `import type * as Manifest from '@happier-dev/plugin-sdk/manifest';` |
 | `@happier-dev/plugin-sdk/mcp` | Daemon-realm MCP server, client, discovery, tool, prompt, and resource contracts. | `import type * as Mcp from '@happier-dev/plugin-sdk/mcp';` |
@@ -116,6 +116,242 @@ the public surface; it does not create a separate stability tier per export.
 | `@happier-dev/plugin-sdk/voice/client` | Client-realm Voice conversation and media contracts. | `import type * as VoiceClient from '@happier-dev/plugin-sdk/voice/client';` |
 | `@happier-dev/plugin-sdk/voice/speech` | Speech-provider contract types. | `import type * as VoiceSpeech from '@happier-dev/plugin-sdk/voice/speech';` |
 | `@happier-dev/plugin-sdk/webhooks` | Daemon-realm webhook endpoint declarations, verification, and test fixtures. | `import type * as Webhooks from '@happier-dev/plugin-sdk/webhooks';` |
+
+## Machine app-page authoring in development
+
+The root `defineUiSurfaceDefinition` helper accepts
+`placement: 'appPage', target: { kind: 'machine' }` in unreleased 0.3 source.
+Its declaration projects through the existing Surface Registry; the mounted
+`PluginSurfaceTarget` and `SurfaceContext` from `/ui` carry the exact
+`{ kind: 'machine', serverId, machineId }`. React Native authors read that same
+target with `useSurfaceContext()` from `@happier-dev/plugin-ui`.
+
+Use `/testing`'s `createPluginUiTestkit` and `createSurfaceContextFixture` to
+exercise exact context and retirement, following the maintained public-authoring
+companion. The [Machine page example](/plugins/examples/action-resource-ui-plugin#add-a-machine-page-in-development)
+shows declaration and canonical service Action usage, and
+[Plugin UI](/plugins/ui#machine-pages-in-development) explains the distinction
+from Services panels. Host-private Machine catalogs, mount/currentness owners,
+native admission and service runners are not plugin import paths.
+
+## Machine enrollment intent in development
+
+In unreleased 0.3 source, declare the intended kind of Machine with optional
+`enrollmentRole: 'server' | 'personal' | 'sandbox'` on a `machineProvisioners`
+descriptor. Declare the known guest OS as `guestPlatform`
+(`linux`, `darwin` or `windows`) in the options base or a dimension option.
+The base or option may also declare `enrollmentRole`; its selected value
+overrides the descriptor role without creating a second provisioner entry.
+
+```ts
+// Include these in the provisioner descriptor:
+const enrollment = {
+  enrollmentRole: 'server',
+  platforms: ['darwin'], // The controller runs here.
+} as const;
+
+// Return this in options.dimensions.image:
+const imageOption = {
+  id: 'linux', title: 'Linux guest', assignments: [],
+  guestPlatform: 'linux', // The selected guest runs here.
+  nativeFacts: { image: { id: 'linux', title: 'Linux guest' } },
+} as const;
+```
+
+Use `projectMachineProvisionerSelectionV1` from
+`@happier-dev/plugin-sdk/machine-provisioners` to project the selected facts.
+The shared Add review drafts a dedicated `happier` user-service with editable
+Preauthorized administrator access only for declared Linux servers. Personal
+Machines keep their existing user; sandboxes use the guest process. Missing role,
+or a server without platform facts, keeps the existing personal-user default.
+A declared macOS or Windows server keeps that path with an explanation that
+dedicated-user enrollment is unsupported. Explicit enrollment choices are preserved, and bootstrap still
+checks the real guest. Do not infer identity from a provisioner id, transport,
+image name or controller OS.
+
+The maintained [public author fixture](https://github.com/happier-dev/happier/blob/dev/packages/plugin-sdk/fixtures/authoring-inference/machineProvisioners.ts)
+shows these declarations alongside options and ordinary Action activation.
+
+### Prerequisites and repair Actions
+
+In **0.3 development**, declare executable prerequisites in `managedDependencies`
+and reference them from the provisioner's `prerequisites`. Read availability with
+`context.services.managedServices.dependencies.status(id, { signal })`; discovery
+does not install software. An explicitly approved repair Action can call
+`dependencies.ensure(id, { signal })` for an installable declared source. A
+system-only source requires installation by the person; return its installation
+guide rather than inventing a downloader. See the
+[managed dependency declarations](/plugins/manifest/contributions).
+
+When a check or options result reports an unavailable prerequisite, its
+`repairAction` names an ordinary qualified Action and its admitted input:
+
+```ts
+const prerequisite = {
+  requirement: {
+    kind: 'managedDependency',
+    id: { pluginId: 'examples.machine-provisioner', localId: 'fixture-tool' },
+  },
+  status: 'unavailable',
+  repairAction: {
+    action: { pluginId: 'examples.machine-provisioner', localId: 'repair' },
+    input: { machineName: 'guest' },
+  },
+} as const;
+```
+
+The host invokes that Action through normal surface admission and approval; a
+repair reference grants no permission by itself. Declare `ui`, `agent`, `mcp`,
+`cli` and `plugin` surfaces when each can perform the repair. Native installers
+keep their normal confirmation. A client Action that opens installation guidance
+can return the guide URL to automated callers; it still needs an answering App
+through the existing client Action route. Recheck availability after repair.
+The maintained fixture's repair simulates the effect; it is not a native installer.
+
+### Conditional credentials and picker groups
+
+Use `credentialPurposeRequirements[].optionalWhen` on the provisioner for a
+launch variant that does not need a declared credential purpose. For example:
+
+```ts
+const credentialPurposeRequirements = [{
+  purpose: 'native-connection',
+  optionalWhen: { op: 'eq', path: 'name', value: 'local' },
+}] as const;
+```
+
+Only a true predicate with every referenced selector present waives the purpose.
+Missing selectors keep it required, including broad picker checks. The host's
+credential requirement owner evaluates this for configuration and acquisition;
+do not repeat the decision in UI or native handlers. `optionalWhen` changes
+whether the purpose is needed, not how credentials are stored or granted.
+
+Picker groups use the same declaration facts: `billing.location: 'local'` places
+a provisioner with computers the person controls; cloud provisioners with
+`enrollmentRole: 'sandbox'` appear with cloud sandboxes, and other cloud
+provisioners appear with cloud servers. A selected option may refine the
+enrollment role. Declare these facts rather than adding a group registry or
+inferring a group from a plugin id.
+
+## Native deletion notices in development
+
+In matching unreleased 0.3 SDK and host builds, native observations and reviewed
+retention capabilities can carry `deletionNotices`. A `stopped-storage` notice
+with `consequence: 'disk-deleted'` describes the provider's own deletion rule.
+Its `rule: { kind: 'after-stop', afterMs: 0 }` means the disk is deleted as soon
+as the Machine stops. Positive `afterMs` values describe the retention delay
+after Stop. Omit `at` when the provider supplies no deletion deadline; the host
+keeps the rule without guessing a Stop time or scheduling a reminder.
+
+## Native choice refusals in development
+
+In matching 0.3 development SDK and host builds, an options `base` or dimension
+with `available: false` can return `unavailableReason: { code, status, fieldPath? }`.
+Use a stable native code, localized `status`, and an optional declared input path
+that the person can change. The selection projector retains this reason even
+when the launch is incomplete or invalid. The configurator shows the native
+reason beside Create and at the named field, rather than blaming another choice.
+
+For example, a refused driver can supply
+`{ code: 'driver_unavailable', status: { key: 'driver.unavailable', fallback: 'Choose another VM driver.' }, fieldPath: 'vmType' }`.
+The maintained author fixture linked above includes a refused options result.
+These closed result shapes require matching development readers; this does not
+change acquisition authority or the executable launch schema.
+
+## Managed allocation presentation in development
+
+In matching 0.3 development SDK and host builds, use
+`classifyManagedMachineAllocationV1` from
+`@happier-dev/plugin-sdk/machine-provisioners` to distinguish allocation from
+active creation:
+
+```ts
+const state = classifyManagedMachineAllocationV1(row, currentCreationOperation);
+```
+
+The optional operation must already be correlated to the row by its owner.
+Only a running acquire or bootstrap retry makes a `may-exist` allocation
+`creating`; without that receipt it stays `may-exist`. Unsubmitted, bound and
+confirmed-absent allocations retain their facts. The helper reads no inventory,
+performs no correlation or mutation, and leaves labels and recovery controls to
+the surface. The maintained public author fixture above includes this projection.
+
+## Native HTTP and guest execution in development
+
+In matching 0.3 development builds, use the machine-provisioner SDK bridge
+instead of copying a fetch adapter into a native client:
+
+```ts
+import {
+  createMachineProvisionerFetch,
+  createMachineProvisionerMaterializedFetch,
+  buildMachineProvisionerShellCommand,
+  buildMachineProvisionerDaemonStartScript,
+} from '@happier-dev/plugin-sdk/machine-provisioners';
+
+const request = createMachineProvisionerFetch(context, {
+  purpose: 'cloud-api',
+  origins: ['https://api.example.com'],
+  headerName: 'authorization',
+});
+const reply = await request('https://api.example.com/resources');
+
+// For a role that captures its API credential once and uses guest tokens:
+const capturedRequest = createMachineProvisionerMaterializedFetch(context, {
+  purpose: 'cloud-api', origin: 'https://api.example.com',
+  headerName: 'authorization', methods: ['GET', 'POST', 'DELETE'],
+  isGuestUrl: url => url.origin === 'https://guest.example.com',
+});
+
+// Native text-only exec APIs can carry separate binary streams and exit status.
+const command = buildMachineProvisionerShellCommand(argv, stdinBase64);
+const startupFile = buildMachineProvisionerDaemonStartScript(environment, detachedDaemonStartArgv);
+```
+
+The first bridge uses the host-captured Connected Account purpose. During an
+explicit authentication attempt, pass formatted `credential` headers instead;
+those headers are not persisted by the bridge. The materialized bridge reads
+once per role and strips its API header from guest requests, preserving the
+guest-specific headers supplied by the native client. Both bridges preserve
+bytes, refuse redirects and combine role cancellation with request cancellation.
+They do not add retries or native lifecycle decisions.
+
+The shell command returns JSON with `exitCode`, `stdoutBase64` and
+`stderrBase64`. Omit the second argument when the native API carries stdin in
+its own field. The vendor adapter still interprets native transport errors and
+parses this command result; it never treats command acceptance as success.
+The startup-file builder renders the host-provided environment and argv; the
+native adapter still owns private staging, publication and startup registration.
+
+## Cloud-init SSH bootstrap in development
+
+In unreleased 0.3 source, a daemon-realm cloud provisioner can build first-boot
+`user_data` from the managed row's public key and select the matching SSH identity:
+
+```ts
+import {
+  buildMachineProvisionerCloudInit,
+  MACHINE_PROVISIONER_CLOUD_SSH_USER,
+} from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
+
+const userData = buildMachineProvisionerCloudInit(bootstrapSshPublicKey);
+const connection = {
+  address: publicAddress,
+  user: MACHINE_PROVISIONER_CLOUD_SSH_USER,
+};
+```
+
+Pass `userData` in the cloud's create request and use `connection` when calling
+`resolveMachineProvisionerSshBootstrap` with the invoked handler's exec service
+and retained credential reference. The helper creates the key-only `happier-bootstrap`
+user with its own home, bash and passwordless sudo, and disables SSH password
+authentication. For dedicated-daemon enrollment, the host uses this principal for
+bootstrap and creates the separate locked `happier` account with its reviewed
+administrator policy. The daemon
+does not inherit the bootstrap user's sudo grant or vendor-issued root password.
+This create-time configuration
+does not modify an existing guest. Host-key observation still requires the host's
+ordinary trust approval before installation.
 
 ## Agent skill delivery in development
 

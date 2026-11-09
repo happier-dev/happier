@@ -14,13 +14,18 @@ describe('Container runtime prerequisite repair', () => {
     // The answering client's external-link host API is the effect boundary.
     const executeAction = vi.fn(async () => ({ status: 'opened' }));
     const signal = new AbortController().signal;
-    const context = { signal, ui: { executeAction } } as unknown as PluginClientActionContext;
+    const context = { signal, invocationSurface: 'ui', ui: { executeAction } } as unknown as PluginClientActionContext;
     try {
       const repair = kit.registration('actions', 'runtime-install-docs');
       expect(repair).toBeDefined();
       if (!repair) throw new Error('Missing runtime repair registration');
       await expect(repair({ runtime }, context)).resolves.toBeNull();
       expect(executeAction).toHaveBeenCalledWith('links.openExternal', { url }, { signal });
+      executeAction.mockClear();
+      for (const invocationSurface of ['agent', 'mcp', 'cli'] as const) {
+        await expect(repair({ runtime }, { ...context, invocationSurface })).resolves.toEqual({ url });
+      }
+      expect(executeAction).not.toHaveBeenCalled();
       const failure = new Error('external_link_unavailable');
       executeAction.mockRejectedValueOnce(failure);
       await expect(repair({ runtime }, context)).rejects.toBe(failure);
