@@ -2,16 +2,17 @@ import type { UsageAnalyticsBreakdownDimension } from '@happier-dev/protocol/usa
 import { getAgentStaticModels } from '@happier-dev/agents';
 import { canonicalUsageModelPriceId } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { isUnattributedUsageAgentId } from '@happier-dev/protocol/usage/usageFormatting';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import { AGENT_IDS } from '@/agents/catalog/catalog';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import { listProjectedAgentUiBehaviorIds } from '@/agents/registry/agentUiBehaviorProjection';
+import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { formatUsageDimensionLabel } from '@/sync/api/account/formatUsageDimensionLabel';
-import { t } from '@/text';
+import { getTranslationValue, t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 const SOURCE_LABEL_KEYS = {
-    'claude-assistant-usage': 'usage.board.page.sourceClaudeResponses',
-    'claude-sdk-result': 'usage.board.page.sourceClaudeSessionSummaries',
     accounting: 'usage.board.page.sourceAccounting',
     quota: 'usage.board.page.sourceQuota',
     work: 'usage.board.page.sourceWork',
@@ -23,19 +24,18 @@ const SOURCE_LABEL_KEYS = {
     native: 'usage.board.page.sourceAccounting',
 } as const;
 
-const SOURCE_AGENTS: Readonly<Record<string, string>> = {
-    'claude-assistant-usage': 'claude',
-    'claude-sdk-result': 'claude',
-    'codex-app-server-token-usage': 'codex',
-    'codex-native-accounting': 'codex',
-    'pi-native-accounting': 'pi',
-    'opencode-native-accounting': 'opencode',
-};
+function readDeclaredAccountingSource(source: string) {
+    for (const agentId of new Set([...AGENT_IDS, ...listProjectedAgentUiBehaviorIds()])) {
+        const declaration = resolveAgentUiBehavior(agentId).accountingSourcePresentation?.find(row => row.sourceId === source);
+        if (declaration) return { agentId, declaration };
+    }
+    return null;
+}
 
 /** The Agent an ingestion source belongs to, where the source names one; identity stays the key. */
 export function usageSourceAgentId(source: string): string | null {
-    const known = SOURCE_AGENTS[source];
-    if (known) return known;
+    const known = readDeclaredAccountingSource(source);
+    if (known) return known.agentId;
     const colon = source.indexOf(':');
     return colon > 0 ? source.slice(colon + 1) : null;
 }
@@ -47,8 +47,15 @@ export function usageSourceTitle(source: string, fallback?: string): string {
         && display.toLowerCase() !== formatUsageDimensionLabel('source', source).toLowerCase() ? display : undefined;
     const key = SOURCE_LABEL_KEYS[source as keyof typeof SOURCE_LABEL_KEYS];
     if (key) return providedTitle ?? t(key);
-    const agentId = SOURCE_AGENTS[source];
-    if (agentId) return providedTitle ?? `${t('usage.board.page.sourceAccounting')} · ${usageAgentTitle(agentId)}`;
+    const declared = readDeclaredAccountingSource(source);
+    if (declared) {
+        if (providedTitle) return providedTitle;
+        const { title, translatedTitle } = declared.declaration;
+        if (typeof title === 'string') return title;
+        if (translatedTitle) return resolvePluginLocalizedStringV2Text(title, translatedTitle);
+        const translation = getTranslationValue(title.key);
+        return resolvePluginLocalizedStringV2Text(title, typeof translation === 'string' ? translation : undefined);
+    }
     if (providedTitle) return providedTitle;
     const colon = source.indexOf(':');
     if (colon > 0) {

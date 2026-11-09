@@ -10,6 +10,18 @@ import { getModelOptionsForAgentTypeOrPreflight, getModelOptionsForSession, reso
 import { parsePreflightModelListFromProbeModelsResult } from './parsePreflightModelListFromProbeModelsResult';
 
 describe('modelOptions preflight', () => {
+    it('retains a contributed native model name and disclosure in preflight and Session picker data', () => {
+        const model = { id: 'meta/muse-wonder-1.0-contributor', name: 'muse-wonder-1.0-contributor',
+            description: 'Your content, including inter-session messages, may be used for product improvement.' };
+        const preflight = parsePreflightModelListFromProbeModelsResult({ availableModels: [model], supportsFreeform: false });
+        const expected = { value: model.id, label: model.name, description: model.description };
+        expect(getModelOptionsForAgentTypeOrPreflight({ agentType: 'external', preflight })[1]).toEqual(expected);
+        const metadata = ComposerOptionsInputV1Schema.parse({ sessionModelsV1: {
+            v: 1, agentId: 'external', updatedAt: 1, currentModelId: model.id, availableModels: [model],
+        } });
+        expect(getModelOptionsForSession('external', metadata)[1]).toEqual(expected);
+    });
+
     it('reconciles unsupported draft models only against a successful non-freeform catalog', () => {
         const catalog = { availableModels: [{ id: 'gateway-model', name: 'Gateway model' }], supportsFreeform: false };
         const options = getModelOptionsForAgentTypeOrPreflight({ agentType: 'external', preflight: catalog });
