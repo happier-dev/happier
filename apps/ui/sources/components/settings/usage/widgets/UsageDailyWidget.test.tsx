@@ -6,6 +6,7 @@ import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { act } from 'react-test-renderer';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { t } from '@/text';
 import { WidgetFrameCellHeightContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -88,6 +89,16 @@ describe('Daily period chart', () => {
     expect(chart.props.barRanges).toEqual([]);
     expect(chart.props.series[0].points.map((point: { y: number | null }) => point.y)).toEqual([10, null, 0, 30]);
     expect(screen.findAllHostsByTestId(`daily.chart-gap-${start + day}`)).toHaveLength(1);
+  });
+
+  it('keys the hatched day in the legend, so a day with no figure reads as one (R137 Costs)', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(start + 20 * day);
+    const screen = await renderScreen(<UsageDailyWidget {...fixture([10, null, 0, 30], start + 4 * day)} />);
+    expect(screen.findByType(StackedSeriesChart).props.gapLabel).toBe(t('usage.board.howYouWork.notRecorded'));
+    expect(screen.getTextContent()).toContain(t('usage.board.howYouWork.notRecorded'));
+    await screen.unmount();
+    const covered = await renderScreen(<UsageDailyWidget {...fixture([10, 20, 0, 30], start + 4 * day)} />);
+    expect(covered.getTextContent()).not.toContain(t('usage.board.howYouWork.notRecorded'));
   });
 
   it('can compare one witnessed active day without treating an uncovered today as observed usage', async () => {

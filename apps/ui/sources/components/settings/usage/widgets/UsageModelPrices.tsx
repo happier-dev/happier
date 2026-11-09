@@ -9,6 +9,8 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 import { SelectionList } from '@/components/ui/selectionList/SelectionList';
@@ -60,8 +62,16 @@ const RATE_TITLE = {
  * the Account's own `usage.modelPrices` setting through the ordinary settings Action, so history
  * re-prices at query time; reported and invoiced money never change.
  */
-export function UsageModelPricesEditor(props: Readonly<{ slice: UsageQueryResultSlice; serverId: string; testID: string }>) {
+export function UsageModelPricesEditor(props: Readonly<{ slice: UsageQueryResultSlice; serverId: string; testID: string;
+  /** Hold the rows' room this long before drawing them, so a sheet's entrance plays before their render work. */
+  rowsAfterMs?: number }>) {
   const overrides = useSetting('usageModelPriceOverridesV1');
+  const [rowsShown, setRowsShown] = React.useState(props.rowsAfterMs === undefined);
+  React.useEffect(() => {
+    if (rowsShown) return;
+    const timer = setTimeout(() => setRowsShown(true), props.rowsAfterMs);
+    return () => clearTimeout(timer);
+  }, [rowsShown, props.rowsAfterMs]);
   const model = React.useMemo(() => buildUsagePriceEditorModel(props.slice, overrides), [props.slice, overrides]);
   const rows = React.useMemo(() => [...model.rows].filter(row => row.modelId !== null)
     // What needs a decision first: unpriced, then the viewer's own prices, then the catalog.
@@ -69,11 +79,12 @@ export function UsageModelPricesEditor(props: Readonly<{ slice: UsageQueryResult
   return (
     <View style={styles.body} testID={props.testID}>
       <UsagePriceProvenance provenance={model.provenance} serverId={props.serverId} testID={`${props.testID}.provenance`} />
-      <View style={styles.rows}>
+      {!rowsShown ? <ItemLoadStateRows testID={`${props.testID}.rowsEntering`} state={{ kind: 'loading' }} rows={rows.length} lines={2}
+        accessibilityLabel={t('usage.board.page.pricesTitle')} /> : <View style={styles.rows}>
         {rows.map((row, index) => <UsageModelPriceRow key={row.modelId!} row={row} overrides={overrides}
           mappingTargets={model.mappingTargets} serverId={props.serverId} last={index === rows.length - 1}
           testID={`${props.testID}.model.${row.modelId}`} />)}
-      </View>
+      </View>}
     </View>
   );
 }
@@ -136,7 +147,9 @@ export function useUsageModelPricesAction(slice: UsageQueryResultSlice | null, s
 function UsageModelPricesSheet(props: Readonly<{ slice: UsageQueryResultSlice; serverId: string; testID: string }> & CustomModalInjectedProps) {
   return (
     <ScrollView style={styles.sheet} contentContainerStyle={styles.sheetContent}>
-      <UsageModelPricesEditor slice={props.slice} serverId={props.serverId} testID={props.testID} />
+      {/* The rows wait for the modal's own entrance; drawn in the same frame, their render work hid it (R137). */}
+      <UsageModelPricesEditor slice={props.slice} serverId={props.serverId} testID={props.testID}
+        rowsAfterMs={motionTokens.overlay.modal.enterMs} />
     </ScrollView>
   );
 }

@@ -21,7 +21,7 @@ export function formatUsageClockMinutes(minutes: number): string {
   return `${String(Math.floor(whole / 60)).padStart(2, '0')}:${String(whole % 60).padStart(2, '0')}`;
 }
 
-/** "3 h 12 min", "18 min", "40 s": a measured duration. A measured nothing reads "0 min", never blank. */
+/** "3 h 12 min", "18 min", "40 s": a measured duration. A measured nothing reads "0 s", never blank. */
 const durationLabels: UsageDurationLabels = {
   seconds: seconds => t('usage.board.howYouWork.durationSeconds', { seconds }),
   minutes: minutes => t('usage.board.howYouWork.durationMinutes', { minutes }),

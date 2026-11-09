@@ -104,6 +104,8 @@ export type StackedSeriesChartProps = Readonly<{
   leads?: Readonly<Record<string, ReactNode>>;
   /** Callers supply localized unavailable wording. */
   unknownLabel?: string;
+  /** Names the hatch drawn on a bucket with no known value; the legend keys it only while such a bucket is drawn. */
+  gapLabel?: string;
   valueFormatter?: (value: number) => string;
   /**
    * Say each value in an accessible name as `valueFormatter` reads it (unit and display precision) instead of with every
@@ -346,6 +348,8 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     target?.focus();
   }, [denseLine, selectedId, geometry.buckets]);
   const unknown = props.unknownLabel ?? '—';
+  const gapKey = props.gapLabel && props.variant === 'bar'
+    && geometry.buckets.some(bucket => bucket.values.every(entry => entry.value === null)) ? props.gapLabel : null;
   const magnitude = (value: number) => props.mirrored ? Math.abs(value) : value;
   const format = (value: number) => props.valueFormatter ? props.valueFormatter(magnitude(value)) : formatHappierDataValue(magnitude(value), text.locale);
   const reading = { formatCoordinate: props.coordinateFormatter, ...(props.formattedReadings && props.valueFormatter ? { formatValue: props.valueFormatter } : {}), locale: text.locale };
@@ -757,6 +761,13 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
           accessibilityLabel={pressLabel ?? entry.label} selected={chosen}
           onPress={() => press(entry.id)} style={row}>{key}</HappierPressable> : <View key={entry.id} style={row}>{key}</View>;
       })}
+      {gapKey ? <View testID={props.testID ? `${props.testID}-gap-key` : undefined}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_DATA_METRICS.axisGapPx }}>
+        <View style={{ width: 8, height: 8, borderRadius: 2, overflow: 'hidden', opacity: HAPPIER_DATA_METRICS.barRestOpacity }}>
+          <HatchSwatch ink={props.theme.colors.secondaryText} />
+        </View>
+        <HappierText style={text.caption}>{gapKey}</HappierText>
+      </View> : null}
       {toggleInLegend ? valuesToggle : null}
     </View> : null}
     {props.summary ? <HappierText style={text.caption} tabularNumbers>{props.summary}</HappierText> : null}

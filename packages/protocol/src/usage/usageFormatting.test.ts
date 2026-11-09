@@ -14,7 +14,8 @@ describe('shared Usage formatting', () => {
             minutes: (minutes: number) => `${minutes} min`,
             hours: (hours: number, minutes: number) => `${hours} h ${minutes} min`,
         };
-        expect(formatUsageDuration(0, labels)).toBe('0 min');
+        // A measured zero is said in the smallest unit, so a column of short turns keeps one unit (R137 run length).
+        expect(formatUsageDuration(0, labels)).toBe('0 s');
         expect(formatUsageDuration(40_000, labels)).toBe('40 s');
         // A measured turn too short to round to a second is under one, never "0 min" (R135 N4).
         expect(formatUsageDuration(300, labels)).toBe('<1 s');
@@ -22,7 +23,7 @@ describe('shared Usage formatting', () => {
         expect(formatUsageDuration(59_500, labels)).toBe('1 min');
         expect(formatUsageDuration(3_570_000, labels)).toBe('1 h 0 min');
         expect(formatUsageDuration(11_520_000, labels)).toBe('3 h 12 min');
-        expect(formatUsageDurationCompact(0, 'en-US')).toBe('0m');
+        expect(formatUsageDurationCompact(0, 'en-US')).toBe('0s');
         expect(formatUsageDurationCompact(3_570_000, 'en-US')).toBe('1h');
         expect(formatUsageDurationCompact(11_520_000, 'en-US')).toBe('3h 12m');
         expect(formatUsageDurationCompact(40_000, 'fr-FR')).toBe(new Intl.NumberFormat('fr-FR', {

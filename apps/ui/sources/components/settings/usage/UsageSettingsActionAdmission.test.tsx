@@ -385,6 +385,15 @@ describe('Usage settings UI Action admission', () => {
         expect(harness.artifacts(serverId).list().map(artifact => artifact.id)).toEqual(beforeRetiredPress);
         await screen.unmount();
     });
+    it('holds the price rows\' room until the sheet has entered, so its entrance is seen (R137 Prices)', async () => {
+        const { slice } = priceSlice();
+        const screen = await renderScreen(<UsageModelPricesEditor slice={slice} serverId={serverId} testID="prices" rowsAfterMs={60_000} />);
+        // The provenance line is there at once; the rows' room is held by the shared loading rows until the entrance ends.
+        expect(screen.findByTestId('prices.provenance.refresh')).not.toBeNull();
+        expect(screen.findByTestId('prices.model.qa-private-model.set')).toBeNull();
+        expect(screen.findByTestId('prices.rowsEntering')).not.toBeNull();
+        await screen.unmount();
+    });
     it.each([false, true])('sets and resets a model price through its Account owner (explicit Ask: %s)', async requireApproval => {
         if (!requireApproval) {
             raw.actionsSettingsV1 = { v: 1, actions: {} };

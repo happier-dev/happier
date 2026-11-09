@@ -162,7 +162,7 @@ describe('Compact usage durations', () => {
     expect(formatUsageDurationCompact(3 * HOUR)).toBe('3h');
     expect(formatUsageDurationCompact(18 * MIN)).toBe('18m');
     expect(formatUsageDurationCompact(40_000)).toBe('40s');
-    expect(formatUsageDurationCompact(0)).toBe('0m');
+    expect(formatUsageDurationCompact(0)).toBe('0s');
   });
 });
 

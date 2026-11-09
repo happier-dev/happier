@@ -243,6 +243,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
     if (Math.abs(unused) > 1) setStretchPx(current => Math.max(0, current + unused));
   }, [phone, compact, cellHeight, drawnPx]);
   const shape = resolveUsageDailyChartShape(presentation, phone, compact ? 0 : stretchPx);
+  const hasGapDay = (series[0]?.points ?? []).some((_, index) => series.every(entry => entry.points[index]?.y == null));
   const height = shape.plotPx;
   if (!view || count === 0)
     // Until the first read answers, the body holds the settled chart's shape (its plot, axis and legend room).
@@ -265,7 +266,9 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         showScaleValues: true,
         scaleGutter: 44,
         showPeakValue: dailyShowsPeak(phone, compact),
-        showLegend: !compact && series.length > 1,
+        // A hatched day is keyed in the legend, so a day with no figure (Cost: no price) reads as one beside the totals.
+        showLegend: !compact && (series.length > 1 || hasGapDay),
+        gapLabel: metric === 'cost' ? t('usage.board.page.factUnpriced') : t('usage.board.howYouWork.notRecorded'),
         ...dailyContext,
         ...motion,
         unknownLabel: '—',

@@ -37,6 +37,10 @@ const page = {
 }>;
 
 function renderBar(selections: string[], overrides: Partial<Bar> = {}) {
+  return renderScreen(<UsageFilterBar {...barProps(selections)} {...overrides} />);
+}
+
+function barProps(selections: string[]): Bar {
   const filter = (
     field: 'sources' | 'agents',
     selected: string[],
@@ -76,7 +80,7 @@ function renderBar(selections: string[], overrides: Partial<Bar> = {}) {
     onMetricChange: null,
     testID: 'filters',
   } satisfies Bar;
-  return renderScreen(<UsageFilterBar {...props} {...overrides} />);
+  return props;
 }
 
 describe('UsageFilterBar', () => {
@@ -90,6 +94,24 @@ describe('UsageFilterBar', () => {
     expect(sources.valueLabel).toBe(t('usage.board.page.filterAll'));
     expect(sources.count).toBeUndefined();
     expect(sources.reserveCount).toBeUndefined();
+    await screen.unmount();
+  });
+
+  it('keeps its tallest height at one width, so a view without Tokens/Cost does not lift the page (R137)', async () => {
+    Object.assign(viewport, { width: 1280, height: 900 });
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', maxTouchPoints: 0 });
+    const toggled = { metric: 'tokens' as const, onMetricChange: () => {} };
+    const screen = await renderBar([], toggled);
+    const bar = () => screen.findHostByTestId('filters')!;
+    const layout = (width: number, height: number) => act(async () => { bar().props.onLayout({ nativeEvent: { layout: { width, height } } }); });
+    const minHeight = () => [bar().props.style].flat(Infinity).reduce((found: unknown, style: { minHeight?: number } | null) => style?.minHeight ?? found, undefined);
+    await layout(1000, 80);
+    await screen.update(<UsageFilterBar {...barProps([])} metric={null} onMetricChange={null} />);
+    await layout(1000, 40);
+    expect(minHeight()).toBe(80);
+    // A new width measures afresh.
+    await layout(1200, 40);
+    expect(minHeight()).toBeUndefined();
     await screen.unmount();
   });
 

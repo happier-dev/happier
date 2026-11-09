@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -60,6 +60,16 @@ export function UsageFilterBar(
     [],
   );
   const { theme } = useUnistyles();
+  // Views without Tokens/Cost (Plans, Coach, Sources) fit the bar on fewer rows. At one width the bar keeps the tallest
+  // height it has drawn, so switching views never lifts the page under the pointer; a new width measures afresh (R137).
+  const [floor, setFloor] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
+  const onBarLayout = React.useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    if (!(width > 0) || !(height > 0)) return;
+    setFloor(current => current === null || Math.abs(current.width - width) >= 1 ? (current === null ? { width, height } : null)
+      : height > current.height ? { width, height } : current);
+  }, []);
+  const floorStyle = floor ? { minHeight: floor.height } : null;
   // Coverage is said once, as a dot in Sources, while a source the page reads is incomplete.
   const coverageIncomplete = props.coverageIncomplete;
   const filters = React.useMemo(
@@ -216,7 +226,7 @@ export function UsageFilterBar(
   );
   if (phone)
     return (
-      <View testID={props.testID} style={styles.phone}>
+      <View testID={props.testID} style={[styles.phone, floorStyle]} onLayout={onBarLayout}>
         {period}
         {/* One Filters chip, then Tokens/Cost and the cost basis: the row wraps rather than hiding the
             basis select past the screen edge (a scroller clipped it mid-word at 390). */}
@@ -227,7 +237,7 @@ export function UsageFilterBar(
       </View>
     );
   return (
-    <View testID={props.testID} style={styles.bar}>
+    <View testID={props.testID} style={[styles.bar, floorStyle]} onLayout={onBarLayout}>
       {period}
       {props.scopeFilters.length > 0 ? <View style={styles.rule} /> : null}
       <View style={styles.chips}>{chips}</View>
