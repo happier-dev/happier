@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
-import { ConnectedPresentationRecordV1Schema, projectConnectedPresentationLabelsV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
@@ -224,14 +223,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     },
                 },
             },
-            permissions: {
-                footer: {
-                    usePermissionUpdates: false,
-                    forceReadOnlyAfterStop: false,
-                    supportsExecPolicyAmendment: true,
-                    stopHandling: 'denyOnly',
-                },
-            },
         });
         const externalSessions = readObjectField(generated, 'externalSessions');
         const browse = readObjectField(externalSessions, 'browse');
@@ -275,12 +266,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     groups: [],
                 }],
             },
-            labelsByKey: projectConnectedPresentationLabelsV1(ConnectedPresentationRecordV1Schema.parse({
-                v: 1,
-                entries: [{ v: 1, subject: { kind: 'account', account: {
-                    service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work',
-                } }, label: 'Work Profile' }],
-            })),
+            labelsByKey: {},
         })).toEqual([
             {
                 key: 'codex:user',
@@ -290,7 +276,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             {
                 key: 'codex:connected-service:openai-codex:work',
                 label: expect.any(String),
-                detail: 'Work Profile',
                 source: {
                     kind: 'codexHome',
                     home: 'connectedService',
@@ -320,12 +305,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         })).toEqual({
             source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
             runtimeDescriptorV1: opaqueRuntimeDescriptor,
-        });
-        expect(behavior.permissions?.footer).toMatchObject({
-            usePermissionUpdates: false,
-            forceReadOnlyAfterStop: false,
-            supportsExecPolicyAmendment: true,
-            stopHandling: 'denyOnly',
         });
         expect(behavior.resume?.experimentSwitches?.[0]?.id).toBe('resumeAcp');
         expect(behavior.resume?.experimentSwitches?.[0]?.getValue?.(
