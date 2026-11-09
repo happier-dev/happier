@@ -209,8 +209,14 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
         ? root.content.kind === 'doc_passage_comment' ? root.content.passage
           : root.content.kind === 'doc_edit_proposal' ? root.content.proposal.target : null : null);
       if (doc) discussionContext.push({ kind: 'host_reference_metadata', text: JSON.stringify({ doc,
-        ...(attachedPassage ? { documentPassage: { revision: attachedPassage.revision, quote: attachedPassage.quote } } : {}),
-        suggestEdit: { actionId: 'doc.edit.propose', discussionRef: doc.threadRef.discussion },
+        ...(attachedPassage ? { documentPassage: {
+          revision: attachedPassage.revision, quote: attachedPassage.quote,
+          ...(attachedPassage.prefix === undefined ? {} : { prefix: attachedPassage.prefix }),
+          ...(attachedPassage.suffix === undefined ? {} : { suffix: attachedPassage.suffix }),
+        } } : {}),
+        suggestEdit: { actionId: 'doc.edit.propose', discussionRef: doc.threadRef.discussion,
+          replacementScope: 'after replaces only documentPassage.quote. Keep prefix and suffix unchanged; check prefix + after + suffix. These are the attached version, not a claim about current document text. Use doc.read if surrounding context is absent or insufficient.',
+        },
       }) });
       // Keep selected identity in the incumbent Pending metadata so dispatch
       // resolves current contributed context through its existing registry.
