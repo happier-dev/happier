@@ -1,10 +1,12 @@
 import * as React from 'react';
-import type { MachineLiveStreamControlSidebandV1, SimulatorOrientationV1, SimulatorPreviewRectV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamControlSidebandV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type { SimulatorOrientationV1, SimulatorPreviewRectV1 } from '@happier-dev/protocol/devices/simulator/inputV1';
 
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 
 import { buildSimulatorPreviewControl } from '@/sync/domains/devices/simulator/control';
 import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator/types';
+import type { LiveStreamInputGesture } from '@/sync/domains/machines/peer/mediation/stream/inputGesture';
 
 import { simulatorStreamStyles } from './styles';
 
@@ -17,8 +19,8 @@ function resolveSourceAndStream(viewModel: SimulatorPreviewViewModel): Readonly<
     return { sourceId, streamId };
 }
 
-function supports(viewModel: SimulatorPreviewViewModel, kind: MachineLiveStreamControlSidebandV1['kind']): boolean {
-    return viewModel.controls.supportedInputKinds.includes(kind);
+function supports(viewModel: SimulatorPreviewViewModel, kind: LiveStreamInputGesture['kind']): boolean {
+    return kind !== 'pointer' && kind !== 'wheel' && viewModel.controls.supportedInputKinds.includes(kind);
 }
 
 function resourceAllowsInput(viewModel: SimulatorPreviewViewModel): boolean {
@@ -48,7 +50,7 @@ export function SimulatorInputLayer(props: Readonly<{
     const { viewModel, onSendControl } = props;
     const sourceAndStream = resolveSourceAndStream(viewModel);
     const supportsKind = React.useCallback(
-        (kind: MachineLiveStreamControlSidebandV1['kind']) => supports(viewModel, kind),
+        (kind: LiveStreamInputGesture['kind']) => supports(viewModel, kind),
         [viewModel],
     );
     const onGesture = React.useCallback((input: Readonly<{

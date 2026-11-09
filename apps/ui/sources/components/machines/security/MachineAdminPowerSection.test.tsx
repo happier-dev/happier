@@ -189,7 +189,8 @@ describe('Machine → Security → Administrator power', () => {
         separateUsers: { value: 'sharedAgent', busy: false, onChoose: vi.fn(), onRepair: vi.fn(), step: React.createElement('View', { testID: 'offer' }) },
       },
     );
-    expect(segmented(screen)?.props.disabled).toBe(true);
+    expect(segmented(screen)).toBeUndefined();
+    expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-security-admin-access' })?.props.subtitle).toBeTruthy();
     expect(
       findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, {
         testID: 'machine-security-admin-read-only',
@@ -198,7 +199,7 @@ describe('Machine → Security → Administrator power', () => {
       t('machineDetailPage.security.admin.readOnly', { machine: 'shop-prod' }),
     );
     expect(screen.findAllByTestId('offer')).toHaveLength(0);
-    expect(findTestInstanceByTypeWithProps(screen, SegmentedChoiceItem, { testID: 'machine-security-admin-isolation' })?.props.disabled).toBe(true);
+    expect(findTestInstanceByTypeWithProps(screen, SegmentedChoiceItem, { testID: 'machine-security-admin-isolation' })).toBeUndefined();
     expect(
       findTestInstanceByTypeWithProps(screen, RoundButton, {
         testID: 'machine-security-admin-save',

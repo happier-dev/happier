@@ -51,7 +51,7 @@ function buildMenu(
   switch (item.kind) {
     case 'owner': {
       const owner = item.owner.owner;
-      if (owner.kind === 'happier' || !item.rootRef) return [];
+      if (owner.kind === 'happier' || owner.kind === 'container' || !item.rootRef) return [];
       const frees = item.memoryBytes
         ? t('machineProcesses.menu.freesAbout', {
             amount: formatProcessMemory(item.memoryBytes),
@@ -120,12 +120,12 @@ function buildMenu(
               },
             ]
           : []),
-        danger({
+        ...(item.owner.owner.kind === 'container' ? [] : [danger({
           id: 'kill',
           title: t('machineProcesses.menu.killProcess'),
           ...(proven ? {} : { subtitle: t('machineProcesses.menu.asksFirst') }),
           run: () => controller.killProcess(item),
-        }),
+        })]),
       ];
     }
     case 'leftBehind':

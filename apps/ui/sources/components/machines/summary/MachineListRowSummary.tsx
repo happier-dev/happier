@@ -29,10 +29,16 @@ export const MachineListRowSummary = React.memo(function MachineListRowSummary(p
     const { theme } = useUnistyles();
     const setting = useMachineSummarySettingValue();
     const availability = useMachineResourceSummary({ serverId: props.serverId, machineId: props.machineId ?? '' });
-    const selectMachine = React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) =>
-        resolveServerScopedMachine(state, props.serverId, props.machineId ?? ''), [props.machineId, props.serverId]);
-    const machine = storage(selectMachine);
-    const published = React.useMemo(() => readMachinePublishedResources(machine?.daemonState), [machine?.daemonState]);
+    // Only the published resources (retained while unchanged), so other daemon publications leave this row alone.
+    const selectResources = React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]): unknown => {
+        const daemonState: unknown = resolveServerScopedMachine(state, props.serverId, props.machineId ?? '')?.daemonState;
+        return daemonState !== null && typeof daemonState === 'object' ? (daemonState as { resources?: unknown }).resources ?? null : null;
+    }, [props.machineId, props.serverId]);
+    const resources = storage(selectResources);
+    const published = React.useMemo(() => resources === null ? null : readMachinePublishedResources({ resources }), [resources]);
+    if (props.online && props.machineId && setting.metrics.length > 0 && availability?.kind === 'monitoring_off') {
+        return <MachineSummaryStrip testID={props.testID} availability={availability} style={setting.style} metrics={setting.metrics} layout="inline" />;
+    }
     const headline = published && props.online ? selectHeadlineReason(published.attention) : null;
     // A machine that needs you says why in a word, in tone, when its strip has no instrument for it.
     if (headline && !(setting.metrics as readonly string[]).includes(headline.metric as MachineSummaryMetric)) {

@@ -1,8 +1,10 @@
 import type {
-    MachineLiveStreamCapsV1,
-    MachineLiveStreamCodecIdV1,
+    MachineLiveStreamCapsV1} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import type {
+    MachineLiveStreamCodecIdV1} from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import type {
     SimulatorDeviceResourceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/v1';
 
 // Omitted quality limits leave capture at its source capability. Explicit viewer
 // quality choices remain proposals; the Home's grant owner applies operator policy.

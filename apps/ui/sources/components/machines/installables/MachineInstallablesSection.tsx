@@ -6,7 +6,8 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
-import { useMachine, useSetting } from '@/sync/domains/state/storage';
+import { useMachine } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/store/hooks';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { getInstallablesRegistryEntries, INSTALLABLES_PROJECTION_SECTIONS, type InstallableAutoUpdateMode } from '@/capabilities/installablesRegistry';
@@ -37,7 +38,8 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
     const presence = useMachinePresenceSummary(serverId, machineId);
     const isOnline = !!machine && presence.reachability === 'reachable';
 
-    const installablesPolicyByMachineId = useSetting('installablesPolicyByMachineId');
+    const machinePolicy = useSettingsSelector(settings => Object.hasOwn(settings.installablesPolicyByMachineId, machineId)
+        ? settings.installablesPolicyByMachineId[machineId] : undefined, ['installablesPolicyByMachineId']);
     const policyAction = useMountedActionExecution(serverId);
     const accountBindings = useServerCredentialAccountScopeBindings([serverId]);
     const accountLifetime = accountBindings.values().next().value ?? null;
@@ -83,14 +85,14 @@ export function MachineInstallablesSection(props: Readonly<{ machineId: string; 
             const status = entry.getStatus(results);
             const detectResult = entry.getDetectResult(results);
             const policy = resolveInstallablePolicy({
-                settings: { installablesPolicyByMachineId },
+                settings: { installablesPolicyByMachineId: { [machineId]: machinePolicy } },
                 machineId: machineId ?? '',
                 installableKey: entry.key,
                 defaults: entry.defaultPolicy,
             });
             return { entry, enabled, status, detectResult, policy };
         });
-    }, [capabilitiesSnapshot, daemonMergedProjectionInputs?.pluginProjectionV2, machineId, installablesPolicyByMachineId]);
+    }, [capabilitiesSnapshot, daemonMergedProjectionInputs?.pluginProjectionV2, machineId, machinePolicy]);
 
     React.useEffect(() => {
         if (!machineId) return;

@@ -16,14 +16,14 @@ import {
 } from '@/sync/domains/computer/useComputerProviderSettings';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { useSetting } from '@/sync/domains/state/storage';
-import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useSettingsSelector } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import type {
   ComputerProviderIdV1,
   ComputerUseSettingsV1,
 } from '@happier-dev/protocol/computer/v1';
+import { readComputerUseSettingsForMachine } from '@happier-dev/protocol/computer/v1';
 
 import {
   resolveComputerProviderRowState,
@@ -64,12 +64,13 @@ export function MachineComputerUseSection(
     props.serverId,
   ]);
   const accountLifetime = accountBindings.values().next().value ?? null;
-  const computerUseByMachineId = useSetting('computerUseByMachineId');
+  const machinePreferences = useSettingsSelector(settings => sameAccount
+    ? readComputerUseSettingsForMachine(settings, props.machineId) : null, ['computerUseByMachineId']);
   const settings = useComputerProviderSettings({
     machineId: props.machineId,
     serverId: props.serverId,
     accountLifetime,
-    computerUseByMachineId: sameAccount ? computerUseByMachineId : null,
+    preferences: machinePreferences,
     enabled: props.online,
   });
   const { preferences, providers, mutation } = settings;

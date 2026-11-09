@@ -30,6 +30,7 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
 import { InlineCode } from '@/components/ui/text/InlineCode';
@@ -295,6 +296,9 @@ function MachineServicesList(
   ) : null;
 
   const state = readListState(list, props.online);
+  // Adding here is Manage's: someone who only uses this Machine reads why, where the controls would be.
+  const { recipient } = useMachineTabFacts(props.serverId, machineId);
+  const recipientLine = <SurfaceFreshnessLine testID="machine-services-recipient" glyph="lock" reason={t('machines.widgets.body.common.recipient')} />;
   // The page's one sentence leads on the tab's own edge, like Guard's sections; the table below keeps the contained
   // sheet the Processes table uses, so both read on one column edge (lab `services/list`).
   // A failed refresh says so under the sentence, over the rows it keeps showing.
@@ -304,13 +308,14 @@ function MachineServicesList(
   // Nothing can be deployed to or watched on a Machine that isn't answering (lab `services/offline`).
   const head = answeredEmpty ? null : (
     <ItemGroup surface="none" description={description} testID="machine-services-lede" actionLayout="adaptive"
-      action={props.online === false ? undefined : (
+      action={props.online === false || recipient ? undefined : (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
           <DeployHereButton onPress={deployHere} />
           <MachineServiceWatchMenu serverId={props.serverId} machineId={machineId} machineName={machineName} rows={rows} />
         </View>
       )}>
       {stale}
+      {recipient ? recipientLine : null}
     </ItemGroup>
   );
   return (
@@ -325,9 +330,9 @@ function MachineServicesList(
             <SurfaceStateCard testID="machine-services-empty" kind="empty" iconName="hard-drives"
               title={t('machineServices.empty.title', { machine: machineName })}
               reason={t('machineServices.empty.body')}
-              action={{ label: t('machineServices.deployHere'), onPress: deployHere, testID: 'machine-services-deploy-here' }}
+              {...(recipient ? {} : { action: { label: t('machineServices.deployHere'), onPress: deployHere, testID: 'machine-services-deploy-here' } })}
               // With the sentence gone (answered empty) its two ways to add stand here, so the first Watch starts here too (lab `services/empty`).
-              {...(answeredEmpty ? { actionFooter: <MachineServiceWatchMenu serverId={props.serverId} machineId={machineId} machineName={machineName} rows={rows} /> } : {})} />
+              {...(recipient ? { actionFooter: recipientLine } : answeredEmpty ? { actionFooter: <MachineServiceWatchMenu serverId={props.serverId} machineId={machineId} machineName={machineName} rows={rows} /> } : {})} />
           ) : (
             <CoreCollectionScope>
               <Collection<ServicesListItem>

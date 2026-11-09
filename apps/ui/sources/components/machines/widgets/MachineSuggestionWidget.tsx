@@ -580,7 +580,7 @@ function MachineSuggestionFallback(
     storage.offline ? { kind: 'offline' } : { kind: 'live' },
     props.testID,
   );
-  const items = storage.summary?.suggestionsTop ?? EMPTY_ITEMS;
+  const items = storage.summary?.suggestionsSafeTop ?? storage.summary?.suggestionsTop ?? EMPTY_ITEMS;
   const safe = React.useMemo(
     () => items.filter((item) => item.verdict === 'safe' && item.collectable),
     [items],
@@ -634,7 +634,8 @@ function MachineSuggestionFallback(
       />
     );
   }
-  const bytes = safe.reduce((sum, item) => sum + item.size.freesBytes, 0);
+  const bytes = storage.summary.suggestionsSafeFreesBytes ?? safe.reduce((sum, item) => sum + item.size.freesBytes, 0);
+  const count = storage.summary.suggestionsSafeTotalCount ?? safe.length;
   const parts = machineBytesParts(bytes, 'storage');
   const hero = (
     <View testID={`${props.testID}.hero`} style={styles.hero}>
@@ -648,7 +649,7 @@ function MachineSuggestionFallback(
       </View>
       <VitalsSubLine>
         {t('machines.widgets.body.suggestion.verified', {
-          count: safe.length,
+          count,
           machine: facts.name,
         })}
       </VitalsSubLine>
@@ -671,7 +672,7 @@ function MachineSuggestionFallback(
       <View testID={`${props.testID}.rows`} style={styles.rows}>
         <MachineWidgetSectionLabel
           label={t('machines.widgets.body.suggestion.largestOf', {
-            count: safe.length,
+            count,
           })}
           meta={t('machines.widgets.body.worktrees.size')}
         />

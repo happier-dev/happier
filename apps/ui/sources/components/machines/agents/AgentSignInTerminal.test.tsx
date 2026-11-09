@@ -6,7 +6,8 @@ import { createServerScopedMachineRpcBoundaryMock } from '@/dev/testkit/mocks/se
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
-import { ApprovalRequestSchema, type DaemonTerminalEnsureResponse, type DaemonTerminalStreamReadResponse } from '@happier-dev/protocol';
+import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { type DaemonTerminalEnsureResponse, type DaemonTerminalStreamReadResponse } from '@happier-dev/protocol/daemon/terminal';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn(), confirm: vi.fn() }));

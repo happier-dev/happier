@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol';
+import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol/devices/simulator/v1';
 
 import {
     DEFAULT_SIMULATOR_LIVE_STREAM_CAPS,

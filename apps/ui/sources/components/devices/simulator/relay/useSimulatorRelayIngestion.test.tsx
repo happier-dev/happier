@@ -9,7 +9,7 @@ import {
     type MachineLiveStreamFrameV1,
     type MachineLiveStreamRelayEnvelopeV1,
     type MachineLiveStreamStartRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 
 import {
     useSimulatorRelayIngestion,
@@ -153,6 +153,23 @@ describe('useSimulatorRelayIngestion', () => {
     afterEach(() => {
         vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals();
         if (platformOsDescriptor) Object.defineProperty(Platform, 'OS', platformOsDescriptor);
+    });
+
+    it('ingests a local transport frame without minting credentials and stops it on teardown', async () => {
+        const fake = createFakeTransport();
+        const input: UseSimulatorRelayIngestionInput = {
+            ...baseInput(fake.transport),
+            openRelay: async ({ streamId }) => {
+                fake.deliver(frameEnvelope(imageFrame(1)));
+                return { ok: true, streamId };
+            },
+            startProduction: async () => { throw new Error('Local transport must not mint a relay grant'); },
+        };
+        const hook = await renderHook(() => useSimulatorRelayIngestion(input));
+        expect(hook.getCurrent().playerStatesBySimulatorId[SIMULATOR_ID]?.lastFrameUrl).toBe('data:image/jpeg;base64,AQID');
+        await hook.unmount();
+        expect(fake.listenerCount()).toBe(0);
+        expect(fake.sent.some(envelope => envelope.message.kind === 'control' && envelope.message.control.kind === 'stop')).toBe(true);
     });
 
     it.each(['hide/show', 'retry'] as const)('orders a reused stream behind a delayed start and its final Stop: %s', async (transition) => {
@@ -349,6 +366,29 @@ describe('useSimulatorRelayIngestion', () => {
 
         expect(fake.sent).toEqual([]);
         expect(hook.getCurrent().playerStatesBySimulatorId[SIMULATOR_ID]).toBeDefined();
+    });
+
+    it.each(['before', 'after'] as const)('settles a server admission refusal %s the daemon start RPC completes', async (timing) => {
+        const fake = createFakeTransport();
+        let completeStart!: () => void;
+        const startCompletion = new Promise<void>(resolve => { completeStart = resolve; });
+        const hook = await renderHook(() => useSimulatorRelayIngestion({
+            ...baseInput(fake.transport),
+            startDaemonRelay: async () => {
+                if (timing === 'before') await startCompletion;
+                return { ok: true, streamId: STREAM_ID };
+            },
+        }));
+        await act(async () => fake.deliver({ v: 1, sourceMachineId: SOURCE, targetMachineId: TARGET,
+            message: { kind: 'start_response', startResponse: { v: 1, streamId: STREAM_ID,
+                accepted: false, routeKind: 'server_relay', disabledReason: 'live_stream_authorization_expired' } },
+        }));
+        await act(async () => { completeStart(); });
+        await act(async () => fake.deliver(frameEnvelope(imageFrame(1))));
+        expect(hook.getCurrent().playerStatesBySimulatorId[SIMULATOR_ID]).toMatchObject({
+            phase: 'error', decodedFrames: 0, diagnostic: { reasonCode: 'live_stream_authorization_expired' },
+        });
+        await hook.unmount();
     });
 
     it('advances H264 only after decoder output and never revives a terminal source', async () => {

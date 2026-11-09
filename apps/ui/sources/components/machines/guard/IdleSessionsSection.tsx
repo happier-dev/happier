@@ -72,7 +72,7 @@ export const IdleSessionsSection = React.memo(function IdleSessionsSection(props
                     <View style={styles.caption}><Text style={styles.captionText}>{t('machineGuard.idle.rightNow', { machine: props.machineName })}</Text></View>
                     <GuardInsetList>
                         {idle.map((entry, index) => (
-                            <IdleRow key={entry.sessionRef} index={index} title={entry.title} agentId={entry.agentId}
+                            <IdleRow key={entry.sessionRef} index={index} title={entry.title ?? t('session.untitled')} agentId={entry.agentId}
                                 machineId={props.machineId} serverId={props.serverId}
                                 qualifier={[t('machineGuard.idle.idleFor', { duration: formatGuardDuration(entry.idleMs) }),
                                     ...(entry.status === 'kept' && entry.reason ? [guardKeepReasonLabel(entry.reason)] : [])].join(' · ')}

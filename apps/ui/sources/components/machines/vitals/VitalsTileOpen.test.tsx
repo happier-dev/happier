@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
-import { VitalsTile, VitalsTileOpenContext } from './VitalsSheet';
+import { VitalsTile, VitalsTileOpenContext, VitalsTileRoomContext, type VitalsTileRoom } from './VitalsSheet';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -28,6 +28,28 @@ describe('a Vitals tile that opens its machine page', () => {
         const open = screen.findByTestId('tile.open')!;
         expect(open.findAll(node => Array.isArray(node.children) && node.children.includes('chart'))).toHaveLength(0);
         expect(screen.root.findAll(node => Array.isArray(node.children) && node.children.includes('chart')).length).toBeGreaterThan(0);
+        await screen.unmount();
+    });
+
+    it('opens from its figure when its host already names it, drawing no label of its own', async () => {
+        const onOpen = vi.fn();
+        const room: VitalsTileRoom = { layout: 'stack', instruments: 'primary', chartMaximum: false, inset: false, chart: 'plot', fill: false, title: false };
+        const screen = await renderScreen(
+            <VitalsTileRoomContext.Provider value={room}>
+                <VitalsTileOpenContext.Provider value={{ onOpen, accessibilityLabel: 'Open CPU' }}>
+                    <VitalsTile testID="tile" label="CPU" value={<React.Fragment>{'12%'}</React.Fragment>}>
+                        <React.Fragment>{'chart'}</React.Fragment>
+                    </VitalsTile>
+                </VitalsTileOpenContext.Provider>
+            </VitalsTileRoomContext.Provider>,
+        );
+        const said = (text: string) => screen.root.findAll(node => Array.isArray(node.children) && node.children.includes(text));
+        expect(said('CPU')).toHaveLength(0);
+        await screen.pressByTestIdAsync('tile.open');
+        expect(onOpen).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('tile.open')!.findAll(node => Array.isArray(node.children) && node.children.includes('12%')).length).toBeGreaterThan(0);
+        // The chart stays outside the open control.
+        expect(screen.findByTestId('tile.open')!.findAll(node => Array.isArray(node.children) && node.children.includes('chart'))).toHaveLength(0);
         await screen.unmount();
     });
 });

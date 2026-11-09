@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { CompositionStrip } from '@happier-dev/plugin-ui/presentation';
+import { CompositionStrip, HAPPIER_ICON_BUTTON_SIZE } from '@happier-dev/plugin-ui/presentation';
 import type {
   MachineProcessesAnswerV1,
   OwnerRowV1,
@@ -28,7 +28,7 @@ import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemePro
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
 import {
-  readCoarsePrimaryPointer,
+  useCoarsePrimaryPointer,
   useRowActionHoverHost,
 } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { withUsageAccentAlpha } from '@/components/settings/usage/usageAccent';
@@ -234,7 +234,7 @@ function TopConsumersBody(
   );
   const accessory = React.useCallback(
     (item: ProcessesItem) =>
-      isStoppable(item) && !unavailableReason ? (
+      unavailableReason ? null : isStoppable(item) ? (
         <StopAccessory
           item={item}
           serverId={target.serverId}
@@ -242,7 +242,10 @@ function TopConsumersBody(
           onConfirm={requestStopConfirmation}
           testID={testID}
         />
-      ) : null,
+      ) : (
+        // A row that cannot stop keeps Stop's room, so every row's figure ends on one edge.
+        <View style={styles.stopRoom} />
+      ),
     [controller, requestStopConfirmation, target.serverId, testID, unavailableReason],
   );
 
@@ -264,9 +267,9 @@ function TopConsumersBody(
         : [],
     [controller.hidden, scoped, size, titles],
   );
-  const happierBytes = React.useMemo(() => {
+  const measuredBytes = React.useMemo(() => {
     if (!scoped) return null;
-    const bytes = props.sessionId
+    return props.sessionId
       ? scoped.owners.reduce<number | null>(
           (sum, owner) =>
             sum === null || owner.totals.memoryBytes === null
@@ -275,11 +278,20 @@ function TopConsumersBody(
           0,
         )
       : scoped.totals.happier.memoryBytes;
-    // The hero counts down by what a stop gave back before the next sample measures it.
-    return bytes === null
+  }, [props.sessionId, scoped]);
+  // The hero counts down by what a stop gave back before the next sample measures it.
+  const happierBytes =
+    measuredBytes === null
       ? null
-      : Math.max(0, bytes - controller.pendingFreedBytes);
-  }, [controller.pendingFreedBytes, props.sessionId, scoped]);
+      : Math.max(0, measuredBytes - controller.pendingFreedBytes);
+  // Each row's hairline is its memory over the widget's own total, as the sample measured it: a stop leaves the others' shares as they were.
+  const shareOf = React.useCallback(
+    (item: ProcessesItem) =>
+      measuredBytes && item.memoryBytes !== null
+        ? item.memoryBytes / measuredBytes
+        : null,
+    [measuredBytes],
+  );
   const usedMemory =
     memory && memory.totalBytes !== null && memory.availableBytes !== null
       ? memory.totalBytes - memory.availableBytes
@@ -377,9 +389,11 @@ function TopConsumersBody(
         titles={titles}
         cpuCapacityCores={null}
         table={wideTable}
+        singleLine
         onOpen={openProcesses}
         accessory={accessory}
         leaving={controller.leaving}
+        {...(wideTable ? {} : { shareOf })}
         accessibilityLabel={t('machines.widgets.body.topConsumers.tableLabel', {
           machine: facts.name,
         })}
@@ -412,11 +426,14 @@ function TopConsumersBody(
         rest={rows}
       />
     );
+  // Medium and Tall end on what the rest of the machine uses, at the card's foot (lab rw C).
+  const elseFoot = elseLine ? <View style={styles.foot}>{elseLine}</View> : null;
   if (size === 'medium')
     return (
       <MachineWidgetColumn testID={testID}>
         {hero}
         {rows}
+        {elseFoot}
       </MachineWidgetColumn>
     );
   if (size === 'full')
@@ -446,7 +463,7 @@ function TopConsumersBody(
         {hero}
         {composition}
         {rows}
-        {elseLine}
+        {elseFoot}
       </MachineWidgetColumn>
     );
   return (
@@ -481,14 +498,15 @@ function StopAccessory(
   );
   const status = useSessionStatus(
     owner.kind === 'session' ? (session ?? null) : null,
-    { workingTextMode: 'static', subscribeToTranscript: false },
+    { subscribeToTranscript: false },
   );
   const working =
     owner.kind === 'session' &&
     status !== null &&
     WORKING_STATES.has(status.state);
   const hover = useRowActionHoverHost();
-  const alwaysShown = useDeviceType() === 'phone' || readCoarsePrimaryPointer();
+  const coarsePrimaryPointer = useCoarsePrimaryPointer();
+  const alwaysShown = useDeviceType() === 'phone' || coarsePrimaryPointer;
   const name = controller.titleOf(item);
   const press = React.useCallback(
     () => controller.stop(item, working ? onConfirm : undefined),
@@ -507,7 +525,6 @@ function StopAccessory(
           accessibilityLabel={t('machines.widgets.body.topConsumers.stop', {
             name,
           })}
-          minimumInteractiveTargetSize={alwaysShown ? 44 : undefined}
           onPress={press}
         />
       </RowActionRevealSlot>
@@ -678,6 +695,8 @@ function OwnerComposition(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  foot: { marginTop: 'auto' },
+  stopRoom: { width: HAPPIER_ICON_BUTTON_SIZE },
   caption: {
     ...Typography.variant('meta'),
     color: theme.colors.text.tertiary,

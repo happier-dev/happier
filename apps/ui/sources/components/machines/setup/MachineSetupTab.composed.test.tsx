@@ -15,6 +15,8 @@ import {
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { MachineSetupAppChildV1Schema, MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachinePresetItemV1Schema } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import { getMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import sodium from 'libsodium-wrappers';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
@@ -52,6 +54,17 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 const routerHandle = vi.hoisted(() => ({ current: null as null | { spies: { push: { mock: { calls: unknown[][] } } } } }));
 installApprovalCommonModuleMocks({
   text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+  reactNative: async () => {
+    const [{ createCapturingFlatListMock }, { createReactNativeWebMock, createMeasuredViewMock }] = await Promise.all([
+      import('@/dev/testkit/mocks/virtualizedList'),
+      import('@/dev/testkit/mocks/reactNative'),
+    ]);
+    // Render native list cells so the Store's real review targets remain observable.
+    return createReactNativeWebMock({
+      ...createCapturingFlatListMock({ renderItems: true }).module,
+      View: createMeasuredViewMock({ width: 960, height: 600 }, testID => testID.endsWith(':stage')),
+    });
+  },
   modal: async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ renderCustomModals: true }).module;
@@ -71,10 +84,11 @@ const { resetScopedHomeActionExecutorsForTests } =
 // test's lifecycle deadline, as in the adjacent ConfigurationView harness.
 await loadSyncSingletonForTests();
 // Module and crypto initialization are harness setup, not a person's Apply lifetime.
-const [{ createCliActionExecutorHarness }, { createHostActionOperationRuntime }, { createCombinedMachineSetupActionDeps }] = await Promise.all([
+const [{ createCliActionExecutorHarness }, { createHostActionOperationRuntime }, { createCombinedMachineSetupActionDeps }, { prepareMachineSetupPlanV1 }] = await Promise.all([
   import('../../../../../cli/src/session/actions/createCliActionExecutorHarness'),
   import('../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime'),
   import('../../../../../cli/src/machines/setup/composeMachineSetup'),
+  import('../../../../../cli/src/machines/setup/prepareMachineSetupPlan'),
 ]);
 await sodium.ready;
 beforeEach(async () => {
@@ -88,15 +102,15 @@ afterEach(() => standardCleanup());
 async function publishManagedDevbox(serverId: string, role?: 'use') {
   const { storage } = await import('@/sync/domains/state/storage');
   const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
-  const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
   const scope = { serverId, accountId: 'owner' };
+  const machine = createMachineFixture({ id: 'devbox', isShared: role !== undefined, activeAt: Date.now(),
+    ...(role ? { access: { role, resourceMode: 'plain' as const, accessState: 'ready' as const, custodian: { accountId: 'owner', displayName: 'Owner' } } } : {}) });
   await act(async () => {
-    storage.setState({ settingsScope: scope, profileScope: scope });
-    storage.getState().applyMachines([createMachineFixture({ id: 'devbox', isShared: role !== undefined, activeAt: Date.now(),
-      ...(role ? { access: { role, resourceMode: 'plain' as const, accessState: 'ready' as const, custodian: { accountId: 'owner', displayName: 'Owner' } } } : {}) })],
-      true, { sourceServerId: serverId, sourceAccountId: scope.accountId });
-    observeMachinePresenceForTest(scope, ['devbox']);
+    storage.setState({ settingsScope: scope });
+    await publishMachineInventoryForTest(scope, [machine]);
   });
+  return machine;
 }
 
 const preset = (id: string, name: string, creation = false) => ({
@@ -337,13 +351,17 @@ describe('Machine → Setup tab (P-M1)', () => {
     harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
     const setup = { scripts: [{ body: 'echo bundled' }] };
     const plans: unknown[] = [];
-    harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+    const current = await getMachineSetupDesiredV1({
+      read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 0 }),
+      compareAndSwap: async () => { throw new Error('Planning cannot publish setup'); },
+    });
+    // The HTTP response comes from the receiving planner, including exact removal-review operands.
+    harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
       const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
       const request = MachineSetupPlanInputV1Schema.parse(envelope.input);
       plans.push(request);
       return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true,
-        result: MachineSetupPlanResultV1Schema.parse({ desiredRevision: 0, exclusions: [], support: [],
-          sources: request.sources ?? [{ kind: 'direct', setup: {} }], ...(request.mode === 'effects' ? { recipePlans: [] } : {}) }) } } };
+        result: await prepareMachineSetupPlanV1({ input: request, current }) } } };
     } });
     const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
     const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
@@ -370,10 +388,11 @@ describe('Machine → Setup tab (P-M1)', () => {
     expect(plans).toHaveLength(0);
     await act(async () => { picker.props.onSelect(picker.props.machines.targets[0]); });
     await waitForHomeGovernance(() => expect({
-      errorCode: screen.findByTestId('store.software.review.error')?.props.diagnosticCode,
+      error: screen.tree.findAll(node => node.props?.testID === 'store.software.review.error'
+        && typeof node.props.diagnosticCode === 'string')[0]?.props.diagnosticCode ?? null,
       plans,
       reviewFound: screen.findByTestId('store.software.review.target.devbox') !== null,
-    }).toMatchObject({ errorCode: undefined, plans: expect.arrayContaining([expect.objectContaining({ mode: 'effects' })]), reviewFound: true }));
+    }).toMatchObject({ error: null, plans: expect.arrayContaining([expect.objectContaining({ mode: 'effects' })]), reviewFound: true }));
     expect(plans.at(-1)).toMatchObject({ machineId: 'devbox', mode: 'effects', sources: [
       { kind: 'bundledPreset', ref: { pluginId: 'example.setup', localId: 'secure', revision: '2' }, setup }, { kind: 'direct' },
     ] });
@@ -731,8 +750,8 @@ describe('Machine → Setup tab (P-M1)', () => {
       name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
     });
     const serverId = resolveServerProfileScopeIdForIdentifier(home);
-    await publishManagedDevbox(serverId, 'use');
-    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    const machine = await publishManagedDevbox(serverId, 'use');
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner', machine }) } });
     harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
     const plans: unknown[] = [];
     harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
@@ -750,6 +769,23 @@ describe('Machine → Setup tab (P-M1)', () => {
       expect(screen.findByTestId(absent), absent).toBeNull();
     }
     expect(screen.findByTestId('machine-setup-tools-section')).not.toBeNull();
+    await screen.unmount();
+  });
+
+  it('says an offline Machine cannot be checked instead of loading forever', async () => {
+    const home = await harness.addHome({
+      name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true,
+    });
+    const serverId = resolveServerProfileScopeIdForIdentifier(home);
+    await publishManagedDevbox(serverId);
+    harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+    harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [] } });
+    const { MachineSetupTab } = await import('./MachineSetupTab');
+    const screen = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online={false}
+      params={{ id: 'setup' }} setParams={vi.fn()} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-offline')).not.toBeNull());
+    expect(screen.findByTestId('machine-setup-loading')).toBeNull();
+    expect(screen.findByTestId('machine-setup-recipes-none')).toBeNull();
     await screen.unmount();
   });
 
@@ -786,9 +822,9 @@ describe('Machine → Setup tab (P-M1)', () => {
     await publishManagedDevbox(serverId);
     harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
     harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset('web', 'Web server')] } });
-    const docker = { kind: 'softwareRecipe', selection: { ref: { pluginId: 'p', recipeId: 'docker', revision: '1' }, inputs: {} } };
-    const firewall = { kind: 'setupRecipe', selection: { ref: { pluginId: 'p', recipeId: 'firewall', revision: '1' }, inputs: {} } };
-    const keep = { kind: 'softwareRecipe', selection: { ref: { pluginId: 'p', recipeId: 'node', revision: '1' }, inputs: {} } };
+    const docker = MachinePresetItemV1Schema.parse({ kind: 'softwareRecipe', selection: { ref: { pluginId: 'tools.example', recipeId: 'docker', revision: '1' }, inputs: {} } });
+    const firewall = MachinePresetItemV1Schema.parse({ kind: 'setupRecipe', selection: { ref: { pluginId: 'tools.example', recipeId: 'firewall', revision: '1' }, inputs: {} } });
+    const keep = MachinePresetItemV1Schema.parse({ kind: 'softwareRecipe', selection: { ref: { pluginId: 'tools.example', recipeId: 'node', revision: '1' }, inputs: {} } });
     harness.answer(home, '/v1/actions/machines.setup.plan', { select: async input => {
       const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
       return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true,
@@ -808,8 +844,12 @@ describe('Machine → Setup tab (P-M1)', () => {
     const { MachineSetupTab } = await import('./MachineSetupTab');
     const screen = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
       params={{ id: 'setup' }} setParams={vi.fn()} />);
-    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-save-preset')).not.toBeNull());
-    const planned = harness.requestsFor('/v1/actions/machines.setup.plan').length;
+    await waitForHomeGovernance(() => expect({
+      door: screen.findByTestId('machine-setup-save-preset') !== null,
+      failures: screen.tree.findAll(node => typeof node.props?.diagnosticCode === 'string').map(node => node.props.diagnosticCode),
+    }).toEqual({ door: true, failures: [] }));
+    const setupActions = () => harness.requests.filter(request => request.path.startsWith('/v1/actions/machines.setup.')).map(request => request.path);
+    const planned = setupActions();
     await screen.pressByTestIdAsync('machine-setup-save-preset');
     const shown = show.mock.calls.at(-1)![0] as unknown as Readonly<{ component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> }>;
     const setChrome = vi.fn();
@@ -823,8 +863,10 @@ describe('Machine → Setup tab (P-M1)', () => {
     await waitForHomeGovernance(() => expect(created).toBeDefined());
     expect(created!.setup.items).toEqual([docker, keep]);
     expect(created!.name).toContain('devbox');
-    expect(harness.requestsFor('/v1/actions/machines.setup.plan')).toHaveLength(planned);
-    expect(harness.requestsFor('/v1/actions/machines.setup.apply')).toHaveLength(0);
+    expect(created).not.toHaveProperty('launch');
+    expect(created).not.toHaveProperty('controller');
+    expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1);
+    expect(setupActions()).toEqual(planned);
     await waitForHomeGovernance(() => expect(routerHandle.current?.spies.push.mock.calls.at(-1)?.[0])
       .toBe(`/settings/machines/presets/${encodeURIComponent(created!.id)}?serverId=${encodeURIComponent(serverId)}`));
     expect(onClose).toHaveBeenCalled();
@@ -834,7 +876,7 @@ describe('Machine → Setup tab (P-M1)', () => {
 
   it('omits the provenance choice when no preset is attached and leaves preset items out when asked', async () => {
     const { projectMachineSetupCapture } = await import('./machineSetupCapture');
-    const docker = { kind: 'softwareRecipe' as const, selection: { ref: { pluginId: 'p', recipeId: 'docker', revision: '1' }, inputs: {} } };
+    const docker = MachinePresetItemV1Schema.parse({ kind: 'softwareRecipe', selection: { ref: { pluginId: 'tools.example', recipeId: 'docker', revision: '1' }, inputs: {} } });
     const sources = [
       { kind: 'accountPreset' as const, presetId: 'web', presetRevision: 2, setup: { items: [docker] } },
       { kind: 'direct' as const, setup: {} },

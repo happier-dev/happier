@@ -183,9 +183,11 @@ describe('Machine services presentation', () => {
     })])[0]).toMatchObject({ name: candidate.name, watched: false });
     const unresolved = { ...candidate, name: `happier-${'b'.repeat(64)}`,
       nameResolution: 'unresolved_environment' as const };
-    expect(machineServiceWatchChoices([unresolved], [])[0]).toMatchObject({
-      name: 'Unresolved environment service', nativeResourceId,
-    });
+    // Its only name is a generated hash and its identity a tuple: nothing a person could pick it by.
+    expect(machineServiceWatchChoices([unresolved], [])).toEqual([]);
+    expect(machineServiceWatchChoices([candidate], [])[0]).toMatchObject({ nativeResourceId, identityLine: null });
+    expect(machineServiceWatchChoices([{ ...candidate, adapter: { ...candidate.adapter, localId: 'systemd' }, nativeResourceId: 'system/cron.service' }], [])[0])
+      .toMatchObject({ identityLine: 'system/cron.service' });
   });
   it('says how much memory a service uses and how long it has run only from what its source reported', () => {
     const now = 10 * 3_600_000;

@@ -65,7 +65,7 @@ import {
   type ProcessesItem,
   type ProcessesSort,
 } from './processesPresentation';
-import { ProcessPortActionsProvider } from './ProcessPortMenu';
+import { MachinePortActionsProvider } from '@/components/machines/localServices/MachinePortActions';
 import {
   ProcessesControllerContext,
   useProcessesController
@@ -758,7 +758,8 @@ function MachineProcessesTree(
           testIDPrefix="machine-processes-scope"
         />
       )}
-      <View style={styles.toolbarEnd}>
+      {/* With the search here, the chip and the search share one line (lab `rp` H); the toolbar itself still wraps. */}
+      <View style={[styles.toolbarEnd, search ? styles.toolbarEndOneLine : null]}>
         {wireScope === 'all' ? (
           <View style={styles.inline}>
             <Text style={styles.quiet}>
@@ -776,7 +777,9 @@ function MachineProcessesTree(
             />
           </View>
         ) : null}
-        <MachineFreshnessChip testID={`machine-processes-${freshness.kind}`} lead={t('machineProcesses.sampledWhileLooking')} freshness={freshness} />
+        <View style={styles.chip}>
+          <MachineFreshnessChip testID={`machine-processes-${freshness.kind}`} lead={t('machineProcesses.sampledWhileLooking')} freshness={freshness} />
+        </View>
         {search}
       </View>
     </View>
@@ -813,8 +816,9 @@ function MachineProcessesTree(
       <View testID="machine-processes">
         {/* Nothing retained to filter (lab `rp` ST 6): the header and tabs stay and the body is the state; the scope bar
             stays only while All processes failed, as the way back to what Happier started. */}
-        <ItemGroup header="none" surface="none">
-          {scope === 'all' ? toolbar : null}
+        {scope === 'all' ? <ItemGroup header="none" surface="none">{toolbar}</ItemGroup> : null}
+        {/* Offline is one quiet line on the page's sheet, as Storage says it; the other states draw their own tile. */}
+        <ItemGroup header="none" {...(online === false ? {} : { surface: 'none' as const })}>
           <ProcessesStateCard
             status={processes.status}
             reason={processes.answer?.reason ?? processes.reason}
@@ -833,6 +837,11 @@ function MachineProcessesTree(
     wireScope === 'happier' &&
     answer.leftBehind.length === 0 &&
     answer.owners.every((owner) => owner.owner.kind === 'happier');
+  // A calm machine with nothing running says only that (lab `rp` ST 5); one short on memory or CPU keeps its
+  // vitals above it, since this is where the header's "Review processes" leads.
+  const vitalsNeedYou = (published?.attention?.reasons ?? []).some(
+    (reason) => reason.metric === 'memory' || reason.metric === 'cpu',
+  );
   // The tab's own blocks above the table, each on the page column like every section (lab `rp` H):
   // the scope bar and any freshness line, the three tiles, then the table's sheet.
   // The outer group only caps the table to the page column; the header's sections return to the page's own insets.
@@ -856,7 +865,7 @@ function MachineProcessesTree(
           />
         ) : null}
       </ItemGroup>
-      {allOff || nothingRunning ? null : tiles}
+      {allOff || (nothingRunning && !vitalsNeedYou) ? null : tiles}
       {answer?.othersWork && answer.othersWork.count > 0 ? (
         <ItemGroup header="none" surface="none">
           <Text style={styles.quiet}>
@@ -873,9 +882,13 @@ function MachineProcessesTree(
             testID="machine-processes-nothing"
             layout="page"
             iconName="terminal"
-            title={t('machineProcesses.states.nothingTitle', {
-              machine: machineName,
-            })}
+            // Happier itself is still listed beneath, so the state names it rather than saying nothing runs.
+            title={t(
+              answer.owners.length > 0
+                ? 'machineProcesses.states.onlyHappierTitle'
+                : 'machineProcesses.states.nothingTitle',
+              { machine: machineName },
+            )}
             subtitle={t('machineProcesses.states.nothingBody')}
             primaryAction={{
               label: t('machineProcesses.states.startSession', {
@@ -942,7 +955,7 @@ function MachineProcessesTree(
     <ProcessesControllerContext.Provider
       value={unavailableReason && !answer ? null : controller}
     >
-      <ProcessPortActionsProvider serverId={serverId} machineId={machineId}>
+      <MachinePortActionsProvider serverId={serverId} machineId={machineId}>
       <ProcessesShowDetailsContext.Provider value={showDetails}>
           <ProcessesRowNotesContext.Provider value={controller.notes}>
         <View
@@ -1003,7 +1016,7 @@ function MachineProcessesTree(
         </View>
         </ProcessesRowNotesContext.Provider>
         </ProcessesShowDetailsContext.Provider>
-      </ProcessPortActionsProvider>
+      </MachinePortActionsProvider>
     </ProcessesControllerContext.Provider>
   );
 }
@@ -1050,6 +1063,15 @@ const styles = StyleSheet.create((theme) => ({
     columnGap: theme.space.s16,
     rowGap: theme.space.s4,
     marginLeft: 'auto',
+  },
+  toolbarEndOneLine: {
+    flexWrap: 'nowrap',
+    flexGrow: 1,
+    justifyContent: 'flex-end',
+  },
+  // The chip says its whole line; the search gives way first.
+  chip: {
+    flexShrink: 0,
   },
   inline: {
     flexDirection: 'row',

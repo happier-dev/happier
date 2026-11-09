@@ -16,6 +16,7 @@ import { formatHappierDataBytesParts } from '@happier-dev/plugin-ui/presentation
 import type { MachineResourceTone } from '@/components/machines/summary/machineSummaryStripModel';
 import type { MachineVitalsRange } from '@/sync/domains/machines/resources/machineRpc';
 import type { MachineResourceState } from '@/sync/domains/machines/resources/machineResourceStore';
+import { readMachineResourceObservation } from '@/sync/domains/machines/resources/machineResourceAvailability';
 
 /**
  * The Overview's pure rules (plan 20 VU-6): which of the six states a machine is in, the history each
@@ -56,6 +57,8 @@ export type MachineVitalsOverviewView =
     }>
   /** Offline with nothing this app session read: the banner and one quiet line. */
   | Readonly<{ kind: 'offline_empty' }>
+  /** Monitoring is Off by choice: nothing reads; what was read before stays, as of its time. */
+  | Readonly<{ kind: 'monitoring_off'; sample: MachineVitalsSampleV1 | null }>
   | Readonly<{
       kind: 'ready';
       sample: MachineVitalsSampleV1;
@@ -66,6 +69,8 @@ export function selectMachineVitalsOverviewView(
   input: Readonly<{
     online: boolean | null;
     published: MachinePublishedResourceSummaryV1 | null;
+    /** The machine's saved monitoring mode; null while its policy can't be read. */
+    monitoring?: 'off' | 'while_viewing' | 'always' | null;
     state: Readonly<{
       status: MachineResourceState['status'];
       snapshot: MachineVitalsSnapshotV1 | null;
@@ -75,6 +80,7 @@ export function selectMachineVitalsOverviewView(
   }>,
 ): MachineVitalsOverviewView {
   const { state, published } = input;
+  const observation = readMachineResourceObservation(state, published?.vitals ?? null);
   const sample = state.snapshot?.sample ?? null;
   // The last report stays while a machine is away; nothing is shown as zero (OS 3).
   if (input.online === false)
@@ -84,9 +90,11 @@ export function selectMachineVitalsOverviewView(
   if (input.online === null) return sample
     ? { kind: 'ready', sample, freshness: 'stale' }
     : { kind: 'unavailable', since: null, reason: 'request_failed' };
+  // Off is the person's choice, not a failure or an empty machine: say so before any read state.
+  if (input.monitoring === 'off') return { kind: 'monitoring_off', sample };
   if (state.status === 'not_reported') return { kind: 'older_happier' };
   // The daemon itself says its sampler is failing: the body is one state card that names it (OS 5).
-  if (published?.vitals.state === 'unavailable') {
+  if (published?.vitals.state === 'unavailable' && (published.vitals.reason === 'helper_missing' || observation.readerFailed)) {
     return {
       kind: 'unavailable',
       since: published.vitals.since,
@@ -107,7 +115,7 @@ export function selectMachineVitalsOverviewView(
     return {
       kind: 'ready',
       sample,
-      freshness: state.stale || state.status === 'slow' || state.status === 'error' ? 'stale' : 'live',
+      freshness: observation.freshness === 'live' ? 'live' : 'stale',
     };
   if (state.status === 'error')
     return { kind: 'unavailable', since: null, reason: 'request_failed', ...(state.errorCode ? { errorCode: state.errorCode } : {}) };
@@ -175,13 +183,13 @@ export function resolveMachineUptimeParts(
 }
 
 /** Exact CPU capacity used by accounting, including a container's fractional quota. */
-export function resolveMachineCpuCapacityCores(host: MachineVitalsHostFactsV1): number {
+export function resolveMachineCpuCapacityCores(host: Pick<MachineVitalsHostFactsV1, 'logicalCores' | 'effectiveCores'>): number {
   return host.effectiveCores !== undefined && host.effectiveCores > 0 ? host.effectiveCores : host.logicalCores;
 }
 
 /** Cores as the machine has them, rounded only for the displayed machine fact. */
 export function resolveMachineCoreCount(
-  host: MachineVitalsHostFactsV1,
+  host: Pick<MachineVitalsHostFactsV1, 'logicalCores' | 'effectiveCores'>,
 ): number {
   return Math.round(resolveMachineCpuCapacityCores(host) * 10) / 10;
 }

@@ -38,7 +38,7 @@ function subjectTitle(entry: MachineGuardActivityRowV1): string {
     const subject = entry.subject;
     if (!subject) return t('machineGuard.activity.kinds.something');
     switch (subject.kind) {
-        case 'session': return subject.title;
+        case 'session': return subject.title ?? t('session.untitled');
         case 'service': return subject.label;
         case 'terminal': return subject.label;
         default: return t('machineGuard.activity.kinds.something');
@@ -87,6 +87,9 @@ function reason(entry: MachineGuardActivityRowV1): string | null {
     else if (entry.rule === 'memory_guard' && entry.trigger) {
         parts.push(t('machineGuard.activity.trigger', { level: guardLevelWord(entry.trigger.level), duration: formatGuardDuration(entry.at - entry.trigger.sinceMs) }));
         if (entry.step) parts.push(t('machineGuard.activity.stepN', { step: entry.step }));
+    } else if (entry.kind === 'ceiling_near') {
+        // A notice, not a stop: the Session is still running, so it never borrows the stopped-at-ceiling reason.
+        parts.push(t('machineGuard.activity.because.ceiling_near'));
     } else if (entry.rule === 'idle_sessions' || entry.rule === 'left_behind' || entry.rule === 'ceiling'
         || entry.rule === 'approved_proposal' || entry.rule === 'idle_terminals') {
         parts.push(t(`machineGuard.activity.because.${entry.rule}`));

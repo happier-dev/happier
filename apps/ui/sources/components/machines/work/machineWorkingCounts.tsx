@@ -4,6 +4,7 @@ import type { ActivityAttentionSource } from '@/activity/source/activityAttentio
 import { forEachActivitySummaryCandidate } from '@/activity/source/buildActivityOverviewFromSource';
 import { useActivityAttentionSummarySource } from '@/activity/source/useActivityAttentionSource';
 import { storage } from '@/sync/domains/state/storage';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import {
     resolveDisplayMachineIdForSessionFromState,
@@ -84,8 +85,24 @@ const MachineWorkingCountsContext = React.createContext<MachineWorkingCountsStor
  * Mounted by an open machine surface (the rail popover, All machines): it computes the per-machine
  * working counts once per Activity source change, and each row subscribes to its own number, so a
  * session update on one machine re-renders only that machine's row. Closed surfaces mount nothing.
+ * The Activity subscription lives in a leaf beside the rows, so a Session change renders the leaf (and
+ * the rows whose number moved), never this provider or the page under it; while a retained surface is
+ * hidden the leaf is not mounted, so Session churn computes nothing there and the rows keep what they
+ * showed until the surface is presented again, when the leaf reads the current counts once.
  */
 export function MachineWorkingCountsProvider(props: Readonly<{ children: React.ReactNode }>) {
+    const presented = useLayoutPresentationActive();
+    const [store] = React.useState(createMachineWorkingCountsStore);
+    return (
+        <MachineWorkingCountsContext.Provider value={store}>
+            {presented ? <MachineWorkingCountsSource store={store} /> : null}
+            {props.children}
+        </MachineWorkingCountsContext.Provider>
+    );
+}
+
+/** The provider's one Activity reader; it renders before the rows in the same pass, so they read its counts. */
+function MachineWorkingCountsSource(props: Readonly<{ store: MachineWorkingCountsStore }>): null {
     const source = useActivityAttentionSummarySource();
     const counts = React.useMemo(() => buildMachineWorkingCounts({
         source,
@@ -93,15 +110,20 @@ export function MachineWorkingCountsProvider(props: Readonly<{ children: React.R
         state: storage.getState() as SessionMachineTargetState,
         includeWarmSourceWhenNotReady: true,
     }), [source]);
-    return <MachineWorkingCountsScope counts={counts}>{props.children}</MachineWorkingCountsScope>;
+    usePublishedMachineWorkingCounts(props.store, counts);
+    return null;
+}
+
+/** Rows rendered in this pass read the new counts; rows that did not re-render hear about it in the layout effect. */
+function usePublishedMachineWorkingCounts(store: MachineWorkingCountsStore, counts: MachineWorkingCounts): void {
+    store.publish(counts);
+    React.useLayoutEffect(() => store.notify(), [counts, store]);
 }
 
 /** Publishes one projection to the rows below; a row re-renders only when its own number changes. */
 export function MachineWorkingCountsScope(props: Readonly<{ counts: MachineWorkingCounts; children: React.ReactNode }>) {
     const [store] = React.useState(createMachineWorkingCountsStore);
-    // Rows rendered in this pass read the new counts; rows that did not re-render hear about it below.
-    store.publish(props.counts);
-    React.useLayoutEffect(() => store.notify(), [props.counts, store]);
+    usePublishedMachineWorkingCounts(store, props.counts);
     return <MachineWorkingCountsContext.Provider value={store}>{props.children}</MachineWorkingCountsContext.Provider>;
 }
 

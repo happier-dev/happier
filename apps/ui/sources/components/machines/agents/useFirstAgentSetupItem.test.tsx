@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
-import type { MachineAgentInventoryItem } from '@happier-dev/protocol';
+import type { MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';

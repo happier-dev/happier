@@ -12,6 +12,7 @@ import {
 
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import {
   executeMachineProcessesActionV1,
@@ -24,9 +25,9 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 import { showLeftBehindReview } from './LeftBehindReview';
+import { describeEndedOwner } from './processOwnerIdentity';
 import {
   showProcessConfirmDialog,
   type ProcessConfirmContent,
@@ -134,6 +135,7 @@ export function useProcessesController(
 ): ProcessesController {
   const reducedMotion = useReducedMotionPreference();
   const navigateToSession = useNavigateToSession();
+  const writeClipboard = useClipboardWrite(input.serverId);
   const [leaving, setLeaving] = React.useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -515,7 +517,7 @@ export function useProcessesController(
         item.kind === 'leftBehind' ? item.row.owner : item.owner.owner;
       const ownerTitle = owner
         ? (titles.get(owner.rowId) ?? '')
-        : t('machineProcesses.endedOwner');
+        : describeEndedOwner(ownerRef);
       const proven = row.level === 'proven';
       const facts: ProcessConfirmFact[] = [
         ...(row.command
@@ -554,7 +556,7 @@ export function useProcessesController(
         proven
           ? t('machineProcesses.kill.processBody', { owner: ownerTitle })
           : row.level === 'left_behind'
-            ? t('machineProcesses.kill.leftBehindBody', { owner: ownerTitle })
+            ? t('machineProcesses.kill.leftBehindBody')
             : t('machineProcesses.kill.likelyBody', {
                 owner: ownerTitle,
                 platform: PLATFORM_NAMES[answer?.platform ?? 'darwin'],
@@ -650,7 +652,7 @@ export function useProcessesController(
         (async () => {
           const rows = items.map((item) => ({
             row: item.row,
-            ownerTitle: t('machineProcesses.endedOwner'),
+            ownerTitle: describeEndedOwner(item.row.owner),
             when: formatRelativeTimeShort(item.row.confirmedAtMs, Date.now()),
           }));
           const selectedRefs = await showLeftBehindReview({
@@ -736,7 +738,7 @@ export function useProcessesController(
 
   const copy = React.useCallback((text: string) => {
     fireAndForget(
-      setClipboardStringSafe(text).then((copied) => {
+      writeClipboard(text).then((copied) => {
         if (copied)
           publishPresentationNotice({
             key: 'machine-processes:copied',
@@ -746,7 +748,7 @@ export function useProcessesController(
       }),
       { tag: 'MachineProcesses.copy' },
     );
-  }, []);
+  }, [writeClipboard]);
 
   const titleOf = React.useCallback((item: ProcessesItem) => describeProcessesItemTitle(item, latest.current.titles), []);
 

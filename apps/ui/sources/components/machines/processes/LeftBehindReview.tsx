@@ -90,7 +90,7 @@ function LeftBehindReviewSheet(props: ReviewProps) {
                 title={
                   entry.row.command ? `${name}  ${entry.row.command}` : name
                 }
-                subtitle={t('machineProcesses.review.startedBy', {
+                subtitle={t('machineProcesses.leftBehindRow', {
                   owner: entry.ownerTitle,
                   when: entry.when,
                 })}

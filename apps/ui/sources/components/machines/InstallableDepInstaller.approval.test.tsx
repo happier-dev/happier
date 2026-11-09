@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApprovalRequestSchema } from '@happier-dev/protocol';
+import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { COMPUTER_CUA_DRIVER_DEP_ID } from '@happier-dev/protocol/installables';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';

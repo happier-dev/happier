@@ -61,6 +61,8 @@ export type UseSimulatorRelayIngestionInput = Readonly<{
     preferredCodec?: MachineLiveStreamCodecIdV1;
     startProduction?: StartProductionMachineLiveStream;
     startDaemonRelay?: StartDaemonRelay;
+    /** Transport acquisition boundary; local demo carriers need no server relay credentials. */
+    openRelay?: typeof openMachineLiveStreamRelayClient;
     timeoutMs?: number;
     /** Source-owned metadata shares this one scoped subscriber, but never enters the image decoder. */
     onMetadataFrame?: (frame: MachineLiveStreamFrameV1) => void;
@@ -312,7 +314,7 @@ export function useSimulatorRelayIngestion(
         });
 
         const previousOpen = previousOpenRef.current;
-        const open = () => openMachineLiveStreamRelayClient({
+        const open = () => (latestRef.current.openRelay ?? openMachineLiveStreamRelayClient)({
             ...clientInput,
             onAuthorized: (request) => {
                 if (disposed || ended) return;

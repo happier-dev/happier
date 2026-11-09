@@ -19,19 +19,21 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useMachineVitalsOverview } from '@/sync/domains/machines/resources/useMachineVitalsOverview';
 import { useMachineVitalsAttribution } from '@/sync/domains/machines/resources/useMachineVitalsAttribution';
+import { useMachineMonitoringMode } from '@/sync/domains/machines/resources/useMachineMonitoringMode';
 import { MachineUsingTheMost } from './MachineUsingTheMost';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 import { CpuTile } from './CpuTile';
 import { DiskTile } from './DiskTile';
 import { MachineAlertsRow } from './MachineAlertsRow';
 import { MachineMoreFrom } from './MachineMoreFrom';
+import { MachineMonitoringOffCard, MachineMonitoringRows } from './MachineMonitoringRows';
 import {
   useMachineVitalsTimeline,
   resolveMachineCpuCapacityCores,
@@ -86,16 +88,19 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
     [daemonState],
   );
   const [range] = useMachineVitalsRange();
+  // Off is the person's choice, not a failure: nothing here demands a read while it holds.
+  const monitoring = useMachineMonitoringMode({ serverId: props.serverId, machineId: machine.id });
   const overview = useMachineVitalsOverview({
     serverId: props.serverId,
     machineId: machine.id,
     daemonStateVersion: machine.daemonStateVersion ?? null,
     range,
-    enabled: props.online === true,
+    enabled: props.online === true && monitoring !== 'off',
   });
   const view = selectMachineVitalsOverviewView({
     online: props.online,
     published,
+    monitoring,
     state: overview,
   });
   // Only an Overview that opened on reserved boxes cross-fades its first sample in.
@@ -136,6 +141,35 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
   ) : null;
   if (props.online === null && view.kind !== 'ready') return <SurfaceStateCard kind="unavailable" title={t('common.unknown')} />;
   if (view.kind === 'offline_empty') return offlineBanner;
+  const settings = (
+    <>
+      <MachineMonitoringRows serverId={props.serverId} machineId={machine.id} />
+      <MachineAlertsRow serverId={props.serverId} machineId={machine.id} machineName={props.machineName} />
+    </>
+  );
+  if (view.kind === 'monitoring_off') {
+    // What it read before stays, as of its time (the range bar's chip says when); nothing reads, so no range.
+    return (
+      <>
+        <MachineMonitoringOffCard serverId={props.serverId} machineId={machine.id} machineName={props.machineName}
+          held={view.sample !== null} />
+        {view.sample && !props.rangeInBar ? (
+          <ItemGroup header="none" surface="none">
+            <MachineVitalsRangeBar freshness={resolveVitalsFreshnessChip(view, retry)} showRange={false} />
+          </ItemGroup>
+        ) : null}
+        {view.sample ? (
+          <VitalsSheet testID="machine-vitals-sheet">
+            <CpuTile sample={view.sample} host={published?.host ?? null} timeline={timeline} axis={axis} freshness="stale" live={false} />
+            <MemoryTile sample={view.sample} attention={attention} timeline={timeline} nowMs={Date.now()} axis={axis} freshness="stale" live={false} />
+            <DiskTile sample={view.sample} attention={attention} happierBytesByVolume={null} />
+            <NetworkTile sample={view.sample} today={null} timeline={timeline} axis={axis} freshness="stale" live={false} />
+          </VitalsSheet>
+        ) : null}
+        {settings}
+      </>
+    );
+  }
   if (
     view.kind === 'older_happier' ||
     view.kind === 'unavailable'
@@ -214,11 +248,7 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
           attention={attention}
         />
       ) : null}
-      <MachineAlertsRow
-        serverId={props.serverId}
-        machineId={machine.id}
-        machineName={props.machineName}
-      />
+      {settings}
     </>
   );
 });
@@ -291,6 +321,7 @@ function MachineVitalsStateCard(
 ) {
   const router = useRouter();
   const door = useMachinesDoor();
+  const writeClipboard = useClipboardWrite(props.serverId);
   const { view, machineName } = props;
   const openDoctor = React.useCallback(() => {
     router.push(
@@ -335,7 +366,7 @@ function MachineVitalsStateCard(
                   }),
                   testID: 'machine-vitals-ask-owner',
                   onPress: () =>
-                    setClipboardStringSafe(
+                    writeClipboard(
                       t('machineVitals.states.askOwnerMessage', {
                         machine: machineName,
                       }),

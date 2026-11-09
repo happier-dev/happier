@@ -38,6 +38,8 @@ export function formatMachineAgentStatus(status: MachineAgentStatus): string {
                 case 'unknown': return t('machineAgents.offlineUnknown');
             }
             return t('machineAgents.offlineUnknown');
+        // The classified reason stays on the typed status for diagnostics. It is not product copy.
+        case 'unavailable': return t('machineAgents.unknown');
         case 'unknown': return t('machineAgents.unknown');
     }
 }

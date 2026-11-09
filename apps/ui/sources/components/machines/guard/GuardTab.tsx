@@ -14,6 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { DEFAULT_MACHINE_GUARD_ACTIVITY_QUERY } from '@/sync/domains/machines/guard/machineGuardRpc';
 import { useMachineGuardActivity, useMachineGuardView } from '@/sync/domains/machines/guard/useMachineGuardView';
+import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
@@ -115,7 +116,7 @@ function GuardRules(props: Readonly<{ serverId: string; machineId: string; machi
                     {props.barAccessoryShown ? null : <GuardPhoneFreshness serverId={props.serverId} machineId={props.machineId} />}
                 </View>
             </ItemGroup>
-            {guard.offline ? <OfflineBanner machineName={props.machineName} asOf={facts.lastSeenAt} onRetry={guard.retry} /> : readFailed}
+            {guard.offline ? <OfflineBanner serverId={props.serverId} machineId={props.machineId} machineName={props.machineName} onRetry={guard.retry} /> : readFailed}
             <MemoryGuardSection machineName={props.machineName} policy={policy} view={view} editable={editable}
                 failed={policyState.failed} awaiting={awaiting}
                 reading={!view && !guard.offline && guard.status !== 'error'} nowMs={nowMs} save={policyState.save} />
@@ -144,8 +145,9 @@ function GuardRules(props: Readonly<{ serverId: string; machineId: string; machi
 }
 
 /** "studio is offline · These are its guard settings as of …" above what it blocks (G9-2). */
-function OfflineBanner(props: Readonly<{ machineName: string; asOf: number | null; onRetry: () => void }>) {
+function OfflineBanner(props: Readonly<{ serverId: string; machineId: string; machineName: string; onRetry: () => void }>) {
     const { theme } = useUnistyles();
+    const { lastSeenAt = null } = useMachinePresenceSummary(props.serverId, props.machineId);
     return (
         <ItemGroup>
             <View testID="machine-guard-offline" style={styles.banner}>
@@ -153,7 +155,7 @@ function OfflineBanner(props: Readonly<{ machineName: string; asOf: number | nul
                 <View style={styles.bannerBody}>
                     <Text style={styles.bannerTitle}>{t('machineGuard.states.offlineTitle', { machine: props.machineName })}</Text>
                     <Text style={styles.bannerText}>
-                        {t('machineGuard.states.offlineBody', { time: props.asOf === null ? t('machineGuard.states.lastKnown') : formatAsOfTime(props.asOf) })}
+                        {t('machineGuard.states.offlineBody', { time: lastSeenAt === null ? t('machineGuard.states.lastKnown') : formatAsOfTime(lastSeenAt) })}
                     </Text>
                     <TextLinkButton label={t('machineGuard.tryAgain')} onPress={props.onRetry} tone="strong" />
                 </View>

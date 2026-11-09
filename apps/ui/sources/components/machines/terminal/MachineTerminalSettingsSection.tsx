@@ -1,14 +1,14 @@
 import * as React from 'react';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { SettingTextInput } from '@/components/settings/shell/SettingTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Modal } from '@/modal';
 import { resolveTerminalHost } from '@/sync/domains/settings/terminalSettings';
-import { useSetting, useSettings } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -25,13 +25,16 @@ export const MachineTerminalSettingsSection = React.memo(function MachineTermina
 }>) {
     const { machineId, tmuxAvailable } = props;
     const stopExecution = useMountedActionExecution(props.serverId);
-    const settings = useSettings();
-    const terminalTmuxByMachineId = useSetting('sessionTmuxByMachineId');
-    const tmuxOverride = machineId && terminalTmuxByMachineId && Object.hasOwn(terminalTmuxByMachineId, machineId)
-        ? terminalTmuxByMachineId[machineId] : undefined;
-    const tmuxOverrideEnabled = Boolean(tmuxOverride || (machineId && Object.hasOwn(settings.sessionTerminalHostByMachineId, machineId)));
-    const selectedGlobalTerminalHost = resolveTerminalHost({ settings, machineId: null });
-    const selectedMachineTerminalHost = resolveTerminalHost({ settings, machineId: machineId ?? null });
+    const { tmuxOverride, tmuxOverrideEnabled, selectedGlobalTerminalHost, selectedMachineTerminalHost } = useSettingsSelector(settings => {
+        const tmuxOverride = machineId && Object.hasOwn(settings.sessionTmuxByMachineId, machineId)
+            ? settings.sessionTmuxByMachineId[machineId] : undefined;
+        return {
+            tmuxOverride,
+            tmuxOverrideEnabled: Boolean(tmuxOverride || (machineId && Object.hasOwn(settings.sessionTerminalHostByMachineId, machineId))),
+            selectedGlobalTerminalHost: resolveTerminalHost({ settings, machineId: null }),
+            selectedMachineTerminalHost: resolveTerminalHost({ settings, machineId }),
+        };
+    }, ['sessionTerminalHost', 'sessionUseTmux', 'sessionTerminalHostByMachineId', 'sessionTmuxByMachineId']);
 
     const setTmuxOverrideEnabled = React.useCallback((enabled: boolean) => {
         if (!machineId) return;
@@ -42,14 +45,18 @@ export const MachineTerminalSettingsSection = React.memo(function MachineTermina
         })(), { tag: 'MachineTerminalSettingsSection.setTerminalHostOverride' });
     }, [machineId, stopExecution, selectedGlobalTerminalHost]);
 
-    const updateTmuxOverride = React.useCallback((patch: Partial<NonNullable<typeof tmuxOverride>>) => {
-        if (!machineId || !tmuxOverride) return;
+    const updateTmuxOverride = React.useCallback(async (patch: Partial<NonNullable<typeof tmuxOverride>>) => {
+        if (!machineId || !tmuxOverride) return false;
         const { useTmux: _host, ...tmux } = patch;
-        fireAndForget((async () => {
+        try {
             const result = await stopExecution.execute('settings.set', { anchor: 'machines.terminal.host', key: machineId,
                 value: { tmux } });
             if (!result.ok) Modal.alert(t('common.error'), result.error);
-        })(), { tag: 'MachineTerminalSettingsSection.updateTmuxOverride' });
+            return result.ok;
+        } catch {
+            Modal.alert(t('common.error'), t('common.unavailable'));
+            return false;
+        }
     }, [machineId, stopExecution, tmuxOverride]);
 
     const setTerminalHostOverride = React.useCallback((next: 'none' | 'tmux' | 'zellij' | 'herdr') => {
@@ -111,11 +118,12 @@ export const MachineTerminalSettingsSection = React.memo(function MachineTermina
                                 mode="info"
                                 accessoryLayout="adaptive"
                                 rightElement={(
-                                    <FieldTextInput
+                                    <SettingTextInput
+                                        key={machineId}
                                         accessibilityLabel={t('profiles.tmuxSession')}
                                         placeholder={t('profiles.tmux.sessionNamePlaceholder')}
                                         value={tmuxOverride.sessionName}
-                                        onChangeText={(value) => updateTmuxOverride({ sessionName: value })}
+                                        onCommit={(value) => updateTmuxOverride({ sessionName: value })}
                                         autoCapitalize="none"
                                         monospace
                                     />
@@ -125,9 +133,9 @@ export const MachineTerminalSettingsSection = React.memo(function MachineTermina
                             <Item
                                 title={t('profiles.tmux.isolatedServerTitle')}
                                 subtitle={tmuxOverride.isolated ? t('profiles.tmux.isolatedServerEnabledSubtitle') : t('profiles.tmux.isolatedServerDisabledSubtitle')}
-                                rightElement={<Switch value={tmuxOverride.isolated} onValueChange={(next) => updateTmuxOverride({ isolated: next })} />}
+                                rightElement={<Switch value={tmuxOverride.isolated} onValueChange={(next) => { void updateTmuxOverride({ isolated: next }); }} />}
                                 showChevron={false}
-                                onPress={() => updateTmuxOverride({ isolated: !tmuxOverride.isolated })}
+                                onPress={() => { void updateTmuxOverride({ isolated: !tmuxOverride.isolated }); }}
                             />
 
                             {tmuxOverride.isolated && (
@@ -138,11 +146,13 @@ export const MachineTerminalSettingsSection = React.memo(function MachineTermina
                                     mode="info"
                                     accessoryLayout="adaptive"
                                     rightElement={(
-                                        <FieldTextInput
+                                        <SettingTextInput
+                                            key={machineId}
                                             accessibilityLabel={t('profiles.tmuxTempDir')}
                                             placeholder={t('profiles.tmux.tempDirPlaceholder')}
                                             value={tmuxOverride.tmpDir ?? ''}
-                                            onChangeText={(value) => updateTmuxOverride({ tmpDir: value.trim().length > 0 ? value : null })}
+                                            normalize={value => value.trim().length > 0 ? value : ''}
+                                            onCommit={(value) => updateTmuxOverride({ tmpDir: value || null })}
                                             autoCapitalize="none"
                                             monospace
                                         />

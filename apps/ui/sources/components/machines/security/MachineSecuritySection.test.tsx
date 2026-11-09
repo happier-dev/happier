@@ -61,6 +61,7 @@ async function render(
   updates: MachineUpdatesModel,
   online: boolean | null,
   control = controls(),
+  canManage = true,
 ) {
   const { MachineSecurityView } = await import('./MachineSecuritySection');
   return await renderScreen(
@@ -69,6 +70,7 @@ async function render(
       machineName: 'shop-prod',
       online,
       controls: control,
+      canManage,
     }),
   );
 }
@@ -205,5 +207,16 @@ describe('Machine → Security page', () => {
     const screen = await render(model({ status: 'drifted', pendingSecurity: 1, pendingAll: 1, rebootNeeded: true }), true, control);
     expect(row(screen, 'machine-security-restart')?.props.subtitle).toBe(t('machineDetailPage.security.restartNoInstallation'));
     expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-security-restart-start' })?.props.disabled).toBe(true);
+  });
+  it('shows a Use grantee the updates read-only: no Install, no Restart, and why instead of a check failure', async () => {
+    const failure = { ok: false as const, errorCode: 'action_forbidden', error: 'forbidden' };
+    const none = await render(model(null, { read: { kind: 'failed', failure }, failure }), true, controls(), false);
+    expect(row(none, 'machine-security-updates')?.props.title).toBe(t('machineDetailPage.security.needsManage', { machine: 'shop-prod' }));
+    const pushed = await render(model({ status: 'drifted', pendingSecurity: 2, pendingAll: 5, rebootNeeded: true }, { stale: true, read: { kind: 'failed', failure }, failure }), true, controls(), false);
+    expect(row(pushed, 'machine-security-updates')?.props.title).toBe(t('machineDetailPage.security.securityWaiting', { count: 2 }));
+    expect(findTestInstanceByTypeWithProps(pushed, RoundButton, { testID: 'machine-security-install' })).toBeUndefined();
+    expect(findTestInstanceByTypeWithProps(pushed, RoundButton, { testID: 'machine-security-restart-start' })).toBeUndefined();
+    expect(findTestInstanceByTypeWithProps(pushed, SurfaceFreshnessLine, { testID: 'machine-security-stale' })?.props.reason)
+      .toBe(t('machineDetailPage.security.staleNeedsManage', { machine: 'shop-prod' }));
   });
 });

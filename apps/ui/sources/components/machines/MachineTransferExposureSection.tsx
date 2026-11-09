@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import { t } from '@/text';
 import {
     readMachineDaemonTransferState,
@@ -25,6 +26,10 @@ function resolveListenerStateLabel(state: MachineDaemonTransferListenerClassStat
 }
 
 function resolveTailscaleServeStateLabel(state: MachineDaemonTransferListenerClassState): string {
+    if (state.diagnostic) {
+        const message = resolveSystemTaskFailureMessage(state.diagnostic);
+        if (message) return message;
+    }
     if (!state.enabled) {
         return t('machine.transferExposure.stateDisabled');
     }

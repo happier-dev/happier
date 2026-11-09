@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
-import type { MachinePoolViewV1 } from '@happier-dev/protocol';
+import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import {
     buildMachinePoolRowPresentations,

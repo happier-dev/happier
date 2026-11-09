@@ -42,6 +42,7 @@ export const MachineAgentsSection = React.memo(function MachineAgentsSection(pro
             agents={inventory.agents}
             status={inventory.status}
             lastCheckedAt={inventory.lastCheckedAt}
+            failure={inventory.failure}
             machineName={props.machineName}
             {...(props.titled === undefined ? {} : { titled: props.titled })}
             renderMark={(agent) => <MachineAgentMark agentId={agent.agentId} machineId={props.machineId} serverId={props.serverId} />}

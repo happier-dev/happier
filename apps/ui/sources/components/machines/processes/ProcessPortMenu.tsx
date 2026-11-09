@@ -6,50 +6,21 @@ import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPr
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import {
   copyLocalServiceAddress,
-  resolveLocalServiceEntryActions,
 } from '@/components/sessions/localServices/localServiceEntryActions';
-import {
-  useLocalServiceActionRunner,
-  type LocalServiceActionRunner,
-} from '@/components/sessions/localServices/localServiceActionOutcome';
 import { resolveLocalServicePublicLinkOffer } from '@/components/sessions/localServices/LocalServicePublicPreviewControls';
-import {
-  useLocalServiceEntryActions,
-  type LocalServiceEntryActionsWiring,
-} from '@/components/sessions/localServices/useLocalServiceEntryActions';
-import { useLocalServiceLiveFeeds } from '@/components/sessions/localServices/useLocalServiceLiveFeeds';
-import {
-  useLocalServicePresentationFeatures,
-  type LocalServiceCapabilityDisabledReasons,
-} from '@/components/sessions/localServices/useLocalServicePublicPreviewFeature';
 import {
   DropdownMenu,
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Typography } from '@/constants/Typography';
-import { selectLocalServiceInventoryRows } from '@/sync/domains/local/services/inventory/store';
-import { selectLocalServiceLaunchTargets } from '@/sync/domains/local/services/launch';
 import { useLocalServicePublicPreviewStateController } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
-import {
-  buildLocalServiceRows,
-  selectLocalServiceRowForInventoryEntry,
-  type ServiceRow,
-} from '@/sync/domains/local/services/serviceRow';
-import type { ActionExecuteResult } from '@happier-dev/protocol';
-import {
-  bindServicesOpenInBrowser,
-  type OpenBrowserViewTarget,
-} from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
-import { resolveBrowserSurfacePlatform } from '@/components/browser/surfaces/useBrowserSurfaceHostProps';
-import type { ServiceRowOpenHandler } from '@/components/sessions/localServices/ServiceRowView';
-import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
-import { useLocalServicePreviewState } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+
+import { useMachinePortEntry } from '@/components/machines/localServices/MachinePortActions';
 
 import { showProcessConfirmDialog } from './ProcessConfirmDialog';
 import {
@@ -57,158 +28,6 @@ import {
   type ProcessesItem,
 } from './processesPresentation';
 import { ProcessesControllerContext } from './useProcessesController';
-
-/** The machine's Local services, read once a port is first pressed and kept while the tab is open. */
-type PortServices = Readonly<{
-  /** `null` until the launcher's first snapshot arrives. */
-  rows: readonly ServiceRow[] | null;
-  handlers: LocalServiceEntryActionsWiring['handlers'];
-  run: LocalServiceActionRunner['run'];
-  publicPreviewEnabled: boolean;
-  capabilityDisabledReasons: LocalServiceCapabilityDisabledReasons;
-  /** Open in browser: the Services opener, ending in an external tab (the machine page hosts no browser pane). */
-  openInBrowser: ServiceRowOpenHandler;
-  /** The private-preview access owner's registrations: whether Open can reach a preview from here. */
-  previews: LocalServicePreviewState;
-}>;
-
-const unopenable = (errorCode: string): ActionExecuteResult => ({
-  ok: false,
-  errorCode,
-  error: errorCode,
-});
-
-/**
- * The external-tab end of the Services opener. Registration, mapping and the access route stay the
- * Services owner's (`bindServicesOpenInBrowser`); the URL is the one it admits for this viewer — the
- * preview's access URL — never the service's raw address. No access URL means no route from here.
- */
-const openInExternalTab: OpenBrowserViewTarget = async (target, options) => {
-  const url = target.kind === 'externalUrl' ? target.url : options?.currentUrl;
-  if (!url) return unopenable('preview_private_route_unavailable');
-  return (await openExternalUrl(url))
-    ? { ok: true, result: null }
-    : unopenable('browser_adapter_unavailable');
-};
-
-type PortActions = Readonly<{
-  serverId: string;
-  /** The one intent signal: the first press on any port starts the Local services feeds. */
-  demand: () => void;
-  services: PortServices | null;
-}>;
-
-const ProcessPortActionsContext = React.createContext<PortActions | null>(null);
-
-/**
- * Lets the tab's port chips act through Local services (plan 30 U8, RU-3). Nothing is read until a
- * chip is pressed; from then on the machine's feeds and the shared Action admission stay mounted with
- * the tab, so an Action waiting on approval or a review outlives the menu that started it.
- */
-export function ProcessPortActionsProvider(
-  props: Readonly<{
-    serverId: string;
-    machineId: string;
-    children: React.ReactNode;
-  }>,
-) {
-  const [demanded, setDemanded] = React.useState(false);
-  const [services, setServices] = React.useState<PortServices | null>(null);
-  const demand = React.useCallback(() => setDemanded(true), []);
-  const value = React.useMemo(
-    () => ({ serverId: props.serverId, demand, services }),
-    [demand, props.serverId, services],
-  );
-  return (
-    <ProcessPortActionsContext.Provider value={value}>
-      {demanded ? (
-        <PortServicesHost
-          serverId={props.serverId}
-          machineId={props.machineId}
-          onServices={setServices}
-        />
-      ) : null}
-      {props.children}
-    </ProcessPortActionsContext.Provider>
-  );
-}
-
-function PortServicesHost(
-  props: Readonly<{
-    serverId: string;
-    machineId: string;
-    onServices: (services: PortServices | null) => void;
-  }>,
-) {
-  const feeds = useLocalServiceLiveFeeds({
-    machineId: props.machineId,
-    serverId: props.serverId,
-    scope: 'machine',
-  });
-  const wiring = useLocalServiceEntryActions({
-    machineId: props.machineId,
-    serverId: props.serverId,
-    scope: 'machine',
-    onRefresh: feeds.refresh,
-    applyLauncherSnapshot: feeds.applyLauncherSnapshot,
-    testID: 'machine-processes-port-services',
-  });
-  const runner = useLocalServiceActionRunner();
-  const { publicPreviewFeatureEnabled: publicPreviewEnabled, publicPreviewCapabilityDisabledReasons: capabilityDisabledReasons } = useLocalServicePresentationFeatures(props.serverId);
-  const previews = useLocalServicePreviewState({
-    machineId: props.machineId,
-    serverId: props.serverId,
-  });
-  const openInBrowser = React.useMemo(
-    () =>
-      bindServicesOpenInBrowser({
-        onOpenTarget: openInExternalTab,
-        platform: resolveBrowserSurfacePlatform(),
-        serverId: props.serverId,
-      }),
-    [props.serverId],
-  );
-  const { inventoryState, launcherState } = feeds;
-  const rows = React.useMemo(
-    () =>
-      launcherState && launcherState.updatedAt !== null
-        ? buildLocalServiceRows({
-            inventoryRows: selectLocalServiceInventoryRows(inventoryState),
-            launchTargets: selectLocalServiceLaunchTargets(launcherState),
-            sessionId: null,
-            scope: 'machine',
-          })
-        : null,
-    [inventoryState, launcherState],
-  );
-  const services = React.useMemo(
-    (): PortServices => ({
-      rows,
-      handlers: wiring.handlers,
-      run: runner.run,
-      publicPreviewEnabled,
-      capabilityDisabledReasons,
-      openInBrowser,
-      previews,
-    }),
-    [
-      capabilityDisabledReasons,
-      openInBrowser,
-      previews,
-      publicPreviewEnabled,
-      rows,
-      runner.run,
-      wiring.handlers,
-    ],
-  );
-  const { onServices } = props;
-  React.useEffect(() => {
-    onServices(services);
-  }, [onServices, services]);
-  React.useEffect(() => () => onServices(null), [onServices]);
-  // A Start/Restart review never starts from a port; this keeps the shared admission's review placed.
-  return wiring.review;
-}
 
 type PortEntry = DropdownMenuItem & Readonly<{ run?: () => void }>;
 
@@ -228,17 +47,10 @@ export const ProcessPortChip = React.memo(function ProcessPortChip(
   }>,
 ) {
   const language = usePreferredLanguage();
-  const actions = React.useContext(ProcessPortActionsContext);
   const controller = React.useContext(ProcessesControllerContext);
   const [open, setOpen] = React.useState(false);
-  const services = actions?.services ?? null;
-  const row =
-    open && services?.rows
-      ? selectLocalServiceRowForInventoryEntry(services.rows, {
-          inventoryEntryId: props.inventoryEntryId,
-          port: props.port,
-        })
-      : null;
+  const { actions, services, row, offered, open: openPort } = useMachinePortEntry(props, open);
+  const writeClipboard = useClipboardWrite(actions?.serverId ?? null, { enabled: open });
   // The row's public-link feed is read only while its menu is open.
   const preview = useLocalServicePublicPreviewStateController({
     machineId: row?.target.machineId ?? null,
@@ -261,7 +73,7 @@ export const ProcessPortChip = React.memo(function ProcessPortChip(
     if (!services?.rows) {
       return [{ id: 'loading', title: t('common.loading'), disabled: true }];
     }
-    if (!row) {
+    if (!row || !offered) {
       return [
         {
           id: 'not-listed',
@@ -271,15 +83,9 @@ export const ProcessPortChip = React.memo(function ProcessPortChip(
       ];
     }
     const { handlers, run } = services;
-    const offered = resolveLocalServiceEntryActions(
-      row,
-      { ...handlers, onOpenServiceInBrowser: services.openInBrowser },
-      services.previews,
-    );
     const blocked = controller.unavailableReason;
     const list: PortEntry[] = [];
-    const openTarget = offered.open;
-    if (openTarget) {
+    if (openPort) {
       const subtitle = blocked ?? offered.openUnavailableReason ?? undefined;
       list.push({
         id: 'open-browser',
@@ -289,13 +95,7 @@ export const ProcessPortChip = React.memo(function ProcessPortChip(
         disabled: subtitle !== undefined,
         run: () =>
           fireAndForget(
-            run({
-              id: `port:${props.inventoryEntryId}:open`,
-              failureTitle: t('localServices.actions.failureTitle.open', {
-                service: row.title,
-              }),
-              action: async () => services.openInBrowser(openTarget),
-            }),
+            openPort(),
             { tag: 'MachineProcesses.portOpen' },
           ),
       });
@@ -313,7 +113,7 @@ export const ProcessPortChip = React.memo(function ProcessPortChip(
               row.target,
               address,
               handlers.onCopyServiceUrl,
-              setClipboardStringSafe,
+              writeClipboard,
             ).then((copied) => {
               if (copied)
                 publishPresentationNotice({
@@ -417,6 +217,8 @@ export const ProcessPortChip = React.memo(function ProcessPortChip(
       language,
     controller,
     open,
+    openPort,
+    offered,
     preview.state,
     props.inventoryEntryId,
     props.item,

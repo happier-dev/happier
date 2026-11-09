@@ -15,7 +15,8 @@ export function ProcessesStateCard(props: Readonly<{
 }>) {
   if (props.online === null) return <SurfaceStateCard testID="machine-processes-unknown" kind="unavailable" title={t('common.unknown')} />;
   if (props.online === false) {
-    return <SurfaceStateCard testID="machine-processes-offline-empty" kind="unavailable"
+    // One quiet line, as Storage says the same cause beside it (lab `rs` MS 4): nothing here is the machine's fault to fix.
+    return <SurfaceStateCard testID="machine-processes-offline-empty" kind="unavailable" size="line"
       title={t('machineProcesses.states.offlineTitle', { machine: props.machineName })}
               reason={t('machineProcesses.states.offlineReason')} />;
   }

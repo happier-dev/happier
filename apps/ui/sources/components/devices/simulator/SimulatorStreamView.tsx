@@ -6,9 +6,10 @@ import { StreamStatusDot, resolveStreamStatusDotVariant } from '@/components/str
 import { Text } from '@/components/ui/text/Text';
 import type { SimulatorPreviewStreamState } from '@/sync/domains/devices/simulator/types';
 import type {
-    MachineLiveStreamControlSidebandV1,
+    MachineLiveStreamControlSidebandV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import type {
     SimulatorDeviceResourceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/devices/simulator/v1';
 
 import { SimulatorConnectingState } from './SimulatorConnectingState';
 import { SimulatorUnavailableState } from './SimulatorUnavailableState';

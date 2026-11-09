@@ -2,16 +2,20 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { z } from 'zod/mini';
 import {
-    DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES,
+    DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES} from '@happier-dev/protocol/features/payload/capabilities/deviceCapabilities';
+import {
     DaemonMachineLiveStreamRelayStartRequestV1Schema,
-    DaemonMachineLiveStreamRelayStartResponseV1Schema,
+    DaemonMachineLiveStreamRelayStartResponseV1Schema} from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
+import {
     MachineLiveStreamDecodedEnvelopeV1Schema,
-    MachineLiveStreamCodecIdV1Schema,
     MachineLiveStreamRelayAuthorizationV1Schema,
     MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1,
-    SimulatorDeviceResourceV1Schema,
     type MachineLiveStreamRelayEnvelopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import {
+    MachineLiveStreamCodecIdV1Schema} from '@happier-dev/protocol/machines/peer/mediation/stream/codecsV1';
+import {
+    SimulatorDeviceResourceV1Schema} from '@happier-dev/protocol/devices/simulator/v1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { DirectRouteGrantScopeV1Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';

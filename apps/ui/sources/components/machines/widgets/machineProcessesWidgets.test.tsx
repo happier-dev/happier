@@ -6,7 +6,7 @@ import type { MachineProcessesAnswerV1 } from '@happier-dev/protocol/machines/pr
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -212,6 +212,39 @@ afterEach(async () => {
 });
 
 describe('Using the most widget', () => {
+  it('counts admitted native container memory in Services without offering raw Stop', async () => {
+    const answer = createProcessesAnswer();
+    const owner = answer.owners[0];
+    owner.owner = { kind: 'container', serverId: 'home', machineId: 'machine', serviceId: 'production/web',
+      containerId: 'a'.repeat(64), composeProject: 'production', composeService: 'web', environmentId: 'environment' };
+    delete owner.root;
+    answer.owners = [owner];
+    answer.totals.happier = owner.totals;
+    const { screen } = await mount({ Body: MachineTopConsumersWidget, size: 'wide', answer,
+      waitFor: `machine-processes-share-o:${owner.rowId}` });
+    const composition = screen.root.findAll(node => node.props.testID === 'widget.composition'
+      && Array.isArray(node.props.segments))[0];
+    expect(composition?.props.segments).toEqual([expect.objectContaining({ id: 'services', value: owner.totals.memoryBytes })]);
+    expect(screen.findByTestId(`widget.stop-o:${owner.rowId}`)).toBeNull();
+    expect(transport.rpc.mock.calls.some(([rpc]) => (rpc as Rpc).method === RPC_METHODS.MACHINES_PROCESSES_STOP)).toBe(false);
+  });
+
+  it('draws each owner row\'s share of the widget\'s own total as the hairline beneath it (lab rw C)', async () => {
+    const { screen } = await mount({ Body: MachineTopConsumersWidget, answer: createProcessesAnswer(),
+      waitFor: 'widget.stop-o:service:website', reply: () => undefined });
+    for (const key of ['o:service:website', 'o:session:refactor'])
+      expect(screen.findByTestId(`machine-processes-share-${key}`)).not.toBeNull();
+  });
+
+  it('draws each owner as one line: the name, its status and the memory, with no CPU line beneath (lab rw C)', async () => {
+    const { screen } = await mount({ Body: MachineTopConsumersWidget, answer: createProcessesAnswer(),
+      waitFor: 'widget.stop-o:service:website', reply: () => undefined });
+    const row = screen.root.findAll((node) => node.props.testID === 'machine-processes-row-o:session:refactor')[0]!;
+    const texts = row.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children as string);
+    expect(screen.findByTestId('machine-processes-memory-o:session:refactor')).not.toBeNull();
+    expect(texts.some((text) => /CPU/.test(text))).toBe(false);
+  });
+
   it('stops and offers the way back from an owner-only Session without requesting its process tree', async () => {
     const answer = createProcessesAnswer();
     answer.owners = answer.owners.map(owner => ({ ...owner, members: [],
@@ -230,7 +263,10 @@ describe('Using the most widget', () => {
         return undefined;
       } });
     await act(async () => { await screen.pressByTestIdAsync('widget.stop-o:session:refactor'); });
-    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('widget.stopped')).not.toBeNull()); });
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(screen.findByTestId('widget.stopped')).not.toBeNull();
+    });
     expect(calls[0]?.payload).toMatchObject({ targets: [{ ref: 'runner', expect: {
       level: 'proven', owner: { kind: 'session', sessionId: 'refactor' },
     } }] });
@@ -316,10 +352,9 @@ describe('Using the most widget', () => {
     await act(async () => {
       await screen.pressByTestIdAsync('widget.stop-o:service:website');
     });
-    await act(async () => {
-      await vi.waitFor(() =>
-        expect(screen.findByTestId('widget.stopped')).not.toBeNull(),
-      );
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(screen.findByTestId('widget.stopped')).not.toBeNull();
     });
     expect(calls[0]).toMatchObject({
       method: RPC_METHODS.MACHINES_PROCESSES_STOP,

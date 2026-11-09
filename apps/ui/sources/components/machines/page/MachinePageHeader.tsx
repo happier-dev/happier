@@ -293,6 +293,8 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             alwaysShowTitle
             // The mark and the actions hang from the name's line; the sentence and facts run beneath both (lab `rm` R).
             actionsLayout="hang"
+            // Start session and the rest stay beside the Machine's identity, not folded into a phone's bar menu.
+            actionsPlacement="page"
             title={machine ? machineName : t('machineDetailPage.placeholderTitle')}
             description={machine && (published || runtimePresence?.showStatus) ? (
                 <MachineWorkingCountsProvider>

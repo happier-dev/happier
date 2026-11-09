@@ -28,7 +28,9 @@ import {
   VitalsSheet,
   VitalsSubLine,
   VitalsTile,
+  VitalsTileRoomContext,
   VitalsValue,
+  type VitalsTileRoom,
 } from '@/components/machines/vitals/VitalsSheet';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
@@ -37,6 +39,9 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { t } from '@/text';
 
 import type { ProcessesMeterNote } from './useProcessesController';
+
+/** A phone's tiles are meter rows (lab `rp` Hp): the label and figure on one line, the meter beneath. */
+const PHONE_TILE_ROOM: VitalsTileRoom = Object.freeze({ layout: 'line', instruments: 'primary', chartMaximum: false, inset: true, chart: 'plot', fill: false, title: true });
 
 export type ProcessesTilesInput = Readonly<{
   sample: MachineVitalsSampleV1 | null;
@@ -321,11 +326,15 @@ export const ProcessesTiles = React.memo(function ProcessesTiles(
     </VitalsTile>
   );
   // Phone (lab `rp` Hp): memory and Happier's part as two meter rows; CPU sits on each row instead.
-  return (
+  return props.compact ? (
+    <VitalsTileRoomContext.Provider value={PHONE_TILE_ROOM}>
+      <VitalsSheet testID="machine-processes-tiles" columns={3}>
+        {[memoryTile, happierTile]}
+      </VitalsSheet>
+    </VitalsTileRoomContext.Provider>
+  ) : (
     <VitalsSheet testID="machine-processes-tiles" columns={3}>
-      {props.compact
-        ? [memoryTile, happierTile]
-        : [memoryTile, cpuTile, happierTile]}
+      {[memoryTile, cpuTile, happierTile]}
     </VitalsSheet>
   );
 });
@@ -336,13 +345,13 @@ function ProcessesTilesLoading(props: Readonly<{ compact: boolean }>) {
   const keys = props.compact
     ? (['memory', 'happier'] as const)
     : (['memory', 'cpu', 'happier'] as const);
-  return (
+  const sheet = (
     <VitalsSheet testID="machine-processes-tiles-loading" columns={3}>
       {keys.map((key) => (
         <VitalsTile
           key={key}
           label={t(`machineProcesses.tiles.${key}`)}
-          value={<HappierSkeletonBlock color={color} width={64} height={18} />}
+          value={<HappierSkeletonBlock color={color} width={64} height={props.compact ? 14 : 18} />}
         >
           <HappierSkeletonBlock color={color} width="100%" height={4} />
           {props.compact ? null : <Text style={styles.note}> </Text>}
@@ -350,6 +359,9 @@ function ProcessesTilesLoading(props: Readonly<{ compact: boolean }>) {
       ))}
     </VitalsSheet>
   );
+  return props.compact ? (
+    <VitalsTileRoomContext.Provider value={PHONE_TILE_ROOM}>{sheet}</VitalsTileRoomContext.Provider>
+  ) : sheet;
 }
 
 const styles = StyleSheet.create((theme) => ({

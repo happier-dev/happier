@@ -76,6 +76,61 @@ const VitalsSheetStackedContext = React.createContext(false);
 const VitalsValueInRowContext = React.createContext(false);
 
 /**
+ * The room a tile's host gives it. The Overview's sheet gives a tile everything (the default); a Metric widget
+ * gives each of its sizes what fits there (lab `rw` M, MM: Wide puts the figure beside the chart, Wide and Medium
+ * keep the chart alone, only the sizes with height keep the minute maximum, per-core, composition and swap).
+ * The host decides the room once; every tile reads it here, so no tile grows a widget-only variant.
+ */
+export type VitalsTileRoom = Readonly<{
+  /**
+   * `side`: the label, figure and sub line stand left of the instruments (a short, wide host). `line`: one meter row,
+   * the label at the left and the figure at the right on one line, the instruments beneath (a phone's Processes
+   * tiles, lab `rp` Hp); the tile's quiet top-right fact is left to the page.
+   */
+  layout: 'stack' | 'side' | 'line';
+  /**
+   * `primary`: only the tile's first instrument (its chart or volume rows); `secondary` adds the next ones
+   * (per-core, composition); `all` also draws the last details (swap). See {@link VitalsTileSecondary}.
+   */
+  instruments: 'all' | 'secondary' | 'primary';
+  /** Whether a history chart also draws its minute maximum (and the key that names the two lines). */
+  chartMaximum: boolean;
+  /** Whether the tile pads itself; a widget body already holds its content to the frame's inset. */
+  inset: boolean;
+  /**
+   * How the history chart takes its room. `plot`: the tile's plot with its scale and axis. `spark`: the bare line
+   * beneath the figure, with no scale or axis (a Small widget, lab `rw` M).
+   */
+  chart: 'plot' | 'spark';
+  /**
+   * Whether the chart takes what the host's room leaves after the tile's own lines (a widget measures its room and
+   * gives the tile that height), instead of the plot's default height. Without a measured room it keeps the default.
+   */
+  fill: boolean;
+  /**
+   * Whether the tile names itself. A host that already names the tile's vital (a Metric widget's frame title, "CPU")
+   * says `false`: the label is not drawn, only the quiet facts that stand beside it, and the figure takes the tile's
+   * open target.
+   */
+  title: boolean;
+}>;
+const FULL_TILE_ROOM: VitalsTileRoom = Object.freeze({ layout: 'stack', instruments: 'all', chartMaximum: true, inset: true, chart: 'plot', fill: false, title: true });
+export const VitalsTileRoomContext = React.createContext<VitalsTileRoom>(FULL_TILE_ROOM);
+export function useVitalsTileRoom(): VitalsTileRoom {
+  return React.useContext(VitalsTileRoomContext);
+}
+
+/**
+ * A tile's instrument after its first: `secondary` (per-core, composition) is drawn unless the host gives only
+ * the primary room; `tertiary` (swap) only where the host gives the tile all of its room.
+ */
+export function VitalsTileSecondary(props: Readonly<{ children: React.ReactNode; tier?: 'secondary' | 'tertiary' }>) {
+  const instruments = useVitalsTileRoom().instruments;
+  const shown = instruments === 'all' || (instruments === 'secondary' && props.tier !== 'tertiary');
+  return shown ? <>{props.children}</> : null;
+}
+
+/**
  * A tile shown somewhere else (a Metric widget) opens its machine page from its title. The tile's own
  * chart and disclosures stay separate controls, never nested inside one big button.
  */
@@ -99,6 +154,32 @@ export const VitalsTile = React.memo(function VitalsTile(
 ) {
   const open = React.useContext(VitalsTileOpenContext);
   const stacked = React.useContext(VitalsSheetStackedContext);
+  const room = useVitalsTileRoom();
+  const side = room.layout === 'side' && props.children != null;
+  const figure = (
+    <>
+      <View style={styles.valueRow}>{props.value}</View>
+      {props.sub ? <View style={styles.sub}>{props.sub}</View> : null}
+    </>
+  );
+  if (room.layout === 'line') {
+    return (
+      <View testID={props.testID} style={[styles.tile, styles.lineTile]}>
+        <View style={styles.rowTile}>
+          <View style={[styles.rowText, styles.labelRow]}>
+            <Text accessibilityRole="header" numberOfLines={1} style={styles.rowLabel}>
+              {props.label}
+            </Text>
+            {props.labelAccessory}
+          </View>
+          <View style={styles.rowValue}>
+            <VitalsValueInRowContext.Provider value>{props.value}</VitalsValueInRowContext.Provider>
+          </View>
+        </View>
+        {props.children ? <View style={styles.lineBody}>{props.children}</View> : null}
+      </View>
+    );
+  }
   if (stacked && !props.children && !open && (props.meta === undefined || props.meta === null)) {
     return (
       <View testID={props.testID} style={[styles.tile, styles.rowTile]}>
@@ -118,9 +199,11 @@ export const VitalsTile = React.memo(function VitalsTile(
     );
   }
   return (
-    <View testID={props.testID} style={styles.tile}>
-      <View style={styles.labelRow}>
-        {open ? (
+    <View testID={props.testID} style={[styles.tile, room.inset ? null : styles.tileFlush, side ? styles.tileSide : null, room.fill ? styles.tileFill : null]}>
+      <View style={side ? styles.sideLead : null}>
+      {room.title || props.labelAccessory || (props.meta !== undefined && props.meta !== null) ? (
+      <View style={[styles.labelRow, room.title ? null : styles.labelRowUntitled]}>
+        {!room.title ? null : open ? (
           <HappierPressable
             testID={props.testID ? `${props.testID}.open` : undefined}
             accessibilityRole="button"
@@ -143,10 +226,20 @@ export const VitalsTile = React.memo(function VitalsTile(
           <View style={styles.meta}>{props.meta}</View>
         ) : null}
       </View>
-      <View style={styles.valueRow}>{props.value}</View>
-      {props.sub ? <View style={styles.sub}>{props.sub}</View> : null}
+      ) : null}
+      {room.title || !open ? figure : (
+        <HappierPressable
+          testID={props.testID ? `${props.testID}.open` : undefined}
+          accessibilityRole="button"
+          accessibilityLabel={open.accessibilityLabel}
+          onPress={open.onOpen}
+        >
+          {figure}
+        </HappierPressable>
+      )}
+      </View>
       {props.children ? (
-        <View style={styles.body}>{props.children}</View>
+        <View style={[side ? styles.sideBody : styles.body, room.fill ? styles.bodyFill : null]}>{props.children}</View>
       ) : null}
     </View>
   );
@@ -178,7 +271,7 @@ export function VitalsValue(
         </Text>
       ) : null}
       {props.phrase ? (
-        <Text numberOfLines={1} style={styles.phrase}>
+        <Text numberOfLines={1} style={[styles.phrase, inRow ? styles.phraseInRow : null]}>
           {props.phrase}
         </Text>
       ) : null}
@@ -258,6 +351,10 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
     minHeight: 18,
   },
+  // A tile its host names carries only its quiet facts, at the end.
+  labelRowUntitled: {
+    justifyContent: 'flex-end',
+  },
   label: {
     ...Typography.variant('meta'),
     ...Typography.default('medium'),
@@ -312,6 +409,10 @@ const styles = StyleSheet.create((theme) => ({
     marginLeft: theme.space.s6,
     flexShrink: 1,
   },
+  // A row's figure reads as one run ("84.4 GB free"); the headline's extra air before its phrase is a tile's.
+  phraseInRow: {
+    marginLeft: 0,
+  },
   sub: {
     marginTop: theme.space.s2,
     minWidth: 0,
@@ -324,6 +425,35 @@ const styles = StyleSheet.create((theme) => ({
   strong: {
     ...Typography.default('medium'),
     color: theme.colors.text.primary,
+  },
+  tileFlush: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+  },
+  // Side by side (a Wide widget): the figure keeps its column, the chart takes the rest.
+  tileSide: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: theme.space.s20,
+  },
+  sideLead: {
+    flexBasis: '38%',
+    flexShrink: 0,
+    minWidth: 0,
+  },
+  sideBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: HAPPIER_DATA_METRICS.rowGapPx,
+  },
+  // A filling tile stretches to the room its host measured; its body hands the rest to the chart.
+  tileFill: {
+    flexGrow: 1,
+    alignItems: 'stretch',
+  },
+  bodyFill: {
+    flexGrow: 1,
   },
   rowTile: {
     flexDirection: 'row',
@@ -349,6 +479,15 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.variant('label'),
     ...Typography.tabular(),
     color: theme.colors.text.primary,
+  },
+  lineTile: {
+    paddingTop: PAGE_LIST_METRICS.rowPaddingVerticalPx,
+    paddingBottom: PAGE_LIST_METRICS.rowPaddingVerticalPx,
+  },
+  lineBody: {
+    marginTop: theme.space.s8,
+    gap: HAPPIER_DATA_METRICS.rowGapPx,
+    minWidth: 0,
   },
   body: {
     marginTop: HAPPIER_DATA_METRICS.blockGapPx,

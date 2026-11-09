@@ -4,7 +4,7 @@ import type { ReactTestInstance, ReactTestRenderer } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
-import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol';
+import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol/devices/simulator/v1';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');

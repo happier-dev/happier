@@ -4,8 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import type { MachineVitalsRange } from '@/sync/domains/machines/resources/machineRpc';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
+import { usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
+import { MACHINE_VITALS_RANGE_UI_KEY, machineVitalsRangeState } from '@/sync/domains/state/navigationUiState';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
@@ -16,6 +16,7 @@ import { readMachinePublishedResources } from '@/components/machines/summary/mac
 import { EMPTY_MACHINE_RESOURCE_STATE, isMachineResourceStateStale, machineResourceStore } from '@/sync/domains/machines/resources/machineResourceStore';
 import { useMachineDaemonReadTarget } from '@/sync/domains/machines/useMachineDaemonReadTarget';
 import { useMachineResourceRefreshing } from '@/sync/domains/machines/resources/useMachineResourceSummary';
+import { useMachineMonitoringMode } from '@/sync/domains/machines/resources/useMachineMonitoringMode';
 
 import { MACHINE_VITALS_RANGES, selectMachineVitalsOverviewView, type MachineVitalsOverviewView } from './machineVitalsPresentation';
 
@@ -30,9 +31,9 @@ export function useMachineVitalsRange(): readonly [
   MachineVitalsRange,
   (next: MachineVitalsRange) => void,
 ] {
-  const range = useLocalSetting('machineVitalsRangeV1');
+  const range = usePersistentUiStateValue(machineVitalsRangeState, MACHINE_VITALS_RANGE_UI_KEY) ?? '1h';
   const setRange = React.useCallback((next: MachineVitalsRange) => {
-    getStorage().getState().applyLocalSettings({ machineVitalsRangeV1: next }, { source: 'ui' });
+    machineVitalsRangeState.set(MACHINE_VITALS_RANGE_UI_KEY, next);
   }, []);
   return [range, setRange] as const;
 }
@@ -96,6 +97,8 @@ const styles = StyleSheet.create({
 
 /** The chip for an Overview state: nothing while the first sample loads, Live, As of · Retry, or As of offline. */
 export function resolveVitalsFreshnessChip(view: MachineVitalsOverviewView, onRetry: () => void, refreshing = false): MachineFreshness {
+    // Off with an earlier reading: "As of 10:42", nothing to retry — nothing is reading.
+    if (view.kind === 'monitoring_off') return view.sample ? { kind: 'offline', at: view.sample.sampledAt } : { kind: 'none' };
     if (view.kind !== 'ready') return { kind: 'none' };
     if (view.freshness === 'offline') return { kind: 'offline', at: view.sample.sampledAt };
     if (refreshing) return { kind: 'checking', at: view.sample.sampledAt };
@@ -120,13 +123,14 @@ export const MachineVitalsBarAccessory = React.memo(function MachineVitalsBarAcc
     const subscribe = React.useCallback((listener: () => void) => machineResourceStore.observe(key, listener), [key]);
     const getSnapshot = React.useCallback(() => readTarget.accountMatches ? machineResourceStore.getState(key) : EMPTY_MACHINE_RESOURCE_STATE, [key, readTarget.accountMatches]);
     const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-    const view = selectMachineVitalsOverviewView({ online: props.online, published,
+    const monitoring = useMachineMonitoringMode(props);
+    const view = selectMachineVitalsOverviewView({ online: props.online, published, monitoring,
         state: { ...state, stale: isMachineResourceStateStale(state, Date.now()) } });
     const retry = React.useCallback(() => {
         if (!readTarget.enabled) return;
         machineResourceStore.retry(key);
         machineResourceStore.retryHistory({ ...readTarget.key, range });
     }, [key, readTarget.enabled, readTarget.key, range]);
-    if (view.kind !== 'loading' && view.kind !== 'ready') return null;
+    if (view.kind !== 'loading' && view.kind !== 'ready' && !(view.kind === 'monitoring_off' && view.sample)) return null;
     return <MachineVitalsRangeBar freshness={props.online === null ? { kind: 'none' } : resolveVitalsFreshnessChip(view, retry, refreshing)} showRange={view.kind === 'ready'} placement="bar" />;
 });

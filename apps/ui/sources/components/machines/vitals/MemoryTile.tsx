@@ -38,6 +38,7 @@ import {
   VitalsEmphasis,
   VitalsSubLine,
   VitalsTile,
+  VitalsTileSecondary,
   VitalsValue,
 } from './VitalsSheet';
 import {
@@ -295,7 +296,10 @@ export const MemoryTile = React.memo(function MemoryTile(
           {...(threshold ? { threshold } : {})}
         />
       ) : null}
-      <MemoryComposition memory={memory} />
+      <VitalsTileSecondary>
+        <MemoryComposition memory={memory} />
+      </VitalsTileSecondary>
+      <VitalsTileSecondary tier="tertiary">
       {memory.swap ? (
         <SwapMeter
           swap={memory.swap}
@@ -304,6 +308,7 @@ export const MemoryTile = React.memo(function MemoryTile(
           }
         />
       ) : null}
+      </VitalsTileSecondary>
       {noPressure ? (
         <Text style={styles.note}>
           {t('machineVitals.memory.noPressureNote')}

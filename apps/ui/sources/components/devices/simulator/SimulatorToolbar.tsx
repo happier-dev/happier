@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 
 import { IconButton, type IconButtonIconName } from '@/components/ui/buttons/IconButton';
 import {

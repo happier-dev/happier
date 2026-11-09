@@ -8,7 +8,7 @@ import { MachineGuardActivityRowV1Schema, type MachineGuardActivityRowV1 } from 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 
-import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { WidgetFrameBodyMetaContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -20,6 +20,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { createMachineGuardViewFixture } from '@/sync/domains/machines/guard/guardViewFixtures';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { t } from '@/text';
 
 installDisconnectedServerSocketBoundary();
 const transport = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -156,6 +157,19 @@ afterEach(async () => {
 });
 
 describe('MachineGuardWidget', () => {
+  it.each([false, true])('localizes an untitled Session in compact candidates and warnings (warning=%s)', async warning => {
+    const view = createMachineGuardViewFixture({
+      policy: MachineGuardPolicyV1Schema.parse({ memoryGuard: { enabled: true }, idleSessions: { enabled: true } }),
+      idle: warning ? [{ sessionRef: 'untitled', title: null, agentId: 'codex', status: 'stops_at', stopAt: Date.now() + 60_000, idleMs: 60_000 }] : [],
+    });
+    view.ladder.steps[2] = { rung: 'idleSessions', enabled: true, status: 'next', freesAboutBytes: GiB,
+      candidates: [{ ref: 'untitled', kind: 'session', label: null, qualifier: 'idle', footprintBytes: GiB }] };
+    const { screen } = await mount({ size: 'small', view });
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(screen.getTextContent()).toContain(t('session.untitled'));
+    });
+  });
   it('does not call a withdrawn unknown Machine offline or claim its held Guard state is current', async () => {
     const { screen, serverId } = await mount();
     await vi.waitFor(() => expect(screen.findByTestId('guard-widget.state')).not.toBeNull());
@@ -178,8 +192,10 @@ describe('MachineGuardWidget', () => {
     const { screen } = await mount({ size, activity: [yesterday], view: createMachineGuardViewFixture({
       policy: MachineGuardPolicyV1Schema.parse({ memoryGuard: { enabled: true } }), recentActivity: [],
     }) });
-    await act(async () => {
-      await vi.waitFor(() => expect(screen.getTextContent()).toContain(size === 'wide' ? 'It last acted' : 'Yesterday build'));
+    await vi.waitFor(async () => {
+      // Finish each commit so GuardOn can mount and demand its Activity history.
+      await flushHookEffects();
+      expect(screen.getTextContent()).toContain(size === 'wide' ? 'It last acted' : 'Yesterday build');
     });
     expect(transport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST
       && call.payload.range === '7d' && call.payload.filter === 'all')).toBe(true);
@@ -191,8 +207,9 @@ describe('MachineGuardWidget', () => {
         rule: 'memory_guard', outcome: 'done', attribution: { kind: 'unknown' } })],
     });
     const { screen } = await mount({ view });
-    await act(async () => {
-      await vi.waitFor(() => expect(transport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST)).toBe(true));
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(transport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST)).toBe(true);
     });
     expect(screen.getTextContent()).not.toContain('Last action');
   });

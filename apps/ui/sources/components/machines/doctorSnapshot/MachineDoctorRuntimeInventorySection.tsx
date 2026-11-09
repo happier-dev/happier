@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import type {
     DoctorSnapshot,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

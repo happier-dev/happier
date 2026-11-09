@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
 import {
   createMachineFixture,
@@ -99,3 +100,6 @@ describe('machines needing attention', () => {
     await hook.unmount();
   });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

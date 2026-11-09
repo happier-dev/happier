@@ -13,6 +13,7 @@ import type { StorageItemV1 } from '@happier-dev/protocol/storage/storageV1';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { usageSignatureAccent } from '@/components/settings/usage/usageAccent';
 import { beginMachinePageTabIntent } from '@/components/machines/page/machinePageIntent';
+import { useMachineTabCompactLayout } from '@/components/machines/page/useMachineTabCompactLayout';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import {
   StorageCategoryRow,
@@ -99,6 +100,8 @@ type StorageWidgetView = Readonly<{
   > | null;
   offline: boolean;
   recipient: boolean;
+  /** Protection awaits the machine's resources policy: sizes only, no cleanup action. */
+  policyUnavailable: boolean;
 }>;
 
 /**
@@ -193,6 +196,16 @@ function MachineStorageWidgetBody(
         testID={props.testID}
       />
     );
+  // Protection and cleanup await the machine's resources policy and nothing was sized yet: the tab's notice, in the widget's frame.
+  if (tabView.kind === 'policy_unavailable')
+    return (
+      <MachineWidgetState
+        kind="unavailable"
+        title={t('machineStorage.states.policyUnavailable')}
+        reason={t('machineStorage.states.policyUnavailableReason')}
+        testID={`${props.testID}.policy`}
+      />
+    );
   if (tabView.kind === 'loading')
     return <MachineWidgetState kind="loading" rows={2} testID={props.testID} />;
   const summary = tabView.summary;
@@ -229,8 +242,10 @@ function MachineStorageWidgetBody(
     ) ?? null;
   // The daemon's verified-Safe figure for this volume (40c): absent is not reported (or not yet measured), 0 is
   // a measured zero. A recipient's projection omits it; there it is simply not shown.
-  const volumeCanGo = tabView.recipient ? null : (volume.canGoBytes ?? null);
-  const measuring = !tabView.recipient && volume.canGoBytes === undefined;
+  // While the policy is unavailable the sizes stay but nothing is claimed as able to go.
+  const cleanupKnown = !tabView.recipient && !tabView.policyUnavailable;
+  const volumeCanGo = cleanupKnown ? (volume.canGoBytes ?? null) : null;
+  const measuring = cleanupKnown && volume.canGoBytes === undefined;
   const view: StorageWidgetView = {
     summary,
     volume,
@@ -238,6 +253,7 @@ function MachineStorageWidgetBody(
     reason,
     offline: tabView.offline,
     recipient: tabView.recipient,
+    policyUnavailable: tabView.policyUnavailable,
     canGoBytes: volumeCanGo,
     headline: volume.volume.volumeId === headline?.volume.volumeId,
   };
@@ -275,10 +291,13 @@ function StorageWidgetComposition(
     <StorageCapacityLegend
       view={view}
       free={size === 'tall' || size === 'large'}
+      // Beside the ring the legend is its key, one line each with the figure right-aligned (lab `rw` ST);
+      // under the ring (Tall) the entries run on.
+      layout={size === 'tall' ? 'flow' : 'key'}
       testID={`${props.testID}.legend`}
     />
   );
-  const canAct = !view.offline && !view.recipient;
+  const canAct = !view.offline && !view.recipient && !view.policyUnavailable;
   const actions = (
     <StorageWidgetActions
       view={view}
@@ -559,7 +578,7 @@ function StorageCapacityRing(
 
 /** The ring's key: the three parts with their amounts (and Free where there is room), or "Measuring what can go…". */
 function StorageCapacityLegend(
-  props: Readonly<{ view: StorageWidgetView; free: boolean; testID: string }>,
+  props: Readonly<{ view: StorageWidgetView; free: boolean; layout: 'flow' | 'key'; testID: string }>,
 ) {
   const language = usePreferredLanguage();
   const { theme } = useUnistyles();
@@ -628,7 +647,7 @@ function StorageCapacityLegend(
         segments={segments}
         variant="legend"
         unknownLabel=""
-        appearance={{ legend: 'compact', figure: 'value' }}
+        appearance={{ legend: 'compact', figure: 'value', layout: props.layout }}
         valueFormatter={format}
       />
       {measuring ? (
@@ -753,10 +772,10 @@ function StorageReviewAction(
   });
   const safe = React.useMemo(
     () =>
-      props.view.summary.suggestionsTop.filter(
+      (props.view.summary.suggestionsSafeTop ?? props.view.summary.suggestionsTop).filter(
         (item) => item.verdict === 'safe' && item.collectable,
       ),
-    [props.view.summary.suggestionsTop],
+    [props.view.summary.suggestionsSafeTop, props.view.summary.suggestionsTop],
   );
   const review = React.useCallback(() => {
     // Add only: a second press must never take back what is already collected.
@@ -833,6 +852,7 @@ function StorageWidgetCategories(
           largest={largest}
           facts={describeStorageCategoryFacts(category, null)}
           compact
+          cleanupHidden={props.view.policyUnavailable}
           showDivider={index < categories.length - 1}
           onOpen={openCategory}
         />
@@ -875,6 +895,9 @@ function StorageWidgetEasyRows(
     machineId: props.target.machineId,
     readOnly: !props.canAct,
   });
+  // The card's own width decides the row's composition, as a page's body width does for its rows (a phone's card
+  // holds the bar and the verdict beneath the name instead of in columns it has no room for).
+  const layout = useMachineTabCompactLayout();
   const total = props.items.reduce(
     (sum, item) => sum + item.size.freesBytes,
     0,
@@ -884,7 +907,7 @@ function StorageWidgetEasyRows(
     0,
   );
   return (
-    <View testID={`${props.testID}.easy`} style={styles.section}>
+    <View testID={`${props.testID}.easy`} style={styles.section} onLayout={layout.onLayout}>
       <MachineWidgetSectionLabel
         label={t('machineStorage.suggestions.easy')}
         meta={t('machines.widgets.body.storage.easyMeta', {
@@ -903,7 +926,7 @@ function StorageWidgetEasyRows(
           largest={largest}
           freesBytes={item.size.freesBytes}
           chip={describeStorageVerdict(item)}
-          compact={false}
+          compact={layout.compact}
           collect={
             props.canAct ? collect.rowProps(item, props.items) : undefined
           }

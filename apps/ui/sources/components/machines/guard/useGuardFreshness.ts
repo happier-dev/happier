@@ -1,7 +1,6 @@
 import * as React from 'react';
 
 import type { MachineFreshness } from '@/components/machines/page/MachineFreshnessChip';
-import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import { useMachineGuardView, type MachineGuardActivityHookResult } from '@/sync/domains/machines/guard/useMachineGuardView';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
@@ -31,8 +30,7 @@ export function useGuardActivityFreshness(activity: MachineGuardActivityHookResu
  */
 export function useGuardFreshness(input: Readonly<{ serverId: string; machineId: string }>): MachineFreshness {
     const guard = useMachineGuardView(input);
-    const { reachability } = useMachinePresenceSummary(input.serverId, input.machineId);
-    const { lastSeenAt } = useMachineTabFacts(input.serverId, input.machineId);
+    const { reachability, lastSeenAt = null } = useMachinePresenceSummary(input.serverId, input.machineId);
     const { view, offline, status, pending, receivedAtMs, retry } = guard;
     return React.useMemo((): MachineFreshness => {
         if (reachability === 'unknown') return NONE;

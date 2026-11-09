@@ -7,6 +7,7 @@ import type {
   StorageItemV1,
 } from '@happier-dev/protocol/storage/storageV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import {
   getWidgetSizeFootprintV1,
   type WidgetSizeV1,
@@ -45,6 +46,7 @@ const { storage } = await import('@/sync/domains/state/storageStore');
 const { MachineStorageWidget } = await import('./MachineStorageWidget');
 const { MachineWorktreesWidget } = await import('./MachineWorktreesWidget');
 const { t } = await import('@/text');
+const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
 
 const GB = 1_000_000_000;
 const size = (bytes: number) => ({
@@ -170,6 +172,7 @@ async function mount(
   input: Record<string, unknown> = {},
   overrides: Partial<Machine> = {},
   summary: HappierStorageSummaryV1 = SUMMARY,
+  policyRefused: () => boolean = () => false,
 ) {
   const serverId = await home.addHome({
     name: 'Widget Home',
@@ -198,6 +201,7 @@ async function mount(
   const calls: Rpc[] = [];
   transport.rpc.mockImplementation(async (rpc: Rpc) => {
     calls.push(rpc);
+    if (policyRefused()) throw new RpcError('Storage policy is unavailable', 'policy_unavailable');
     const input = rpc.payload ?? {};
     switch (rpc.method) {
       case RPC_METHODS.DAEMON_STORAGE_WATCH:
@@ -375,5 +379,52 @@ describe('Machine storage widgets', () => {
       );
     });
     expect(gone.screen.getTextContent()).not.toContain('0 GB');
+  });
+
+  it('Storage: an unreadable resources policy says so in the widget, and once sized it keeps the disk but offers no Review', async () => {
+    const never = await mount('storage', 'medium', {}, {}, SUMMARY, () => true);
+    await act(async () => {
+      await vi.waitFor(() =>
+        expect(never.screen.findByTestId('widget.policy.unavailable')).not.toBeNull(),
+      );
+    });
+    expect(never.screen.getTextContent()).toContain(t('machineStorage.states.policyUnavailable'));
+    standardCleanup();
+    machineStorageStore.reset();
+    let refused = false;
+    const sized = await mount('storage', 'medium', {}, {}, SUMMARY, () => refused);
+    await act(async () => {
+      await vi.waitFor(() => expect(sized.screen.findByTestId('widget.review')).not.toBeNull());
+    });
+    refused = true;
+    const resolution = await resolveServerCredentialAccountScope(sized.serverId);
+    if (resolution.kind !== 'bound') throw new Error('Widget Home must be bound');
+    await act(async () => {
+      await machineStorageStore.read({ serverId: resolution.scope.serverId, machineId: 'machine', expectedAccountId: resolution.scope.accountId });
+    });
+    expect(sized.screen.findByTestId('widget.review')).toBeNull();
+    expect(sized.screen.getTextContent()).toContain('412 GB free');
+    expect(sized.screen.getTextContent()).not.toContain(t('machineStorage.breakdown.canGo'));
+  });
+
+  it('Storage Large: a suggestion row recomposes to the width the widget gives it, so a phone card never clips the size or the verdict', async () => {
+    const { screen } = await mount('storage', 'large');
+    await act(async () => {
+      await vi.waitFor(() => expect(screen.findByTestId('widget.easy.pw')).not.toBeNull());
+    });
+    const placesFiguresBeneathTitle = () => screen.findAllByTestId('widget.easy.pw').some(node => node.props.bottomElement != null);
+    // Before the widget has a measure, or on a wide card, the row keeps its one-line composition.
+    expect(placesFiguresBeneathTitle()).toBe(false);
+    await act(async () => {
+      screen.findHostByTestId('widget.easy')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 332, height: 160 } } });
+    });
+    // A phone card (332 px of row): the bar and the verdict sit beneath the name, the size stays beside it, the tick stays.
+    expect(placesFiguresBeneathTitle()).toBe(true);
+    expect(screen.findByTestId('widget.easy.pw-collect')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('Playwright browsers');
+    await act(async () => {
+      screen.findHostByTestId('widget.easy')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 880, height: 160 } } });
+    });
+    expect(placesFiguresBeneathTitle()).toBe(false);
   });
 });

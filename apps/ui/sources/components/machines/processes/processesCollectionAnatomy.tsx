@@ -28,12 +28,14 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 
 import { resolveOwnershipLabel } from './ownershipLabelPresentation';
 import { ProcessPortChip } from './ProcessPortMenu';
 import {
+  describeEndedOwner,
   describeProcessIdentity,
   describeProcessTitle,
   processGlyphName,
@@ -51,6 +53,31 @@ export const ProcessesRowNotesContext = React.createContext<ReadonlyMap<string, 
 
 /** A trend is drawn only where something moves (lab `rp` H): a flat line is noise. */
 const SPARK_MIN_SPREAD_PERCENT = 0.2;
+/** The inline trend's width, and the points it draws: about one every 3 px, so a long sample run reads as a line. */
+const SPARK_WIDTH_PX = 84;
+const SPARK_POINTS = 28;
+
+/** Mean CPU per equal slice of the sampled span; a slice with no reading stays a gap. */
+function bucketSparkPoints(samples: readonly ProcessSampleV1[]): { id: string; x: number; y: number | null }[] {
+  if (samples.length <= SPARK_POINTS) {
+    return samples.map((sample) => ({ id: String(sample.capturedAtMs), x: sample.capturedAtMs, y: sample.cpuPercent ?? null }));
+  }
+  const times = samples.map((sample) => sample.capturedAtMs);
+  const first = Math.min(...times);
+  const span = Math.max(1, Math.max(...times) - first);
+  const sums = new Array<number>(SPARK_POINTS).fill(0);
+  const counts = new Array<number>(SPARK_POINTS).fill(0);
+  for (const sample of samples) {
+    if (typeof sample.cpuPercent !== 'number') continue;
+    const index = Math.min(SPARK_POINTS - 1, Math.floor(((sample.capturedAtMs - first) / span) * SPARK_POINTS));
+    sums[index] += sample.cpuPercent;
+    counts[index] += 1;
+  }
+  return sums.map((sum, index) => {
+    const x = Math.round(first + ((index + 0.5) / SPARK_POINTS) * span);
+    return { id: String(x), x, y: counts[index]! > 0 ? sum / counts[index]! : null };
+  });
+}
 
 export type ProcessesAnatomyInput = Readonly<{
   serverId: string;
@@ -62,6 +89,16 @@ export type ProcessesAnatomyInput = Readonly<{
   history?: MachineProcessesAnswerV1['history'];
   /** A phone row: CPU and the status under the name, memory at the right (lab `rp` Hp). */
   compact: boolean;
+  /**
+   * With `compact`: the memory stands at the end of the name's own line (a widget's rows, lab `rw` C), not at the end
+   * of the line beneath it as on the phone's tab.
+   */
+  memoryOnTitleLine?: boolean;
+  /**
+   * With `compact`: one line per row (a widget's "Using the most", lab `rw` C): the name, its status inline after it
+   * and the memory at the end, through the Collection's single-line list row. No CPU line beneath.
+   */
+  singleLine?: boolean;
   /** The same rows with nothing to act on (Overview's "Using the most", plan 60's tool body). */
   readOnly?: boolean;
   /** Rows leave through this wrapper (stop-and-ease); read-only callers omit it. */
@@ -207,7 +244,6 @@ export const ProcessPortChips = React.memo(function ProcessPortChips(
           accessibilityLabel={props.ports.slice(shown.length).map((port) => `:${port.port}`).join(', ')}
           // The row opens on its own press; the count only reveals its ports.
           onPress={(event) => { event?.stopPropagation?.(); setShowAll(true); }}
-          hitSlop={8}
         >
           <Text numberOfLines={1} style={styles.moreChips}>{`+${hidden}`}</Text>
         </HappierPressable>
@@ -398,14 +434,16 @@ function LeftBehindOwnerLine(
     [owner, props.serverId],
   );
   const [title] = useSessionDisplayTitles(addresses);
+  const isSessionVisible = useSessionRecordingVisibility();
   const when = formatRelativeTimeShort(
     props.item.row.confirmedAtMs,
     Date.now(),
   );
   return (
-    <Text numberOfLines={1} style={styles.quiet}>
+    <Text numberOfLines={2} style={styles.quiet}>
       {t('machineProcesses.leftBehindRow', {
-        owner: title ?? t('machineProcesses.endedOwner'),
+        owner: owner.kind === 'session' && !isSessionVisible({ sessionId: owner.sessionId, serverId: props.serverId })
+          ? describeEndedOwner(owner) : title ?? describeEndedOwner(owner),
         when,
       })}
     </Text>
@@ -452,11 +490,7 @@ const ProcessSpark = React.memo(function ProcessSpark(
         id: 'cpu',
         label: props.label,
         color: theme.colors.text.secondary,
-        points: (props.samples ?? []).map((sample) => ({
-          id: String(sample.capturedAtMs),
-          x: sample.capturedAtMs,
-          y: sample.cpuPercent ?? null,
-        })),
+        points: bucketSparkPoints(props.samples ?? []),
       },
     ];
   }, [props.label, props.samples, theme.colors.text.secondary]);
@@ -469,7 +503,7 @@ const ProcessSpark = React.memo(function ProcessSpark(
       variant="line"
       size="inline"
       fitLine
-      width={84}
+      width={SPARK_WIDTH_PX}
     />
   );
 });
@@ -593,7 +627,14 @@ export function useProcessesCollectionAnatomy(
     return {
       glyph: (item) => <ProcessGlyph item={item} input={input} />,
       title,
-      ...(input.compact
+      ...(input.compact && input.singleLine
+        ? {
+            titleSuffix: (item: ProcessesItem) => (
+              <ProcessRowWhere item={item} input={input} />
+            ),
+            titleMeta: memory,
+          }
+        : input.compact
         ? {
             // Phone (lab `rp` Hp): the name takes the row, CPU and the status beneath, memory at the right.
             byline: (item: ProcessesItem) => (
@@ -607,7 +648,7 @@ export function useProcessesCollectionAnatomy(
                 <ProcessRowWhere item={item} input={input} />
               </View>
             ),
-            reason: memory,
+            ...(input.memoryOnTitleLine ? { titleMeta: memory } : { reason: memory }),
           }
         : {
             // The table keeps the status, command, label and ports on the title line (lab `rp` H); a table too

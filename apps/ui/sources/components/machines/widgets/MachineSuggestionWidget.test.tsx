@@ -1,24 +1,31 @@
 import {
   renderWithSessionTranscriptSource,
   createTestSessionTranscriptSource,
+  flushHookEffects,
 } from '@/dev/testkit';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  API_TOKEN_FULL_GRANT_V1,
+  API_TOKEN_FULL_GRANT_V1} from '@happier-dev/protocol/auth/apiTokenGrant';
+import {
   ApprovalRequestSchema,
   ApprovalRequestV2Schema,
-  ARTIFACT_PLAIN_DATA_KEY_MARKER,
-  StrictJsonValueSchema,
-  buildApprovalRequestArtifactHeaderV1,
-  computeExternalActionRequestEnvelopeDigestV1,
-  encodePlainArtifactStoredContent,
-  ExternalActionRequestEnvelopeV1Schema,
-  ExternalActionResponseEnvelopeV1Schema,
-  signExternalActionApprovalInputV1,
   type ApprovalRequestV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
+  ARTIFACT_PLAIN_DATA_KEY_MARKER,
+  encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+  StrictJsonValueSchema} from '@happier-dev/protocol/json/strictJsonValue';
+import {
+  buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import {
+  computeExternalActionRequestEnvelopeDigestV1,
+  signExternalActionApprovalInputV1} from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import {
+  ExternalActionRequestEnvelopeV1Schema,
+  ExternalActionResponseEnvelopeV1Schema} from '@happier-dev/protocol/actions/externalActionApi';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type {
   MachineStorageTrashMoveInputV1,
@@ -294,7 +301,10 @@ describe('MachineSuggestionWidget', () => {
     webLocks = installWebLockManagerMock();
     await home.reset();
     homeId = await home.addHome({ name: 'Home A', serverUrl: 'https://suggestion-home.example', serverIdentityId: 'srv_stable-home-a', accountId: 'account-1', currentAccount: true });
-    home.answer(homeId, 'GET /v1/machines', { body: [{ ...createPlainMachineRowFixture({ id: MACHINE, accountId: 'account-1' }), installationId: 'installation-exact' }] });
+    const machineRow = { ...createPlainMachineRowFixture({ id: MACHINE, accountId: 'account-1' }), installationId: 'installation-exact' };
+    home.answer(homeId, 'GET /v1/machines', { body: [machineRow] });
+    // The batch-read HTTP harness resolves exact rows, as approval execution does.
+    home.answer(homeId, `GET /v1/machines/${MACHINE}`, { body: { machine: machineRow } });
     home.answer(homeId, 'POST /v1/actions/approval.request.decide', {
       select: raw => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(raw);
@@ -392,9 +402,17 @@ describe('MachineSuggestionWidget', () => {
     const screen = await render('full', request);
     await vi.waitFor(() => expect(calls(RPC_METHODS.DAEMON_STORAGE_ITEMS_CHECK)).toHaveLength(1));
     await vi.waitFor(() => expect(screen.findByTestId('widget.approve')).toBeTruthy());
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await vi.waitFor(() => expect(screen.findByTestId('widget.approve')?.props.disabled).toBe(false));
     await screen.pressByTestIdAsync('widget.approve');
-    await vi.waitFor(() => expect(readApproval()).toMatchObject({ status: 'approved', decision: { kind: 'approve' } }));
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      // Consent is committed before replay admission: wait for the actual HTTP
+      // decision and the widget's settled handler, not that transient label.
+      expect(home.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
+      expect(screen.findByTestId('widget.approve')?.props.disabled).toBe(false);
+      expect(readApproval()).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
+      expect(readApproval().execution).toBeUndefined();
+    });
     const decision = (readApproval() as ApprovalRequestV2).decision;
     const kept = (decision?.narrowedInput as { items: Array<{ ref: { itemId: string } }> }).items;
     expect(kept.map((item) => item.ref.itemId)).toEqual(items.map(item => item.ref.itemId));
@@ -419,5 +437,22 @@ describe('MachineSuggestionWidget', () => {
     await vi.waitFor(() => expect(screen.findByTestId('widget.empty')).toBeTruthy());
     expect(screen.getTextContent()).toContain('machines.widgets.body.suggestion.noneTitle');
     expect(screen.getTextContent()).not.toContain('0 GB');
+  });
+
+  it('shows the Safe preview when larger Caution items fill the general summary preview', async () => {
+    const safe = { itemId: 'safe-cache', kind: 'suggestion', categoryId: 'caches', title: 'Rebuildable cache',
+      evidence: ['managed_cache_root'], path: '/cache/safe', size: size(GB), verdict: 'safe',
+      reason: { code: 'rebuilds' }, collectable: true };
+    const previous = daemonRpc.getMockImplementation()!;
+    daemonRpc.mockImplementation(async call => call.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET
+      ? { ...SUMMARY_NO_SUGGESTIONS, suggestionsTop: [{ ...safe, itemId: 'caution-cache', path: '/cache/caution',
+          verdict: 'caution', reason: { code: 'not_rebuildable' } }], suggestionsSafeTop: [safe], suggestionsTotalCount: 1200,
+          suggestionsSafeTotalCount: 1100, suggestionsSafeFreesBytes: 42 * GB }
+      : previous(call));
+    const screen = await render('full', null);
+    await vi.waitFor(() => expect(screen.findByTestId('widget.row.safe-cache')).toBeTruthy());
+    expect(screen.findByTestId('widget.empty')).toBeNull();
+    expect(screen.findByTestId('widget.row.caution-cache')).toBeNull();
+    expect(screen.getTextContent()).toContain('42');
   });
 });

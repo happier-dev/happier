@@ -156,7 +156,7 @@ function AdoptionBody(props: Props & Partial<Pick<CustomModalInjectedProps, 'set
         label: t('machineServices.adopt.confirm'), testID: 'machine-service-adopt.confirm',
         loading: state.kind === 'applying',
         disabled: busy || missing !== null || currentReview === null,
-        ...(missing ? { accessibilityHint: missing } : {}),
+        ...(missing ? { disabledReason: missing } : {}),
         onPress: adopt,
       } })}
     />

@@ -1,4 +1,4 @@
-import type { MachinePoolMemberStateV1, MachinePoolViewV1 } from '@happier-dev/protocol';
+import type { MachinePoolMemberStateV1, MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { getMachineDisplayName, resolveMachineDisplayNames, type MachineAbsence } from '@/utils/sessions/machineDisplayNames';
 
 /** The only Machine facts a Pool row needs: an identity plus whatever readable label exists. */

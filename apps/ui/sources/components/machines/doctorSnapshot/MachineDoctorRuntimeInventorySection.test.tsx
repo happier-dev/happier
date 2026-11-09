@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
-import type { DoctorSnapshot } from '@happier-dev/protocol';
+import type { DoctorSnapshot } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 

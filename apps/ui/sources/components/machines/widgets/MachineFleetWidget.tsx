@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
+import { useShallow } from 'zustand/react/shallow';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
@@ -6,14 +8,11 @@ import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canon
 import { useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
-import {
-  collectMachineAttention,
-  type MachineAttentionEntry,
-} from '@/components/machines/attention/collectMachineAttention';
-import {
-  MACHINE_CARD_BODY_WITH_TILES_HEIGHT_PX,
-  MachineCardBody,
-} from '@/components/machines/index/MachineCardBody';
+import { MachineAddWays } from '@/components/machines/add/MachineAddWays';
+import type { MachineAttentionEntry } from '@/components/machines/attention/collectMachineAttention';
+import { useMachineAttention } from '@/sync/domains/machines/resources/useMachineAttention';
+import { MachineCardBody } from '@/components/machines/index/MachineCardBody';
+import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import {
   machinePageHref,
   machinesIndexHref,
@@ -31,6 +30,8 @@ import { beginMachinePageTabIntent } from '@/components/machines/page/machinePag
 import { mergeStableProcessOrder } from '@/components/machines/processes/processesPresentation';
 import { reanimatedDisclosureMotion } from '@/components/ui/lists/ExpandableItem';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
+import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { MachineSummaryStrip } from '@/components/machines/summary/MachineSummaryStrip';
 import { MACHINE_SUMMARY_METRICS, MACHINE_SUMMARY_STYLES, normalizeMachineSummaryMetrics, type MachineSummaryMetric, type MachineSummaryStyle, resolveMachineAttentionWordColor } from '@/components/machines/summary/machineSummaryStripModel';
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
@@ -55,7 +56,11 @@ import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/iden
 import { useMachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { useActiveServerAccountScope, useAllMachines, useIsMachineListSettled, useMachineListStatusForServer } from '@/sync/store/hooks';
+import { useIsMachineListSettled, useMachineListStatusForServer } from '@/sync/store/hooks';
+import { getStorage } from '@/sync/domains/state/storage';
+import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { useMachinesCapabilitySnapshots } from '@/updates/machineCapabilitySnapshots';
@@ -91,9 +96,8 @@ export type FleetMachine = Readonly<{
 }>;
 
 /**
- * The fleet's order (lab `FL` "Order"): this computer first, then by name, offline last. Who needs the person
- * is said by the needs-you blocks above (worst first, the Machines page's own list), so calm rows never reorder
- * while the person looks.
+ * The fleet's calm order (lab `FL` "Order"): this computer first, then by name, offline last. Machines that need
+ * the person lead above it (`useFleetRowOrder`), so calm rows never reorder by state while the person looks.
  */
 export function orderFleetMachines(
   machines: readonly FleetMachine[],
@@ -150,18 +154,21 @@ export function MachineFleetWidget(props: MachineWidgetBodyProps) {
  * them need the person, and whether the machine list has arrived. The widget and any page that
  * summarises the fleet (Settings › Overview) read this one model.
  */
-export function useMachineFleetModel() {
+export function useMachineFleetModel(owningServerId?: string) {
   const reachabilityRevision = useMachineReachabilityRevision();
-  const serverId = useActiveServerSnapshot().serverId;
-  const accountScope = useActiveServerAccountScope(serverId);
-  const allMachines = useAllMachines();
+  const explicitServerId = owningServerId?.trim();
+  const activeServer = useActiveServerSnapshot(!explicitServerId);
+  const serverId = resolveServerProfileScopeIdForIdentifier(explicitServerId || activeServer.serverId);
+  const identity = useServerCredentialAccountScopeBinding(serverId);
+  const accountScope = identity.resolution.kind === 'bound' ? identity.resolution.scope : null;
+  const allMachines = getStorage()(useShallow(state => resolveVisibleMachinesForActiveServerFromState(state, { serverId })));
   // App data can arrive before this Home's machine list: until the list has been read, an empty fleet
   // means "still reading", never "no machines" (the same readiness owner as the Setup checklist).
   const settled = useIsMachineListSettled(serverId);
   const status = useMachineListStatusForServer(serverId);
   const refresh = React.useCallback(() => {
-    fireAndForget(sync.refreshMachinesThrottled({ staleMs: 0, force: true }), { tag: 'MachineFleet.refresh' });
-  }, []);
+    fireAndForget(sync.refreshMachines({ serverId }), { tag: 'MachineFleet.refresh' });
+  }, [serverId]);
   const nowMs = useMachinePresenceNowMs(allMachines);
   const thisComputerMachineId = useThisComputerMachineId();
   const fleet = React.useMemo(() => {
@@ -174,8 +181,8 @@ export function useMachineFleetModel() {
         name: names.get(machine.id) ?? machine.id, online: reachability === 'unknown' ? null : reachability === 'reachable', thisComputer: machine.id === thisComputerMachineId };
     }));
   }, [accountScope, allMachines, nowMs, reachabilityRevision, serverId, thisComputerMachineId]);
-  const attention = React.useMemo(() => collectMachineAttention([{ serverId, accountScope, serverName: '', status,
-    machines: fleet.map((entry) => entry.machine) }], nowMs), [accountScope, fleet, nowMs, serverId, status]);
+  const attention = useMachineAttention([{ serverId, accountScope, serverName: '', status,
+    machines: fleet.map((entry) => entry.machine) }]);
   const needs = React.useMemo(() => selectAttentionSubjects(attention.entries), [attention.entries]);
   const needsByKey = React.useMemo(() => new Map(needs.map((entry) => [entry.key, entry])), [needs]);
   return { serverId, status, settled, refresh, fleet, needs, needsByKey };
@@ -183,9 +190,11 @@ export function useMachineFleetModel() {
 
 function FleetBody(props: MachineWidgetBodyProps) {
   const size = useMachineWidgetSize();
+  // The widget reads every machine, so its frame says so where a bound one names its machine (lab rw H).
+  useWidgetFrameBodyCaption(t('machines.widgets.body.activity.allMachines'));
   const device = useMachineSummarySettingValue();
   const { style, metrics } = resolveFleetPresentation(props.input, device);
-  const { serverId, status, settled: machineListSettled, refresh, fleet, needs, needsByKey } = useMachineFleetModel();
+  const { serverId, status, settled: machineListSettled, refresh, fleet, needs, needsByKey } = useMachineFleetModel(props.serverId);
   // A mounted Machines widget keeps its online machines' summaries live (one batched demand).
   const demand = React.useMemo(() => fleet.filter((entry) => entry.online).map((entry) => ({ serverId, machineId: entry.machine.id })), [fleet, serverId]);
   useMachineResourceLiveDemand(demand, { detail: 'summary', enabled: metrics.length > 0 });
@@ -212,10 +221,8 @@ function FleetBody(props: MachineWidgetBodyProps) {
       reason={t(status === 'loading' ? 'machines.widgets.body.common.loading' : 'machines.widgets.body.common.readFailed')}
       action={status === 'loading' ? undefined : { label: t('common.retry'), onPress: refresh }} />
   ) : null;
-  if (fleet.length === 0) {
-    return <MachineWidgetState kind="empty" title={t('machines.widgets.body.fleet.noMachines')}
-      action={{ label: t('machines.widgets.body.fleet.addMachine'), onPress: openIndex }} testID={props.testID} />;
-  }
+  // No machine yet (58d AF1): the empty state is the ways to add one, each opening the one Add chooser.
+  if (fleet.length === 0) return <MachineAddWays serverId={serverId} testIDPrefix={props.testID} />;
   // With one machine, Vitals says it all: this widget invites a second one instead of a list of one (lab FL).
   if (fleet.length === 1) {
     return <>{freshness}<MachineWidgetState kind="empty" title={t('machines.widgets.body.fleet.oneMachineTitle')}
@@ -255,29 +262,34 @@ function FleetBody(props: MachineWidgetBodyProps) {
   // Medium and up: every online machine in one held order; a machine that needs the person opens its block in
   // place, and when it recovers the block folds back into its calm row (lab rw FL "Order", MO).
   const online = ordered.filter((entry) => entry.online !== false);
-  const offlineRows = offline.length > 0 ? (
+  // Medium and Full are two rows high: offline machines are one quiet line at the end ("studio is offline",
+  // "8 are offline", lab FL Medium), so a long offline list never runs past the card. Tall lists them.
+  const offlineLine = describeRest([], offline, online.length);
+  const offlineEnd = size === 'tall' ? (offline.length > 0 ? (
     <>
       <Text style={styles.label}>{t('machines.widgets.body.fleet.offlineGroup', { count: offline.length })}</Text>
       {rows(offline, false)}
     </>
-  ) : null;
+  ) : null) : offlineLine ? <Text testID={`${props.testID}.rest`} numberOfLines={2} style={styles.rest}>{offlineLine}</Text> : null;
   if (size === 'full') {
     const half = Math.ceil(online.length / 2);
     return <MachineWidgetColumn testID={props.testID}>{freshness}<MachineWidgetTwoColumns lead={rows(online.slice(0, half), false)}
-      rest={<>{rows(online.slice(half), false)}{offlineRows}</>} /></MachineWidgetColumn>;
+      rest={rows(online.slice(half), false)} />{offlineEnd}</MachineWidgetColumn>;
   }
-  return <MachineWidgetColumn testID={props.testID}>{freshness}{rows(online, false)}{offlineRows}</MachineWidgetColumn>;
+  return <MachineWidgetColumn testID={props.testID}>{freshness}{rows(online, false)}{offlineEnd}</MachineWidgetColumn>;
 }
 
 /**
  * The rows' order, held while the person looks (lab FL "Order"): worst first, then calm with this computer
- * first, offline last — computed once; a machine that recovers keeps its place, a new machine joins the end.
+ * first, offline last. Machines that need the person always lead, even when that fact arrives after the rows;
+ * a machine that recovers keeps its place, and a new machine joins the end.
  */
 function useFleetRowOrder(fleet: readonly FleetMachine[], needs: readonly MachineAttentionEntry[]): readonly string[] {
-  const needKeys = new Set(needs.map((entry) => entry.key));
-  const fresh = [...needs.map((entry) => entry.key), ...fleet.filter((entry) => !needKeys.has(entry.key)).map((entry) => entry.key)];
+  const needKeys = needs.map((entry) => entry.key);
+  const needing = new Set(needKeys);
+  const fresh = fleet.filter((entry) => !needing.has(entry.key)).map((entry) => entry.key);
   const held = React.useRef<readonly string[]>([]);
-  const next = mergeStableProcessOrder(held.current, fresh);
+  const next = [...needKeys, ...mergeStableProcessOrder(held.current.filter((key) => !needing.has(key)), fresh)];
   if (next.length !== held.current.length || next.some((key, index) => key !== held.current[index])) held.current = next;
   return held.current;
 }
@@ -287,7 +299,10 @@ export function describeRest(calm: readonly FleetMachine[], offline: readonly Fl
   const parts: string[] = [];
   if (calm.length > 0) parts.push(listed > 0 ? t('machines.widgets.body.fleet.othersCalm', { count: calm.length }) : t('machines.widgets.body.fleet.allCalm', { count: calm.length }));
   if (offline.length === 1) parts.push(t('machines.widgets.body.fleet.oneOffline', { machine: offline[0]!.name }));
-  else if (offline.length > 1) parts.push(t('machines.widgets.body.fleet.manyOffline', { count: offline.length }));
+  // After "4 others are calm" the count reads on ("· 8 are offline"); standing alone it names what it counts,
+  // as the All machines list does ("8 machines are offline").
+  else if (offline.length > 1) parts.push(parts.length > 0 ? t('machines.widgets.body.fleet.manyOffline', { count: offline.length })
+    : t('allMachines.offlineHidden', { count: offline.length }));
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
@@ -309,6 +324,7 @@ const FleetMachineRow = React.memo(function FleetMachineRow(props: Readonly<{
   const { theme } = useUnistyles();
   const reducedMotion = useReducedMotionPreference();
   const { entry, need } = props;
+  const activity = useMachineActivity(entry.online === false ? entry.machine : null);
   const target = React.useMemo(() => ({ serverId: entry.serverId, machineId: entry.machine.id }), [entry.machine.id, entry.serverId]);
   const availability = useMachineResourceSummary(target);
   const working = useMachineWorkingCount(target);
@@ -316,7 +332,7 @@ const FleetMachineRow = React.memo(function FleetMachineRow(props: Readonly<{
   const tone = reason ? resolveMachineAttentionWordColor(theme.colors) : null;
   const word = reason ? describeMachineAttentionWord(reason) : null;
   const subtitle = entry.online === null ? t('common.unknown') : !entry.online
-    ? t('settingsOverview.machineLastSeen', { lastSeen: formatLastSeen(entry.machine.activeAt ?? 0) })
+    ? t('settingsOverview.machineLastSeen', { lastSeen: formatLastSeen(activity?.activeAt ?? 0) })
     : working > 0 ? t('machineDetailPage.work.working', { count: working }) : t('machineDetailPage.work.none');
   const strip = entry.online && props.metrics.length > 0 && availability?.kind !== 'not_reported'
     ? <MachineSummaryStrip availability={availability} style={props.style} metrics={props.metrics} layout="under" testID={`${props.testID}.strip`} />
@@ -326,7 +342,7 @@ const FleetMachineRow = React.memo(function FleetMachineRow(props: Readonly<{
     : undefined;
   const header = (
     <Item testID={props.testID} title={entry.name} titleEllipsizeMode="middle" subtitle={doing ? undefined : subtitle} titleAccessory={doing}
-      icon={<Icon name={entry.thisComputer ? 'laptop' : 'desktop'} color={entry.online ? theme.colors.text.secondary : theme.colors.text.tertiary} />}
+      icon={<Icon name={resolveMachineKindGlyph({ isThisComputer: entry.thisComputer, platform: entry.machine.metadata?.platform })} color={entry.online ? theme.colors.text.secondary : theme.colors.text.tertiary} />}
       onPress={() => props.onOpen(target)} showChevron={false} accessoryLayout="adaptive"
       {...(word ? { accessibilityLabel: `${entry.name}, ${word}` } : {})}
       rightElement={props.compact && word && tone ? <Text numberOfLines={1} style={[styles.word, { color: tone }]}>{word}</Text> : strip} />
@@ -380,7 +396,8 @@ function FleetCards(
     [machines],
   );
   const thisComputer = useThisComputerCliUpdate();
-  const accountScope = useActiveServerAccountScope(props.serverId);
+  const identity = useServerCredentialAccountScopeBinding(props.serverId);
+  const accountScope = identity.resolution.kind === 'bound' ? identity.resolution.scope : null;
   const runs = useMachineUpdateRuns(props.serverId);
   const snapshots = useMachinesCapabilitySnapshots(props.serverId, machineIds, accountScope?.accountId);
   const updating = React.useMemo(
@@ -449,6 +466,7 @@ const FleetMachineCard = React.memo(function FleetMachineCard(
   const { theme } = useUnistyles();
   const router = useRouter();
   const { entry } = props;
+  const activity = useMachineActivity(entry.online === false ? entry.machine : null);
   const availability = useMachineResourceSummary({
     serverId: entry.serverId,
     machineId: entry.machine.id,
@@ -460,7 +478,7 @@ const FleetMachineCard = React.memo(function FleetMachineCard(
   const line = entry.online === null ? t('common.unknown') : entry.online
     ? t('systemStatus.machine.online')
     : t('settingsOverview.machineLastSeen', {
-        lastSeen: formatLastSeen(entry.machine.activeAt ?? 0),
+        lastSeen: formatLastSeen(activity?.activeAt ?? 0),
       });
   const tiles =
     props.metrics.length === 0 ? undefined : entry.online &&
@@ -478,7 +496,7 @@ const FleetMachineCard = React.memo(function FleetMachineCard(
           : t('machines.widgets.body.common.offline')}
       </Text>
     );
-  const footerLeft =
+  const facts =
     props.agents.length > 0 ? (
       <MachineCliLogoRow
         testID={`${props.testID}.agents`}
@@ -489,34 +507,25 @@ const FleetMachineCard = React.memo(function FleetMachineCard(
     ) : (
       t('machineDetailPage.work.none')
     );
-  // The card is the action (its chevron); Update is its own control over the footer, never a button in a button.
   return (
-    <View style={styles.cardBody}>
-      <HappierPressable
-        testID={`${props.testID}.open`}
-        onPress={props.onOpen}
-        accessibilityRole="button"
-        accessibilityLabel={t('machines.widgets.body.fleet.openMachine', { machine: entry.name })}
-        style={styles.cardBody}
-      >
-        <MachineCardBody
-          testID={props.testID}
-          name={entry.name}
-          line={line}
-          tag={entry.thisComputer ? t('settingsMachines.thisComputerTitle') : null}
-          mark={
-            <Icon
-              name={entry.thisComputer ? 'laptop' : 'desktop'}
-              size={20}
-              color={entry.online ? theme.colors.text.secondary : theme.colors.text.tertiary}
-            />
-          }
-          tiles={tiles}
-          footerLeft={footerLeft}
-        />
-      </HappierPressable>
-      {props.hasUpdate ? (
-        <View style={styles.cardUpdate}>
+    <WidgetFrame
+      testID={props.testID}
+      frameStyle="card"
+      placement="home"
+      bodyHeight="content"
+      onOpen={props.onOpen}
+      accessibilityLabel={t('machines.widgets.body.fleet.openMachine', { machine: entry.name })}
+      title={entry.name}
+      source={[entry.thisComputer ? t('settingsMachines.thisComputerTitle') : null, line].filter(Boolean).join(' · ')}
+      sourcePlacement="below"
+      mark={<Icon
+        name={resolveMachineKindGlyph({ isThisComputer: entry.thisComputer, platform: entry.machine.metadata?.platform })}
+        size={20}
+        color={entry.online ? theme.colors.text.secondary : theme.colors.text.tertiary}
+      />}
+      body={{ kind: 'content', children: <MachineCardBody tiles={tiles} /> }}
+      facts={facts}
+      menu={props.hasUpdate ? (
           <RoundButton
             testID={`${props.testID}.update`}
             size="small"
@@ -524,9 +533,8 @@ const FleetMachineCard = React.memo(function FleetMachineCard(
             title={t('settingsOverview.update')}
             onPress={() => router.push(UPDATES_ROUTE as never)}
           />
-        </View>
       ) : null}
-    </View>
+    />
   );
 });
 
@@ -561,15 +569,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   card: {
     flex: 1,
-    minHeight: MACHINE_CARD_BODY_WITH_TILES_HEIGHT_PX,
-  },
-  cardBody: {
-    flex: 1,
-  },
-  cardUpdate: {
-    position: 'absolute',
-    right: 16,
-    bottom: 12,
   },
   cardQuiet: {
     ...Typography.variant('meta'),

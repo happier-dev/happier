@@ -14,10 +14,8 @@ import type {
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { usageSignatureAccent, withUsageAccentAlpha } from '@/components/settings/usage/usageAccent';
-import {
-  ExpandableItem,
-  ExpandableItemCaret,
-} from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -36,6 +34,7 @@ import {
   VitalsMeta,
   VitalsSubLine,
   VitalsTile,
+  VitalsTileSecondary,
   VitalsValue,
 } from './VitalsSheet';
 import {
@@ -154,6 +153,7 @@ export const CpuTile = React.memo(function CpuTile(
         />
       ) : null}
       {cpu ? (
+        <VitalsTileSecondary>
         <ExpandableItem
           expanded={open}
           onExpandedChange={setOpen}
@@ -166,7 +166,7 @@ export const CpuTile = React.memo(function CpuTile(
               style={styles.disclosure}
               testID="machine-vitals-per-core-toggle"
             >
-              <ExpandableItemCaret expanded={state.expanded} />
+              <DisclosureCaret expanded={state.expanded} />
               <Text style={styles.disclosureLabel}>
                 {t('machineVitals.cpu.perCore')}
               </Text>
@@ -175,6 +175,7 @@ export const CpuTile = React.memo(function CpuTile(
         >
           <PerCoreBody cpu={cpu} host={props.host} />
         </ExpandableItem>
+        </VitalsTileSecondary>
       ) : null}
     </VitalsTile>
   );

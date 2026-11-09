@@ -31,6 +31,8 @@ const { useMachineDaemonReadTarget, useMachineDaemonReadTargets } = await import
 const { useMachineWidgetMachine } = await import('../widgets/machineWidgetKit');
 const { MachineDaemonSection } = await import('../daemon/MachineDaemonSection');
 const { t } = await import('@/text');
+const { MachineProjectWorkSection } = await import('@/components/projects/workers/MachineProjectWorkSection');
+const { MachineVitalsOverview } = await import('../vitals/MachineVitalsOverview');
 
 let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 afterEach(async () => { standardCleanup(); machineResourceStore.reset(); boundary.rpc.mockReset(); boundary.rpc.mockImplementation(() => new Promise(() => {})); clearMachineRequestReachabilityForTest(); await accountConnection?.dispose(); accountConnection = null; });
@@ -133,6 +135,12 @@ it('uses the page Home credential scope rather than treating a reachable Machine
     );
     const screen = await renderScreen(frame(state));
     expect(screen.findByTestId('machine-detail-unavailable')).toBeNull();
+    // Work first (owner 2026-11-05, MPG-8 amendment): what the machine takes on and runs comes before its vitals.
+    // The vitals body is a memo component; the rendered node carries its inner function.
+    const vitalsType = (MachineVitalsOverview as unknown as { type: unknown }).type;
+    const order = screen.findAll(node => node.type === MachineProjectWorkSection || node.type === vitalsType)
+        .map(node => node.type === vitalsType ? 'vitals' : 'work');
+    expect(order).toEqual(['work', 'vitals']);
     await act(async () => { recordMachineRequestFailed({ ...authority.getCurrent().binding!.scope, machineId: machine.id }); });
     await screen.update(frame(state, false));
     // Offline is said once, by the quiet banner above what the machine last reported (lab `rv` OS 3), never by the

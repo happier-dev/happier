@@ -44,6 +44,24 @@ it('pulls a known Machine last-active time once on page open without following l
     } finally { await hook.unmount(); await homes.dispose(); store.setState(previous); }
 });
 
+it('stops loading when a Machine that was open disappears, so the page can say it is gone', async () => {
+    const store = getStorage();
+    const previous = store.getState();
+    const serverId = getActiveServerSnapshot().serverId;
+    const machine = createMachineFixture({ id: 'page-machine', active: true, activeAt: Date.now() });
+    store.getState().applyMachines([machine], true, { sourceServerId: serverId });
+    const hook = await renderHook(useMachinePageTarget);
+    try {
+        expect(hook.getCurrent().machine?.id).toBe('page-machine');
+        await act(async () => store.getState().applyMachines([], true, { sourceServerId: serverId }));
+        expect(hook.getCurrent().machine).toBeFalsy();
+        await waitForHomeGovernance(() => expect(hook.getCurrent().isHydratingMachine).toBe(false));
+    } finally {
+        await hook.unmount();
+        store.setState(previous);
+    }
+});
+
 it('keeps the page shell quiet when its Machine presence changes', async () => {
     const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://page-presence.test', serverIdentityId: 'srv_page_presence', accountId: 'owner' }], route: () => undefined });
     const serverId = homes.homes.a!.id;

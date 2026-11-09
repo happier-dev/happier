@@ -1,3 +1,4 @@
+import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import * as React from 'react';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -7,7 +8,7 @@ import type { MachinePageTabParams } from '@/components/machines/page/machinePag
 import { MachineSummaryStrip } from '@/components/machines/summary/MachineSummaryStrip';
 import type { MachineSummaryMetric } from '@/components/machines/summary/machineSummaryStripModel';
 import { CpuTile } from '@/components/machines/vitals/CpuTile';
-import { VitalsTileOpenContext } from '@/components/machines/vitals/VitalsSheet';
+import { VitalsTileOpenContext, VitalsTileRoomContext, type VitalsTileRoom } from '@/components/machines/vitals/VitalsSheet';
 import { DiskTile } from '@/components/machines/vitals/DiskTile';
 import { MemoryTile } from '@/components/machines/vitals/MemoryTile';
 import { NetworkTile } from '@/components/machines/vitals/NetworkTile';
@@ -18,7 +19,9 @@ import { useMachineResourceSummary } from '@/sync/domains/machines/resources/use
 import { EMPTY_MACHINE_RESOURCE_STATE, machineResourceStore } from '@/sync/domains/machines/resources/machineResourceStore';
 import { useMachineDaemonReadTarget } from '@/sync/domains/machines/useMachineDaemonReadTarget';
 import { resolveMetricWarningTone } from '@/components/machines/vitals/machineVitalsPresentation';
+import { useWidgetFrameBodyIdentity, type WidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { t } from '@/text';
+import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
 import {
   MachineWidgetColumn,
@@ -90,6 +93,30 @@ function metricTab(config: MachineMetricWidgetConfig): MachinePageTabParams {
   return { id: 'overview' };
 }
 
+/** What a Metric is called in its frame (lab `rw` M: "CPU" with the CPU mark), instead of the generic "Metric". */
+const METRIC_FRAME_MARK = {
+  cpu: 'cpu',
+  memory: 'stack',
+  disk_free: 'hard-drives',
+  network: 'arrows-down-up',
+} as const satisfies Record<MachineMetricWidgetMetric, WidgetFrameBodyIdentity['mark']>;
+const METRIC_FRAME_TITLE = {
+  cpu: 'machines.widgets.inputs.cpu',
+  memory: 'machines.widgets.inputs.memory',
+  disk_free: 'machines.widgets.inputs.diskFree',
+  network: 'machines.widgets.inputs.network',
+} as const satisfies Record<MachineMetricWidgetMetric, string>;
+
+function useMetricFrameIdentity(metric: MachineMetricWidgetMetric): void {
+  const language = usePreferredLanguage();
+  const identity = React.useMemo(
+    (): WidgetFrameBodyIdentity => ({ title: t(METRIC_FRAME_TITLE[metric]), mark: METRIC_FRAME_MARK[metric] }),
+    // The name is a word in the reader's language: re-lend it when that changes.
+    [metric, language],
+  );
+  useWidgetFrameBodyIdentity(identity);
+}
+
 /**
  * Metric (lab `rw` M, MM, MD, MN): one number with its history. Small is the Machine summary strip's own tile
  * for that metric — the figure beside its five-minute line. From Wide up the body is the Overview's own tile
@@ -99,6 +126,7 @@ function metricTab(config: MachineMetricWidgetConfig): MachinePageTabParams {
 export function MachineMetricWidget(props: MachineWidgetBodyProps) {
   const target = useMachineWidgetTarget(props.input);
   const config = readMachineMetricWidgetConfig(props.input);
+  useMetricFrameIdentity(config.metric);
   if (!target)
     return (
       <MachineWidgetState
@@ -151,6 +179,9 @@ function MetricBody(
     />
   );
 }
+
+/** Small's one button takes the body's room, so the line under the figure can fill it. */
+const filledPressable = { flexGrow: 1, alignSelf: 'stretch' } as const;
 
 function MetricSmall(
   props: Readonly<{
@@ -241,12 +272,14 @@ function MetricSmall(
         testID={`${props.testID}.open`}
         onPress={props.onOpen}
         accessibilityRole="button"
+        style={filledPressable}
       >
         <MachineSummaryStrip
           availability={availability ?? { kind: 'never_sampled' }}
           style="sparklines"
           metrics={[STRIP_METRIC[props.config.metric]]}
           layout="tiles"
+          fill
           testID={`${props.testID}.strip`}
         />
       </HappierPressable>
@@ -264,6 +297,7 @@ function MetricTile(
   }>,
 ) {
   const { config } = props;
+  const size = useMachineWidgetSize();
   const vitals = useMachineWidgetVitalsView({
     target: props.target,
     facts: props.facts,
@@ -293,6 +327,9 @@ function MetricTile(
   );
   if (view.kind === 'loading')
     return <MachineWidgetState kind="loading" rows={3} testID={props.testID} />;
+  if (view.kind === 'monitoring_off')
+    return <MachineWidgetState kind="empty" title={t('machineVitals.monitoring.offTitle', { machine: props.facts.name })}
+      reason={t('machineVitals.monitoring.offReason')} testID={props.testID} />;
   if (view.kind === 'older_happier')
     return (
       <MachineWidgetState
@@ -380,10 +417,26 @@ function MetricTile(
   // The tile's chart and per-core disclosure are controls of their own: it opens from its title.
   return (
     <MachineWidgetColumn testID={props.testID}>
-      <VitalsTileOpenContext.Provider value={openTarget}>{tile}</VitalsTileOpenContext.Provider>
+      <VitalsTileRoomContext.Provider value={METRIC_TILE_ROOM[size]}>
+        <VitalsTileOpenContext.Provider value={openTarget}>{tile}</VitalsTileOpenContext.Provider>
+      </VitalsTileRoomContext.Provider>
     </MachineWidgetColumn>
   );
 }
+
+/**
+ * What each size holds of the Overview's tile (lab `rw` M, MM, MD, MN): Wide sets the figure beside its chart,
+ * Wide and Medium keep the chart alone, Full adds per-core or the composition, and only Tall and Large have
+ * the height for swap and the minute maximum's second line. The widget body already holds the frame's inset.
+ */
+const METRIC_TILE_ROOM: Readonly<Record<WidgetSizeV1, VitalsTileRoom>> = Object.freeze({
+  small: { layout: 'stack', instruments: 'primary', chartMaximum: false, inset: false, chart: 'spark', fill: true, title: false },
+  medium: { layout: 'stack', instruments: 'primary', chartMaximum: false, inset: false, chart: 'plot', fill: true, title: false },
+  wide: { layout: 'side', instruments: 'primary', chartMaximum: false, inset: false, chart: 'plot', fill: true, title: false },
+  full: { layout: 'stack', instruments: 'secondary', chartMaximum: false, inset: false, chart: 'plot', fill: true, title: false },
+  tall: { layout: 'stack', instruments: 'all', chartMaximum: true, inset: false, chart: 'plot', fill: true, title: false },
+  large: { layout: 'stack', instruments: 'all', chartMaximum: true, inset: false, chart: 'plot', fill: true, title: false },
+});
 
 /** Disk free on one chosen volume; a missing selection stays unmeasured, never another disk. */
 export function narrowToVolume(

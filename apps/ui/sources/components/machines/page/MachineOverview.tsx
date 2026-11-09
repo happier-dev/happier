@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { MachineProjectTerminalsSection } from '@/components/machines/MachineProjectTerminalsSection';
 import { MachineRunsSection } from '@/components/machines/runs/MachineRunsSection';
 import { MachineRecentSessionsSection } from '@/components/machines/sessions/MachineRecentSessionsSection';
@@ -9,13 +10,14 @@ import { ManagedEnrolledMachineSectionsView } from '@/components/settings/machin
 import { describeMachineRuntimePresence, projectMachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import { splitHappierBannerPoint } from '@happier-dev/plugin-ui/presentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { CheckoutReachabilityScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
-import { CheckoutReachabilityScope } from '@/components/workspaces/reachability/checkoutReachability';
 
 import { MachineCapabilitiesSection } from './MachineCapabilitiesSection';
 import { MachineThisMachineSection } from './MachineThisMachineSection';
+import { MachineInventoryBlock } from './MachineInventoryBlock';
 import { MachineResourcesAskBlock } from '@/components/machines/resources/ask/MachineResourcesAskBlock';
 import { useMachinePageState } from './machinePageContext';
 import type { MachinePageTabBodyProps } from './machinePageTabQuery';
@@ -32,11 +34,11 @@ function offlineHelpPoints() {
 }
 
 /**
- * The machine page's Overview (MPG-8): what blocks use first, then (for a machine Happier created)
- * Managed, then plan 20's vitals body (CPU, memory, disk, network, what else the machine reports and its
- * Alerts) and Ask an agent, then the machine's work in place (Project work: workers, then runs, recent
- * sessions and project terminals, each only once the machine has some), then "This machine", whose rows push
- * its own settings and diagnostics (lab `R`).
+ * The machine page's Overview (MPG-8 as amended 2026-11-05): what blocks use first, then (for a machine Happier
+ * created) Managed, then the machine's work in place (Project work: workers, then runs, recent sessions and project
+ * terminals, each only once the machine has some), then plan 20's vitals body (CPU, memory, disk, network, what
+ * else the machine reports and its Alerts) and Ask an agent, then "This machine", whose rows push its own settings
+ * and diagnostics (lab `R`).
  */
 export function MachineOverview(props: MachinePageTabBodyProps) {
     const { target, managedEnrolled, refreshKey, reload } = useMachinePageState();
@@ -61,12 +63,14 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
     const offlineRetry = React.useMemo(() => ({ onPress: () => void retry(), loading: retrying }), [retry, retrying]);
     const { setParams } = props;
     const openProcesses = React.useCallback(() => setParams({ id: 'processes' }), [setParams]);
+    const triggerSubject = React.useMemo(() => ({ kind: 'machine' as const, machineId: props.machineId }), [props.machineId]);
     const reachabilityScope = React.useMemo(() => ({ serverId: props.serverId, machineId: props.machineId }), [props.serverId, props.machineId]);
 
     if (!machine) return null;
     const runtimePresence = describeMachineRuntimePresence(machine, undefined,
         projectMachineManagedPresence(machine, managedEnrolled.machine), machineAccountScope);
     return (
+        // The vitals banner says once that the machine is offline; the sections below inherit it, never repeat it.
         <CheckoutReachabilityScope scope={reachabilityScope}>
             {/* An offline machine is a fact, not a fault: the vitals body below says it once, in its quiet banner above
                 what the machine last reported (lab `rv` OS 3). Only a machine that is online but still cannot start
@@ -85,6 +89,14 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
                 what it was made with, beside its receipt, before the sections every machine has. */}
             <ManagedEnrolledMachineSectionsView enrolled={managedEnrolled} />
 
+            {/* Project work first (owner 2026-11-05, MPG-8 amendment; lab m-detail "On it now"): what this machine takes on and
+                runs now, then its runs, recent sessions and project terminals, each section present only once there is something in it. */}
+            <MachineProjectWorkSection serverId={props.serverId} machineId={props.machineId} machineName={target.machineSentenceName} />
+            <MachineRunsSection machine={machine} serverId={props.serverId} online={target.online}
+                isServerSwitching={target.isServerSwitching} refreshKey={refreshKey} />
+            <MachineRecentSessionsSection machineId={props.machineId} serverId={props.serverId} />
+            <MachineProjectTerminalsSection machineId={props.machineId} serverId={props.serverId} />
+
             {/* Plan 20's vitals body: live while this tab is shown, its history and Alerts row. */}
             <MachineVitalsOverview serverId={props.serverId} machine={machine} machineName={props.machineName} online={props.online}
                 rangeInBar={props.barAccessoryShown} onOpenProcesses={openProcesses}
@@ -94,13 +106,11 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
             {/* The page answers first; the agent is there when it is not enough (lab `ra` A1). */}
             <MachineResourcesAskBlock serverId={props.serverId} machineId={props.machineId} machineName={props.machineName} />
 
-            {/* Project work, in place (MPG-8): what this machine takes on and runs now, then its runs, recent sessions and
-                project terminals, each section present only once there is something in it. */}
-            <MachineProjectWorkSection serverId={props.serverId} machineId={props.machineId} machineName={target.machineSentenceName} />
-            <MachineRunsSection machine={machine} serverId={props.serverId} online={target.online}
-                isServerSwitching={target.isServerSwitching} refreshKey={refreshKey} />
-            <MachineRecentSessionsSection machineId={props.machineId} serverId={props.serverId} />
-            <MachineProjectTerminalsSection machineId={props.machineId} serverId={props.serverId} />
+            {/* What runs here by itself (OPS-AUTOMATIONS-1102 D2): the Account's triggers on this machine, Add beside the title. */}
+            <SubjectTriggersSection subject={triggerSubject} subjectName={props.machineName} />
+
+            {/* What's on this Machine (S50 `i:machine`): everything Happier manages here, the same rows as Store → Installed. */}
+            <MachineInventoryBlock serverId={props.serverId} machineId={props.machineId} scope={machineAccountScope} />
 
             {/* Skills and MCP servers (Capabilities P8 U8.6): what sessions on this machine get, before This machine. */}
             <MachineCapabilitiesSection machineId={props.machineId} machineName={props.machineName} offline={props.online === false} />

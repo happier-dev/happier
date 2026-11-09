@@ -186,7 +186,7 @@ function LeftBehindBody(
       />
       <Text numberOfLines={1} style={styles.note}>
         {size === 'small'
-          ? t('machines.widgets.body.leftBehind.sessionsEnded')
+          ? t('machines.widgets.body.leftBehind.ownerEnded')
           : size === 'wide'
             ? ''
             : t('machines.widgets.body.leftBehind.nothingStops')}

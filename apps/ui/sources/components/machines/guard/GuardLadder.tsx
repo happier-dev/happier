@@ -168,7 +168,7 @@ const LadderStep = React.memo(function LadderStep(props: Readonly<{
                             {step.candidates.map((candidate, index) => (
                                 <GuardInsetRow key={candidate.ref} testID={`machine-guard-candidate-${candidate.ref}`} first={index === 0}
                                     leading={<Icon name={CANDIDATE_ICONS[candidate.kind]} size={14} color={theme.colors.text.secondary} />}
-                                    label={candidate.label} qualifier={candidate.qualifier}
+                                    label={candidate.label ?? t('session.untitled')} qualifier={candidate.qualifier}
                                     trailing={<GuardInsetFigure tone={candidate.footprintBytes === largest ? 'strong' : 'normal'}>
                                         {formatMachineBytes(candidate.footprintBytes, 'memory')}
                                     </GuardInsetFigure>} />

@@ -67,6 +67,8 @@ export function useMachineSetup(
     machineId: string;
     active: boolean;
     online: boolean | null;
+    /** Only Manage may read the plan; a Machine refuses anyone else, so nothing asks. */
+    canCheck: boolean;
   }>,
 ) {
   const { serverId, machineId } = input;
@@ -159,7 +161,7 @@ export function useMachineSetup(
 
   // Opening the tab (or the Machine coming back) is the demand for a check; publications never start one.
   const demanded =
-    input.active && input.online !== false && !!binding && !!homeId;
+    input.active && input.online !== false && input.canCheck && !!binding && !!homeId;
   React.useEffect(() => {
     if (demanded) void check();
   }, [demanded, check]);

@@ -13,6 +13,7 @@ import { resolveVitalsAxis } from '@/components/machines/vitals/vitalsFormat';
 import type { MachineVitalsRange } from '@/sync/domains/machines/resources/machineRpc';
 import { useMachineVitalsOverview } from '@/sync/domains/machines/resources/useMachineVitalsOverview';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { useMachineMonitoringMode } from '@/sync/domains/machines/resources/useMachineMonitoringMode';
 
 import type {
   MachineWidgetMachineFacts,
@@ -42,12 +43,13 @@ export function useMachineWidgetVitalsView(
   }>,
 ): MachineWidgetVitalsView {
   const language = usePreferredLanguage();
+  const monitoring = useMachineMonitoringMode({ serverId: input.target.serverId, machineId: input.target.machineId });
   const overview = useMachineVitalsOverview({
     serverId: input.target.serverId,
     machineId: input.target.machineId,
     daemonStateVersion: input.facts.daemonStateVersion,
     range: input.range,
-    enabled: input.enabled !== false && input.facts.online === true,
+    enabled: input.enabled !== false && input.facts.online === true && monitoring !== 'off',
   });
   const daemonState: unknown = input.facts.machine?.daemonState;
   const published = React.useMemo(
@@ -57,6 +59,7 @@ export function useMachineWidgetVitalsView(
   const view = selectMachineVitalsOverviewView({
     online: input.facts.online,
     published,
+    monitoring,
     state: overview,
   });
   const timeline = useMachineVitalsTimeline({ range: input.range, history: overview.history, samples: overview.samples });

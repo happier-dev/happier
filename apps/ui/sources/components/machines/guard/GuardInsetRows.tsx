@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
@@ -44,8 +44,10 @@ export function GuardInsetRow(props: Readonly<{
 }
 
 /** The trailing figure's text styles, for a figure that is its own component (the live countdown). */
-export function useGuardInsetFigureStyle(tone: GuardInsetFigureTone) {
-    return styles[tone === 'strong' ? 'figureStrong' : tone === 'quiet' ? 'figureQuiet' : 'figure'];
+export function useGuardInsetFigureStyle(tone: GuardInsetFigureTone): TextStyle {
+    // Unistyles maps native font fields through breakpoint/opaque-color types.
+    // The authored figure styles below are checked against the native contract.
+    return styles[tone === 'strong' ? 'figureStrong' : tone === 'quiet' ? 'figureQuiet' : 'figure'] as TextStyle;
 }
 
 export function GuardInsetFigure(props: Readonly<{ tone?: GuardInsetFigureTone; children: React.ReactNode }>) {
@@ -96,17 +98,17 @@ const styles = StyleSheet.create((theme) => ({
         ...happierPageTextMetrics('rowDescription'),
         color: theme.colors.text.secondary,
         fontVariant: ['tabular-nums'],
-    },
+    } satisfies TextStyle,
     figureStrong: {
         ...Typography.default('semiBold'),
         ...happierPageTextMetrics('rowDescription'),
         color: theme.colors.text.primary,
         fontVariant: ['tabular-nums'],
-    },
+    } satisfies TextStyle,
     figureQuiet: {
         ...Typography.default(),
         ...happierPageTextMetrics('rowDescription'),
         color: theme.colors.text.tertiary,
         fontVariant: ['tabular-nums'],
-    },
+    } satisfies TextStyle,
 }));

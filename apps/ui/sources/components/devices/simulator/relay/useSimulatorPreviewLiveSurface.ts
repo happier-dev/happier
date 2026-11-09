@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useMachineLiveStreamId } from '@/components/stream/useMachineLiveStreamId';
-import type { MachineLiveStreamCapsV1, SimulatorDeviceResourceV1 } from '@happier-dev/protocol';
+import type { MachineLiveStreamCapsV1} from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
+import type { SimulatorDeviceResourceV1 } from '@happier-dev/protocol/devices/simulator/v1';
 
 import {
     useSimulatorPreviewSessionSurfaceRuntime,

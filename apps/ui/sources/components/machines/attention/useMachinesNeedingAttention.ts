@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import {
+    describeMachineAttentionWord,
     describeMachineReasonPhrase,
     readMachinePublishedResources,
     resolveMachineReasonAction,
@@ -18,6 +19,8 @@ export type MachineNeedingAttention = Readonly<{
     machineId: string;
     /** "edge-1 is short on memory". */
     title: string;
+    /** The reason in a word or two ("Short on memory"), for saying one reason once across Machines. */
+    word: string;
     actionLabel: string;
     /** The tab its action opens; `null` opens the machine. */
     tab: MachinePageTabParams | null;
@@ -48,6 +51,7 @@ export function useMachinesNeedingAttention(): readonly MachineNeedingAttention[
                 serverId: key.serverId ?? '',
                 machineId: key.machineId,
                 title: describeMachineReasonPhrase(names.get(machine.id) ?? getMachineDisplayName(machine), reason),
+                word: describeMachineAttentionWord(reason),
                 actionLabel: action?.label ?? t('machineAttention.actions.review'),
                 tab: action?.tab ?? null,
             };

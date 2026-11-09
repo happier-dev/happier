@@ -10,7 +10,7 @@ describe('machine attached presets chip label', () => {
     const presets = [{ id: 'web', name: 'Production web server' }];
     const names = [
       machineSetupSourceName({ kind: 'accountPreset', presetId: 'web' }, presets),
-      machineSetupSourceName({ kind: 'bundledPreset' }, presets),
+      machineSetupSourceName({ kind: 'bundledPreset', ref: { pluginId: 'example.setup', localId: 'secure', revision: '1' } }, presets),
       machineSetupSourceName({ kind: 'accountPreset', presetId: 'gone' }, presets),
     ];
     expect(machineAttachedPresetsLabel(names)).toBe(`Production web server \u00b7 ${t('machinePresets.setup.tab.bundledPreset')} +1`);

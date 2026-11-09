@@ -99,6 +99,43 @@ describe('history maxima', () => {
 });
 
 describe('the Overview state (lab rv OS 1–6)', () => {
+  it('uses the same recovered reader availability as summaries while an older failure publication is held', () => {
+    const failing: MachinePublishedResourceSummaryV1 = {
+      v: 1, attention: calm, host,
+      vitals: { state: 'unavailable', since: 42, reason: 'reader_failed' },
+    };
+    const recovered = sample(90);
+    expect(selectMachineVitalsOverviewView({ online: true, published: failing,
+      state: { status: 'ready', snapshot: snapshot(recovered), stale: false },
+    })).toEqual({ kind: 'ready', sample: recovered, freshness: 'live' });
+    // A failure after the held observation remains a genuine unavailable state.
+    expect(selectMachineVitalsOverviewView({ online: true, published: failing,
+      state: { status: 'ready', snapshot: snapshot(sample(1)), stale: false },
+    })).toEqual({ kind: 'unavailable', since: 42, reason: 'reader_failed' });
+  });
+  it('says monitoring is Off instead of loading, zero or unavailable, and keeps what was read before as of its time', () => {
+    const held = sample(1);
+    // Nothing read yet: Off, never a skeleton waiting for a sample that will not come.
+    expect(selectMachineVitalsOverviewView({ online: true, published: reporting, monitoring: 'off',
+      state: { status: 'loading', snapshot: null, stale: false },
+    })).toEqual({ kind: 'monitoring_off', sample: null });
+    // Read before it was turned off: kept, and labelled as from before rather than live.
+    expect(selectMachineVitalsOverviewView({ online: true, published: reporting, monitoring: 'off',
+      state: { status: 'ready', snapshot: snapshot(held), stale: false },
+    })).toEqual({ kind: 'monitoring_off', sample: held });
+    // A daemon that reports a failing sampler while Off is still Off: nothing is being read.
+    expect(selectMachineVitalsOverviewView({ online: true, monitoring: 'off',
+      published: { v: 1, attention: calm, host, vitals: { state: 'unavailable', since: 42, reason: 'reader_failed' } },
+      state: { status: 'error', snapshot: null, stale: false },
+    })).toEqual({ kind: 'monitoring_off', sample: null });
+    // Offline still says offline first; While viewing reads as usual.
+    expect(selectMachineVitalsOverviewView({ online: false, published: reporting, monitoring: 'off',
+      state: { status: 'ready', snapshot: snapshot(held), stale: false },
+    })).toMatchObject({ kind: 'ready', freshness: 'offline' });
+    expect(selectMachineVitalsOverviewView({ online: true, published: reporting, monitoring: 'while_viewing',
+      state: { status: 'ready', snapshot: snapshot(held), stale: false },
+    })).toMatchObject({ kind: 'ready', freshness: 'live' });
+  });
   it('keeps the held sample stale while the first watch failure is slow', () => {
     const held = sample(1);
     expect(selectMachineVitalsOverviewView({ online: true, published: reporting,

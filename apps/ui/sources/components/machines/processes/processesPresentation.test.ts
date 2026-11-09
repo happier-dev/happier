@@ -318,7 +318,7 @@ describe('totals, labels, emphasis and stable order', () => {
   });
 
   it('takes emphasis at one full core or when left behind', () => {
-    const capacity = resolveMachineCpuCapacityCores({ logicalCores: 18, effectiveCores: 1.26, memoryTotalBytes: 100, bootedAt: 0 });
+    const capacity = resolveMachineCpuCapacityCores({ logicalCores: 18, effectiveCores: 1.26 });
     expect(isProcessRowEmphasized({ cpuPercent: 77.5, level: 'proven' }, capacity)).toBe(false);
     expect(isProcessRowEmphasized({ cpuPercent: 80, level: 'proven' }, capacity)).toBe(true);
     expect(isProcessRowEmphasized({ cpuPercent: 100, level: 'proven' }, 0.5)).toBe(false);

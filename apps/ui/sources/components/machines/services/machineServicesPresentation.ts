@@ -213,6 +213,8 @@ export function machineServiceDeclaredFacts(
 
 export type MachineServiceWatchChoice = Readonly<{
   candidateId: string; revision: string; name: string; kind: string; nativeResourceId: string;
+  /** The line a person can read for this identity; a Compose tuple has none and stays an operand. */
+  identityLine: string | null;
   phase: MachineServiceDiscoveryCandidateV1['observation']['phase'];
   /** Already on this page as a watched service: shown, never picked twice. */
   watched: boolean;
@@ -232,11 +234,13 @@ export function machineServiceWatchChoices(
   rows: readonly Pick<MachineServiceRowV1, 'nativeInstance'>[],
 ): readonly MachineServiceWatchChoice[] {
   const watched = new Set(rows.flatMap(row => row.nativeInstance ? [machineServiceNativeIdentityKeyV1(row.nativeInstance)] : []));
-  return candidates.map((candidate): MachineServiceWatchChoice => {
+  // An unresolved container is named only by a generated hash: nothing here lets a person choose it.
+  return candidates.filter(candidate => candidate.nameResolution !== 'unresolved_environment').map((candidate): MachineServiceWatchChoice => {
     const identity = machineServiceNativeIdentityKeyV1(candidate);
     return {
-      candidateId: candidate.candidateId, revision: candidate.revision, name: machineServiceDisplayName(candidate),
-      kind: candidate.adapter.localId, nativeResourceId: candidate.nativeResourceId, phase: candidate.observation.phase,
+      candidateId: candidate.candidateId, revision: candidate.revision, name: candidate.name,
+      kind: candidate.adapter.localId, nativeResourceId: candidate.nativeResourceId,
+      identityLine: candidate.adapter.localId === 'compose' ? null : candidate.nativeResourceId, phase: candidate.observation.phase,
       watched: watched.has(identity),
     };
   }).sort((left, right) => left.kind.localeCompare(right.kind) || left.name.localeCompare(right.name));

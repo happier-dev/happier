@@ -102,7 +102,7 @@ export function MachineSubPageScreen() {
                 <ItemGroup surface="none">
                     {target.isHydratingMachine
                         ? <SurfaceStateCard testID="machine-detail-loading" kind="loading" title={t('common.loading')} />
-                        : <SurfaceStateCard testID="machine-detail-not-found" kind="unavailable" title={t('machine.notFound')} />}
+                        : <SurfaceStateCard testID="machine-detail-not-found" kind="unavailable" title={t('machine.notFound')} reason={t('machine.notFoundReason')} />}
                 </ItemGroup>
             )}
         </ItemList>

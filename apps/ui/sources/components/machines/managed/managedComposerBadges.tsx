@@ -19,8 +19,8 @@ import {
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { RequesterDisclosureContent, type RequesterDisclosureModel } from './RequesterDisclosure';
 import type { ManagedMachineArchiveChoiceAvailability } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
+import { RequesterDisclosureContent, type RequesterDisclosureModel } from './RequesterDisclosure';
 
 /**
  * The composer's one status badge for a machine being created (plan 50s3, lab `m-pick Aprog/Aprogd`) and
@@ -35,12 +35,28 @@ export type ManagedProgressModel = Readonly<{
   machineName: string;
   mark: React.ReactNode;
   /** "Mac desktop · macOS Tahoe · on MacBook Pro". */
-  recipe: string;
+  launch: string;
+  /** Who does the work, when it is this device ("From this phone"): joins the launch line. */
+  origin?: string;
+  /** "Keep Happier open until vercel-1 joins.": only while this device is the one doing the work. */
+  hold?: Readonly<{ text: string; icon: 'device-mobile' | 'laptop' | 'globe' }>;
+  /**
+   * A creation nothing is running for any more, read from the resource's recorded facts (58b L4 "Setup
+   * interrupted"): it names the state, leads its message with what is missing, and offers the same-resource ways forward.
+   */
+  recovery?: Readonly<{
+    title: string;
+    lead: string;
+    onContinue?: () => void;
+    onInspect?: () => void;
+  }>;
   /** Observed stages only, in order. */
   stages: readonly Readonly<{
     id: string;
     label: string;
     state: Extract<SetupStepState, 'done' | 'running' | 'upcoming' | 'failed'>;
+    /** A recorded fact at the step's end ("Not joined"). */
+    meta?: string;
   }>[];
   failed: boolean;
   /** A native-create/admission failure must not be labelled as an install failure. */
@@ -55,6 +71,8 @@ export type ManagedProgressModel = Readonly<{
   message: string;
   /** D42(4): offered at creation only, Keep by default; Stop/Delete become the session's archive trigger. */
   archiveChoice?: Readonly<{
+    /** Whose end the rule waits for: a Session's archive (default) or a task's finish (D23). */
+    scope?: 'session' | 'task';
     value: ManagedArchiveChoice;
     onChange: (next: ManagedArchiveChoice) => void;
     supportedEffects?: readonly ManagedArchiveChoice[];
@@ -72,11 +90,11 @@ export function buildManagedProgressStatusBadge(
 ): AgentInputStatusBadge {
   return {
     key: 'managed-machine-progress',
-    label: model.failed
+    label: model.recovery?.title ?? (model.failed
       ? model.failureLabel ?? t('managedMachines.creation.installFailedShort')
-      : model.label,
+      : model.label),
     testID: 'managed-machine-progress-badge',
-    accessibilityLabel: model.failed
+    accessibilityLabel: model.recovery ? model.recovery.title : model.failed
       ? model.failureTitle ?? t('managedMachines.creation.installFailedTitle', {
           name: model.machineName,
         })
@@ -84,11 +102,11 @@ export function buildManagedProgressStatusBadge(
     accessibilityHint: t('managedMachines.creation.openDetails'),
     // Creation in progress needs nothing from the user: the neutral badge, its spinner the only motion
     // (lab `m-pick-Aprog`). Only an observed failure speaks; a settled or cached observation keeps its tone.
-    tone: model.failed
+    tone: model.failed || model.recovery
       ? 'warning'
       : isManagedProgressWorking(model) ? 'neutral' : model.tone,
     icon: (tint) =>
-      model.failed ? (
+      model.failed || model.recovery ? (
         <Icon name="warning" size={14} color={tint} />
       ) : !isManagedProgressWorking(model) ? (
         <Icon name="desktop" size={14} color={tint} />
@@ -106,6 +124,8 @@ export function buildManagedProgressStatusBadge(
         anchorRef={anchorRef}
         onRequestClose={onRequestClose}
         maxWidthCap={380}
+        // A phone opens the same stages as a bottom sheet, led by the content's own title (lab af-create Op).
+        phonePresentation="sheet"
         testID="managed-machine-progress-popover"
         content={() => <ManagedProgressPopoverContent model={model} />}
       />
@@ -123,12 +143,14 @@ export const ManagedProgressPopoverContent = React.memo(
     props: Readonly<{ model: ManagedProgressModel }>,
   ) {
     const { model } = props;
+    const { theme } = useUnistyles();
     const steps = React.useMemo(
       (): SetupStep[] =>
         model.stages.map((stage) => ({
           key: stage.id,
           title: stage.label,
           state: stage.state,
+          ...(stage.meta ? { meta: stage.meta } : {}),
           testID: setupStepTestID('managed-machine-progress-step', stage.id, stage.state),
         })),
       [model.stages],
@@ -149,7 +171,7 @@ export const ManagedProgressPopoverContent = React.memo(
         <View style={styles.head}>
           {model.mark ? <View style={styles.mark}>{model.mark}</View> : null}
           <Text style={styles.title} numberOfLines={2}>
-            {model.failed
+            {model.recovery ? model.recovery.title : model.failed
               ? model.failureTitle ?? t('managedMachines.creation.installFailedTitle', {
                   name: model.machineName,
                 })
@@ -161,25 +183,34 @@ export const ManagedProgressPopoverContent = React.memo(
             <Text style={styles.elapsed}>{model.elapsed}</Text>
           ) : null}
         </View>
-        <Text style={styles.quiet}>{model.recipe}</Text>
+        {model.launch || model.origin ? (
+          <Text style={styles.quiet}>{[model.launch, model.origin].filter(Boolean).join(' · ')}</Text>
+        ) : null}
         <SetupSteps
           testID="managed-machine-progress-steps"
           variant="compact"
           steps={steps}
         />
         <Text style={styles.body} accessibilityLiveRegion="polite">
+          {model.recovery ? <Text style={styles.bodyLead}>{model.recovery.lead} </Text> : null}
           {model.message}
         </Text>
-        {model.archiveChoice && !model.failed ? (
+        {model.hold ? (
+          <View style={styles.hold} testID="managed-machine-progress-hold">
+            <Icon name={model.hold.icon} size={14} color={theme.colors.text.secondary} />
+            <Text style={styles.holdText}>{model.hold.text}</Text>
+          </View>
+        ) : null}
+        {model.archiveChoice && !model.failed && !model.recovery ? (
           <View style={styles.archive}>
             <Text style={styles.archiveLabel}>
-              {t('managedRetention.whenSessionArchived')}
+              {archiveScopeLabel(model.archiveChoice)}
             </Text>
             {/* Three short words: the control is as wide as its words, not the popover. */}
             <View style={styles.archiveChoice}>
             <SegmentedTabBar<ManagedArchiveChoice>
               role="radiogroup"
-              accessibilityLabel={t('managedRetention.whenSessionArchived')}
+              accessibilityLabel={archiveScopeLabel(model.archiveChoice)}
               compact
               segmentSizing="content"
               testIDPrefix="managed-machine-progress-archive"
@@ -203,6 +234,24 @@ export const ManagedProgressPopoverContent = React.memo(
         <SectionButtonRow
           trailing={
             <>
+              {model.recovery?.onInspect ? (
+                <RoundButton
+                  testID="managed-machine-progress-inspect"
+                  size="small"
+                  display="inverted"
+                  title={t('managedMachines.creation.inspect')}
+                  onPress={model.recovery.onInspect}
+                />
+              ) : null}
+              {model.recovery?.onContinue ? (
+                <RoundButton
+                  testID="managed-machine-progress-continue"
+                  size="small"
+                  display="secondary"
+                  title={t('managedMachines.creation.continueSetup')}
+                  onPress={model.recovery.onContinue}
+                />
+              ) : null}
               {deleteInOwnRow ? null : deleteMachine}
               {model.failed && model.onContinueWithoutSetup ? (
                 <RoundButton
@@ -231,7 +280,7 @@ export const ManagedProgressPopoverContent = React.memo(
                   onPress={model.onRetrySetup}
                 />
               ) : null}
-              {model.onCancel ? (
+              {model.onCancel && !model.recovery ? (
                 <RoundButton
                   testID="managed-machine-progress-cancel"
                   size="small"
@@ -251,6 +300,13 @@ export const ManagedProgressPopoverContent = React.memo(
     );
   },
 );
+
+/** The rule's trigger in words, for the visible label and the control's accessibility label alike. */
+function archiveScopeLabel(choice: NonNullable<ManagedProgressModel['archiveChoice']>): string {
+  return choice.scope === 'task'
+    ? t('managedRetention.whenTaskFinishes')
+    : t('managedRetention.whenSessionArchived');
+}
 
 /** Why a disabled archive effect cannot be chosen: the provider lacks it, or the controller cannot run the rule. */
 function archiveUnavailableReason(
@@ -338,6 +394,21 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.default(),
     ...rowDescription,
     color: theme.colors.text.secondary,
+  },
+  bodyLead: {
+    ...Typography.default('semiBold'),
+    color: theme.colors.text.primary,
+  },
+  hold: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s6,
+  },
+  holdText: {
+    ...Typography.default(),
+    ...happierPageTextMetrics('meta'),
+    color: theme.colors.text.secondary,
+    flexShrink: 1,
   },
   // Three one-word segments: as wide as their words, at the popover's leading edge (lab m-pick Aprogd).
   archiveChoice: {

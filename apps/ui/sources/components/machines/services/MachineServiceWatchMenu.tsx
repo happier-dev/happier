@@ -41,7 +41,7 @@ export function MachineServiceWatchMenu(props: Readonly<{
     testID: `machine-services-watch-candidate:${choice.candidateId}`,
     title: choice.name,
     subtitle: choice.watched ? t('machineServices.watch.alreadyWatched')
-      : `${choice.nativeResourceId} · ${t(`machineServices.state.${choice.phase}`)}`,
+      : [choice.identityLine, t(`machineServices.state.${choice.phase}`)].filter(Boolean).join(' · '),
     category: choice.kind === 'systemd' || choice.kind === 'compose' ? t(`machineServices.kind.${choice.kind}`) : choice.kind,
     checked: picked.has(choice.candidateId),
     disabled: choice.watched,

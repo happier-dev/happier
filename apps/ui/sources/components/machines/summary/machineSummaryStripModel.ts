@@ -2,6 +2,8 @@ import type { MachineResourceSummaryV1 } from '@happier-dev/protocol/machines/re
 import type { MachineMemoryPressureSourceV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
+import { formatVitalsLoad } from '@/components/machines/vitals/vitalsFormat';
+import { resolveMachineCoreCount } from '@/components/machines/vitals/machineVitalsPresentation';
 import { t } from '@/text';
 
 import type { MachineSummaryMetric } from './machineSummarySettingModel';
@@ -44,7 +46,26 @@ export type MachineSummaryInstrument = Readonly<{
     tone: MachineResourceTone;
     /** The exact reading for the tooltip and the accessible name ("Memory 71 GB free, 57 GB in use"). */
     exact: string | null;
+    /** CPU only: "Load 2.31 · 18 cores" from the facts the summary holds; `null` when it holds neither (older daemon). */
+    detail?: string | null;
 }>;
+
+/**
+ * The CPU line under a filling figure. Load is the daemon's per-core-normalised observation, shown as sent (never divided
+ * again); cores are the capacity the machine has, said as "available" when a container's limit is below the host's.
+ */
+export function describeMachineCpuLoadAndCores(cpu: MachineResourceSummaryV1['cpu']): string | null {
+    const load = cpu.load1 === undefined ? null : formatVitalsLoad(cpu.load1);
+    const host = cpu.logicalCores === undefined ? null
+        : { logicalCores: cpu.logicalCores, ...(cpu.effectiveCores !== undefined ? { effectiveCores: cpu.effectiveCores } : {}) };
+    const count = host ? resolveMachineCoreCount(host) : null;
+    const limited = host !== null && host.effectiveCores !== undefined && host.effectiveCores > 0 && host.effectiveCores < host.logicalCores;
+    if (load !== null && count !== null) {
+        return t(limited ? 'machineVitals.cpu.loadAndCoresLimited' : 'machineVitals.cpu.loadAndCores', { load, count });
+    }
+    if (load !== null) return t('machineVitals.cpu.load', { load });
+    return count === null ? null : t('machineVitals.cpu.cores', { count });
+}
 
 /** CPU's line scales to its recent peak but never below 40 %, so a 2 → 3 % wiggle stays flat (no min–max). */
 export const CPU_LINE_FLOOR_PCT = 40;
@@ -101,6 +122,7 @@ export function buildMachineSummaryInstruments(summary: MachineResourceSummaryV1
             line: scaleLine(summary.cpu.series, cpuPeak),
             tone: summary.cpu.tone,
             exact: cpuPct === null ? null : t('machineSummary.exact.cpu', { percent: Math.round(cpuPct) }),
+            detail: describeMachineCpuLoadAndCores(summary.cpu),
         },
         memory: {
             metric: 'memory',

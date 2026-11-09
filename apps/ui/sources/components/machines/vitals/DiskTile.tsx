@@ -3,6 +3,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { MachineResourceAttentionV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 
+import { machineDiskName } from '@/components/machines/storage/storageViewModel';
 import { resolveMachineResourceToneColor } from '@/components/machines/summary/machineSummaryStripModel';
 import { t } from '@/text';
 
@@ -27,6 +28,8 @@ type Volume = Extract<
   { reported: true }
 >['volumes'][number];
 
+const diskName = (volume: Volume) => machineDiskName({ label: volume.label, mountPath: volume.mount });
+
 /**
  * One capacity per row: APFS volumes report their container's free space, so the volumes of one container
  * are one row named by all of them, never a remainder split that would invent per-volume free space.
@@ -38,14 +41,14 @@ function groupVolumes(
   const rows: Readonly<{ volume: Volume; label: string }>[] = [];
   for (const volume of volumes) {
     if (!volume.apfsContainerId) {
-      rows.push({ volume, label: volume.label });
+      rows.push({ volume, label: diskName(volume) });
       continue;
     }
     const members = containers.get(volume.apfsContainerId);
     if (members) members.push(volume);
     else {
       containers.set(volume.apfsContainerId, [volume]);
-      rows.push({ volume, label: volume.label });
+      rows.push({ volume, label: diskName(volume) });
     }
   }
   return rows.map((row) => {
@@ -55,7 +58,7 @@ function groupVolumes(
     return members.length > 1
       ? {
           volume: row.volume,
-          label: members.map((member) => member.label).join(' · '),
+          label: members.map(diskName).join(' · '),
         }
       : row;
   });
@@ -112,7 +115,7 @@ export const DiskTile = React.memo(function DiskTile(
   const headlineTone = toneOf(headline);
   const free = machineBytesParts(headline.availableBytes, 'storage');
   const headlineLabel =
-    rows.find((row) => row.volume.id === headline.id)?.label ?? headline.label;
+    rows.find((row) => row.volume.id === headline.id)?.label ?? diskName(headline);
   const full = rows.find((row) => row.volume.inodesExhausted);
   const happierOnHeadline = props.happierBytesByVolume?.get(headline.id) ?? null;
   return (

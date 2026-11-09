@@ -7,6 +7,14 @@ import { guardLevelWord } from '../guardPresentation';
 import { t } from '@/text';
 
 describe('Guard Activity presentation data', () => {
+    it('localizes an untitled Session while preserving a saved receipt title', () => {
+        const receipt = (title: string | null) => MachineGuardActivityRowV1Schema.parse({
+            v: 1, id: 'untitled', at: 1, kind: 'stopped_session', rule: 'idle_sessions',
+            subject: { kind: 'session', sessionId: '3f9a0c21', title }, outcome: 'done', attribution: { kind: 'unknown' },
+        });
+        expect(describeGuardActivityRow(receipt(null)).title).toBe(t('machineGuard.activity.kinds.stoppedSession', { title: t('session.untitled') }));
+        expect(describeGuardActivityRow(receipt('Saved title')).title).toBe(t('machineGuard.activity.kinds.stoppedSession', { title: 'Saved title' }));
+    });
     it('keeps reclaimed housekeeping and emptied Trash as decimal disk bytes beside binary freed memory', () => {
         const receipt = (kind: 'housekeeping' | 'stopped_session' | 'trash_emptied', freedBytes: number, undoneAt?: number) => MachineGuardActivityRowV1Schema.parse({
             v: 1, id: kind, at: 1000, kind, rule: kind === 'stopped_session' ? 'idle_sessions' : 'housekeeping',
@@ -36,6 +44,15 @@ describe('Guard Activity presentation data', () => {
         });
         expect(describeGuardActivityRow(entry).reason).toBe(t('machineGuard.activity.trigger', {
             level: guardLevelWord('elevated'), duration: t('machineVitals.alerts.durations.minutes', { minutes: 2 }) }));
+    });
+    it('says a near-ceiling notice left the Session running, and only a reached ceiling says it was stopped', () => {
+        const ceiling = (kind: 'ceiling_near' | 'ceiling_reached') => describeGuardActivityRow(MachineGuardActivityRowV1Schema.parse({
+            v: 1, id: kind, at: 1000, kind, rule: 'ceiling', subject: { kind: 'session', sessionId: 'session', title: 'Build' },
+            outcome: 'done', attribution: { kind: 'unknown' },
+        })).reason;
+        expect(ceiling('ceiling_reached')).toBe(t('machineGuard.activity.because.ceiling'));
+        expect(ceiling('ceiling_near')).toBe(t('machineGuard.activity.because.ceiling_near'));
+        expect(ceiling('ceiling_near')).not.toBe(ceiling('ceiling_reached'));
     });
     it.each(['too_many_open_files', 'no_ptys', 'process_limit', 'out_of_memory', 'other'] as const)(
         'preserves the typed %s start failure and next step without diagnostic prose', failureReason => {

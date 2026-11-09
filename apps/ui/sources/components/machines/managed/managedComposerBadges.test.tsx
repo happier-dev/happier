@@ -292,6 +292,26 @@ describe('managed composer badges', () => {
     expect(screen.getTextContent()).not.toContain('Linear');
   });
 
+  it.each([['preset_limit_reached', 'machinePresets.limitWaits'], ['some_unknown_code', 'newSession.failedToStart']] as const)(
+    'says what stopped an acquire refused before any operation exists (%s)', async (code, expected) => {
+      const { buildNewSessionManagedProgressBadge } = await import('@/components/sessions/new/hooks/screenModel/newSessionManagedProgressBadge');
+      const { createManagedMachineSelectionDraft } = await import('@/sync/domains/state/newSessionManagedMachineDraft');
+      const { t } = await import('@/text');
+      const selection = createManagedMachineSelectionDraft({
+        selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 },
+        receipt: { launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+          controller: { machineId: 'controller', installationId: 'installation' }, optionStatus: 'current', prerequisites: [],
+          billing: { location: 'local', stoppedBilling: 'not-billed' }, retentionCapabilities: { supportedIntents: ['stop', 'delete'] },
+          retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+      });
+      const badge = buildNewSessionManagedProgressBadge({ selection, acquisition: null, select: () => {}, retryInstallation: () => {},
+        progress: { kind: 'failed', code } });
+      const screen = await renderScreen(<>{badge?.renderPopover?.({ open: true,
+        anchorRef: React.createRef<unknown>(), onRequestClose: () => undefined })}</>);
+      expect(screen.getTextContent()).toContain(t(expected));
+    },
+  );
+
   describe('creation from this device (58d U5)', () => {
     const accountReceipt = {
       launch: { provider: { pluginId: 'machine.vercel', localId: 'sandbox' }, schemaVersion: 1, name: 'vercel-1', choices: {} },

@@ -153,7 +153,6 @@ export function useMachinePageTarget(): MachinePageTarget {
         if (!machineId) return;
         if (machine) {
             hydrationRequestedRef.current = false;
-            if (isHydratingMachine) setIsHydratingMachine(false);
             return;
         }
         if (hydrationRequestedRef.current) return;
@@ -169,8 +168,13 @@ export function useMachinePageTarget(): MachinePageTarget {
         })(), { tag: 'MachinePage.hydrateMachine' });
         return () => {
             cancelled = true;
+            hydrationRequestedRef.current = false;
         };
-    }, [isHydratingMachine, machine, machineId]);
+    }, [machine, machineId]);
+
+    React.useEffect(() => {
+        if (machine && isHydratingMachine) setIsHydratingMachine(false);
+    }, [isHydratingMachine, machine]);
 
     const machineName = React.useMemo(() => {
         if (!machine) return t('machine.unknownMachine');

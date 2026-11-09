@@ -15,6 +15,7 @@ import { createMachineGuardViewFixture } from '@/sync/domains/machines/guard/gua
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 installDisconnectedServerSocketBoundary();
 const transport = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -92,6 +93,33 @@ beforeEach(async () => { await home.reset(); machineGuardStore.reset(); transpor
 afterEach(async () => { standardCleanup(); machineGuardStore.reset(); storage.setState(before); await home.reset(); });
 
 describe('GuardTab', () => {
+    it('presents untitled Session ladder and idle rows using the canonical localized fallback', async () => {
+        guardAnswer.current = createMachineGuardViewFixture({ ...VIEW,
+            policy: { ...VIEW.policy, idleSessions: { ...VIEW.policy.idleSessions, enabled: true } },
+            idle: [{ ...VIEW.idle[0]!, title: null }],
+            ladder: { ...VIEW.ladder, steps: VIEW.ladder.steps.map(step => step.rung === 'idleSessions'
+                ? { ...step, enabled: true, status: 'next' as const, freesAboutBytes: GiB,
+                    candidates: [{ ref: 'untitled-session', kind: 'session' as const, label: null, qualifier: 'idle', footprintBytes: GiB }] }
+                : step) },
+        });
+        const { screen } = await mount({ overrides: { metadata: { ...machine().metadata!,
+            resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, guard: { idleSessions: { enabled: true } } }),
+        } } });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-guard-candidate-untitled-session')).not.toBeNull()); });
+        expect(screen.getTextContent().split(t('session.untitled')).length - 1).toBe(2);
+        expect(screen.getTextContent()).not.toContain('3f9a0c21');
+    });
+    it('says once that nothing automatic has happened, without a zeroed summary or empty filters, and leads back to the rules', async () => {
+        const { screen, setParams } = await mount({ params: { id: 'guard', page: 'activity' } });
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-activity-nothing-yet')).not.toBeNull()); });
+        expect(screen.getTextContent()).toContain(t('machineGuard.activity.emptyTitle.7d', { machine: 'leeroy-mbp' }));
+        expect(screen.findByTestId('machine-activity-summary')).toBeNull();
+        expect(screen.findByTestId('machine-activity-filter:all')).toBeNull();
+        expect(screen.findByTestId('machine-activity-earlier')).not.toBeNull();
+        await act(async () => screen.pressByTestId('machine-activity-review-rules'));
+        expect(setParams).toHaveBeenCalledWith({ id: 'guard' });
+    });
+
     it('previews the same Activity receipts as the detail page when today has no entries', async () => {
         const yesterday = Date.now() - 86_400_000;
         const entries: MachineGuardActivityRowV1[] = Array.from({ length: 30 }, (_, index) => ({
@@ -382,9 +410,12 @@ describe('GuardTab', () => {
         expect(screen.getTextContent()).toContain('Saved. leeroy-mbp hasn’t applied it yet.');
     });
 
-    it('reads a rule as its value, not as a dimmed control, when it cannot be changed', async () => {
-        const { screen } = await mount({ overrides: { active: false, activeAt: 0 } });
+    it.each([0, Date.UTC(2026, 9, 24, 12)])('reads offline rules with the last-known timestamp (%s)', async activeAt => {
+        const { screen } = await mount({ overrides: { active: false, activeAt }, barAccessoryShown: true });
         await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-guard-offline')).not.toBeNull()); });
+        expect(screen.getTextContent()).toContain(t('machineGuard.states.offlineBody', {
+            time: activeAt > 0 ? formatAsOfTime(activeAt) : t('machineGuard.states.lastKnown'),
+        }));
         expect(screen.findByTestId('machine-guard-left-behind:off')).toBeNull();
         expect(screen.findByTestId('machine-guard-left-behind')).not.toBeNull();
         expect(screen.findByTestId('machine-guard-activity-empty')).toBeNull();

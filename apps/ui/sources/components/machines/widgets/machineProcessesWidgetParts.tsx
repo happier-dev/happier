@@ -7,7 +7,7 @@ import {
   type CollectionAnatomy,
   type CollectionSummaryRow,
 } from '@happier-dev/plugin-ui';
-import { HappierDataMetric } from '@happier-dev/plugin-ui/presentation';
+import { CapacityBar, HappierDataMetric } from '@happier-dev/plugin-ui/presentation';
 import type { MachineProcessesAnswerV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 
 import { useProcessesCollectionAnatomy } from '@/components/machines/processes/processesCollectionAnatomy';
@@ -18,6 +18,7 @@ import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemePro
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { useMachineProcesses } from '@/sync/domains/machines/processes/useMachineProcesses';
 import { t } from '@/text';
 
@@ -190,6 +191,38 @@ export function MachineWidgetSectionLabel(
 const keyOf = (item: ProcessesItem) => item.key;
 
 /**
+ * A row's share as the hairline beneath it: the row's rule filled in ink as far as its share of the total, from
+ * the name's edge to the end (lab `rw` C). Through the one capacity bar, so a stop eases it down with the figure.
+ */
+function RowShareHairline(props: Readonly<{ share: number | null; testID: string }>) {
+  const { theme } = useUnistyles();
+  const pluginTheme = usePluginUiTheme(theme);
+  const reducedMotion = useReducedMotionPreference();
+  if (props.share === null) return null;
+  return (
+    <View pointerEvents="none" style={styles.shareHairline}>
+      <CapacityBar
+        testID={props.testID}
+        theme={pluginTheme}
+        label=""
+        value={Math.min(1, Math.max(0, props.share))}
+        capacity={1}
+        color={theme.colors.text.tertiary}
+        trackColor={theme.colors.border.subtle}
+        height={SHARE_HAIRLINE_PX}
+        showCaption={false}
+        animated
+        reducedMotion={reducedMotion}
+      />
+    </View>
+  );
+}
+
+const SHARE_HAIRLINE_PX = 2;
+/** Where a widget list row's name starts, measured live (focus ring, 22 px mark column, 12 px gap): the Collection's own row divider starts here. */
+const ROW_NAME_EDGE_PX = 35;
+
+/**
  * The Processes tab's rows (plan 30's anatomy, read-only: the tab's menus are not offered here), as a list
  * where the widget is narrow and the tab's table where it is wide. `accessory` adds a row's one inline
  * action (Stop); a row press opens the Processes tab.
@@ -203,16 +236,23 @@ export function MachineProcessesWidgetRows(
     titles: ReadonlyMap<string, string>;
     cpuCapacityCores: number | null;
     table: boolean;
+    /** A narrow list of one-line rows: name, status inline, memory at the end (lab `rw` C). */
+    singleLine?: boolean;
     accessibilityLabel: string;
     onOpen: () => void;
     accessory?: (item: ProcessesItem) => React.ReactNode;
     /** Rows letting go after a stop (the tab's stop-and-ease). */
     leaving?: ReadonlySet<string>;
+    /**
+     * A row's share of the widget's own total (0..1), drawn as a hairline under the row so the list reads as a chart
+     * (lab `rw` C); `null` draws none. Narrow list only: the table says its figures in columns.
+     */
+    shareOf?: (item: ProcessesItem) => number | null;
     summaryRows?: readonly CollectionSummaryRow[];
     testID: string;
   }>,
 ) {
-  const { onOpen, accessory, leaving } = props;
+  const { onOpen, accessory, leaving, shareOf } = props;
   const onOpenChange = React.useCallback(
     (key: string | null) => {
       if (key) onOpen();
@@ -234,9 +274,13 @@ export function MachineProcessesWidgetRows(
       titles: props.titles,
       cpuCapacityCores: props.cpuCapacityCores,
       compact: !props.table,
+      // A narrow widget list says the figure on the name's own line (lab `rw` C, LB).
+      memoryOnTitleLine: !props.table,
+      singleLine: !props.table && props.singleLine === true,
       readOnly: true,
     }),
     [
+      props.singleLine,
       props.cpuCapacityCores,
       props.machineId,
       props.machineName,
@@ -248,20 +292,23 @@ export function MachineProcessesWidgetRows(
   const base = useProcessesCollectionAnatomy(anatomyInput);
   const anatomy = React.useMemo(
     (): CollectionAnatomy<ProcessesItem> =>
-      accessory || leaving
+      accessory || leaving || shareOf
         ? {
             ...base,
             wrapItem: (item, content) => (
               <ProcessRowPresence leaving={leaving?.has(item.key) ?? false}>
                 <View style={styles.row}>
-                  <View style={styles.rowContent}>{content}</View>
+                  <View style={styles.rowContent}>
+                    {content}
+                    {shareOf ? <RowShareHairline share={shareOf(item)} testID={`machine-processes-share-${item.key}`} /> : null}
+                  </View>
                   {accessory?.(item)}
                 </View>
               </ProcessRowPresence>
             ),
           }
         : base,
-    [accessory, base, leaving],
+    [accessory, base, leaving, shareOf],
   );
   return (
     <CoreCollectionScope>
@@ -301,6 +348,13 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.variant('meta'),
     marginLeft: 'auto',
     color: theme.colors.text.tertiary,
+  },
+  // The hairline lies on the row's own rule: from the name's edge (after the mark) to the row's end.
+  shareHairline: {
+    position: 'absolute',
+    left: ROW_NAME_EDGE_PX,
+    right: 0,
+    bottom: 0,
   },
   row: {
     flexDirection: 'row',

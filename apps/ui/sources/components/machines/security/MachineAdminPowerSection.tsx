@@ -293,7 +293,14 @@ export function MachineAdminPowerView(
             rightElement={<InlineCode>{observation.daemonUsername}</InlineCode>}
           />
         ) : null}
-        {mode !== null ? (
+        {mode !== null && !props.canManage ? (
+          <Item
+            testID="machine-security-admin-access"
+            title={t(`${s}.access`)}
+            subtitle={options.find((option) => option.id === mode)?.label}
+            showChevron={false}
+          />
+        ) : mode !== null ? (
           <SegmentedChoiceItem<AdminAccessMode>
             testID="machine-security-admin-access"
             testIDPrefix="machine-security-admin-access"
@@ -339,7 +346,7 @@ export function MachineAdminPowerView(
             }
           />
         ) : null}
-        {separateUsers?.value ? (
+        {separateUsers?.value && props.canManage ? (
           <SegmentedChoiceItem<MachineAgentRunAs>
             testID="machine-security-admin-isolation"
             testIDPrefix="machine-security-agents-run-as"
@@ -348,7 +355,7 @@ export function MachineAdminPowerView(
             subtitleLines={0}
             options={runAsOptions}
             value={separateUsers.value}
-            disabled={!props.canManage || props.online !== true || separateUsers.busy}
+            disabled={props.online !== true || separateUsers.busy}
             onChange={separateUsers.onChoose}
           />
         ) : (

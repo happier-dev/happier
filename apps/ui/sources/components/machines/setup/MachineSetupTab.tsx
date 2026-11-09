@@ -115,17 +115,18 @@ function MachineSetupRoot(
   const router = useRouter();
   const { theme } = useUnistyles();
   const presented = useLayoutPresentationActive();
-  const setup = useMachineSetup({
-    serverId: props.serverId,
-    machineId: props.machineId,
-    active: presented,
-    online: props.online,
-  });
   const canManage = useServerScopedMachine(
     props.serverId,
     props.machineId,
     selectCanManage,
   );
+  const setup = useMachineSetup({
+    serverId: props.serverId,
+    machineId: props.machineId,
+    active: presented,
+    online: props.online,
+    canCheck: canManage,
+  });
   const saveScope = useServerCredentialAccountScopeBinding(props.serverId).binding?.scope ?? null;
   const homeId = getServerProfileById(props.serverId)?.serverIdentityId ?? null;
   const editable = canManage && props.online !== false;
@@ -163,6 +164,46 @@ function MachineSetupRoot(
   const apps = readMachineSetupApps(setup.plan?.sources ?? NO_SOURCES);
   const capturable = setup.plan?.sources.some((source) => describeMachineSetup(source.setup).length > 0) === true;
   const presetCatalog = presets.presetsByServerId[props.serverId] ?? NO_PRESETS;
+  const toolsSection = (
+    <ItemGroup
+      title={t('machinePresets.setup.tab.tools')}
+      description={t('machinePresets.setup.tab.toolsHelp')}
+      testID="machine-setup-tools-section"
+    >
+      <ToolsRow
+        serverId={props.serverId}
+        machineId={props.machineId}
+        onPress={props.onOpenTools}
+      />
+    </ItemGroup>
+  );
+  // Nothing can be read for these two: one line says why, in place of sections that would claim an empty setup.
+  const offlineUnread = setup.plan === null && props.online === false;
+  if (!canManage || offlineUnread) {
+    return (
+      <View testID="machine-setup">
+        {canManage ? (
+          <ItemGroup surface="none">
+            <SurfaceStateCard
+              testID="machine-setup-offline"
+              kind="unavailable"
+              size="line"
+              title={t('machinePresets.setup.tab.offline', { machine })}
+            />
+          </ItemGroup>
+        ) : (
+          <ItemGroup
+            surface="none"
+            description={t('machinePresets.setup.tab.readOnly')}
+            testID="machine-setup-read-only"
+          >
+            {null}
+          </ItemGroup>
+        )}
+        {toolsSection}
+      </View>
+    );
+  }
 
   const freshness = (
     <SurfaceFreshnessLine
@@ -205,7 +246,6 @@ function MachineSetupRoot(
         machineName={machine}
         drifted={drifted}
         editable={editable}
-        canManage={canManage}
         localize={localize}
       />
       {firstLoad ? (
@@ -417,17 +457,7 @@ function MachineSetupRoot(
           ) : null}
         </>
       )}
-      <ItemGroup
-        title={t('machinePresets.setup.tab.tools')}
-        description={t('machinePresets.setup.tab.toolsHelp')}
-        testID="machine-setup-tools-section"
-      >
-        <ToolsRow
-          serverId={props.serverId}
-          machineId={props.machineId}
-          onPress={props.onOpenTools}
-        />
-      </ItemGroup>
+      {toolsSection}
     </View>
   );
 }
@@ -446,7 +476,6 @@ function MachineSetupAttention(
     machineName: string;
     drifted: number;
     editable: boolean;
-    canManage: boolean;
     localize: (pluginId: string, value: unknown) => string;
   }>,
 ) {
@@ -554,17 +583,6 @@ function MachineSetupAttention(
             : null
         }
       />
-    );
-  }
-  if (!props.canManage) {
-    return (
-      <ItemGroup
-        surface="none"
-        description={t('machinePresets.setup.tab.readOnly')}
-        testID="machine-setup-read-only"
-      >
-        {null}
-      </ItemGroup>
     );
   }
   return null;

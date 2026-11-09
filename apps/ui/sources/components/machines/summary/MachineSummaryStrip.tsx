@@ -4,6 +4,7 @@ import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentati
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { CapacityBar, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 
+import { usageSignatureAccent } from '@/components/settings/usage/usageAccent';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { Tooltip } from '@/components/ui/overlays/Tooltip';
 import { CapacityRing } from '@/components/ui/progress/CapacityRing';
@@ -11,6 +12,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { MachineResourceAvailability } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { t } from '@/text';
+import { vitalsAreaWash } from '@/components/machines/vitals/vitalsFormat';
+import { describeMachineSummaryCaption } from './MachineSummaryCaption';
 
 import {
     buildMachineSummaryInstruments,
@@ -67,6 +70,11 @@ export type MachineSummaryStripProps = Readonly<{
     style: MachineSummaryStyle;
     metrics: readonly MachineSummaryMetric[];
     layout: MachineSummaryStripLayout;
+    /**
+     * `tiles` only: the tile takes the room its host gives it, figure at the top and the line filling the rest (a Small
+     * Metric widget, lab `rw` M), with no label of its own: the host's frame names the metric. Otherwise the tile keeps its card height with a short line.
+     */
+    fill?: boolean;
     testID?: string;
 }>;
 
@@ -89,7 +97,12 @@ export const MachineSummaryStrip = React.memo(function MachineSummaryStrip(props
         setUnderWidth(current => (current === width ? current : width));
     }, []);
     if (props.metrics.length === 0) return null;
-    if (props.layout === 'fact') return <MachineMemoryFact instruments={instruments} testID={props.testID} />;
+    if (props.availability?.kind === 'monitoring_off') {
+        return <Text testID={props.testID} numberOfLines={1} style={styles.label}>{t('machineVitals.monitoring.modes.off')}</Text>;
+    }
+    // A failed watch or read keeps its values, one step dimmer: the freshness line says why (M-15).
+    const stale = props.availability?.kind === 'reporting' && (props.availability.freshness === 'stale' || props.availability.readStatus !== undefined);
+    if (props.layout === 'fact') return <MachineMemoryFact instruments={instruments} stale={stale} testID={props.testID} />;
     // Held in a const so the narrowing reaches the instruments drawn below.
     const layout = props.layout;
     const shown = props.layout === 'inline' && props.style === 'numbers'
@@ -97,8 +110,6 @@ export const MachineSummaryStrip = React.memo(function MachineSummaryStrip(props
         : props.layout === 'under'
             ? fitMachineSummaryMetrics(props.metrics, instruments, machineSummaryUnderCapacity(props.style, underWidth, theme.space.s12))
             : props.metrics;
-    // A failed watch or read keeps its values, one step dimmer: the freshness line says why (M-15).
-    const stale = props.availability?.kind === 'reporting' && (props.availability.freshness === 'stale' || props.availability.readStatus !== undefined);
     const accessibilityLabel = describeMachineSummary(instruments, shown);
     return (
         <View
@@ -106,7 +117,7 @@ export const MachineSummaryStrip = React.memo(function MachineSummaryStrip(props
             accessible
             accessibilityLabel={accessibilityLabel}
             onLayout={props.layout === 'under' ? onLayout : undefined}
-            style={[props.layout === 'tiles' ? styles.tiles : styles.row, props.layout === 'inline' ? styles.inlineRow : null,
+            style={[props.layout === 'tiles' ? styles.tiles : styles.row, props.layout === 'tiles' && props.fill ? styles.tilesFill : null, props.layout === 'inline' ? styles.inlineRow : null,
                 props.layout === 'under' ? styles.underRow : null, stale ? styles.stale : null]}
         >
             {shown.map(metric => (
@@ -116,8 +127,9 @@ export const MachineSummaryStrip = React.memo(function MachineSummaryStrip(props
                     instrument={instruments?.[metric] ?? null}
                     style={props.style}
                     layout={layout}
+                    fill={props.fill === true}
                     // One caption names the instruments; labels return only where one or four metrics show (MPG-20).
-                    labelled={props.layout === 'tiles' || ((props.layout === 'under' || props.layout === 'preview') && (shown.length === 1 || shown.length === 4))}
+                    labelled={(props.layout === 'tiles' && props.fill !== true) || ((props.layout === 'under' || props.layout === 'preview') && (shown.length === 1 || shown.length === 4))}
                     neverSampled={props.availability?.kind === 'never_sampled'
                         || props.availability?.kind === 'reporting' && !instruments?.[metric]?.figure}
                     color={theme.colors.text.secondary}
@@ -152,6 +164,7 @@ const MachineSummaryInstrumentView = React.memo(function MachineSummaryInstrumen
     instrument: MachineSummaryInstrument | null;
     style: MachineSummaryStyle;
     layout: Exclude<MachineSummaryStripLayout, 'fact'>;
+    fill: boolean;
     labelled: boolean;
     neverSampled: boolean;
     color: string;
@@ -161,7 +174,8 @@ const MachineSummaryInstrumentView = React.memo(function MachineSummaryInstrumen
     const { instrument, layout } = props;
     const tone = instrument?.tone ?? 'calm';
     const toneColor = resolveMachineResourceToneColor(tone, theme.colors);
-    const inkColor = tone === 'calm' ? props.color : toneColor;
+    // A filling line is the Metric chart's own ink: the signature accent while calm, the tone otherwise.
+    const inkColor = tone === 'calm' ? (layout === 'tiles' && props.fill ? usageSignatureAccent(theme) : props.color) : toneColor;
     const showFigure = (layout !== 'inline' || props.style === 'numbers') && (props.style !== 'rings' || layout === 'tiles' || layout === 'cells');
     const figure = instrument?.figure ?? (props.neverSampled ? '–' : null);
     if (layout === 'tiles' && props.style === 'rings' && props.metric !== 'network') {
@@ -177,13 +191,16 @@ const MachineSummaryInstrumentView = React.memo(function MachineSummaryInstrumen
         return instrument?.exact ? <Tooltip label={instrument.exact} style={styles.ringTile}>{ring}</Tooltip> : ring;
     }
     const drawn = renderInstrument({ ...props, inkColor, trackColor: theme.colors.border.subtle });
+    const filling = layout === 'tiles' && props.fill;
     const body = (
-        <View style={layout === 'tiles' ? styles.tile : styles.instrument}>
+        <View style={layout === 'tiles' ? [styles.tile, filling ? styles.tileFill : null] : styles.instrument}>
             {props.labelled ? <Text numberOfLines={1} style={styles.label}>{machineSummaryMetricTitle(props.metric)}</Text> : null}
             {layout === 'tiles' ? (
                 <>
-                    <Text numberOfLines={1} style={[styles.tileFigure, { color: toneColor }]}>{figure ?? ' '}</Text>
-                    <View style={styles.tileInstrument}>{drawn}</View>
+                    <Text numberOfLines={1} style={[filling ? styles.tileFigureLarge : styles.tileFigure, { color: toneColor }]}>{figure ?? ' '}</Text>
+                    {/* The frame names the metric, so the line says what the figure is: "memory free", "download", the window. */}
+                    {filling ? <Text numberOfLines={1} style={styles.tileCaption}>{fillCaption(props.metric, props.style, instrument)}</Text> : null}
+                    <View style={filling ? styles.tileInstrumentFill : styles.tileInstrument}>{drawn}</View>
                 </>
             ) : (
                 <>
@@ -198,7 +215,10 @@ const MachineSummaryInstrumentView = React.memo(function MachineSummaryInstrumen
         </View>
     );
     // The exact reading on hover and keyboard focus (R9); the strip's own name already says it to screen readers.
-    return instrument?.exact && layout !== 'preview' ? <Tooltip label={instrument.exact}>{body}</Tooltip> : body;
+    // A tile's tooltip host takes the tile's share of the strip, so the tiles spread over their card.
+    // The host is the same element whether or not this sample carries an exact reading (an empty label shows no
+    // tooltip): swapping it in and out around the body would remount the line on every sample that drops one.
+    return layout !== 'preview' ? <Tooltip label={instrument?.exact ?? ''} style={layout === 'tiles' ? styles.ringTile : undefined}>{body}</Tooltip> : body;
 });
 
 /**
@@ -226,6 +246,7 @@ function renderInstrument(props: Readonly<{
     instrument: MachineSummaryInstrument | null;
     style: MachineSummaryStyle;
     layout: Exclude<MachineSummaryStripLayout, 'fact'>;
+    fill: boolean;
     inkColor: string;
     trackColor: string;
 }>): React.ReactNode {
@@ -240,6 +261,8 @@ function renderInstrument(props: Readonly<{
         return <MachineSummaryMeter used={instrument?.used ?? null} color={props.inkColor} trackColor={props.trackColor}
             width={layout === 'inline' ? 16 : layout === 'tiles' ? undefined : LINE_WIDTH[layout] / (props.style === 'bars' ? 1 : 2)} />;
     }
+    if (layout === 'tiles' && props.fill) return <MachineSummaryFillLine line={instrument?.line ?? []} color={props.inkColor} />;
+    if (layout === 'tiles') return <MachineSummaryTileLine line={instrument?.line ?? []} color={props.inkColor} />;
     return <MachineSummaryLine line={instrument?.line ?? []} color={props.inkColor}
         width={LINE_WIDTH[layout]} height={LINE_HEIGHT[layout]} />;
 }
@@ -256,9 +279,6 @@ function MachineSummaryMeter(props: Readonly<{ used: number | null; color: strin
     );
 }
 
-// Summary rows announce measured values themselves; their charts have no point-selection action.
-const renderSummaryBucket: NonNullable<React.ComponentProps<typeof StackedSeriesChart>['renderBucket']> = (_bucket, visual) => visual;
-
 /** A 5-minute line through the shared chart owner, already scaled by the model (no min–max fit). */
 function MachineSummaryLine(props: Readonly<{ line: readonly (number | null)[]; color: string; width: number; height: number }>) {
     const { theme } = useUnistyles();
@@ -271,24 +291,88 @@ function MachineSummaryLine(props: Readonly<{ line: readonly (number | null)[]; 
         <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ width: props.width, height: props.height }}>
             <StackedSeriesChart theme={pluginTheme} label="" series={series} variant="line" size="inline"
                 width={props.width} viewportHeight={props.height} minimumMaximum={1} strokeWidth={1.25}
-                showAxis={false} showLegend={false} showGrid={false} showReadout={false} renderBucket={renderSummaryBucket} />
+                showAxis={false} showLegend={false} showGrid={false} showReadout={false} decorative />
         </View>
     );
 }
 
-/** "19 GB free", or the pressure word in tone when memory is not calm (MPG-35). */
+/**
+ * The caption's own words under a filling figure: CPU leaves its name to the frame and says its load and cores (lab `rw` M),
+ * or only the window when the machine reports neither.
+ */
+function fillCaption(metric: MachineSummaryMetric, style: MachineSummaryStyle, instrument: MachineSummaryInstrument | null): string | null {
+    return metric === 'cpu' ? instrument?.detail ?? t('machineSummary.caption.window') : describeMachineSummaryCaption([metric], style);
+}
+
+/**
+ * A tile's line at its design width, narrowed to the tile it stands in: two tiles in a card split its width, and a
+ * line wider than its tile ran past the card's edge.
+ */
+function MachineSummaryTileLine(props: Readonly<{ line: readonly (number | null)[]; color: string }>) {
+    const [width, setWidth] = React.useState<number | null>(null);
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const visibleWidth = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
+        if (visibleWidth === null) return;
+        const next = Math.min(LINE_WIDTH.tiles, Math.floor(visibleWidth));
+        setWidth(current => (current === next ? current : next));
+    }, []);
+    return (
+        <View onLayout={onLayout} style={stylesheet.tileLine}>
+            {width === null ? null : <MachineSummaryLine line={props.line} color={props.color} width={width} height={LINE_HEIGHT.tiles} />}
+        </View>
+    );
+}
+
+/**
+ * The same line through the same chart owner, drawn at the box its tile leaves it (a measured width and height). The
+ * box holds no content of its own and the ink sits over it, so the line never grows its own room. A history that has
+ * not arrived leaves a gap, never a drawn zero.
+ */
+function MachineSummaryFillLine(props: Readonly<{ line: readonly (number | null)[]; color: string }>) {
+    const { theme } = useUnistyles();
+    const pluginTheme = usePluginUiTheme(theme);
+    const [box, setBox] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
+        const { width, height } = event.nativeEvent.layout;
+        const visibleWidth = readHappierVisibleLayoutWidth(width);
+        if (visibleWidth === null || !(height > 0)) return;
+        setBox(current => (current?.width === visibleWidth && current.height === height ? current : { width: visibleWidth, height }));
+    }, []);
+    const series = React.useMemo(() => [{ id: 'line', label: '', color: props.color, fillOpacity: vitalsAreaWash(theme.dark),
+        points: props.line.map((y, index) => ({ id: String(index), x: index, y })) }], [props.color, props.line, theme.dark]);
+    const drawn = box !== null && props.line.some((y) => typeof y === 'number');
+    return (
+        <View onLayout={onLayout} style={stylesheet.fillLine}>
+            {drawn ? (
+                <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[stylesheet.fillInk, { width: box.width, height: box.height }]}>
+                    <StackedSeriesChart theme={pluginTheme} label="" series={series} variant="area" size="inline"
+                        width={box.width} viewportHeight={box.height} minimumMaximum={1} strokeWidth={1.25}
+                        showAxis={false} showLegend={false} showGrid={false} showReadout={false} decorative />
+                </View>
+            ) : null}
+        </View>
+    );
+}
+
+/**
+ * "19 GB free" in meta ink (MPG-35). Pressure reads as a sentence, never a bare level word: tight memory stays
+ * quiet ink, and only memory that is short speaks, in the attention tone (healthy is quiet; amber needs you).
+ */
 const MachineMemoryFact = React.memo(function MachineMemoryFact(props: Readonly<{
     instruments: Readonly<Record<MachineSummaryMetric, MachineSummaryInstrument>> | null;
+    stale: boolean;
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
     const memory = props.instruments?.memory ?? null;
     if (!memory?.figure) return null;
-    const calm = memory.tone === 'calm';
+    const label = memory.tone === 'calm' ? t('machineSummary.memoryFreeFact', { free: memory.figure })
+        : memory.tone === 'crit' ? t('machineAttention.words.memoryCritical') : t('machineAttention.words.memoryElevated');
+    const color = memory.tone === 'crit' ? theme.colors.state.attention.textForeground : theme.colors.text.secondary;
     const body = (
         <Text testID={props.testID} numberOfLines={1} accessible accessibilityLabel={memory.exact ?? undefined}
-            style={[stylesheet.fact, { color: calm ? theme.colors.text.secondary : resolveMachineResourceToneColor(memory.tone, theme.colors) }]}>
-            {calm ? t('machineSummary.memoryFreeFact', { free: memory.figure }) : memory.figure}
+            style={[stylesheet.fact, { color }, props.stale ? stylesheet.stale : null]}>
+            {label}
         </Text>
     );
     return memory.exact ? <Tooltip label={memory.exact}>{body}</Tooltip> : body;
@@ -309,9 +393,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignSelf: 'stretch',
         minWidth: 0,
     },
+    // Tiles share their host card's body width: the first figure starts on the card's text edge, and the tiles keep
+    // their spacing between each other rather than an inset of their own on both sides.
     tiles: {
         flexDirection: 'row',
         alignItems: 'stretch',
+        alignSelf: 'stretch',
+        gap: theme.space.s16,
+    },
+    tilesFill: {
+        flexGrow: 1,
     },
     stale: {
         opacity: 0.55,
@@ -325,12 +416,35 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         minWidth: 0,
         gap: theme.space.s4,
-        paddingHorizontal: theme.space.s16,
         paddingVertical: theme.space.s12,
     },
     tileInstrument: {
         height: 24,
         justifyContent: 'center',
+    },
+    tileFill: {
+        paddingHorizontal: 0,
+        paddingVertical: 0,
+    },
+    tileInstrumentFill: {
+        flexGrow: 1,
+        minHeight: 32,
+        marginTop: theme.space.s8,
+    },
+    tileLine: {
+        alignSelf: 'stretch',
+        height: LINE_HEIGHT.tiles,
+        justifyContent: 'center',
+    },
+    fillLine: {
+        flexGrow: 1,
+        minHeight: 32,
+        alignSelf: 'stretch',
+    },
+    fillInk: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
     },
     ringTile: {
         flex: 1,
@@ -381,6 +495,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     tileFigure: {
         ...Typography.variant('label', 'semiBold'),
         ...Typography.tabular(),
+    },
+    tileFigureLarge: {
+        ...Typography.variant('title', 'semiBold'),
+        ...Typography.tabular(),
+    },
+    tileCaption: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.tertiary,
     },
     fact: {
         ...Typography.variant('meta'),

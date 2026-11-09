@@ -107,7 +107,7 @@ export function selectGuardPendingStop(
             {
               kind: 'session' as const,
               id: entry.sessionRef,
-              title: entry.title,
+              title: entry.title ?? t('session.untitled'),
               stopAt: entry.stopAt,
               idleMs: entry.idleMs,
             },
@@ -618,7 +618,7 @@ function GuardCandidates(
                 {String(index + 1)}
               </Text>
             }
-            title={candidate.label}
+            title={candidate.label ?? t('session.untitled')}
             titleAccessory={
               candidate.qualifier ? (
                 <Text numberOfLines={1} style={styles.qualifier}>

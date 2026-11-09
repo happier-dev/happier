@@ -64,6 +64,7 @@ import {
 } from './machineWidgetKit';
 import { useMachineAttentionStatedAbove } from './machineAttentionStatedAbove';
 import { useMachineWidgetVitalsView } from './machineWidgetVitalsView';
+import { machineDiskName } from '@/components/machines/storage/storageViewModel';
 
 const RING_METRICS: readonly MachineSummaryMetric[] = ['cpu', 'memory', 'disk'];
 const LARGE_METRICS: readonly MachineSummaryMetric[] = [
@@ -126,6 +127,9 @@ function VitalsBody(
         testID={props.testID}
       />
     );
+  if (availability?.kind === 'monitoring_off' && facts.online !== false)
+    return <MachineWidgetState kind="empty" title={t('machineVitals.monitoring.offTitle', { machine: facts.name })}
+      testID={props.testID} />;
   if (availability?.kind === 'not_reported')
     return (
       <MachineWidgetState
@@ -545,7 +549,7 @@ function describeRowDetail(
     const { totalBytes, volumeLabel } = summary.disk;
     return (
       [
-        volumeLabel,
+        volumeLabel === null ? null : machineDiskName({ label: volumeLabel }),
         totalBytes !== null ? machineBytesFigure(totalBytes, 'storage') : null,
       ]
         .filter(Boolean)
@@ -589,6 +593,9 @@ function VitalsDetail(
         testID={`${props.testID}.detail`}
       />
     );
+  if (vitals.view.kind === 'monitoring_off')
+    return <MachineWidgetState kind="empty" title={t('machineVitals.monitoring.offTitle', { machine: props.facts.name })}
+      reason={t('machineVitals.monitoring.offReason')} testID={`${props.testID}.detail`} />;
   if (!sample || vitals.view.kind !== 'ready') return null;
   const openProcesses = () => props.open({ id: 'processes', sort: 'memory' });
   const using = props.facts.online ? (
