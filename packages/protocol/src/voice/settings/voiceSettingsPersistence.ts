@@ -173,18 +173,16 @@ function resolvePredecessorCredentialTarget(
     return contribution ? { contribution, credentialSlotId } : null;
 }
 
-const MAX_VOICE_CREDENTIAL_BINDINGS = 64;
-
 function normalizeQualifiedCredentialBindings(value: unknown): readonly VoiceCredentialBindingV1[] {
     if (!isRecord(value) || !Array.isArray(value.credentialBindings)) return [];
     // A legacy carrier entry fans out to one binding per credential slot, so the
     // normalized result can exceed its input length and can collide with an
     // already-canonical entry for the same identity. `VoiceCredentialBindingsSchema`
-    // rejects duplicates and anything past the ceiling for the WHOLE array, and
-    // `voiceSettingsParse` then falls back to `[]` — which is how a single
+    // rejects duplicates for the WHOLE array, and `voiceSettingsParse` then
+    // falls back to `[]` — which is how a single
     // duplicate would silently retract every stored Voice credential binding at
     // the next settings write. Emit a set the canonical schema always accepts.
-    return dedupeCredentialBindings(value.credentialBindings.slice(0, 64).flatMap((candidate) => {
+    return dedupeCredentialBindings(value.credentialBindings.flatMap((candidate) => {
         const canonical = createStoredReadSchema(VoiceCredentialBindingV1Schema).safeParse(candidate);
         if (canonical.success) return [canonical.data];
         const legacy = createStoredReadSchema(PredecessorVoiceCredentialBindingV1Schema).safeParse(candidate);
@@ -243,7 +241,6 @@ function dedupeCredentialBindings(
         const identity = credentialBindingIdentity(binding);
         if (byIdentity.has(identity)) continue;
         byIdentity.set(identity, binding);
-        if (byIdentity.size === MAX_VOICE_CREDENTIAL_BINDINGS) break;
     }
     return [...byIdentity.values()];
 }

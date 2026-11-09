@@ -13,7 +13,7 @@ export function parsePredecessorVoiceCredentialBindings(
     if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
     const raw = value as Readonly<Record<string, unknown>>;
     if (!Array.isArray(raw.credentialBindings)) return [];
-    return raw.credentialBindings.slice(0, 64).flatMap((candidate) => {
+    return raw.credentialBindings.flatMap((candidate) => {
         const parsed = createStoredReadSchema(PredecessorVoiceCredentialBindingV1Schema).safeParse(candidate);
         return parsed.success ? [parsed.data] : [];
     });

@@ -172,11 +172,14 @@ describe('shared Voice settings owner', () => {
     expect(owner.voiceSettingsParse({ credentialBindings: [{ ...binding, credentialSource: { kind: 'retired' } }] }).credentialBindings).toEqual([]);
   });
 
-  it('reads predecessor credential carriers with retired fields', () => {
-    expect(parsePredecessorVoiceCredentialBindings({ credentialBindings: [{ providerId: 'openai_compat',
-      credentialBindings: { account: { chat_api_key: 'secret-id' }, retired: true }, retired: true }] })).toEqual([{
-      providerId: 'openai_compat', credentialBindings: { account: { chat_api_key: 'secret-id' } },
-    }]);
+  it('reads all 65 predecessor credential carriers with retired fields', () => {
+    const bindings = Array.from({ length: 65 }, (_, index) => ({
+      providerId: `example.voice/provider-${index}`,
+      credentialBindings: { account: { chat_api_key: `secret-${index}` } },
+    }));
+    expect(parsePredecessorVoiceCredentialBindings({ credentialBindings: bindings.map(binding => ({
+      ...binding, credentialBindings: { ...binding.credentialBindings, retired: true }, retired: true,
+    })) })).toEqual(bindings);
   });
 
   it('classifies retained legacy credential material through the same tolerant binding projection', () => {
