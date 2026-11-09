@@ -1,6 +1,7 @@
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { t } from '@/text';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import type { TriggerWhenValue } from './sessionTriggerForm';
 import { buildSimpleScheduleCron, formatClockTimeInput, parseClockTime, SIMPLE_SCHEDULE_REPEATS } from './triggerSchedule';
 
@@ -11,7 +12,7 @@ export function useTriggerScheduleCommands(props: Readonly<{
     onChange: (next: TriggerWhenValue) => void;
 }>) {
     const { when, currentUiContextCommandScope: scope } = props;
-    const readValue = (input?: PluginUiJsonValueV1) => input !== null && typeof input === 'object' && !Array.isArray(input)
+    const readValue = (input?: PluginUiJsonValueV1) => isRecord(input)
         && typeof input.value === 'string' ? input.value : null;
     const changeRepeat = (repeat: string) => {
         const selected = SIMPLE_SCHEDULE_REPEATS.find(candidate => candidate === repeat);

@@ -52,7 +52,6 @@ import {
 import { normalizeLimit } from './sessionStateReaders';
 import { createMachineInventoryProbe } from './probeMachineInventory';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
 type ModelInventoryItem = Readonly<{
   id: string;

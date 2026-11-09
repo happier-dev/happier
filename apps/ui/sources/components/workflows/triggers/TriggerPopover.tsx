@@ -4,6 +4,7 @@ import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentU
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
@@ -315,7 +316,7 @@ export function FieldSelect(props: Readonly<{
         { key: 'select', title: props.title, description: JSON.stringify({ control: `${scope}.select`,
             selectedId: props.selectedId, input: { id: 'option id' }, options: props.items.map(({ id, title, disabled }) => ({ id, title, disabled: disabled === true })) }),
             invoke: input => {
-                if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.id !== 'string') return false;
+                if (!isRecord(input) || typeof input.id !== 'string') return false;
                 const item = props.items.find(candidate => candidate.id === input.id);
                 if (!item || item.disabled) return false;
                 select(item.id);

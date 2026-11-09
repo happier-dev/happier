@@ -1308,7 +1308,7 @@ export function WorkflowRunInputs(
                             diagnosticCode={optionState.errorCode}
                             action={{
                               label: t('common.retry'),
-                              onPress: retry,
+                              onPress: () => retry(),
                             }}
                           />
                         }

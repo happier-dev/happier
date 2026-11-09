@@ -39,7 +39,7 @@ export type CurrentAutomationEventContributionV1 = AutomationEligibleEventContri
  * durable-push source is declared and which webhook contribution it names.
  */
 export function readCurrentAutomationEventDurablePushWebhookContributionV1(
-    event: ParsedAutomationEventContributionV1,
+    event: CurrentAutomationEventContributionV1,
 ): Readonly<{ pluginId: string; localId: string }> | null {
     const source = event.automation?.source;
     if (
