@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { IModal, ModalType } from '@/modal';
+import type { CustomModalChromeConfig } from '@/modal/types';
 import { vi } from 'vitest';
 
 export type ModalModuleMockOptions = Readonly<{
@@ -28,6 +29,7 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
     let modals: ReadonlyArray<Readonly<{ id: string; config: CustomModalConfig }>> = [];
     let nextModalId = 0;
     const VisibleModalKindContext = React.createContext<ModalType | null>(null);
+    const ModalContentIdContext = React.createContext<string | null>(null);
     const listeners = new Set<() => void>();
     const publish = () => { for (const listener of listeners) listener(); };
     const showImplementation = options.spies?.show ?? ((config: Parameters<IModal['show']>[0]) => {
@@ -89,6 +91,18 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
         updateCustomModalProps: spies.update,
     };
 
+    function CustomContent({ id, config }: Readonly<{ id: string; config: CustomModalConfig }>) {
+        const [chrome, setChrome] = React.useState<CustomModalChromeConfig | null>(null);
+        const onClose = React.useCallback(() => spies.hide(id), [id]);
+        // Match CustomModal: publishing chrome updates its frame without re-entering the content that published it.
+        const content = React.useMemo(() =>
+            React.createElement(config.component, { ...config.props, onClose, setChrome }),
+        [config.component, config.props, onClose]);
+        return React.createElement(ModalContentIdContext.Provider, { value: id },
+            content,
+            chrome && 'footer' in chrome ? chrome.footer : null);
+    }
+
     function CustomContentProvider({ active, children }: { active?: boolean; children?: React.ReactNode }) {
         const snapshot = React.useSyncExternalStore(
             (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
@@ -98,11 +112,7 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
         return React.createElement(VisibleModalKindContext.Provider, {
             value: active === false || snapshot.length === 0 ? null : 'custom',
         }, React.createElement('ModalProvider', { active }, children ?? null,
-            snapshot.map(({ id, config }) => React.createElement(config.component, {
-                ...config.props,
-                key: id,
-                onClose: () => spies.hide(id),
-            }))));
+            snapshot.map(({ id, config }) => React.createElement(CustomContent, { id, config, key: id }))));
     }
 
     function ModalProvider({ active, children }: { active?: boolean; children?: React.ReactNode }) {
@@ -126,6 +136,7 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
             },
             ModalProvider,
             useVisibleModalKind: () => React.useContext(VisibleModalKindContext),
+            useModalContentId: () => React.useContext(ModalContentIdContext),
             useOptionalModal: () => ({
                 isKeyboardLiftSuppressedByModal: options.isKeyboardLiftSuppressedByModal ?? false,
                 state: { modals: [] },
