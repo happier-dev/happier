@@ -1,4 +1,5 @@
-import { readSpokenActionOutcomeOwner, resolveSpokenActionOutcome } from '@/voice/context/spokenActionOutcome';
+import { readSpokenActionOutcomeOwner } from '@/voice/context/spokenActionOutcome';
+import { resolveVoiceToolResultHumanSummary } from '@/voice/context/resolveVoiceToolResultHumanSummary';
 import { getVoiceContextFormatterPrefs } from '@/voice/context/voiceContextPrefs';
 import { resolveVoiceSessionLabel } from '@/voice/context/resolveVoiceSessionLabel';
 import type { VoiceHostTextPlayback } from '@happier-dev/plugin-sdk/voice/client';
@@ -373,7 +374,11 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     const actionRun = await runActionsOnce(actions, params.turnOrigin ?? 'person');
     const toolResults = actionRun.results;
     toolResultBatches.push(toolResults);
-    const outcomes = toolResults.map(entry => resolveSpokenActionOutcome(entry, {
+    const summaryPrefs = resolveVoiceToolResultPrivacyPrefs();
+    const outcomes = toolResults.map(entry => resolveVoiceToolResultHumanSummary({
+      toolName: entry.t, toolInput: entry.args, toolResult: entry.result,
+      shareFilePaths: summaryPrefs.shareFilePaths, shareSessionSummary: summaryPrefs.shareSessionSummary,
+      outcomeOnly: true,
       resolveSentToLabel: input => {
         const sessionId = input?.sessionId ?? params.currentToolSessionAddress?.sessionId;
         const serverId = input?.serverId ?? params.currentToolSessionAddress?.serverId;

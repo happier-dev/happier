@@ -1,6 +1,10 @@
 import { resolveSpokenActionOutcome } from './spokenActionOutcome';
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { t } from '@/text';
+import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { resolveVoiceActionExecution, VOICE_ACTION_EXECUTE_TOOL_NAME } from '@/voice/tools/voiceActionExecution';
 
 function asObject(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -162,26 +166,55 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
     shareFilePaths: boolean;
     /** Session titles and explicit summaries may cross the provider boundary only with consent. */
     shareSessionSummary: boolean;
+    /** Local speech presents settled effects; discovery remains provider context. */
+    outcomeOnly?: boolean;
+    resolveSentToLabel?: (input: Readonly<Record<string, unknown>> | null) => string | null;
 }>): string | null {
-    const result = asObject(params.toolResult);
-    if (!result) return null;
+    const envelope = asObject(params.toolResult);
+    if (!envelope) return null;
+    const execution = params.outcomeOnly && params.toolName === VOICE_ACTION_EXECUTE_TOOL_NAME
+        ? resolveVoiceActionExecution(params.toolInput) : null;
+    const toolName = execution?.toolName ?? params.toolName;
+    const result = execution ? asObject(envelope.result) ?? envelope : envelope;
     // Keep the runtime boundary fail-closed for untyped, legacy, or malformed callers too.
     const shareFilePaths = params.shareFilePaths === true;
     const shareSessionSummary = params.shareSessionSummary === true;
-    const outcome = resolveSpokenActionOutcome({ t: params.toolName, args: params.toolInput, result: params.toolResult });
+    const outcome = resolveSpokenActionOutcome({ t: params.toolName, args: params.toolInput, result: params.toolResult }, {
+        resolveSentToLabel: params.resolveSentToLabel,
+    });
     if (outcome) return maybeRedact(outcome, shareFilePaths);
+
+    if (toolName === 'spawnSession') {
+        if (envelope.ok === false) {
+            return resolveActionExecutionFailureMessage(envelope, t('entityDragDrop.preview.unknownDetail'));
+        }
+        const { ok: _ok, summary: _summary, ...creation } = result;
+        if (ActionApprovalRequestCreatedResultSchema.safeParse(creation).success) return t('approvals.status.open');
+        // The Action owner validated settlement before presentation. Retained
+        // outcomes may already have private target fields projected away.
+        switch (result.type) {
+            case 'success': return t('common.done');
+            case 'pending': return t('session.askRecord.unsure');
+            case 'error': return result.code === 'cancelled'
+                ? t('voiceSurface.actionCanceled')
+                : resolveActionExecutionFailureMessage(result, t('entityDragDrop.preview.unknownDetail'));
+        }
+    }
+
+    if (params.outcomeOnly && toolName !== 'spawnSession' && toolName !== 'openSession'
+        && toolName !== 'setPrimaryActionSession' && toolName !== 'setTrackedSessions') return null;
 
     // An explicit `result.summary` (or `error.message`) is summary text, so it must honor the
     // `shareSessionSummary` toggle, not only `shareFilePaths` (X-L1). When summary sharing is
     // disabled the explicit summary is suppressed entirely rather than spoken back to the provider.
     const explicitSummary = normalizeText(result.summary)
         ?? normalizeText(asObject(result.error)?.message);
-    if (explicitSummary) {
+    if (explicitSummary && !params.outcomeOnly) {
         if (!shareSessionSummary) return null;
         return maybeRedact(explicitSummary, shareFilePaths);
     }
 
-    switch (params.toolName) {
+    switch (toolName) {
         case 'listSessions': {
             if (!shareSessionSummary) return null;
             return summarizeLabelList(
@@ -209,7 +242,7 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
         }
         case 'listAgentModels': {
             const labels = collectLabels(result.items, shareFilePaths);
-            const input = asObject(params.toolInput);
+            const input = asObject(execution?.input ?? params.toolInput);
             const agentLabel = resolveAgentModelsSummaryLabel(input, result);
             const prefix = agentLabel ? `Available ${agentLabel} models` : 'Available models';
             return summarizeLabelList(prefix, labels);

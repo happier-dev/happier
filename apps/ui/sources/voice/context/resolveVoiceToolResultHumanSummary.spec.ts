@@ -5,6 +5,40 @@ import { t } from '@/text';
 import { resolveVoiceToolResultHumanSummary } from './resolveVoiceToolResultHumanSummary';
 
 describe('resolveVoiceToolResultHumanSummary', () => {
+    it('uses the creation owner result through the canonical Action envelope for speech', () => {
+        expect(resolveVoiceToolResultHumanSummary({
+            toolName: 'action_execute', toolInput: { actionId: 'session.spawn_new', input: {} },
+            toolResult: { ok: true, result: { session: { id: 'new-session', title: 'Morning Sun' } } },
+            shareFilePaths: false, shareSessionSummary: true, outcomeOnly: true,
+        })).toBe('Created Morning Sun.');
+    });
+
+    it('keeps discovery results available to the model without making them spoken outcomes', () => {
+        const input = { toolName: 'listAgentBackends', toolInput: {},
+            toolResult: { ok: true, summary: 'I found the Session creation action.', items: [{ label: 'Codex' }] },
+            shareFilePaths: false, shareSessionSummary: true };
+        expect(resolveVoiceToolResultHumanSummary(input)).toBe('I found the Session creation action.');
+        expect(resolveVoiceToolResultHumanSummary({ ...input, outcomeOnly: true })).toBeNull();
+    });
+
+    it.each([false, true])('speaks committed creation, pending and failure dispositions without inventing completion (envelope=%s)', envelope => {
+        const summarize = (result: Record<string, unknown>) => resolveVoiceToolResultHumanSummary({
+            toolName: envelope ? 'action_execute' : 'spawnSession',
+            toolInput: envelope ? { actionId: 'session.spawn_new', input: {} } : {},
+            toolResult: envelope ? { ok: true, result } : { ok: true, ...result },
+            shareFilePaths: false, shareSessionSummary: false, outcomeOnly: true,
+        });
+        expect(summarize({ type: 'success', disposition: 'created', sessionId: 'new-session',
+            executionTarget: { serverId: 'home', machineId: 'machine' },
+            organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
+        })).toBe(t('common.done'));
+        expect(summarize({ type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' }))
+            .toBe(t('session.askRecord.unsure'));
+        expect(summarize({ type: 'error', code: 'cancelled', retryable: false }))
+            .toBe(t('voiceSurface.actionCanceled'));
+        expect(summarize({ kind: 'approval_request_created', artifactId: 'approval-1', actionId: 'session.spawn_new' }))
+            .toBe(t('approvals.status.open'));
+    });
     it.each([false, true])('keeps canceled approval operations distinct from request cancellation (envelope=%s)', envelope => {
         const input = { artifactId: 'request-1', decision: 'approve' };
         expect(resolveVoiceToolResultHumanSummary({

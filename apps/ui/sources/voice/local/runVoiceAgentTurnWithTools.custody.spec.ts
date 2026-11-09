@@ -122,6 +122,23 @@ describe('runVoiceAgentTurnWithTools local effect custody', () => {
       voiceAgentSessions, ...options });
   }
 
+  it('presents the created Session outcome instead of the model follow-up narration', async () => {
+    await prepareSession();
+    queueAction('create-outcome', { t: 'spawnSession', args: {
+      executionTarget: { serverId: localVoiceHomeId, machineId: 'machine-1' },
+      directory: { kind: 'path', path: '/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+    } });
+    queueFinal('I found the Session creation action.');
+    const result = await run('create a Session');
+    expect(result.totalActions).toBe(1);
+    expect(result.toolResultBatches[0]?.[0]?.result, JSON.stringify(result.toolResultBatches))
+      .toMatchObject({ ok: true, type: 'success' });
+    expect(result.assistantTurns).toHaveLength(1);
+    expect(result.assistantTurns[0]).toBe(t('common.done'));
+    expect(result.assistantTurns[0]).not.toContain('creation action');
+  });
+
   it.each([
     { name: 'person direct write ON', turnOrigin: 'person', canApproveRequests: true, lookup: false, expected: 'executed' },
     { name: 'person lookup then write ON', turnOrigin: 'person', canApproveRequests: true, lookup: true, expected: 'executed' },
