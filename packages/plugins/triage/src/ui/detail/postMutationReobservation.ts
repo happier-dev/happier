@@ -56,7 +56,9 @@ export async function reobserveTriagePostMutationRow(
   );
   const lastKnownLocator = prior?.outcome.kind === 'present'
     ? prior.outcome.locator
-    : undefined;
+    : previous?.content?.sourceInstanceId === sourceInstanceId
+      ? previous.content.outcome.locator
+      : undefined;
   let result: ReturnType<typeof TriageReobserveEntryResultV1Schema.parse>;
   try {
     const read = async (options: PluginCancellationOptions) => TriageReobserveEntryResultV1Schema.parse(await host.executeAction(
