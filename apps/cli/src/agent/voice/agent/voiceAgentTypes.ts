@@ -78,7 +78,7 @@ export type VoiceAgentTurnStreamEvent =
   | Readonly<{ t: 'delta'; textDelta: string }>
   | Readonly<{ t: 'done'; assistantText: string; actions?: VoiceAssistantAction[] }>
   | Readonly<{ t: 'cancelled' }>
-  | Readonly<{ t: 'error'; error: string; errorCode?: string }>;
+  | Readonly<import('@happier-dev/protocol/execution/runs/streaming').ExecutionRunTurnStreamEventError>;
 export type VoiceAgentTurnStreamStartResult = Readonly<{ streamId: string }>;
 export type VoiceAgentTurnStreamReadResult = Readonly<{
   streamId: string;

@@ -20,6 +20,8 @@ export type VoiceMachineError = Readonly<{
     /** Sanitized provider prose admitted by the shared error-copy owner. */
     providerMessage?: string;
     providerError?: import('@happier-dev/protocol/providers/errors').ProviderErrorV1;
+    usageLimit?: Pick<import('@happier-dev/protocol/execution/runs/streaming').ExecutionRunTurnStreamEventError,
+        'usageLimitRecovery' | 'usageLimitResetAtMs'>;
     phase: VoiceMachineErrorPhase;
     retryPolicy: VoiceMachineRetryPolicy;
     recoveryAction: VoiceMachineRecoveryAction;

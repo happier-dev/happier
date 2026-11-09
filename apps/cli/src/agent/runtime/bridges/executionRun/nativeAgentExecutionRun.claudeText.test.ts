@@ -134,10 +134,15 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
                 expect(read.done).toBe(true);
             });
             expect(initialSettled!.events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+            expect(initialSettled!.events.filter(event => event.t === 'error')).toHaveLength(1);
             expect(initialSettled!.events.some(event => event.t === 'done' || event.t === 'voice_output')).toBe(false);
             if (resumeMode === 'standard') {
                 const waiting = temporaryThrottleScheduler.read('run:claude-consecutive-quota');
                 expect(waiting).toMatchObject({ status: 'waiting', attemptCount: 0 });
+                expect(initialSettled!.events).toContainEqual(expect.objectContaining({ t: 'error',
+                    usageLimitRecovery: expect.objectContaining({ nextCheckAtMs: waiting!.nextRetryAtMs,
+                        authSelectionKind: 'profile' }) }));
+                expect(JSON.stringify(initialSettled!.events)).not.toContain('quota-profile');
                 expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('active_turn');
                 expect(recoveryDecisions).toHaveLength(attempt - 1);
                 // A second spoken commit must consume the retained waiting fact,
@@ -152,6 +157,9 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
                     expect(read.done).toBe(true);
                 });
                 expect(settled!.events).toContainEqual(expect.objectContaining({ t: 'error', errorCode: 'usage_limit' }));
+                expect(settled!.events.filter(event => event.t === 'error')).toHaveLength(1);
+                expect(settled!.events).toContainEqual(expect.objectContaining({ t: 'error',
+                    usageLimitRecovery: expect.objectContaining({ nextCheckAtMs: waiting!.nextRetryAtMs }) }));
                 expect(settled!.events.some(event => event.t === 'done' || event.t === 'voice_output')).toBe(false);
                 expect(sdk.processes).toHaveLength(expectedProcesses);
                 expect(readNativePromptCount()).toBe(nativePromptsBeforeRepeat);
@@ -178,7 +186,11 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
                 await sdk.processes.at(-1)!.emit({ type: 'result', subtype: 'success', is_error: false,
                     session_id: 'native-consecutive-quota', result: 'Native recovery completed.' });
                 await vi.waitFor(() => expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('idle'));
-            } else expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('idle');
+            } else {
+                expect(manager.readCurrentRuntimeAuthority(voiceAgentId)?.runtimeState).toBe('idle');
+                expect(initialSettled!.events).toContainEqual(expect.objectContaining({ t: 'error',
+                    usageLimitResetAtMs: expect.any(Number) }));
+            }
         }
         expect(recoveryDecisions).toEqual(resumeMode === 'off' ? [
             expect.objectContaining({ status: 'failed', reason: 'continuation_disabled' }),

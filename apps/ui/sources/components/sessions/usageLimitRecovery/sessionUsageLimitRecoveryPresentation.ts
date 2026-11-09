@@ -221,7 +221,7 @@ export function hasSessionUsageLimitResetElapsed(resetAtMs: number | null, nowMs
         && nowMs >= resetAtMs;
 }
 
-function formatRecoveryTime(atMs: number): string {
+export function formatSessionUsageLimitRecoveryTime(atMs: number): string {
     return new Date(atMs).toLocaleString(undefined, {
         dateStyle: 'medium',
         timeStyle: 'short',
@@ -318,7 +318,7 @@ function buildDaemonRetryPresentation(params: Readonly<{
     const retryLabel = translate('session.usageLimitRecovery.actions.retryTemporaryThrottle');
     const title = translate(params.usageLimit ? 'session.usageLimitRecovery.banner.title' : 'session.usageLimitRecovery.overloadTitle');
     const body = params.usageLimit && nextCheckAtMs !== null
-        ? translate('session.usageLimitRecovery.banner.retryAt', { time: formatRecoveryTime(nextCheckAtMs) })
+        ? translate('session.usageLimitRecovery.banner.retryAt', { time: formatSessionUsageLimitRecoveryTime(nextCheckAtMs) })
         : translate(offline ? 'session.usageLimitRecovery.overloadOffline'
             : dispatching ? 'session.usageLimitRecovery.overloadDispatching'
             : nextCheckAtMs !== null ? 'session.usageLimitRecovery.overloadWaiting'
@@ -428,7 +428,7 @@ export function buildSessionUsageLimitRecoveryPresentation(params: Readonly<{
     const bodyWithRecoveryCreditSummary = recoveryCreditSummary
         ? `${body}\n${params.translate('session.usageLimitRecovery.banner.resetCreditSummary', {
             count: recoveryCreditSummary.availableCount,
-            expiresAt: recoveryCreditSummary.nextExpiresAtMs === null ? null : formatRecoveryTime(recoveryCreditSummary.nextExpiresAtMs),
+            expiresAt: recoveryCreditSummary.nextExpiresAtMs === null ? null : formatSessionUsageLimitRecoveryTime(recoveryCreditSummary.nextExpiresAtMs),
         })}`
         : body;
     const rememberActionKind = params.settings.mode === 'auto_wait' ? 'forget' : 'remember';

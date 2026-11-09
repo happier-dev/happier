@@ -6,9 +6,18 @@ import {
   ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamStartResponseSchema,
   ExecutionRunUserTranscriptCommitRequestSchema,
-} from '../../index.js';
+} from './streaming.js';
 
 describe('execution run streaming schemas', () => {
+  it('accepts older untimed refusals but rejects malformed quota presentation facts', () => {
+    const response = { streamId: 's', nextCursor: 1, done: true,
+      events: [{ t: 'error', error: 'usage_limit', errorCode: 'usage_limit' }] };
+    expect(ExecutionRunTurnStreamReadResponseSchema.safeParse(response).success).toBe(true);
+    for (const metadata of [{ usageLimitResetAtMs: 'tomorrow' }, { usageLimitRecovery: { nextCheckAtMs: 123 } }]) {
+      expect(ExecutionRunTurnStreamReadResponseSchema.safeParse({ ...response,
+        events: [{ ...response.events[0], ...metadata }] }).success).toBe(false);
+    }
+  });
   it('accepts omitted latency policy and validates the existing speech preference range', () => {
     const request = { runId: 'run-1', message: 'hello' };
     expect(ExecutionRunTurnStreamStartRequestSchema.parse(request).speechSegmentTargetChars).toBeUndefined();

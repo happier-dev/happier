@@ -1,7 +1,7 @@
 import type { VoiceAttemptPresentation } from '@happier-dev/protocol/voice/attemptPresentation';
 import { t } from '@/text';
 import { resolveVoiceMachineErrorKind } from '@/voice/runtime/machine/voiceMachineError';
-import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
+import { presentVoiceUsageLimitMessage, resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
 import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 import type { VoiceMachineRecoveryAction } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
 import { resolveVoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
@@ -21,6 +21,7 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     errorMessage?: string | null;
     errorProviderMessage?: string;
     errorProviderError?: ProviderErrorV1;
+    errorUsageLimit?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineError['usageLimit'];
     errorConnectedServiceDiagnostic?: ConnectedServiceUxDiagnosticV1;
     recoveryAction: VoiceMachineRecoveryAction | null;
     recoveryContext: VoiceAttemptRecoveryContext;
@@ -47,6 +48,7 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
                 : { label: t('voicePresence.recovery.setUp'), icon: 'gear' as const };
     const failureKind = input.errorCode ? resolveVoiceMachineErrorKind(input.errorCode) : null;
     const failureMessage = provider ? t(provider.descriptionKey) : connectedService ? t(connectedService.bodyKey) : failureKind === null ? null
+        : failureKind === 'provider_error' && input.errorMessage === 'usage_limit' ? presentVoiceUsageLimitMessage(input.errorUsageLimit)
         : failureKind === 'provider_error' && input.errorProviderMessage ? input.errorProviderMessage
         : failureKind === 'authentication_required' && input.errorMessage === 'agent_signed_out' && agentTitle && agentMachineLabel
             ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: agentTitle, machine: agentMachineLabel })

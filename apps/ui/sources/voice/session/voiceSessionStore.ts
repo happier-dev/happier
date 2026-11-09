@@ -34,6 +34,7 @@ const DEFAULT_SNAPSHOT: VoiceSessionSnapshot = {
 };
 
 let cachedCanonicalSnapshot: VoiceSessionSnapshot = DEFAULT_SNAPSHOT;
+let runtimePreparation: VoiceSessionSnapshot | null = null;
 let attemptSequence = 0;
 let activeAttemptId: string | null = null;
 let spokenActionConfirmation: SpokenActionConfirmation | null = null;
@@ -95,10 +96,10 @@ export function canDismissVoiceSessionFailedAttempt(snapshot: VoiceSessionSnapsh
       && Boolean(snapshot.errorCode || snapshot.errorPresentation)));
 }
 
-function reconcileAttemptId(snapshot: VoiceSessionSnapshot, binding?: VoiceSessionBinding | null, context?: VoiceSessionConversationContext | null): void {
+function reconcileAttemptId(snapshot: VoiceSessionSnapshot, binding?: VoiceSessionBinding | null, context?: VoiceSessionConversationContext | null, continuingStart = false): void {
   const active = isAttemptActive(snapshot);
   const previousActive = isAttemptActive(lastAttemptSnapshot);
-  const sessionChanged = active
+  const sessionChanged = !continuingStart && active
     && previousActive
     && (snapshot.sessionId !== lastAttemptSnapshot.sessionId || snapshot.adapterId !== lastAttemptSnapshot.adapterId);
   if (active && (!previousActive || sessionChanged)) {
@@ -180,12 +181,14 @@ const SNAPSHOT_FIELDS = {
   mode: true,
   canStop: true,
   canCommitInput: true,
+  inputEndsOnSilence: true,
   canHoldToTalk: true,
   micMuted: true,
   errorCode: true,
   errorMessage: true,
   errorProviderMessage: true,
   errorProviderError: true,
+  errorUsageLimit: true,
   errorConnectedServiceDiagnostic: true,
   errorRecoveryAction: true,
   errorPresentation: true,
@@ -220,6 +223,7 @@ function normalizeVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot): VoiceSes
     errorMessage: snapshot.errorMessage,
     errorProviderMessage: snapshot.errorProviderMessage,
     errorProviderError: snapshot.errorProviderError,
+    errorUsageLimit: snapshot.errorUsageLimit,
     errorConnectedServiceDiagnostic: snapshot.errorConnectedServiceDiagnostic,
     errorRecoveryAction: snapshot.errorRecoveryAction,
     errorPresentation: snapshot.errorPresentation,
@@ -257,6 +261,7 @@ export const useVoiceSessionStore = create<VoiceSessionState>((set) => ({
 }));
 
 export function getVoiceSessionSnapshot(): VoiceSessionSnapshot {
+  if (runtimePreparation) return finalizeCanonicalSnapshot(runtimePreparation);
   const lifecycleSnapshot = getVoiceSessionLifecycleController()?.getSnapshot();
   if (lifecycleSnapshot) {
     return finalizeCanonicalSnapshot(lifecycleSnapshot);
@@ -271,9 +276,36 @@ export function getVoiceSessionSnapshot(): VoiceSessionSnapshot {
 }
 
 export function setVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot, binding?: VoiceSessionBinding | null, context?: VoiceSessionConversationContext | null): void {
+  // Mounting the executable owner must not hide the first Start behind its initial idle snapshot.
+  if (runtimePreparation) return;
   const normalized = normalizeVoiceSessionSnapshot(snapshot);
   reconcileAttemptId(normalized, binding, context);
   useVoiceSessionStore.getState().setSnapshot(normalized);
+}
+
+/** Preparation is the beginning of this same attempt, before its lazy owner can publish. */
+export function beginVoiceSessionRuntimePreparation(snapshot: VoiceSessionSnapshot, context: VoiceSessionConversationContext | null): Readonly<{
+  adopt: (snapshot: VoiceSessionSnapshot) => void;
+  dispose: (failure?: VoiceSessionSnapshot) => void;
+}> {
+  const preparation = normalizeVoiceSessionSnapshot(snapshot);
+  runtimePreparation = preparation;
+  reconcileAttemptId(preparation, null, context);
+  useVoiceSessionStore.getState().setSnapshot(preparation);
+  return {
+    adopt: (snapshot: VoiceSessionSnapshot) => {
+      if (runtimePreparation !== preparation) return;
+      runtimePreparation = null;
+      const normalized = normalizeVoiceSessionSnapshot(snapshot);
+      reconcileAttemptId(normalized, null, context, normalized.adapterId === preparation.adapterId);
+      useVoiceSessionStore.getState().setSnapshot(normalized);
+    },
+    dispose: (failure?: VoiceSessionSnapshot) => {
+      if (runtimePreparation !== preparation) return;
+      runtimePreparation = null;
+      setVoiceSessionSnapshot(failure ?? DEFAULT_SNAPSHOT);
+    },
+  };
 }
 
 /** Only the canonical End command can annotate the existing active attempt; this never ends it. */
@@ -406,6 +438,7 @@ export function subscribeToVoiceSessionSnapshot(listener: () => void): () => voi
 }
 
 export function resetVoiceSessionStoreForTests(): void {
+  runtimePreparation = null;
   spokenActionConfirmation?.clear();
   spokenActionConfirmation = null;
   cachedCanonicalSnapshot = DEFAULT_SNAPSHOT;

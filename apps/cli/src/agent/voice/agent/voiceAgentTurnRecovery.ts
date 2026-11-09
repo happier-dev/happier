@@ -1,4 +1,5 @@
 import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import { projectSessionUsageLimitRecoveryDisplayV1 } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { logger } from '@/ui/logger';
 import { createExecutionRunCodedError } from '@/agent/runtime/bridges/executionRun/errors';
@@ -32,7 +33,9 @@ export async function runVoiceAgentTurn(
     logger.infoFile('[VoiceAgent] Turn recovery phase', {
       phase: 'waiting_settlement', armedAtMs: recovery.armedAtMs, retryAtMs,
     });
-    throw createExecutionRunCodedError('usage_limit', 'usage_limit');
+    throw Object.assign(createExecutionRunCodedError('usage_limit', 'usage_limit'), {
+      usageLimitRecovery: projectSessionUsageLimitRecoveryDisplayV1(recovery),
+    });
   } finally {
     unsubscribe?.();
   }

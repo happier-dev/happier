@@ -43,6 +43,8 @@ import { resolveVoiceBindingBySessionId } from '@/voice/binding/resolveVoiceBind
 import { resolveVoiceConversationNavigationAddress } from '@/voice/binding/resolveVoiceConversationNavigationAddress';
 import { isVoiceConversationCustodySessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
+import { resolveVoiceSettingsRecoveryTarget } from '@/voice/settings/voiceSettingsRouteFocus';
+import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 import { useVoiceSetupDismissed } from '@/voice/settings/setup/useVoiceSetupItem';
 import { resolveVoiceMarkEvent, type VoiceMarkEvent } from '@/components/voice/presence/resolveVoiceMarkPose';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
@@ -107,6 +109,8 @@ export const VOICE_ATTEMPT_IDLE_TARGET_GLOBAL: VoiceAttemptIdleTarget = Object.f
 export const VOICE_ATTEMPT_IDLE_TARGET_DEFAULT: VoiceAttemptIdleTarget = Object.freeze({ kind: 'default' });
 
 export type VoiceAttemptControlProjection = VoiceAttemptControl & Readonly<{
+    /** Idle Start refusal and remedy, projected from the admission owner. */
+    startRefusal?: Readonly<{ reason: string; actionLabel: string; onRecover: () => void }> | null;
     /** Sanitized read-only public seam, produced from this exact host model. */
     publicPresentation?: VoiceAttemptPresentation;
     statusWord: string;
@@ -352,19 +356,11 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         () => (agentRuntime ? { localId: agentRuntime.localId, pluginId: agentRuntime.pluginId } : null),
         [agentRuntime?.localId, agentRuntime?.pluginId],
     );
-    const subscribeBindingSources = React.useCallback((notify: () => void) => {
-        const unsubscribeSessions = storage.subscribe(notify, { sessions: true, sessionListRowsByServerId: true });
-        const unsubscribeBindings = voiceSessionBindingStore.subscribe(notify);
-        return () => {
-            unsubscribeSessions();
-            unsubscribeBindings();
-        };
-    }, []);
     const readAttemptTarget = React.useCallback(
         () => expectedAttempt ? voiceSessionManager.getAttemptTargetSessionAddress() : null,
         [expectedAttempt, snap.sessionId, snap.adapterId],
     );
-    const capturedAttemptTarget = React.useSyncExternalStore(subscribeBindingSources, readAttemptTarget, readAttemptTarget);
+    const capturedAttemptTarget = React.useSyncExternalStore(voiceSessionBindingStore.subscribe, readAttemptTarget, readAttemptTarget);
     const recoveryBindingScope = expectedAttempt ? capturedAttemptTarget ? 'session' : 'global' : bindingScope;
     /*
      * The session a recovery is about: the running attempt's control session, or — when nothing is
@@ -499,7 +495,6 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     );
     // The conversation the user can return to, with the Home its binding named.
     const bindingCacheRef = React.useRef<Readonly<{
-        sessions: unknown;
         bindings: unknown;
         controlSessionId: string;
         adapterId: string | null;
@@ -509,12 +504,10 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     // external-store snapshot keeps one identity while the inputs are unchanged.
     const readOpenConversationTarget = React.useCallback((): OpenConversationTarget | null => {
         const controlSessionId = snapSessionId?.trim() ?? '';
-        const sessions = storage.getState();
         const bindings = voiceSessionBindingStore.getState();
         const cached = bindingCacheRef.current;
         if (
             cached
-            && cached.sessions === sessions
             && cached.bindings === bindings
             && cached.controlSessionId === controlSessionId
             && cached.adapterId === snapAdapterId
@@ -536,7 +529,6 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
                 : { address, requestAddress }
             : null;
         bindingCacheRef.current = {
-            sessions,
             bindings,
             controlSessionId,
             adapterId: snapAdapterId,
@@ -545,7 +537,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         return value;
     }, [snapAdapterId, snapSessionId]);
     const activeOpenConversationTarget = React.useSyncExternalStore(
-        subscribeBindingSources,
+        voiceSessionBindingStore.subscribe,
         readOpenConversationTarget,
         readOpenConversationTarget,
     );
@@ -643,10 +635,10 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
          * Every mount of this projection is already behind the Voice feature gate (the global off
          * switch), so an idle Voice that cannot start offers its setup and the rest mic stays
          * discoverable — until the person dismisses "Set up voice" (the same dismissal Home uses;
-         * Settings → Voice stays reachable). A malformed target (a session scope with no session) is
-         * a caller mistake setup cannot fix — it fails closed.
+         * Settings → Voice stays reachable). A missing Session refuses Start but still offers the
+         * admission owner's remedy: the person can open a Session rather than lose the control.
          */
-        setupOffered: ownsVoiceRuntime && !setupDismissed && (bindingScope === 'global' || startSessionId !== null),
+        setupOffered: ownsVoiceRuntime && !setupDismissed,
         sessionStatus,
         hiddenSession: presentedSessionIsHidden,
     }), [
@@ -678,6 +670,19 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
     const canStart = control.canStart;
     const canMute = control.canMute;
     const muted = control.muted;
+    const refusalReasonKey = startAdmission.refusal?.reasonKey;
+    const refusalRecoveryAction = startAdmission.refusal?.recoveryAction;
+    const recoverStart = React.useCallback(() => {
+        if (!refusalRecoveryAction) return;
+        const target = refusalRecoveryAction === 'open_session' ? '/new' : resolveVoiceSettingsRecoveryTarget(refusalRecoveryAction);
+        if (target) navigateWithFocusReturn(() => router.push(target as never));
+    }, [navigateWithFocusReturn, refusalRecoveryAction, router]);
+    const startRefusal = React.useMemo(() => refusalReasonKey && refusalRecoveryAction ? {
+        reason: translateVoiceReadiness(refusalReasonKey),
+        actionLabel: refusalRecoveryAction === 'open_session' ? t('commandPalette.commands.newSessionTitle')
+            : tLoose(`voice.readiness.actions.${refusalRecoveryAction}`),
+        onRecover: recoverStart,
+    } : null, [refusalReasonKey, refusalRecoveryAction, recoverStart]);
 
     const onToggle = React.useCallback(async () => {
         if (!voiceSessionManager.matchesAttempt(expectedAttempt)) return false;
@@ -799,7 +804,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
      */
     const failureMessage = publicPresentation.failureMessage;
     const failureReason = surfaceState === 'error' ? failureMessage : null;
-    const captionLabel = surfaceState === 'permission_required'
+    const captionLabel = !control.live && startRefusal ? startRefusal.reason : surfaceState === 'permission_required'
         ? t('voicePresence.captions.blocked')
         : surfaceState === 'error'
             ? failureReason ?? t('voicePresence.captions.failed')
@@ -811,7 +816,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             : control.primaryAction === 'start'
                 ? t('voiceAssistant.startVoice')
                 : control.primaryAction === 'setup'
-                    ? t('voicePresence.setUp')
+                    ? startRefusal?.actionLabel ?? t('voicePresence.setUp')
                     : null;
     const primaryActionHint = control.primaryAction === 'recover'
         ? primaryActionLabel
@@ -820,22 +825,24 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             : control.primaryAction === 'start'
                 ? t('voiceSurface.orbStartHint')
                 : control.primaryAction === 'setup'
-                    ? t('voicePresence.setUpHint')
+                    ? startRefusal?.reason ?? t('voicePresence.setUpHint')
                     : null;
     const onPrimaryAction = React.useCallback(() => {
         if (control.primaryAction === 'recover') {
             return onRecover();
         }
         if (control.primaryAction === 'setup') {
+            if (startRefusal) return startRefusal.onRecover();
             navigateWithFocusReturn(() => router.push(SETTINGS_ROUTES.voice as never));
             return;
         }
         if (control.primaryAction === 'start' || control.primaryAction === 'end') return onToggle();
-    }, [control.primaryAction, navigateWithFocusReturn, onRecover, onToggle, router]);
+    }, [control.primaryAction, navigateWithFocusReturn, onRecover, onToggle, router, startRefusal]);
 
     return React.useMemo(
         () => ({
             ...control,
+            startRefusal,
             publicPresentation,
             statusWord,
             statusLabel,
@@ -873,6 +880,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         }),
         [
             control,
+            startRefusal,
             publicPresentation,
             statusWord,
             serviceTitle,

@@ -1,17 +1,24 @@
 import type {
   ExecutionRunUserTranscriptDirective,
-  ExecutionRunTurnStreamReadResponse,
+  ExecutionRunTurnStreamReadResponse} from '@happier-dev/protocol/execution/runs/streaming';
+import type {
   ExecutionRunReplaySeedRequest,
   ExecutionRunResumeHandle,
-  ExecutionRunVoiceAgentIntentInputV1,
-  AcpConfigOptionOverridesV1,
-  ProviderBoundModelRef,
-  ConnectedServiceBindingsV2,
+  ExecutionRunVoiceAgentIntentInputV1} from '@happier-dev/protocol/execution/runs/startRequest';
+import type {
+  AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
+import type {
+  ProviderBoundModelRef} from '@happier-dev/protocol/providers/selection/v1';
+import type {
+  ConnectedServiceBindingsV2} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type {
   VoiceAgentOutputEffectV1,
-  VoiceAgentOutputEventV1,
-  VoiceAssistantAction,
+  VoiceAgentOutputEventV1} from '@happier-dev/protocol/voice/outputEvents';
+import type {
+  VoiceAssistantAction} from '@happier-dev/protocol/voice/actions';
+import type {
   BackendTargetRefV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { PermissionIntent } from '@happier-dev/agents';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
@@ -113,7 +120,7 @@ export type VoiceAgentTurnStreamEvent =
   | Readonly<{ t: 'voice_output'; output: VoiceAgentOutputEventV1 }>
   | Readonly<{ t: 'delta'; textDelta: string }>
   | Readonly<{ t: 'done'; assistantText: string; actions?: VoiceAssistantAction[] }>
-  | Readonly<{ t: 'error'; error: string; errorCode?: string }>
+  | Readonly<import('@happier-dev/protocol/execution/runs/streaming').ExecutionRunTurnStreamEventError>
   | Readonly<{ t: 'cancelled' }>;
 
 const PROCESS_LOCAL_VOICE_AGENT_ACTION_EFFECT_ID = Symbol.for(

@@ -85,6 +85,7 @@ export type VoiceSessionSnapshot = Readonly<{
   /** Sanitized provider prose from the runtime error-copy owner. */
   errorProviderMessage?: string;
   errorProviderError?: import('@happier-dev/protocol/providers/errors').ProviderErrorV1;
+  errorUsageLimit?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineError['usageLimit'];
   errorConnectedServiceDiagnostic?: ConnectedServiceUxDiagnosticV1;
   errorRecoveryAction?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineRecoveryAction;
   errorPresentation?: import('@/voice/runtime/machine/voiceConversationRuntimeTypes').VoiceMachineErrorPresentation;

@@ -178,10 +178,6 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
                 await navigate(buildSettingHref(SETTINGS_ROUTES.voiceConversations, VOICE_CONVERSATIONS_SETTINGS.settings.agent));
                 return true;
             }
-            if (params.errorReason === 'usage_limit') {
-                await navigate(buildSettingHref(SETTINGS_ROUTES.voiceConversations, VOICE_CONVERSATIONS_SETTINGS.settings.connectedServices));
-                return true;
-            }
             if (Platform.OS === 'web') {
                 await navigate(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
                 return true;

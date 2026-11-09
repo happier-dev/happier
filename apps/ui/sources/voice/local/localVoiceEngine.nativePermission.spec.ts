@@ -11,12 +11,16 @@ import {
 
 const restoreLoader = await warmLocalVoiceEngineHarnessGraph();
 afterAll(() => restoreLoader());
+const quotaRetryAtMs = Date.UTC(2026, 10, 14, 15);
 
 describe('native Voice permission input', () => {
   registerLocalVoiceEngineHarnessHooks();
 
   it.each([
     { label: 'Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false },
+    { label: 'permission synthesis failure', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, readoutFailure: true },
+    { label: 'permission synthesis failure followed by native denial', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, readoutFailure: true, turnError: 'claude_error_during_execution', continues: true },
+    { label: 'permission playback failure after the carrier settles', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, readoutFailure: true, startedReadout: true, carrierSettled: true },
     { label: 'Yes, allow it', enabled: true, answer: 'Yes, allow it.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'No, deny it', enabled: true, answer: 'No, deny it.', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false },
@@ -40,14 +44,15 @@ describe('native Voice permission input', () => {
     { label: 'an empty native follow-up', enabled: true, answer: '', approved: null, end: false, replaceRequest: false, emptyFollowUp: true },
     { label: 'provider quota before tools', enabled: true, answer: '', approved: null, end: false, replaceRequest: false, turnError: 'usage_limit', providerFailure: true },
     { label: 'End before provider quota settles', enabled: true, answer: '', approved: null, end: true, replaceRequest: false, turnError: 'usage_limit', providerFailure: true },
-    { label: 'approval opt-out', enabled: false, answer: 'Yes.', approved: null, end: false, replaceRequest: false },
+    { label: 'approval opt-out', enabled: false, answer: 'Yes, allow it.', approved: null, end: false, replaceRequest: false },
+    { label: 'delegated approval opt-out after carrier settlement', enabled: false, answer: 'Yes, allow it.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'an unclear answer', enabled: true, answer: 'Yes, but no.', approved: null, end: false, replaceRequest: false },
     { label: 'an empty transcript', enabled: true, answer: '', approved: null, end: false, replaceRequest: false },
     { label: 'an empty decision after the carrier settles', enabled: true, answer: '', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'an unclear decision after the carrier settles', enabled: true, answer: 'Maybe.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal }) => {
+  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal, readoutFailure }) => {
     const storage = await getStorage();
     const state = storage.getState();
     const config = readLocalConversationVoiceSettings(state.settings.voice);
@@ -87,7 +92,11 @@ describe('native Voice permission input', () => {
           streamError = undefined;
           // Native denial terminates this model turn with an error stream event.
           return { streamId: 'stream-1', events: [{ t: 'error', errorCode,
-            error: 'Native Agent session turn failed' }], nextCursor: 1, done: true };
+            error: 'Native Agent session turn failed', ...(providerFailure ? { usageLimitRecovery: {
+              v: 1, status: 'waiting', issueFingerprint: 'temporary-throttle:quota',
+              armedAtMs: quotaRetryAtMs - 60_000, resetAtMs: null, nextCheckAtMs: quotaRetryAtMs,
+              attemptCount: 0, maxAttempts: 0, lastProbeError: null, authSelectionKind: 'profile',
+            } } : {}) }], nextCursor: 1, done: true };
         }
       }
       if (request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND || request.method === RPC_METHODS.SESSION_USER_ACTION_ANSWER) {
@@ -121,8 +130,10 @@ describe('native Voice permission input', () => {
     try {
       await lifecycle.toggle(target);
       expect(lifecycle.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
-      const expectedAttempt = getVoiceSessionPresentedAttemptId();
+      let expectedAttempt = getVoiceSessionPresentedAttemptId();
       const expectNextCommitAccepted = async () => {
+        await waitForTestEvent(lifecycle.subscribe, lifecycle.getSnapshot,
+          snapshot => snapshot.status === 'connected' && snapshot.mode === 'listening' && snapshot.canCommitInput === true);
         expect(lifecycle.getSnapshot(), JSON.stringify(lifecycle.getSnapshot())).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
         // Native recorders produce a fresh file; the preceding turn deleted its artifact.
         const { File } = await import('expo-file-system');
@@ -171,9 +182,12 @@ describe('native Voice permission input', () => {
           expect(expoSpeechSpeak).not.toHaveBeenCalled();
         } else {
           const { t } = await import('@/text');
-          expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual([t('session.usageLimitRecovery.banner.title')]);
+          const time = new Date(quotaRetryAtMs).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+          expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual([
+            `${t('session.usageLimitRecovery.banner.title')} ${t('session.usageLimitRecovery.banner.retryAt', { time })}`,
+          ]);
           expect(lifecycle.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'provider_error',
-            errorMessage: 'usage_limit', errorRecoveryAction: 'open_settings' });
+            errorMessage: 'usage_limit', errorRecoveryAction: 'none' });
           expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
         }
         return;
@@ -199,6 +213,10 @@ describe('native Voice permission input', () => {
       }
       const precedingSpeechCount = expoSpeechSpeak.mock.calls.length;
       const actualRequestSessionId = retarget ? 'delegated-next' : requestSessionId;
+      if (readoutFailure) expoSpeechSpeak.mockImplementationOnce((_text, options) => {
+        if (startedReadout) options.onStart?.();
+        options.onError?.(new Error('native_permission_playback_failed'));
+      });
       // The OS has accepted synthesis, but no playback buffer has started yet.
       if (replacedReadout) expoSpeechSpeak.mockImplementationOnce((_text, options) => {
         if (startedReadout) options.onStart?.();
@@ -252,6 +270,19 @@ describe('native Voice permission input', () => {
         'A permission in the live target must be read aloud').toContain('permission'));
       await waitForLocalVoiceBoundaryEvent('speech', precedingSpeechCount + 1);
       expect(expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0]).toContain('permission');
+      if (readoutFailure) {
+        await vi.waitFor(() => expect(lifecycle.getSnapshot()).toMatchObject({
+          status: 'disconnected', errorCode: 'tts_failed', errorRecoveryAction: 'retry',
+        }));
+        expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
+        expect(storage.getState().sessions[actualRequestSessionId]?.agentState?.requests?.['native-write']).toBeDefined();
+        expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
+        await lifecycle.retry(binding.controlSessionId);
+        expectedAttempt = getVoiceSessionPresentedAttemptId();
+        await waitForLocalVoiceBoundaryEvent('speech', precedingSpeechCount + 2);
+        await waitForTestEvent(lifecycle.subscribe, lifecycle.getSnapshot, snapshot => snapshot.canCommitInput === true);
+        expect(expoSpeechSpeak.mock.calls.slice(precedingSpeechCount).filter(([text]) => text.includes('permission'))).toHaveLength(2);
+      }
       if (replacedReadout) {
         if (readoutCompleteBeforeFinal) {
           finishReadout?.();
@@ -274,9 +305,25 @@ describe('native Voice permission input', () => {
         finishReadout?.();
       }
       if (!enabled) {
+        await vi.waitFor(() => expect(lifecycle.getSnapshot()).toMatchObject({
+          status: 'connected', mode: 'listening', canCommitInput: true,
+        }));
+        const { File } = await import('expo-file-system');
+        const uri = 'file:///tmp/tap-only-permission-answer.m4a';
+        new File(uri).write(new Uint8Array([1, 2, 3]));
+        setRecorderUri(uri);
         expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
-          .toMatchObject({ status: 'unavailable', code: 'voice_commit_unavailable' });
+          .toMatchObject({ status: 'completed' });
+        await expect(localVoiceSpeechTranscription.mock.results.at(-1)?.value).resolves.toBe(answer);
+        const { t } = await import('@/text');
+        expect(expoSpeechSpeak.mock.calls.at(-1)?.[0]).toBe(t('voice.readiness.permissionTapRequired'));
+        expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'listening', canCommitInput: true });
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
+        expect(storage.getState().sessions[actualRequestSessionId]?.agentState?.requests?.['native-write']).toBeDefined();
+        const { createAppSessionTranscriptActions } = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
+        await createAppSessionTranscriptActions(actualRequestSessionId, target.serverId).respondToPermission({ id: 'native-write', approved: true });
+        await submitted;
+        await expectNextCommitAccepted();
         return;
       }
       await waitForTestEvent(lifecycle.subscribe, lifecycle.getSnapshot, snapshot => snapshot.canCommitInput === true);
@@ -292,7 +339,7 @@ describe('native Voice permission input', () => {
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);
         return;
       }
-      if (carrierSettled || replacedReadout) {
+      if (carrierSettled || replacedReadout || readoutFailure) {
         // The original turn consumed its recording; the OS returns a fresh
         // artifact for the permission answer captured after that turn.
         const { File } = await import('expo-file-system');
@@ -366,12 +413,12 @@ describe('native Voice permission input', () => {
         expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
         return;
       }
-      if (!turnError) {
+      if (!turnError && !readoutFailure) {
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL)).toBe(false);
         if (!replacedReadout) expect(expoSpeechSpeak.mock.calls.some(([text]) => text === 'Daemon reply')).toBe(true);
       }
       await expectNextCommitAccepted();
-      expect(originalResult).toHaveProperty('result');
+      if (!readoutFailure) expect(originalResult).toHaveProperty('result');
     } finally {
       asrHeld.resolve(answer);
       waiting.resolve();

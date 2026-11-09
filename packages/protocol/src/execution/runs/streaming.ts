@@ -4,6 +4,7 @@ import { z } from 'zod/mini';
 import { VoiceAssistantActionSchema } from '../../voice/actions.js';
 import { VoiceAgentOutputEventV1Schema } from '../../voice/outputEvents.js';
 import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
+import { SessionUsageLimitRecoveryDisplayV1Schema } from '../../sessions/state/valueSchemas/usageLimitRecovery.js';
 import { ExecutionRunPreparedInstructionsForSchema } from './runPrimitives.js';
 export { ExecutionRunPreparedInstructionsForSchema } from './runPrimitives.js';
 
@@ -82,6 +83,9 @@ export const ExecutionRunTurnStreamEventErrorSchema = lazyZodSchema(() => z.loos
   t: z.literal('error'),
   error: z.string(),
   errorCode: z.optional(z.string()),
+  /** Display facts only; the native Run retains recovery and credential selection. */
+  usageLimitRecovery: z.optional(SessionUsageLimitRecoveryDisplayV1Schema),
+  usageLimitResetAtMs: z.optional(SessionUsageLimitRecoveryDisplayV1Schema.shape.resetAtMs),
 }));
 export type ExecutionRunTurnStreamEventError = z.infer<typeof ExecutionRunTurnStreamEventErrorSchema>;
 

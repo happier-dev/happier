@@ -869,14 +869,11 @@ async function readNativeTurnMessage(
     });
   } catch (error) {
     if (!isCurrent() || interrupted) return;
-    // Retire the waiting turn through Stop so Retry does not join it before
-    // reading the still-pending Session request on the replacement attempt.
-    await stopLocalVoiceSession();
-    if (captureAdmission || voiceConversationRuntimeMachine.getSnapshot().controlSessionId !== sessionId) return;
-    voiceConversationRuntimeMachine.transitionToDisconnected({
-      controlSessionId: sessionId,
-      error: classifyVoiceMachineError(error, { kind: 'tts_failed', reason: 'tts_failed' }),
-    });
+    // Only speech failed. Keep the native turn and its pending request alive
+    // while retiring the failed capture through the usual failure cleanup.
+    await surfaceLocalVoiceTurnFailure(
+      sessionId, new VoiceTextTurnError('tts_failed', 'tts_failed', error), admission, captureAttempt,
+    );
   } finally { noteTtsStopped(); }
   if (!isCurrent() || interrupted) return;
   voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId });
@@ -921,13 +918,25 @@ function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captu
     onResponseSettled: async result => {
       const failure = !result.ok ? result.error : null;
       const pendingTurn = activeTurnAbortSessionId === sessionId ? inFlight : null;
+      if (pendingTurn && !failure) {
+        // A settled permission response must not wait for the Agent's turn.
+        // Its final can rearm the current capture, including a recovered one.
+        fireAndForget(pendingTurn.then(
+          () => resumeNativeVoiceListening(admission, captureAttempt),
+          async turnError => {
+            if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
+            await surfaceLocalVoiceTurnFailure(sessionId, turnError, admission, captureAttempt);
+          },
+        ), { tag: 'voice.nativePermission.turnSettlement' });
+        return;
+      }
       if (failure && pendingTurn) {
         activeTurnAbortController?.abort();
         await pendingTurn.catch(() => {});
       }
       if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
       if (failure) {
-        recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', readSafeVoiceRuntimeFailureCode(failure));
+        recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', readSafeVoiceRuntimeFailureCode(failure) ?? 'provider_error');
         await readNativeTurnMessage(admission, captureAttempt,
           `${t('approvals.decisionError')} ${t('voice.readiness.permissionTapRequired')}`, false, () => true, () => {});
       } else if (result.ok && !pendingTurn) {
@@ -970,6 +979,7 @@ async function runVoiceTurnWithSendFailureHandling(
       await runAbortableVoiceTurn(sessionId, runner);
     } catch (error) {
       const code = readSafeVoiceRuntimeFailureCode(error);
+      const responseInput = readCaptureAdmission(sessionId) ? activeNativePermissionInput : permissionInput;
       if (code === 'usage_limit' && binding?.transcriptMode === 'native_session' && admission && captureAttempt) {
         if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
         // Read the same localized refusal that remains in the compact surface.
@@ -979,7 +989,7 @@ async function runVoiceTurnWithSendFailureHandling(
         if (!isCaptureAttemptCurrent(admission, captureAttempt)) return;
         throw error;
       } else if (code !== 'claude_error_during_execution'
-        || await permissionInput?.waitForResponseSettlement() !== 'denied') throw error;
+        || await responseInput?.waitForResponseSettlement() !== 'denied') throw error;
       recordVoiceRuntimeFailure('local_conversation', 'provider_error', 'provider_error', code);
     }
     beginAutomaticCurrentUiContextUpdates(sessionId);
@@ -988,26 +998,34 @@ async function runVoiceTurnWithSendFailureHandling(
     if (isAbortedVoiceTurnError(error)) {
       return;
     }
-    if (admission && captureAttempt) {
-      if (!isCaptureAttemptCurrent(admission, captureAttempt)) throw error;
-      // Endpoint finalization can stop STT while retaining the admitted mic
-      // facade. Retire the whole capture, including an incumbent producer,
-      // before the failure projects disconnected without a Stop control.
-      detachCaptureCurrentUiContext(sessionId);
-      abortCaptureAdmission(sessionId);
-      await localVoiceCaptureOwner.stopSession(sessionId);
-      if (!isCaptureAdmissionCurrent(admission)) throw error;
-      closeInputLevel();
-      releaseCaptureAdmission(sessionId);
-    }
-    transitionVoiceRuntimeToIdle({
-      controlSessionId: sessionId,
-      reason: readSafeVoiceRuntimeFailureCode(error) ?? 'send_failed',
-      ...(error instanceof VoiceTextTurnError ? { kind: error.kind } : {}),
-      cause: error,
-    });
+    await surfaceLocalVoiceTurnFailure(sessionId, error, admission, captureAttempt);
     throw error;
   }
+}
+
+async function surfaceLocalVoiceTurnFailure(
+  sessionId: string,
+  error: unknown,
+  admission?: LocalVoiceCaptureAdmission | null,
+  captureAttempt?: LocalVoiceCaptureAttempt,
+): Promise<void> {
+  if (admission && captureAttempt) {
+    if (!isCaptureAttemptCurrent(admission, captureAttempt)) throw error;
+    // Release the complete capture before publishing a failure without Stop.
+    // The native Run and its pending Session request retain their own lifetime.
+    detachCaptureCurrentUiContext(sessionId);
+    abortCaptureAdmission(sessionId);
+    await localVoiceCaptureOwner.stopSession(sessionId);
+    if (!isCaptureAdmissionCurrent(admission)) throw error;
+    closeInputLevel();
+    releaseCaptureAdmission(sessionId);
+  }
+  transitionVoiceRuntimeToIdle({
+    controlSessionId: sessionId,
+    reason: readSafeVoiceRuntimeFailureCode(error) ?? 'send_failed',
+    ...(error instanceof VoiceTextTurnError ? { kind: error.kind } : {}),
+    cause: error,
+  });
 }
 
 function surfaceRecordedAudioCleanupFailure(
@@ -1462,7 +1480,7 @@ export async function toggleLocalVoiceTurn(
     // A fresh Start supersedes finite work, even if its provider ignores abort.
     // End releases capture and invalidates playback without joining that work.
     await stopLocalVoiceSession();
-  } else if (inFlight && initialBargeInDecision.kind !== 'interrupt_and_rearm') {
+  } else if (inFlight && !machineSnapshot.error && initialBargeInDecision.kind !== 'interrupt_and_rearm') {
     await inFlight;
   }
 
@@ -1595,6 +1613,7 @@ export async function toggleLocalVoiceTurn(
 
   // Stop retains a terminal error for diagnostics; a fresh Start must still acquire a new capture.
   if (current.status === 'idle' || current.status === 'error') {
+    const precedingTurn = inFlight;
     const settings = storage.getState().settings as any;
     const { config } = resolveLocalVoiceAdapterSettings(settings);
     if (!await ensureLocalConversationBindingForSession(settings, sessionId, requestedTargetSessionAddress, conversationSelection, onConversationSelection)) {
@@ -1608,7 +1627,7 @@ export async function toggleLocalVoiceTurn(
     }).finally(() => {
       if (inFlight === operation) inFlight = null;
     });
-    inFlight = operation;
+    if (!precedingTurn) inFlight = operation;
     await operation;
     return;
   }

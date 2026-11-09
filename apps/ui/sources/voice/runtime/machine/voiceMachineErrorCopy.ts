@@ -1,6 +1,19 @@
-import type { VoiceMachineErrorKind } from './voiceConversationRuntimeTypes';
+import type { VoiceMachineError, VoiceMachineErrorKind } from './voiceConversationRuntimeTypes';
+import { t } from '@/text';
+import { formatSessionUsageLimitRecoveryTime } from '@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
+
+/** The daemon owns retry scheduling; a provider reset alone promises no automatic retry. */
+export function presentVoiceUsageLimitMessage(usageLimit: VoiceMachineError['usageLimit']): string {
+    const title = t('session.usageLimitRecovery.banner.title');
+    const retryAtMs = usageLimit?.usageLimitRecovery?.nextCheckAtMs;
+    const resetAtMs = usageLimit?.usageLimitResetAtMs ?? usageLimit?.usageLimitRecovery?.resetAtMs;
+    const notice = retryAtMs != null
+        ? t('session.usageLimitRecovery.banner.retryAt', { time: formatSessionUsageLimitRecoveryTime(retryAtMs) })
+        : resetAtMs != null ? t('message.agentQuotaWait', { time: formatSessionUsageLimitRecoveryTime(resetAtMs) }) : null;
+    return notice ? `${title} ${notice}` : title;
+}
 
 /** Only a typed Agent turn failure admits provider prose into the shared presenter. */
 export function readSafeVoiceProviderFailureMessage(reason: string, cause: unknown): string | undefined {

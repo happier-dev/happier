@@ -6,6 +6,7 @@ import { readSafeVoiceRuntimeFailureCode } from '@/voice/runtime/voiceRuntimeFai
 import { readSafeVoiceProviderFailureMessage } from './voiceMachineErrorCopy';
 import { createProviderErrorV1, ProviderErrorCodeV1Schema, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { isVoiceTextTurnRejectedBeforeEffectError } from '@/voice/session/types';
+import { ExecutionRunTurnStreamEventErrorSchema } from '@happier-dev/protocol/execution/runs/streaming';
 
 import type {
     VoiceMachineError,
@@ -114,14 +115,22 @@ export function createVoiceMachineError(params: Readonly<{
     const providerError = providerErrorResult.success ? providerErrorResult.data
         : providerCode.success ? createProviderErrorV1(providerCode.data) : null;
     const providerMessage = readSafeVoiceProviderFailureMessage(params.reason, params.cause);
+    const quota = params.reason === 'usage_limit' && cause && typeof cause === 'object'
+        ? ExecutionRunTurnStreamEventErrorSchema.safeParse({ t: 'error', error: params.reason,
+            usageLimitRecovery: 'usageLimitRecovery' in cause ? cause.usageLimitRecovery : undefined,
+            usageLimitResetAtMs: 'usageLimitResetAtMs' in cause ? cause.usageLimitResetAtMs : undefined,
+        }) : null;
     return {
         kind: params.kind,
         reason: providerError?.code ?? uxDiagnostic?.code ?? params.reason,
         ...(providerMessage ? { providerMessage } : {}),
+        ...(quota?.success && (quota.data.usageLimitRecovery !== undefined || quota.data.usageLimitResetAtMs !== undefined)
+            ? { usageLimit: { usageLimitRecovery: quota.data.usageLimitRecovery,
+                usageLimitResetAtMs: quota.data.usageLimitResetAtMs } } : {}),
         ...policy,
-        // A quota refusal requires choosing another account in Voice settings or waiting for reset.
+        // Waiting for quota is not a setup failure. The native Run owns any automatic recovery.
         ...(params.kind === 'provider_error' && params.reason === 'usage_limit'
-            ? { recoveryAction: 'open_settings' as const, presentation: 'error' as const, retryPolicy: 'never' as const } : {}),
+            ? { recoveryAction: 'none' as const, presentation: 'error' as const, retryPolicy: 'never' as const } : {}),
         // Connected Services owns retryability; its refusal stays visible until dismissed.
         ...(uxDiagnostic ? {
             uxDiagnostic,
