@@ -231,6 +231,17 @@ describe('MainAppTabBar', () => {
         await wide.unmount();
     });
 
+    it('hands a long-pressed tab to its destinations owner', async () => {
+        const { MainAppTabBar } = await import('./MainAppTabBar');
+        const held: string[] = [];
+        const screen = await renderTabBar(<MainAppTabBar activeTab="sessions" onTabPress={() => {}}
+            destinations={{ tabs: [{ id: 'bots', label: 'bots', icon: 'robot' as const }], onPress: () => {},
+                onTabLongPress: (id) => { held.push(id); } }} />);
+        await act(async () => { screen.findHostByTestId('tabbar-tab-bots')?.props.onLongPress(); });
+        await act(async () => { screen.findHostByTestId('tabbar-tab-projects')?.props.onLongPress(); });
+        expect(held).toEqual(['bots', 'projects']);
+    });
+
     it('exposes localized tab semantics and selected state when visual labels are hidden', async () => {
         badgeSettingsState.showLabels = false;
         friendRequestsState.items = [{ id: 'fr-1' }, { id: 'fr-2' }];

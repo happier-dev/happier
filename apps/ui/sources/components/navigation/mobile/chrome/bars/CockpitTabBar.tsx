@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { Platform, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { HappierPressable, HAPPIER_FOCUS_RING_DELEGATED_STYLE } from '@happier-dev/plugin-ui/presentation';
 import { ScrollView } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
@@ -18,7 +18,8 @@ import { resolveHorizontalScrollEdgeMaskRamps, resolveHorizontalScrollEdgeMaskSt
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { usePublishCockpitBarScrolls } from './cockpitBarScrollState';
-import { resolveCockpitTrackRevealX } from './cockpitTrackReveal';
+import { COCKPIT_TRACK_MORE_SLOT, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
+import { CockpitBarFoldedContext } from '../pageBarChromeFold';
 
 
 const styles = StyleSheet.create((theme) => ({
@@ -76,6 +77,10 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
     },
+    trackTrailing: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
 }));
 
 export type CockpitTabBadge =
@@ -111,6 +116,8 @@ type CockpitTabBarProps<TSurface extends string> = Readonly<{
     tabs: readonly CockpitTabBarTabDefinition<TSurface>[];
     tabTestIdPrefix: string;
     onSurfacePress: (surface: TSurface) => void;
+    /** A held tab (right-click on web): the one way into a tab's own menu, for every bar. `anchor` is the tab. */
+    onTabLongPress?: (surface: TSurface, anchor: unknown) => void;
     trailing?: React.ReactNode;
     /**
      * `scroll` when the tabs do not fit the capsule: the first tab stays fixed and the rest (with
@@ -144,7 +151,10 @@ export function CockpitTabBar<TSurface extends string>(props: CockpitTabBarProps
 }>) {
     const insets = useChromeSafeAreaInsets();
     const settingsMetrics = resolveTabBarMetrics(useSetting('tabBarSize'), useSetting('tabBarShowLabels'));
-    usePublishCockpitBarScrolls(cockpitTabBarScrolls(props));
+    // One bottom chrome at a time (FIN N4): inside a page's own bottom bar only the bar's More stands.
+    const folded = React.useContext(CockpitBarFoldedContext);
+    usePublishCockpitBarScrolls(!folded && cockpitTabBarScrolls(props));
+    if (folded) return <>{props.trailing}</>;
     return <CockpitTabBarView {...props} bottomInset={insets.bottom} metrics={props.metrics ?? settingsMetrics} />;
 }
 
@@ -159,14 +169,21 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
 }>) {
     const { theme } = useUnistyles();
     const { metrics } = props;
+    const anchors = React.useRef(new Map<string, unknown>());
     const renderTab = (tab: CockpitTabBarTabDefinition<TSurface>) => {
         const active = tab.id === props.activeSurface;
         const tintColor = active ? theme.colors.text.primary : theme.colors.text.secondary;
+        const hold = props.onTabLongPress && !tab.disabled ? () => props.onTabLongPress?.(tab.id, anchors.current.get(tab.id) ?? null) : undefined;
         return (
             <HappierPressable
                 key={tab.id}
                 testID={`${props.tabTestIdPrefix}${tab.id}`}
+                controlRef={(node) => {
+                    if (node) anchors.current.set(tab.id, node);
+                    else anchors.current.delete(tab.id);
+                }}
                 onPress={() => props.onSurfacePress(tab.id)}
+                {...(hold ? { onLongPress: hold, onContextMenu: (event: { preventDefault?: () => void }) => { event.preventDefault?.(); hold(); } } : {})}
                 disabled={tab.disabled}
                 style={(state) => [styles.tab, {
                     minWidth: metrics.tabMinWidth,
@@ -212,11 +229,13 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
                     <>
                         {props.tabs[0] ? renderTab(props.tabs[0]) : null}
                         <View style={styles.trackDivider} />
-                        <CockpitTabBarTrack activeId={props.activeSurface}>
+                        <CockpitTabBarTrack activeId={resolveCockpitTrackRevealTarget(props.tabs.map(tab => tab.id), props.activeSurface) ?? undefined}>
                             {props.tabs.slice(1).map(tab => (
                                 <CockpitTabBarTrackItem key={tab.id} id={tab.id}>{renderTab(tab)}</CockpitTabBarTrackItem>
                             ))}
-                            {props.trailing}
+                            {props.trailing ? (
+                                <CockpitTabBarTrackItem id={COCKPIT_TRACK_MORE_SLOT} style={styles.trackTrailing}>{props.trailing}</CockpitTabBarTrackItem>
+                            ) : null}
                         </CockpitTabBarTrack>
                     </>
                 ) : (
@@ -243,10 +262,10 @@ const TRACK_EDGE_FADE = { fadeSize: 16 } as const;
 const TrackRevealContext = React.createContext<((id: string, x: number, width: number) => void) | null>(null);
 
 /** Reports where a tab sits in the track, so the track can bring the selected one into view. */
-function CockpitTabBarTrackItem(props: Readonly<{ id: string; children: React.ReactNode }>) {
+function CockpitTabBarTrackItem(props: Readonly<{ id: string; children: React.ReactNode; style?: StyleProp<ViewStyle> }>) {
     const report = React.useContext(TrackRevealContext);
     return (
-        <View onLayout={report ? (event) => report(props.id, event.nativeEvent.layout.x, event.nativeEvent.layout.width) : undefined}>
+        <View style={props.style} onLayout={report ? (event) => report(props.id, event.nativeEvent.layout.x, event.nativeEvent.layout.width) : undefined}>
             {props.children}
         </View>
     );

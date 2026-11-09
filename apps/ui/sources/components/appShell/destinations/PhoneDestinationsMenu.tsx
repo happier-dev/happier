@@ -6,6 +6,7 @@ import { useBotsSummary } from '@/components/sessions/bots/botsSummary';
 import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { NavigationPlacementTabMenu } from '@/components/ui/navigation/NavigationPlacementTabMenu';
 import { useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import { resolveTabBarMetrics, type TabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { CockpitTabBarActionView, type CockpitTabBarTabDefinition } from '@/components/navigation/mobile/chrome/bars/CockpitTabBar';
@@ -149,7 +150,23 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean }>) {
 
     const openMenu = React.useCallback(() => setOpen(true), []);
     const available = destinations.length > 0;
-    const renderMenu = (metrics: TabBarMetrics) => !available ? null : (
+    // A held tab's menu: a kept destination moves or hides; a main tab is fixed, so it only offers Customize.
+    const [tabMenu, setTabMenu] = React.useState<Readonly<{ id: string; label: string; open: boolean }> | null>(null);
+    const tabAnchor = React.useRef<unknown>(null);
+    const holdTab = React.useCallback((id: string, anchor: unknown, label: string) => {
+        tabAnchor.current = anchor;
+        setTabMenu({ id, label, open: true });
+    }, []);
+    const closeTabMenu = React.useCallback((next: boolean) => {
+        if (!next) setTabMenu(current => current && { ...current, open: false });
+    }, []);
+    const heldDestination = tabMenu ? destinations.find((destination) => destination.id === tabMenu.id) : undefined;
+    const renderMenu = (metrics: TabBarMetrics) => !available ? null : <>
+        {tabMenu ? <NavigationPlacementTabMenu testID="phone-launcher-tab-menu" address="phoneLauncher" preferences={placement.preferences}
+            item={heldDestination
+                ? { id: heldDestination.id, title: heldDestination.title, defaultPlacement: phoneLauncherDefaultPlacement(heldDestination) }
+                : { id: tabMenu.id, title: tabMenu.label, defaultPlacement: 'pinned', allowedPlacements: ['pinned'] }}
+            open={tabMenu.open} anchorRef={tabAnchor} onOpenChange={closeTabMenu} onCustomize={() => select(CUSTOMIZE_ITEM_ID)} /> : null}
         <DropdownMenu
             testID="phone-launcher-menu"
             open={open}
@@ -170,9 +187,9 @@ export function usePhoneDestinationsMore(input: Readonly<{ native: boolean }>) {
                 : <CockpitTabBarActionView testID="phone-launcher-button" label={t('common.more')} icon="dots-three"
                     metrics={metrics} expanded={expanded} onPress={toggle} />}
         />
-    );
+    </>;
     return { available, menu: renderMenu(settingsMetrics), renderMenu, open: openMenu,
-        bar: { tabs: barTabs, onPress: select } };
+        bar: { tabs: barTabs, onPress: select, ...(input.native || !available ? {} : { onTabLongPress: holdTab }) } };
 }
 
 /** The floating main bar with the phone's destinations: the tabs, the Bar items, then More. */

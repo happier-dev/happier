@@ -46,7 +46,7 @@ export function PluginDetailCockpitTabBar(props: PluginDetailCockpitTabBarProps)
     const presentation = usePluginDetailCockpitBarPresentation(props);
     return <CockpitTabBar activeSurface={props.model.activeId} barTestId="plugin-detail-cockpit-tabbar"
         tabs={presentation.shown.map(detailNavigationTab)} tabTestIdPrefix="plugin-detail-cockpit-tab-"
-        layout={presentation.layout} onSurfacePress={props.onSelect} trailing={presentation.menu} />;
+        layout={presentation.layout} onSurfacePress={props.onSelect} onTabLongPress={presentation.onTabLongPress} trailing={presentation.menu} />;
 }
 
 /** The existing App pane owns visibility; the mounted detail supplies its companion catalog. */

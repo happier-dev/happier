@@ -123,5 +123,5 @@ function ProjectCockpitTabBarContent(props: PresentationProps) {
     const presentation = useProjectCockpitBarPresentation(props);
     return <CockpitTabBar activeSurface={presentation.activeId} barTestId={`project-cockpit-tabbar-${props.workspaceRefId}`}
         tabs={presentation.shown.map(presentation.tabForPage)} tabTestIdPrefix="project-cockpit-tab-" layout={presentation.layout}
-        onSurfacePress={presentation.select} trailing={presentation.menu} />;
+        onSurfacePress={presentation.select} onTabLongPress={presentation.onTabLongPress} trailing={presentation.menu} />;
 }

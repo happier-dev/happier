@@ -23,5 +23,5 @@ export const MachineCockpitTabBar = React.memo(function MachineCockpitTabBar(pro
     const presentation = useMachineCockpitBarPresentation(props);
     return <CockpitTabBar activeSurface={props.activeId} barTestId={`machine-cockpit-tabbar-${props.machineId}`}
         tabs={presentation.shown.map(machineNavigationTab)} tabTestIdPrefix="machine-cockpit-tab-" layout={presentation.layout}
-        onSurfacePress={props.onSelect} trailing={presentation.menu} />;
+        onSurfacePress={props.onSelect} onTabLongPress={presentation.onTabLongPress} trailing={presentation.menu} />;
 });

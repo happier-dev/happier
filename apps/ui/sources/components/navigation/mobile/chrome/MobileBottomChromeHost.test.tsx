@@ -64,6 +64,7 @@ const { MainAppTabStateProvider } = await import('./MainAppTabStateProvider');
 const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
 const { PresentedSessionChromeFixture } = await import('@/dev/testkit/harness/presentedDetailChrome');
 const { MainAppTabBar } = await import('./bars/MainAppTabBar');
+const { PagePinnedBar } = await import('@/components/ui/layout/PagePinnedBar');
 const { SessionCockpitTabBar } = await import('./bars/SessionCockpitTabBar');
 const { SessionCockpitChromeRegistryProvider, useSessionCockpitChromeRegister, useSessionCockpitBottomChromeHeight } = await import(
     '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry'
@@ -91,10 +92,11 @@ function MountedSession(props: Readonly<{ surface: SessionMobileSurface; termina
 function MeasurementReader() {
     return <Text testID="chrome-height">{useSessionCockpitBottomChromeHeight()}</Text>;
 }
-type HarnessProps = Readonly<{ mounted?: boolean; surface?: SessionMobileSurface; terminalAvailable?: boolean; detailsCount?: number }>;
-function Harness({ mounted = false, surface = 'chat', terminalAvailable = true, detailsCount = 0 }: HarnessProps) {
+type HarnessProps = Readonly<{ mounted?: boolean; surface?: SessionMobileSurface; terminalAvailable?: boolean; detailsCount?: number; pageBar?: boolean }>;
+function Harness({ mounted = false, surface = 'chat', terminalAvailable = true, detailsCount = 0, pageBar = false }: HarnessProps) {
     return <runtime.Wrapper><MainAppTabStateProvider><SessionCockpitChromeRegistryProvider><InboxSummaryProvider>
         {mounted ? <MountedSession surface={surface} terminalAvailable={terminalAvailable} detailsCount={detailsCount} /> : null}
+        {pageBar ? <PagePinnedBar testID="page-bar"><Text>bar</Text></PagePinnedBar> : null}
         <PresentedSessionChromeFixture /><MeasurementReader /><MobileBottomChromeHost />
     </InboxSummaryProvider></SessionCockpitChromeRegistryProvider></MainAppTabStateProvider></runtime.Wrapper>;
 }
@@ -122,6 +124,22 @@ beforeEach(() => {
 });
 
 describe('MobileBottomChromeHost mounted chrome', () => {
+    // FIN N4: one bottom chrome at a time; the page's own bar wins and the shell's bar comes back after it.
+    it('gives the bottom to a page\'s own pinned bar and takes it back when the bar leaves', async () => {
+        const screen = await renderScreen(<Harness pageBar />);
+        await finishAnimations();
+        expect(screen.findAllByType(MainAppTabBar)).toHaveLength(0);
+        await screen.update(<Harness />);
+        await finishAnimations();
+        expect(screen.findAllByType(MainAppTabBar)).toHaveLength(1);
+    });
+    // Holding the bar docks the Session switcher on a native phone, so a tab's menu never competes with it.
+    it.each([['android', false], ['web', true]] as const)('on %s a held Session tab opens its menu: %s', async (os, offersMenu) => {
+        native.os = os; route.pathname = '/session/session-1/files'; enableCockpit();
+        const screen = await renderScreen(<Harness mounted surface="browse" />);
+        await finishAnimations();
+        expect(typeof screen.findHostByTestId('session-cockpit-tab-browse')?.props.onLongPress === 'function').toBe(offersMenu);
+    });
     it('renders the authenticated Home tab and ignores selecting it again', async () => {
         const screen = await renderScreen(<Harness />);
         expect(screen.findByType(MainAppTabBar).props.activeTab).toBe('sessions');

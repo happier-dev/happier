@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { GlassPanel } from '@/components/ui/glass/GlassPanel';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useSessionCockpitPageBottomClearance } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { PageBarFoldedChrome, useClaimPhoneBottomForPageBar } from '@/components/navigation/mobile/chrome/PageBarFoldedChrome';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -29,6 +30,8 @@ export function WorkflowRunNeedsYouDock(
 ): React.ReactElement {
   const insets = useChromeSafeAreaInsets();
   const bottomClearance = Math.max(insets.bottom, useSessionCockpitPageBottomClearance());
+  // The dock is the page's bottom bar: the Map/Steps pill folds into it (one bottom chrome at a time, FIN N4).
+  const claimsBottom = useClaimPhoneBottomForPageBar();
   const { theme } = useUnistyles();
   const { onHeight } = props;
   const frameHeight = React.useRef<number | null>(null);
@@ -54,6 +57,7 @@ export function WorkflowRunNeedsYouDock(
           radius={theme.borderRadius.xl}
           style={styles.panel}
         >
+          {claimsBottom ? <PageBarFoldedChrome /> : null}
           <View style={styles.text}>
             <Text style={styles.title} numberOfLines={1}>
               {t('workflows.a11y.needsYou', { count: props.count })}

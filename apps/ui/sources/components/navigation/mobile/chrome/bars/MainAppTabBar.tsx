@@ -15,6 +15,8 @@ export type { TabType };
 export type MainAppTabBarDestinations = Readonly<{
     tabs: readonly CockpitTabBarTabDefinition<string>[];
     onPress: (id: string) => void;
+    /** A held tab, main tabs included: the destinations owner holds the placement menu. */
+    onTabLongPress?: (id: string, anchor: unknown, label: string) => void;
 }>;
 
 type MainAppTabBarProps = Readonly<{
@@ -58,6 +60,8 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
     const tabs: readonly CockpitTabBarTabDefinition<string>[] = [...definitions.map((tab) => ({
         id: tab.key, label: tab.label, icon: tab.icon, accessibilityLabel: tab.accessibilityLabel, badge: tab.badge,
     })), ...destinations];
+    const onHold = props.destinations?.onTabLongPress;
+    const onTabLongPress = onHold ? (id: string, anchor: unknown) => onHold(id, anchor, tabs.find((tab) => tab.id === id)?.label ?? id) : undefined;
     const onPress = (id: string) => {
         const tab = definitions.find((definition) => definition.key === id);
         if (tab) props.onTabPress(tab.key);
@@ -74,6 +78,7 @@ export const MainAppTabBar = React.memo((props: MainAppTabBarProps) => {
             opaqueBand={false}
             trailingAccessory={props.trailingAccessory ?? EMPTY_ACCESSORY}
             onSurfacePress={onPress}
+            onTabLongPress={onTabLongPress}
             trailing={props.more?.(metrics)}
         />
     );

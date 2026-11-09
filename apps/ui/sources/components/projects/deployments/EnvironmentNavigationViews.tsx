@@ -54,5 +54,5 @@ export function EnvironmentCockpitTabBar(props: EnvironmentCockpitTabBarProps) {
     const presentation = useEnvironmentCockpitBarPresentation(props);
     return <CockpitTabBar activeSurface={props.model.activeId} barTestId="environment-cockpit-tabbar"
         tabs={presentation.shown.map(detailNavigationTab)} tabTestIdPrefix="environment-cockpit-tab-"
-        layout={presentation.layout} onSurfacePress={props.onSelect} trailing={presentation.menu} />;
+        layout={presentation.layout} onSurfacePress={props.onSelect} onTabLongPress={presentation.onTabLongPress} trailing={presentation.menu} />;
 }

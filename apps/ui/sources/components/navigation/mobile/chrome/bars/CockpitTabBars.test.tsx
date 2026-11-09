@@ -112,8 +112,9 @@ async function seedCockpitState(element: React.ReactNode) {
         sessionCockpitSwipeNavigationEnabled: swipeSettingsState.swipe,
     }, isDataReady: true });
     storage.setState({ localSettings: { ...storage.getState().localSettings,
-        sessionCockpitBarSurfaceIds: cockpitPinsState.value,
-        navigationSurfacePlacementsV1: surfacePlacementsState.value } });
+        navigationSurfacePlacementsV1: { ...(cockpitPinsState.value === null ? {} : { sessionTabBar: {
+            orderedIds: cockpitPinsState.value, placements: Object.fromEntries([...new Set(['browse', 'git', 'companion', 'terminal', ...cockpitPinsState.value])]
+                .map(id => [id, cockpitPinsState.value!.includes(id) ? 'pinned' as const : 'overflow' as const])) }, }), ...surfacePlacementsState.value } } });
     if (route) {
         // These are producer fixture payloads; the presentation owner and store readers remain real.
         const target = reachableMachineState.target ?? { machineId: 'machine-1', basePath: '/repo' };
@@ -1228,6 +1229,38 @@ it('scrolls a Project bar whose pinned pages do not fit, and keeps More to what 
     expect(pages.filter(page => wide.findHostByTestId(`project-cockpit-tab-${page}`) === null)).toEqual([]);
     expect(observed.at(-1)).toBe(false);
     await wide.unmount();
+});
+// TL-E / UI refinements 11-07: long-pressing a tab opens the one placement menu, for every bar.
+it('opens the placement menu from a long-pressed Project tab and writes the choice', async () => {
+    const { ProjectCockpitTabBar } = await import('./ProjectCockpitTabBar');
+    const screen = await renderScreen(<ProjectCockpitTabBar pages={await projectPages()} workspaceRefId="workspace-a"
+        activeSurface="overview" terminalTabAvailable={true} onSurfacePress={() => {}} />);
+    const tabMenu = () => screen.tree.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'project-cockpit-tab-menu');
+    expect(tabMenu()).toBeUndefined();
+    await act(async () => { screen.findHostByTestId('project-cockpit-tab-code')?.props.onLongPress(); });
+    expect(tabMenu()?.props.open).toBe(true);
+    expect(tabMenu()?.props.items.map((item: { id: string }) => item.id)).toEqual(['pinned', 'overflow', 'hidden', 'customize']);
+    await act(async () => { await tabMenu()?.props.onSelect('overflow'); });
+    expect(JSON.stringify(settingWrites.calls.at(-1)?.value)).toContain('"code":"overflow"');
+    expect(tabMenu()).toBeUndefined();
+    // The Project's primary page cannot leave the bar: its menu only offers Customize.
+    await act(async () => { screen.findHostByTestId('project-cockpit-tab-overview')?.props.onLongPress(); });
+    expect(tabMenu()?.props.items.map((item: { id: string }) => item.id)).toEqual(['customize']);
+    await screen.unmount();
+});
+// FIN N4: inside a page's own bottom bar a phone bar folds to its More, and nothing it showed is lost.
+it('folds a phone bar to one More that lists every item, showing the selected one', async () => {
+    const { ProjectCockpitTabBar } = await import('./ProjectCockpitTabBar');
+    const { CockpitBarFoldedContext } = await import('../pageBarChromeFold');
+    const screen = await renderScreen(<CockpitBarFoldedContext.Provider value={true}>
+        <ProjectCockpitTabBar pages={await projectPages()} workspaceRefId="workspace-a"
+            activeSurface="code" terminalTabAvailable={true} onSurfacePress={() => {}} />
+    </CockpitBarFoldedContext.Provider>);
+    expect(screen.findHostByTestId('project-cockpit-tab-code')).toBeNull();
+    expect(screen.findHostByTestId('project-cockpit-tab-more')?.props.accessibilityLabel).toContain('code');
+    const items = screen.tree.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id);
+    expect(items).toEqual(expect.arrayContaining(['overview', 'code', 'changes', 'scripts', 'services', 'context', 'customize']));
+    await screen.unmount();
 });
 it('keeps every pinned Discussion entry on a narrow bar, scrolling, beside one permanent More', async () => {
     const { DiscussionCockpitTabBar } = await import('./DiscussionCockpitTabBar');

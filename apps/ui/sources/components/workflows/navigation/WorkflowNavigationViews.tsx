@@ -75,5 +75,5 @@ export function WorkflowCockpitTabBar(props: WorkflowCockpitTabBarProps) {
     const presentation = useWorkflowCockpitBarPresentation(props);
     return <CockpitTabBar activeSurface={props.model.sideId ?? props.model.activeId} barTestId={`${props.model.pageKind}-cockpit-tabbar`}
         tabs={presentation.shown.map(detailNavigationTab)} tabTestIdPrefix={`${props.model.pageKind}-cockpit-tab-`}
-        layout={presentation.layout} onSurfacePress={props.onSelect} trailing={presentation.menu} />;
+        layout={presentation.layout} onSurfacePress={props.onSelect} onTabLongPress={presentation.onTabLongPress} trailing={presentation.menu} />;
 }

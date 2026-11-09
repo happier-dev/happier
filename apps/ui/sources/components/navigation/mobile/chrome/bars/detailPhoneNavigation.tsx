@@ -7,6 +7,7 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { resolveFloatingTabBarSlotCount } from '@/components/ui/navigation/FloatingTabBarSurface';
 import { resolveTabBarMetrics } from '@/components/ui/navigation/tabBarMetrics';
 import { NavigationPlacementPinButton } from '@/components/ui/navigation/NavigationPlacementPinButton';
+import { NavigationPlacementTabMenu } from '@/components/ui/navigation/NavigationPlacementTabMenu';
 import { useDetailPageTabsPosition, useNavigationSurfacePlacement } from '@/components/ui/navigation/useNavigationSurfacePlacement';
 import type { DetailNavigationCustomizerProps } from '@/components/ui/navigation/NavigationPlacementCustomizer';
 import { type NavigationPlacementAddress, type NavigationPlacementPreferences } from '@/sync/domains/settings/mobileSurfacePinning';
@@ -17,6 +18,8 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { CockpitTabBarAction, type CockpitTabBarTabDefinition } from './CockpitTabBar';
 import { sfSymbolForCockpitTabIcon } from './cockpitTabSymbols';
 import { resolveDetailPhoneBarFit, resolveDetailPhonePlacement, type PhonePlacementItem } from './detailPhoneNavigationProjection';
+import { resolveDetailPhoneNavigationItem } from '@/components/appShell/rightSidebar/detailNavigationItems';
+import { CockpitBarFoldedContext } from '../pageBarChromeFold';
 
 type PhoneMenuItem = PhonePlacementItem & Readonly<{
     title: string;
@@ -73,7 +76,9 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
     const slotCount = input.native ? null : resolveFloatingTabBarSlotCount({ windowWidth: width, maxWidth: layout.maxWidth, tabMinWidth: metrics.tabMinWidth });
     // More also opens Customize, so it occupies one measured slot even before any item overflows.
     const fit = resolveDetailPhoneBarFit(input.placement, slotCount, input.overflowBehavior, { selectedLabelSlots: metrics.showLabels ? 0 : 1 });
-    const { behindMore } = fit;
+    // Folded into a page's own bar, More is the bar: it lists every item, and nothing can be pinned to a bar not shown.
+    const folded = React.useContext(CockpitBarFoldedContext);
+    const behindMore = folded ? placements.ordered.filter(item => placements.effectivePlacements[item.id] !== 'hidden') : fit.behindMore;
     const activeBehindMore = behindMore.find(item => item.id === input.activeId)
         ?? input.items.find(item => item.id === input.activeId && item.phonePlacement === 'none');
     const openMore = React.useCallback(() => setMoreOpen(true), []);
@@ -85,7 +90,18 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
             Modal.show({ component: DetailNavigationCustomizer, props: customizer });
         }), { tag: 'DetailPhoneNavigation.customize' });
     };
-    const menu = <DetailPhoneMoreMenu testIDPrefix={`${input.pageKind}-cockpit`} nativeAnchorTestID={`${input.pageKind}-native-more-anchor`}
+    // A held tab's menu: which tab, and whether it is open, kept apart so a late selection still has its tab.
+    const [tabMenu, setTabMenu] = React.useState<Readonly<{ id: string; open: boolean }> | null>(null);
+    const tabAnchor = React.useRef<unknown>(null);
+    const holdTab = React.useCallback((id: string, anchor: unknown) => {
+        tabAnchor.current = anchor;
+        setTabMenu({ id, open: true });
+    }, []);
+    const closeTabMenu = React.useCallback((open: boolean) => {
+        if (!open) setTabMenu(current => current && { ...current, open: false });
+    }, []);
+    const heldItem = tabMenu ? input.items.find(item => item.id === tabMenu.id) : undefined;
+    const more = <DetailPhoneMoreMenu testIDPrefix={`${input.pageKind}-cockpit`} nativeAnchorTestID={`${input.pageKind}-native-more-anchor`}
         native={input.native} surfaceId={input.address} preferences={preferences} activeId={input.activeId}
         open={moreOpen} onOpenChange={setMoreOpen} onSelect={input.select} onCustomize={customize}
         activeTrigger={activeBehindMore ? { title: activeBehindMore.count ? `${activeBehindMore.title}, ${activeBehindMore.count}` : activeBehindMore.title,
@@ -93,7 +109,7 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
         entries={behindMore.map(entry => {
             const pinned = placements.effectivePlacements[entry.id] === 'pinned';
             return { id: entry.id, title: entry.title, icon: entry.icon, kind: entry.navigation.kind, pinned,
-                pinnable: entry.allowedPlacements === undefined || entry.allowedPlacements.includes(pinned ? 'overflow' : 'pinned'),
+                pinnable: !folded && (entry.allowedPlacements === undefined || entry.allowedPlacements.includes(pinned ? 'overflow' : 'pinned')),
                 disabled: Boolean(entry.disabledReason),
                 subtitle: entry.disabledReason ? entry.disabledReasonCode ? entry.disabledReason
                     : resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: entry.disabledReason }).body
@@ -102,7 +118,13 @@ export function useDetailPhoneBarPresentation<T extends PhoneMenuItem>(input: Re
         })} />;
     // Native bars keep UIKit's own capacity; the floating bar scrolls when its Bar items do not fit.
     const barLayout = !input.native && fit.mode === 'scroll' ? 'scroll' as const : 'fit' as const;
-    return { ...fit, layout: barLayout, menu, openMore, metrics, slotCount };
+    const menu = <>
+        {more}
+        {tabMenu && heldItem ? <NavigationPlacementTabMenu testID={`${input.pageKind}-cockpit-tab-menu`} address={input.address}
+            item={resolveDetailPhoneNavigationItem(heldItem)} preferences={preferences} open={tabMenu.open} anchorRef={tabAnchor}
+            onOpenChange={closeTabMenu} onCustomize={customize} /> : null}
+    </>;
+    return { ...fit, behindMore, layout: barLayout, menu, openMore, metrics, slotCount, onTabLongPress: input.native ? undefined : holdTab };
 }
 
 export type DetailPhoneMoreEntry = Readonly<{

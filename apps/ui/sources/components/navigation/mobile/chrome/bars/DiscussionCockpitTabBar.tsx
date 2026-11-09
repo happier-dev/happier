@@ -70,5 +70,10 @@ export const DiscussionCockpitTabBar = React.memo(function DiscussionCockpitTabB
     const presentation = useDiscussionCockpitBarPresentation(props);
     return <CockpitTabBar activeSurface={props.activeSurface} barTestId={`discussion-cockpit-tabbar-${props.discussionId}`}
         tabs={presentation.shown.map(presentation.tabForItem)} tabTestIdPrefix="discussion-cockpit-tab-" layout={presentation.layout}
-        onSurfacePress={presentation.select} trailing={presentation.menu} />;
+        onSurfacePress={presentation.select} trailing={presentation.menu}
+        // The bar's tabs are surfaces; a placement belongs to the item.
+        onTabLongPress={presentation.onTabLongPress && ((surface, anchor) => {
+            const item = presentation.items.find(candidate => discussionSurfaceForItem(candidate) === surface);
+            if (item) presentation.onTabLongPress?.(item.id, anchor);
+        })} />;
 });

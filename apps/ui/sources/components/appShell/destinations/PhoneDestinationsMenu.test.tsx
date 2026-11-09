@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 // The harness installs the server socket boundary as it loads: import it before any runtime module.
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -191,6 +191,22 @@ describe('PhoneDestinationsMenu', () => {
             recovery: ['plugin-app-pages-menu'],
         });
         expect(menuOf(menu).props.separateCategories).toBe(true);
+    });
+
+    // UI refinements 11-07: every bar's held tab opens the one placement menu; a fixed tab can only Customize.
+    it('opens the placement menu from a held destination on the bar, and only Customize from a main tab', async () => {
+        surfaceState.platformOS = 'web';
+        // An open web popover listens for window resizes; this suite has no DOM.
+        vi.stubGlobal('window', { location: { pathname: '/', search: '', hash: '' }, addEventListener: () => {}, removeEventListener: () => {} });
+        onTestFinished(() => { vi.unstubAllGlobals(); });
+        setCatalog({ pages: [], navigationPlacements: { phoneLauncher: { orderedIds: [], placements: { artifacts: 'pinned' } } } });
+        const screen = await renderMenu();
+        const tabMenu = () => screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'phone-launcher-tab-menu');
+        await act(async () => { screen.findHostByTestId('tabbar-tab-artifacts')?.props.onLongPress(); });
+        expect(tabMenu()?.props.items.map((item: { id: string }) => item.id)).toEqual(['pinned', 'overflow', 'hidden', 'customize']);
+        await act(async () => { tabMenu()?.props.onOpenChange(false); });
+        await act(async () => { screen.findHostByTestId('tabbar-tab-sessions')?.props.onLongPress(); });
+        expect(tabMenu()?.props.items.map((item: { id: string }) => item.id)).toEqual(['customize']);
     });
 
     it("honours the launcher's own placements, never the desktop rail's", async () => {

@@ -42,6 +42,7 @@ import { useCompactAppDestinations } from '@/components/appShell/destinations/us
 import { PHONE_HOME_ROUTE } from '@/components/navigation/shell/PhoneHomeLogoButton';
 import { useMainAppTabState } from './MainAppTabStateProvider';
 import { isWorkflowsTabRoutePathname, resolveMainTabPressRoute, resolveMobileBottomChromeModel } from './resolveMobileBottomChromeModel';
+import { usePageBarFoldsChrome } from './pageBarChromeFold';
 import { resolveMobileBottomChromePresenter } from './resolveMobileBottomChromePresenter';
 import { systemTabBarAvailable } from './SystemTabBar';
 import { SystemMobileBottomChrome, type SystemMobileBottomChromeModel } from './SystemMobileBottomChrome';
@@ -285,9 +286,15 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
     const overlayRouteActive = typeof pathname === 'string' && isOverlaySurfaceRoutePathname(pathname);
     const frozenChromeRef = React.useRef<BottomChromeItem | null>(null);
 
+    const pageBarFolds = usePageBarFoldsChrome();
     const resolvedChrome = React.useMemo((): BottomChromeItem | null => {
         if (overlayRouteActive && frozenChromeRef.current) {
             return frozenChromeRef.current;
+        }
+
+        // One bottom chrome at a time (FIN N4): a page's own bottom bar wins while it is on screen.
+        if (pageBarFolds) {
+            return null;
         }
 
         if (model.kind === 'mainAppTabs') {
@@ -330,6 +337,7 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         dismissingSessionId,
         mobileWorkspaceExperience,
         model,
+        pageBarFolds,
         visibleMainTab,
     ]);
 

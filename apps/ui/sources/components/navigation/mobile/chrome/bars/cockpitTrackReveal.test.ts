@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveCockpitTrackRevealX } from './cockpitTrackReveal';
+import { COCKPIT_TRACK_MORE_SLOT, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
 
 describe('a scrolling phone bar keeps its selected tab in view', () => {
     const viewport = 300;
@@ -14,5 +14,16 @@ describe('a scrolling phone bar keeps its selected tab in view', () => {
     });
     it('leaves a fully visible tab where it is', () => {
         expect(resolveCockpitTrackRevealX({ x: 100, width: 50, offset: 0, viewport, fade })).toBeNull();
+    });
+});
+
+describe('what a scrolling phone bar brings into view', () => {
+    const tabs = ['chat', 'files', 'git'] as const;
+    it('reveals a selected tab in the track and leaves the fixed first tab alone', () => {
+        expect(resolveCockpitTrackRevealTarget(tabs, 'git')).toBe('git');
+        expect(resolveCockpitTrackRevealTarget(tabs, 'chat')).toBeNull();
+    });
+    it('reveals More at the end of the track when the selected item is behind it', () => {
+        expect(resolveCockpitTrackRevealTarget(tabs, 'browser')).toBe(COCKPIT_TRACK_MORE_SLOT);
     });
 });

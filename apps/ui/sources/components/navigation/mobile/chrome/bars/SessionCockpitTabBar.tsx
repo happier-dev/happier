@@ -30,6 +30,7 @@ import { openSessionNavigationCustomizer, resolveSessionNavigationCustomizerProp
 import type { ResolveRightSidebarTabsInput } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 
 import { useSessionSwitcherBand } from '../lateralSwipe/SessionSwitcherBand';
+import { useSessionSwitcherInputEnabled } from '../lateralSwipe/useSessionSwitcherInputEnabled';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import {
     CockpitTabBar,
@@ -239,7 +240,8 @@ export function useSessionCockpitBarPresentation(props: SessionCockpitTabBarProp
     const visibility = { mode: presentation.mode, visible: presentation.shown, top: placement.topPages,
         held: presentation.held, overflow: placement.placements.overflow };
     return { catalog, tabForEntry, visibility, tabs: presentation.shown.map(tabForEntry), menu: presentation.menu,
-        pageTabs: placement.pageTabs, barScrolls, pendingNavigationAddress, openMore: presentation.openMore };
+        pageTabs: placement.pageTabs, barScrolls, pendingNavigationAddress, openMore: presentation.openMore,
+        onTabLongPress: presentation.onTabLongPress };
 }
 
 /**
@@ -261,11 +263,15 @@ function SessionPhoneTopPageStrip(props: React.ComponentProps<typeof SessionPhon
 }
 
 export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps) => {
-    const { tabs, menu, barScrolls, pendingNavigationAddress } = useSessionCockpitBarPresentation(props);
+    const { tabs, menu, barScrolls, pendingNavigationAddress, onTabLongPress } = useSessionCockpitBarPresentation(props);
     // The band's actions are built HERE because a tab is the only element in the band a screen
     // reader can focus, and an action only reaches the rotor through the element that owns it.
     // They are the switcher's non-gesture path: step either way, or open it for tapping.
     const switcherBand = useSessionSwitcherBand();
+    // Holding this bar docks the Session switcher where that gesture is live, so the hold stays the switcher's there.
+    const holdToDock = useSetting('sessionSwitcherHoldToDockEnabled') !== false;
+    const switcherInput = useSessionSwitcherInputEnabled();
+    const holdOwnedBySwitcher = switcherBand !== null && holdToDock && switcherInput;
     const bandAccessibilityActions = React.useMemo(() => (switcherBand ? [
         { name: SWITCH_SESSION_ACTION, label: t('phoneNav.switcher.switchSessionAction') },
         { name: PREVIOUS_SESSION_ACTION, label: t('workspaceCockpit.previousSession') },
@@ -287,6 +293,7 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
             tabTestIdPrefix="session-cockpit-tab-"
             layout={barScrolls ? 'scroll' : 'fit'}
             onSurfacePress={props.onSurfacePress}
+            onTabLongPress={holdOwnedBySwitcher ? undefined : onTabLongPress}
             bandAccessibilityActions={bandAccessibilityActions}
             onBandAccessibilityAction={bandAccessibilityActions ? handleBandAccessibilityAction : undefined}
             trailing={<>
