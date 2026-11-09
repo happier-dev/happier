@@ -10,7 +10,8 @@ import {
 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
 import { SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
-import { createModelIntentMetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
+import { createModelIntentMetadataCasCandidate, createModelIntentV2MetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 
 import {
   createSessionModelTransitionAuthorizer,
@@ -270,10 +271,12 @@ function createHarness(params?: Readonly<{
   authorize?: Parameters<typeof createSessionModelTransitionCoordinator>[0]['authorize'];
   initial?: ProviderBoundModelRef;
   initialTarget?: AuthorizedSessionModelTransitionTarget;
+  initialActiveTargetConfirmed?: boolean;
+  readModelSelectionIntent?: Parameters<typeof createSessionModelTransitionCoordinator>[0]['readModelSelectionIntent'];
   authoritativeRuntimeReadback?: boolean;
   checkCurrentPublisherAuthority?: () => Promise<boolean>;
   readRuntimeModelId?: () => Promise<string | null> | string | null;
-  subscribeRuntimeModelChanges?: (handler: () => void) => () => void;
+  subscribeRuntimeModelChanges?: Parameters<typeof createSessionModelTransitionCoordinator>[0]['subscribeRuntimeModelChanges'];
 }>) {
   let current =
     params?.initialTarget?.selection
@@ -295,7 +298,7 @@ function createHarness(params?: Readonly<{
     current = target.selection;
     return { status: 'applied' as const };
   });
-  const publishActive = vi.fn(async (target: AuthorizedSessionModelTransitionTarget) => {
+  const publishActive = vi.fn<Parameters<typeof createSessionModelTransitionCoordinator>[0]['publishActive']>(async (target) => {
     events.push(`active:${target.selection.modelId}`);
   });
   const revokeActiveSelectionProof = vi.fn(async () => undefined);
@@ -324,6 +327,8 @@ function createHarness(params?: Readonly<{
     runId: 'run-1',
     agentTargetKey: 'agent:happier.agent.claude/claude',
     initialActiveTarget: params?.initialTarget ?? authorized(current),
+    initialActiveTargetConfirmed: params?.initialActiveTargetConfirmed ?? true,
+    readModelSelectionIntent: params?.readModelSelectionIntent ?? (() => null),
     isCurrentRun: () => currentRun,
     checkCurrentPublisherAuthority:
       params?.checkCurrentPublisherAuthority ?? (async () => true),
@@ -364,6 +369,298 @@ function createHarness(params?: Readonly<{
 }
 
 describe('createSessionModelTransitionCoordinator', () => {
+  it.each(['brokered', 'vendor-native'] as const)('retains a %s Team model intent through repeated carried prompts and a failed turn, while explicit native selection replaces it', async deliveryMode => {
+    const selection = native('same-model');
+    const nativeDelivery = deliveryMode === 'vendor-native' ? { managedId: 'managed', controllerInstallationId: 'controller-installation',
+      guestInstallationId: 'guest-installation', bindingKey: 'binding', placeholderRef: 'placeholder',
+      sourceRevision: 'source-v1', providerTicket: 't'.repeat(43) } : undefined;
+    const team = { kind: 'team_credential_provider_model' as const, resourceId: 'resource-1', teamId: 'team-1',
+      expectedResourceRevision: 7, deliveryMode, agentTargetKey: selection.agentTargetKey, modelId: selection.modelId,
+      ...(nativeDelivery ? { nativeDelivery } : {}) };
+    const initialTarget = { ...authorized(selection), readAppliedTeamCredentialModel: () => team };
+    let metadata = { modelSelectionIntentV2: { v: 2 as const, updatedAt: 10, ref: {
+      source: 'team_resource' as const, resourceId: team.resourceId, teamId: team.teamId,
+      expectedResourceRevision: team.expectedResourceRevision, deliveryMode: team.deliveryMode,
+      agentTargetKey: selection.agentTargetKey, modelId: selection.modelId,
+      ...(nativeDelivery ? { nativeDelivery } : {}),
+    } } };
+    const retained = metadata;
+    let intentWrites = 0;
+    const authorize = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1',
+      agentId: 'claude', agentTargetKey: selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => initialTarget });
+    const harness = createHarness({ initialTarget, authorize,
+      readModelSelectionIntent: () => readSessionModelSelectionV2FromMetadata(metadata), publishIntent: async requested => {
+      intentWrites++;
+      const candidate = createModelIntentMetadataCasCandidate({ selection: requested, nowMs: () => 20 });
+      metadata = candidate.update(metadata);
+      return { accepted: candidate.readState().accepted, updatedAt: candidate.readState().updatedAt! };
+    } });
+    try {
+      for (let i = 0; i < 3; i++) {
+        let dispatched = false;
+        const request = harness.coordinator.submit(selection, { source: 'prompt', runWithActiveSelection: async transfer => {
+          await transfer({ abortSignal: new AbortController().signal, dispatch: async () => {
+            dispatched = true;
+            if (i === 1) throw new Error('controlled turn failure');
+          } });
+        } });
+        if (i === 1) await expect(request).rejects.toThrow('controlled turn failure');
+        else await expect(request).resolves.toMatchObject({ ok: true });
+        expect(dispatched).toBe(true);
+        expect(metadata).toBe(retained);
+      }
+      expect(intentWrites).toBe(0);
+      expect(harness.coordinator.readActiveTarget()).toBe(initialTarget);
+      if (nativeDelivery) {
+        metadata = { ...metadata, modelSelectionIntentV2: { ...metadata.modelSelectionIntentV2,
+          ref: { ...metadata.modelSelectionIntentV2.ref, nativeDelivery: { ...nativeDelivery, placeholderRef: 'changed-placeholder' } } } };
+        let wrongBindingDispatched = false;
+        await expect(harness.coordinator.submit(selection, { source: 'prompt', runWithActiveSelection: async transfer => {
+          await transfer({ abortSignal: new AbortController().signal, dispatch: async () => { wrongBindingDispatched = true; } });
+        } })).resolves.toMatchObject({ ok: false, status: 'restart_required', reason: 'team_resource_binding_changed' });
+        expect(wrongBindingDispatched).toBe(false);
+        metadata = retained;
+      }
+      await expect(harness.coordinator.submit(selection, { source: 'command' }))
+        .resolves.toMatchObject({ ok: false, status: 'restart_required' });
+      expect(intentWrites).toBe(1);
+      expect(metadata).not.toHaveProperty('modelSelectionIntentV2');
+      expect(metadata).toMatchObject({ modelSelectionIntentV1: { selection } });
+      let reusedTeamAfterNativeSwitch = false;
+      await expect(harness.coordinator.submit(selection, { source: 'prompt', runWithActiveSelection: async transfer => {
+        await transfer({ abortSignal: new AbortController().signal, dispatch: async () => { reusedTeamAfterNativeSwitch = true; } });
+      } })).resolves.toMatchObject({ ok: false, status: 'restart_required' });
+      expect(reusedTeamAfterNativeSwitch).toBe(false);
+      const replacement = createModelIntentV2MetadataCasCandidate({ selection: { ...retained.modelSelectionIntentV2,
+        updatedAt: 30, ref: { ...retained.modelSelectionIntentV2.ref, resourceId: 'resource-2' } }, nowMs: () => 30 });
+      metadata = replacement.update(metadata);
+      const pendingTeam = metadata;
+      const writesBeforePendingTeamPrompt = intentWrites;
+      await expect(harness.coordinator.submit(selection, { source: 'prompt', runWithActiveSelection: async transfer => {
+        await transfer({ abortSignal: new AbortController().signal, dispatch: async () => { reusedTeamAfterNativeSwitch = true; } });
+      } })).resolves.toMatchObject({ ok: false, status: 'restart_required' });
+      expect(reusedTeamAfterNativeSwitch).toBe(false);
+      expect(metadata).toBe(pendingTeam);
+      expect(intentWrites).toBe(writesBeforePendingTeamPrompt);
+    } finally { await harness.coordinator.dispose(); }
+  });
+
+  it.each(['actual-provider-model', ' model/opaque '])('confirms observed native model identity without inventing proof for an unavailable opened credential source (%s)', async (observedModelId) => {
+    let nativeProven = false;
+    const initialTarget = { ...authorized(native('default')),
+      readAppliedTeamCredentialModel: () => nativeProven ? null : undefined };
+    const authorize = createSessionModelTransitionAuthorizer({
+      sessionId: 'session-1', machineId: 'machine-1', agentId: 'claude',
+      agentTargetKey: initialTarget.selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => initialTarget,
+    });
+    const harness = createHarness({ initialTarget, initialActiveTargetConfirmed: false, authorize,
+      readRuntimeModelId: () => observedModelId,
+      subscribeRuntimeModelChanges: handler => { handler(observedModelId); return () => undefined; } });
+    try {
+      await vi.waitFor(async () => expect(await harness.coordinator.readAppliedTarget()).toMatchObject({
+        status: 'applied', target: { selection: native(observedModelId) },
+      }));
+      const applied = await harness.coordinator.readAppliedTarget();
+      if (applied.status !== 'applied') throw new Error('Observed model must be available');
+      expect(applied.target.readAppliedTeamCredentialModel).toBe(initialTarget.readAppliedTeamCredentialModel);
+      expect(applied.target.readAppliedTeamCredentialModel?.()).toBeUndefined();
+      nativeProven = true;
+      expect(applied.target.readAppliedTeamCredentialModel?.()).toBeNull();
+      expect(harness.applyRuntime).not.toHaveBeenCalled();
+    } finally { await harness.coordinator.dispose(); }
+  });
+  it('keeps an unavailable opened credential source distinct from native auth and consumes later native proof', async () => {
+    let nativeProven = false;
+    const initialTarget = { ...authorized(native('old')), readAppliedTeamCredentialModel: () => nativeProven ? null : undefined };
+    const authorize = createSessionModelTransitionAuthorizer({
+      sessionId: 'session-1', machineId: 'machine-1', agentId: 'claude',
+      agentTargetKey: initialTarget.selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => initialTarget,
+    });
+    const harness = createHarness({ initialTarget, authorize });
+    await expect(harness.coordinator.submit(native('old'), { source: 'command' }))
+      .resolves.toMatchObject({ ok: false, status: 'restart_required' });
+    expect(harness.applyRuntime).not.toHaveBeenCalled();
+    nativeProven = true;
+    await expect(harness.coordinator.submit(native('next'), { source: 'command' }))
+      .resolves.toMatchObject({ ok: true, status: 'applied' });
+    await harness.coordinator.dispose();
+  });
+  it.each(['old', 'next'])('requires restart from Team custody to native model %s, even for the same model id', async modelId => {
+    const initialTarget = { ...authorized(native('old')), readAppliedTeamCredentialModel: () => ({
+      kind: 'team_credential_provider_model' as const, teamId: 'team-1', resourceId: 'resource-1',
+      expectedResourceRevision: 7, deliveryMode: 'brokered' as const,
+      agentTargetKey: native('old').agentTargetKey, modelId: 'old',
+    }) };
+    const authorize = createSessionModelTransitionAuthorizer({
+      sessionId: 'session-1', machineId: 'machine-1', agentId: 'claude',
+      agentTargetKey: initialTarget.selection.agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => initialTarget,
+    });
+    const harness = createHarness({ initialTarget, authorize });
+    await expect(harness.coordinator.submit(native(modelId), { source: 'command' }))
+      .resolves.toMatchObject({ ok: false, status: 'restart_required' });
+    expect(harness.applyRuntime).not.toHaveBeenCalled();
+    expect(harness.coordinator.readActiveTarget()).toEqual(initialTarget);
+    await harness.coordinator.dispose();
+  });
+  it('dispatches an unconfirmed native startup selector without inferring alias equivalence or restoring it over actual readback', async () => {
+    const harness = createHarness({ initial: native('default'), initialActiveTargetConfirmed: false,
+      readRuntimeModelId: () => 'actual-provider-model',
+      subscribeRuntimeModelChanges: handler => { handler('actual-provider-model'); return () => undefined; } });
+    const dispatch = vi.fn(async () => undefined);
+    const result = await harness.coordinator.submit(native('default'), { source: 'prompt', runWithActiveSelection: async transfer => {
+      await transfer({ abortSignal: new AbortController().signal, dispatch });
+    } });
+    expect(result.ok).toBe(true);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(harness.applyRuntime).not.toHaveBeenCalled();
+    await vi.waitFor(async () => expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'applied',
+      target: { selection: native('actual-provider-model') } }));
+    const before = await harness.coordinator.readAppliedTarget();
+    const after = await harness.coordinator.readAppliedTarget();
+    if (before.status !== 'applied' || after.status !== 'applied') throw new Error('Actual model is unavailable');
+    expect(after.target).toBe(before.target);
+    expect(harness.coordinator.readActiveTarget().selection).toEqual(native('default'));
+    expect(harness.publishActive).toHaveBeenLastCalledWith(expect.objectContaining({ selection: native('actual-provider-model') }), 'runtime_readback');
+    await harness.coordinator.dispose();
+  });
+  it('dispatches accepted next-prompt configuration without verifying Running until actual readback', async () => {
+    let runtimeModelId = 'old';
+    let observe!: (modelId?: string | null) => void;
+    const harness = createHarness({
+      initial: native('old'),
+      readRuntimeModelId: () => runtimeModelId,
+      subscribeRuntimeModelChanges: handler => { observe = handler; return () => undefined; },
+    });
+    harness.applyRuntime.mockImplementation(async () =>
+      mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({ status: 'applied', timing: 'before_next_prompt' }));
+    const next = native('next');
+    const configured = await harness.coordinator.submit(next, { source: 'command' });
+    expect(configured).toMatchObject({ ok: true, status: 'armed', requestedSelection: next });
+    await vi.waitFor(async () => expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'applied',
+      target: { selection: native('old') } }));
+    expect(harness.publishActive.mock.calls.some(([target, evidence]) => target.selection.modelId === 'next' && evidence !== null)).toBe(false);
+    observe('old');
+    await harness.coordinator.submit(next, { source: 'prompt', runWithActiveSelection: async transfer => {
+      await transfer({ abortSignal: new AbortController().signal, dispatch: async () => {
+        harness.events.push('send');
+      } });
+    } });
+    expect(harness.events).toContain('send');
+    expect(harness.applyRuntime).toHaveBeenCalledTimes(1);
+    expect(harness.coordinator.readActiveTarget().selection).toEqual(next);
+    runtimeModelId = 'next';
+    observe('next');
+    await vi.waitFor(async () => expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'applied', target: { selection: next } }));
+    expect(harness.publishActive).toHaveBeenLastCalledWith(expect.objectContaining({ selection: next }), 'runtime_readback');
+    await harness.coordinator.dispose();
+  });
+  it('keeps a configured route usable after prompt dispatch fails and never publishes proof from the retry', async () => {
+    const harness = createHarness({ initial: native('old'), readRuntimeModelId: () => 'old' });
+    harness.applyRuntime.mockImplementation(async () =>
+      mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({ status: 'applied', timing: 'before_next_prompt' }));
+    const next = native('next');
+    await expect(harness.coordinator.submit(next, { source: 'prompt', runWithActiveSelection: async transfer => {
+      await transfer({ abortSignal: new AbortController().signal, dispatch: async () => { throw new Error('provider unavailable'); } });
+    } })).rejects.toThrow('provider unavailable');
+    const dispatch = vi.fn(async () => undefined);
+    await harness.coordinator.submit(next, { source: 'prompt', runWithActiveSelection: async transfer => {
+      await transfer({ abortSignal: new AbortController().signal, dispatch });
+    } });
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(harness.applyRuntime).toHaveBeenCalledOnce();
+    await vi.waitFor(async () => expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'applied',
+      target: { selection: native('old') } }));
+    expect(harness.publishActive.mock.calls.some(([target, evidence]) => target.selection.modelId === 'next' && evidence !== null)).toBe(false);
+    await harness.coordinator.unarm();
+    expect(harness.coordinator.readActiveTarget().selection).toEqual(native('old'));
+    await harness.coordinator.dispose();
+  });
+
+  it('checks current publisher custody after Provider authorization finishes', async () => {
+    const validationStarted = deferred<void>();
+    const validation = deferred<boolean>();
+    let publisherCurrent = true;
+    const harness = createHarness({ initialTarget: { ...authorized(provider('pc_work', 'old')),
+      revalidateBeforeEffect: async () => { validationStarted.resolve(); return validation.promise; } },
+      checkCurrentPublisherAuthority: async () => publisherCurrent });
+    const applied = harness.coordinator.readAppliedTarget();
+    await validationStarted.promise;
+    publisherCurrent = false;
+    validation.resolve(true);
+    expect(await applied).toMatchObject({ status: 'unavailable', reason: 'publisher_authority_unavailable' });
+    await harness.coordinator.dispose();
+  });
+
+  it('retains same-source actual proof while pending, and invalidates unknown or revoked runtime evidence', async () => {
+    let runtimeModelId: string | null = 'old';
+    let observe!: (modelId?: string | null) => void;
+    let authorizationCurrent = true;
+    const initial = provider('pc_work', 'old');
+    const target = (selection: ProviderBoundModelRef): AuthorizedSessionModelTransitionTarget => ({
+      ...authorized(selection), revalidateBeforeEffect: async () => authorizationCurrent,
+    });
+    const harness = createHarness({ initialTarget: target(initial), ownerScope: modelMutationScope,
+      authorize: async selection => target(selection), readRuntimeModelId: () => runtimeModelId,
+      subscribeRuntimeModelChanges: handler => { observe = handler; return () => undefined; } });
+    harness.applyRuntime.mockResolvedValue({ status: 'deferred' });
+    await harness.coordinator.submit(provider('pc_work', 'next'), { source: 'command' });
+    await vi.waitFor(async () => expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'applied', target: { selection: initial } }));
+    const before = await harness.coordinator.readAppliedTarget();
+    observe('old');
+    await vi.waitFor(async () => expect((await harness.coordinator.runWithStableActiveTarget(async () => undefined)).status).toBe('completed'));
+    const after = await harness.coordinator.readAppliedTarget();
+    if (before.status !== 'applied' || after.status !== 'applied') throw new Error('Actual model is unavailable');
+    expect(after.target).toBe(before.target);
+    runtimeModelId = null;
+    observe(null);
+    expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'unavailable' });
+    expect(await harness.coordinator.submit(provider('pc_work', 'next'), { source: 'command', captureBefore: true }))
+      .toMatchObject({ ok: false, status: 'unsupported', reason: 'exact_model_mutation_requires_confirmed_runtime' });
+    runtimeModelId = 'old';
+    observe('old');
+    await vi.waitFor(async () => expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'applied' }));
+    authorizationCurrent = false;
+    expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'unavailable' });
+    await harness.coordinator.dispose();
+  });
+
+  it('does not use a model-id-only observation to confirm deferred cross-provider materialization', async () => {
+    let observe!: (modelId?: string | null) => void;
+    const initial = provider('pc_old', 'shared-model');
+    const next = provider('pc_new', 'shared-model');
+    const harness = createHarness({ initial, ownerScope: modelMutationScope, readRuntimeModelId: () => 'shared-model',
+      subscribeRuntimeModelChanges: handler => { observe = handler; return () => undefined; } });
+    harness.applyRuntime.mockImplementation(async () =>
+      mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({ status: 'applied', timing: 'before_next_prompt' }));
+    await harness.coordinator.submit(next, { source: 'command' });
+    observe('shared-model');
+    await vi.waitFor(async () => expect((await harness.coordinator.runWithStableActiveTarget(async () => undefined)).status).toBe('completed'));
+    expect(harness.publishActive).toHaveBeenCalledOnce();
+    expect(harness.publishActive).toHaveBeenLastCalledWith(expect.objectContaining({ selection: next }), null);
+    expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'unavailable' });
+    expect(await harness.coordinator.submit(next, { source: 'command', captureBefore: true }))
+      .toMatchObject({ ok: false, status: 'unsupported', reason: 'exact_model_mutation_requires_confirmed_runtime' });
+    await harness.coordinator.dispose();
+  });
+  it('keeps the actual old model and failure when next-prompt configuration publication fails', async () => {
+    const harness = createHarness({ initial: native('old'), readRuntimeModelId: () => 'old' });
+    harness.applyRuntime.mockImplementation(async () =>
+      mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({ status: 'applied', timing: 'before_next_prompt' }));
+    harness.publishActive.mockRejectedValueOnce(new Error('publication failed'));
+    expect(await harness.coordinator.submit(native('next'), { source: 'command' })).toMatchObject({
+      ok: false, status: 'reconciliation_required', activeSelection: native('old'), reason: 'publication failed',
+    });
+    expect(harness.applyRuntime.mock.calls.map(([target]) => target.selection.modelId)).toEqual(['next']);
+    expect(harness.unfence).not.toHaveBeenCalled();
+    expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'unavailable' });
+    await harness.coordinator.dispose();
+  });
+
+
   function createNativeHarness() {
     const authorizer = createSessionModelTransitionAuthorizer({
       agentId: 'claude', agentTargetKey: native('old').agentTargetKey,
@@ -378,6 +675,7 @@ describe('createSessionModelTransitionCoordinator', () => {
     const next = native('next');
     const armed = await harness.coordinator.submit(next, { source: 'command', applyTiming: 'next_prompt' });
     expect(armed).toMatchObject({ ok: true, status: 'armed', activeSelection: native('old'), requestedSelection: next });
+    expect(harness.coordinator.readArmedSelection()).toEqual(next);
     expect(harness.readCurrent()).toEqual(native('old'));
     await vi.waitFor(async () => expect((await harness.coordinator.runWithStableActiveTarget(async () => undefined)).status).toBe('completed'));
     await harness.coordinator.submit(next, { source: 'metadata' });
@@ -386,6 +684,7 @@ describe('createSessionModelTransitionCoordinator', () => {
       await transfer({ abortSignal: new AbortController().signal, dispatch: async () => { harness.events.push('send'); } });
     } });
     expect(harness.readCurrent()).toEqual(next);
+    expect(harness.coordinator.readArmedSelection()).toBeNull();
     expect(harness.events.indexOf('apply:next')).toBeLessThan(harness.events.indexOf('send'));
     await harness.coordinator.dispose();
   });
@@ -393,6 +692,7 @@ describe('createSessionModelTransitionCoordinator', () => {
     const harness = createNativeHarness();
     await harness.coordinator.submit(native('next'), { source: 'command', applyTiming: 'next_prompt' });
     expect(await harness.coordinator.unarm()).toMatchObject({ ok: true, status: 'already_active' });
+    expect(harness.coordinator.readArmedSelection()).toBeNull();
     expect(harness.readCurrent()).toEqual(native('old'));
     expect(harness.events).not.toContain('apply:next');
     expect(harness.events).not.toContain('send');
@@ -426,6 +726,8 @@ describe('createSessionModelTransitionCoordinator', () => {
     let current = true;
     const coordinator = createSessionModelTransitionCoordinator({
       runId: 'run-1', agentTargetKey: native('X').agentTargetKey, initialActiveTarget: initialTarget,
+      initialActiveTargetConfirmed: true,
+      readModelSelectionIntent: () => null,
       isCurrentRun: () => current, checkCurrentPublisherAuthority: async () => current,
       authorize: authorizer,
       publishIntent: async () => {
@@ -457,6 +759,34 @@ describe('createSessionModelTransitionCoordinator', () => {
       publicationRelease.resolve(); applicationRelease.resolve(); await coordinator.dispose();
     }
   });
+  it('captures and restores configured default intent after actual runtime proof resolves the startup selector', async () => {
+    let intent = { modelSelectionIntentV1: { v: 1 as const, updatedAt: 1, selection: native('default') } };
+    let order = 10;
+    const authorizer = createSessionModelTransitionAuthorizer({ sessionId: 'session-1', machineId: 'machine-1',
+      agentId: 'claude', agentTargetKey: native('default').agentTargetKey, nativeModelApplyPolicy: 'live',
+      readActiveTarget: () => harness.coordinator.readActiveTarget() });
+    const harness = createHarness({ initial: native('default'), initialActiveTargetConfirmed: false,
+      authorize: authorizer, ownerScope: modelMutationScope, readRuntimeModelId: () => 'actual-model',
+      subscribeRuntimeModelChanges: handler => { handler('actual-model'); return () => undefined; },
+      publishIntent: async (selection, expected, requiredBefore) => {
+        const candidate = createModelIntentMetadataCasCandidate({ selection, nowMs: () => ++order, ownerScope: modelMutationScope,
+          ...(requiredBefore ? { captureBefore: true, requiredBefore } : {}),
+          ...(expected ? { expected: { owner: 'inactive', scope: modelMutationScope, ...expected } } : {}) });
+        intent = candidate.update(intent);
+        const state = candidate.readState();
+        return { accepted: state.accepted, updatedAt: state.updatedAt ?? 0 };
+      } });
+    await vi.waitFor(async () => expect(await harness.coordinator.readAppliedTarget()).toMatchObject({ status: 'applied',
+      target: { selection: native('actual-model') } }));
+    const changed = await harness.coordinator.submit(native('new'), { source: 'command', captureBefore: true });
+    expect(changed).toMatchObject({ ok: true, reversal: { before: native('default'), applied: native('new'), updatedAt: 11 } });
+    expect(await harness.coordinator.submit(native('default'), { source: 'command',
+      expected: { owner: 'active', scope: modelMutationScope, runId: 'run-1', selection: native('new'), updatedAt: 11 } }))
+      .toMatchObject({ ok: true });
+    expect(intent.modelSelectionIntentV1.selection).toEqual(native('default'));
+    await harness.coordinator.dispose();
+  });
+
   it('captures active owner state and conditionally restores it, refusing an intervening model or a replacement run', async () => {
     let intent = { modelSelectionIntentV1: { v: 1 as const, updatedAt: 1, selection: native('old') } };
     let order = 10;
@@ -572,6 +902,10 @@ describe('createSessionModelTransitionCoordinator', () => {
         status: 'applied',
       }),
     ).toEqual({ status: 'applied' });
+    for (const timing of ['before_next_prompt', 'scheduled_for_next_prompt', 'queued_until_safe_window', 'next_idle'] as const) {
+      expect(mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult({ status: 'applied', timing }))
+        .toEqual({ status: 'deferred' });
+    }
   });
 
   it('projects a plugin-authored transition reason through the canonical failure redactor', () => {
@@ -646,7 +980,7 @@ describe('createSessionModelTransitionCoordinator', () => {
 
     await harness.coordinator.admitReplacementTarget(successor);
 
-    expect(harness.publishActive).toHaveBeenCalledWith(successor);
+    expect(harness.publishActive).toHaveBeenCalledWith(successor, null);
     expect(harness.coordinator.readActiveTarget()).toBe(successor);
     expect(harness.events).toEqual(['active:old']);
 
@@ -866,83 +1200,30 @@ describe('createSessionModelTransitionCoordinator', () => {
     },
   );
 
-  it('rolls the runtime back before releasing the fence when active-fact publication fails', async () => {
-    const harness = createHarness({ authoritativeRuntimeReadback: true });
+  it.each([
+    { initial: provider('pc_work', 'old'), next: provider('pc_work', 'next') },
+    { initial: native(' old/opaque '), next: native(' next/opaque ') },
+  ])('keeps the actual runtime model on publication failure without silently reverting ($initial.modelId)', async ({ initial, next }) => {
+    const harness = createHarness({ initial, authoritativeRuntimeReadback: true });
     harness.publishActive.mockRejectedValueOnce(new Error('metadata unavailable'));
 
     await expect(
-      harness.coordinator.submit(provider('pc_work', 'next'), { source: 'command' }),
-    ).resolves.toMatchObject({
-      ok: false,
-      status: 'publication_failed_rolled_back',
-      activeSelection: provider('pc_work', 'old'),
-    });
-
-    expect(harness.applyRuntime.mock.calls.map(([target]) => target.selection.modelId))
-      .toEqual(['next', 'old']);
-    expect(harness.unfence).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not suppress contradictory forward-model evidence during rollback', async () => {
-    let runtimeModelId = 'old';
-    let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
-      throw new Error('Runtime model subscription was not installed');
-    };
-    const harness = createHarness({
-      readRuntimeModelId: () => runtimeModelId,
-      subscribeRuntimeModelChanges: (handler) => {
-        notifyRuntimeModelChange = handler;
-        return () => undefined;
-      },
-    });
-    harness.publishActive.mockRejectedValueOnce(
-      new Error('metadata unavailable'),
-    );
-    harness.applyRuntime
-      .mockImplementationOnce(async (target) => {
-        runtimeModelId = target.selection.modelId;
-        return { status: 'applied' };
-      })
-      .mockImplementationOnce(async () => {
-        runtimeModelId = 'next';
-        notifyRuntimeModelChange(runtimeModelId);
-        return { status: 'applied' };
-      });
-
-    await expect(
-      harness.coordinator.submit(
-        provider('pc_work', 'next'),
-        { source: 'command' },
-      ),
+      harness.coordinator.submit(next, { source: 'command' }),
     ).resolves.toMatchObject({
       ok: false,
       status: 'reconciliation_required',
-      reason: 'runtime_model_drift_observed_during_rollback',
+      activeSelection: next,
+      reason: 'metadata unavailable',
     });
+
+    expect(harness.applyRuntime.mock.calls.map(([target]) => target.selection.modelId))
+      .toEqual([next.modelId]);
+    expect(harness.readCurrent()).toEqual(next);
+    expect(harness.coordinator.readActiveTarget().selection).toEqual(next);
     expect(harness.unfence).not.toHaveBeenCalled();
   });
 
-  it('does not release a retired run fence after rollback fact publication completes late', async () => {
-    const harness = createHarness({ authoritativeRuntimeReadback: true });
-    const rollbackPublication = deferred<void>();
-    harness.publishActive
-      .mockRejectedValueOnce(new Error('metadata unavailable'))
-      .mockImplementationOnce(async () => await rollbackPublication.promise);
 
-    const result = harness.coordinator.submit(
-      provider('pc_work', 'next'),
-      { source: 'command' },
-    );
-    await vi.waitFor(() => expect(harness.publishActive).toHaveBeenCalledTimes(2));
-    harness.retireRun();
-    rollbackPublication.resolve();
-
-    await expect(result).resolves.toMatchObject({
-      ok: false,
-      status: 'owner_unavailable',
-    });
-    expect(harness.unfence).not.toHaveBeenCalled();
-  });
 
   it('does not roll a retired run back when active-fact publication rejects late', async () => {
     const harness = createHarness();
@@ -970,55 +1251,29 @@ describe('createSessionModelTransitionCoordinator', () => {
     expect(harness.unfence).not.toHaveBeenCalled();
   });
 
-  it('keeps input and later transitions fenced when publication and rollback cannot be proven', async () => {
+  it('keeps input and later transitions fenced without changing the actual model when publication fails', async () => {
     const harness = createHarness();
     harness.publishActive.mockRejectedValueOnce(new Error('metadata unavailable'));
-    harness.applyRuntime
-      .mockResolvedValueOnce({ status: 'applied' })
-      .mockResolvedValueOnce({ status: 'failed', reason: 'rollback failed' });
 
     await expect(
       harness.coordinator.submit(provider('pc_work', 'next'), { source: 'command' }),
     ).resolves.toMatchObject({
       ok: false,
       status: 'reconciliation_required',
-      activeSelection: null,
+      activeSelection: provider('pc_work', 'next'),
     });
     await expect(
       harness.coordinator.submit(provider('pc_work', 'later'), { source: 'command' }),
     ).resolves.toMatchObject({
       ok: false,
       status: 'reconciliation_required',
-      activeSelection: null,
+      activeSelection: provider('pc_work', 'next'),
     });
 
     expect(harness.unfence).not.toHaveBeenCalled();
-    expect(harness.applyRuntime).toHaveBeenCalledTimes(2);
+    expect(harness.applyRuntime).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps known old active truth when rollback applied but reconciliation publication failed', async () => {
-    const harness = createHarness({ authoritativeRuntimeReadback: true });
-    harness.publishActive
-      .mockRejectedValueOnce(new Error('next publication unavailable'))
-      .mockRejectedValueOnce(new Error('rollback publication unavailable'));
-
-    await expect(
-      harness.coordinator.submit(
-        provider('pc_work', 'next'),
-        { source: 'command' },
-      ),
-    ).resolves.toMatchObject({
-      ok: false,
-      status: 'reconciliation_required',
-      activeSelection: provider('pc_work', 'old'),
-      reason: 'rollback_publication_failed',
-    });
-
-    expect(harness.applyRuntime.mock.calls.map(
-      ([target]) => target.selection.modelId,
-    )).toEqual(['next', 'old']);
-    expect(harness.unfence).not.toHaveBeenCalled();
-  });
 
   it('keeps input fenced when runtime application may have occurred without authoritative proof', async () => {
     const harness = createHarness();
@@ -1040,9 +1295,13 @@ describe('createSessionModelTransitionCoordinator', () => {
     expect(harness.unfence).not.toHaveBeenCalled();
   });
 
-  it('publishes and unfences only after exact live-runtime model readback proves an unproven apply', async () => {
+  it.each([
+    { initial: provider('pc_work', 'old'), next: provider('pc_work', 'next') },
+    { initial: native('old'), next: native(' model/opaque ') },
+  ])('publishes and unfences only after exact live-runtime model readback proves an unproven apply ($next.modelId)', async ({ initial, next }) => {
     const harness = createHarness({
-      readRuntimeModelId: () => 'next',
+      initial,
+      readRuntimeModelId: () => next.modelId,
     });
     harness.applyRuntime.mockResolvedValueOnce({
       status: 'unproven',
@@ -1052,21 +1311,21 @@ describe('createSessionModelTransitionCoordinator', () => {
 
     await expect(
       harness.coordinator.submit(
-        provider('pc_work', 'next'),
+        next,
         { source: 'command' },
       ),
     ).resolves.toMatchObject({
       ok: true,
       status: 'applied',
-      activeSelection: provider('pc_work', 'next'),
+      activeSelection: next,
     });
 
     expect(harness.publishActive.mock.calls.map(
       ([target]) => target.selection.modelId,
-    )).toEqual(['next']);
+    )).toEqual([next.modelId]);
     expect(harness.unfence).toHaveBeenCalledTimes(1);
     expect(harness.coordinator.readActiveTarget().selection)
-      .toEqual(provider('pc_work', 'next'));
+      .toEqual(next);
   });
 
   it('keeps readback recovery fenced when runtime drift arrives during active-fact publication', async () => {
@@ -1389,7 +1648,7 @@ describe('createSessionModelTransitionCoordinator', () => {
     });
   });
 
-  it('fences and restores the accepted active target when runtime-origin evidence drifts', async () => {
+  it('keeps runtime-origin drift visible and fenced without silently restoring the previous model', async () => {
     let runtimeModelId = 'old';
     let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
       throw new Error('Runtime model subscription was not installed');
@@ -1411,19 +1670,11 @@ describe('createSessionModelTransitionCoordinator', () => {
 
     await vi.waitFor(() => {
       expect(harness.fence).toHaveBeenCalledTimes(1);
-      expect(harness.publishActive).toHaveBeenCalledWith(
-        expect.objectContaining({
-          selection: provider('pc_work', 'old'),
-        }),
-      );
-      expect(harness.unfence).toHaveBeenCalledTimes(1);
+      expect(harness.revokeActiveSelectionProof).toHaveBeenCalledWith(provider('pc_work', 'old'));
     });
-    expect(harness.coordinator.readActiveTarget().selection)
-      .toEqual(provider('pc_work', 'old'));
-    expect(harness.authorize).toHaveBeenCalledWith(provider('pc_work', 'old'));
-    expect(harness.authorize).not.toHaveBeenCalledWith(
-      provider('pc_work', 'runtime-observed'),
-    );
+    expect(runtimeModelId).toBe('runtime-observed');
+    expect(harness.publishActive).not.toHaveBeenCalled();
+    expect(harness.unfence).not.toHaveBeenCalled();
 
     await expect(
       harness.coordinator.submit(
@@ -1431,158 +1682,15 @@ describe('createSessionModelTransitionCoordinator', () => {
         { source: 'command' },
       ),
     ).resolves.toMatchObject({
-      ok: true,
-      status: 'already_active',
-      activeSelection: provider('pc_work', 'old'),
-    });
-    expect(harness.applyRuntime).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps drift restoration fenced when authorization changes during active publication', async () => {
-    let runtimeModelId = 'unexpected-runtime-model';
-    let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
-      throw new Error('Runtime model subscription was not installed');
-    };
-    const publication = deferred<void>();
-    let authorizationCurrent = true;
-    const harness = createHarness({
-      readRuntimeModelId: () => runtimeModelId,
-      subscribeRuntimeModelChanges: (handler) => {
-        notifyRuntimeModelChange = handler;
-        return () => undefined;
-      },
-    });
-    const restorationTarget = {
-      ...authorized(provider('pc_work', 'old')),
-      revalidateBeforeEffect: vi.fn(async () => authorizationCurrent),
-    };
-    harness.authorize.mockResolvedValueOnce(restorationTarget);
-    harness.applyRuntime.mockImplementationOnce(async (target) => {
-      runtimeModelId = target.selection.modelId;
-      return { status: 'applied' };
-    });
-    harness.publishActive.mockImplementationOnce(
-      async () => await publication.promise,
-    );
-
-    notifyRuntimeModelChange('unexpected-runtime-model');
-    await vi.waitFor(() => expect(harness.publishActive).toHaveBeenCalledTimes(1));
-    authorizationCurrent = false;
-    publication.resolve();
-
-    await vi.waitFor(() => {
-      expect(restorationTarget.revalidateBeforeEffect).toHaveBeenCalledTimes(4);
-    });
-    expect(harness.unfence).not.toHaveBeenCalled();
-    await expect(
-      harness.coordinator.submit(
-        provider('pc_work', 'next'),
-        { source: 'command' },
-      ),
-    ).resolves.toMatchObject({
       ok: false,
       status: 'reconciliation_required',
       activeSelection: null,
     });
+    expect(harness.applyRuntime).not.toHaveBeenCalled();
   });
 
-  it('keeps drift restoration fenced when authorization changes during runtime apply', async () => {
-    let runtimeModelId = 'unexpected-runtime-model';
-    let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
-      throw new Error('Runtime model subscription was not installed');
-    };
-    const application = deferred<Readonly<{ status: 'applied' }>>();
-    let authorizationCurrent = true;
-    const harness = createHarness({
-      readRuntimeModelId: () => runtimeModelId,
-      subscribeRuntimeModelChanges: (handler) => {
-        notifyRuntimeModelChange = handler;
-        return () => undefined;
-      },
-    });
-    const restorationTarget = {
-      ...authorized(provider('pc_work', 'old')),
-      revalidateBeforeEffect: vi.fn(async () => authorizationCurrent),
-    };
-    harness.authorize.mockResolvedValueOnce(restorationTarget);
-    harness.applyRuntime.mockImplementationOnce(async (target) => {
-      runtimeModelId = target.selection.modelId;
-      return await application.promise;
-    });
 
-    notifyRuntimeModelChange('unexpected-runtime-model');
-    await vi.waitFor(() => expect(harness.applyRuntime).toHaveBeenCalledTimes(1));
-    authorizationCurrent = false;
-    application.resolve({ status: 'applied' });
 
-    await vi.waitFor(() => {
-      expect(restorationTarget.revalidateBeforeEffect).toHaveBeenCalledTimes(2);
-    });
-    expect(harness.publishActive).not.toHaveBeenCalled();
-    expect(harness.unfence).not.toHaveBeenCalled();
-    await expect(
-      harness.coordinator.submit(
-        provider('pc_work', 'next'),
-        { source: 'command' },
-      ),
-    ).resolves.toMatchObject({
-      ok: false,
-      status: 'reconciliation_required',
-      activeSelection: null,
-    });
-  });
-
-  it('keeps drift restoration fenced when authorization changes during confirmation readback', async () => {
-    let runtimeModelId = 'unexpected-runtime-model';
-    let readCount = 0;
-    let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
-      throw new Error('Runtime model subscription was not installed');
-    };
-    const confirmationReadback = deferred<string | null>();
-    let authorizationCurrent = true;
-    const harness = createHarness({
-      readRuntimeModelId: () => {
-        readCount += 1;
-        return readCount === 2
-          ? confirmationReadback.promise
-          : runtimeModelId;
-      },
-      subscribeRuntimeModelChanges: (handler) => {
-        notifyRuntimeModelChange = handler;
-        return () => undefined;
-      },
-    });
-    const restorationTarget = {
-      ...authorized(provider('pc_work', 'old')),
-      revalidateBeforeEffect: vi.fn(async () => authorizationCurrent),
-    };
-    harness.authorize.mockResolvedValueOnce(restorationTarget);
-    harness.applyRuntime.mockImplementationOnce(async (target) => {
-      runtimeModelId = target.selection.modelId;
-      return { status: 'applied' };
-    });
-
-    notifyRuntimeModelChange('unexpected-runtime-model');
-    await vi.waitFor(() => expect(readCount).toBe(2));
-    authorizationCurrent = false;
-    confirmationReadback.resolve('old');
-
-    await vi.waitFor(() => {
-      expect(restorationTarget.revalidateBeforeEffect).toHaveBeenCalledTimes(3);
-    });
-    expect(harness.publishActive).not.toHaveBeenCalled();
-    expect(harness.unfence).not.toHaveBeenCalled();
-    await expect(
-      harness.coordinator.submit(
-        provider('pc_work', 'next'),
-        { source: 'command' },
-      ),
-    ).resolves.toMatchObject({
-      ok: false,
-      status: 'reconciliation_required',
-      activeSelection: null,
-    });
-  });
 
   it('does not publish or unfence a proposal when runtime drift arrives during its effect', async () => {
     let runtimeModelId = 'old';
@@ -1618,22 +1726,11 @@ describe('createSessionModelTransitionCoordinator', () => {
       activeSelection: null,
     });
 
-    await vi.waitFor(() => {
-      expect(harness.publishActive).toHaveBeenCalledTimes(1);
-      expect(harness.publishActive).toHaveBeenCalledWith(
-        expect.objectContaining({
-          selection: provider('pc_work', 'old'),
-        }),
-      );
-      expect(harness.unfence).toHaveBeenCalledTimes(1);
-    });
-    expect(harness.publishActive).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        selection: provider('pc_work', 'next'),
-      }),
-    );
-    expect(harness.coordinator.readActiveTarget().selection)
-      .toEqual(provider('pc_work', 'old'));
+    await vi.waitFor(() => expect(harness.revokeActiveSelectionProof).toHaveBeenCalled());
+    expect(runtimeModelId).toBe('unexpected-runtime-model');
+    expect(harness.publishActive).not.toHaveBeenCalled();
+    expect(harness.unfence).not.toHaveBeenCalled();
+    expect(harness.applyRuntime).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the fence when runtime evidence proves an effect after apply reports failure', async () => {
@@ -1712,13 +1809,13 @@ describe('createSessionModelTransitionCoordinator', () => {
           selection: provider('pc_work', 'next'),
         }),
       );
-      expect(harness.unfence).toHaveBeenCalledTimes(2);
+      expect(harness.unfence).toHaveBeenCalledTimes(1);
     });
-    expect(harness.coordinator.readActiveTarget().selection)
-      .toEqual(provider('pc_work', 'next'));
+    expect(runtimeModelId).toBe('unexpected-runtime-model');
+    expect(harness.applyRuntime).toHaveBeenCalledTimes(1);
   });
 
-  it('bounds drift restoration to one attempt per runtime observation', async () => {
+  it('never retries a model switch from repeated runtime drift observations', async () => {
     let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
       throw new Error('Runtime model subscription was not installed');
     };
@@ -1734,12 +1831,14 @@ describe('createSessionModelTransitionCoordinator', () => {
     notifyRuntimeModelChange('unexpected-runtime-model');
 
     await vi.waitFor(() => {
-      expect(harness.applyRuntime).toHaveBeenCalledTimes(1);
+      expect(harness.revokeActiveSelectionProof).toHaveBeenCalled();
     });
+    notifyRuntimeModelChange('unexpected-runtime-model');
     await Promise.resolve();
     await Promise.resolve();
+    expect(harness.applyRuntime).not.toHaveBeenCalled();
 
-    expect(harness.applyRuntime).toHaveBeenCalledTimes(1);
+    expect(harness.revokeActiveSelectionProof).toHaveBeenCalled();
     expect(harness.publishActive).not.toHaveBeenCalled();
     expect(harness.unfence).not.toHaveBeenCalled();
     await expect(
@@ -1754,152 +1853,9 @@ describe('createSessionModelTransitionCoordinator', () => {
     });
   });
 
-  it('retries exact fact publication before unfencing when drift restoration publication fails', async () => {
-    let runtimeModelId = 'unexpected-runtime-model';
-    let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
-      throw new Error('Runtime model subscription was not installed');
-    };
-    const harness = createHarness({
-      readRuntimeModelId: () => runtimeModelId,
-      subscribeRuntimeModelChanges: (handler) => {
-        notifyRuntimeModelChange = handler;
-        return () => undefined;
-      },
-    });
-    harness.applyRuntime.mockImplementationOnce(async (target) => {
-      runtimeModelId = target.selection.modelId;
-      notifyRuntimeModelChange(runtimeModelId);
-      return { status: 'applied' };
-    });
-    harness.publishActive.mockRejectedValueOnce(
-      new Error('metadata unavailable'),
-    );
 
-    notifyRuntimeModelChange('unexpected-runtime-model');
 
-    await vi.waitFor(() => {
-      expect(harness.publishActive).toHaveBeenCalledTimes(2);
-      expect(harness.unfence).toHaveBeenCalledTimes(1);
-    });
-    expect(harness.publishActive).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        selection: provider('pc_work', 'old'),
-      }),
-    );
-  });
 
-  it('does not erase newer runtime drift observed during restoration publication', async () => {
-    let runtimeModelId = 'unexpected-runtime-model';
-    let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
-      throw new Error('Runtime model subscription was not installed');
-    };
-    const harness = createHarness({
-      readRuntimeModelId: () => runtimeModelId,
-      subscribeRuntimeModelChanges: (handler) => {
-        notifyRuntimeModelChange = handler;
-        return () => undefined;
-      },
-    });
-    harness.applyRuntime.mockImplementationOnce(async (target) => {
-      runtimeModelId = target.selection.modelId;
-      return { status: 'applied' };
-    });
-    harness.publishActive.mockImplementationOnce(async () => {
-      runtimeModelId = 'newer-runtime-drift';
-      notifyRuntimeModelChange(runtimeModelId);
-    });
-
-    notifyRuntimeModelChange('unexpected-runtime-model');
-
-    await vi.waitFor(() => {
-      expect(harness.publishActive).toHaveBeenCalledTimes(1);
-    });
-    expect(harness.unfence).not.toHaveBeenCalled();
-    await expect(
-      harness.coordinator.submit(
-        provider('pc_work', 'next'),
-        { source: 'command' },
-      ),
-    ).resolves.toMatchObject({
-      ok: false,
-      status: 'reconciliation_required',
-    });
-  });
-
-  it('does not erase newer runtime drift delivered after restoration readback is captured', async () => {
-    let runtimeModelId = 'unexpected-runtime-model';
-    let readCount = 0;
-    const releaseConfirmationRead = deferred<void>();
-    let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
-      throw new Error('Runtime model subscription was not installed');
-    };
-    const harness = createHarness({
-      readRuntimeModelId: () => {
-        readCount += 1;
-        if (readCount !== 2) return runtimeModelId;
-        const capturedModelId = runtimeModelId;
-        return releaseConfirmationRead.promise.then(() => capturedModelId);
-      },
-      subscribeRuntimeModelChanges: (handler) => {
-        notifyRuntimeModelChange = handler;
-        return () => undefined;
-      },
-    });
-    harness.applyRuntime.mockImplementationOnce(async (target) => {
-      runtimeModelId = target.selection.modelId;
-      return { status: 'applied' };
-    });
-
-    notifyRuntimeModelChange('unexpected-runtime-model');
-    await vi.waitFor(() => expect(readCount).toBe(2));
-    runtimeModelId = 'newer-runtime-drift';
-    notifyRuntimeModelChange(runtimeModelId);
-    releaseConfirmationRead.resolve();
-
-    await vi.waitFor(() => {
-      expect(harness.applyRuntime).toHaveBeenCalledTimes(2);
-    });
-    expect(harness.publishActive).not.toHaveBeenCalled();
-    expect(harness.unfence).not.toHaveBeenCalled();
-  });
-
-  it('re-fences and restores newer runtime drift observed during restoration fence release', async () => {
-    let runtimeModelId = 'unexpected-runtime-model';
-    let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
-      throw new Error('Runtime model subscription was not installed');
-    };
-    const harness = createHarness({
-      readRuntimeModelId: () => runtimeModelId,
-      subscribeRuntimeModelChanges: (handler) => {
-        notifyRuntimeModelChange = handler;
-        return () => undefined;
-      },
-    });
-    harness.applyRuntime.mockImplementation(async (target) => {
-      runtimeModelId = target.selection.modelId;
-      notifyRuntimeModelChange(runtimeModelId);
-      return { status: 'applied' };
-    });
-    harness.unfence.mockImplementationOnce(async () => {
-      runtimeModelId = 'newer-runtime-drift';
-      notifyRuntimeModelChange(runtimeModelId);
-    });
-
-    notifyRuntimeModelChange('unexpected-runtime-model');
-
-    await vi.waitFor(() => {
-      expect(harness.applyRuntime).toHaveBeenCalledTimes(2);
-      expect(harness.publishActive).toHaveBeenCalledTimes(2);
-      expect(harness.fence).toHaveBeenCalledTimes(2);
-      expect(harness.unfence).toHaveBeenCalledTimes(2);
-    });
-    expect(harness.applyRuntime.mock.calls.map(
-      ([target]) => target.selection.modelId,
-    )).toEqual(['old', 'old']);
-    expect(harness.coordinator.readActiveTarget().selection).toEqual(
-      provider('pc_work', 'old'),
-    );
-  });
 
   it('does not strand an exact readback publication at the pump release boundary', async () => {
     let runtimeModelId = 'old';
@@ -2191,7 +2147,7 @@ describe('createSessionModelTransitionCoordinator', () => {
     expect(harness.unfence).toHaveBeenCalledTimes(1);
   });
 
-  it('rolls runtime back when authorization changes after apply but before active publication', async () => {
+  it('keeps the real model and failure when authorization changes after apply but before active publication', async () => {
     const harness = createHarness({ authoritativeRuntimeReadback: true });
     const next = provider('pc_work', 'next');
     const revalidateBeforeEffect = vi.fn()
@@ -2206,24 +2162,22 @@ describe('createSessionModelTransitionCoordinator', () => {
       harness.coordinator.submit(next, { source: 'command' }),
     ).resolves.toMatchObject({
       ok: false,
-      status: 'publication_failed_rolled_back',
-      activeSelection: provider('pc_work', 'old'),
+      status: 'reconciliation_required',
+      activeSelection: provider('pc_work', 'next'),
       reason: 'provider_authorization_changed_before_publication',
     });
 
     expect(revalidateBeforeEffect).toHaveBeenCalledTimes(2);
     expect(harness.applyRuntime.mock.calls.map(
       ([target]) => target.selection.modelId,
-    )).toEqual(['next', 'old']);
-    expect(harness.publishActive.mock.calls.map(
-      ([target]) => target.selection.modelId,
-    )).toEqual(['old']);
-    expect(harness.unfence).toHaveBeenCalledTimes(1);
+    )).toEqual(['next']);
+    expect(harness.publishActive).not.toHaveBeenCalled();
+    expect(harness.unfence).not.toHaveBeenCalled();
     expect(harness.coordinator.readActiveTarget().selection)
-      .toEqual(provider('pc_work', 'old'));
+      .toEqual(provider('pc_work', 'next'));
   });
 
-  it('rolls runtime back when authorization changes during active publication', async () => {
+  it('keeps the real model and failure when authorization changes during active publication', async () => {
     const harness = createHarness({ authoritativeRuntimeReadback: true });
     const next = provider('pc_work', 'next');
     const publication = deferred<void>();
@@ -2244,98 +2198,13 @@ describe('createSessionModelTransitionCoordinator', () => {
 
     await expect(result).resolves.toMatchObject({
       ok: false,
-      status: 'publication_failed_rolled_back',
-      activeSelection: provider('pc_work', 'old'),
+      status: 'reconciliation_required',
+      activeSelection: provider('pc_work', 'next'),
       reason: 'provider_authorization_changed_during_publication',
     });
     expect(revalidateBeforeEffect).toHaveBeenCalledTimes(3);
     expect(harness.applyRuntime.mock.calls.map(
       ([target]) => target.selection.modelId,
-    )).toEqual(['next', 'old']);
-    expect(harness.publishActive.mock.calls.map(
-      ([target]) => target.selection.modelId,
-    )).toEqual(['next', 'old']);
-    expect(harness.unfence).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps rollback fenced when previous authorization changes during rollback publication', async () => {
-    const previousSelection = provider('pc_work', 'old');
-    const rollbackPublication = deferred<void>();
-    let previousAuthorizationCurrent = true;
-    const revalidatePreviousAuthorization = vi.fn(
-      async () => previousAuthorizationCurrent,
-    );
-    const harness = createHarness({
-      authoritativeRuntimeReadback: true,
-      initialTarget: {
-        ...authorized(previousSelection),
-        revalidateBeforeEffect: revalidatePreviousAuthorization,
-      },
-    });
-    harness.publishActive
-      .mockRejectedValueOnce(new Error('target publication failed'))
-      .mockImplementationOnce(
-        async () => await rollbackPublication.promise,
-      );
-
-    const result = harness.coordinator.submit(
-      provider('pc_work', 'next'),
-      { source: 'command' },
-    );
-    await vi.waitFor(() => expect(harness.publishActive).toHaveBeenCalledTimes(2));
-    previousAuthorizationCurrent = false;
-    rollbackPublication.resolve();
-
-    await expect(result).resolves.toMatchObject({
-      ok: false,
-      status: 'reconciliation_required',
-      activeSelection: null,
-      reason: 'provider_authorization_changed_during_rollback_publication',
-    });
-    expect(revalidatePreviousAuthorization).toHaveBeenCalledTimes(3);
-    expect(harness.unfence).not.toHaveBeenCalled();
-  });
-
-  it('does not roll back to a startup target whose authorization changed during the forward effect', async () => {
-    const previousSelection = provider('pc_work', 'old');
-    const application = deferred<Readonly<{ status: 'applied' }>>();
-    let previousAuthorizationCurrent = true;
-    const revalidatePreviousAuthorization = vi.fn(
-      async () => previousAuthorizationCurrent,
-    );
-    const harness = createHarness({
-      initialTarget: {
-        ...authorized(previousSelection),
-        revalidateBeforeEffect: revalidatePreviousAuthorization,
-      },
-    });
-    harness.authorize.mockResolvedValueOnce({
-      ...authorized(provider('pc_work', 'next')),
-      revalidateBeforeEffect: async () => true,
-    });
-    harness.applyRuntime.mockImplementationOnce(
-      async () => await application.promise,
-    );
-    harness.publishActive.mockRejectedValueOnce(
-      new Error('target publication failed'),
-    );
-
-    const result = harness.coordinator.submit(
-      provider('pc_work', 'next'),
-      { source: 'command' },
-    );
-    await vi.waitFor(() => expect(harness.applyRuntime).toHaveBeenCalledTimes(1));
-    previousAuthorizationCurrent = false;
-    application.resolve({ status: 'applied' });
-
-    await expect(result).resolves.toMatchObject({
-      ok: false,
-      status: 'reconciliation_required',
-      activeSelection: null,
-      reason: 'provider_authorization_changed_before_rollback',
-    });
-    expect(harness.applyRuntime.mock.calls.map(
-      ([target]) => target.selection.modelId,
     )).toEqual(['next']);
     expect(harness.publishActive.mock.calls.map(
       ([target]) => target.selection.modelId,
@@ -2343,95 +2212,9 @@ describe('createSessionModelTransitionCoordinator', () => {
     expect(harness.unfence).not.toHaveBeenCalled();
   });
 
-  it('does not publish rollback facts when previous authorization changes during rollback apply', async () => {
-    const previousSelection = provider('pc_work', 'old');
-    let runtimeModelId = previousSelection.modelId;
-    let previousAuthorizationCurrent = true;
-    const rollbackApplication = deferred<Readonly<{ status: 'applied' }>>();
-    const harness = createHarness({
-      initialTarget: {
-        ...authorized(previousSelection),
-        revalidateBeforeEffect: async () => previousAuthorizationCurrent,
-      },
-      readRuntimeModelId: () => runtimeModelId,
-    });
-    harness.applyRuntime
-      .mockImplementationOnce(async (target) => {
-        runtimeModelId = target.selection.modelId;
-        return { status: 'applied' };
-      })
-      .mockImplementationOnce(async (target) => {
-        runtimeModelId = target.selection.modelId;
-        return await rollbackApplication.promise;
-      });
-    harness.publishActive.mockRejectedValueOnce(
-      new Error('target publication failed'),
-    );
 
-    const result = harness.coordinator.submit(
-      provider('pc_work', 'next'),
-      { source: 'command' },
-    );
-    await vi.waitFor(() => expect(harness.applyRuntime).toHaveBeenCalledTimes(2));
-    previousAuthorizationCurrent = false;
-    rollbackApplication.resolve({ status: 'applied' });
 
-    await expect(result).resolves.toMatchObject({
-      ok: false,
-      status: 'reconciliation_required',
-      activeSelection: null,
-      reason: 'provider_authorization_changed_after_rollback',
-    });
-    expect(harness.publishActive.mock.calls.map(
-      ([target]) => target.selection.modelId,
-    )).toEqual(['next']);
-    expect(harness.unfence).not.toHaveBeenCalled();
-  });
 
-  it('does not publish rollback facts when runtime drifts during rollback apply', async () => {
-    const previousSelection = provider('pc_work', 'old');
-    let runtimeModelId = previousSelection.modelId;
-    let notifyRuntimeModelChange: (currentModelId?: string | null) => void = () => {
-      throw new Error('Runtime model subscription was not installed');
-    };
-    const harness = createHarness({
-      initialTarget: authorized(previousSelection),
-      readRuntimeModelId: () => runtimeModelId,
-      subscribeRuntimeModelChanges: (handler) => {
-        notifyRuntimeModelChange = handler;
-        return () => undefined;
-      },
-    });
-    harness.applyRuntime
-      .mockImplementationOnce(async (target) => {
-        runtimeModelId = target.selection.modelId;
-        return { status: 'applied' };
-      })
-      .mockImplementationOnce(async () => {
-        runtimeModelId = 'rogue-runtime-model';
-        notifyRuntimeModelChange(runtimeModelId);
-        return { status: 'applied' };
-      });
-    harness.publishActive.mockRejectedValueOnce(
-      new Error('target publication failed'),
-    );
-
-    await expect(
-      harness.coordinator.submit(
-        provider('pc_work', 'next'),
-        { source: 'command' },
-      ),
-    ).resolves.toMatchObject({
-      ok: false,
-      status: 'reconciliation_required',
-      activeSelection: null,
-      reason: 'runtime_model_drift_observed_during_rollback',
-    });
-    expect(harness.publishActive.mock.calls.map(
-      ([target]) => target.selection.modelId,
-    )).toEqual(['next']);
-    expect(harness.unfence).not.toHaveBeenCalled();
-  });
 
   it('does not reconcile or unfence an unvalidated startup target from runtime readback', async () => {
     let runtimeModelId = 'old';
@@ -2461,9 +2244,7 @@ describe('createSessionModelTransitionCoordinator', () => {
       runtimeModelId = target.selection.modelId;
       return { status: 'applied' };
     });
-    harness.publishActive
-      .mockRejectedValueOnce(new Error('target publication failed'))
-      .mockRejectedValueOnce(new Error('rollback publication failed'));
+    harness.publishActive.mockRejectedValueOnce(new Error('target publication failed'));
 
     await expect(
       harness.coordinator.submit(
@@ -2542,6 +2323,8 @@ describe('createSessionModelTransitionCoordinator', () => {
       ok: false,
       status: 'restart_required',
       activeSelection: selection,
+      // The same admitted selection needs restart only because its binding changed.
+      reason: 'provider_binding_changed',
     });
 
     expect(harness.applyRuntime).not.toHaveBeenCalled();

@@ -9293,6 +9293,54 @@ describe('runHostSessionRuntime', () => {
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
 
+  it.each(['idle', 'in-flight'] as const)('consumes an armed model on an ordinary send before recording prompt composition (%s)', async state => {
+    const harness = createHarness();
+    const initial = { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null, modelId: 'old-model' } as const;
+    const selection = { ...initial, modelId: 'next-model' };
+    harness.opts.modelSelection = { v: 1, updatedAt: 1, ref: initial };
+    let currentModelId: string = initial.modelId;
+    harness.runtime.updateSessionRuntimeConfig.mockImplementation(async (update: RuntimeTurnConfigUpdate) => {
+      if (update.modelId) currentModelId = update.modelId;
+      return { status: 'applied', timing: 'current_window' };
+    });
+    harness.runtime.models = { read: () => ({ currentModelId, models: [
+      { id: initial.modelId, name: 'Old' }, { id: selection.modelId, name: 'Next' },
+    ] }) };
+    let userMessageHandler: ((message: import('@/api/types').UserMessage) => boolean | void) | null = null;
+    harness.session.onUserMessage = (handler: (message: import('@/api/types').UserMessage) => boolean | void) => { userMessageHandler = handler; };
+    delete harness.deps.createPermissionModeQueueStateFn;
+    harness.runtime.supportsInFlightSteer = () => true;
+    harness.runtime.isTurnInFlight = () => state === 'in-flight';
+    harness.runtime.steerPrompt = vi.fn(async () => {});
+    harness.runtime.sendTurnPrompt.mockImplementation(async () => {
+      expect(currentModelId).toBe(selection.modelId);
+    });
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      const transition = harness.handlers.get(SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION);
+      await expect(transition?.({ v: 1, selection, applyTiming: 'next_prompt' })).resolves.toMatchObject({
+        ok: true, status: 'armed', activeSelection: initial, requestedSelection: selection,
+      });
+      expect(currentModelId).toBe(initial.modelId);
+      if (!userMessageHandler) throw new Error('Expected the production input binding');
+      // Active Session Action sends omit ambient model metadata. The armed
+      // selection must come from the running transition owner at dispatch.
+      userMessageHandler({ role: 'user', content: { type: 'text', text: 'Use the newly selected model' },
+        localId: 'ordinary-send-after-arm', meta: {} });
+      expect(params.messageQueue.size()).toBe(1);
+      let shouldExit = false;
+      await runPermissionModePromptLoop({ ...params, shouldExit: () => shouldExit,
+        sendReady: () => { shouldExit = true; } });
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    expect(harness.runtime.sendTurnPrompt).toHaveBeenCalled();
+    expect(harness.runtime.steerPrompt).not.toHaveBeenCalled();
+    expect(harness.session.enqueueSessionEventCommitted).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'prompt-composition', composition: expect.objectContaining({
+        inputId: 'ordinary-send-after-arm', requestIdentity: expect.objectContaining({ selection }),
+      }),
+    }));
+  });
+
   it('atomically transfers the run-host model fence into prompt dispatch custody', async () => {
     const harness = createHarness();
     const activeSelection = {

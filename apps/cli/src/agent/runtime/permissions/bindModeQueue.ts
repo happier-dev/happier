@@ -80,6 +80,8 @@ export type InFlightSteerController = Readonly<{
   readActivePermissionMode?: () => PermissionMode;
   /** Exact running-session selection; null means the owner is not yet provable. */
   readActiveModelSelection?: () => ProviderBoundModelRef | null;
+  /** The Session transition owner's model for the next ordinary prompt. */
+  readArmedModelSelection?: () => ProviderBoundModelRef | null;
   /**
    * Whether the runtime is currently processing a turn (i.e. can accept steer input).
    */
@@ -598,6 +600,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       (steer.isProviderInputAdmitted?.() ?? true) &&
       !isNonSteerablePromptPayload(text) &&
       !modelOverride &&
+      (isExactClaimedSteer || !steer.readArmedModelSelection?.()) &&
       (!didChangePermissionMode() || typeof steer.applyConfigDeltaInFlight === 'function')
     );
     if (isExactClaimedSteer && !canSteerCurrentProviderTurn) {

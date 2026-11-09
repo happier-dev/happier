@@ -4,7 +4,6 @@ import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaq
 import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { resolveRuntimeCheckpointToolProtocol } from '@happier-dev/agents/session/controls/checkpoints';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { isRecord } from '@happier-dev/plugin-sdk';
 import { SessionCompactRequestV1Schema } from '@happier-dev/protocol/sessions/control/index';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -17,6 +16,7 @@ import type React from 'react';
 import type { ApiClient } from '@/api/api';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { RuntimeSessionTurnMutationV1 } from '@/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
+import { createRegisteredSessionStateFieldMutation } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { RegisterProviderAcceptedEffect } from '@/agent/runtime/session/input/providerInputOutcome';
 import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
@@ -78,7 +78,6 @@ import type {
 } from '@/agent/runtime/permissions/queuedPrompt';
 import {
   resolveSessionPendingQueueDeliveryTiming,
-  resolveSessionPendingQueueMaxPopPerWake,
 } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
 import { resolvePendingQueueHandoff } from '@/agent/runtime/mode/switching/pendingQueueHandoffOrchestrator';
 import { createTerminalTurnStateMachine } from '@/agent/runtime/terminal/turnStateMachine';
@@ -90,7 +89,6 @@ import {
 } from './runnerRuntimeDisposal';
 import {
   createSessionTurnLifecycle,
-  observeRuntimeMessageForSessionTurnLifecycle,
 } from '@/agent/runtime/session/turn/lifecycle';
 import {
   createRuntimeTranscriptProjector,
@@ -263,7 +261,7 @@ export type SessionLoopLifecycleParams = Readonly<{
   setActiveAgentCompositionToolSelection: (
     selection: AgentCompositionToolSelection | null,
   ) => void;
-  happyMcpServerStop: () => void;
+  happyMcpServerStop: () => void | Promise<void>;
   reconnectionHandle: { cancel: () => void } | null;
   startupCoordinator: Readonly<{
     start?: (() => void | Promise<void>) | null;
@@ -288,13 +286,10 @@ export type SessionLoopLifecycleParams = Readonly<{
     ) => Promise<void>,
   ) => Promise<SessionModelTransitionResultV1>;
   readActiveModelSelection?: () => ProviderBoundModelRef;
+  readArmedModelSelection?: () => ProviderBoundModelRef | null;
   resolveSessionRolePromptContext?: (signal?: AbortSignal) => Promise<SessionRolePromptContextV1 | null>;
   resolveFreshSessionSystemPrompt?: SessionPromptPlanResolver;
   prepareSessionRolePromptPolicy?: () => Promise<void>;
-  onProviderPromptDispatchPrepared?: (input: Readonly<{
-    localIds: readonly string[];
-    selection: ProviderBoundModelRef;
-  }>) => void;
   deps: SessionLoopLifecycleDeps;
   initialResumeId: string;
   onStrictInitialResumeFailure?: ((params: Readonly<{
@@ -426,6 +421,8 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     hasAssistantText?: true;
     finalAssistantMessageSeq?: number;
     failureMessageSeq?: number;
+    failureEvent?: Extract<AgentSessionRuntimeEvent, { kind: 'turn-failed' }>;
+    terminalSourceMessage?: NonNullable<Extract<RuntimeTranscriptProjectionResult, { projected: true }>['terminalSourceMessage']>;
     startSeqExclusive?: number;
   }>();
   const pendingInputSettlementsByLocalId = new Map<string, Promise<void>>();
@@ -521,19 +518,22 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       }
       try {
         const turnState = 'turnId' in mutation ? readTurnTranscriptState(mutation.turnId) : null;
-        if (mutation.action === 'fail' && turnState?.failureMessageSeq === undefined) {
-          // Prompt dispatch and strict-resume failures can enter the lifecycle
-          // directly, without a native transcript event. They use the same
-          // diagnostic/terminal writer and exact committed marker receipt.
-          const marker = await runtimeFailureTranscriptProjector({
+        if (mutation.action === 'fail') {
+          // History consumes the lifecycle's enriched issue, after preceding
+          // transcript output settles, including failures without a native event.
+          // Reuse any native marker's exact receipt rather than writing it twice.
+          const marker = await runtimeFailureTranscriptProjector(turnState?.failureEvent ?? {
             kind: 'turn-failed', sessionId: mutation.sessionId, turnId: mutation.turnId,
             sequence: 0, emittedAtMs: mutation.observedAt,
             ...(mutation.agentTurnId ? { agentTurnId: mutation.agentTurnId } : {}),
             diagnostic: { code: mutation.issue.code, severity: 'error',
               ...(mutation.issue.sanitizedPreview ? { message: mutation.issue.sanitizedPreview } : {}),
               details: { v: 1, source: mutation.issue.source, occurredAt: mutation.issue.occurredAt } },
-          });
-          if (turnState && marker?.committedSequence !== undefined) turnState.failureMessageSeq = marker.committedSequence;
+          }, { issue: mutation.issue, terminalSourceMessage: turnState?.terminalSourceMessage });
+          if (turnState && marker) {
+            turnState.terminalSourceMessage = marker;
+            if (marker.committedSequence !== undefined) turnState.failureMessageSeq = marker.committedSequence;
+          }
         }
         // Join the existing Pending write before reading its acknowledged-row
         // projection. A settled attempt is ordering, not invented commit evidence.
@@ -594,6 +594,30 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
               }
             : mutation;
         if (mutation.action !== 'cancel') await enqueueTerminalMutation(settledMutation);
+        if ((mutation.action === 'fail' || mutation.action === 'cancel') && turnState?.terminalSourceMessage) {
+          const marker = turnState.terminalSourceMessage;
+          const notifyTerminalOriginal = async (original: Readonly<{ localId: string; committedSequence: number }>) => {
+            try {
+              const evidence = params.session.captureSessionFollowRuleEvidence({ kind: 'failed_or_stopped' });
+              if (evidence) await params.session.notifySessionFollowRuleMessageCommitted({
+                localId: original.localId, seq: original.committedSequence, evidence,
+              });
+            } catch {
+              logger.debug(`${params.config.uiLogPrefix} Runtime terminal Follow observation unavailable`, {
+                error: 'runtime_terminal_follow_observation_failed', action: mutation.action,
+              });
+            }
+          };
+          if (marker.committedSequence !== undefined) void notifyTerminalOriginal({
+            localId: marker.localId, committedSequence: marker.committedSequence,
+          });
+          else if (marker.whenCommitted) {
+            // Reuse the append's existing observation under this Session lifetime;
+            // cancellation does not gain a new wait, retry or delivery lifetime.
+            void marker.whenCommitted.then(original => original ? notifyTerminalOriginal(original) : undefined)
+              .catch(() => undefined);
+          }
+        }
         if ('turnId' in mutation) {
           retireTurnTranscriptState(mutation.turnId);
         }
@@ -637,6 +661,18 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         || readServerEnabledBit(snapshot.features, 'sessions.autonomousExchange') !== true) return null;
       const inputId = runtimeForPromptLoop.readTurnStartingInputId?.(turnId);
       return inputId ? { turnId, inputId } : null;
+    },
+    onTurnProgressChanged: ({ progress, observedAt }) => {
+      void params.session.enqueueRegisteredSessionStateFieldMutation(createRegisteredSessionStateFieldMutation({
+        sessionId: params.session.sessionId,
+        fieldId: 'runtime.turnProgress',
+        source: 'runtime',
+        deliveryClass: 'durable_best_effort',
+        observedAt,
+        op: progress ? { kind: 'set', value: progress } : { kind: 'clear' },
+      })).catch(() => {
+        logger.debug('[session-turn] Progress metadata publication unavailable');
+      });
     },
     onTurnFactsChanged: (input) => {
       params.session.observeHostTurnFacts?.(input);
@@ -721,62 +757,80 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     resolvedStartingMode.kind === 'switching' ? resolvedStartingMode.startingMode : 'remote';
   let terminalHandoffFailureRequiresManualAction = false;
   let runtimeTranscriptProjectionSerial = Promise.resolve();
+  // Identity lookup mutates the recorded account, so preserve native arrival
+  // order without making daemon/metadata I/O part of transcript durability.
+  let connectedAccountObservationSerial = Promise.resolve();
   const projectRuntimeTranscript = createRuntimeTranscriptProjector();
   // A native runtime ending can mean observer/protocol loss or a crash. It
   // cannot establish a clean process end, even when host cleanup exits zero.
   let runtimeEndedWithoutCleanExit = false;
   let requestRuntimeEndedTermination = (): void => undefined;
-  const observeRuntimeLifecycleMessage = (message: unknown): void => {
-    const parsedRuntimeEvent = AgentSessionRuntimeEventSchema.safeParse(message);
-    if (parsedRuntimeEvent.success && parsedRuntimeEvent.data.kind === 'turn-cancelled') {
+  const observeRuntimeLifecycleMessage = (message: AgentSessionRuntimeEvent): void => {
+    if (message.kind === 'connected-account-identity-observed') {
+      const signal = abortController.signal;
+      connectedAccountObservationSerial = connectedAccountObservationSerial.then(async () => {
+        if (signal.aborted) return;
+        try {
+          if (!daemonTurnContributionsBridge?.observeConnectedAccountIdentity) {
+            throw new Error('connected_account_identity_observation_unavailable');
+          }
+          await daemonTurnContributionsBridge.observeConnectedAccountIdentity(message, { signal });
+        } catch {
+          if (!signal.aborted) {
+            logger.warn('[connected-services] Provider account observation was not accepted by the daemon');
+          }
+        }
+      });
+    }
+    if (message.kind === 'turn-cancelled') {
       logger.debug(`${params.config.uiLogPrefix} Runtime cancellation observed`, {
-        turnId: parsedRuntimeEvent.data.turnId,
-        emittedAtMs: parsedRuntimeEvent.data.emittedAtMs,
+        turnId: message.turnId,
+        emittedAtMs: message.emittedAtMs,
         pendingTranscriptProjections: pendingRuntimeTranscriptProjections.size,
       });
     }
     const questionWaitTurnId = params.session.readQuestionWaitTurnId?.() ?? null;
-    if (parsedRuntimeEvent.success && parsedRuntimeEvent.data.kind === 'turn-start') {
-      if (hostReadyCapture?.turnId === null && parsedRuntimeEvent.data.startedBy === 'host') {
-        hostReadyCapture.turnId = parsedRuntimeEvent.data.turnId;
+    if (message.kind === 'turn-start') {
+      if (hostReadyCapture?.turnId === null && message.startedBy === 'host') {
+        hostReadyCapture.turnId = message.turnId;
       }
-      activeRuntimeTranscriptTurnId = parsedRuntimeEvent.data.turnId;
-      const state = readTurnTranscriptState(parsedRuntimeEvent.data.turnId);
+      activeRuntimeTranscriptTurnId = message.turnId;
+      const state = readTurnTranscriptState(message.turnId);
       delete state.failure;
       const startSeq = params.session.getLastObservedMessageSeq?.();
       if (typeof startSeq === 'number' && Number.isSafeInteger(startSeq) && startSeq >= 0) state.startSeqExclusive = startSeq;
     }
-    if (parsedRuntimeEvent.success && parsedRuntimeEvent.data.kind === 'input-accepted') {
-      const event = parsedRuntimeEvent.data;
+    if (message.kind === 'input-accepted') {
+      const event = message;
       const state = readTurnTranscriptState(event.delivery.turnId);
       for (const localId of event.inputIds) state.userLocalIds.add(localId);
     }
-    if (parsedRuntimeEvent.success && parsedRuntimeEvent.data.kind === 'transcript-message-committed'
-      && parsedRuntimeEvent.data.role === 'user' && parsedRuntimeEvent.data.turnId) {
-      readTurnTranscriptState(parsedRuntimeEvent.data.turnId).userLocalIds.add(parsedRuntimeEvent.data.messageId);
+    if (message.kind === 'transcript-message-committed'
+      && message.role === 'user' && message.turnId) {
+      readTurnTranscriptState(message.turnId).userLocalIds.add(message.messageId);
     }
-    const parsedProjectionTurnId = parsedRuntimeEvent.success && 'turnId' in parsedRuntimeEvent.data
-      ? parsedRuntimeEvent.data.turnId
+    const parsedProjectionTurnId = 'turnId' in message
+      ? message.turnId
       : null;
-    const projectionTurnId = parsedRuntimeEvent.success && isSessionScopedRuntimeTranscriptEvent(parsedRuntimeEvent.data)
+    const projectionTurnId = isSessionScopedRuntimeTranscriptEvent(message)
       ? null
       : typeof parsedProjectionTurnId === 'string'
         ? parsedProjectionTurnId
         : activeRuntimeTranscriptTurnId;
-    if (parsedRuntimeEvent.success && projectionTurnId
-      && isForegroundTurnRuntimeTranscriptEvent(parsedRuntimeEvent.data)
-      && ((parsedRuntimeEvent.data.kind === 'message-delta' && parsedRuntimeEvent.data.channel === 'assistant')
-        || (parsedRuntimeEvent.data.kind === 'transcript-message-committed' && parsedRuntimeEvent.data.role === 'assistant'))
-      && parsedRuntimeEvent.data.text.trim().length > 0) {
+    if (projectionTurnId
+      && isForegroundTurnRuntimeTranscriptEvent(message)
+      && ((message.kind === 'message-delta' && message.channel === 'assistant')
+        || (message.kind === 'transcript-message-committed' && message.role === 'assistant'))
+      && message.text.trim().length > 0) {
       readTurnTranscriptState(projectionTurnId).hasAssistantText = true;
     }
-    if (parsedRuntimeEvent.success && params.config.publishHostRuntimeEvent) {
+    if (params.config.publishHostRuntimeEvent) {
       try {
-        params.config.publishHostRuntimeEvent(parsedRuntimeEvent.data);
+        params.config.publishHostRuntimeEvent(message);
       } catch {
         logger.debug(`${params.config.uiLogPrefix} Host Event publication failed (non-fatal)`, {
           error: 'host_event_publication_failed',
-          eventKind: parsedRuntimeEvent.data.kind,
+          eventKind: message.kind,
         });
       }
     }
@@ -807,48 +861,50 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         const state = readTurnTranscriptState(projectionTurnId);
         state.finalAssistantMessageSeq = Math.max(state.finalAssistantMessageSeq ?? 0, projectionResult.finalAssistantMessageSeq);
       }
+      if (projectionTurnId && projectionResult?.projected && projectionResult.terminalSourceMessage) {
+        readTurnTranscriptState(projectionTurnId).terminalSourceMessage = projectionResult.terminalSourceMessage;
+      }
       try {
-        if (parsedRuntimeEvent.success) {
-          await observeAgentStreamTokenEvent({
-            event: parsedRuntimeEvent.data,
-            agentId: params.policyAgentId,
-            observeAgentStreamToken,
-            uiLogPrefix: params.config.uiLogPrefix,
-          });
-          const failureMarker = await runtimeFailureTranscriptProjector(parsedRuntimeEvent.data,
-            projectionResult?.projected ? projectionResult.terminalSourceMessage : undefined);
-          if (projectionTurnId && parsedRuntimeEvent.data.kind === 'turn-failed'
-            && failureMarker?.committedSequence !== undefined) {
-            readTurnTranscriptState(projectionTurnId).failureMessageSeq = failureMarker.committedSequence;
-          }
+        await observeAgentStreamTokenEvent({
+          event: message,
+          agentId: params.policyAgentId,
+          observeAgentStreamToken,
+          uiLogPrefix: params.config.uiLogPrefix,
+        });
+        // Accepted failures are projected with their enriched lifecycle issue
+        // at terminal mutation admission. Input rejections have no accepted turn.
+        if (message.kind === 'turn-failed' && projectionTurnId) {
+          readTurnTranscriptState(projectionTurnId).failureEvent = message;
+        } else {
+          await runtimeFailureTranscriptProjector(message);
         }
       } catch (error) {
         transcriptProjectionError ??= error;
       }
       if (
-        parsedRuntimeEvent.success && projectionTurnId
-        && (parsedRuntimeEvent.data.kind === 'turn-complete' || parsedRuntimeEvent.data.kind === 'turn-failed'
-          || parsedRuntimeEvent.data.kind === 'turn-cancelled')
+        projectionTurnId
+        && (message.kind === 'turn-complete' || message.kind === 'turn-failed'
+          || message.kind === 'turn-cancelled')
       ) {
         const state = readTurnTranscriptState(projectionTurnId);
-        if (parsedRuntimeEvent.data.kind === 'turn-complete' && state.hasAssistantText
+        if (message.kind === 'turn-complete' && state.hasAssistantText
           && state.finalAssistantMessageSeq === undefined) {
-          transcriptProjectionError ??= new RuntimeTranscriptRequiredAdmissionError('delivery_not_confirmed', parsedRuntimeEvent.data.kind);
+          transcriptProjectionError ??= new RuntimeTranscriptRequiredAdmissionError('delivery_not_confirmed', message.kind);
         }
       }
       if (
-        readyCapture && readyCapture.context === undefined && parsedRuntimeEvent.success
-        && (parsedRuntimeEvent.data.kind === 'turn-complete' || parsedRuntimeEvent.data.kind === 'turn-failed'
-          || parsedRuntimeEvent.data.kind === 'turn-cancelled')
+        readyCapture && readyCapture.context === undefined
+        && (message.kind === 'turn-complete' || message.kind === 'turn-failed'
+          || message.kind === 'turn-cancelled')
       ) {
         // The ordered terminal projection has flushed this host turn's text.
         // Capture it before a successor can update the Session snapshot.
         readyCapture.context = {
           assistantPreviewText: transcriptProjectionError ? null : params.session.getTurnAssistantTextSnapshotStore?.()
             ?.getCurrentTurnSnapshot({ turnToken: readyCapture.snapshotScope?.turnToken ?? null })?.normalizedText ?? null,
-          ...(!transcriptProjectionError && parsedRuntimeEvent.data.kind === 'turn-complete'
-            && questionWaitTurnId !== parsedRuntimeEvent.data.turnId && projectionResult?.projected ? {
-              completedTurn: { turnId: parsedRuntimeEvent.data.turnId,
+          ...(!transcriptProjectionError && message.kind === 'turn-complete'
+            && questionWaitTurnId !== message.turnId && projectionResult?.projected ? {
+              completedTurn: { turnId: message.turnId,
                 ...(projectionResult.terminalSourceMessage ? { original: projectionResult.terminalSourceMessage } : {}),
               },
             } : {}),
@@ -875,7 +931,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
             error: error instanceof RuntimeTranscriptRequiredAdmissionError
               ? error.code
               : 'runtime_transcript_projection_failed',
-            eventKind: parsedRuntimeEvent.success ? parsedRuntimeEvent.data.kind : 'invalid',
+            eventKind: message.kind,
             ...(error instanceof RuntimeTranscriptRequiredAdmissionError
               ? { reason: error.reason }
               : {}),
@@ -889,11 +945,8 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       () => undefined,
       () => undefined,
     );
-    observeRuntimeMessageForSessionTurnLifecycle({
-      lifecycle: sessionTurnLifecycle,
-      message,
-    });
-    if (parsedRuntimeEvent.success) setThinkingState(sessionTurnLifecycle.hasActiveTurn());
+    sessionTurnLifecycle.observeRuntimeEvent(message);
+    setThinkingState(sessionTurnLifecycle.hasActiveTurn());
     const observation = mapRuntimeMessageToTerminalLifecycleObservation({
       agentId: params.policyAgentId,
       message,
@@ -902,7 +955,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       terminalHandoffFailureRequiresManualAction = false;
       terminalTurnStateMachine.observe(observation);
     }
-    if (parsedRuntimeEvent.success && parsedRuntimeEvent.data.kind === 'runtime-ended') {
+    if (message.kind === 'runtime-ended') {
       runtimeEndedWithoutCleanExit = true;
       requestRuntimeEndedTermination();
     }
@@ -911,6 +964,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const subscribeRuntimeEventsRequired = (): void => {
     let unsubscribe: unknown;
     try {
+      hookRuntimeForCallbacks.setOnRollbackBoundary?.((input) => sessionTurnLifecycle.observeRollbackBoundary(input));
       unsubscribe = runtimeForPromptLoop.subscribeRuntimeEvents(observeRuntimeLifecycleMessage);
     } catch {
       throw new RuntimeEventSubscriptionRequiredError('subscription_failed');
@@ -919,6 +973,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       throw new RuntimeEventSubscriptionRequiredError('invalid_unsubscribe');
     }
     unsubscribeRuntimeEvents = () => {
+      hookRuntimeForCallbacks.setOnRollbackBoundary?.(null);
       unsubscribe();
     };
   };
@@ -926,6 +981,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const unsubscribeRuntimeEventsOnce = (): void => {
     if (runtimeEventsUnsubscribed) return;
     runtimeEventsUnsubscribed = true;
+    sessionTurnLifecycle.dispose();
     unsubscribeRuntimeEvents();
   };
   const runtimeOverrideTarget: RuntimeOverrideTarget = createRuntimeOverrideTarget({
@@ -943,6 +999,18 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     });
   const runtimeForInFlightSteer: { current: RuntimeTurnOperations | null } = { current: runtimeForPromptLoop };
   let shouldExit = false;
+  let requesterAccessLost = false;
+  // A requester bearer belongs on this host only while its runner is useful.
+  // A refused reconnect ends intake; the admitted turn keeps its own lifetime.
+  const requesterSession = params.opts.credentials?.requesterSessionCredentialScope?.requesterSession;
+  const unsubscribeRequesterConnection = requesterSession?.sessionId === params.session.sessionId
+    ? params.session.subscribeToSessionConnectionState(state => {
+        if (state.phase !== 'auth_failed') return;
+        requesterAccessLost = true;
+        shouldExit = true;
+        params.permissionModeState.messageQueue.close();
+      })
+    : undefined;
   let abortController = new AbortController();
   let cleanupPromise: Promise<void> | null = null;
   let runnerTerminationWork: Promise<void> | null = null;
@@ -1156,6 +1224,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   };
   const cleanupOnce = (): Promise<void> => {
     cleanupPromise ??= (async () => {
+      unsubscribeRequesterConnection?.();
       if (closeFailedSession) params.session.prepareForClose();
       unsubscribeRuntimeEventsOnce();
       await drainRuntimeTranscriptProjections();
@@ -1523,6 +1592,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
           : { kind: 'backend', backendId: params.policyAgentId, sourceKind: 'built_in' }),
         session: params.session,
         runtime: runtimeOverrideTarget,
+        models: hookRuntime.models,
         isStarted,
         configOptionRejectionTranscript: {
           session: params.session,
@@ -1567,11 +1637,12 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         params.permissionModeState.releaseRejectedBeforeProviderPromptIdentity(session, message),
       initialResumeId: initialResumeId || undefined,
       strictInitialResume: initialResumeId.length > 0,
-      onPromptFailure: async error => {
+      onPromptFailure: async (error, context) => {
         await surfacePrimarySessionRuntimeIssue({
           provider: params.policyAgentId,
           cause: 'session_error',
           error,
+          ...(context ? { beforeProviderDispatch: context.beforeProviderDispatch } : {}),
           session: { sessionId: params.session.sessionId, sessionTurnLifecycle },
           allocateTurnWhenIdle: true,
         });
@@ -1593,7 +1664,6 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         }
       },
       startRuntimeBeforeFirstPrompt: params.config.startRuntimeBeforeFirstPrompt === true,
-      pendingQueueDrainMaxPopPerWake: resolveSessionPendingQueueMaxPopPerWake(params.opts.accountSettingsContext?.settings ?? null),
       pendingQueueDeliveryTiming: resolveSessionPendingQueueDeliveryTiming(params.opts.accountSettingsContext?.settings ?? null),
       setActiveAgentCompositionToolSelection: params.setActiveAgentCompositionToolSelection,
       readReferenceAction: params.readReferenceAction,
@@ -1689,8 +1759,8 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       ...(params.readActiveModelSelection
         ? { readActiveModelSelection: params.readActiveModelSelection }
         : {}),
-      ...(params.onProviderPromptDispatchPrepared
-        ? { onProviderPromptDispatchPrepared: params.onProviderPromptDispatchPrepared }
+      ...(params.readArmedModelSelection
+        ? { readArmedModelSelection: params.readArmedModelSelection }
         : {}),
       onBeforeReset: params.config.lifecycleHooks?.onBeforeReset
         ? (loopParams) => params.config.lifecycleHooks?.onBeforeReset?.({ ...loopParams, session: params.session, runtime: hookRuntimeForCallbacks })
@@ -1736,7 +1806,16 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
       await activeRunnerTerminationWork;
     } else {
       try {
-        if (terminalProcessExited) {
+        if (requesterAccessLost) {
+          // The current turn has settled. Release this runner and transport
+          // without a new semantic Stop write through the refused publisher.
+          await disposeRuntimeOnce('host_shutdown');
+          try {
+            await onBeforeSessionClose?.({ session: params.session, runtime: hookRuntimeForCallbacks });
+          } finally {
+            await params.session.close();
+          }
+        } else if (terminalProcessExited) {
           // Publish unresolved native input custody while Pending settlement
           // still has the Session transport. Physical exit does not prove
           // whether the native process accepted an in-flight input.

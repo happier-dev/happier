@@ -1,11 +1,16 @@
+import { isDeepStrictEqual } from 'node:util';
 import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { CallerInputConstraintsV1, ModelSelectionApplyPolicy, ProviderBoundModelRef, ProviderRuntimeBindingBasisV1, SessionModelTransitionResultV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { SessionModelMutationExpectedV1, SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
+import type { SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import { projectPluginFailureMessage } from '@/plugins/runtime/lifecycle/utils';
 import {
   isRuntimeConfigUpdateOutcomeApplied,
+  isRuntimeConfigUpdateOutcomeDeferred,
   type RuntimeConfigUpdateOutcomeV1,
 } from '@happier-dev/agents';
 
@@ -15,6 +20,8 @@ export type AuthorizedSessionModelTransitionTarget = Readonly<{
   providerBinding: AgentSessionProviderBinding | null;
   sessionBindingMetadata: SessionProviderBindingMetadataV1 | null;
   runtimeBindingBasis: ProviderRuntimeBindingBasisV1 | null;
+  /** Custody actually opened by the native runtime, distinct from native auth. */
+  readAppliedTeamCredentialModel?: () => TeamCredentialProviderModelSelectionV1 | null | undefined;
   revalidateBeforeEffect: () => Promise<boolean>;
 }>;
 
@@ -32,10 +39,12 @@ export type SessionAppliedModelTransitionUnavailableReason =
   | 'runtime_model_drift'
   | 'prompt_admission_fenced'
   | 'runtime_effect_in_progress'
+  | 'runtime_model_unconfirmed'
   | 'active_target_changed';
 
 export type SessionModelTransitionApplyResult =
   | Readonly<{ status: 'applied' }>
+  | Readonly<{ status: 'deferred'; reason?: string }>
   | Readonly<{
       status: 'failed' | 'unsupported' | 'unproven';
       reason?: string;
@@ -65,6 +74,9 @@ export function mapRuntimeConfigUpdateOutcomeToSessionModelTransitionApplyResult
       reason: 'runtime_model_transition_outcome_unproven',
       readbackAfterCompletion: true,
     };
+  }
+  if (isRuntimeConfigUpdateOutcomeDeferred(outcome)) {
+    return { status: 'deferred' };
   }
   if (isRuntimeConfigUpdateOutcomeApplied(outcome)) {
     return { status: 'applied' };
@@ -113,11 +125,22 @@ function sameSelection(
     && left.modelId === right.modelId;
 }
 
+function readTeamRoute(target: AuthorizedSessionModelTransitionTarget) {
+  return target.readAppliedTeamCredentialModel ? target.readAppliedTeamCredentialModel() : null;
+}
+
+function sameTeamRoute(
+  left: AuthorizedSessionModelTransitionTarget,
+  right: AuthorizedSessionModelTransitionTarget,
+): boolean {
+  return JSON.stringify(readTeamRoute(left)) === JSON.stringify(readTeamRoute(right));
+}
+
 function sameAuthorizedTarget(
   left: AuthorizedSessionModelTransitionTarget,
   right: AuthorizedSessionModelTransitionTarget,
 ): boolean {
-  if (!sameSelection(left.selection, right.selection)) return false;
+  if (!sameSelection(left.selection, right.selection) || !sameTeamRoute(left, right)) return false;
   if (left.selection.providerConnectionId === null) return true;
   return left.runtimeBindingBasis !== null
     && right.runtimeBindingBasis !== null
@@ -133,10 +156,12 @@ function samePublishedActiveFacts(
     providerBinding: left.providerBinding,
     sessionBindingMetadata: left.sessionBindingMetadata,
     runtimeBindingBasis: left.runtimeBindingBasis,
+    teamCredentialModel: readTeamRoute(left),
   }) === JSON.stringify({
     providerBinding: right.providerBinding,
     sessionBindingMetadata: right.sessionBindingMetadata,
     runtimeBindingBasis: right.runtimeBindingBasis,
+    teamCredentialModel: readTeamRoute(right),
   });
 }
 
@@ -144,6 +169,7 @@ function runtimeModelIdReadbackCanProveTarget(
   current: AuthorizedSessionModelTransitionTarget,
   candidate: AuthorizedSessionModelTransitionTarget,
 ): boolean {
+  if (!sameTeamRoute(current, candidate)) return false;
   if (sameSelection(current.selection, candidate.selection)) {
     return samePublishedActiveFacts(current, candidate);
   }
@@ -231,6 +257,9 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   agentTargetKey: string;
   ownerScope?: SessionModelMutationScopeV1;
   initialActiveTarget: AuthorizedSessionModelTransitionTarget;
+  initialActiveTargetConfirmed: boolean;
+  /** Current durable source, distinct from the route still opened until restart. */
+  readModelSelectionIntent: () => SessionModelSelectionV2 | null;
   isCurrentRun: () => boolean;
   checkCurrentPublisherAuthority: () => Promise<boolean>;
   authorize: (
@@ -247,6 +276,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   ) => Promise<SessionModelTransitionApplyResult>;
   publishActive: (
     target: AuthorizedSessionModelTransitionTarget,
+    evidence?: 'runtime_apply' | 'runtime_readback' | null,
   ) => Promise<void>;
   revokeActiveSelectionProof: (
     selection: ProviderBoundModelRef,
@@ -289,6 +319,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     target: AuthorizedSessionModelTransitionTarget,
   ) => Promise<void>;
   readActiveTarget: () => AuthorizedSessionModelTransitionTarget;
+  /** A command-armed selection that still needs the next prompt's transition custody. */
+  readArmedSelection: () => ProviderBoundModelRef | null;
   /** Restore applied intent through this same command queue; callers never guess the active route. */
   unarm: (callerInputConstraints?: CallerInputConstraintsV1) => Promise<SessionModelTransitionResultV1>;
   readAppliedTarget: () => Promise<SessionAppliedModelTransitionTarget>;
@@ -309,6 +341,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   dispose: () => Promise<void>;
 }> {
   let activeTarget = params.initialActiveTarget;
+  let observedAppliedTarget = params.initialActiveTargetConfirmed === false
+    ? null : params.initialActiveTarget;
   let current: Proposal | null = null;
   let pending: Proposal | null = null;
   let pumpPromise: Promise<void> | null = null;
@@ -332,6 +366,11 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   let stableActiveTargetEffectSettled: Promise<void> | null = null;
   let publisherAuthorityUnavailable = false;
   let armedSelection: ProviderBoundModelRef | null = null;
+  // An accepted configuration owns dispatch, but only runtime evidence owns
+  // Running. Retain its prior materialization basis for model-only readback.
+  let awaitingRuntimeConfirmation = params.initialActiveTargetConfirmed === false
+    ? { basis: params.initialActiveTarget }
+    : null;
 
   const isCurrent = (): boolean =>
     !disposed
@@ -347,17 +386,23 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     if (runtimeObservedDriftModelId !== null) return 'runtime_model_drift';
     if (activeFenceEpochId !== null) return 'prompt_admission_fenced';
     if (current?.effectStarted === true) return 'runtime_effect_in_progress';
+    if (observedAppliedTarget === null) return 'runtime_model_unconfirmed';
     return null;
   };
 
   const readAppliedTarget = async (): Promise<SessionAppliedModelTransitionTarget> => {
     const reason = readAppliedTargetUnavailableReason();
     if (reason) return { status: 'unavailable', reason };
-    const target = activeTarget;
+    const target = observedAppliedTarget;
+    if (target === null) return { status: 'unavailable', reason: 'runtime_model_unconfirmed' };
+    if (!await targetAuthorizationStillCurrent(target)) {
+      if (observedAppliedTarget === target) observedAppliedTarget = null;
+      return { status: 'unavailable', reason: 'runtime_model_unconfirmed' };
+    }
     const result = await runWithCurrentPublisherPermit(async (): Promise<SessionAppliedModelTransitionTarget> => {
       const reason = readAppliedTargetUnavailableReason();
       if (reason) return { status: 'unavailable', reason };
-      return activeTarget === target
+      return observedAppliedTarget === target
         ? { status: 'applied', target }
         : { status: 'unavailable', reason: 'active_target_changed' };
     });
@@ -438,6 +483,34 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     if (typeof target.revalidateBeforeEffect !== 'function') return false;
     return await target.revalidateBeforeEffect().catch(() => false);
   };
+
+  const publishConfiguredTarget = async (
+    target: AuthorizedSessionModelTransitionTarget,
+  ): Promise<void> => {
+    const basis = awaitingRuntimeConfirmation?.basis ?? activeTarget;
+    await params.publishActive(target, null);
+    if (!isCurrent()) throw new Error('session_publisher_authority_lost');
+    if (!await targetAuthorizationStillCurrent(target)) {
+      throw new Error('provider_authorization_changed_during_publication');
+    }
+    if (!isCurrent()) throw new Error('session_publisher_authority_lost');
+    activeTarget = target;
+    awaitingRuntimeConfirmation = { basis };
+    if (observedAppliedTarget && (!runtimeModelIdReadbackCanProveTarget(basis, target)
+      || !runtimeModelIdReadbackCanProveTarget(basis, observedAppliedTarget))) {
+      observedAppliedTarget = null;
+    }
+    armedSelection = null;
+    readbackReconciliationRequested = true;
+  };
+
+  const successfulProposalResult = (
+    proposal: Proposal,
+    status: 'applied' | 'already_active',
+  ): SessionModelTransitionResultV1 => awaitingRuntimeConfirmation
+    ? { ok: true, status: 'armed', activeSelection: awaitingRuntimeConfirmation.basis.selection,
+        requestedSelection: proposal.selection }
+    : { ok: true, status, activeSelection: activeTarget.selection };
 
   const clearActiveFence = async (): Promise<void> => {
     if (!activeFenceEpochId) return;
@@ -712,9 +785,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     let modelId: string | null;
     try {
       const rawModelId = await params.readRuntimeModelId();
-      modelId = typeof rawModelId === 'string' && rawModelId.trim().length > 0
-        ? rawModelId.trim()
-        : null;
+      modelId = readNonBlankOpaqueIdentifier(rawModelId);
     } catch {
       return false;
     }
@@ -727,7 +798,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       return true;
     }
     if (modelId !== target.selection.modelId) return false;
-    if (!runtimeModelIdReadbackCanProveTarget(activeTarget, target)) {
+    if (!runtimeModelIdReadbackCanProveTarget(awaitingRuntimeConfirmation?.basis ?? activeTarget, target)) {
       return false;
     }
     if (
@@ -767,7 +838,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       );
     }
     try {
-      await params.publishActive(target);
+      await params.publishActive(target, 'runtime_readback');
       if (!isCurrent()) {
         proposal.resolve(failure(
           'owner_unavailable',
@@ -800,6 +871,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         );
       }
       activeTarget = target;
+      observedAppliedTarget = target;
+      awaitingRuntimeConfirmation = null;
       armedSelection = null;
       const promptCustody =
         await runPromptCustodyAfterSuccessfulTransition(proposal);
@@ -864,7 +937,37 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       await settleBeforeRuntimeEffect(proposal, failure('unsupported', activeTarget.selection, proposal.selection, 'exact_model_mutation_scope_unavailable'));
       return;
     }
+    if ((proposal.captureBefore || proposal.expected) && observedAppliedTarget === null) {
+      await settleBeforeRuntimeEffect(proposal, failure('unsupported', activeTarget.selection,
+        proposal.selection, 'exact_model_mutation_requires_confirmed_runtime'));
+      return;
+    }
     let target: AuthorizedSessionModelTransitionTarget;
+    // A prompt carries the selected model as a V1 projection, which cannot
+    // express its Team source. Reusing that exact opened target is input
+    // dispatch, not a request to replace the source with native authentication.
+    const desiredModel = proposal.source === 'prompt' ? params.readModelSelectionIntent() : null;
+    const activeTeam = readTeamRoute(activeTarget);
+    let carriesActiveTeamSelection = false;
+    if (proposal.source === 'prompt'
+      && proposal.selection.providerConnectionId === null
+      && desiredModel?.ref.source === 'team_resource'
+      && desiredModel.ref.agentTargetKey === proposal.selection.agentTargetKey
+      && desiredModel.ref.modelId === proposal.selection.modelId) {
+      if (!sameSelection(activeTarget.selection, proposal.selection)
+        || activeTeam == null
+        || desiredModel.ref.resourceId !== activeTeam.resourceId
+        || desiredModel.ref.teamId !== activeTeam.teamId
+        || desiredModel.ref.deliveryMode !== activeTeam.deliveryMode
+        || !isDeepStrictEqual(desiredModel.ref.nativeDelivery ?? null, activeTeam.nativeDelivery ?? null)) {
+        // A newly selected Team source is waiting for restart. Its V1 prompt
+        // projection cannot authorize either the old source or native execution.
+        await settleBeforeRuntimeEffect(proposal, failure('restart_required', activeTarget.selection,
+          proposal.selection, 'team_resource_binding_changed'));
+        return;
+      }
+      carriesActiveTeamSelection = true;
+    }
     // Startup metadata echoes the Provider already admitted by the launch
     // handoff. Runtime readback does not make that echo a new admission.
     const carriesOpenedProviderSelection = proposal.reuseInitialAdmission === true
@@ -875,7 +978,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       && sameSelection(activeTarget.selection, proposal.selection)
       && proposal.callerInputConstraints === undefined;
     try {
-      target = carriesOpenedProviderSelection ? activeTarget
+      target = carriesActiveTeamSelection || carriesOpenedProviderSelection ? activeTarget
         : await params.authorize(proposal.selection, proposal.callerInputConstraints);
     } catch (error) {
       if (await settleIfInterruptedBeforeRuntimeEffect(proposal)) return;
@@ -917,7 +1020,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     // Metadata proposals are observations of an intent that already won the
     // durable CAS. Republishing them would mint a newer timestamp and feed the
     // metadata synchronizer back into this coordinator indefinitely.
-    if (proposal.source !== 'metadata') {
+    if (proposal.source !== 'metadata' && !carriesActiveTeamSelection) {
       // A durable CAS that has started must finish, but it is not the runtime
       // effect boundary. A newer proposal may still supersede this one; the
       // newer CAS runs afterward so accepted intent order remains preserved.
@@ -975,27 +1078,23 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         await runPromptCustodyAfterSuccessfulTransition(proposal);
       if (promptCustody === 'settled') return;
       if (promptCustody === 'completed') {
-        proposal.resolve({
-          ok: true,
-          status: 'already_active',
-          activeSelection: activeTarget.selection,
-        });
+        proposal.resolve(successfulProposalResult(proposal, 'already_active'));
         return;
       }
-      await settleBeforeRuntimeEffect(proposal, {
-        ok: true,
-        status: 'already_active',
-        activeSelection: activeTarget.selection,
-      });
+      await settleBeforeRuntimeEffect(proposal, successfulProposalResult(proposal, 'already_active'));
       return;
     }
 
     if (target.policy === 'restart_session') {
       armedSelection = null;
+      // The admitted selection itself needs a restart only when its Provider
+      // binding changed after admission (endpoint/credential/re-consent). Name
+      // that closed Provider refusal so callers present its restart recovery.
       await settleBeforeRuntimeEffect(proposal, failure(
         'restart_required',
         activeTarget.selection,
         proposal.selection,
+        sameSelection(activeTarget.selection, proposal.selection) ? 'provider_binding_changed' : undefined,
       ));
       return;
     }
@@ -1106,6 +1205,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
     if (
       applied.status !== 'applied'
+      && applied.status !== 'deferred'
       && applied.status !== 'unproven'
       && runtimeObservationRevision !== forwardEffectObservationRevision
       && latestRuntimeObservedModelId === target.selection.modelId
@@ -1146,7 +1246,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       ));
       return;
     }
-    if (applied.status !== 'applied') {
+    if (applied.status !== 'applied' && applied.status !== 'deferred') {
       try {
         await clearActiveFenceUnlessPendingSuccessor();
       } catch {
@@ -1204,7 +1304,11 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       if (runtimeObservedDriftModelId !== null) {
         throw new Error('runtime_model_drift_observed_before_publication');
       }
-      await params.publishActive(target);
+      if (applied.status === 'deferred') {
+        await publishConfiguredTarget(target);
+      } else {
+        await params.publishActive(target);
+      }
       if (!isCurrent()) {
         proposal.resolve(failure(
           'owner_unavailable',
@@ -1216,7 +1320,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       if (runtimeObservedDriftModelId !== null) {
         throw new Error('runtime_model_drift_observed_during_publication');
       }
-      if (!await targetAuthorizationStillCurrent(target)) {
+      if (applied.status === 'applied' && !await targetAuthorizationStillCurrent(target)) {
         throw new Error('provider_authorization_changed_during_publication');
       }
       if (!isCurrent()) {
@@ -1233,6 +1337,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         );
       }
       activeTarget = target;
+      if (applied.status === 'applied') {
+        observedAppliedTarget = target;
+        awaitingRuntimeConfirmation = null;
+      }
       armedSelection = null;
     } catch (error) {
       if (!isCurrent()) {
@@ -1243,239 +1351,29 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         ));
         return;
       }
-      if (!await targetAuthorizationStillCurrent(previousTarget)) {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        reconciliationTargets = [target];
-        proposal.resolve(reconciliationFailure(
-          null,
-          proposal.selection,
-          'provider_authorization_changed_before_rollback',
-        ));
-        return;
+      // A failed publication cannot undo the Agent's accepted configuration.
+      // Keep its actual applied model; uncertain facts use the existing
+      // reconciliation result and prompt fence, never a second runtime switch.
+      activeTarget = target;
+      if (applied.status === 'applied') {
+        observedAppliedTarget = runtimeObservedDriftModelId === null ? target : null;
+        awaitingRuntimeConfirmation = null;
+      } else {
+        awaitingRuntimeConfirmation ??= { basis: previousTarget };
       }
-      if (!isCurrent()) {
-        proposal.resolve(failure(
-          'owner_unavailable',
-          activeTarget.selection,
-          proposal.selection,
-        ));
-        return;
-      }
-      const permittedRollback =
-        await runWithCurrentPublisherPermit(async () => {
-          expectedRuntimeEffectModelId = previousTarget.selection.modelId;
-          return await safelyApply(previousTarget);
-        });
-      if (permittedRollback.status === 'blocked') {
-        proposal.resolve(failure(
-          'owner_unavailable',
-          activeTarget.selection,
-          proposal.selection,
-        ));
-        return;
-      }
-      const rollback = permittedRollback.value;
-      if (!isCurrent()) {
-        proposal.resolve(failure(
-          'owner_unavailable',
-          activeTarget.selection,
-          proposal.selection,
-        ));
-        return;
-      }
-      if (rollback.status === 'applied') {
-        const rollbackConfirmationObservationRevision =
-          runtimeObservationRevision;
-        let confirmedRollbackModelId: string | null = null;
-        try {
-          if (!params.readRuntimeModelId) {
-            throw new Error('runtime_rollback_readback_unavailable');
-          }
-          const rawConfirmedRollbackModelId =
-            await params.readRuntimeModelId();
-          confirmedRollbackModelId =
-            typeof rawConfirmedRollbackModelId === 'string'
-            && rawConfirmedRollbackModelId.trim().length > 0
-              ? rawConfirmedRollbackModelId.trim()
-              : null;
-        } catch {
-          reconciliationRequired = true;
-          reconciliationActiveSelection = null;
-          reconciliationTargets = [target, previousTarget];
-          proposal.resolve(reconciliationFailure(
-            null,
-            proposal.selection,
-            'runtime_rollback_readback_unavailable',
-          ));
-          return;
-        }
-        if (!isCurrent()) {
-          proposal.resolve(failure(
-            'owner_unavailable',
-            activeTarget.selection,
-            proposal.selection,
-          ));
-          return;
-        }
-        if (
-          runtimeObservedDriftModelId !== null
-          || (
-            runtimeObservationRevision
-              !== rollbackConfirmationObservationRevision
-            && latestRuntimeObservedModelId
-              !== previousTarget.selection.modelId
-          )
-        ) {
-          reconciliationRequired = true;
-          reconciliationActiveSelection = null;
-          reconciliationTargets = [];
-          proposal.resolve(reconciliationFailure(
-            null,
-            proposal.selection,
-            'runtime_model_drift_observed_during_rollback',
-          ));
-          return;
-        }
-        if (
-          confirmedRollbackModelId !== previousTarget.selection.modelId
-        ) {
-          reconciliationRequired = true;
-          reconciliationActiveSelection = null;
-          reconciliationTargets = [target, previousTarget];
-          proposal.resolve(reconciliationFailure(
-            null,
-            proposal.selection,
-            'runtime_rollback_readback_mismatch',
-          ));
-          return;
-        }
-        if (!await targetAuthorizationStillCurrent(previousTarget)) {
-          reconciliationRequired = true;
-          reconciliationActiveSelection = null;
-          reconciliationTargets = [];
-          proposal.resolve(reconciliationFailure(
-            null,
-            proposal.selection,
-            'provider_authorization_changed_after_rollback',
-          ));
-          return;
-        }
-        if (!isCurrent()) {
-          proposal.resolve(failure(
-            'owner_unavailable',
-            activeTarget.selection,
-            proposal.selection,
-          ));
-          return;
-        }
-        if (runtimeObservedDriftModelId !== null) {
-          reconciliationRequired = true;
-          reconciliationActiveSelection = null;
-          reconciliationTargets = [];
-          proposal.resolve(reconciliationFailure(
-            null,
-            proposal.selection,
-            'runtime_model_drift_observed_during_rollback_revalidation',
-          ));
-          return;
-        }
-        try {
-          await params.publishActive(previousTarget);
-          if (!isCurrent()) {
-            proposal.resolve(failure(
-              'owner_unavailable',
-              activeTarget.selection,
-              proposal.selection,
-            ));
-            return;
-          }
-          if (runtimeObservedDriftModelId !== null) {
-            reconciliationRequired = true;
-            reconciliationActiveSelection = previousTarget.selection;
-            reconciliationTargets = [];
-            proposal.resolve(reconciliationFailure(
-              reconciliationActiveSelection,
-              proposal.selection,
-              'runtime_model_drift_observed_during_transition',
-            ));
-            return;
-          }
-          if (!await targetAuthorizationStillCurrent(previousTarget)) {
-            reconciliationRequired = true;
-            reconciliationActiveSelection = null;
-            reconciliationTargets = [];
-            proposal.resolve(reconciliationFailure(
-              null,
-              proposal.selection,
-              'provider_authorization_changed_during_rollback_publication',
-            ));
-            return;
-          }
-          if (!isCurrent()) {
-            proposal.resolve(failure(
-              'owner_unavailable',
-              activeTarget.selection,
-              proposal.selection,
-            ));
-            return;
-          }
-          if (runtimeObservedDriftModelId !== null) {
-            reconciliationRequired = true;
-            reconciliationActiveSelection = null;
-            reconciliationTargets = [];
-            proposal.resolve(reconciliationFailure(
-              null,
-              proposal.selection,
-              'runtime_model_drift_observed_during_rollback_revalidation',
-            ));
-            return;
-          }
-          await clearActiveFenceUnlessPendingSuccessor();
-          if (!isCurrent()) {
-            proposal.resolve(failure(
-              'owner_unavailable',
-              activeTarget.selection,
-              proposal.selection,
-            ));
-            return;
-          }
-          proposal.resolve(failure(
-            'publication_failed_rolled_back',
-            previousTarget.selection,
-            proposal.selection,
-            projectSessionModelTransitionReason(
-              error instanceof Error ? error.message : null,
-              'active_fact_publication_failed',
-            ),
-          ));
-          return;
-        } catch {
-          if (!isCurrent()) {
-            proposal.resolve(failure(
-              'owner_unavailable',
-              activeTarget.selection,
-              proposal.selection,
-            ));
-            return;
-          }
-          // The runtime is old again, but publication/fence reconciliation is
-          // still uncertain. Keep the exact admission fence closed.
-        }
-      }
+      armedSelection = null;
       reconciliationRequired = true;
-      reconciliationActiveSelection = rollback.status === 'applied'
-        ? previousTarget.selection
-        : null;
-      reconciliationTargets = rollback.status === 'applied'
-        ? [previousTarget]
-        : [target, previousTarget];
+      reconciliationActiveSelection = runtimeObservedDriftModelId !== null
+        ? null
+        : observedAppliedTarget?.selection ?? null;
+      reconciliationTargets = runtimeObservedDriftModelId !== null ? [] : [target];
       proposal.resolve(reconciliationFailure(
         reconciliationActiveSelection,
         proposal.selection,
-        rollback.status === 'applied'
-          ? 'rollback_publication_failed'
-          : rollback.reason ?? 'runtime_rollback_failed',
+        projectSessionModelTransitionReason(
+          error instanceof Error ? error.message : null,
+          'active_fact_publication_failed',
+        ),
       ));
       return;
     }
@@ -1535,11 +1433,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       ));
       return;
     }
-    proposal.resolve({
-      ok: true,
-      status: 'applied',
-      activeSelection: activeTarget.selection,
-    });
+    proposal.resolve(successfulProposalResult(proposal, 'applied'));
   };
 
   const revokeActiveSelectionProofAfterUnresolvedDrift =
@@ -1554,6 +1448,75 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     };
 
   const reconcileFromRuntimeReadback = async (): Promise<void> => {
+    if ((awaitingRuntimeConfirmation || observedAppliedTarget === null)
+      && !reconciliationRequired && params.readRuntimeModelId && isCurrent()) {
+      const confirmation = awaitingRuntimeConfirmation;
+      const configuredTarget = activeTarget;
+      const basis = confirmation?.basis ?? configuredTarget;
+      const observationRevision = runtimeObservationRevision;
+      let observedModelId: string | null;
+      try {
+        const raw = await params.readRuntimeModelId();
+        observedModelId = readNonBlankOpaqueIdentifier(raw);
+      } catch {
+        return;
+      }
+      const observationStillCurrent = (): boolean => isCurrent()
+        && !reconciliationRequired
+        && activeTarget === configuredTarget
+        && awaitingRuntimeConfirmation === confirmation
+        && (runtimeObservationRevision === observationRevision
+          || latestRuntimeObservedModelId === observedModelId);
+      if (!observationStillCurrent()) return;
+      if (!observedModelId) {
+        observedAppliedTarget = null;
+        return;
+      }
+      if (!runtimeModelIdReadbackCanProveTarget(basis, configuredTarget)) return;
+      let target: AuthorizedSessionModelTransitionTarget;
+      try {
+        target = observedModelId === configuredTarget.selection.modelId
+          ? configuredTarget
+          : await params.authorize({ ...configuredTarget.selection, modelId: observedModelId });
+        if (configuredTarget.selection.providerConnectionId === null
+          && target.selection.providerConnectionId === null
+          && configuredTarget.readAppliedTeamCredentialModel) {
+          // Model-only readback observes the current runtime, not a request
+          // to replace its credential source with ordinary native auth.
+          target = { ...target, readAppliedTeamCredentialModel: configuredTarget.readAppliedTeamCredentialModel };
+        }
+      } catch {
+        return;
+      }
+      if (!sameSelection(target.selection, { ...configuredTarget.selection, modelId: observedModelId })
+        || !runtimeModelIdReadbackCanProveTarget(basis, target)
+        || !await targetAuthorizationStillCurrent(configuredTarget)
+        || !await targetAuthorizationStillCurrent(target)
+        || !observationStillCurrent()) return;
+      if (observedAppliedTarget && sameAuthorizedTarget(observedAppliedTarget, target)
+        && samePublishedActiveFacts(observedAppliedTarget, target)) target = observedAppliedTarget;
+      try {
+        await requireCurrentPublisherPermit(async () => {
+          if (observationStillCurrent()) await params.publishActive(target, 'runtime_readback');
+        });
+        if (!await targetAuthorizationStillCurrent(configuredTarget)
+          || !await targetAuthorizationStillCurrent(target)
+          || !observationStillCurrent()) return;
+        observedAppliedTarget = target;
+        if (observedModelId === configuredTarget.selection.modelId) awaitingRuntimeConfirmation = null;
+      } catch {
+        observedAppliedTarget = null;
+        reconciliationRequired = true;
+        reconciliationActiveSelection = null;
+        reconciliationTargets = [configuredTarget];
+        try {
+          await ensureActiveFence();
+        } catch {
+          reconciliationRequired = true;
+        }
+      }
+      return;
+    }
     if (
       !reconciliationRequired
       || !params.readRuntimeModelId
@@ -1564,9 +1527,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     let modelId: string | null;
     try {
       const rawModelId = await params.readRuntimeModelId();
-      modelId = typeof rawModelId === 'string' && rawModelId.trim().length > 0
-        ? rawModelId.trim()
-        : null;
+      modelId = readNonBlankOpaqueIdentifier(rawModelId);
     } catch {
       if (runtimeObservedDriftModelId !== null) {
         await revokeActiveSelectionProofAfterUnresolvedDrift();
@@ -1581,161 +1542,15 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
 
     if (runtimeObservedDriftModelId !== null) {
-      if (!activeFenceEpochId) {
-        const epochId =
-          `model-transition:${params.runId}:${++transitionOrdinal}`;
-        try {
-          await params.fencePromptAdmission(epochId);
-          if (!isCurrent()) return;
-          activeFenceEpochId = epochId;
-        } catch {
-          reconciliationRequired = true;
-          reconciliationActiveSelection = null;
-          await revokeActiveSelectionProofAfterUnresolvedDrift();
-          return;
-        }
-      }
-
-      let restorationTarget: AuthorizedSessionModelTransitionTarget;
+      // Runtime-origin drift is evidence, not permission to switch models.
+      // The model catalog keeps reporting the real model; revoke stale exact
+      // source proof and retain the existing explicit restart recovery.
       try {
-        restorationTarget = await params.authorize(activeTarget.selection);
+        await ensureActiveFence();
       } catch {
         reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
       }
-      if (
-        !sameSelection(restorationTarget.selection, activeTarget.selection)
-        || restorationTarget.policy !== 'live'
-        || !await targetAuthorizationStillCurrent(restorationTarget)
-        || !isCurrent()
-      ) {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
-      }
-      const permittedRestoration =
-        await runWithCurrentPublisherPermit(async () => {
-          expectedRuntimeEffectModelId =
-            restorationTarget.selection.modelId;
-          return await safelyApply(restorationTarget);
-        });
-      if (permittedRestoration.status === 'blocked') {
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
-      }
-      const restorationOutcome = permittedRestoration.value;
-      if (restorationOutcome.status !== 'applied' || !isCurrent()) {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
-      }
-      if (!await targetAuthorizationStillCurrent(restorationTarget)) {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        reconciliationTargets = [];
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
-      }
-      if (!isCurrent()) {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
-      }
-      const confirmationObservationRevision = runtimeObservationRevision;
-      let confirmedModelId: string | null;
-      try {
-        const rawConfirmedModelId = await params.readRuntimeModelId();
-        confirmedModelId =
-          typeof rawConfirmedModelId === 'string'
-          && rawConfirmedModelId.trim().length > 0
-            ? rawConfirmedModelId.trim()
-            : null;
-      } catch {
-        confirmedModelId = null;
-      }
-      if (
-        confirmedModelId !== restorationTarget.selection.modelId
-        || !isCurrent()
-      ) {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        if (confirmedModelId) {
-          runtimeObservedDriftModelId = confirmedModelId;
-        }
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
-      }
-      if (
-        runtimeObservationRevision !== confirmationObservationRevision
-        && latestRuntimeObservedModelId !== confirmedModelId
-      ) {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
-      }
-      if (!await targetAuthorizationStillCurrent(restorationTarget)) {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        reconciliationTargets = [];
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
-      }
-      if (!isCurrent()) {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
-      }
-      if (
-        runtimeObservationRevision !== confirmationObservationRevision
-        && latestRuntimeObservedModelId !== confirmedModelId
-      ) {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = null;
-        await revokeActiveSelectionProofAfterUnresolvedDrift();
-        return;
-      }
-      runtimeObservedDriftModelId = null;
-      try {
-        await params.publishActive(restorationTarget);
-        if (!isCurrent()) return;
-        if (!await targetAuthorizationStillCurrent(restorationTarget)) {
-          reconciliationRequired = true;
-          reconciliationActiveSelection = null;
-          reconciliationTargets = [];
-          return;
-        }
-        if (!isCurrent()) return;
-        activeTarget = restorationTarget;
-        reconciliationActiveSelection = restorationTarget.selection;
-        if (runtimeObservedDriftModelId !== null) {
-          reconciliationRequired = true;
-          reconciliationTargets = [];
-          return;
-        }
-        reconciliationRequired = false;
-        reconciliationTargets = [];
-        await clearActiveFence();
-        if (!isCurrent()) return;
-        if (reconciliationRequired || runtimeObservedDriftModelId !== null) {
-          try {
-            await ensureActiveFence();
-          } catch {
-            reconciliationRequired = true;
-          }
-          return;
-        }
-      } catch {
-        reconciliationRequired = true;
-        reconciliationActiveSelection = restorationTarget.selection;
-        reconciliationTargets = [restorationTarget];
-      }
+      await revokeActiveSelectionProofAfterUnresolvedDrift();
       return;
     }
 
@@ -1745,7 +1560,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     );
     if (matchingTargets.length !== 1) return;
     const target = matchingTargets[0]!;
-    if (!runtimeModelIdReadbackCanProveTarget(activeTarget, target)) return;
+    if (!runtimeModelIdReadbackCanProveTarget(awaitingRuntimeConfirmation?.basis ?? activeTarget, target)) return;
     if (!await targetAuthorizationStillCurrent(target)) {
       return;
     }
@@ -1761,6 +1576,8 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
       }
       if (!isCurrent()) return;
       activeTarget = target;
+      observedAppliedTarget = target;
+      awaitingRuntimeConfirmation = null;
       reconciliationActiveSelection = target.selection;
       if (runtimeObservedDriftModelId !== null) {
         reconciliationRequired = true;
@@ -1885,7 +1702,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     if (samePublishedActiveFacts(activeTarget, target)) return;
 
     const publication = await runWithCurrentPublisherPermit(async () => {
-      await params.publishActive(target);
+      await publishConfiguredTarget(target);
     });
     if (publication.status === 'blocked') {
       throw new Error('session_publisher_authority_lost');
@@ -1899,14 +1716,10 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
   if (params.subscribeRuntimeModelChanges) {
     unsubscribeRuntimeModelChanges = params.subscribeRuntimeModelChanges((rawModelId) => {
       if (!accepting || !isCurrent()) return;
-      const modelId =
-        typeof rawModelId === 'string' && rawModelId.trim().length > 0
-          ? rawModelId.trim()
-          : null;
-      if (modelId) {
-        latestRuntimeObservedModelId = modelId;
-        runtimeObservationRevision += 1;
-      }
+      const modelId = readNonBlankOpaqueIdentifier(rawModelId);
+      latestRuntimeObservedModelId = modelId;
+      runtimeObservationRevision += 1;
+      if (observedAppliedTarget?.selection.modelId !== modelId) observedAppliedTarget = null;
       const matchesReconciliationTarget =
         modelId !== null
         && reconciliationRequired
@@ -1915,6 +1728,7 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
         );
       if (
         modelId
+        && awaitingRuntimeConfirmation === null
         && modelId !== activeTarget.selection.modelId
         && modelId !== expectedRuntimeEffectModelId
         && !matchesReconciliationTarget
@@ -2095,11 +1909,13 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
 
   return Object.freeze({
     submit,
-    unarm: (callerInputConstraints?: CallerInputConstraintsV1) => submit(activeTarget.selection, {
+    unarm: (callerInputConstraints?: CallerInputConstraintsV1) => submit(
+      awaitingRuntimeConfirmation?.basis.selection ?? activeTarget.selection, {
       source: 'command', ...(callerInputConstraints ? { callerInputConstraints } : {}),
     }),
     admitReplacementTarget,
     readActiveTarget: () => activeTarget,
+    readArmedSelection: () => armedSelection,
     readAppliedTarget,
     runWithStableActiveTarget,
     dispose,

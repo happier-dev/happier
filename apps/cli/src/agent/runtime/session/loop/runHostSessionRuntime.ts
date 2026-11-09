@@ -2214,7 +2214,6 @@ export async function runHostSessionRuntime(
       value: await localEffect(),
     };
   };
-  let deferRuntimeModelsFlushDuringAuthorityPreparation = false;
   const activityPushSender = api.push();
   // Same rich-sender definition as the incumbent Activity owner
   // (sendReadyWithPushNotification): null/absence means Home delivery.
@@ -2309,6 +2308,7 @@ export async function runHostSessionRuntime(
     readActivePermissionMode: () => permissionHandler.getPermissionMode(),
     readActiveModelSelection: () =>
       modelTransitionCoordinator?.readActiveTarget().selection ?? null,
+    readArmedModelSelection: () => modelTransitionCoordinator?.readArmedSelection() ?? null,
     supportsInFlightSteer: () => runtimeForInFlightSteer?.supportsInFlightSteer?.() === true,
     isProviderNativeCommand: (prompt) => runtimeForInFlightSteer?.isProviderNativeCommand?.(prompt) === true,
     isTurnInFlight: () => runtimeForInFlightSteer?.isTurnInFlight?.() === true,
@@ -3468,9 +3468,6 @@ export async function runHostSessionRuntime(
           });
         } else {
           await publishActive();
-          if (!deferRuntimeModelsFlushDuringAuthorityPreparation) {
-            await runtimeModelsPublisher?.flush();
-          }
         }
         latestExactActiveSelectionFact = activeSelectionV1;
       } catch (error) {
@@ -4157,6 +4154,7 @@ export async function runHostSessionRuntime(
             : {}),
         }),
       readActiveModelSelection: () => modelTransitionCoordinator!.readActiveTarget().selection,
+      readArmedModelSelection: () => modelTransitionCoordinator!.readArmedSelection(),
       deps: {
         ...(deps.sessionLoopLifecycleDeps ?? {}),
         daemonTurnContributionsBridge,

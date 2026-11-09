@@ -635,6 +635,7 @@ export async function runPermissionModePromptLoop(opts: {
     ) => Promise<void>,
   ) => Promise<SessionModelTransitionResultV1>;
   readActiveModelSelection?: () => ProviderBoundModelRef;
+  readArmedModelSelection?: () => ProviderBoundModelRef | null;
   /**
    * Registers replay/Follow effects against the exact localId settled by the host's canonical
    * provider-input outcome normalizer. Transport send completion is never provider acceptance.
@@ -1030,10 +1031,11 @@ export async function runPermissionModePromptLoop(opts: {
       continue;
     }
 
+    const readRequestedModelSelection = () => message.mode.modelSelection ?? opts.readArmedModelSelection?.() ?? null;
     const readCallerInputFailure = (): PreTurnFailure | null => {
       const constraints = message.mode.callerInputConstraints;
       if (!constraints) return null;
-      const effectiveModel = message.mode.modelSelection ?? opts.readActiveModelSelection?.() ?? 'automatic';
+      const effectiveModel = readRequestedModelSelection() ?? opts.readActiveModelSelection?.() ?? 'automatic';
       const code = !isModelRefGrantedV1(constraints, effectiveModel)
         ? 'model_not_granted'
         : !isPermissionModeGrantedV1(constraints, message.mode.permissionMode)
@@ -1244,7 +1246,7 @@ export async function runPermissionModePromptLoop(opts: {
           }
           await dispatch();
         };
-        const requestedSelection = message.mode.modelSelection;
+        const requestedSelection = readRequestedModelSelection();
         if (!requestedSelection) {
           return await runProviderInputDispatch(dispatchGrantedInput);
         }
