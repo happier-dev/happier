@@ -136,7 +136,9 @@ function createJourneyCodex(sessionId: string, endpoint: Readonly<{ endpointUrl:
   const project = createRuntimeTranscriptProjector();
   let projection = Promise.resolve();
   let nextTurn = 0;
+  const nativeObservers = new Set<Parameters<DisposableCodexAppServerClient['onNativeEvent']>[0]>();
   const notify = async (method: string, params: Record<string, unknown>) => {
+    for (const observer of nativeObservers) observer(method, params, Date.now());
     const handler = handlers.get(method);
     if (!handler) throw new Error(`Missing native notification ${method}`);
     await handler(params);
@@ -216,6 +218,7 @@ function createJourneyCodex(sessionId: string, endpoint: Readonly<{ endpointUrl:
     },
     notify: async () => {}, registerRequestHandler: () => () => {},
     registerNotificationHandler: (method, handler) => { handlers.set(method, handler); return () => handlers.delete(method); },
+    onNativeEvent: observer => { nativeObservers.add(observer); return () => { nativeObservers.delete(observer); }; },
     onExit: () => () => {}, dispose: async () => {},
   };
   const runtime = createCodexAppServerRuntime({ happierSessionId: sessionId, directory: '/fixture',
@@ -308,7 +311,7 @@ function createJourneyCodex(sessionId: string, endpoint: Readonly<{ endpointUrl:
     async send(text: string) {
       const terminals = events.filter(event => ['turn-complete', 'turn-cancelled', 'turn-failed'].includes(event.kind)).length;
       const admitted = await native.send({ inputIds: [`${sessionId}-${sends.length}`], input: { text }, delivery: { kind: 'newTurn', turnId: `host-${sends.length}` } });
-      expect(admitted, `${sessionId}: ${text}`).toMatchObject({ status: 'admitted' });
+      expect(admitted, `${sessionId}: ${text}: ${JSON.stringify(admitted)}`).toMatchObject({ status: 'admitted' });
       const completion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
       return async () => {
         await completion;

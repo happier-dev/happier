@@ -92,7 +92,11 @@ function manualConnectedAccountVersion(input: Readonly<{
     configurationRevision: input.material.configurationRevision,
     authenticationModeId: input.material.authenticationModeId,
     contributionContractVersion: directContributionContract,
-    privateConfigurationFingerprint: input.material.serviceConfigurationFingerprint,
+    // A rotated Saved Secret held key is new direct material, like a changed private configuration.
+    privateConfigurationFingerprint: input.material.credentialSecretFingerprint
+      ? computeCanonicalDomainSeparatedDigest('happier.team-credential-private-material.v1',
+        [input.material.serviceConfigurationFingerprint ?? 'none', input.material.credentialSecretFingerprint])
+      : input.material.serviceConfigurationFingerprint,
   });
 }
 

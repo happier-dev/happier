@@ -1,6 +1,6 @@
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import type { UsageObservationTokens } from '@happier-dev/protocol';
 import type { TeamCredentialRequestProtocolKindV1 } from '@happier-dev/protocol/teams';
+import type { ProviderRequestCostParser } from '@happier-dev/plugin-sdk/providers';
 
 /**
  * The public external Provider route has no Session turn and no Agent usage
@@ -13,11 +13,14 @@ import type { TeamCredentialRequestProtocolKindV1 } from '@happier-dev/protocol/
  * It never derives, estimates or completes a number the Provider did not
  * report: an absent or unparseable usage block leaves the observation unknown,
  * which the terminal report carries as `measurement: 'unavailable'`.
+ * A declared Provider decoder may preserve its charged request USD from that
+ * same terminal usage block; the host never derives it from token prices.
  */
 export type ExternalProviderTerminalTokenObservation = Readonly<{
     outcome: 'succeeded' | 'failed';
     actualModelId: string | null;
     tokens: UsageObservationTokens | null;
+    reportedCostUsd?: number;
 }>;
 
 export type ExternalProviderTerminalTokenReader = Readonly<{
@@ -28,10 +31,10 @@ export type ExternalProviderTerminalTokenReader = Readonly<{
 type JsonObject = Record<string, unknown>;
 
 // Route conformance: Responses and Messages carry terminal usage on every
-// admitted request. A streamed Chat Completion carries it only when the caller
-// sent `stream_options.include_usage`, which the broker never adds, so that
-// request stays `unavailable` and the server keeps the resource-wide external
-// token capability closed (`usageCapabilities.ts`, the single decision owner).
+// admitted request. Standard OpenAI Chat streaming requires include_usage;
+// vendors such as OpenRouter include terminal usage automatically. The broker
+// observes either shape without rewriting the request or claiming universal
+// coverage (`usageCapabilities.ts` remains the single capability owner).
 
 function isObject(value: unknown): value is JsonObject {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -44,7 +47,7 @@ function readCount(value: unknown): number | null {
 function readModelId(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
-    return trimmed.length > 0 && trimmed.length <= PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderValueChars
+    return trimmed.length > 0
         ? trimmed
         : null;
 }
@@ -141,20 +144,25 @@ function parseJsonObject(text: string): JsonObject | null {
 export function createExternalProviderTerminalTokenReader(input: Readonly<{
     routeKind: TeamCredentialRequestProtocolKindV1;
     contentType: string | null;
+    requestCostParser?: ProviderRequestCostParser;
 }>): ExternalProviderTerminalTokenReader {
     const streamed = (input.contentType ?? '').toLowerCase().includes('text/event-stream');
     const decoder = new TextDecoder('utf-8');
-    // The observer never HOLDS more than the canonical Provider body budget:
-    // the whole body when it is one JSON document, one unterminated event when
-    // it is a stream (drained events are released). A long stream of small
-    // events therefore stays observed; one held value beyond the budget leaves
-    // the observation unknown rather than growing the daemon's memory with a
-    // response it is merely passing through.
-    const budget = PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes;
-    let overflowed = false;
     let pending = '';
     let modelId: string | null = null;
     let tokens: UsageObservationTokens | null = null;
+    let reportedCostUsd: number | undefined;
+    const observeUsage = (usage: unknown): void => {
+        tokens = routeTokens(input.routeKind, usage);
+        reportedCostUsd = undefined;
+        if (!tokens || !input.requestCostParser) return;
+        try {
+            const cost = input.requestCostParser(usage);
+            if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) reportedCostUsd = cost;
+        } catch {
+            // Missing/malformed vendor cost must not suppress valid token evidence.
+        }
+    };
     let completed = false;
     let failed = false;
     let anthropicInitialTokens: UsageObservationTokens | null = null;
@@ -186,15 +194,15 @@ export function createExternalProviderTerminalTokenReader(input: Readonly<{
                     failed = true;
                 } else {
                     modelId = readModelId(payload.response.model);
-                    tokens = routeTokens(input.routeKind, payload.response.usage);
+                    observeUsage(payload.response.usage);
                 }
             }
             return;
         }
         modelId = readModelId(payload.model) ?? modelId;
-        // Only the final include_usage chunk reports the whole Chat request.
+        // Each terminal usage block describes this request, never an increment.
         if (Array.isArray(payload.choices) && payload.choices.length === 0) {
-            tokens = routeTokens(input.routeKind, payload.usage);
+            observeUsage(payload.usage);
         }
     };
 
@@ -223,20 +231,10 @@ export function createExternalProviderTerminalTokenReader(input: Readonly<{
 
     return Object.freeze({
         push(chunk: Uint8Array): void {
-            if (overflowed) return;
             pending += decoder.decode(chunk, { stream: true });
             if (streamed) drainStreamedLines(false);
-            // UTF-16 length bounds the held UTF-8 bytes from below, so this
-            // never fires early; it fires once the held text is at least the budget.
-            if (pending.length > budget) {
-                overflowed = true;
-                pending = '';
-            }
         },
         read(): ExternalProviderTerminalTokenObservation {
-            if (overflowed) {
-                return Object.freeze({ outcome: failed || !completed ? 'failed' : 'succeeded', actualModelId: null, tokens: null });
-            }
             pending += decoder.decode();
             if (streamed) {
                 drainStreamedLines(true);
@@ -264,7 +262,7 @@ export function createExternalProviderTerminalTokenReader(input: Readonly<{
                                     && typeof choice.finish_reason === 'string' && choice.finish_reason.length > 0);
                     modelId = readModelId(payload.model);
                     if (completed) {
-                        tokens = routeTokens(input.routeKind, payload.usage);
+                        observeUsage(payload.usage);
                     }
                 }
                 failed ||= !completed;
@@ -272,7 +270,8 @@ export function createExternalProviderTerminalTokenReader(input: Readonly<{
             }
             return failed
                 ? Object.freeze({ outcome: 'failed', actualModelId: null, tokens: null })
-                : Object.freeze({ outcome: 'succeeded', actualModelId: modelId, tokens });
+                : Object.freeze({ outcome: 'succeeded', actualModelId: modelId, tokens,
+                    ...(reportedCostUsd !== undefined ? { reportedCostUsd } : {}) });
         },
     });
 }

@@ -27,7 +27,6 @@ import { applyWorkspaceFileReplace } from '@/rpc/handlers/workspaceFileReplace';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 type RequestContext = Readonly<{
     signal?: AbortSignal;
-    assertCurrentAuthority?: () => Promise<void>;
     requesterWorkAttributionV1?: RequesterWorkAttributionV1;
 }>;
 /** Native arguments can contain absolute URIs and remain inside the host. */
@@ -427,7 +426,6 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                 if (disposed)
                     return { status: 'unavailable', reason: 'session_unavailable' };
                 context?.signal?.throwIfAborted();
-                await context?.assertCurrentAuthority?.();
                 // Provider suggestions are dispatched by the shared RPC ingress to
                 // their Provider owner, independently of language-server lifetime.
                 if (input.kind === 'ai.inlineSuggest' || input.kind === 'ai.nextEdit') return { status: 'error', errorCode: 'unsupported' };
@@ -439,9 +437,9 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                     if (input.kind !== 'diagnostics' || input.scope !== 'project' || input.text !== 'disk') return null;
                     for (const path of root.documents.keys()) {
                         if (!heldDocument(root, path)?.unsaved) continue;
-                        await context?.assertCurrentAuthority?.();
+                        context?.signal?.throwIfAborted();
                         const bytes = await readFile(resolveWorkspacePath({ rootPath: root.path, platform }, path));
-                        await context?.assertCurrentAuthority?.();
+                        context?.signal?.throwIfAborted();
                         return { status: 'error' as const, errorCode: 'unsaved_editor_changes' as const, diskHash: createHash('sha256').update(bytes).digest('hex') };
                     }
                     return null;
@@ -456,9 +454,9 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                 let diskText: string | undefined, fileHash: string | undefined;
                 const existing = heldDocument(root, input.path);
                 if (input.text === 'disk' || !existing) {
-                    await context?.assertCurrentAuthority?.();
+                    context?.signal?.throwIfAborted();
                     const bytes = await readFile(absolute);
-                    await context?.assertCurrentAuthority?.();
+                    context?.signal?.throwIfAborted();
                     diskText = bytes.toString('utf8');
                     fileHash = createHash('sha256').update(bytes).digest('hex');
                 }
@@ -543,9 +541,9 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                     return errorResponse(errors[0]);
                 }
                 const provenance = { status: 'ok' as const, version: document.version, generation: root.generation, ...(fileHash ? { fileHash } : {}) };
-                await context?.assertCurrentAuthority?.();
+                context?.signal?.throwIfAborted();
                 const result = await projectResults(root, input.kind, ready, provenance, { ...input, position });
-                await context?.assertCurrentAuthority?.();
+                context?.signal?.throwIfAborted();
                 const afterConflict = await projectDiskConflict();
                 if (afterConflict) return afterConflict;
                 context?.signal?.throwIfAborted();
@@ -574,22 +572,23 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
         async apply(input, context) {
             const retained: Array<{ id: string; session: ServerSession; path: string }> = [];
             const results: Extract<DaemonWorkspaceFileReplaceApplyResponse, { ok: true }>['results'] = [];
+            let truncated = false;
             try {
                 context?.signal?.throwIfAborted();
-                await context?.assertCurrentAuthority?.();
                 const root = rootFor(input.rootPath);
                 const applyFiles = async (files: WorkspaceFileEditSetFile[]) => {
                     for (const file of files) {
                         if (heldDocument(root, file.path)?.unsaved) {
-                            await context?.assertCurrentAuthority?.();
+                            context?.signal?.throwIfAborted();
                             const bytes = await readFile(resolveWorkspacePath({ rootPath: root.path, platform }, file.path));
-                            await context?.assertCurrentAuthority?.();
+                            context?.signal?.throwIfAborted();
                             throw new LspWorkspaceEditError('unsaved_editor_changes', createHash('sha256').update(bytes).digest('hex'));
                         }
                     }
                     const response = await applyWorkspaceFileReplace({ rootPath: root.path, operation: { kind: 'editSet', files } }, root.path,
                         { kind: 'restrictedRoots', roots: [root.path] }, context);
                     if (response.ok) {
+                        truncated ||= response.truncated === true;
                         results.push(...response.results);
                         const renamed = response.results.flatMap(result => result.status === 'replaced' && result.renameTo ? [{ path: result.path, renameTo: result.renameTo }] : []);
                         for (const session of rootSessions(root)) {
@@ -599,9 +598,9 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                                 try { path = localPath(session, root, result.path); } catch { continue; }
                                 const held = session.document(path);
                                 if (held && !held.unsaved) {
-                                    await context?.assertCurrentAuthority?.();
+                                    context?.signal?.throwIfAborted();
                                     const text = (await readFile(resolveWorkspacePath({ rootPath: root.path, platform }, result.path))).toString('utf8');
-                                    await context?.assertCurrentAuthority?.();
+                                    context?.signal?.throwIfAborted();
                                     await session.snapshot({ ...held, text, version: held.version + 1 });
                                 }
                             }
@@ -617,9 +616,9 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                 }
                 const operation = input.operation;
                 if (operation.action.disabledReason !== undefined) return { status: 'error', errorCode: 'unsupported' };
-                await context?.assertCurrentAuthority?.();
+                context?.signal?.throwIfAborted();
                 const bytes = await readFile(resolveWorkspacePath({ rootPath: root.path, platform }, input.path));
-                await context?.assertCurrentAuthority?.();
+                context?.signal?.throwIfAborted();
                 const diskHash = createHash('sha256').update(bytes).digest('hex');
                 if (heldDocument(root, input.path)?.unsaved) return { status: 'error', errorCode: 'unsaved_editor_changes', diskHash };
                 if (diskHash !== operation.expectedHash) return { status: 'error', errorCode: 'stale_query' };
@@ -648,19 +647,20 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                     if (!nativeAction) throw new LspWorkspaceEditError('invalid_request');
                     const command = readCodeActionCommand(nativeAction);
                     const initial = await applyFiles(action.files);
-                    if (!initial.ok || initial.results.some(result => result.status !== 'replaced' || result.reason !== undefined)) return initial;
+                    if (!initial.ok || initial.truncated || initial.results.some(result => result.status !== 'replaced' || result.reason !== undefined)) return initial;
                     if (command) {
-                      await context?.assertCurrentAuthority?.();
+                      context?.signal?.throwIfAborted();
                       await session.executeCommand(command, async edit => {
-                        await context?.assertCurrentAuthority?.();
+                        context?.signal?.throwIfAborted();
                         const files = await normalizeWorkspaceEdit({ rootPath: root.path, platform, edit, document: path => heldDocument(root, path) });
                         const applied = await applyFiles(files);
-                        return applied.ok && applied.results.every(result => result.status === 'replaced' && result.reason === undefined);
+                        return applied.ok && !applied.truncated && applied.results.every(result => result.status === 'replaced' && result.reason === undefined);
                       }, context?.signal);
                     }
-                    return { ok: true, results };
+                    return { ok: true, results, ...(truncated ? { truncated: true } : {}) };
                 } finally { hosted.activeOperations--; touch(id); }
             } catch (error) {
+                if (truncated) return { ok: true, results, truncated: true };
                 if (results.length) return { ok: true, results: [...results, { path: input.path, status: 'failed', reason: context?.signal?.aborted ? 'cancelled' : error instanceof LanguageServerSessionError ? error.code : 'request_failed' }], ...(context?.signal?.aborted ? { cancelled: [input.path] } : {}) };
                 return errorResponse(error);
             } finally {

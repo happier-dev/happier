@@ -2,14 +2,14 @@ import { ProviderDiscoveryCandidateV1Schema, createProviderDiscoveryCandidateIdV
 import { normalizeProviderEndpointUrlSyntax } from '@happier-dev/protocol/providers/safety/url';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { areProviderContributionKeysEqualV1 } from '@happier-dev/protocol/providers/contribution-identity';
-import type { ProviderDiscoveryCandidateV1 } from '@happier-dev/protocol';
+import type { ProviderDiscoveryCandidateV1, DaemonProviderConnectionViewV1 } from '@happier-dev/protocol';
 
 import type { NormalizedLocalServiceInventorySnapshot } from '@/daemon/local/services/inventory/scanner';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 
 export type ProviderDiscoveryConnectionEndpointView = Readonly<{
   endpointTemplateId: string;
-  baseUrl: string;
+  baseUrl: DaemonProviderConnectionViewV1['endpoints'][number]['baseUrl'];
 }>;
 
 export type ProviderDiscoveryConnectionView = Readonly<{

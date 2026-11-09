@@ -16,7 +16,6 @@ import { PROFILE_PROVIDER_CONVERSION_ROUTE_V1, ProfileProviderConversionMutation
 import { DEFAULT_PROVIDER_SETTINGS_V1, ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
 import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsCatalogV1Schema,
   splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -98,7 +97,7 @@ describe('public legacy Profile conflict confirmation', () => {
     const authorizationInput = { rawSettings: raw, context: baseContext, providersByContributionKey, machineId: 'machine-review' };
     const conflict = (await authorizeLegacyProfileMigrationContext({ ...authorizationInput,
       providerSettings: initialSettings,
-      lifetime: createProviderOperationLifetime({ wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs }),
+      lifetime: createProviderOperationLifetime({}),
     })).pendingConflicts?.[0];
     if (!conflict) throw new Error('Expected a credential conflict requiring review');
     expect(conflict.kinds).toContain('credential_binding');
@@ -107,7 +106,7 @@ describe('public legacy Profile conflict confirmation', () => {
     });
     const currentConflict = (await authorizeLegacyProfileMigrationContext({ ...authorizationInput,
       providerSettings: settings,
-      lifetime: createProviderOperationLifetime({ wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs }),
+      lifetime: createProviderOperationLifetime({}),
     })).pendingConflicts?.[0];
     if (!currentConflict) throw new Error('Expected exact current pending review facts');
     let catalog = splitProviderSettingsV1(settings).catalog;

@@ -7,7 +7,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { createCliProviderConnectionsStore, createCliProviderConnectionsStoreForOperation } from '@/providers/settings/catalogStore';
 import type { refreshActiveProviderConnectionsCatalog } from '@/providers/settings/hydrate';
-import type { resolveMergedContributionRegistry } from '@/plugins/projection/registry/merged';
+import type { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { promoteSavedSecretWithProviderConnectionsCatalog } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
@@ -38,10 +38,10 @@ export function createCliAccountProviderActionExecuteV1(params: Readonly<{
     }
     let registry: ReturnType<typeof resolveMergedContributionRegistry> | undefined;
     let wroteCatalog = false;
-    const readRegistry = async () => {
+    const readRegistry = async (providerContributionKeys?: readonly string[]) => {
       if (registry) return registry;
       const { resolveMergedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
-      return registry ??= resolveMergedContributionRegistry();
+      return registry ??= resolveMergedContributionRegistry({ providerContributionKeys });
     };
     const execute = createAccountProviderActionExecuteV1({
       assertCurrent: () => store.assertCurrent(),
@@ -61,9 +61,9 @@ export function createCliAccountProviderActionExecuteV1(params: Readonly<{
         if (result.status === 'outcome_unknown') throw Object.assign(new Error('Provider mutation outcome is unknown'), { code: 'outcome_unknown' });
         throw createProviderErrorV1('provider_secret_unavailable');
       },
-      readDefinitions: async () => {
-        const definitions = params.readDefinitions ? await params.readDefinitions()
-          : [...((await readRegistry()).providersByContributionKey ?? [])].map(([contributionKey, contribution]) => ({
+      readDefinitions: async contributionKeys => {
+        const definitions = params.readDefinitions ? await params.readDefinitions(contributionKeys)
+          : [...((await readRegistry(contributionKeys)).providersByContributionKey ?? [])].map(([contributionKey, contribution]) => ({
             contributionKey, definition: contribution.definition, provenance: contribution.provenance,
           }));
         await store.verifyCurrent();

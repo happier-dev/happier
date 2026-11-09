@@ -65,7 +65,7 @@ function fixture(shape: 'legacy' | 'discovery', published = true) {
         { revision: 1, record: { key: 'skill-rules', value: { v: 1, rules: [] } } },
       ], tombstones: [], diagnostics: [] } }),
       writeRecord: async () => ({ status: 'updated', revision: 1, cursor: 1 }) },
-    includeInSession: async () => ({ ok: true }), readLinkSkills: registry.readLinkSkills, fetchLinkSkillFiles: registry.fetchLinkSkillFiles,
+    includeInSession: async () => ({ ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } }), readLinkSkills: registry.readLinkSkills, fetchLinkSkillFiles: registry.fetchLinkSkillFiles,
   });
   const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
     skillActionExecute: ({ actionId, input, context }) => action(actionId, input, { surface: context.surface ?? null }),

@@ -11,10 +11,6 @@ import {
   ProviderOperationAbandonedError,
   type ProviderOperationLifetime,
 } from '../operationLifetime';
-import {
-  PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
-  ProviderProbeAdmissionCapacityError,
-} from '../probe/scheduler';
 
 import type {
   ProviderContributionRegistryView,
@@ -109,7 +105,7 @@ export async function collectProviderConnectionsDnsEvidence(input: Readonly<{
    * source-scoped failures. Without this consumer, DNS admission fails closed. */
   onConnectionResolved?: (connectionId: string, result: Readonly<{
     evidence: ProviderEndpointDnsEvidence;
-    error?: ProviderOperationAbandonedError | ProviderProbeAdmissionCapacityError;
+    error?: ProviderOperationAbandonedError;
   }>) => void;
 }>): Promise<ReadonlyMap<string, ProviderEndpointDnsEvidence>> {
   const urlsByConnectionId = new Map<string, readonly ProviderConnectionEndpointUrl[]>();
@@ -128,7 +124,7 @@ export async function collectProviderConnectionsDnsEvidence(input: Readonly<{
   const resolveAddresses = input.resolveAddresses ?? (async (hostname: string) =>
     (await lookup(hostname, { all: true, verbatim: true })).map((answer) => answer.address));
   const addressesByHostname = new Map<string, readonly string[]>();
-  const errorsByHostname = new Map<string, ProviderOperationAbandonedError | ProviderProbeAdmissionCapacityError>();
+  const errorsByHostname = new Map<string, ProviderOperationAbandonedError>();
   const evidenceByConnectionId = new Map<string, ProviderEndpointDnsEvidence>();
   const pendingHostsByConnectionId = new Map<string, Set<string>>();
   const connectionsByHostname = new Map<string, Set<string>>();
@@ -154,16 +150,7 @@ export async function collectProviderConnectionsDnsEvidence(input: Readonly<{
     if (pendingHosts.size === 0) publishConnection(connectionId);
   }
   const hostnames = [...hostnamesToResolve];
-  let nextHostnameIndex = 0;
-  const resolveWorker = async (): Promise<void> => {
-    while (true) {
-      // Reserve the hostname synchronously. Every worker may resume together
-      // after the lifetime check below, so advancing the shared cursor after
-      // that yield can otherwise run workers past the end of the collection.
-      const hostnameIndex = nextHostnameIndex;
-      if (hostnameIndex >= hostnames.length) return;
-      nextHostnameIndex += 1;
-      const hostname = hostnames[hostnameIndex]!;
+  await Promise.all(hostnames.map(async (hostname): Promise<void> => {
       // Refuse before invoking the resolver, not only while awaiting it. This
       // keeps cancellation from feeding more unabortable libuv work.
       try {
@@ -179,7 +166,6 @@ export async function collectProviderConnectionsDnsEvidence(input: Readonly<{
       } catch (error) {
         if (
           error instanceof ProviderOperationAbandonedError
-          || error instanceof ProviderProbeAdmissionCapacityError
         ) {
           if (!input.onConnectionResolved || input.lifetime.signal?.aborted) throw error;
           errorsByHostname.set(hostname, error);
@@ -192,17 +178,7 @@ export async function collectProviderConnectionsDnsEvidence(input: Readonly<{
         pendingHosts.delete(hostname);
         if (pendingHosts.size === 0) publishConnection(connectionId);
       }
-    }
-  };
-  await Promise.all(Array.from(
-    {
-      length: Math.min(
-        PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
-        hostnames.length,
-      ),
-    },
-    () => resolveWorker(),
-  ));
+  }));
 
   return evidenceByConnectionId;
 }

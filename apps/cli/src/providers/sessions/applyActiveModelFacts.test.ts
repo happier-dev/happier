@@ -7,6 +7,14 @@ import {
 import type { Metadata } from '@/api/types';
 import type { AuthorizedSessionModelTransitionTarget } from '@/providers/sessions/sessionModelTransitionCoordinator';
 import { applyActiveModelFacts } from './applyActiveModelFacts';
+import { createSessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+
+function appliedSelectionFact(target: AuthorizedSessionModelTransitionTarget) {
+  const fact = createSessionActiveModelSelection({ selection: target.selection, source: 'runtime_apply',
+    runner: { pid: 123, processStartTimeMs: 1_000 }, teamCredentialModel: null });
+  if (!fact) throw new Error('Invalid applied model selection fixture');
+  return fact;
+}
 
 const baseMetadata = {
   path: '/tmp/workspace',
@@ -25,6 +33,22 @@ const providerBindingUpstream = {
 };
 
 describe('applyActiveModelFacts', () => {
+  it.each([true, false])('does not publish configuration as observed current model when evidence is null (existing observation: %s)', (hasObservation) => {
+    const target = { selection: { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null,
+      modelId: 'configured' }, policy: 'live', providerBinding: null, sessionBindingMetadata: null,
+      runtimeBindingBasis: null, revalidateBeforeEffect: async () => true } satisfies AuthorizedSessionModelTransitionTarget;
+    const metadata: Metadata = { ...baseMetadata, ...(hasObservation ? { sessionModelsV1: {
+      v: 1 as const, agentId: 'qwen', updatedAt: 1, currentModelId: 'observed', availableModels: [{ id: 'observed', name: 'Observed' }],
+    } } : {}) };
+    const published = applyActiveModelFacts(metadata, target, 'qwen', null);
+    expect(published.sessionModelsV1?.currentModelId).toBe(hasObservation ? 'observed' : undefined);
+    expect(published.sessionModelsV1?.activeSelectionV1).toBeUndefined();
+    if (hasObservation) {
+      expect(published.sessionModelsV1?.availableModels).toContainEqual({ id: 'configured', name: 'configured' });
+    } else {
+      expect(published.sessionModelsV1).toBeUndefined();
+    }
+  });
   it('publishes an exact initial active model without replacing a newer durable intent', () => {
     const activeTarget = {
       selection: {
@@ -54,7 +78,7 @@ describe('applyActiveModelFacts', () => {
       },
     };
 
-    expect(applyActiveModelFacts(metadata, activeTarget, 'qwen')).toMatchObject({
+    expect(applyActiveModelFacts(metadata, activeTarget, 'qwen', appliedSelectionFact(activeTarget))).toMatchObject({
       modelSelectionIntentV1: {
         selection: pendingSelection,
       },
@@ -102,7 +126,7 @@ describe('applyActiveModelFacts', () => {
       },
     } satisfies Metadata;
 
-    expect(applyActiveModelFacts(metadata, activeTarget, 'qwen')).toMatchObject({
+    expect(applyActiveModelFacts(metadata, activeTarget, 'qwen', appliedSelectionFact(activeTarget))).toMatchObject({
       sessionModelsV1: {
         agentId: 'qwen',
         updatedAt: 0,
@@ -155,7 +179,7 @@ describe('applyActiveModelFacts', () => {
       revalidateBeforeEffect: async () => true,
     } satisfies AuthorizedSessionModelTransitionTarget;
 
-    const published = applyActiveModelFacts(baseMetadata, activeTarget, 'claude');
+    const published = applyActiveModelFacts(baseMetadata, activeTarget, 'claude', appliedSelectionFact(activeTarget));
     expect(
       published.sessionModelsV1?.availableModels[0]?.modelOptions?.[1]?.overridesWhenOn,
     ).toEqual({ optionIds: ['reasoning_effort'], forcedValue: 'xhigh' });
@@ -194,7 +218,7 @@ describe('applyActiveModelFacts', () => {
     } satisfies AuthorizedSessionModelTransitionTarget;
 
     expect(
-      applyActiveModelFacts(baseMetadata, activeTarget, 'qwen'),
+      applyActiveModelFacts(baseMetadata, activeTarget, 'qwen', appliedSelectionFact(activeTarget)),
     ).toMatchObject({
       sessionModelsV1: {
         currentModelId: 'provider-model',
@@ -260,7 +284,7 @@ describe('applyActiveModelFacts', () => {
     } satisfies Metadata;
 
     expect(
-      applyActiveModelFacts(metadata, activeTarget, 'qwen')
+      applyActiveModelFacts(metadata, activeTarget, 'qwen', appliedSelectionFact(activeTarget))
         .sessionModelsV1?.availableModels,
     ).toEqual([{
       id: 'provider-model',

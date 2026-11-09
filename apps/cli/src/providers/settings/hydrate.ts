@@ -1,4 +1,5 @@
 import { $ZodError } from 'zod/v4/core';
+import { awaitWithinProviderOperation, type ProviderOperationLifetime } from '../operationLifetime';
 import { isRetryableAccountEncryptionCurrentnessError } from '@/api/client/accountEncryptionCurrentness';
 import type { ProviderConnectionsCatalogSnapshotV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { randomUUID } from 'node:crypto';
@@ -9,7 +10,7 @@ import { beginActiveProviderConnectionsCatalogRefresh, commitActiveProviderConne
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { sameProviderConnectionsCatalogAuthority } from '@/providers/lifecycle/currentAccountSettingsSnapshot';
 import { createCliProviderConnectionsStore, createCliProviderConnectionsStoreForOperation, observeProviderCatalogPhase } from './catalogStore';
-import { runWithRequesterSessionCurrentnessCheckpoint } from '@/daemon/sessionEncryption/requesterCurrentness';
+
 export { readActiveProviderConnectionsCatalog } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 const pending = new Map<string, {
@@ -28,6 +29,26 @@ export function prepareProviderConnectionsCatalogForCli(input: CliCatalogInput):
   return readProviderConnectionsCatalogForCli(input, false);
 }
 
+/** Join only an already-owned observation; spawn revalidation must not start a fallback read. */
+export async function waitForPendingProviderConnectionsCatalogRefreshForCli(input: Readonly<{
+  expectedScopeKey: string; lifetime: ProviderOperationLifetime;
+}>): Promise<void> {
+  if (getActiveAccountSettingsSnapshot()?.scopeKey !== input.expectedScopeKey) return;
+  const key = `${input.expectedScopeKey}:${getActiveAccountSettingsSnapshotLifetimeToken()}`;
+  const refresh = pending.get(key);
+  if (!refresh) return;
+  let onReadable!: () => void;
+  const readable = new Promise<void>(resolve => { onReadable = resolve; });
+  refresh.readers.add(onReadable);
+  try {
+    // Readable publication precedes optional history maintenance. Both this
+    // reader and ordinary preparation share that same settlement edge.
+    await awaitWithinProviderOperation(Promise.race([refresh.completion, readable]), input.lifetime);
+  } finally {
+    refresh.readers.delete(onReadable);
+  }
+}
+
 /** Explicit machine operations reobserve row authority before capturing their basis. */
 export function refreshProviderConnectionsCatalogForCli(input: CliCatalogInput): Promise<ProviderConnectionsCatalogSnapshotV1> {
   return readProviderConnectionsCatalogForCli(input, true);
@@ -36,7 +57,7 @@ export function refreshProviderConnectionsCatalogForCli(input: CliCatalogInput):
 function readProviderConnectionsCatalogForCli(input: CliCatalogInput, reobserve: boolean): Promise<ProviderConnectionsCatalogSnapshotV1> {
   // Admission, row loading and local publication are one read preparation.
   // The store exits this checkpoint before source mutations or history cleanup.
-  return runWithRequesterSessionCurrentnessCheckpoint(async () => {
+  return (async () => {
     const snapshot = input.operationContext ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
     const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
     if (snapshot?.scopeKey !== input.expectedScopeKey) return { status: 'unavailable', reason: 'scope-retired' };
@@ -71,7 +92,7 @@ function readProviderConnectionsCatalogForCli(input: CliCatalogInput, reobserve:
     }
     if (result.status !== 'ready') return result;
     return admitted.providerConnectionsCatalog ?? { status: 'unavailable', reason: 'unreachable' };
-  }, { readOnly: true });
+  })();
 }
 
 /** Demand-load the sole catalog in the caller's existing Account custody. */

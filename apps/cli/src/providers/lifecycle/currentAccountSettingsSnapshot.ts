@@ -22,8 +22,8 @@ export function sameProviderConnectionsCatalogAuthority(
 }
 
 /**
- * Keeps a Provider operation tied to one account while re-reading the current
- * version for authorization and commit revalidation. Live mode fails closed
+ * Keeps Provider reads tied to one Account. Each new admission consumes the
+ * current owner result, not a settings revision fence. Live mode fails closed
  * when that owner disappears or changes scope; static mode is only for an
  * operation that had no live settings owner and intentionally retains its
  * bootstrap snapshot.
@@ -38,7 +38,7 @@ export function createAuthoritativeProviderSnapshotReader(input: Readonly<{
     const current = input.readCurrent();
     if (!current) return null;
     if (!input.initial.scopeKey || current.scopeKey !== input.initial.scopeKey) return null;
-    return current.settingsVersion >= input.initial.settingsVersion ? current : null;
+    return current;
   };
 }
 
@@ -59,7 +59,7 @@ export function createAccountBoundProviderSnapshotReader(
       return current;
     }
     if (initial.scopeKey) {
-      if (current.scopeKey !== initial.scopeKey || current.settingsVersion < initial.settingsVersion) {
+      if (current.scopeKey !== initial.scopeKey) {
         return null;
       }
       initial = current;

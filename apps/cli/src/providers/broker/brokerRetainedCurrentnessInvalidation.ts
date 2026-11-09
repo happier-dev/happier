@@ -2,7 +2,7 @@ import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol'
 
 /** Facts delivered by the existing Account change feed to retained broker custody. */
 export type ProviderBrokerRetainedCurrentnessInvalidation = Readonly<{
-  facts: readonly ('all' | 'teams' | 'connected-services' | 'connected-catalog' | 'saved-secrets' | 'provider-connections')[];
+  facts: readonly ('all' | 'teams' | 'team-credential-material' | 'connected-services' | 'connected-catalog' | 'saved-secrets' | 'provider-connections')[];
   /** Absent means every Connected Service; a present list retains the feed's exact scope. */
   connectedServiceRefs?: readonly QualifiedConnectedAccountServiceRef[];
 }>;

@@ -17,24 +17,26 @@ import {
     type ProviderBrokerRouteGrantExpectedBindingV1,
 } from '@/daemon/peer/mediation/verifyProviderBrokerRouteGrantV1';
 import type { DirectRouteGrantTrustRoot } from '@/daemon/peer/mediation/verifyRouteGrantSignature';
-import { evaluateTeamCredentialRequestPolicyV1, type TeamCredentialRequestPolicyFailureCodeV1 } from './requestPolicyV1';
+import { evaluateTeamCredentialRequestPolicyV1, sanitizeProviderBrokerRequestV1, type TeamCredentialRequestPolicyFailureCodeV1 } from './requestPolicyV1';
 import type {
     TeamCredentialProviderBrokerApplicationCarrierRequestV1,
     TeamCredentialRequestPolicyV1,
     TeamCredentialRequestProtocolKindV1,
     TeamCredentialSourceBindingV1,
+    TeamCredentialSourceMemberV1,
     TeamCredentialUsageLimitDenialV1,
 } from '@happier-dev/protocol/teams';
 import { createExternalProviderTerminalTokenReader } from './externalProviderTerminalTokens';
 import { isSameTeamCredentialBrokerApplication } from './teamCredentialModelCatalog';
 import { readProviderBrokerTransportFailure } from './providerBrokerTransportFailure';
-import { runProviderBrokerApplicationPhase } from './providerBrokerApplicationFailureContext';
+import { providerBrokerEndpointPhaseDiagnostic, runProviderBrokerApplicationPhase } from './providerBrokerApplicationFailureContext';
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH, PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH,
     PROVIDER_BROKER_MODEL_ID_HEADER, projectProviderBrokerEndpointMetadata } from './providerBrokerPrivateProtocol';
-import type { SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import type { SignedProviderBrokerRouteGrantV2, ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import type { TeamCredentialBrokerSourceOpenFailureReason } from './teamCredentialBrokerSourceOwner';
 import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 async function requestProviderAccess(
     access: ManagedProviderEndpointHttpAccess,
@@ -78,8 +80,8 @@ export type ProviderBrokerExternalRequestPolicySnapshot =
         policy: TeamCredentialRequestPolicyV1 | null;
         modelCatalog: TeamCredentialRequestModelCatalog;
     }> & (
-        | Readonly<{ kind: 'application'; application: ProviderBrokerApplicationBindingV1 }>
-        | Readonly<{ kind: 'model_catalog'; applications: readonly ProviderBrokerApplicationBindingV1[] }>
+        | Readonly<{ kind: 'application'; application: ProviderBrokerSourceApplicationBindingV1 }>
+        | Readonly<{ kind: 'model_catalog'; applications: readonly ProviderBrokerSourceApplicationBindingV1[] }>
     ));
 
 export type ProviderBrokerModelCatalogAuthorization =
@@ -90,12 +92,12 @@ export type ProviderBrokerModelCatalogAuthorization =
     | Readonly<{
         kind: 'external_api_key';
         binding: Extract<ProviderBrokerRelayApplicationBindingV1, { kind: 'external_api_key' }>;
-        application: ProviderBrokerApplicationBindingV1;
+        application: ProviderBrokerSourceApplicationBindingV1;
     }>
     | Readonly<{
         kind: 'resource_test';
         binding: Extract<ProviderBrokerRelayApplicationBindingV1, { kind: 'resource_test' }>;
-        application: ProviderBrokerApplicationBindingV1;
+        application: ProviderBrokerSourceApplicationBindingV1;
     }>;
 
 /** Host-private lifetime attached to one carrier-authenticated application stream. */
@@ -109,8 +111,10 @@ export type ProviderBrokerApplicationStreamLifetime = Readonly<{
         application: ProviderBrokerApplicationBindingV1;
         modelId: string;
         sourceRevision: string;
+        /** The member the Home admitted this request against. */
+        admittedSourceMember?: TeamCredentialSourceMemberV1;
     }>): Promise<Readonly<{ access: ManagedProviderEndpointHttpAccess; sourceMemberKey: string }>
-        | Readonly<{ ok: false; reasonCode: 'resource_unavailable';
+        | Readonly<{ ok: false; reasonCode: 'resource_unavailable' | typeof CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired;
             sourceOpenFailureReason?: TeamCredentialBrokerSourceOpenFailureReason }> | null>;
     /** Releases this stream's joined view. The operation keeps serving its
      * other streams and the ones it has not opened yet. */
@@ -180,10 +184,12 @@ export type ProviderBrokerRequestHandler = (input: Readonly<{
 }>) => Promise<ProviderBrokerRequestHandlerResult>;
 
 type ProviderBrokerExternalTerminalUsage = Readonly<{
+    requestCostParser?: import('@happier-dev/plugin-sdk/providers').ProviderRequestCostParser;
     record(input: Readonly<{
         outcome: 'succeeded' | 'failed' | 'cancelled';
         actualModelId: string | null;
         tokens: UsageObservationTokens | null;
+        reportedCostUsd?: number;
     }>): Promise<void>;
 }>;
 
@@ -207,6 +213,7 @@ async function observeExternalTerminalResponse(
     const tokenReader = createExternalProviderTerminalTokenReader({
         routeKind,
         contentType: readResponseContentType(response),
+        requestCostParser: terminalUsage.requestCostParser,
     });
     let recorded = false;
     const record = async (outcome: 'succeeded' | 'failed' | 'cancelled'): Promise<void> => {
@@ -308,7 +315,7 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
     admitExternal?: (input: Readonly<{
         binding: Extract<ProviderBrokerRelayApplicationBindingV1, { kind: 'external_api_key' }>;
         expectedResourceRevision: number;
-        application: ProviderBrokerApplicationBindingV1;
+        application: ProviderBrokerSourceApplicationBindingV1;
         request: ManagedServiceRequest;
         requestFacts: ProviderBrokerRequestAdmission['requestFacts'];
     }>) => Promise<Readonly<{
@@ -322,14 +329,14 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
     }>) => Promise<Readonly<{
         resourceRevision: number;
         policy: TeamCredentialRequestPolicyV1 | null;
-        application: ProviderBrokerApplicationBindingV1;
+        application: ProviderBrokerSourceApplicationBindingV1;
         modelCatalog: TeamCredentialRequestModelCatalog;
     }> | null>;
     admitResourceTest?: (input: Readonly<{
         binding: Extract<ProviderBrokerRelayApplicationBindingV1, { kind: 'resource_test' }>;
         relayAuthorization: PeerTcpTunnelRelayAuthorizationV2;
         expectedResourceRevision: number;
-        application: ProviderBrokerApplicationBindingV1;
+        application: ProviderBrokerSourceApplicationBindingV1;
         request: ManagedServiceRequest;
         requestFacts: ProviderBrokerRequestAdmission['requestFacts'];
     }>) => Promise<Readonly<{ ok: true; access: ManagedProviderEndpointHttpAccess }> | Readonly<{ ok: false; reasonCode: TeamCredentialBrokerApplicationFailureCodeV1; usageLimit?: TeamCredentialUsageLimitDenialV1 }>>;
@@ -378,6 +385,8 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
             }
             if (context.releaseOnly) return { ok: false, reasonCode: 'grant_expired' };
             try {
+                const sanitized = sanitizeProviderBrokerRequestV1(request);
+                if (!sanitized) return { ok: false, reasonCode: 'request_malformed' };
                 const access = await context.acquireSource(request.signal);
                 if (!access) return { ok: false, reasonCode: 'resource_unavailable' };
                 request.signal?.throwIfAborted();
@@ -386,7 +395,7 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
                         access.endpointUrl(context.authority.payload.application.endpointTemplateId));
                     return response ? { ok: true, response } : { ok: false, reasonCode: 'resource_unavailable' };
                 }
-                return await requestProviderAccess(access, request);
+                return await requestProviderAccess(access, sanitized);
             } catch {
                 return { ok: false, reasonCode: 'broker_unavailable' };
             }
@@ -547,6 +556,7 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
         if (!verification.valid) return { ok: false, reasonCode: verification.reasonCode };
 
         const requestId = input.createRequestId();
+        const phaseDiagnostic = providerBrokerEndpointPhaseDiagnostic(verification.authority.payload, request);
         const streamLifetime = context.streamLifetime;
         const authorizeModelCatalog = input.authorizeModelCatalog;
 
@@ -575,7 +585,7 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
             input.resolveRequestPolicy({
                 authority: verification.authority.payload,
                 request,
-            }));
+            }), phaseDiagnostic);
         if (!policySnapshot) return { ok: false, reasonCode: 'resource_unavailable' };
         // The resource revision is deliberately not compared against the
         // signed authority: it is a mutable policy fact and this request
@@ -599,12 +609,11 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
             if (!modelId || !policySnapshot.modelCatalog.models.some(model => model.id === modelId)) {
                 return { ok: false, reasonCode: 'model_not_allowed' };
             }
-            const authorize = () => runProviderBrokerApplicationPhase('model_catalog_authorization', requestId, () =>
+            const authorized = await runProviderBrokerApplicationPhase('model_catalog_authorization', requestId, () =>
                 authorizeModelCatalog({
                     authorization: { kind: 'private', authority: verification.authority },
                     expectedResourceRevision: policySnapshot.resourceRevision, request,
-                }));
-            const authorized = await authorize();
+                }), phaseDiagnostic);
             if (!authorized.ok) return authorized;
             // The exact runtime must be materialized to read its declaration.
             // Home authorizes this private metadata demand first; no inference,
@@ -617,11 +626,9 @@ export function createProviderBrokerRequestHandler(input: Readonly<{
                     expectedResourceRevision: policySnapshot.resourceRevision,
                     application: verification.authority.payload.application,
                     modelId, sourceRevision: policySnapshot.sourceRevision,
-                }));
+                }), phaseDiagnostic);
             if (!selected) return { ok: false, reasonCode: 'resource_unavailable' };
             if ('reasonCode' in selected) return selected;
-            const current = await authorize();
-            if (!current.ok) return current;
             request.signal?.throwIfAborted();
             const response = projectProviderBrokerEndpointMetadata(selected.access.endpointUrl(
                 verification.authority.payload.application.endpointTemplateId));

@@ -1,10 +1,10 @@
-import { PROVIDER_SETTINGS_LIMITS_V1 } from '@happier-dev/protocol/providers/settings/limits';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { readOwnRecordValue } from '@happier-dev/protocol/providers/ownRecordValue';
 import { resolveProviderGrantV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
-import { resolveProviderManagedRuntimeDeclarationV1, providerEndpointPolicySecurityFactsV1 } from '@happier-dev/protocol/providers/contributions';
+import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
+import { providerEndpointPolicySecurityFactsV1 } from '@happier-dev/protocol/providers/contributions';
 import { resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
-import { projectAvailableProviderContributionsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
+import { projectAvailableProviderContributionsV1, readProviderAdditionalCredentialSlotsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
 import { describeAccountProviderConnectionV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
 import type { ProviderErrorV1, ResolvedProviderManagedConnectedAccountPurposeDeclarationV1 } from '@happier-dev/protocol';
 
@@ -27,6 +27,7 @@ import {
 import type { ProviderConnectionRegistryProjection } from './types';
 import type { ProviderLocalInstallationReadResult } from '@/providers/discovery/installations';
 import { isRemoteProviderGatewayPlacement } from '@/providers/managed/gatewayPlacement';
+import { errorForProviderResolution } from '@/providers/registry/resolutionError';
 
 const EMPTY_RUNTIME_SUMMARY: ProviderConnectionRuntimeSummary = Object.freeze({
   health: 'not_checked', modelCount: null, checkedAt: null, endpoints: [],
@@ -207,7 +208,8 @@ export async function describeProviderConnections(
       const accountState = accountView.grants.accountState;
       const machineState = machineGrantResolution?.state ?? (machineGrant ? 'stale' as const : 'absent' as const);
       const effectiveState = effectiveGrantResolution?.state
-        ?? (resolution.status === 'endpoint_unresolved' && (readOwnRecordValue(connection.endpointOverridesByMachineId, input.machineId)?.length ?? 0) === 0
+        ?? (resolution.status === 'endpoint_unresolved'
+          && (readOwnRecordValue(connection.endpointOverridesByMachineId, input.machineId)?.length ?? 0) === 0
           ? accountState : 'absent' as const);
       let runtimeProjection: ProviderConnectionRuntimeProjection = EMPTY_RUNTIME_PROJECTION;
       let runtimeError: ProviderErrorV1 | null = null;
@@ -333,6 +335,9 @@ export async function describeProviderConnections(
                 .filter(([, slots]) => Boolean(slots[credentialDefinition.slotId]))
                 .map(([machineId]) => machineId)
                 .sort(),
+              ...(credentialDefinition.authorityDescription ? { authorityDescription: credentialDefinition.authorityDescription } : {}),
+              ...(readProviderAdditionalCredentialSlotsV1(credentialDefinition).length ? { additionalCredentials: readProviderAdditionalCredentialSlotsV1(credentialDefinition).map(slot => ({ ...slot,
+                accountBound: Boolean(credentialBindings?.account?.[slot.slotId]), boundMachineIds: Object.entries(credentialBindings?.byMachineId ?? {}).filter(([, slots]) => slots[slot.slotId]).map(([id]) => id).sort() })) } : {}),
               ...('keyUrl' in credentialDefinition && credentialDefinition.keyUrl
                 ? { keyUrl: credentialDefinition.keyUrl }
                 : {}),
@@ -357,20 +362,9 @@ export async function describeProviderConnections(
         endpoints,
         scope: resolved?.record.scope ?? null,
         authorized: resolved?.record.authorization.authorized === true && runtimeError === null,
-        authorizationError: runtimeError ?? (resolved?.record.authorization.authorized === false
-          ? createProviderErrorV1(resolved.record.authorization.errorCode, { connectionId: connection.id, machineId: input.machineId })
-          : resolution.status === 'source_unavailable'
-            ? createProviderErrorV1('provider_contribution_unavailable', { connectionId: connection.id, machineId: input.machineId })
-            : resolution.status === 'endpoint_unresolved'
-              ? createProviderErrorV1(
-                  resolution.reason === 'endpoint_resolution_required'
-                    ? 'provider_endpoint_unreachable'
-                    : 'provider_connection_invalid',
-                  { connectionId: connection.id, machineId: input.machineId },
-                )
-              : resolution.status === 'invalid' || resolution.status === 'missing' || resolution.status === 'deleted'
-                ? createProviderErrorV1('provider_connection_not_found', { connectionId: connection.id, machineId: input.machineId })
-                : null),
+        authorizationError: runtimeError ?? (resolved?.record.authorization.authorized === true
+          ? null
+          : errorForProviderResolution(resolution, input.machineId)),
         revision: connection.revision,
         probeObservationIdentity: runtimeProjection.probeObservationIdentity,
         runtime: gatewayRuntime ? { ...runtimeProjection.summary, gateway: gatewayRuntime } : runtimeProjection.summary,
@@ -424,10 +418,8 @@ export async function describeProviderConnections(
     discoveryCandidatesTruncated: false,
     localInstallations: [...localInstallations],
     localInstallationsStatus: installationRead.status,
-    diagnostics: read.diagnostics
-      .slice(0, PROVIDER_SETTINGS_LIMITS_V1.readDiagnostics)
-      .map(redactProviderSettingsDiagnostic),
-    diagnosticsTruncated: read.diagnostics.length > PROVIDER_SETTINGS_LIMITS_V1.readDiagnostics,
+    diagnostics: read.diagnostics.map(redactProviderSettingsDiagnostic),
+    diagnosticsTruncated: false,
     availableTruncated: false,
     ...(input.connectionId !== undefined ? {
       deletedConnection: deletedConnection

@@ -78,7 +78,6 @@ describe('provider spawn runtime catalog bridge', () => {
           lastAccessedAt: 20,
         },
       ],
-      installationChecks: [],
       modelLoadStates: [{
         key: {
           machineId: 'machine-a',
@@ -180,7 +179,6 @@ describe('provider spawn runtime catalog bridge', () => {
         },
         lastAccessedAt: 30,
       }],
-      installationChecks: [],
       modelLoadStates: [{
         key: {
           machineId: 'machine-a',
@@ -241,7 +239,6 @@ describe('provider spawn runtime catalog bridge', () => {
           lastAccessedAt: 20,
         },
       ],
-      installationChecks: [],
       modelLoadStates: [],
     });
     const lookup = (modelId: string) => selectProviderRuntimeCatalogModel({
@@ -275,7 +272,6 @@ describe('provider spawn runtime catalog bridge', () => {
         },
         lastAccessedAt: 30,
       }],
-      installationChecks: [],
       modelLoadStates: [],
     });
 
@@ -316,7 +312,6 @@ describe('provider spawn runtime catalog bridge', () => {
         },
         lastAccessedAt: 20,
       })),
-      installationChecks: [],
       modelLoadStates: [],
     });
     const original = String.prototype.localeCompare;
@@ -550,7 +545,6 @@ describe('provider spawn runtime catalog bridge', () => {
         },
         lastAccessedAt: 20,
       }],
-      installationChecks: [],
       modelLoadStates: [],
     });
     const resolveManagedPurposeBindingIntent = vi.fn<

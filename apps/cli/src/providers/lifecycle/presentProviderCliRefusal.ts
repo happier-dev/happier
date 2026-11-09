@@ -3,8 +3,10 @@ import {
   type ProviderErrorV1,
   type ProviderRecoveryActionV1,
 } from '@happier-dev/protocol';
+import type { SavedSecretOperationAdmissionFailureReasonV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 const ERROR_SUMMARIES = {
+  connected_service_credential_reconnect_required: 'The selected Connected Account needs reconnecting. Reconnect the profile, or ask its source owner to reconnect it.',
   model_not_granted: 'The selected model is not included in the access grant.',
   permission_mode_not_granted: 'The requested permission mode is not included in the access grant.',
   provider_feature_disabled: 'Provider features are unavailable.',
@@ -35,6 +37,7 @@ const ERROR_SUMMARIES = {
   provider_endpoint_unauthorized: 'The Provider rejected the credential.',
   provider_probe_response_invalid: 'The Provider returned an invalid catalog response.',
   provider_model_not_found: 'The Provider model was not found.',
+  provider_model_config_option_unsupported: 'The selected Provider model or Agent does not support the requested reasoning effort.',
   provider_model_unloaded: 'The Provider model is not loaded.',
   provider_authorization_changed: 'Provider authorization changed during the request.',
   provider_binding_changed: 'The persisted Provider binding no longer matches.',
@@ -51,6 +54,7 @@ const ERROR_SUMMARIES = {
   provider_settings_limit_exceeded: 'The Provider settings limit was exceeded.',
   provider_settings_invalid: 'The Provider settings are invalid.',
   provider_connection_invalid: 'The Provider connection is invalid.',
+  provider_account_scope_required: 'This Provider uses a public endpoint. Enable the connection for the Account.',
   provider_profile_migration_source_changed: 'The source profile changed during Provider migration.',
   provider_profile_migration_source_not_found: 'The source profile was not found for Provider migration.',
   provider_profile_migration_conflict: 'The Provider profile migration conflicts with current settings.',
@@ -78,6 +82,19 @@ const RECOVERY_GUIDANCE = {
   review_profile_migration: 'Review the Provider profile migration before trying again.',
   review_current_state: 'Review current Provider state before making another change.',
 } as const satisfies Record<ProviderRecoveryActionV1, string>;
+
+/** Names the Saved Secret owner's reason so a refusal is never read as an absent secret. */
+const SAVED_SECRET_REASON_DETAILS = {
+  reference_missing: 'The selected Saved Secret does not exist.',
+  reference_unavailable: 'The Saved Secret could not be read right now.',
+  reference_forbidden: 'This Account no longer has access to the shared Saved Secret.',
+  reference_deleted: 'The shared Saved Secret was deleted.',
+  reference_mode_incompatible: 'The shared Saved Secret uses an encryption mode this Account cannot open.',
+  reference_repair_required: 'The shared Saved Secret needs an update before it can be used.',
+  reference_corrupt: 'The Saved Secret is damaged and needs replacing.',
+  reference_stale: 'The Saved Secret changed after this binding was saved.',
+  reference_collision_migration_required: 'The Saved Secret reference needs migrating before it can be used.',
+} as const satisfies Record<SavedSecretOperationAdmissionFailureReasonV1, string>;
 
 const MAX_PRESENTATION_LINE_LENGTH = 512;
 const TERMINAL_UNSAFE_CHARACTER = /[\u0000-\u001f\u007f-\u009f\p{Cf}\p{Zl}\p{Zp}]/u;
@@ -124,6 +141,7 @@ export function presentProviderCliRefusal(error: ProviderErrorV1): readonly stri
     error.code === 'provider_run_credential_selection_required'
       ? 'Select a Team credential explicitly for this Run.'
       : RECOVERY_GUIDANCE[error.action],
+    ...(error.savedSecretReason ? [`Saved Secret: ${SAVED_SECRET_REASON_DETAILS[error.savedSecretReason]}`] : []),
     ...(error.connectionId ? [presentBoundedCliContext('Connection', error.connectionId)] : []),
     ...(error.machineId ? [presentBoundedCliContext('Machine', error.machineId)] : []),
     ...(error.sourceProfileId ? [presentBoundedCliContext('Source profile', error.sourceProfileId)] : []),

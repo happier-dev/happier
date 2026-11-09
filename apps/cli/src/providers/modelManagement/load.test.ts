@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol';
+import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderContributionV1Schema, ProviderSettingsV1Schema,
+  createProviderErrorV1, splitProviderSettingsV1, type ProviderErrorV1 } from '@happier-dev/protocol';
+import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createProviderRuntimeStateStore } from '../runtimeState';
+import { resolveProviderConnectionForMachine } from '../registry';
+import { createRuntimeProviderModelManagementServices } from './runtimeServices';
 
 import {
   createProviderModelLoadHttpPort,
@@ -30,6 +38,91 @@ const descriptor = {
   confirmation: 'refresh-catalog-load-state',
   preflightPolicy: 'advisory',
 } as const;
+
+it('coalesces admitted model loads past the former ten-minute cutoff and a connection rename', async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), 'happier-admitted-load-'));
+  const definition = ProviderContributionV1Schema.parse({
+    v: 1, id: 'loader', name: 'Loader', kind: 'local',
+    endpointTemplates: [{ id: 'management', protocol: 'openai-chat', localUrlCandidates: ['http://127.0.0.1:1234/'],
+      capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
+    catalog: { source: 'probe', manualModelPolicy: 'allowed',
+      probes: [{ endpointTemplateId: 'management', path: '/api/v1/models', parser: 'lmstudio-native-models' }] },
+    modelLoad: descriptor,
+  });
+  const registry = { providersByContributionKey: new Map([['acme.loader/loader', {
+    provenance: 'external' as const, source: { kind: 'path' as const }, pluginId: 'acme.loader',
+    identity: { pluginId: 'acme.loader', localId: 'loader' }, definition,
+  }]]) };
+  const baseSettings = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [{
+    v: 1, id: 'connection-a', source: { kind: 'contribution', contributionKey: 'acme.loader/loader' },
+    role: 'default', displayName: 'Loader', displayNameMode: 'automatic', revision: 0, createdAt: 1, updatedAt: 1,
+  }] });
+  const resolved = resolveProviderConnectionForMachine({ connectionId: 'connection-a', machineId: 'machine-a',
+    providerSettings: baseSettings, registry, dnsEvidenceByEndpointUrl: new Map() });
+  if (resolved.status !== 'resolved') throw new Error('Expected local model-load source');
+  const settings = ProviderSettingsV1Schema.parse({ ...baseSettings, machineGrants: [{
+    v: 1, machineId: 'machine-a', connectionId: 'connection-a', confirmedAt: 1,
+    endpointSetFingerprint: resolved.record.endpointSetFingerprint,
+    connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint,
+  }] });
+  let snapshot: ActiveAccountSettingsSnapshot = {
+    source: 'cache', settings: AccountSettingsSchema.parse({}),
+    providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(settings).catalog },
+    settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-a',
+  };
+  let loaded = false;
+  let enterPost!: () => void;
+  let releasePost!: () => void;
+  const postEntered = new Promise<void>(resolve => { enterPost = resolve; });
+  const postReleased = new Promise<void>(resolve => { releasePost = resolve; });
+  let postCount = 0;
+  const client = createProviderProbeHttpClient({
+    resolveAddresses: async () => ['127.0.0.1'],
+    // DNS and HTTP are the system boundaries; authorization, catalog parsing,
+    // runtime persistence, load orchestration and confirmation stay real.
+    transport: async input => {
+      if (input.method === 'POST') {
+        postCount++;
+        enterPost();
+        await postReleased;
+        loaded = true;
+      }
+      return { status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify({
+        models: [{ key: 'model-a', type: 'llm', loaded_instances: loaded ? [{ id: 'instance-a' }] : [] }],
+      })) };
+    },
+  });
+  const services = createRuntimeProviderModelManagementServices({ machineId: 'machine-a', happyHomeDir: homeDir,
+    registry, featureGate: { isEnabled: () => true }, getAccountSettingsSnapshot: () => snapshot,
+    resolveAddresses: async () => ['127.0.0.1'], runtimeStore: createProviderRuntimeStateStore({ happyHomeDir: homeDir, machineId: 'machine-a' }), client,
+    modelSettingsMutation: async (): Promise<never> => { throw new Error('Unexpected model-settings mutation'); },
+  });
+  let pending: Promise<Awaited<ReturnType<typeof services.loadModel>>[]> | undefined;
+  const startedAt = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(startedAt);
+  try {
+    await expect(services.probe({ machineId: 'machine-a', connectionId: 'connection-a' })).resolves.toMatchObject({ status: 'success' });
+    const request = { machineId: 'machine-a', connectionId: 'connection-a', modelId: 'model-a' };
+    pending = Promise.all([services.loadModel(request), services.loadModel(request)]);
+    await postEntered;
+    clock.mockReturnValue(startedAt + 601_000);
+    const renamed = ProviderSettingsV1Schema.parse({ ...settings, connections: settings.connections.map(connection => ({
+      ...connection, displayName: 'Renamed loader', displayNameMode: 'custom', revision: connection.revision + 1,
+    })) });
+    snapshot = { ...snapshot, providerConnectionsCatalog: { status: 'ready', revision: 2, catalog: splitProviderSettingsV1(renamed).catalog } };
+    releasePost();
+    await expect(pending).resolves.toEqual([
+      { status: 'loaded', source: 'requested' },
+      { status: 'loaded', source: 'requested' },
+    ]);
+    expect(postCount).toBe(1);
+  } finally {
+    releasePost();
+    await pending;
+    clock.mockRestore();
+    await rm(homeDir, { recursive: true, force: true });
+  }
+});
 
 function authorization(overrides: Partial<ProviderModelLoadAuthorization<Ticket, CredentialRef>> = {}): ProviderModelLoadAuthorization<Ticket, CredentialRef> {
   return {
@@ -136,8 +229,6 @@ describe('provider model-load safe-client adapter', () => {
     }),
     authorizeDestination: async () => {},
     redirectPolicy: 'reject',
-    wallTimeMs: 600_000,
-    maxDecodedBodyBytes: 1_048_576,
     signal: new AbortController().signal,
   } as const;
 
@@ -270,8 +361,6 @@ describe('explicit provider model loading', () => {
       path: '/api/v1/models/load',
       body: { model: 'model-a' },
       redirectPolicy: 'reject',
-      wallTimeMs: 600_000,
-      maxDecodedBodyBytes: 1_048_576,
       resolveCredential: expect.any(Function),
     }));
     expect(test.refresh).toHaveBeenCalledTimes(1);

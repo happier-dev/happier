@@ -10,7 +10,7 @@
  */
 
 import { runTailscaleServeStatus } from '@/integrations/tailscale/tailscaleCommand';
-import { tailscaleServeHttpsUrlForInternalServerUrlFromStatus } from '@happier-dev/cli-common/tailscale';
+import { TailscaleCommandError, tailscaleServeHttpsUrlForInternalServerUrlFromStatus } from '@happier-dev/cli-common/tailscale';
 
 export async function tailscaleServeHttpsUrlForInternalServerUrl(params: Readonly<{
   internalServerUrl: string;
@@ -28,7 +28,8 @@ export async function tailscaleServeHttpsUrlForInternalServerUrl(params: Readonl
       tailscaleBin: params.tailscaleBin,
     });
     return tailscaleServeHttpsUrlForInternalServerUrlFromStatus(status, internalServerUrl);
-  } catch {
+  } catch (error) {
+    if (error instanceof TailscaleCommandError && error.failure) throw error;
     return null;
   }
 }

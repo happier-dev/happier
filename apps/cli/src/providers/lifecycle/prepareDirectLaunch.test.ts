@@ -31,6 +31,28 @@ const bindingMetadata: SessionProviderBindingMetadataV1 = {
 };
 
 describe('direct Provider launch lifecycle', () => {
+  it('preserves a Provider refusal while separately reporting failed resource cleanup', async () => {
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    const cleanup = () => { throw new Error('private cleanup credential'); };
+    try {
+      await expect(prepareDirectProviderLaunch({
+        selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex',
+          providerConnectionId: connectionId, modelId: 'model-a' } },
+        backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
+        machineId: 'machine-a', agentId: 'codex', scope: { kind: 'session', sessionId: 'session-a' },
+        previousBinding: null, confirmation: null, connectedServices: null, featureEnabled: false,
+      }, {
+        // External process/file disposal fails; real Provider admission decides the refusal.
+        initialResources: [{ onFailure: cleanup, onExit: cleanup }],
+        resolvePrerequisites: async () => { throw new Error('Disabled Provider reached prerequisites'); },
+        createAuthorizationAttempt: async () => { throw new Error('Disabled Provider reached authorization'); },
+      })).resolves.toEqual({ ok: false, error: createProviderErrorV1('provider_feature_disabled', {
+        connectionId, machineId: 'machine-a',
+      }) });
+      expect(diagnostic).toHaveBeenCalledWith('[PROVIDER] Unexpected failure', expect.objectContaining({ operation: 'launch' }));
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private cleanup credential');
+    } finally { diagnostic.mockRestore(); }
+  });
   it('reports an unexpected resource failure as an internal Agent error with content-free diagnostics', async () => {
     const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     // Resource disposal is an OS/process boundary; no Provider domain logic is replaced.

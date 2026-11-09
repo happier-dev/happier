@@ -239,7 +239,6 @@ function runtimeState(input: Readonly<{
     machineId: 'machine_a',
     endpointHealth: [],
     catalogs: [...(input.catalogs ?? [])],
-    installationChecks: [],
     modelLoadStates: [...(input.loads ?? [])],
   });
 }
@@ -566,7 +565,7 @@ describe('provider catalog host assembly', () => {
     ]);
   });
 
-  it('honors the protocol maximum without adding a second host bound or sort', () => {
+  it('preserves models beyond the retired Protocol maximum without adding a host bound or sort', () => {
     const connection = resolvedConnection();
     const models = Array.from({ length: 4_998 }, (_, index) => ({ id: `model-${index}` }));
     const assembled = assembleProviderConnectionCatalog({
@@ -577,11 +576,11 @@ describe('provider catalog host assembly', () => {
     expect(assembled.rows).toHaveLength(5_000);
 
     const overLimitModels = Array.from({ length: 4_999 }, (_, index) => ({ id: `over-${index}` }));
-    expect(() => assembleProviderConnectionCatalog({
+    expect(assembleProviderConnectionCatalog({
       agentTargetKey: 'codex', connection, providerSettings: settings(connection),
       runtimeState: runtimeState({ catalogs: [catalogRecord({ models: overLimitModels })] }),
       catalogRuntimeKey: currentCatalogKey,
-    })).toThrowError('Merged provider catalog exceeds the per-connection model limit');
+    }).rows).toHaveLength(5_001);
   });
 });
 

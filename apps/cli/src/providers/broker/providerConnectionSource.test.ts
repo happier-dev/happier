@@ -1,3 +1,4 @@
+import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
 import { describe, expect, it, vi } from 'vitest';
 import type { ManagedServiceRequest, ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import {
@@ -11,6 +12,7 @@ import {
   splitProviderSettingsV1,
   type ProviderSettingsV1,
   sealSavedSecretResourceStoredContentV1,
+  createProviderConnectionSecurityFingerprintV1,
 } from '@happier-dev/protocol';
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
 
@@ -23,7 +25,6 @@ import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
 import {
   createProviderConnectionBrokerSourceOpen,
-  isProviderConnectionBrokerSourceCurrent,
   materializeProviderConnectionDirectCredential,
   isProviderConnectionDirectSourceCurrent,
   materializeProviderConnectionBrokerSource,
@@ -36,6 +37,7 @@ import { createTeamCredentialBrokerSourceOwner } from './teamCredentialBrokerSou
 import { createPrivateProviderBrokerStreamLifetime } from './daemonProviderBrokerRuntime';
 import { createProviderConnectionCpxBridge } from './providerConnectionCpxBridge';
 import { createBrokerProviderRegistry } from './providerBroker.testkit';
+import { createDevelopmentPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 
 const key = new Uint8Array(32).fill(7);
 const connectionId = ProviderConnectionIdSchema.parse('pc_team_source');
@@ -45,6 +47,7 @@ const definition = ProviderContributionV1Schema.parse({
   id: 'gateway',
   name: 'External gateway',
   kind: 'cloud',
+  requestCost: { endpointTemplateIds: ['responses'] },
   endpointTemplates: [{
     id: 'responses',
     protocol: 'openai-responses',
@@ -230,8 +233,72 @@ describe('Provider Connection Team broker source', () => {
       dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: () => current })).resolves.toMatchObject(unsupported);
   });
 
-  it('opens the exact Provider source through CPX and leases current credential material per request', async () => {
+  it('admits an exact legacy source pin after a destination-only grant and refuses changed destinations', () => {
     const settings = accountSettings();
+    const source = { ...resourceSource(settings), connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema.parse(createProviderConnectionSecurityFingerprintV1({
+      securityContractVersion: 1, endpoints: definition.endpointTemplates.map(endpoint => ({ endpointTemplateId: endpoint.id,
+        protocol: endpoint.protocol, url: endpoint.baseUrl ?? null, publicHeaders: endpoint.publicHeaders })),
+      credentialTransports: definition.credential?.transports ?? [], catalogProbes: [],
+    })) };
+    const request = { source, machineId: 'machine-a', ...sourceFacts(settings), registry, dnsEvidenceByEndpointUrl };
+    expect(resolveProviderConnectionBrokerSource({ ...request, protocol: 'openai-responses', endpointTemplateId: 'responses' }))
+      .toMatchObject({ ok: true });
+    expect(resolveProviderConnectionDirectSourceSnapshot(request)).toMatchObject({ ok: true });
+    const changedRegistry = { ...registry, providersByContributionKey: new Map(registry.providersByContributionKey)
+      .set(contributionKey, { ...contribution, definition: ProviderContributionV1Schema.parse({ ...definition,
+        endpointTemplates: [{ ...definition.endpointTemplates[0], baseUrl: 'https://changed.example/v1' }],
+      }) }) };
+    expect(resolveProviderConnectionBrokerSource({ ...request, registry: changedRegistry,
+      protocol: 'openai-responses', endpointTemplateId: 'responses' })).toMatchObject({ ok: false });
+    const changedDeclaration = { ...registry, providersByContributionKey: new Map(registry.providersByContributionKey)
+      .set(contributionKey, { ...contribution, definition: ProviderContributionV1Schema.parse({ ...definition,
+        catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'responses',
+          path: '/models', parser: 'openai-models' }] },
+      }) }) };
+    expect(resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-a',
+      providerSettings: request.providerSettings, registry: changedDeclaration, dnsEvidenceByEndpointUrl }))
+      .toMatchObject({ status: 'resolved', record: { authorization: { authorized: true } } });
+    expect(resolveProviderConnectionBrokerSource({ ...request, registry: changedDeclaration,
+      protocol: 'openai-responses', endpointTemplateId: 'responses' }))
+      .toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+  });
+
+  it('leases both independent source secrets and refuses the source after companion withdrawal', async () => {
+    const pairedDefinition = ProviderContributionV1Schema.parse({ ...definition, credential: { ...definition.credential,
+      transports: [{ ...definition.credential!.transports[0], additionalCredentials: [{ slotId: 'upstreamKey',
+        destination: { kind: 'httpHeader', name: 'x-upstream-key', format: 'raw' } }] }],
+    } });
+    const pairedRegistry = { ...registry, providersByContributionKey: new Map(registry.providersByContributionKey)
+      .set(contributionKey, { ...contribution, definition: pairedDefinition }) };
+    let current = accountSettings(pairedRegistry);
+    const source = resourceSource(current, pairedRegistry);
+    const resolve = () => resolveProviderConnectionBrokerSource({ source, machineId: 'machine-a',
+      protocol: 'openai-responses', endpointTemplateId: 'responses', ...sourceFacts(current), registry: pairedRegistry, dnsEvidenceByEndpointUrl });
+    expect(resolve()).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+    const settings = readProviderSettingsForCli(current).settings;
+    current = { ...snapshotFromProviderSettings({ ...settings, secretBindingsByConnectionId: {
+      ...settings.secretBindingsByConnectionId, [connectionId]: { ...settings.secretBindingsByConnectionId[connectionId],
+        account: { apiKey: formatSharedSavedSecretRefV1('secret-a'), upstreamKey: formatSharedSavedSecretRefV1('secret-b') } },
+    } }), savedSecretResources: [providerSecret('source-secret'), providerSecret('upstream-secret', 1, 'secret-b')] };
+    const resolved = resolve();
+    if (!resolved.ok) throw new Error('Expected independently bound source');
+    expect(resolveProviderConnectionDirectSourceSnapshot({ source, machineId: 'machine-a', ...sourceFacts(current),
+      registry: pairedRegistry, dnsEvidenceByEndpointUrl })).toMatchObject({ ok: false, error: { code: 'provider_credential_transport_unavailable' } });
+    const material = await materializeProviderConnectionBrokerSource({ expected: resolved.snapshot, registry: pairedRegistry,
+      dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: () => current });
+    expect(material).toMatchObject({ ok: true, lease: { credential: {
+      value: 'Bearer source-secret', additionalCredentials: [{ name: 'x-upstream-key', value: 'upstream-secret' }],
+    } } });
+    if (!material.ok) throw new Error('Expected admitted material');
+    expect(material.lease.redact('Bearer source-secret upstream-secret')).toBe('[REDACTED] [REDACTED]');
+    material.lease.close();
+    current = { ...current, savedSecretResources: [providerSecret('source-secret')] };
+    expect(await materializeProviderConnectionBrokerSource({ expected: resolved.snapshot, registry: pairedRegistry,
+      dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: () => current })).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+  });
+
+  it('opens the exact Provider source through CPX and leases current credential material per request', async () => {
+    let settings = accountSettings();
     const sourceBinding = resourceSource(settings);
     const credentialValues: string[] = [];
     // Records exactly what each hop sent, including an absent header map, so a
@@ -435,21 +502,21 @@ describe('Provider Connection Team broker source', () => {
     expect(credentialValues).toEqual(['Bearer source-secret', 'Bearer source-secret']);
     expect(retire).not.toHaveBeenCalled();
     expect(openCpxProviderConnection).toHaveBeenCalledOnce();
-    resourceEnabled = false;
+    settings = snapshotFromProviderSettings({ ...readProviderSettingsForCli(settings).settings, accountGrants: [] });
     await expect(access.access.request({
       pathAndQuery: '/v1/responses',
       method: 'POST',
       headers: {},
       body: new TextEncoder().encode('{"model":"gateway-model"}'),
       signal: controller.signal,
-    })).rejects.toMatchObject({ failure: { reasonCode: 'source_unavailable' } });
-    // Disabling the resource is real authority loss: the refused request
-    // leases no credential material and the operation is retired.
+    })).resolves.toMatchObject({ status: 403 });
+    // The next credential acquisition refuses a withdrawn source grant.
+    // Home request admission owns resource/member withdrawal and retirement.
     expect(credentialValues).toEqual(['Bearer source-secret', 'Bearer source-secret']);
-    expect(retire).toHaveBeenCalledOnce();
-    expect(cleanup).toHaveBeenCalledOnce();
+    expect(retire).not.toHaveBeenCalled();
+    expect(cleanup).not.toHaveBeenCalled();
     await streamLifetime.close();
-    expect(retire).toHaveBeenCalledOnce();
+    expect(retire).not.toHaveBeenCalled();
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
@@ -489,7 +556,7 @@ describe('Provider Connection Team broker source', () => {
     expect(openCpxProviderConnection).not.toHaveBeenCalled();
   });
 
-  it.each(['gateway_stale', 'source_stale', 'source_unknown', 'selection_unknown'] as const)('cleans a rejected CPX join and retires only definite stale custody: %s', async failure => {
+  it.each(['gateway_stale', 'source_stale', 'source_unknown', 'selection_unknown'] as const)('settles the captured CPX join without repeating source admission: %s', async failure => {
     const settings = accountSettings();
     const events: string[] = [];
     let joined = false;
@@ -535,7 +602,7 @@ describe('Provider Connection Team broker source', () => {
       },
     });
 
-    await expect(open({
+    const opened = await open({
       source: resourceSource(settings),
       resourceId: 'resource-a',
       resourceRevision: 7,
@@ -557,14 +624,21 @@ describe('Provider Connection Team broker source', () => {
         protocol: 'openai-responses',
       },
       signal: new AbortController().signal,
-    })).resolves.toBeNull();
-    const unknown = failure === 'source_unknown' || failure === 'selection_unknown';
-    expect(retire).toHaveBeenCalledTimes(unknown ? 0 : 1);
+    });
+    if (failure !== 'gateway_stale') {
+      expect(opened).not.toBeNull();
+      expect(retire).not.toHaveBeenCalled();
+      expect(cleanup).not.toHaveBeenCalled();
+      await opened?.projection.cleanup();
+    } else {
+      expect(opened).toBeNull();
+      expect(retire).toHaveBeenCalledOnce();
+    }
     expect(cleanup).toHaveBeenCalledOnce();
-    expect(events).toEqual(unknown ? ['cleanup'] : ['retire', 'cleanup']);
+    expect(events).toEqual(failure === 'gateway_stale' ? ['retire', 'cleanup'] : ['cleanup']);
   });
 
-  it('projects only exact current source facts and materializes through the canonical credential owner', async () => {
+  it('materializes through the fingerprint owner without repeating captured source identity admission', async () => {
     const settings = accountSettings();
     const source = resolveProviderConnectionBrokerSource({
       source: resourceSource(settings),
@@ -583,14 +657,29 @@ describe('Provider Connection Team broker source', () => {
         credentialRef: { transport: { destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } },
       },
     });
+    const duplicateIdentityReads = { provider: 0, endpointUrl: 0 };
+    // Observe reads without changing the real admitted snapshot's values.
+    // Current source fingerprint admission already owns these identity facts.
+    const expected = { ...source.snapshot,
+      get provider() { duplicateIdentityReads.provider++; return source.snapshot.provider; },
+      endpoint: { ...source.snapshot.endpoint,
+        get normalizedUrl() { duplicateIdentityReads.endpointUrl++; return source.snapshot.endpoint.normalizedUrl; },
+      },
+    };
     const materialized = await materializeProviderConnectionBrokerSource({
-      expected: source.snapshot,
+      expected,
       registry,
       dnsEvidenceByEndpointUrl,
       getAccountSettingsSnapshot: () => snapshot(settings),
     });
     expect(materialized).toMatchObject({ ok: true, lease: { credential: { name: 'authorization', value: 'Bearer source-secret' } } });
     if (materialized.ok) materialized.lease.close();
+    const capture = { expected, registry, dnsEvidenceByEndpointUrl,
+      getAccountSettingsSnapshot: () => snapshot(settings) };
+    expect(await isProviderConnectionDirectSourceCurrent(capture)).toBe(true);
+    expect(await materializeProviderConnectionDirectCredential(capture))
+      .toMatchObject({ ok: true, credential: { kind: 'apiKey', value: 'source-secret' } });
+    expect(duplicateIdentityReads).toEqual({ provider: 0, endpointUrl: 0 });
   });
 
   // A contribution may publish several runtime header transports for one
@@ -715,50 +804,7 @@ describe('Provider Connection Team broker source', () => {
     })).resolves.toMatchObject({ ok: true });
   });
 
-  it('offers a credential-free currentness check over the exact Provider snapshot', async () => {
-    const settings = accountSettings();
-    const resolved = resolveProviderConnectionBrokerSource({
-      source: resourceSource(settings), machineId: 'machine-a', protocol: 'openai-responses',
-      endpointTemplateId: 'responses', ...sourceFacts(settings), registry, dnsEvidenceByEndpointUrl,
-    });
-    if (!resolved.ok) throw new Error('expected broker source snapshot');
-    await expect(isProviderConnectionBrokerSourceCurrent({
-      expected: resolved.snapshot,
-      registry,
-      dnsEvidenceByEndpointUrl,
-      getAccountSettingsSnapshot: () => snapshot(settings),
-    })).resolves.toBe(true);
-    await expect(isProviderConnectionBrokerSourceCurrent({
-      expected: resolved.snapshot,
-      registry,
-      dnsEvidenceByEndpointUrl,
-      getAccountSettingsSnapshot: () => ({ ...settings, providerConnectionsCatalog: { status: 'loading' } }),
-    })).rejects.toMatchObject({ code: 'provider_settings_invalid' });
-    await expect(isProviderConnectionBrokerSourceCurrent({
-      expected: resolved.snapshot,
-      registry,
-      dnsEvidenceByEndpointUrl,
-      getAccountSettingsSnapshot: () => snapshot(settings),
-    })).resolves.toBe(true);
-    await expect(isProviderConnectionBrokerSourceCurrent({
-      expected: resolved.snapshot,
-      registry: { ...registry, runtimeRegistryGeneration: 10 },
-      dnsEvidenceByEndpointUrl,
-      getAccountSettingsSnapshot: () => snapshot(settings),
-    })).resolves.toBe(true);
-    await expect(isProviderConnectionBrokerSourceCurrent({
-      expected: resolved.snapshot,
-      registry: {
-        ...registry,
-        runtimeRegistryGeneration: 10,
-        providerActivationOccurrenceIdsByPluginId: new Map([['acme.gateway', 'gateway-occurrence-2']]),
-      },
-      dnsEvidenceByEndpointUrl,
-      getAccountSettingsSnapshot: () => snapshot(settings),
-    })).resolves.toBe(false);
-  });
-
-  it('invalidates connection, endpoint, and grant changes without pinning credential rotation', async () => {
+  it('keeps the source current across rename and declaration churn without pinning credential rotation', async () => {
     const settings = accountSettings();
     const resolved = resolveProviderConnectionBrokerSource({
       source: resourceSource(settings), machineId: 'machine-a', protocol: 'openai-responses',
@@ -777,10 +823,8 @@ describe('Provider Connection Team broker source', () => {
     const rotatedSecret = { ...settings, savedSecretResources: [providerSecret('rotated-secret', 2)] };
     const changedDefinition = ProviderContributionV1Schema.parse({
       ...definition,
-      endpointTemplates: definition.endpointTemplates.map((endpoint) => ({
-        ...endpoint,
-        publicHeaders: { ...endpoint.publicHeaders, 'x-revision': 'changed' },
-      })),
+      name: 'Renamed Provider declaration',
+      catalog: { ...definition.catalog, staticModels: [{ id: 'gateway-model', name: 'Renamed model' }] },
     });
     const changedRegistry = {
       ...registry,
@@ -790,22 +834,19 @@ describe('Provider Connection Team broker source', () => {
       }]]),
     };
     for (const current of [
-      { settings: changedConnection, registry },
-      { settings, registry: changedRegistry },
+      { settings: changedConnection, registry, value: 'Bearer source-secret' },
+      { settings, registry: changedRegistry, value: 'Bearer source-secret' },
+      { settings: rotatedSecret, registry, value: 'Bearer rotated-secret' },
     ]) {
-      await expect(isProviderConnectionBrokerSourceCurrent({
+      const materialized = await materializeProviderConnectionBrokerSource({
         expected: resolved.snapshot,
         registry: current.registry,
         dnsEvidenceByEndpointUrl,
         getAccountSettingsSnapshot: () => snapshot(current.settings),
-      })).resolves.toBe(false);
+      });
+      expect(materialized).toMatchObject({ ok: true, lease: { credential: { value: current.value } } });
+      if (materialized.ok) materialized.lease.close();
     }
-    await expect(isProviderConnectionBrokerSourceCurrent({
-      expected: resolved.snapshot,
-      registry,
-      dnsEvidenceByEndpointUrl,
-      getAccountSettingsSnapshot: () => snapshot(rotatedSecret),
-    })).resolves.toBe(true);
   });
 
   it('invalidates a direct-material snapshot when its exact Saved Secret rotates or disappears', async () => {
@@ -871,10 +912,14 @@ describe('Provider Connection Team broker source', () => {
   });
 
   it('composes the source owner through the real CPX bridge and revokes before the next request', async () => {
-    const settings = accountSettings();
+    let settings = accountSettings();
     const source = resourceSource(settings);
     const managedRequests: ManagedServiceRequest[] = [];
     let resourceEnabled = true;
+    let resourceReads = 0;
+    let registryReads = 0;
+    let dnsReads = 0;
+    let selectionReads = 0;
     const cleanup = vi.fn(async () => {});
     const managedRequest = vi.fn(async (request: ManagedServiceRequest): Promise<ManagedServiceResponse> => {
       managedRequests.push(request);
@@ -901,24 +946,39 @@ describe('Provider Connection Team broker source', () => {
       retireAll: vi.fn(async () => 0),
     };
     const bridge = createProviderConnectionCpxBridge({ custody });
+    let costCurrent = true;
+    let costEndpoints = ['responses'];
+    const costAcquisitions: unknown[] = [];
     const openProviderConnectionSource = createProviderConnectionBrokerSourceOpen({
+      acquireRequestCostParser: async (identity) => {
+        costAcquisitions.push(identity);
+        return { parse: () => 0.12, endpointTemplateIds: costEndpoints,
+          activationOccurrenceId: 'gateway-occurrence-1', isCurrent: () => costCurrent,
+          sourceCustody: createDevelopmentPluginSourceCustody('acme-gateway-root') };
+      },
       machineId: 'machine-a',
-      readResource: async () => ({
+      readResource: async () => {
+        resourceReads++;
+        return {
         teamId: 'team-a',
         source,
         brokerPlacement: { kind: 'machine' as const, machineId: 'machine-a' },
         revision: 7,
         enabled: resourceEnabled,
-      }),
-      withRegistry: async (read) => await read(registry),
+        };
+      },
+      withRegistry: async (read) => { registryReads++; return await read(registry); },
       getAccountSettingsSnapshot: () => snapshot(settings),
-      collectDnsEvidence: async () => dnsEvidenceByEndpointUrl,
+      collectDnsEvidence: async () => { dnsReads++; return dnsEvidenceByEndpointUrl; },
       openCpxProviderConnection: bridge.open,
-      resolveExactSelection: async () => ({
+      resolveExactSelection: async () => {
+        selectionReads++;
+        return {
         endpointTemplateId: 'responses',
         protocol: 'openai-responses' as const,
         credentialTransport: definition.credential!.transports[0]!,
-      }),
+        };
+      },
     });
     const sourceOwner = createTeamCredentialBrokerSourceOwner({
       machineId: 'machine-a',
@@ -953,7 +1013,11 @@ describe('Provider Connection Team broker source', () => {
       sourceRevision: 'source-revision-a',
     });
     expect(access).not.toBeNull();
+    expect(costAcquisitions).toHaveLength(0);
     if (!access || !('access' in access)) throw new Error('Expected acquired Provider source access');
+    expect({ resourceReads, registryReads, dnsReads, selectionReads }).toEqual({
+      resourceReads: 1, registryReads: 1, dnsReads: 1, selectionReads: 1,
+    });
     const response = await access.access.request({
       pathAndQuery: '/v1/responses',
       method: 'POST',
@@ -967,14 +1031,52 @@ describe('Provider Connection Team broker source', () => {
       'accept-encoding': 'identity',
     });
     expect(managedRequests[0]?.headers).not.toHaveProperty('authorization');
+    expect({ resourceReads, registryReads, dnsReads, selectionReads }).toEqual({
+      resourceReads: 1, registryReads: 1, dnsReads: 1, selectionReads: 1,
+    });
 
-    resourceEnabled = false;
+    const renamed = readProviderSettingsForCli(settings).settings;
+    settings = snapshotFromProviderSettings({ ...renamed, connections: renamed.connections.map(connection => ({
+      ...connection, revision: connection.revision + 1, displayName: 'Renamed gateway',
+    })) });
+    const afterRename = await access.access.request({ pathAndQuery: '/v1/responses', method: 'POST',
+      body: new TextEncoder().encode('{}') });
+    expect(afterRename.status).toBe(200);
+    await new Response(await readProviderBrokerResponseBody(afterRename.body)).text();
+    expect(managedRequests).toHaveLength(2);
+    expect({ resourceReads, registryReads, dnsReads, selectionReads }).toEqual({
+      resourceReads: 1, registryReads: 1, dnsReads: 1, selectionReads: 1,
+    });
+
+    const externalRequest = { resourceId: 'resource-composed', resourceRevision: 7, brokerMachineId: 'machine-a',
+      source, operation: { kind: 'external_api_key' as const, externalApiKeyId: 'external-key', operationId: 'operation-1',
+        assignedAccountId: 'actor', assignedTeamMembershipId: 'member' },
+      application: { agentTargetKey: 'agent:happier.agent.codex/codex',
+        implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+        endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' as const },
+      signal: new AbortController().signal };
+    const external = await sourceOwner.acquire(externalRequest);
+    if (!external.ok) throw new Error('Expected external source');
+    expect(costAcquisitions).toEqual([{ pluginId: 'acme.gateway', localId: 'gateway' }]);
+    expect(external.projection.requestCostParser?.({ cost: 0.12 })).toBe(0.12);
+    costCurrent = false;
+    expect(external.projection.requestCostParser?.({ cost: 0.12 })).toBeNull();
+    await external.projection.cleanup();
+    costCurrent = true;
+    costEndpoints = ['unrelated-endpoint'];
+    const unsupported = await sourceOwner.acquire({ ...externalRequest, operation: { ...externalRequest.operation, operationId: 'operation-2' } });
+    if (!unsupported.ok) throw new Error('Expected external source');
+    expect(unsupported.projection.requestCostParser).toBeUndefined();
+    await unsupported.projection.cleanup();
+
+    const providerSettings = readProviderSettingsForCli(settings).settings;
+    settings = snapshotFromProviderSettings({ ...providerSettings, accountGrants: [] });
     await expect(access.access.request({
       pathAndQuery: '/v1/responses',
       method: 'POST',
       body: new TextEncoder().encode('{}'),
     })).rejects.toMatchObject({ failure: { reasonCode: 'source_unavailable' } });
-    expect(managedRequests).toHaveLength(1);
+    expect(managedRequests).toHaveLength(2);
     await lifetime.close();
     expect(cleanup).toHaveBeenCalled();
   });

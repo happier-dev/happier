@@ -37,17 +37,13 @@ export type PreparedProviderLaunch = Readonly<{
   suppressedConnectedServiceIds: readonly string[];
 }>;
 
-export type PrepareProviderLaunchResult =
+export type PrepareProviderLaunchResult<PrerequisiteFailure extends Readonly<{ ok: false }> = never> =
   | Readonly<{ ok: true; kind: 'native' }>
   | PreparedProviderLaunch
-  | Readonly<{ ok: false; error: ProviderErrorV1 }>;
+  | Readonly<{ ok: false; error: ProviderErrorV1 }>
+  | PrerequisiteFailure;
 
-/**
- * Canonical Provider lifecycle preparation semantics shared by daemon and
- * direct terminal launch adapters. Resource ownership and late materialization
- * remain with the caller so the launch resource scope can own them exactly once.
- */
-export async function prepareProviderLaunch(input: Readonly<{
+export type PrepareProviderLaunchInput<PrerequisiteFailure extends Readonly<{ ok: false }> = never> = Readonly<{
   selection?: SessionModelSelectionV1;
   callerInputConstraints?: CallerInputConstraintsV1;
   permissionMode?: SessionPermissionMode;
@@ -64,14 +60,25 @@ export async function prepareProviderLaunch(input: Readonly<{
   featureEnabled: boolean;
   resolvePrerequisites: (
     context: ProviderLaunchPrerequisiteContext,
-  ) => Promise<Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }>>;
+  ) => Promise<Readonly<{ ok: true } | { ok: false; error: ProviderErrorV1 }> | PrerequisiteFailure>;
   createAuthorizationAttempt: (
     context: CreateAuthorizationAttemptInput,
   ) => Promise<Readonly<
     | { ok: true; attempt: ProviderSpawnAuthorizationAttempt }
     | { ok: false; error: ProviderErrorV1 }
   >>;
-}>): Promise<PrepareProviderLaunchResult> {
+}>;
+
+/**
+ * Canonical Provider lifecycle preparation semantics shared by daemon and
+ * direct terminal launch adapters. Resource ownership and late materialization
+ * remain with the caller so the launch resource scope can own them exactly once.
+ * Agent prerequisite refusals retain their existing typed result rather than
+ * acquiring a replacement Provider classification.
+ */
+export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly<{ ok: false }> = never>(
+  input: PrepareProviderLaunchInput<PrerequisiteFailure>,
+): Promise<PrepareProviderLaunchResult<PrerequisiteFailure>> {
   const selection = input.selection ? SessionModelSelectionV1Schema.parse(input.selection) : undefined;
   if (input.callerInputConstraints) {
     if (!isModelRefGrantedV1(input.callerInputConstraints, selection?.ref ?? 'automatic')) {

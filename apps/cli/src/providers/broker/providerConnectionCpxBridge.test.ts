@@ -39,6 +39,7 @@ function credentialLease(name = 'authorization', value = 'Bearer source-secret')
     redact: redaction.redact,
     containsSensitiveValue: redaction.containsSensitiveValue,
     createStreamingSanitizer: redaction.createStreamingSanitizer,
+    registerSensitiveValues: redaction.add,
     close: redaction.close,
   };
 }
@@ -227,7 +228,8 @@ describe('Provider Connection CPX bridge', () => {
   });
 
   it('supports the Anthropic x-api-key variant and refuses caller/public header collisions', async () => {
-    const managedRequest = vi.fn<(input: ManagedServiceRequest) => Promise<ManagedServiceResponse>>(async () => response('{"ok":true}'));
+    const managedRequest = vi.fn<(input: ManagedServiceRequest) => Promise<ManagedServiceResponse>>(async input =>
+      response(JSON.stringify({ echo: input.headers?.['x-happier-provider-source-additional-credentials'] })));
     const managed = custody(managedRequest);
     const bridge = createProviderConnectionCpxBridge({ custody: managed.owner });
     const projection = await bridge.open({
@@ -240,16 +242,26 @@ describe('Provider Connection CPX bridge', () => {
       },
       signal: new AbortController().signal,
       isCurrent: async () => true,
-      acquireRequestCredential: async () => credentialLease('x-api-key', 'source-key'),
+      acquireRequestCredential: async () => {
+        const lease = credentialLease('x-api-key', 'source-key');
+        return { ...lease, credential: { ...lease.credential,
+          additionalCredentials: [{ kind: 'httpHeader' as const, name: 'x-companion-token', value: 'Bearer companion-value' }] } };
+      },
     });
     await expect(projection!.access.request({
       pathAndQuery: '/v1/messages', headers: { 'anthropic-version': 'caller-value' },
     })).rejects.toMatchObject({ failure: { reasonCode: 'source_unavailable' } });
-    await projection!.access.request({ pathAndQuery: '/v1/messages', method: 'POST' });
+    const result = await projection!.access.request({ pathAndQuery: '/v1/messages', method: 'POST' });
+    expect(await new Response(await readProviderBrokerResponseBody(result.body)).text()).toBe('{"echo":"[REDACTED]"}');
     const source = JSON.parse(Buffer.from(
       managedRequest.mock.calls[0]![0].headers!['x-happier-provider-source']!, 'base64url',
     ).toString('utf8'));
     expect(source.credentialHeaderName).toBe('x-api-key');
+    expect(source.additionalCredentialHeaderNames).toEqual(['x-companion-token']);
+    const forwardedHeaders = managedRequest.mock.calls[0]![0].headers!;
+    expect(forwardedHeaders['x-happier-provider-source-credential']).toBe('source-key');
+    expect(JSON.parse(Buffer.from(forwardedHeaders['x-happier-provider-source-additional-credentials']!, 'base64url').toString('utf8')))
+      .toEqual({ 'x-companion-token': 'Bearer companion-value' });
   });
 
   it('fails closed for source changes, protocol mismatch, and managed redirects', async () => {
@@ -316,31 +328,4 @@ describe('Provider Connection CPX bridge', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it('retries one replayable request only after the current Saved Secret changes', async () => {
-    const managedRequest = vi.fn<(input: ManagedServiceRequest) => Promise<ManagedServiceResponse>>(
-      async (): Promise<ManagedServiceResponse> => (
-        managedRequest.mock.calls.length === 1 ? response('', 401) : response('{"ok":true}')
-      ),
-    );
-    const managed = custody(managedRequest);
-    const bridge = createProviderConnectionCpxBridge({ custody: managed.owner });
-    let acquisition = 0;
-    const projection = await bridge.open({
-      application,
-      operation,
-      endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1', protocol: 'openai-responses', publicHeaders: {}, resolvedAddresses: ['203.0.113.10'] },
-      signal: new AbortController().signal,
-      isCurrent: async () => true,
-      acquireRequestCredential: async () => {
-        acquisition += 1;
-        return credentialLease('authorization', acquisition === 1 ? 'Bearer old-secret' : 'Bearer rotated-secret');
-      },
-    });
-    await expect(projection!.access.request({
-      pathAndQuery: '/v1/responses', method: 'POST', body: new TextEncoder().encode('{}'),
-    })).resolves.toMatchObject({ status: 200 });
-    expect(managedRequest).toHaveBeenCalledTimes(2);
-    expect(managedRequest.mock.calls[0]![0].headers?.['x-happier-provider-source-credential']).toBe('Bearer old-secret');
-    expect(managedRequest.mock.calls[1]![0].headers?.['x-happier-provider-source-credential']).toBe('Bearer rotated-secret');
-  });
 });

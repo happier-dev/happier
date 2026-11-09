@@ -3,10 +3,7 @@ import { createServer } from 'node:http';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol';
-
 import {
-  PROVIDER_MODEL_LOAD_HTTP_LIMITS,
   ProviderProbeCancelledError,
   ProviderProbeClientError,
   createProviderProbeHttpClient,
@@ -54,6 +51,16 @@ type MutableProbeModelFixture = {
 };
 
 describe('provider probe HTTP client', () => {
+  it('uses caller lifetime rather than a new GET deadline and accepts complete bodies beyond five MiB', async () => {
+    let clock = 0;
+    const client = createProviderProbeHttpClient({ now: () => clock,
+      resolveAddresses: async () => { clock = 31_000; return ['93.184.216.34']; },
+      transport: async () => response({ body: gzipSync(Buffer.from(`${' '.repeat(6 * 1024 * 1024)}{"data":[{"id":"large"}]}`)),
+        headers: { 'content-type': 'application/json', 'content-encoding': 'gzip' } }),
+    });
+    await expect(client.getCatalog({ endpointUrl: 'https://gateway.example', path: '/models', parser: 'openai-models',
+      publicHeaders: {}, ...authorizedDestination })).resolves.toMatchObject({ catalog: { models: [{ id: 'large' }] } });
+  });
   it('acquires usage once through the admitted transport and normalizes only Q1 meters', async () => {
     const close = vi.fn();
     const transport = vi.fn<ProviderProbeTransport>(async () => response({
@@ -537,7 +544,7 @@ describe('provider probe HTTP client', () => {
     })).rejects.toMatchObject({ code: 'provider_probe_response_invalid' });
   });
 
-  it('decodes supported compression before JSON and rejects decoded over-limit bodies', async () => {
+  it('decodes supported compression before JSON and rejects malformed decoded bodies', async () => {
     const compressed = gzipSync(Buffer.from('{"data":[{"id":"model-a"}]}'));
     const client = createProviderProbeHttpClient({
       resolveAddresses: async () => ['93.184.216.34'],
@@ -552,7 +559,7 @@ describe('provider probe HTTP client', () => {
 
     const oversizedClient = createProviderProbeHttpClient({
       resolveAddresses: async () => ['93.184.216.34'],
-      transport: async () => response({ body: Buffer.alloc(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes + 1) }),
+      transport: async () => response({ body: Buffer.from('not JSON') }),
     });
     await expect(oversizedClient.getCatalog({
       endpointUrl: 'https://models.example', path: '/models', parser: 'openai-models', publicHeaders: {}, ...authorizedDestination,
@@ -560,7 +567,7 @@ describe('provider probe HTTP client', () => {
   });
 
   it('spends one wall budget across the whole redirect chain', async () => {
-    const wallTimeouts: number[] = [];
+    const wallTimeouts: Array<number | undefined> = [];
     let clock = 0;
     const client = createProviderProbeHttpClient({
       resolveAddresses: async () => ['93.184.216.34'],
@@ -579,19 +586,20 @@ describe('provider probe HTTP client', () => {
     });
 
     await expect(client.getCatalog({
-      endpointUrl: 'https://models.example', path: '/models', parser: 'openai-models', publicHeaders: {}, ...authorizedDestination,
+      endpointUrl: 'https://models.example', path: '/models', parser: 'openai-models', publicHeaders: {}, wallDeadlineAtMs: 30_000, ...authorizedDestination,
     })).resolves.toMatchObject({ catalog: { models: [{ id: 'model-a' }] } });
 
     expect(wallTimeouts).toEqual([
-      PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-      PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs - 12_000,
+      30_000,
+      18_000,
     ]);
   });
 
-  it('bounds a managed authenticated response that returns headers and never finishes its body', async () => {
+  it('cancels a managed authenticated response that returns headers and never finishes its body', async () => {
     vi.useFakeTimers();
     try {
       let bodyCancelled = false;
+      const cancellation = new AbortController();
       const stalledBody = new ReadableStream<Uint8Array>({
         start() {
           // Headers are already delivered; the body never produces a chunk.
@@ -613,6 +621,7 @@ describe('provider probe HTTP client', () => {
         parser: 'openai-models',
         publicHeaders: {},
         credentialPolicy: 'required',
+        signal: cancellation.signal,
         managedRequest: async () => ({
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -621,31 +630,24 @@ describe('provider probe HTTP client', () => {
         ...authorizedDestination,
       }).catch((error: unknown) => error);
 
-      // The idle budget, not the wall budget, owns a response that delivered
-      // headers and then went silent. Advance past the idle ceiling only: the
-      // wall budget is still two thirds unspent, so a probe that settles here
-      // can only have been released by the idle deadline.
-      await vi.advanceTimersByTimeAsync(
-        PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs + 1_000,
-      );
+      await vi.advanceTimersByTimeAsync(11_000);
+      cancellation.abort();
 
       const error = await settled;
-      expect(error).toBeInstanceOf(ProviderProbeClientError);
-      expect(error).toMatchObject({ code: 'provider_endpoint_unreachable' });
+      expect(error).toBeInstanceOf(ProviderProbeCancelledError);
       expect(bodyCancelled).toBe(true);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('bounds a managed authenticated body that keeps trickling inside the idle budget', async () => {
+  it('applies the containing caller deadline through a trickling managed response body', async () => {
     vi.useFakeTimers();
     try {
       let bodyCancelled = false;
       let chunks = 0;
-      // Each chunk lands inside the idle budget, so only the end-to-end wall
-      // budget can stop a body that trickles forever.
-      const trickleGapMs = PROVIDER_ENDPOINT_SAFETY_LIMITS.maxIdleTimeMs - 1_000;
+      // Continuing body activity cannot extend the caller's deadline.
+      const trickleGapMs = 9_000;
       const tricklingBody = new ReadableStream<Uint8Array>({
         pull(controller) {
           return new Promise<void>((resolve) => {
@@ -673,6 +675,7 @@ describe('provider probe HTTP client', () => {
         parser: 'openai-models',
         publicHeaders: {},
         credentialPolicy: 'required',
+        wallDeadlineAtMs: Date.now() + 30_000,
         managedRequest: async () => ({
           status: 200,
           headers: { 'content-type': 'application/json' },
@@ -682,7 +685,7 @@ describe('provider probe HTTP client', () => {
       }).catch((error: unknown) => error);
 
       await vi.advanceTimersByTimeAsync(
-        PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs + 1_000,
+        31_000,
       );
 
       const error = await settled;
@@ -894,8 +897,6 @@ describe('provider fixed-shape model-load HTTP client', () => {
     expect(transport).toHaveBeenCalledWith(expect.objectContaining({
       method: 'POST',
       url: 'http://127.0.0.1:1234/api/v1/models/load',
-      wallTimeMs: expect.any(Number),
-      idleTimeMs: 10_000,
       body: Buffer.from('{"model":"model/a:latest"}'),
       headers: expect.objectContaining({
         accept: 'application/json',
@@ -904,12 +905,6 @@ describe('provider fixed-shape model-load HTTP client', () => {
         'x-client': 'happier',
       }),
     }));
-    const transportRequest = transport.mock.calls[0]?.[0];
-    expect(transportRequest?.wallTimeMs).toBeGreaterThan(0);
-    expect(transportRequest?.wallTimeMs).toBeLessThanOrEqual(
-      PROVIDER_MODEL_LOAD_HTTP_LIMITS.wallTimeMs,
-    );
-    expect(PROVIDER_MODEL_LOAD_HTTP_LIMITS).toEqual({ wallTimeMs: 600_000, maxDecodedBodyBytes: 1_048_576 });
   });
 
   it('resolves bracketed IPv6 URL literals through their unwrapped hostname', async () => {
@@ -1010,16 +1005,18 @@ describe('provider fixed-shape model-load HTTP client', () => {
     });
   });
 
-  it('enforces the one-MiB decoded response cap including compression', async () => {
-    const oversized = gzipSync(Buffer.alloc(PROVIDER_MODEL_LOAD_HTTP_LIMITS.maxDecodedBodyBytes + 1));
+  it('accepts complete model-load responses beyond former body and ten-minute limits', async () => {
+    const oversized = gzipSync(Buffer.alloc(6 * 1024 * 1024));
+    let clock = 0;
     const client = createProviderProbeHttpClient({
-      resolveAddresses: async () => ['127.0.0.1'],
+      now: () => clock,
+      resolveAddresses: async () => { clock = 601_000; return ['127.0.0.1']; },
       transport: async () => response({
         headers: { 'content-encoding': 'gzip' },
         body: oversized,
       }),
     });
-    await expect(client.postModelLoad(request)).rejects.toMatchObject({ code: 'provider_probe_response_invalid' });
+    await expect(client.postModelLoad(request)).resolves.toEqual({ statusCode: 200 });
   });
 
   it('preserves cancellation and destination refusal before transport', async () => {

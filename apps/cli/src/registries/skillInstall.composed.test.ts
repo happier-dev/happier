@@ -79,7 +79,7 @@ describe('reviewed skill installation through the Add and Git owners', () => {
             { revision: 1, record: { key: 'skill-rules', value: { v: 1, rules: [] } } },
           ], tombstones: [], diagnostics: [] } }),
           writeRecord: async () => ({ status: 'updated', revision: 1, cursor: 1 }) },
-        includeInSession: async () => ({ ok: true }), readRegistryItem: registry.readRegistryItem,
+        includeInSession: async () => ({ ok: true, state: 'on', previous: 'inherit', applyTiming: { t: 'next_turn' } }), readRegistryItem: registry.readRegistryItem,
         readRegistrySource: registry.readRegistrySource, fetchRegistrySkillFiles: registry.filesForPointer,
         readLinkSkills: registry.readLinkSkills, fetchLinkSkillFiles: registry.fetchLinkSkillFiles,
       });

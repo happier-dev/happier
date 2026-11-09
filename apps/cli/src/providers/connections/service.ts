@@ -1,4 +1,3 @@
-import { ProviderSettingsLimitError } from '@happier-dev/protocol/providers/settings/v1';
 import { isProviderContributionAuthoringMachineRequiredV1 } from '@happier-dev/protocol/providers/connections/creationV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { createProviderOperationLifetime } from '@/providers/operationLifetime';
@@ -63,11 +62,6 @@ export function createProviderConnectionService(deps: ProviderConnectionServiceD
     } catch (error) {
       const providerError = parseProviderError(error);
       if (providerError) return { status: 'error', error: providerError };
-      if (error instanceof ProviderSettingsLimitError) {
-        return { status: 'error', error: createProviderErrorV1('provider_settings_limit_exceeded', {
-          connectionId, machineId: deps.machineId,
-        }) };
-      }
       if (error instanceof ProviderConnectionValidationError || error instanceof zodMiniCore0.core.$ZodError) {
         return { status: 'error', error: createProviderErrorV1('provider_connection_invalid', {
           ...(connectionId ? { connectionId } : {}), machineId: deps.machineId,

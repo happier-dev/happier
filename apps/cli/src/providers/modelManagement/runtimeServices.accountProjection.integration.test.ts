@@ -9,7 +9,6 @@ import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunL
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
 import { resolveProviderContributionRegistryView } from '@/providers/registry/contributions';
 import { DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { createProviderOperationLifetime } from '@/providers/operationLifetime';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -159,7 +158,7 @@ it('explicit requester Refresh probes A managed source on B without B Account re
       resolveManagedPurposeBindingIntent: async () => { ambientPurposeReads++; throw new Error('B purpose read'); } });
     expect(await missingPurposeRuntime.scheduleDemandRefresh({ machineId: fixture.machineId, connectionId: 'run-gateway' },
       'manual_refresh', { getAccountSettingsSnapshot: () => fixture.snapshot,
-        lifetime: createProviderOperationLifetime({ wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs }) })).not.toBeNull();
+        lifetime: createProviderOperationLifetime({}) })).not.toBeNull();
     expect(ambientPurposeReads).toBe(0);
     expect(ambientReads).toBe(0);
     const ordinary = await services.projectModelsForAccount(request, context);
@@ -173,7 +172,7 @@ it('explicit requester Refresh probes A managed source on B without B Account re
     retireAtCredentialRead = true;
     await expect(services.projectModelsForAccount({ ...request, forceRefresh: true }, context))
       .resolves.toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
-    await expect(access(join(gateway.directory, 'gateway-started'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(join(gateway.directory, 'gateway-started'))).resolves.toBeUndefined();
     retireAtCredentialRead = false;
     current = true;
     const refreshed = await services.projectModelsForAccount({ ...request, forceRefresh: true }, context);
@@ -407,8 +406,8 @@ it.each(['issued', 'missing'] as const)('projects requester A personal hub throu
           : { ...snapshot, settingsVersion: snapshot.settingsVersion + 1 };
         return result;
       });
-      await expect(worker.projectModelsForAccount(request, accountContext)).resolves.toMatchObject({ status: 'error',
-        error: { code: 'provider_authorization_changed' } });
+      await expect(worker.projectModelsForAccount(request, accountContext)).resolves.toMatchObject({ status: 'success',
+        groups: [{ rows: [{ descriptor: { id: 'example' } }] }] });
       accountSnapshot = snapshot;
     }
     const readsBeforeRetirement = transport.mock.calls.length;
@@ -567,7 +566,7 @@ it('admits a cold peer catalog through the real hub projection before optional h
   } finally { await fixture.cleanup(); }
 }));
 
-it.each(['purpose', 'dns', 'selected'] as const)('retains healthy models and scopes slow source work (%s)', async slowBoundary => {
+it.each(['purpose', 'dns', 'selected'] as const)('retains healthy models and scopes failed source work (%s)', async slowBoundary => {
   const fixture = await createManagedRunLaunchFixture({ physicalGateway: true, probeCatalog: false });
   let releaseTarget = () => {};
   try {
@@ -616,7 +615,7 @@ it.each(['purpose', 'dns', 'selected'] as const)('retains healthy models and sco
       selectTarget: unexpected, materializeAccount: unexpected, projectTargetAccounts: unexpected,
       assertTargetAccountMaterializable: unexpected,
       resolveTarget: async (target, signal) => {
-        if (slowBoundary !== 'dns') { targetEntered(); await released; }
+        if (slowBoundary !== 'dns') { targetEntered(); await released; throw new Error('Fixture Home unavailable'); }
         signal.throwIfAborted();
         return target.kind === 'account' ? { account: target.account, displayName: 'Upstream' } : null;
       },
@@ -624,7 +623,7 @@ it.each(['purpose', 'dns', 'selected'] as const)('retains healthy models and sco
     const services = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId,
       happyHomeDir: fixture.happyHomeDir, registry, getAccountSettingsSnapshot: () => snapshot,
       featureGate: { isEnabled: () => true }, resolveAddresses: async hostname => {
-        if (hostname === 'slow.example') { targetEntered(); await released; }
+        if (hostname === 'slow.example') { targetEntered(); await released; throw new Error('Fixture DNS unavailable'); }
         return ['1.1.1.1'];
       },
       acquireRuntimeLease: async () => {
@@ -645,7 +644,7 @@ it.each(['purpose', 'dns', 'selected'] as const)('retains healthy models and sco
       // Let the healthy source complete its real filesystem/catalog work while
       // only the unrelated Home/DNS boundary remains held.
       await new Promise<void>(resolve => setImmediate(resolve));
-      await vi.advanceTimersByTimeAsync(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs);
+      releaseTarget();
     }
     try {
       await vi.waitFor(() => expect(settled).toBe(true));
@@ -654,10 +653,11 @@ it.each(['purpose', 'dns', 'selected'] as const)('retains healthy models and sco
         ref: { agentTargetKey: fixture.agentTargetKey, providerConnectionId: 'healthy', modelId: 'healthy-model' },
       })] })]) });
       if (result.status !== 'success') throw new Error('Expected partial projection');
-      expect(result.refreshFailures).toEqual(slowBoundary === 'selected' ? undefined : [{
-        connectionId: slowBoundary === 'dns' ? 'slow-dns' : 'run-gateway',
-        error: expect.objectContaining({ code: 'provider_endpoint_unavailable' }),
+      expect(result.refreshFailures).toEqual(slowBoundary !== 'purpose' ? undefined : [{
+        connectionId: 'run-gateway',
+        error: expect.objectContaining({ code: 'provider_connection_invalid' }),
       }]);
+      if (slowBoundary === 'dns') expect(result.groups.some(group => group.connectionId === 'slow-dns')).toBe(false);
     } finally {
       vi.useRealTimers();
       releaseTarget();
@@ -737,7 +737,7 @@ it.each([true, false])('G1 projects only the owning Account source and purpose w
     await expect(services.summary({ connectionId: 'run-gateway', machineId: fixture.machineId,
       accountSettings: ambientSnapshot.settings, providerSettings: admittedAmbientSettings, registry,
       dnsEvidence: new Map(), resolution: admittedAmbient,
-      lifetime: createProviderOperationLifetime({ wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs }),
+      lifetime: createProviderOperationLifetime({}),
     })).resolves.toMatchObject({ status: 'success' });
 
     const controller = new AbortController();

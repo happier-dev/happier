@@ -6,7 +6,7 @@ import type { ProviderContributionRegistryView } from './types';
 
 export function resolveProviderContributionRegistryView(
   registry: Pick<ResolvedContributionRegistry, 'providersByContributionKey'> & Partial<Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>>,
-  runtimeRegistryGeneration: number,
+  runtimeRegistryGeneration: number | undefined,
   readPluginOccurrenceId?: (pluginId: string) => string | null,
 ): ProviderContributionRegistryView {
   if (!registry.providersByContributionKey) {

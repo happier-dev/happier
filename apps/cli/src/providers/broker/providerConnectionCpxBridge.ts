@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer';
 
 import type { ManagedServiceRequest, ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import type { ProviderBrokerApplicationBindingV1, ProviderWireProtocol } from '@happier-dev/protocol';
+import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import { projectManagedProviderBrokerApplication } from './applicationProjection';
 import { getProviderContribution } from '@/providers/registry';
@@ -18,6 +18,7 @@ import { readProviderBrokerTransportFailure } from './providerBrokerTransportFai
 import { ProviderBrokerApplicationFailureError } from './providerBrokerApplicationFailure';
 
 const SOURCE_CREDENTIAL_HEADER = 'x-happier-provider-source-credential';
+const SOURCE_ADDITIONAL_CREDENTIALS_HEADER = 'x-happier-provider-source-additional-credentials';
 
 /** Exact requests admit their declared implementation without a catalog scan.
  * Discovery requires a unique declaration because it has no selected identity. */
@@ -41,12 +42,15 @@ export function readProviderConnectionBrokerImplementation(
 
 /** The contribution declares this private transport; endpoint and protocol
  * admission remain with the current registry's application projection. */
-export function projectProviderConnectionBrokerApplication(input: Readonly<{
+type BrokerApplicationInput = Readonly<{
   registry: ProviderContributionRegistryView;
-  agentTargetKey: string;
+  agentTargetKey?: string;
   protocol: ProviderWireProtocol;
-  expectedApplication?: ProviderBrokerApplicationBindingV1;
-}>): ProviderBrokerApplicationBindingV1 | null {
+  expectedApplication?: ProviderBrokerSourceApplicationBindingV1;
+}>;
+export function projectProviderConnectionBrokerApplication(input: BrokerApplicationInput & { agentTargetKey: string }): ProviderBrokerApplicationBindingV1 | null;
+export function projectProviderConnectionBrokerApplication(input: BrokerApplicationInput): ProviderBrokerSourceApplicationBindingV1 | null;
+export function projectProviderConnectionBrokerApplication(input: BrokerApplicationInput): ProviderBrokerSourceApplicationBindingV1 | null {
   const identity = readProviderConnectionBrokerImplementation(input.registry,
     input.expectedApplication?.implementationIdentity)?.identity;
   if (!identity) return null;
@@ -72,6 +76,7 @@ const PRIVATE_REQUEST_HEADERS = new Set([
   'api-key',
   'x-goog-api-key',
   SOURCE_CREDENTIAL_HEADER,
+  SOURCE_ADDITIONAL_CREDENTIALS_HEADER,
   SOURCE_DESCRIPTOR_HEADER,
   'x-happier-machine-local-capability',
   'x-happier-provider-broker-authority',
@@ -99,13 +104,10 @@ function upstreamUnavailable(): ManagedServiceResponse {
 
 function safePublicHeaders(headers: Readonly<Record<string, string>>): boolean {
   const entries = Object.entries(headers);
-  return entries.length <= PROVIDER_ENDPOINT_SAFETY_LIMITS.maxPublicHeaders
-    && entries.every(([rawName, value]) => {
+  return entries.every(([rawName, value]) => {
     const name = rawName.toLowerCase();
     return rawName === name
       && !PRIVATE_REQUEST_HEADERS.has(name)
-      && name.length <= PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderNameChars
-      && value.length <= PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderValueChars
       && !/[\0\r\n]/u.test(value);
     });
 }
@@ -113,12 +115,14 @@ function safePublicHeaders(headers: Readonly<Record<string, string>>): boolean {
 function descriptor(
   input: ProviderConnectionCpxBridgeOpenInput,
   credentialHeaderName: string,
+  additionalCredentialHeaderNames: readonly string[] = [],
 ): string {
   return Buffer.from(JSON.stringify({
     baseUrl: input.endpoint.normalizedUrl,
     resolvedAddresses: input.endpoint.resolvedAddresses,
     publicHeaders: input.endpoint.publicHeaders,
     credentialHeaderName: credentialHeaderName.toLowerCase(),
+    ...(additionalCredentialHeaderNames.length ? { additionalCredentialHeaderNames } : {}),
   }), 'utf8').toString('base64url');
 }
 
@@ -127,6 +131,7 @@ function requestHeaders(
   providerHeaders: Readonly<Record<string, string>>,
   sourceDescriptor: string,
   credential: string,
+  additionalCredentials?: string,
 ): Readonly<Record<string, string>> | null {
   const result: Record<string, string> = Object.create(null);
   for (const [rawName, value] of Object.entries(caller ?? {})) {
@@ -136,6 +141,7 @@ function requestHeaders(
   }
   result[SOURCE_DESCRIPTOR_HEADER] = sourceDescriptor;
   result[SOURCE_CREDENTIAL_HEADER] = credential;
+  if (additionalCredentials !== undefined) result[SOURCE_ADDITIONAL_CREDENTIALS_HEADER] = additionalCredentials;
   result['accept-encoding'] = 'identity';
   return Object.freeze(result);
 }
@@ -201,14 +207,6 @@ function bindResponseBody(
   });
 }
 
-function credentialsEqual(
-  left: Readonly<{ credential: Readonly<{ name: string; value: string }> }>,
-  right: Readonly<{ credential: Readonly<{ name: string; value: string }> }>,
-): boolean {
-  return left.credential.name.toLowerCase() === right.credential.name.toLowerCase()
-    && left.credential.value === right.credential.value;
-}
-
 /**
  * Adapts the exact Provider source into the existing SVC09 process. The bridge
  * never contacts the Provider: each request carries a current source envelope
@@ -233,7 +231,7 @@ export function createProviderConnectionCpxBridge(input: Readonly<{
         endpointTemplateId: openInput.application.endpointTemplateId,
         operationClaim: { kind: 'providerBroker', operation: openInput.operation },
         purposeBindings: { v: 1, bindings: [] },
-        retainedCurrentnessScope: { facts: ['teams', 'provider-connections', 'saved-secrets'] },
+        retainedCurrentnessScope: { facts: ['teams', 'team-credential-material', 'provider-connections', 'saved-secrets'] },
         isSourceCurrent: async (signal) => await openInput.isCurrent(signal),
         ...(openInput.revalidateOperationAuthorization
           ? { revalidateOperationAuthorization: openInput.revalidateOperationAuthorization }
@@ -250,11 +248,30 @@ export function createProviderConnectionCpxBridge(input: Readonly<{
           lease.close();
           throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
         }
+        const credentials = [lease.credential, ...(lease.credential.additionalCredentials ?? [])];
+        const names = credentials.map(credential => credential.name.toLowerCase());
+        if (credentials.some(credential => credential.kind !== 'httpHeader' || !credential.value || /[\u0000-\u001f\u007f]/u.test(credential.value))
+          || new Set(names).size !== names.length
+          || names.some(name => Object.keys(openInput.endpoint.publicHeaders).some(header => header.toLowerCase() === name))) {
+          lease.close();
+          throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
+        }
+        const additionalCarrier = credentials.length === 1 ? undefined : Buffer.from(JSON.stringify(
+          Object.fromEntries(credentials.slice(1).map(credential => [credential.name.toLowerCase(), credential.value])),
+        ), 'utf8').toString('base64url');
+        if (additionalCarrier !== undefined) {
+          if (!lease.registerSensitiveValues) {
+            lease.close();
+            throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
+          }
+          lease.registerSensitiveValues([additionalCarrier]);
+        }
         const headers = requestHeaders(
           requestInput.headers,
           openInput.endpoint.publicHeaders,
-          descriptor(openInput, lease.credential.name),
+          descriptor(openInput, lease.credential.name, names.slice(1)),
           lease.credential.value,
+          additionalCarrier,
         );
         if (!headers) {
           lease.close();
@@ -311,17 +328,9 @@ export function createProviderConnectionCpxBridge(input: Readonly<{
         if (!await revalidateAuthorization()) {
           throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
         }
-        const firstLease = await openInput.acquireRequestCredential().catch(() => null);
-        if (!firstLease) throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
-        const first = await send(requestInput, firstLease);
-        if (first.status !== 401) return first;
-        const secondLease = await openInput.acquireRequestCredential();
-        if (!secondLease || credentialsEqual(firstLease, secondLease)) {
-          secondLease?.close();
-          return first;
-        }
-        await first.body?.cancel().catch(() => undefined);
-        return await send(requestInput, secondLease);
+        const lease = await openInput.acquireRequestCredential().catch(() => null);
+        if (!lease) throw new ProviderBrokerApplicationFailureError({ ok: false, reasonCode: 'source_unavailable' });
+        return await send(requestInput, lease);
       };
 
       return Object.freeze({

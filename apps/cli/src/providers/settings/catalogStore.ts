@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
-import { loadProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/providerConnectionsCatalogV1';
+import { loadProviderConnectionsCatalogV1, providerConnectionsSourceNeedsCleanupV1 } from '@happier-dev/protocol/providers/connections/providerConnectionsCatalogV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsRowReadResponseV1Schema,
   ProviderConnectionsRowMutationV1Schema, ProviderConnectionsRowMutationResponseV1Schema,
@@ -19,8 +19,10 @@ import { commitActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot,
 import { readAccountSettingsV2Raw, replaceAccountSettingsV2RawForOwnerCutover } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { normalizeCliAccountSettingsHistoryAfterTransfer } from '@/settings/accountSettings/accountSettingsHistoryNormalization';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { SavedSecretOperationAdmissionError } from '@/settings/secrets/savedSecretCatalogRead';
+import { createLaunchSecretReferenceOverlayProviderErrorV1 } from '@/settings/secrets/secretReferenceOverlay';
 import { logger } from '@/ui/logger';
-import { runWithRequesterSessionCurrentnessCheckpoint, runWithoutRequesterSessionCurrentnessCheckpoint } from "@/daemon/sessionEncryption/requesterCurrentness";
+
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 type CatalogReadPhase = 'admission_currentness' | 'account_currentness' | 'storage_currentness' | 'row' | 'source' | 'history';
@@ -116,12 +118,16 @@ function createCapturedStore(input: Readonly<{
     await verifyCurrent();
     return { ...source, ...context };
   });
-  const mutateCatalog = async (value: Readonly<{ catalog: ProviderConnectionsCatalogV1; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }>) => runWithoutRequesterSessionCurrentnessCheckpoint(async () => {
+  const mutateCatalog = async (value: Readonly<{ catalog: ProviderConnectionsCatalogV1; expectedRevision: number | 'absent'; sourceSettingsVersion?: number }>) => (async () => {
     const context = await readStorageContext();
     const { captureSavedSecretReferencesForOperation } = await import('@/settings/secrets/hydrateSavedSecretCatalog');
     const capture = await runWithServerHttpBaseUrl(base, () => captureSavedSecretReferencesForOperation({ expectedScopeKey: input.scopeKey,
       references: listProviderConnectionsCatalogSavedSecretRefsV1(value.catalog).map(ref => ref.secretId),
-      operationContext: input.operationContext, signal: input.signal }));
+      operationContext: input.operationContext, signal: input.signal })).catch(error => {
+        if (input.signal?.aborted) throw error;
+        throw createLaunchSecretReferenceOverlayProviderErrorV1(error instanceof SavedSecretOperationAdmissionError
+          ? error.reason : 'reference_unavailable');
+      });
     await verifyCurrent();
     const admitted = await readStorageContext();
     if (admitted.mode !== context.mode) throw Object.assign(new Error('Provider Account mode changed'), { code: 'account-mode-mismatch' });
@@ -131,7 +137,7 @@ function createCapturedStore(input: Readonly<{
         content: sealProviderConnectionsContentV1({ ...admitted, catalog: value.catalog }), ...capture })));
     if (!result.success) throw Object.assign(new Error('Provider mutation acknowledgement is invalid'), { code: 'outcome_unknown' });
     return result.data;
-  });
+  })();
   const replaceSource = async (value: Readonly<{ raw: Readonly<Record<string, unknown>>; expectedVersion: number }>) => {
     const context = await readStorageContext();
     let response: ReturnType<typeof AccountSettingsV2UpdateResponseSchema.parse>;
@@ -157,15 +163,15 @@ function createCapturedStore(input: Readonly<{
     return { status: 'applied' as const, settingsVersion: response.version };
   };
   /** Mutations require existing row authority and never initialize or clean a retained source. */
-  const readCatalogForMutation = async () => runWithRequesterSessionCurrentnessCheckpoint(async () => {
+  const readCatalogForMutation = async () => (async () => {
     const context = await readStorageContext('identity');
     const catalog = await loadProviderConnectionsCatalogV1({ ...context, signal: input.signal, readRow });
     const admitted = await readStorageContext();
     await verifyCurrent();
     return admitted.mode === context.mode ? catalog : { status: 'unavailable' as const, reason: 'account-mode-mismatch' };
-  });
+  })();
   const readCatalog = async (options?: Pick<Parameters<typeof loadProviderConnectionsCatalogV1>[0], 'onReadyBeforeCleanup' | 'hasPendingCleanup'>
-    & Readonly<{ sourceCleanupPending?: boolean }>) => runWithRequesterSessionCurrentnessCheckpoint(async () => {
+    & Readonly<{ sourceCleanupPending?: boolean }>) => (async () => {
     const context = await readStorageContext('identity');
     let initializeSource = false;
     const catalog = await loadProviderConnectionsCatalogV1({ ...context, signal: input.signal, readRow: async () => {
@@ -180,10 +186,9 @@ function createCapturedStore(input: Readonly<{
     } : undefined, transfer: {
       needsSourceCleanup: () => {
         const snapshot = input.operationContext ? input.operationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
-        return options?.sourceCleanupPending === true || snapshot?.rawSettings === undefined
-          || Object.hasOwn(snapshot.rawSettings, 'providerSettingsV1')
-          || snapshot.providerConnectionsCatalog?.status === 'ready'
-            && snapshot.providerConnectionsCatalog.cleanup?.status === 'cleanup-pending';
+        return providerConnectionsSourceNeedsCleanupV1({ rawSettings: snapshot?.rawSettings,
+          cleanupPending: options?.sourceCleanupPending === true || snapshot?.providerConnectionsCatalog?.status === 'ready'
+            && snapshot.providerConnectionsCatalog.cleanup?.status === 'cleanup-pending' });
       },
       readSourceSnapshot: async () => {
         let source = await readSourceSnapshot();
@@ -196,8 +201,8 @@ function createCapturedStore(input: Readonly<{
           const retained = readRetainedProviderConnectionsCatalogV1(source.raw);
           if (retained.status === 'ready' && hasPersonalReferences(retained.catalog)) {
             const { importLegacySavedSecretsForOperation } = await import('@/settings/secrets/hydrateSavedSecretCatalog');
-            await runWithoutRequesterSessionCurrentnessCheckpoint(() => runWithServerHttpBaseUrl(base, () => importLegacySavedSecretsForOperation({ expectedScopeKey: input.scopeKey,
-              refreshCatalog: true, operationContext: input.operationContext, signal: input.signal })));
+            await (() => runWithServerHttpBaseUrl(base, () => importLegacySavedSecretsForOperation({ expectedScopeKey: input.scopeKey,
+              refreshCatalog: true, operationContext: input.operationContext, signal: input.signal })))();
             source = await readSourceSnapshot();
             const normalized = readRetainedProviderConnectionsCatalogV1(source.raw);
             if (normalized.status === 'ready' && hasPersonalReferences(normalized.catalog)) {
@@ -206,7 +211,7 @@ function createCapturedStore(input: Readonly<{
           }
         }
         return source;
-      }, initializeCatalog: mutateCatalog, replaceSource: value => runWithoutRequesterSessionCurrentnessCheckpoint(() => replaceSource(value)),
+      }, initializeCatalog: mutateCatalog, replaceSource: value => (() => replaceSource(value))(),
       normalizeHistory: value => observePhase('history', () => normalizeCliAccountSettingsHistoryAfterTransfer({ credentials: input.credentials, serverBaseUrl: base,
         signal: input.signal, isCurrent: async () => { try { await verifyCurrent(); return true; } catch { return false; } },
         destinationAuthority: { activeTransferredRoots: value.activeTransferredRoots } })),
@@ -214,7 +219,7 @@ function createCapturedStore(input: Readonly<{
     const admitted = await readStorageContext();
     await verifyCurrent();
     return admitted.mode === context.mode ? catalog : { status: 'unavailable' as const, reason: 'account-mode-mismatch' };
-  }, { readOnly: true });
+  })();
   return { assertCurrent: input.assertCurrent, verifyCurrent, readRow, readStorageContext, readSourceSnapshot, readCatalog,
     readCatalogForMutation, mutateCatalog };
 }

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   createProviderEndpointSetFingerprintV1,
+  createProviderEndpointSetFingerprintV2,
+  createProviderConnectionSecurityFingerprintV1,
+  assessProviderEndpoint,
   DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderContributionV1Schema,
+  ProviderConnectionIdSchema,
   type ProviderSettingsV1,
 } from '@happier-dev/protocol';
 
@@ -14,6 +18,10 @@ import type { ProviderContributionRegistryView } from './types';
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
 import { composeProviderSettingsV1, splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { DEEPSEEK_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/deepseek/src/provider/contribution';
+import { OPENROUTER_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/openrouter/src/provider/contribution';
+import { VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/vercel-ai-gateway/src/provider/contribution';
+import { setProviderConnectionGrant } from '@/providers/connections/service/grants';
 
 const contributionKey = 'acme.gateway/gateway';
 const canonicalContributionKey = 'acme.gateway/gateway';
@@ -183,12 +191,250 @@ const publicDns = new Map([
   ['https://gateway-v2.example/v1', ['8.8.8.8']],
 ]);
 
+describe('Provider grant consent identity across harmless declaration and DNS changes', () => {
+  it('keeps an explicitly confirmed HTTP private hostname usable without admission DNS', () => {
+    const url = 'http://gateway.internal/v1';
+    const declared = contribution(url);
+    const configured = connection('pc_http_private');
+    const resolve = (providerSettings: ProviderSettingsV1, withDns: boolean) => resolveProviderConnectionForMachine({
+      connectionId: configured.id, machineId: 'machine-1', providerSettings, registry: registry(declared),
+      dnsEvidenceByEndpointUrl: new Map(withDns ? [[url, ['10.0.0.1']]] : []),
+    });
+    const initial = resolve(settingsWith([configured]), true);
+    expect(initial).toMatchObject({ status: 'resolved', record: { scope: 'machine', authorization: { authorized: false } } });
+    if (initial.status !== 'resolved') throw new Error('Expected the private HTTP endpoint to admit consent');
+    const enabled = setProviderConnectionGrant({ settings: settingsWith([configured]), connectionId: configured.id,
+      machineId: 'machine-1', scope: 'machine', enabled: true, now: 10,
+      connectionSecurityFingerprint: initial.record.connectionSecurityFingerprint, endpointSetFingerprint: initial.record.endpointSetFingerprint });
+    expect(resolve(enabled, false)).toMatchObject({ status: 'resolved', record: { scope: 'machine', authorization: { authorized: true } } });
+    expect(() => assessProviderEndpoint(url, { resolvedAddresses: ['8.8.8.8'], privateNetworkConfirmed: true }))
+      .toThrow(expect.objectContaining({ code: 'http_public_forbidden' }));
+  });
+
+  it('keeps Account enablement through catalog, usage, load and presentation declaration changes', async () => {
+    const base = contribution();
+    let declared: ResolvedProviderContribution = { ...base, definition: ProviderContributionV1Schema.parse({
+      ...base.definition, kind: 'local',
+      credential: { ...base.definition.credential, transports: [{ id: 'runtime-bearer', protocols: ['openai-responses'],
+        uses: ['runtime', 'management'], destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' } }] },
+      catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'responses',
+        path: '/models', parser: 'gateway-models', reportsModelLoadState: true }] },
+      modelLoad: { endpointTemplateId: 'responses', path: '/load', request: 'json-model-id-v1',
+        confirmation: 'refresh-catalog-load-state', preflightPolicy: 'advisory' },
+    }) };
+    let catalog = splitProviderSettingsV1(settingsWith([connection('pc_consent')])).catalog;
+    const execute = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 10,
+      readCatalog: async () => ({ status: 'ready', revision: 4, catalog }),
+      readDefinitions: async () => [{ contributionKey, definition: declared.definition, provenance: declared.provenance }],
+      writeCatalog: async value => { catalog = value.catalog; return { status: 'updated' }; },
+    });
+    expect(await execute(parseProviderActionRequestV1('providers.connections.enabled.set', {
+      action: 'setEnabled', connectionId: 'pc_consent', scope: 'account', enabled: true,
+    }), { surface: 'cli' })).toMatchObject({ ok: true });
+    expect(catalog.accountGrants[0]?.connectionSecurityFingerprint).toMatch(/^connection-security:v2:/);
+    const resolve = (dnsEvidenceByEndpointUrl = publicDns) => resolveProviderConnectionForMachine({ connectionId: 'pc_consent', machineId: 'machine-1',
+      providerSettings: composeProviderSettingsV1(catalog, {}), registry: registry(declared), dnsEvidenceByEndpointUrl });
+    expect(resolve()).toMatchObject({ status: 'resolved', record: { authorization: { authorized: true, grantKind: 'account' } } });
+    expect(resolve(new Map([['https://gateway.example/v1', ['10.0.0.1']]]))).toMatchObject({ status: 'resolved',
+      record: { scope: 'account', authorization: { authorized: true, grantKind: 'account' } } });
+    expect(resolve(new Map())).toMatchObject({ status: 'resolved',
+      record: { scope: 'account', authorization: { authorized: true, grantKind: 'account' } } });
+    declared = { ...declared, definition: ProviderContributionV1Schema.parse({ ...declared.definition,
+      name: 'Renamed Gateway', kind: 'local',
+      catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'responses',
+        path: '/new-models', parser: 'gateway-models', reportsModelLoadState: true }] },
+      usageSources: [{ id: 'balance', endpointTemplateId: 'responses', path: '/balance', parser: 'balance' }],
+      modelLoad: { endpointTemplateId: 'responses', path: '/load-updated', request: 'json-model-id-v1',
+        confirmation: 'refresh-catalog-load-state', preflightPolicy: 'advisory' },
+    }) };
+    expect(resolve()).toMatchObject({ status: 'resolved', record: { authorization: { authorized: true, grantKind: 'account' } } });
+    const unchangedDefinition = declared.definition;
+    declared = { ...declared, definition: ProviderContributionV1Schema.parse({ ...unchangedDefinition,
+      credential: { ...unchangedDefinition.credential, transports: [{ id: 'runtime-bearer', protocols: ['openai-responses'],
+        uses: ['runtime', 'management'], destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' } }] },
+    }) };
+    expect(resolve()).toMatchObject({ status: 'resolved', record: { authorization: {
+      authorized: false, errorCode: 'provider_account_grant_stale' } } });
+    declared = { ...declared, definition: ProviderContributionV1Schema.parse({ ...unchangedDefinition,
+      endpointTemplates: [{ ...unchangedDefinition.endpointTemplates[0], baseUrl: 'https://changed.example/v1' }],
+    }) };
+    expect(resolve()).toMatchObject({ status: 'resolved', record: { authorization: {
+      authorized: false, errorCode: 'provider_account_grant_stale' } } });
+    declared = { ...declared, definition: unchangedDefinition };
+    catalog = { ...catalog, accountGrants: [] };
+    expect(resolve()).toMatchObject({ status: 'resolved', record: { authorization: {
+      authorized: false, errorCode: 'provider_connection_disabled' } } });
+  });
+
+  it('keeps a Machine grant when DNS addresses change within the same private endpoint and Machine', () => {
+    const configured = connection('pc_private_consent');
+    const resolve = (providerSettings: ProviderSettingsV1, address: string | null, machineId = 'machine-1') =>
+      resolveProviderConnectionForMachine({ connectionId: configured.id, machineId, providerSettings,
+        registry: registry(), dnsEvidenceByEndpointUrl: new Map(address ? [['https://gateway.example/v1', [address]]] : []) });
+    const initial = resolve(settingsWith([configured]), '10.0.0.1');
+    if (initial.status !== 'resolved') throw new Error('Expected initial private endpoint resolution');
+    const enabled = setProviderConnectionGrant({ settings: settingsWith([configured]), connectionId: configured.id,
+      machineId: 'machine-1', scope: 'machine', enabled: true,
+      connectionSecurityFingerprint: initial.record.connectionSecurityFingerprint,
+      endpointSetFingerprint: initial.record.endpointSetFingerprint, now: 10 });
+    expect(enabled.machineGrants[0]?.connectionSecurityFingerprint).toMatch(/^connection-security:v2:/);
+    expect(enabled.machineGrants[0]?.endpointSetFingerprint).toMatch(/^endpoint-set:v2:/);
+    expect(resolve(enabled, '10.0.0.1')).toMatchObject({ status: 'resolved', record: { scope: 'machine',
+      authorization: { authorized: true, grantKind: 'machine' } } });
+    expect(resolve(enabled, '10.0.0.2')).toMatchObject({ status: 'resolved', record: { scope: 'machine',
+      authorization: { authorized: true, grantKind: 'machine' } } });
+    expect(resolve(enabled, null)).toMatchObject({ status: 'resolved', record: { scope: 'machine',
+      authorization: { authorized: true, grantKind: 'machine' } } });
+    expect(resolve(enabled, '8.8.8.8')).toMatchObject({ status: 'resolved', record: { scope: 'machine',
+      authorization: { authorized: true, grantKind: 'machine' } } });
+    expect(resolve(enabled, '10.0.0.2', 'machine-2')).toMatchObject({ status: 'resolved', record: {
+      authorization: { authorized: false, errorCode: 'provider_not_enabled_on_machine' } } });
+    expect(resolve({ ...enabled, machineGrants: [] }, '10.0.0.2')).toMatchObject({ status: 'resolved', record: {
+      authorization: { authorized: false, errorCode: 'provider_not_enabled_on_machine' } } });
+    expect(resolve({ ...enabled, connections: [{ ...configured,
+      endpointOverrides: [{ endpointTemplateId: 'responses', baseUrl: 'https://changed.example/v1' }],
+    }] }, '10.0.0.2')).toMatchObject({ status: 'resolved', record: { authorization: {
+      authorized: false, errorCode: 'provider_machine_grant_stale' } } });
+    const declared = contribution();
+    expect(resolveProviderConnectionForMachine({ connectionId: configured.id, machineId: 'machine-1',
+      providerSettings: enabled, dnsEvidenceByEndpointUrl: new Map([['https://gateway.example/v1', ['10.0.0.2']]]),
+      registry: registry({ ...declared, definition: ProviderContributionV1Schema.parse({ ...declared.definition,
+        credential: { ...declared.definition.credential, transports: [{ id: 'runtime-bearer', protocols: ['openai-responses'],
+          uses: ['runtime'], destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' } }] },
+      }) }),
+    })).toMatchObject({ status: 'resolved', record: { authorization: {
+      authorized: false, errorCode: 'provider_machine_grant_stale' } } });
+    const both = { ...enabled, accountGrants: [{ v: 1 as const, connectionId: configured.id,
+      connectionSecurityFingerprint: initial.record.connectionSecurityFingerprint, confirmedAt: 11 }] };
+    expect(resolve(both, '8.8.8.8')).toMatchObject({ status: 'resolved', record: { scope: 'machine',
+      authorization: { authorized: true, grantKind: 'machine' } } });
+    expect(resolve(both, '8.8.8.8', 'machine-2')).toMatchObject({ status: 'resolved', record: { scope: 'account',
+      authorization: { authorized: true, grantKind: 'account' } } });
+  });
+
+  it('keeps opaque legacy comparison until explicit Account re-consent writes the destination shape', async () => {
+    let declared = contribution();
+    const legacyFingerprint = createProviderConnectionSecurityFingerprintV1({ securityContractVersion: 1,
+      endpoints: [{ endpointTemplateId: 'responses', protocol: 'openai-responses', url: 'https://gateway.example/v1',
+        publicHeaders: { 'X-Provider-Client': 'happier' } }],
+      catalogProbes: [{ endpointTemplateId: 'responses', path: '/models', parser: 'openai-models' }],
+      credentialTransports: declared.definition.credential?.transports ?? [] });
+    let catalog = splitProviderSettingsV1(settingsWith([connection('pc_legacy_consent')], { accountGrants: [{
+      v: 1, connectionId: ProviderConnectionIdSchema.parse('pc_legacy_consent'), connectionSecurityFingerprint: legacyFingerprint, confirmedAt: 1,
+    }] })).catalog;
+    const resolve = () => resolveProviderConnectionForMachine({ connectionId: 'pc_legacy_consent', machineId: 'machine-1',
+      providerSettings: composeProviderSettingsV1(catalog, {}), registry: registry(declared), dnsEvidenceByEndpointUrl: publicDns });
+    expect(resolve()).toMatchObject({ status: 'resolved', record: { authorization: { authorized: true } } });
+    declared = { ...declared, definition: ProviderContributionV1Schema.parse({ ...declared.definition,
+      catalog: { source: 'probe', manualModelPolicy: 'allowed', probes: [{ endpointTemplateId: 'responses',
+        path: '/new-models', parser: 'openai-models' }] } }) };
+    expect(resolve()).toMatchObject({ status: 'resolved', record: { authorization: {
+      authorized: false, errorCode: 'provider_account_grant_stale' } } });
+    const execute = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 10,
+      readCatalog: async () => ({ status: 'ready', revision: 4, catalog }),
+      readDefinitions: async () => [{ contributionKey, definition: declared.definition, provenance: declared.provenance }],
+      writeCatalog: async value => { catalog = value.catalog; return { status: 'updated' }; },
+    });
+    expect(await execute(parseProviderActionRequestV1('providers.connections.enabled.set', {
+      action: 'setEnabled', connectionId: 'pc_legacy_consent', scope: 'account', enabled: true,
+    }), { surface: 'cli' })).toMatchObject({ ok: true });
+    expect(catalog.accountGrants[0]?.connectionSecurityFingerprint).toMatch(/^connection-security:v2:/);
+    expect(resolve()).toMatchObject({ status: 'resolved', record: { authorization: { authorized: true } } });
+    catalog = { ...catalog, accountGrants: [{ ...catalog.accountGrants[0]!,
+      connectionSecurityFingerprint: 'connection-security:v1:unknown-history' }] };
+    expect(resolve()).toMatchObject({ status: 'resolved', record: { authorization: {
+      authorized: false, errorCode: 'provider_account_grant_stale' } } });
+  });
+
+  it('retains opaque Machine DNS comparison until explicit Machine re-consent writes the destination shape', () => {
+    const configured = connection('pc_legacy_machine');
+    const declared = contribution();
+    const oldConnection = createProviderConnectionSecurityFingerprintV1({ securityContractVersion: 1,
+      endpoints: [{ endpointTemplateId: 'responses', protocol: 'openai-responses', url: 'https://gateway.example/v1',
+        publicHeaders: { 'X-Provider-Client': 'happier' } }],
+      catalogProbes: [{ endpointTemplateId: 'responses', path: '/models', parser: 'openai-models' }],
+      credentialTransports: declared.definition.credential?.transports ?? [] });
+    const oldEndpoints = createProviderEndpointSetFingerprintV1({ endpoints: [{ endpointTemplateId: 'responses',
+      endpoint: assessProviderEndpoint('https://gateway.example/v1', {
+        resolvedAddresses: ['10.0.0.1'], purpose: 'configuration', privateNetworkConfirmed: true,
+      }) }] });
+    const legacy = settingsWith([configured], { machineGrants: [{ v: 1, connectionId: configured.id, machineId: 'machine-1',
+      connectionSecurityFingerprint: oldConnection, endpointSetFingerprint: oldEndpoints, confirmedAt: 1 }] });
+    const resolve = (providerSettings: ProviderSettingsV1, address: string) => resolveProviderConnectionForMachine({
+      connectionId: configured.id, machineId: 'machine-1', providerSettings, registry: registry(declared),
+      dnsEvidenceByEndpointUrl: new Map([['https://gateway.example/v1', [address]]]),
+    });
+    const initial = resolve(legacy, '10.0.0.1');
+    expect(initial).toMatchObject({ status: 'resolved', record: { authorization: { authorized: true, grantKind: 'machine' } } });
+    expect(resolve(legacy, '10.0.0.2')).toMatchObject({ status: 'resolved', record: { authorization: {
+      authorized: false, errorCode: 'provider_machine_grant_stale' } } });
+    if (initial.status !== 'resolved') throw new Error('Expected healthy legacy Machine grant');
+    const renewed = setProviderConnectionGrant({ settings: legacy, connectionId: configured.id, machineId: 'machine-1',
+      scope: 'machine', enabled: true, connectionSecurityFingerprint: initial.record.connectionSecurityFingerprint,
+      endpointSetFingerprint: initial.record.endpointSetFingerprint, now: 10 });
+    expect(renewed.machineGrants[0]?.connectionSecurityFingerprint).toMatch(/^connection-security:v2:/);
+    expect(resolve(renewed, '10.0.0.2')).toMatchObject({ status: 'resolved', record: { authorization: { authorized: true } } });
+    expect(legacy.machineGrants[0]?.connectionSecurityFingerprint).toBe(oldConnection);
+    expect(legacy.machineGrants[0]?.endpointSetFingerprint).toBe(oldEndpoints);
+  });
+});
+
+it('resolves a configured family while unused required coordinates stay unconfigured, with header-only Machine inheritance', () => {
+  const base = providerDefinition();
+  const { baseUrl: _url, ...endpoint } = base.endpointTemplates[0]!;
+  const definition = ProviderContributionV1Schema.parse({ ...base, catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+    endpointTemplates: [{ ...endpoint, requiresEndpointOverride: true, publicHeaders: { 'x-policy': 'template' },
+      addressConstraint: { origin: 'https://gateway.example', pathSegments: ['v1'] } },
+    { ...endpoint, id: 'chat', protocol: 'openai-chat', requiresEndpointOverride: true,
+      requiredPublicHeaders: ['x-routing'], addressConstraint: { origin: 'https://account.example', pathSegments: ['v1'] } }] });
+  const configured = connection('pc_partial', { endpointOverrides: [{ endpointTemplateId: 'responses', baseUrl: 'https://gateway.example/v1',
+    publicHeaders: { 'X-Policy': 'account' } }], endpointOverridesByMachineId: {
+      'machine-1': [{ endpointTemplateId: 'responses', publicHeaders: { 'X-Mode': 'machine' } }],
+    } });
+  const resolve = (value = configured) => resolveProviderConnectionForMachine({ connectionId: 'pc_partial', machineId: 'machine-1',
+    providerSettings: settingsWith([value]), registry: registry({ ...contribution(), definition }), dnsEvidenceByEndpointUrl: publicDns });
+  const result = resolve();
+  expect(result).toMatchObject({ status: 'resolved', record: { scope: 'machine', endpoints: [{ endpointTemplateId: 'responses',
+    normalizedUrl: 'https://gateway.example/v1', publicHeaders: { 'x-policy': 'account', 'x-mode': 'machine' } }] } });
+  expect(resolve({ ...configured, endpointOverrides: [{ endpointTemplateId: 'responses', baseUrl: 'https://gateway.example/wrong-family' }] }))
+    .toMatchObject({ status: 'endpoint_unresolved', reason: 'endpoint_invalid' });
+});
+
 it('resolves the admitted Provider domain basis without a Settings subtree', () => {
   const providerSettings = settingsWith([connection('pc_catalog')]);
   const resolved = resolveProviderConnectionForMachine({ connectionId: 'pc_catalog', machineId: 'machine-1',
     providerSettings, registry: registry(), dnsEvidenceByEndpointUrl: publicDns });
   expect(resolved.status).toBe('resolved');
   if (resolved.status === 'resolved') expect(resolved.record.connection.id).toBe('pc_catalog');
+});
+
+it.each([
+  ['happier.provider.deepseek', DEEPSEEK_PROVIDER_CONTRIBUTION],
+  ['happier.provider.openrouter', OPENROUTER_PROVIDER_CONTRIBUTION],
+  ['happier.provider.vercel-ai-gateway', VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION],
+] as const)('resolves a freshly authored %s connection with its Account grant through the same registry owner', async (pluginId, authored) => {
+  const definition = ProviderContributionV1Schema.parse(authored);
+  const key = `${pluginId}/${definition.id}`;
+  const declared: ResolvedProviderContribution = { provenance: 'first_party', source: { kind: 'bundled' },
+    pluginId, identity: { pluginId, localId: definition.id }, definition };
+  let catalog = splitProviderSettingsV1(settingsWith([])).catalog;
+  const execute = createAccountProviderActionExecuteV1({ assertCurrent() {}, now: () => 10,
+    readCatalog: async () => ({ status: 'ready', revision: 1, catalog }),
+    readDefinitions: async () => [{ contributionKey: key, definition, provenance: 'first_party' }],
+    writeCatalog: async value => { catalog = value.catalog; return { status: 'updated' }; },
+  });
+  expect(await execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+    action: 'createContribution', connectionId: 'pc_new_contribution', contributionKey: key,
+    displayName: null, savedSecretId: null, enable: true,
+  }), { surface: 'cli' })).toMatchObject({ ok: true, result: { created: true } });
+  const resolution = resolveProviderConnectionForMachine({ connectionId: 'pc_new_contribution', machineId: 'machine-1',
+    providerSettings: composeProviderSettingsV1(catalog, {}),
+    registry: { providersByContributionKey: new Map([[key, declared]]) },
+    dnsEvidenceByEndpointUrl: new Map(definition.endpointTemplates.flatMap(endpoint =>
+      endpoint.baseUrl ? [[endpoint.baseUrl, ['1.1.1.1']] as const] : [])),
+  });
+  expect(resolution).toMatchObject({ status: 'resolved', record: { connectionId: 'pc_new_contribution',
+    source: { kind: 'contribution', contributionKey: key }, authorization: { authorized: true } } });
 });
 
 it('admits the exact Account grant fingerprint for canonical URLs and all declared endpoint effects', async () => {
@@ -306,7 +552,7 @@ describe('machine-aware provider connection resolver', () => {
       },
     });
     expect(first.record.endpointSetFingerprint).toBe(
-      createProviderEndpointSetFingerprintV1({ endpoints: [] }),
+      createProviderEndpointSetFingerprintV2({ endpoints: [] }),
     );
 
     const grantedSettings = settingsWith([configured], {
@@ -354,13 +600,13 @@ describe('machine-aware provider connection resolver', () => {
       status: 'resolved',
       record: {
         authorization: {
-          authorized: false,
-          errorCode: 'provider_machine_grant_stale',
+          authorized: true,
+          grantKind: 'machine',
         },
       },
     });
     if (changed.status !== 'resolved') throw new Error('Expected changed managed connection to resolve');
-    expect(changed.record.connectionSecurityFingerprint).not.toBe(
+    expect(changed.record.connectionSecurityFingerprint).toBe(
       first.record.connectionSecurityFingerprint,
     );
 
@@ -749,7 +995,7 @@ describe('machine-aware provider connection resolver', () => {
       dnsEvidenceByEndpointUrl: new Map([['http://localhost:4242/v1', ['127.0.0.1']]]),
     })).toMatchObject({
       status: 'resolved',
-      record: { authorization: { authorized: false, errorCode: 'provider_machine_grant_stale' } },
+      record: { authorization: { authorized: true, grantKind: 'machine' } },
     });
   });
 
@@ -775,7 +1021,7 @@ describe('machine-aware provider connection resolver', () => {
     });
   });
 
-  it('does not reuse an account grant after an override edit or public-to-private DNS change', () => {
+  it('does not reuse an opaque legacy account grant after an actual endpoint override edit', () => {
     const configured = connection('pc_account_reauthorization', {
       endpointOverrides: [{ endpointTemplateId: 'responses', baseUrl: 'https://override.example/v1' }],
     });
@@ -790,7 +1036,11 @@ describe('machine-aware provider connection resolver', () => {
     const accountGrant = {
       v: 1 as const,
       connectionId: configured.id,
-      connectionSecurityFingerprint: initial.record.connectionSecurityFingerprint,
+      connectionSecurityFingerprint: createProviderConnectionSecurityFingerprintV1({ securityContractVersion: 1,
+        endpoints: [{ endpointTemplateId: 'responses', protocol: 'openai-responses', url: 'https://override.example/v1',
+          publicHeaders: { 'X-Provider-Client': 'happier' } }],
+        catalogProbes: [{ endpointTemplateId: 'responses', path: '/models', parser: 'openai-models' }],
+        credentialTransports: providerDefinition().credential?.transports ?? [] }),
       confirmedAt: 2,
     };
 
@@ -810,19 +1060,6 @@ describe('machine-aware provider connection resolver', () => {
       record: { authorization: { authorized: false, errorCode: 'provider_account_grant_stale' } },
     });
 
-    expect(resolveProviderConnectionForMachine({
-      connectionId: configured.id,
-      machineId: 'machine-a',
-      providerSettings: settingsWith([configured], { accountGrants: [accountGrant] }),
-      registry: registry(),
-      dnsEvidenceByEndpointUrl: new Map([['https://override.example/v1', ['192.168.1.50']]]),
-    })).toMatchObject({
-      status: 'resolved',
-      record: {
-        scope: 'machine',
-        authorization: { authorized: false, errorCode: 'provider_not_enabled_on_machine' },
-      },
-    });
   });
 
   it('uses the explicitly selected declared local URL candidate when no override exists', () => {
@@ -1013,7 +1250,7 @@ describe('machine-aware provider connection resolver', () => {
     expect(JSON.stringify(result)).not.toContain('secret-binding-canary');
   });
 
-  it('fails closed on unknown contribution override ids and missing DNS evidence', () => {
+  it('rejects unknown override ids and resolves configured public URLs without daemon DNS', () => {
     const invalidOverride = connection('pc_invalid_override', {
       endpointOverrides: [{ endpointTemplateId: 'unknown', baseUrl: 'https://other.example/v1' }],
     });
@@ -1032,7 +1269,22 @@ describe('machine-aware provider connection resolver', () => {
       providerSettings: settingsWith([configured]),
       registry: registry(),
       dnsEvidenceByEndpointUrl: new Map(),
-    })).toMatchObject({ status: 'endpoint_unresolved', reason: 'endpoint_resolution_required' });
+    })).toMatchObject({ status: 'resolved', record: { scope: 'account', endpoints: [{
+      normalizedUrl: 'https://gateway.example/v1', locality: 'public', resolvedAddresses: [],
+    }] } });
+  });
+
+  it.each([
+    ['http://localhost:11434/v1', 'loopback'],
+    ['http://127.0.0.1:11434/v1', 'loopback'],
+    ['https://192.168.1.20/v1', 'private'],
+  ])('keeps configured local URL %s Machine-scoped without DNS', (url, locality) => {
+    const configured = connection('pc_local');
+    expect(resolveProviderConnectionForMachine({ connectionId: configured.id, machineId: 'machine-a',
+      providerSettings: settingsWith([configured]), registry: registry(contribution(url)), dnsEvidenceByEndpointUrl: new Map(),
+    })).toMatchObject({ status: 'resolved', record: { scope: 'machine', endpoints: [{ locality }],
+      authorization: { authorized: false, errorCode: 'provider_not_enabled_on_machine' },
+    } });
   });
 
   it('rejects a contribution override for an unknown endpoint even when it belongs to another machine branch', () => {

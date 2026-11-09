@@ -22,6 +22,7 @@ import { isPidAlive } from '@/testkit/process/spawn';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { DaemonLspApplyResponseSchema } from '@happier-dev/protocol/machines/languageIntelligence';
+import { WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 import { pathToFileURL } from 'node:url';
 import { applyWorkspaceFileTextEdits, buildWorkspaceFileRestoreOperation } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 import { applyWorkspaceFileReplace } from '@/rpc/handlers/workspaceFileReplace';
@@ -37,7 +38,7 @@ function fixtureProjectChecker(rootPath: string, scenario: string, count?: numbe
     return createLanguageServerProjectChecker({ async acquireExec(input) {
         // Executable resolution is the OS boundary; the actual process owner,
         // compiler-output decoder and host projection remain real.
-        const service = createStablePluginExecService({  signal: input.signal,
+        const service = createStablePluginExecService({ signal: input.signal,
             processOwner: input.processOwner, isOccurrenceCurrent: () => !input.signal.aborted,
             resolveExecutable: async () => ({ command: process.execPath,
                 args: [resolve('src/lsp/__fixtures__/projectCheck.cjs'), scenario, join(rootPath, 'started'), ...(count === undefined ? [] : [String(count)])] }),
@@ -69,7 +70,7 @@ async function fixture(rootPath: string, count = 1, behavior: Record<string, unk
     let registry = registryFor(count);
     const host = createLanguageServerHost({ readCurrentContributionRegistry: () => registry, readPolicy, platform, projectChecker, async openProtocol(input) {
             // The OS executable/protocol child is the system boundary; host, catalog, codec and supervisor stay real.
-            const service = createStablePluginExecService({  signal: input.signal, processOwner: input.processOwner, isOccurrenceCurrent: () => !input.signal.aborted,
+            const service = createStablePluginExecService({ signal: input.signal, processOwner: input.processOwner, isOccurrenceCurrent: () => !input.signal.aborted,
                 resolveExecutable: async () => behavior.nativeTypeScript ? { command: resolve('../../node_modules/@typescript/typescript-linux-x64/lib/tsc'), args: ['--lsp', '--stdio'] }
                     : { command: process.execPath, args: [resolve('src/lsp/__fixtures__/languageServer.cjs'), log, JSON.stringify({ ...readLspObject(input.definition.initializationOptions), ...behavior })] }, resolvePath: async () => rootPath });
             const protocol = await service.clients.spawn({ kind: 'jsonRpc', framing: 'contentLength', cancellationMethod: '$/cancelRequest', launch: { executable: input.definition.executable, cwd: rootPath } });
@@ -166,7 +167,7 @@ describe('language intelligence composed host', () => {
         });
     });
 
-    it('retains filesystem currentness through asynchronous LSP apply preparation', async () => {
+    it('finishes admitted LSP apply when authority changes during preparation', async () => {
         await withTempDir('happier-lsp-currentness-', async rootPath => {
             await writeFile(join(rootPath, 'a.ts'), 'old');
             const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
@@ -177,16 +178,17 @@ describe('language intelligence composed host', () => {
                 return bytes;
             });
             const host = createLanguageServerHost();
+            const context = { signal: new AbortController().signal, assertCurrentAuthority: async () => {
+                if (!current) throw Object.assign(new Error('Requester admission expired'), { code: 'filesystem_identity_custody_unavailable' });
+            } };
             try {
                 const response = await host.apply({ rootPath, path: 'a.ts', operation: { kind: 'format', files: [{
                     path: 'a.ts', expectedHash: createHash('sha256').update('old').digest('hex'), edits: [{
                         range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, text: 'new',
                     }],
-                }] } }, { assertCurrentAuthority: async () => {
-                    if (!current) throw Object.assign(new Error('Requester admission expired'), { code: 'filesystem_identity_custody_unavailable' });
-                } });
-                expect(response).toMatchObject({ ok: true, results: [{ status: 'failed', reason: 'filesystem_identity_custody_unavailable' }] });
-                expect((await actual.readFile(join(rootPath, 'a.ts'), 'utf8')) === 'old').toBe(true);
+                }] } }, context);
+                expect(response).toMatchObject({ ok: true, results: [{ status: 'replaced' }] });
+                expect(await actual.readFile(join(rootPath, 'a.ts'), 'utf8')).toBe('new');
             } finally { vi.mocked(fsPromises.readFile).mockImplementation(actual.readFile); await host.dispose(); }
         });
     });
@@ -689,6 +691,36 @@ describe('language intelligence composed host', () => {
             } finally { await f.host.dispose(); }
         });
     });
+    it.runIf(process.platform === 'linux')('preserves truncation and refuses the native command edit when valid receipt paths exceed the reply budget', async () => {
+        await withTempDir('happier-lsp-command-truncated-', async rootPath => {
+            await writeFile(join(rootPath, 'a.ts'), 'old');
+            // These are real, legal filesystem components under one shared
+            // parent. The count follows the actual reply boundary rather than
+            // relying on paths that no supported filesystem can materialize.
+            const parent = Array.from({ length: 8 }, (_, index) => `${index}-${'d'.repeat(238)}`).join('/');
+            await mkdir(join(rootPath, parent), { recursive: true });
+            const samplePath = `${parent}/file-000000.ts`;
+            const refusalBytes = Buffer.byteLength(JSON.stringify({ path: samplePath, status: 'failed', reason: 'transport_ceiling' })) + 1;
+            const count = Math.ceil(WORKSPACE_FILE_SEARCH_MAX_RESPONSE_UTF8_BYTES / refusalBytes) + 1;
+            const paths = Array.from({ length: count }, (_, index) => `${parent}/file-${String(index).padStart(6, '0')}.ts`);
+            for (const path of paths) await writeFile(join(rootPath, path), 'old');
+            const pathList = join(rootPath, 'command-paths.json');
+            await writeFile(pathList, JSON.stringify(paths));
+            const f = await fixture(rootPath, 1, { semanticEdits: true, commandEditPathsFile: pathList });
+            try {
+                const listed = DaemonLspQueryResponseSchema.parse(await f.query('codeActions', 'a.ts', { text: 'disk', position: { line: 0, character: 0 } }));
+                if (listed.status !== 'ok' || listed.kind !== 'codeActions') throw new Error('Expected code actions');
+                const response = await f.host.apply({ rootPath, path: 'a.ts', operation: {
+                    kind: 'codeAction', action: listed.actions[0], expectedHash: listed.fileHash!,
+                } });
+                expect(response).toMatchObject({ ok: true, truncated: true });
+                DaemonLspApplyResponseSchema.parse(response);
+                expect((await f.messages()).find(message => message.id === 'server-edit' && !message.method))
+                    .toMatchObject({ result: { applied: false } });
+                for (const path of ['a.ts', ...paths]) expect(await readFile(join(rootPath, path), 'utf8')).toBe('old');
+            } finally { await f.host.dispose(); }
+        });
+    }, 0);
     it('reports a command edit refusal even when the server acknowledges its command successfully', async () => {
         await withTempDir('happier-lsp-command-refusal-', async rootPath => {
             await writeFile(join(rootPath, 'a.ts'), 'old');

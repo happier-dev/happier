@@ -1,6 +1,5 @@
 import type { DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
-import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { ProviderModelBindingSourceV1Schema, projectProviderModelSourceStateV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import { getProviderExperimentalConfirmationCatalogSourceKeyV1 } from '@happier-dev/protocol/providers/settings/v1';
@@ -12,11 +11,14 @@ import { resolveProviderConnectionSecurityFingerprintMatch } from '@/providers/r
 import { resolveProviderSourceFacts } from '@/providers/registry/sourceFacts';
 import { readProviderModelNameCatalog } from '@/providers/registry/contributions';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
-import { assembleProviderConnectionCatalog, projectProviderCatalogForPicker, readProviderConnectionCatalogPresentation } from '@/providers/catalog';
+import { readProviderConnectionCatalogPresentation, projectProviderCatalogForPicker } from '@/providers/catalog';
 import { awaitWithinProviderOperation, type ProviderOperationLifetime } from '@/providers/operationLifetime';
 import { projectProviderCatalogContextRuntimeState, type RuntimeProviderServices, type RuntimeProviderOperationScope } from '@/providers/probe/runtimeServices';
 import { projectProviderBrokerApplication } from '@/providers/broker/applicationProjection';
 import { projectProviderConnectionBrokerApplication } from '@/providers/broker/providerConnectionCpxBridge';
+import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { createProviderSourceCatalogRevision, type ProviderSourceModelCatalog } from './sourceCatalog';
+import { projectProviderCatalogGatewaySlots } from '@/providers/catalog/assemble';
 
 type SourceInput = Readonly<{
   machineId: string;
@@ -84,7 +86,7 @@ export function projectProviderConnectionSourceCatalog(input: Readonly<{
   delivery: 'direct' | 'brokered';
   localModelManagementEnabled: boolean;
 }>): DaemonProviderModelProjectionResponseV1 {
-  const { context, presentation } = input.observation;
+  const { context } = input.observation;
   const record = context.connection;
   const facts = resolveProviderSourceFacts(record);
   const modelLoad = record.source.kind === 'contribution' ? record.source.definition.modelLoad : undefined;
@@ -102,68 +104,85 @@ export function projectProviderConnectionSourceCatalog(input: Readonly<{
       groups: [{ ...groupBase, authorization: { authorized: false,
         error: createProviderErrorV1(record.authorization.errorCode, { machineId: input.request.machineId, connectionId: record.connectionId }) }, rows: [] }] });
   }
-  if (!input.request.application) {
-    const groups = [...new Set(facts.endpointTemplates.map(endpoint => endpoint.protocol))].flatMap(protocol => {
-      const application = input.delivery === 'brokered'
-        ? projectProviderConnectionBrokerApplication({ registry: input.registry, agentTargetKey: input.request.agentTargetKey, protocol })
-        : projectProviderBrokerApplication({ connection: record, agentTargetKey: input.request.agentTargetKey, protocol });
-      if (!application) return [];
-      const projection = projectProviderConnectionSourceCatalog({ ...input, request: { ...input.request, application } });
-      return projection.status === 'success' ? projection.groups : [];
-    });
-    return DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: input.request.agentTargetKey, groups });
-  }
-  const endpoints = facts.endpointTemplates.filter(endpoint => !input.request.application || endpoint.protocol === input.request.application.protocol);
-  const endpoint = endpoints[0];
-  if (!endpoint) return { status: 'error', error: createProviderErrorV1('provider_incompatible_with_agent') };
-  const application = input.delivery === 'brokered'
-    ? projectProviderConnectionBrokerApplication({ registry: input.registry, agentTargetKey: input.request.agentTargetKey,
-      protocol: endpoint.protocol, expectedApplication: input.request.application })
-    : projectProviderBrokerApplication({ connection: record, agentTargetKey: input.request.agentTargetKey, protocol: endpoint.protocol });
-  if (!application || input.request.application && !pluginJsonValuesEqual(application, input.request.application)) {
+  const catalogs = projectProviderConnectionSourceModels({ ...input,
+    agentTargetKey: input.request.agentTargetKey, application: input.request.application,
+    includeDirectMaterialization: input.request.includeDirectMaterialization });
+  if (input.request.application && catalogs.length === 0) {
     return { status: 'error', error: createProviderErrorV1('provider_incompatible_with_agent') };
   }
-  const sourceFacts = ProviderModelBindingSourceV1Schema.parse({ endpoint: { id: endpoint.id, protocol: endpoint.protocol, capabilities: endpoint.capabilities },
-    ...(facts.credential ? { credential: facts.credential } : {}),
-    compatibilityOverrides: facts.compatibilityOverrides?.filter(override => override.agentTargetKey === input.request.agentTargetKey && override.protocol === endpoint.protocol),
-  });
-  const compatibilityByModelId = new Map([...presentation.rows, ...presentation.staleRows].map(row => [
-    row.row.descriptor.id, projectProviderModelSourceStateV1(sourceFacts, row.row.descriptor),
-  ]));
-  const catalog = assembleProviderConnectionCatalog({ agentTargetKey: input.request.agentTargetKey,
-    connection: record, providerSettings: context.providerSettings, runtimeState: context.runtimeState,
-    catalogRuntimeKey: context.catalogRuntimeKey, modelNameCatalog: context.modelNameCatalog, compatibilityByModelId });
-  // Only explicit presentation exceptions may retain absent source models.
-  // Broker/launch reads carry none and therefore still see current membership.
-  const rows = projectProviderCatalogForPicker({ catalogs: [catalog], modelVisibilityByRef: {}, mode: 'management',
-    currentSelection: input.request.currentSelection, favoriteSelections: input.request.favoriteSelections,
-  }).groups.flatMap(group => group.rows);
-  const states = rows.map(row => compatibilityByModelId.get(row.ref.modelId)!);
-  const sourceRevision = computeCanonicalDomainSeparatedDigest('happier.team-credential-provider-model-catalog.v1', [
-    record.connectionSecurityFingerprint, record.endpointSetFingerprint, String(record.connection.revision),
-    record.source.kind === 'contribution' ? input.registry.providerActivationOccurrenceIdsByPluginId?.get(record.source.pluginId) ?? 'no-provider-activation-occurrence' : 'custom-provider',
-    JSON.stringify(rows.map((row, index) => ({ descriptor: row.descriptor, catalog: row.presentation.catalog,
-      compatibilityFingerprint: states[index]!.compatibilityFingerprint, selectedProtocol: endpoint.protocol }))),
-  ]);
-  const transports = facts.credential?.transports.filter(transport => transport.protocols.includes(endpoint.protocol) && transport.uses.includes('runtime')) ?? [];
-  // A direct export witness needs one declared transport. Source observation
-  // cannot choose between transports using an Agent installed on the broker.
-  const directEndpoint = record.deployment.kind !== 'managedLocal' ? record.endpoints.find(candidate => candidate.endpointTemplateId === endpoint.id) : null;
   return DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey: input.request.agentTargetKey,
-    groups: [{ ...groupBase,
-      ...(record.source.kind === 'contribution' ? { sourceAuthority: { provider: { identity: { pluginId: record.source.pluginId,
-        localId: record.source.definition.id }, definitionRevision: 1 }, connectionSecurityFingerprint: record.connectionSecurityFingerprint } } : {}),
-      sourceRevision, authorization: { authorized: true },
-      rows: rows.map((row, index) => ({ ref: row.ref,
-        descriptor: row.descriptor, sources: row.sources, confidence: row.confidence, application,
+    groups: catalogs.map(catalog => {
+      const bind = (row: ProviderSourceModelCatalog['rows'][number]) => ({
+        ref: { agentTargetKey: input.request.agentTargetKey, providerConnectionId: record.connectionId, modelId: row.descriptor.id },
+        descriptor: row.descriptor, sources: row.sources, confidence: row.confidence,
         ...(row.gatewaySlots ? { gatewaySlots: row.gatewaySlots } : {}),
-        sourceFacts: { ...sourceFacts, endpoint: { ...sourceFacts.endpoint, id: application.endpointTemplateId } },
-        confirmationSource: { connectionId: record.connectionId, catalogSourceKey: getProviderExperimentalConfirmationCatalogSourceKeyV1({ connectionId: record.connectionId }) },
-        compatibility: states[index], endpointHealth: 'not_checked', catalog: row.presentation.catalog, loadState: row.presentation.loadState, visibility: 'visible',
-        ...(input.request.includeDirectMaterialization && directEndpoint && transports.length === 1 ? { directMaterialization: {
-          endpoint: { endpointTemplateId: directEndpoint.endpointTemplateId, normalizedUrl: directEndpoint.normalizedUrl, protocol: directEndpoint.protocol, publicHeaders: directEndpoint.publicHeaders },
-          credentialTransport: transports[0],
-        } } : {}),
-      })),
-    }], currentSelectionRecovery: null });
+        presentation: { compatibility: row.compatibility, endpointHealth: null, catalog: row.catalog, loadState: row.loadState },
+      });
+      const visible = projectProviderCatalogForPicker({ catalogs: [{ ...groupBase,
+        agentTargetKey: input.request.agentTargetKey, authorization: { authorized: true },
+        sourceKind: record.source.kind === 'custom' ? 'custom' : record.source.definition.kind,
+        rows: catalog.rows.filter(row => !row.catalog.stale).map(bind), staleRows: catalog.rows.filter(row => row.catalog.stale).map(bind),
+      }], mode: 'management', modelVisibilityByRef: {}, currentSelection: input.request.currentSelection,
+        favoriteSelections: input.request.favoriteSelections }).groups.flatMap(group => group.rows);
+      const sourceRows = new Map(catalog.rows.map(row => [row.descriptor.id, row]));
+      return { ...groupBase,
+      ...(record.source.kind === 'contribution' ? { sourceAuthority: { provider: { identity: { pluginId: record.source.pluginId,
+        localId: record.source.definition.id }, definitionRevision: 1 }, connectionSecurityFingerprint: input.observation.sourceFingerprints.connectionSecurityFingerprint } } : {}),
+      sourceRevision: catalog.sourceRevision, authorization: { authorized: true },
+      rows: visible.map(row => ({ ...sourceRows.get(row.descriptor.id)!, ref: row.ref })),
+    }; }), currentSelectionRecovery: null });
+}
+
+/** The one source model set, shared by worker projection and external routing. */
+export function projectProviderConnectionSourceModels(input: Readonly<{
+  observation: Extract<Awaited<ReturnType<typeof readProviderConnectionSourceCatalog>>, { status: 'success' }>;
+  registry: ProviderContributionRegistryView;
+  delivery: 'direct' | 'brokered';
+  agentTargetKey?: string;
+  application?: ProviderBrokerSourceApplicationBindingV1;
+  includeDirectMaterialization?: true;
+}>): readonly ProviderSourceModelCatalog[] {
+  const { context, presentation } = input.observation;
+  const record = context.connection;
+  if (!record.authorization.authorized) return [];
+  const facts = resolveProviderSourceFacts(record);
+  return [...new Set(facts.endpointTemplates.map(endpoint => endpoint.protocol))].flatMap(protocol => {
+    if (input.application && input.application.protocol !== protocol) return [];
+    const endpoint = facts.endpointTemplates.find(endpoint => endpoint.protocol === protocol)!;
+    const application = input.delivery === 'brokered'
+      ? projectProviderConnectionBrokerApplication({ registry: input.registry, agentTargetKey: input.agentTargetKey,
+        protocol, expectedApplication: input.application })
+      : projectProviderBrokerApplication({ connection: record, agentTargetKey: input.agentTargetKey,
+        protocol, expectedApplication: input.application });
+    if (!application || input.application && !pluginJsonValuesEqual(application, input.application)) return [];
+    const sourceFacts = ProviderModelBindingSourceV1Schema.parse({ endpoint: { id: endpoint.id, protocol, capabilities: endpoint.capabilities,
+      ...(endpoint.modelIdPattern !== undefined ? { modelIdPattern: endpoint.modelIdPattern } : {}) },
+      ...(facts.credential ? { credential: facts.credential } : {}),
+      compatibilityOverrides: facts.compatibilityOverrides,
+    });
+    const transports = facts.credential?.transports.filter(transport => transport.protocols.includes(protocol) && transport.uses.includes('runtime')) ?? [];
+    const directEndpoint = record.deployment.kind !== 'managedLocal' ? record.endpoints.find(candidate => candidate.endpointTemplateId === endpoint.id) : null;
+    const rows: ProviderSourceModelCatalog['rows'] = [...presentation.rows, ...presentation.staleRows].map(row => ({
+      descriptor: row.row.descriptor, sources: row.row.sources, confidence: row.row.confidence, application,
+      gatewaySlots: projectProviderCatalogGatewaySlots(record, row.row),
+      sourceFacts: { ...sourceFacts, endpoint: { ...sourceFacts.endpoint, id: application.endpointTemplateId } },
+      confirmationSource: { connectionId: record.connectionId, catalogSourceKey: getProviderExperimentalConfirmationCatalogSourceKeyV1({ connectionId: record.connectionId }) },
+      compatibility: projectProviderModelSourceStateV1(sourceFacts, row.row.descriptor),
+      endpointHealth: 'not_checked', catalog: row.catalog, loadState: row.loadState, visibility: 'visible',
+      ...(input.includeDirectMaterialization && directEndpoint && transports.length === 1 ? { directMaterialization: {
+        endpoint: { endpointTemplateId: directEndpoint.endpointTemplateId, normalizedUrl: directEndpoint.normalizedUrl, protocol: directEndpoint.protocol, publicHeaders: directEndpoint.publicHeaders },
+        credentialTransport: transports[0]!,
+      } } : {}),
+    }));
+    const sourceRevision = createProviderSourceCatalogRevision({
+      connectionSecurityFingerprint: input.observation.sourceFingerprints.connectionSecurityFingerprint,
+      endpointSetFingerprint: record.endpointSetFingerprint,
+      activationOccurrenceId: record.source.kind === 'contribution'
+        ? input.registry.providerActivationOccurrenceIdsByPluginId?.get(record.source.pluginId) ?? 'no-provider-activation-occurrence'
+        : 'custom-provider',
+      rows: rows.map(row => ({ descriptor: row.descriptor, catalog: row.catalog,
+        compatibilityFingerprint: row.compatibility.compatibilityFingerprint, selectedProtocol: protocol })),
+    });
+    return [{ application, sourceRevision, rows }];
+  });
 }

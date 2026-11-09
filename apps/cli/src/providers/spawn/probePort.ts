@@ -1,4 +1,3 @@
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { AssessedProviderEndpoint, ProviderErrorV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 
@@ -66,9 +65,7 @@ function startProbeOperationScope(
   scope: ProviderProbeOperationScope | undefined,
 ): ProviderProbeOperationScope {
   return scope ?? {
-    lifetime: createProviderOperationLifetime({
-      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-    }),
+    lifetime: createProviderOperationLifetime({}),
   };
 }
 
@@ -76,9 +73,7 @@ function startModelLoadOperationScope(
   scope: ProviderModelLoadOperationScope | undefined,
 ): ProviderModelLoadOperationScope {
   return scope ?? {
-    lifetime: createProviderOperationLifetime({
-      wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-    }),
+    lifetime: createProviderOperationLifetime({}),
   };
 }
 

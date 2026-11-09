@@ -3,7 +3,8 @@ import { createSkillActionExecuteV1 } from '@happier-dev/protocol/prompts/librar
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 import { readSkillLockV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { computePromptBundleDigestV1 } from '@happier-dev/protocol/prompts/library/promptLibraryDigests';
-import { computeGitBlobShaV1, computeGitTreeShaV1, createRegistryHostV1 } from '@happier-dev/protocol/registries';
+import { computeGitBlobShaV1, computeGitTreeShaV1, createRegistryHostV1, deriveRegistrySourceIdV1,
+  REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { PromptBundleBodyV1Schema, PromptBundleArtifactHeaderV1Schema } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
 import type { PromptLibraryArtifactStore, PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import type { RegistryHttpV1 } from '@happier-dev/protocol/registries';
@@ -14,8 +15,11 @@ const markdown = '---\nname: sample\n---\nInstructions';
 const initial = '1'.repeat(40), latest = '2'.repeat(40);
 const bytes = (text: string) => new TextEncoder().encode(text);
 const files = (text: string) => [{ path: 'SKILL.md', unixMode: 0o644 as const, bytes: bytes(text) }];
-function fixture(linkUrl?: string, written = false) {
+function fixture(linkUrl?: string, written = false, provenance?: ReturnType<typeof readSkillLockV1>['provenance'], ids = ['sample']) {
   let writes = 0;
+  let pages = 0;
+  const opened: string[] = [];
+  const selectedHeaders: string[][] = [];
   let artifact: PromptLibraryStoredArtifact = {
     id: 'sample', revision: { headerVersion: 1, bodyVersion: 1 }, owned: true,
     header: PromptBundleArtifactHeaderV1Schema.parse({ v: 1, kind: 'prompt_bundle.v2', title: 'sample', bundleSchemaId: 'skills.skill_md_v1',
@@ -30,10 +34,13 @@ function fixture(linkUrl?: string, written = false) {
   artifact = { ...artifact, header: { ...artifact.header, skillLock: { ...lock,
     ...(written ? { provenance: { kind: 'written' as const } } : {}),
     ...(linkUrl && lock.provenance.kind === 'registry' ? { provenance: { kind: 'link' as const, url: linkUrl,
-      ref: lock.provenance.registry.ref } } : {}), importedDigest: computePromptBundleDigestV1(initialBody) } } };
+      ref: lock.provenance.registry.ref } } : {}), ...(provenance ? { provenance } : {}),
+    importedDigest: computePromptBundleDigestV1(initialBody) } } };
   const store: PromptLibraryArtifactStore = {
-    list: async () => ({ coverage: 'complete', items: [{ id: artifact.id, header: artifact.header, updatedAtMs: 1, owned: true }] }),
-    read: async () => artifact,
+    list: async () => { pages++; return { coverage: 'complete', items: ids.map(id => ({ id, header: artifact.header, updatedAtMs: 1, owned: true })) }; },
+    readHeadersByIds: async selected => { selectedHeaders.push([...selected]); return selected.map(id => ({ status: 'fulfilled' as const,
+      value: ids.includes(id) ? { ...artifact, id, body: null } : null })); },
+    read: async id => { opened.push(id); return { ...artifact, id }; },
     update: async input => {
       if (JSON.stringify(input.expectedRevision) !== JSON.stringify(artifact.revision)) throw Object.assign(new Error('conflict'), { code: 'version_mismatch' });
       writes++; artifact = { ...artifact, header: input.header, body: input.body,
@@ -62,10 +69,42 @@ function fixture(linkUrl?: string, written = false) {
     readRegistryItem: registry.readRegistryItem, readRegistrySource: registry.readRegistrySource,
     fetchRegistrySkillFiles: registry.filesForPointer, readLinkSkills: registry.readLinkSkills, fetchLinkSkillFiles: registry.fetchLinkSkillFiles,
   });
-  return { get artifact() { return artifact; }, execute, http, writes: () => writes, observation: { state: 'update_available' as const,
+  return { get artifact() { return artifact; }, execute, http, writes: () => writes, opened, selectedHeaders, pages: () => pages, observation: { state: 'update_available' as const,
     latest: { kind: 'gitTree' as const, repo: 'https://github.com/a/b', path: '', commit: latest, treeSha: computeGitTreeShaV1(files(markdown + '\nNew')) } } };
 }
 describe('skill update observations through the existing operation owner', () => {
+  it('acquires only selected headers and bodies, with full enumeration reserved for full checks', async () => {
+    const h = fixture(undefined, false, undefined, ['sample', 'unrelated']);
+    const tracker = createSkillsUpdateTracker({ execute: h.execute });
+    const check = createRegistryUpdateCheck({ trackers: [tracker], ctx: { http: h.http }, readSources: async () => [{ id: 'repo',
+      format: 'git', title: 'Repo', url: 'https://github.com/a/b', kinds: ['skill'], enabled: true, addedAt: 1,
+      origin: { kind: 'user' }, removable: true }] });
+    expect((await check.checkNow({ kind: 'skill', keys: ['sample'] })).results).toMatchObject([{ key: 'sample',
+      upstream: { state: 'update_available', latest: { commit: latest } } }]);
+    expect(h.pages()).toBe(0);
+    expect(h.selectedHeaders).toEqual([['sample']]);
+    // One listing read plus the existing observation/CAS owner's baseline, write admission and result reads.
+    expect(h.opened).toEqual(['sample', 'sample', 'sample', 'sample']);
+    expect(readSkillLockV1(h.artifact.header).upstream).toEqual(h.observation);
+    h.opened.length = 0;
+    await tracker.list();
+    expect(h.pages()).toBe(1);
+    expect(h.opened.sort()).toEqual(['sample', 'unrelated']);
+  });
+  it.each(['git link', 'well-known index'] as const)('labels an unchecked %s by its source rather than the skill title', async kind => {
+    const sourceUrl = kind === 'git link' ? 'https://github.com/a/b/tree/develop' : 'https://skills.example.test/team';
+    const h = kind === 'git link' ? fixture(sourceUrl) : fixture(undefined, false, {
+      kind: 'wellKnown', indexUrl: sourceUrl, name: 'sample', digest: `sha256:${'a'.repeat(64)}`,
+    });
+    const http: RegistryHttpV1 = { ...h.http, getJson: async () => ({ ok: false, status: { state: 'rate_limited' } }) };
+    const check = createRegistryUpdateCheck({ trackers: [createSkillsUpdateTracker({ execute: h.execute })],
+      ctx: { http }, readSources: async () => [] });
+    const result = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(await check.checkNow());
+    expect(result.results).toEqual([{ kind: 'skill', key: 'sample', sourceId: `link:${deriveRegistrySourceIdV1(sourceUrl)}`,
+      sourceTitle: sourceUrl, upstream: { state: 'unchecked', reason: { state: 'rate_limited' } } }]);
+    expect(h.writes()).toBe(0);
+  });
+
   it('completes a written-only library check without display-catalog or upstream admission', async () => {
     const h = fixture(undefined, true);
     const check = createRegistryUpdateCheck({ trackers: [createSkillsUpdateTracker({ execute: h.execute })], ctx: { http: h.http },

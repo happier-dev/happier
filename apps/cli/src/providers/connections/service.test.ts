@@ -32,6 +32,11 @@ import { resolveProviderConnectionForMachine, type ProviderContributionRegistryV
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { createProviderConnectionRpcAdapter } from './rpcAdapter';
 import { createProviderConnectionService } from './service';
+import { loadBundledPluginLocators } from '@/plugins/projection/registry/builtIn/locators';
+import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
+import { activateContributionModule } from '@/plugins/runtime/lifecycle/activation/activateContributionModule';
 import { createProviderLocalInstallationReader } from '@/providers/discovery/installations';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -463,6 +468,82 @@ function harness(options: Readonly<{
 }
 
 describe('provider connection service', () => {
+  it('previews and creates OpenRouter through its real bundled activation, then describes the enabled Machine', async () => {
+    const openrouter = await import('@happier-dev/plugins-openrouter');
+    const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(row => row.pluginId === openrouter.PLUGIN_MANIFEST.id);
+    if (!locator) throw new Error('Missing bundled OpenRouter');
+    const bundled = loadBundledPluginLocators([locator])[0];
+    if (!bundled) throw new Error('Missing admitted OpenRouter');
+    const activated = await activateContributionModule({ pluginId: bundled.pluginId, occurrenceId: 'openrouter-authoring',
+      isOccurrenceCurrent: () => true, manifest: bundled.manifest, manifestAuthority: 'bundled_first_party', moduleNamespace: openrouter });
+    try {
+      expect(activated.status, JSON.stringify(activated.diagnostics)).toBe('active');
+      const registry = createResolvedContributionRegistry(projectLoadedPluginContributes({ provenance: 'first_party',
+        loadResult: { loadedPlugins: [bundled], diagnosticsByPluginId: {} } }));
+      const h = harness({ dnsEvidence: new Map([['https://openrouter.ai/api/v1', ['1.1.1.1']]]) });
+      h.setRegistry(registry);
+      const key = 'happier.provider.openrouter/openrouter';
+      const preview = await h.service.describe({ machineId: 'machine-a', authoringPreview: {
+        connectionId: ProviderConnectionIdSchema.parse('pc_openrouter'), contributionKey: key,
+        displayName: null, selectedCandidateId: null,
+      } });
+      expect(preview).toMatchObject({ status: 'success', authoringPreview: { status: 'resolved', scope: 'account',
+        credential: { required: true } } });
+      if (preview.status !== 'success' || preview.authoringPreview?.status !== 'resolved') throw new Error('Expected reviewed OpenRouter');
+      expect(await h.service.create({ action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_openrouter',
+        contributionKey: key, displayName: null, savedSecretId: 'secret_api', enable: true,
+        authoringReview: { candidateId: null, fingerprint: preview.authoringPreview.fingerprint,
+          revision: preview.authoringPreview.revision, endpointOverrides: [] } }))
+        .toMatchObject({ status: 'success' });
+      expect(await h.service.describe({ machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_openrouter') }))
+        .toMatchObject({ status: 'success', connections: [{ sourceStatus: 'available', scope: 'account', authorized: true,
+          authorizationError: null, grants: { accountEnabled: true }, credential: { accountBound: true } }] });
+    } finally { await activated.dispose(); }
+  });
+
+  it.each(['required-key-unbound', 'unauthenticated'] as const)(
+    'explains Account-scoped enablement for a public %s contribution and allows its local Machine override', async kind => {
+      const h = harness();
+      if (kind === 'unauthenticated') h.providersByContributionKey.set(contributionKey, noAuthContribution());
+      expect(await h.service.create({ action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_scope',
+        contributionKey, displayName: null, savedSecretId: null, enable: false })).toMatchObject({ status: 'success' });
+      const before = structuredClone(h.getProviderSettings());
+      expect(await h.service.setEnabled({ action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_scope',
+        enabled: true, scope: 'machine' })).toMatchObject({ status: 'error', error: {
+          code: 'provider_account_scope_required', retryable: false, action: 'enable_connection',
+        } });
+      expect(h.getProviderSettings()).toEqual(before);
+      expect(h.refreshOnEnable).not.toHaveBeenCalled();
+      expect(await h.service.setEndpointOverride({ action: 'setEndpointOverride', machineId: 'machine-a',
+        connectionId: 'pc_scope', expectedRevision: 0, scope: 'machine', endpointTemplateId: 'responses',
+        baseUrl: 'http://127.0.0.1:8080/v1' })).toMatchObject({ status: 'success' });
+      expect(await h.service.setEnabled({ action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_scope',
+        enabled: true, scope: 'machine' })).toMatchObject({ status: 'success', scope: 'machine', authorized: true });
+      expect(h.getProviderSettings().machineGrants).toHaveLength(1);
+    });
+
+  it('binds only a declared billing slot at Machine scope and clears a removed declaration without touching inference', async () => {
+    const h = harness();
+    const base = contribution();
+    h.providersByContributionKey.set(contributionKey, { ...base, definition: ProviderContributionV1Schema.parse({
+      ...base.definition, usageSources: [{ id: 'credits', endpointTemplateId: 'responses', path: '/credits', parser: 'example-credits',
+        billingCredential: { slotId: 'managementKey', destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } }],
+    }) });
+    expect(await h.service.create({ action: 'createContribution', machineId: 'machine-a', connectionId: 'pc_billing',
+      contributionKey, displayName: null, savedSecretId: 'secret_api', enable: false })).toMatchObject({ status: 'success' });
+    expect(await h.service.bindSecret({ action: 'bindSecret', machineId: 'machine-a', connectionId: 'pc_billing',
+      credentialSlotId: 'managementKey', savedSecretId: 'secret_api', scope: 'machine' })).toMatchObject({ status: 'success' });
+    expect(h.getProviderSettings().secretBindingsByConnectionId[ProviderConnectionIdSchema.parse('pc_billing')]).toMatchObject({
+      account: { apiKey: 'secret_api' }, byMachineId: { 'machine-a': { managementKey: 'secret_api' } },
+    });
+    h.providersByContributionKey.set(contributionKey, base);
+    expect(await h.service.bindSecret({ action: 'bindSecret', machineId: 'machine-a', connectionId: 'pc_billing',
+      credentialSlotId: 'managementKey', savedSecretId: 'secret_api', scope: 'machine' }))
+      .toMatchObject({ status: 'error', error: { code: 'provider_credential_transport_unavailable' } });
+    expect(await h.service.bindSecret({ action: 'bindSecret', machineId: 'machine-a', connectionId: 'pc_billing',
+      credentialSlotId: 'managementKey', savedSecretId: null, scope: 'machine' })).toMatchObject({ status: 'success' });
+    expect(h.getProviderSettings().secretBindingsByConnectionId[ProviderConnectionIdSchema.parse('pc_billing')]).toEqual({ account: { apiKey: 'secret_api' } });
+  });
   it.each(['describe', 'setEnabled', 'setEndpointOverride', 'bindSecret'] as const)(
     'finishes %s after a slow Account read without spending an endpoint probe deadline', async action => {
       const h = harness();
@@ -1796,7 +1877,7 @@ describe('provider connection service', () => {
           },
           teamCredentialSourceOffer: {
             connectionId: 'pc_gateway',
-            connectionSecurityFingerprint: expect.stringMatching(/^connection-security:v1:/),
+            connectionSecurityFingerprint: expect.stringMatching(/^connection-security:v2:/),
             credentialSlotId: 'apiKey',
             label: 'Gateway',
           },
@@ -1940,11 +2021,9 @@ describe('provider connection service', () => {
   });
 
   it('carries describe cancellation through the real installation reader and strict response adapter', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'provider-installation-describe-'));
-    const store = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine-a' });
     let started!: () => void;
     const lookupStarted = new Promise<void>(resolve => { started = resolve; });
-    const reader = createProviderLocalInstallationReader({ runtimeStore: store,
+    const reader = createProviderLocalInstallationReader({
       resolveSystemTool: async () => { started(); return await new Promise<never>(() => {}); },
       runSystemTool: vi.fn(),
     });
@@ -1960,13 +2039,10 @@ describe('provider connection service', () => {
     // The inventory candidate would suppress its installation check.
     h.discoveryCandidates.mockResolvedValue([]);
     const controller = new AbortController();
-    try {
-      const result = createProviderConnectionRpcAdapter(h.service).describeConnections({ machineId: 'machine-a' }, controller.signal);
-      await lookupStarted;
-      controller.abort();
-      await expect(result).resolves.toMatchObject({ status: 'success', localInstallationsStatus: 'incomplete', localInstallations: [] });
-      await expect(store.read()).resolves.toMatchObject({ installationChecks: [] });
-    } finally { await rm(happyHomeDir, { recursive: true, force: true }); }
+    const result = createProviderConnectionRpcAdapter(h.service).describeConnections({ machineId: 'machine-a' }, controller.signal);
+    await lookupStarted;
+    controller.abort();
+    await expect(result).resolves.toMatchObject({ status: 'success', localInstallationsStatus: 'incomplete', localInstallations: [] });
   });
 
   it('preserves configured connections when advisory local installation projection rejects', async () => {
@@ -2585,6 +2661,16 @@ describe('provider connection service', () => {
       deployment: { kind: 'managedLocal', purposeBindingDefaults: {} },
     })).resolves.toMatchObject({ status: 'success', revision: 2, authorized: false });
     expect(readRetainedProviderSettingsFixture(h.getRaw()).settings.connections[0]?.purposeBindingDefaults).toEqual({});
+    await expect(h.service.describe({ machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_managed') }))
+      .resolves.toMatchObject({ status: 'success', connections: [{ authorized: false,
+        authorizationError: { code: 'provider_connection_invalid', action: 'review_connection', retryable: false,
+          reason: 'managed_purpose_bindings_missing' },
+      }] });
+    await expect(h.service.setEnabled({ action: 'setEnabled', machineId: 'machine-a', connectionId: 'pc_managed',
+      scope: 'machine', enabled: true })).resolves.toMatchObject({ status: 'error', error: {
+        code: 'provider_connection_invalid', retryable: false, action: 'review_connection',
+        reason: 'managed_purpose_bindings_missing',
+      } });
     await expect(h.service.startLocal({ action: 'startLocal', machineId: 'machine-a', contributionKey }))
       .resolves.toMatchObject({ status: 'error' });
     expect(h.startManagedProviderRuntime).not.toHaveBeenCalled();
@@ -3256,7 +3342,7 @@ describe('provider connection service', () => {
     expect(h.getProviderSettings().connections[0]!.revision).toBe(revision);
   });
 
-  it.each(['contribution', 'custom'] as const)('preserves a valid %s Account grant through DNS failure without authorizing the unresolved endpoint', async (source) => {
+  it.each(['contribution', 'custom'] as const)('preserves a valid %s Account grant and semantic resolution without daemon DNS', async (source) => {
     const dnsEvidence = new Map<string, readonly string[]>([['https://gateway.example/v1', ['1.1.1.1']]]);
     const h = harness({ dnsEvidence });
     if (source === 'contribution') {
@@ -3278,11 +3364,10 @@ describe('provider connection service', () => {
     await expect(h.service.describe({ machineId: 'machine-a', connectionId: ProviderConnectionIdSchema.parse('pc_gateway') }))
       .resolves.toMatchObject({ status: 'success', connections: [{
         grants: { accountEnabled: true, accountState: 'valid', effectiveState: 'valid' },
-        authorized: false,
-        authorizationError: { code: 'provider_endpoint_unreachable' },
-        runtime: { health: 'not_checked' },
+        authorized: true,
+        authorizationError: null,
+        runtime: { health: 'available' },
       }] });
-    expect(h.runtimeSummary).not.toHaveBeenCalled();
   });
 
   it('projects only effective grants and never renders a stale account grant as enabled', async () => {
@@ -3445,7 +3530,7 @@ describe('provider connection service', () => {
     expect(h.getRaw()).toEqual(futureSnapshot);
   });
 
-  it('bounds redacted read diagnostics and marks truncation', async () => {
+  it('retains every redacted read diagnostic without an arbitrary count cutoff', async () => {
     const h = harness();
     h.setRaw({
       providerSettingsV1: {
@@ -3459,8 +3544,8 @@ describe('provider connection service', () => {
       },
     });
     const result = await h.service.describe({ machineId: 'machine-a' });
-    expect(result).toMatchObject({ status: 'success', diagnosticsTruncated: true });
-    if (result.status === 'success') expect(result.diagnostics).toHaveLength(256);
+    expect(result).toMatchObject({ status: 'success', diagnosticsTruncated: false });
+    if (result.status === 'success') expect(result.diagnostics).toHaveLength(300);
     expect(JSON.stringify(result)).not.toContain('SECRET_SHOULD_NOT_LEAK');
   });
 
@@ -3536,7 +3621,7 @@ describe('provider connection service', () => {
     expect(await Reflect.apply(h.service.bindSecret, undefined, [{
       action: 'bindSecret', machineId: 'machine-a', connectionId: 'pc_work',
       credentialSlotId: 'otherKey', savedSecretId: 'secret_api', scope: 'account',
-    }])).toMatchObject({ status: 'error', error: { code: 'provider_connection_invalid' } });
+    }])).toMatchObject({ status: 'error', error: { code: 'provider_credential_transport_unavailable' } });
   });
 
   it('accepts one current shared Saved Secret reference for contribution/custom authoring and an existing binding', async () => {

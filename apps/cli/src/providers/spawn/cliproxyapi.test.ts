@@ -448,7 +448,6 @@ describe('CLIProxyAPI ordinary Provider binding', () => {
     if (!credential.ok) throw new Error('Expected external Saved Secret resolution');
     const attempt = createProviderSpawnAuthorizationAttempt({
       initial: result.authorization,
-      revalidate: async () => result,
       resolveCredential: () => credential,
       materialize: ({ authorization, binding, credential: resolvedCredential }) =>
         materializeLeasedAgentProviderBinding({

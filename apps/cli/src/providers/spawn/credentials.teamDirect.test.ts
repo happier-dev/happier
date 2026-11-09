@@ -18,7 +18,7 @@ describe('Provider credential team-direct materialization', () => {
   ] as const)(
     'preserves Team direct failure %s as %s',
     async (reason, code, retryable, action) => {
-      await expect(resolveProviderCredentialPlaintextAsync({ savedSecretMaterializer: null,
+      await expect(resolveProviderCredentialPlaintextAsync({
         reference: {
           kind: 'team_direct',
           teamId: 'team-1',
@@ -27,6 +27,7 @@ describe('Provider credential team-direct materialization', () => {
           sourceMemberKey: 'provider:source-member',
           sourceVersion: 'source-version:7',
         },
+        savedSecretMaterializer: null,
         accountSettings: {},
         settingsSecretsReadKeys: [],
         connectionId: 'resource-1',
@@ -68,7 +69,7 @@ describe('Provider credential team-direct materialization', () => {
         },
       }),
     } as const));
-    await expect(resolveProviderCredentialPlaintextAsync({ savedSecretMaterializer: null,
+    await expect(resolveProviderCredentialPlaintextAsync({
       reference: {
         kind: 'team_direct',
         teamId: 'team-1',
@@ -77,6 +78,7 @@ describe('Provider credential team-direct materialization', () => {
         sourceMemberKey: 'member-1',
         sourceVersion: 'version-1',
       },
+      savedSecretMaterializer: null,
       accountSettings: {},
       settingsSecretsReadKeys: [],
       connectionId: 'connection-1',
@@ -96,11 +98,12 @@ describe('Provider credential team-direct materialization', () => {
   });
 
   it('preserves Team authentication operation errors through Provider materialization', async () => {
-    await expect(resolveProviderCredentialPlaintextAsync({ savedSecretMaterializer: null,
+    await expect(resolveProviderCredentialPlaintextAsync({
       reference: {
         kind: 'team_direct', teamId: 'team-1', resourceId: 'resource-1',
         expectedResourceRevision: 7, sourceMemberKey: 'member-1', sourceVersion: 'version-1',
       },
+      savedSecretMaterializer: null,
       accountSettings: {}, settingsSecretsReadKeys: [], connectionId: 'connection-1', machineId: 'machine-1',
       openTeamDirect: vi.fn(async () => ({
         ok: false as const,

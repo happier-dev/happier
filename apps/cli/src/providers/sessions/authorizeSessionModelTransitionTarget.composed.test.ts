@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mergeProviderCatalogV1 } from '@happier-dev/protocol/providers/catalog/merge';
 
 import {
   buildBackendTargetKeyV2,
@@ -19,8 +20,9 @@ import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spaw
 import { projectProviderRuntimeBindingBasis } from '@/providers/spawn/runtimeBindingBasis';
 import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
 import { prepareProviderLaunch } from '@/providers/lifecycle/prepareLaunch';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
-import { resolveSessionModelTransitionAuthorizationRoute } from './authorizeSessionModelTransitionTarget';
+import { authorizeSessionModelTransitionProviderTargetWithLease, resolveSessionModelTransitionAuthorizationRoute } from './authorizeSessionModelTransitionTarget';
 import {
   resolveProviderAuthorizationApplyPolicyForActiveBinding,
   sameProviderAuthorizationRuntimeBindingDimensions,
@@ -54,6 +56,13 @@ const sonnet: ProviderModelDescriptorV1 = {
   },
 };
 
+// Only DNS is replaced; the public transition entry retains real catalog,
+// authorization, Account publication and subscription lifecycle owners.
+vi.mock('node:dns/promises', async (importOriginal) => ({
+  ...await importOriginal<typeof import('node:dns/promises')>(),
+  lookup: async () => [{ address: '1.1.1.1', family: 4 }],
+}));
+
 describe('real Claude registry Provider transition authorization composition', () => {
   const fixtures: Array<
     Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>
@@ -63,6 +72,7 @@ describe('real Claude registry Provider transition authorization composition', (
     await Promise.all(fixtures.splice(0).map(async (fixture) => {
       await fixture.dispose();
     }));
+    resetActiveAccountSettingsSnapshotForTests();
   });
 
   it('classifies current-source CLIProxyAPI Haiku to Sonnet as live through the exact real Claude binding', async () => {
@@ -341,6 +351,32 @@ describe('real Claude registry Provider transition authorization composition', (
       runtimeBindingBasisEqual: true,
       resultingPolicy: 'live',
     });
+    // Exercise the actual transition entry with an Account-owned model row;
+    // unlike the lower authorization fixture, this entry owns its subscription
+    // and releases that authorization before returning the admitted target.
+    settings = ProviderSettingsV1Schema.parse({ ...settings,
+      manualModelsByConnectionId: { ...settings.manualModelsByConnectionId,
+        [connectionId]: [{ id: sonnet.id, name: sonnet.name, addedAt: 1 }] },
+    });
+    const publishedModel = mergeProviderCatalogV1({ staticModels: [],
+      manualModels: settings.manualModelsByConnectionId[connectionId]!,
+      probeState: { snapshot: null, staleProbeModels: [] } }).rows[0]!.descriptor;
+    confirm(agentTargetKey, publishedModel);
+    const { catalog, defaults } = splitProviderSettingsV1(settings);
+    setActiveAccountSettingsSnapshot({ source: 'network',
+      settings: AccountSettingsSchema.parse({ providerDefaultModelSelectionsByAgentTargetKeyV1: defaults }),
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog },
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'account-g4-composed',
+    });
+    const entrySelection = { agentTargetKey, providerConnectionId: connectionId, modelId: sonnet.id };
+    const entryTarget = await authorizeSessionModelTransitionProviderTargetWithLease({
+      sessionId: 'session-active-haiku', machineId, agentId: 'claude', agentTargetKey, lease,
+      input: { selection: entrySelection, activeSelection: activeHaiku.selection,
+        activeSessionBindingMetadata: activeHaiku.authorization.sessionBindingMetadata },
+    });
+    expect(entryTarget).toMatchObject({ selection: entrySelection, policy: 'live',
+      model: { id: sonnet.id }, sessionBindingMetadata: { connectionId },
+      runtimeBindingBasis: { connectionId, agentTargetKey } });
     } finally {
       preparedActiveHaiku.attempt.cleanupOnFailure();
     }

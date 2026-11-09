@@ -1,4 +1,5 @@
 import type { ProviderBrokerApplicationBindingV1, ProviderWireProtocol, ResolvedProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol';
+import type { ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { projectApplicationEndpoint, projectAgentProviderBrokerApplications as projectDeclaredAgentProviderBrokerApplications } from '@happier-dev/protocol/providers/catalog/brokerApplicationProjectionV1';
 import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
 
@@ -28,13 +29,16 @@ export function createAccountConnectionModelProjectionRequest(input: Readonly<{
 
 /** Exact managed implementation admission uses the current contribution, never
  * a retained identity or a host copy of plugin endpoint/protocol facts. */
-export function projectManagedProviderBrokerApplication(input: Readonly<{
+type ManagedApplicationInput = Readonly<{
   registry: ProviderContributionRegistryView;
   implementationIdentity: ProviderBrokerApplicationBindingV1['implementationIdentity'];
-  agentTargetKey: string;
+  agentTargetKey?: string;
   protocol: ProviderWireProtocol;
   endpointTemplateId?: string;
-}>): ProviderBrokerApplicationBindingV1 | null {
+}>;
+export function projectManagedProviderBrokerApplication(input: ManagedApplicationInput & { agentTargetKey: string }): ProviderBrokerApplicationBindingV1 | null;
+export function projectManagedProviderBrokerApplication(input: ManagedApplicationInput): ProviderBrokerSourceApplicationBindingV1 | null;
+export function projectManagedProviderBrokerApplication(input: ManagedApplicationInput): ProviderBrokerSourceApplicationBindingV1 | null {
   const provider = getProviderContribution(input.registry,
     `${input.implementationIdentity.pluginId}/${input.implementationIdentity.localId}`);
   if (!provider?.definition.managedRuntime
@@ -67,7 +71,7 @@ export function projectAgentProviderBrokerApplications(input: Readonly<{
 
 export function resolveManagedProviderBrokerPurpose(input: Readonly<{
   registry: ProviderContributionRegistryView;
-  application: ProviderBrokerApplicationBindingV1;
+  application: ProviderBrokerSourceApplicationBindingV1;
   service: ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'][number]['service'];
 }>): ResolvedProviderManagedRuntimeDeclarationV1['connectedAccounts'][number] | null {
   if (!projectManagedProviderBrokerApplication({
@@ -92,12 +96,15 @@ export function resolveManagedProviderBrokerPurpose(input: Readonly<{
  * owner. Callers never infer endpoint ids or implementation identities from a
  * model id or a persisted Team source binding.
  */
-export function projectProviderBrokerApplication(input: Readonly<{
+type ProviderApplicationInput = Readonly<{
   connection: ResolvedProviderConnectionRecord;
-  agentTargetKey: string;
+  agentTargetKey?: string;
   protocol: ProviderWireProtocol;
-  expectedApplication?: ProviderBrokerApplicationBindingV1;
-}>): ProviderBrokerApplicationBindingV1 | null {
+  expectedApplication?: ProviderBrokerSourceApplicationBindingV1;
+}>;
+export function projectProviderBrokerApplication(input: ProviderApplicationInput & { agentTargetKey: string }): ProviderBrokerApplicationBindingV1 | null;
+export function projectProviderBrokerApplication(input: ProviderApplicationInput): ProviderBrokerSourceApplicationBindingV1 | null;
+export function projectProviderBrokerApplication(input: ProviderApplicationInput): ProviderBrokerSourceApplicationBindingV1 | null {
   const source = input.connection.source;
   if (source.kind !== 'contribution') return null;
   const identity = input.connection.deployment.kind === 'managedLocal'

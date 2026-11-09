@@ -1,7 +1,7 @@
-import { chmod, lstat, mkdir, open } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { PROVIDER_RUNTIME_STATE_LIMITS_V1, ProviderRuntimeStateFileV1Schema, createEmptyProviderRuntimeStateFileV1, normalizeProviderRuntimeStateFileForStartupV1, parseProviderRuntimeStateFileV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
+import { ProviderRuntimeStateFileV1Schema, createEmptyProviderRuntimeStateFileV1, normalizeProviderRuntimeStateFileForStartupV1, parseProviderRuntimeStateFileV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
 import { ProviderMachineIdSchema } from '@happier-dev/protocol/providers/ids';
 import type { ProviderRuntimeStateFileV1, ProviderRuntimeStateParseFailureReasonV1, ProviderEndpointRuntimeStateRecordV1 } from '@happier-dev/protocol';
 
@@ -9,10 +9,6 @@ import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeJsonAtomic as canonicalWriteJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
 import { serializeProviderRuntimeStateRecordKey } from './keys';
-import {
-  pruneProviderRuntimeStateV1,
-  type ProviderRuntimeStatePruneContext,
-} from './prune';
 
 export type ProviderRuntimeStateStoreDiagnostic = Readonly<{
   code: 'provider_runtime_state_invalid';
@@ -24,7 +20,6 @@ export type ProviderRuntimeStateStore = Readonly<{
   read(): Promise<ProviderRuntimeStateFileV1>;
   update(
     transform: (current: ProviderRuntimeStateFileV1) => ProviderRuntimeStateFileV1 | Promise<ProviderRuntimeStateFileV1>,
-    pruneContext?: ProviderRuntimeStatePruneContext,
   ): Promise<ProviderRuntimeStateFileV1>;
   /**
    * Publishes the process-local endpoint activity overlay without rewriting
@@ -58,57 +53,6 @@ async function ensurePrivateParent(path: string): Promise<void> {
     throw new Error('Provider runtime-state parent must be a directory');
   }
   if (process.platform !== 'win32') await chmod(parent, 0o700);
-}
-
-async function readFileBounded(path: string): Promise<Readonly<{
-  bytes: Buffer;
-  missing: boolean;
-  oversized: boolean;
-}>> {
-  let handle;
-  try {
-    handle = await open(path, 'r');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { bytes: Buffer.alloc(0), missing: true, oversized: false };
-    }
-    throw error;
-  }
-  try {
-    const metadata = await handle.stat();
-    if (metadata.size > PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEncodedBytes) {
-      return { bytes: Buffer.alloc(0), missing: false, oversized: true };
-    }
-    const capacity = PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEncodedBytes + 1;
-    const output = Buffer.allocUnsafe(Math.min(capacity, Math.max(1, Number(metadata.size) + 1)));
-    let offset = 0;
-    while (offset < output.length) {
-      const { bytesRead } = await handle.read(output, offset, output.length - offset, offset);
-      if (bytesRead === 0) break;
-      offset += bytesRead;
-    }
-    if (offset === output.length && output.length < capacity) {
-      const expanded = Buffer.allocUnsafe(capacity);
-      output.copy(expanded, 0, 0, offset);
-      while (offset < expanded.length) {
-        const { bytesRead } = await handle.read(expanded, offset, expanded.length - offset, offset);
-        if (bytesRead === 0) break;
-        offset += bytesRead;
-      }
-      return {
-        bytes: expanded.subarray(0, offset),
-        missing: false,
-        oversized: offset > PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEncodedBytes,
-      };
-    }
-    return {
-      bytes: output.subarray(0, offset),
-      missing: false,
-      oversized: offset > PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEncodedBytes,
-    };
-  } finally {
-    await handle.close();
-  }
 }
 
 function cloneState(state: ProviderRuntimeStateFileV1): ProviderRuntimeStateFileV1 {
@@ -210,19 +154,17 @@ export function createProviderRuntimeStateStore(input: Readonly<{
 
   async function loadUnlocked(): Promise<ProviderRuntimeStateFileV1> {
     if (memory) return memory;
-    const read = await readFileBounded(path);
-    if (read.missing) {
-      memory = createEmptyProviderRuntimeStateFileV1(machineId);
-      return memory;
-    }
-    if (read.oversized) {
-      diagnostic('encoded_size_exceeded');
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       memory = createEmptyProviderRuntimeStateFileV1(machineId);
       return memory;
     }
     let raw: unknown;
     try {
-      raw = JSON.parse(read.bytes.toString('utf8')) as unknown;
+      raw = JSON.parse(bytes.toString('utf8')) as unknown;
     } catch {
       diagnostic('malformed');
       memory = createEmptyProviderRuntimeStateFileV1(machineId);
@@ -230,7 +172,6 @@ export function createProviderRuntimeStateStore(input: Readonly<{
     }
     const parsed = parseProviderRuntimeStateFileV1(raw, {
       expectedMachineId: machineId,
-      encodedBytes: read.bytes.byteLength,
     });
     if (!parsed.ok) {
       diagnostic(parsed.diagnostic.reason);
@@ -243,13 +184,11 @@ export function createProviderRuntimeStateStore(input: Readonly<{
 
   async function commitUnlocked(
     candidate: ProviderRuntimeStateFileV1,
-    pruneContext: ProviderRuntimeStatePruneContext = {},
   ): Promise<ProviderRuntimeStateFileV1> {
     if (candidate.machineId !== machineId) {
       throw new TypeError('Provider runtime-state mutation cannot change the store machine envelope');
     }
-    const pruned = pruneProviderRuntimeStateV1(candidate, pruneContext);
-    const parsed = ProviderRuntimeStateFileV1Schema.parse(pruned);
+    const parsed = ProviderRuntimeStateFileV1Schema.parse(candidate);
     const durable = normalizeProviderRuntimeStateFileForStartupV1(parsed);
     await writeJsonAtomic(path, durable);
     if (process.platform !== 'win32') await chmod(path, 0o600).catch(() => {});
@@ -274,10 +213,10 @@ export function createProviderRuntimeStateStore(input: Readonly<{
       }
       await apply();
     }),
-    update: (transform, pruneContext = {}) => enqueue(async () => await mutateLocked(async () => {
+    update: (transform) => enqueue(async () => await mutateLocked(async () => {
       const current = await loadUnlocked();
       const candidate = await transform(cloneState(current));
-      return cloneState(await commitUnlocked(candidate, pruneContext));
+      return cloneState(await commitUnlocked(candidate));
     })),
   };
 }

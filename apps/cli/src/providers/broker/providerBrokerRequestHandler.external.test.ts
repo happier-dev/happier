@@ -4,6 +4,9 @@ import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams
 import type { ManagedProviderEndpointHttpAccess } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { createProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
 import { teamCredentialBrokerResourceAcceptsMachine } from './teamCredentialBrokerSourceOwner';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PLUGIN_MANIFEST, activate } from '@happier-dev/plugins-openrouter/manifest';
+import { TeamCredentialExternalProviderTerminalUsageV1Schema } from '@happier-dev/protocol/teams';
 
 const binding = {
   v: 1 as const,
@@ -28,6 +31,41 @@ const externalRequest = {
 };
 
 describe('Provider broker external authenticated context', () => {
+  it('preserves OpenRouter bytes and reports one schema-admitted charged request through its real plugin decoder', async () => {
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const requestCostParser = kit.registration('providers', 'openrouter')?.requestCostParser;
+      expect(requestCostParser).toEqual(expect.any(Function));
+      const sse = 'data: {"model":"model","choices":[],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10,"cost":0.12,"cost_details":{"upstream_inference_cost":9}}}\n\n'
+        + 'data: [DONE]\n\n';
+      const facts: unknown[] = [];
+      const handler = createProviderBrokerRequestHandler({
+        resolveTrustRoots: () => [], nowMs: Date.now, resolveRequestPolicy: vi.fn(), admit: vi.fn(), createRequestId: () => 'unused',
+        resolveExternalRequestPolicy: async () => ({ kind: 'application', resourceRevision: 4, policy: null,
+          modelCatalog: { models: [{ id: 'model' }], resolveCanonicalModelId: (id) => id },
+          application: { agentTargetKey: 'agent:happier.agent.codex/codex',
+            implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+            endpointTemplateId: 'cliproxyapi-openai-chat', protocol: 'openai-chat' } }),
+        admitExternal: async () => ({ ok: true, access: {
+          endpointUrl: () => 'http://127.0.0.1:1234',
+          request: async () => ({ ok: true, status: 200, statusText: 'OK',
+            headers: { 'content-type': 'text/event-stream' }, body: new Response(sse).body }),
+        }, terminalUsage: { requestCostParser, record: async (fact) => {
+          facts.push(TeamCredentialExternalProviderTerminalUsageV1Schema.parse({ v: 1,
+            admissionUsageEventId: 'usage-1', requestId: 'request-1', brokerMachineId: 'broker-1',
+            completedAtMs: 1, measurement: fact.tokens ? 'reported' : 'unavailable', ...fact }));
+        } } }),
+      });
+      const result = await handler({ context: { kind: 'external', binding },
+        carrierRequest: { ...externalRequest, route: 'chat_completions', pathAndQuery: '/v1/chat/completions', bodyBase64: 'e30=' },
+        request: { pathAndQuery: '/v1/chat/completions', method: 'POST',
+          body: new TextEncoder().encode('{"model":"model","messages":[],"stream":true}') } });
+      if (!result.ok) throw new Error('Expected admitted response');
+      expect(await new Response(await readProviderBrokerResponseBody(result.response.body)).text()).toBe(sse);
+      expect(facts).toEqual([expect.objectContaining({ reportedCostUsd: 0.12, measurement: 'reported',
+        tokens: { input: 8, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 } })]);
+    } finally { await kit.dispose(); }
+  });
   it('accepts an admitted Pool target and converges on the same model policy and managed request owner', async () => {
     const recordTerminal = vi.fn(async () => {});
     const access: ManagedProviderEndpointHttpAccess = {

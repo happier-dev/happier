@@ -54,6 +54,11 @@ const answer = message => {
   if (message.method === 'workspace/executeCommand') {
     if (options.delayCommand) {pending.set(message.id,message);return;}
     commandRequest=message;
+    if (options.commandEditPathsFile) {
+      const paths=JSON.parse(fs.readFileSync(options.commandEditPathsFile,'utf8'));
+      const changes=Object.fromEntries(paths.map(path=>[new URL(path,options.rootUri).href,[{range:{start:{line:0,character:0},end:{line:0,character:3}},newText:'fixed'}]]));
+      send({id:'server-edit',method:'workspace/applyEdit',params:{edit:{changes}}});return;
+    }
     const target=new URL(options.refuseCommandEdit?'../outside.ts':'b.ts',message.params.arguments[0]).href;
     send({id:'server-edit',method:'workspace/applyEdit',params:{edit:{changes:{[target]:[{range:{start:{line:0,character:0},end:{line:0,character:3}},newText:'fixed'}]}}}});
   }

@@ -7,6 +7,12 @@ import {
 } from './parsers';
 
 describe('parseProviderCatalogResponse', () => {
+  it('preserves a completion model with complete large Ollama capability metadata', () => {
+    const capabilities = ['completion', ...Array.from({ length: 33 }, (_, index) => `future-${index}-${'x'.repeat(65)}`)];
+    expect(parseProviderCatalogResponse('ollama-tags', { models: [{ model: 'completion-model', capabilities }] }).models)
+      .toEqual([expect.objectContaining({ id: 'completion-model' })]);
+    expect(parseProviderCatalogResponse('ollama-tags', { models: [{ model: 'embedding-model', capabilities: capabilities.slice(1) }] }).models).toEqual([]);
+  });
   it('parses only the declared OpenAI models discriminant', () => {
     expect(parseProviderCatalogResponse('openai-models', {
       data: [{ id: 'gpt-a' }, { id: 'gpt-b', name: 'GPT B' }],
@@ -215,7 +221,7 @@ describe('parseProviderCatalogResponse', () => {
       .not.toBe(hijack);
   });
 
-  it('applies the host-owned catalog limits to a contributed format', () => {
+  it('preserves complete contributed catalogs while rejecting duplicate identities and inherited implementations', () => {
     const duplicates = { 'acme-catalog-v3': () => ({ models: [{ id: 'same' }, { id: 'same' }] }) };
     expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, duplicates)).toThrow('Duplicate');
 
@@ -224,7 +230,7 @@ describe('parseProviderCatalogResponse', () => {
         models: Array.from({ length: 5_001 }, (_row, index) => ({ id: `acme/${index}` })),
       }),
     };
-    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, oversized)).toThrow('limit');
+    expect(parseProviderCatalogResponse('acme-catalog-v3', {}, oversized).models).toHaveLength(5_001);
 
     const inherited = Object.create({ 'acme-catalog-v3': () => ({ models: [{ id: 'acme/one' }] }) }) as
       Record<string, () => { models: readonly { id: string }[] }>;
@@ -232,7 +238,7 @@ describe('parseProviderCatalogResponse', () => {
       .toThrow(ProviderCatalogFormatUnavailableError);
   });
 
-  it('bounds and validates contributed load states at the parser boundary, not at storage', () => {
+  it('validates contributed load-state identity and shape at the parser boundary', () => {
     const parsers = (loadStates: unknown) => ({
       'acme-catalog-v3': () => ({ models: [{ id: 'acme/one' }, { id: 'acme/two' }], loadStates }),
     }) as unknown as Record<string, () => { models: readonly { id: string }[] }>;
@@ -251,20 +257,13 @@ describe('parseProviderCatalogResponse', () => {
     expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers([
       { modelId: 'acme/absent', loadState: 'loaded' },
     ]))).toThrow('absent from the catalog');
-    expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers(
-      Array.from({ length: 5_001 }, () => ({ modelId: 'acme/one', loadState: 'loaded' })),
-    ))).toThrow('limit');
     expect(() => parseProviderCatalogResponse('acme-catalog-v3', {}, parsers('loaded')))
       .toThrow('must be an array');
   });
 
-  it('rejects duplicates, over-limit lists, and accessor-bearing input before value access', () => {
+  it('rejects duplicate identities from bundled formats', () => {
     expect(() => parseProviderCatalogResponse('openai-models', { data: [{ id: 'same' }, { id: 'same' }] }))
       .toThrow('Duplicate');
 
-    const data: unknown[] = [];
-    Object.defineProperty(data, '0', { enumerable: true, get: () => { throw new Error('accessed'); } });
-    Object.defineProperty(data, 'length', { value: 5_001 });
-    expect(() => parseProviderCatalogResponse('openai-models', { data })).toThrow('limit');
   });
 });

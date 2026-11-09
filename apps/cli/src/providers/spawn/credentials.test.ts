@@ -13,6 +13,7 @@ import {
   resolveProviderCredentialPlaintext,
   resolveProviderCredentialReference,
 } from './credentials';
+import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 
 const key = new Uint8Array(32).fill(7);
 const encryptedValue = encryptSecretStringV1('secret-value', key, (length) => new Uint8Array(length).fill(3));
@@ -63,6 +64,49 @@ const accountSettings = {
 };
 
 describe('provider spawn credential resolution', () => {
+  it('consumes the operation materializer without rebuilding captured secret material', () => {
+    const resource = { ...sharedSecretResource, displayName: 'Vault provider key', relationship: 'owner' as const, capabilities: { use: true }, storedContent: sealSavedSecretResourceStoredContentV1({
+      resourceId: sharedSecretResource.resourceId, mode: 'plain', content: { v: 2, name: 'Vault provider key', kind: 'apiKey',
+        source: { kind: 'external', contribution: { pluginId: 'acme.vault', localId: 'main' }, account: 'account', reference: 'op://vault/item/field' } },
+    }) };
+    const materializer = createSavedSecretMaterializerV1({ resourceCatalogState: undefined, accountSettings: {}, settingsSecretsReadKeys: [], resources: [resource],
+      externalAcquisitions: new Map([[sharedSecretRef, { status: 'ready', value: 'shared-provider-value' }]]) });
+    const inspected = materializer.inspect(sharedSecretRef);
+    if (inspected.status !== 'ready') throw new Error('Expected admitted secret');
+    expect(resolveProviderCredentialPlaintext({
+      reference: { kind: 'apiKey', secretId: sharedSecretRef, secretRecordFingerprint: inspected.fingerprint },
+      accountSettings: {}, settingsSecretsReadKeys: [], savedSecretMaterializer: materializer,
+      connectionId: 'pc_gateway', machineId: 'machine-a',
+    })).toMatchObject({ ok: true, credential: { kind: 'apiKey', value: 'shared-provider-value' } });
+  });
+  it('requires every selected companion binding and refuses rotation or withdrawal of either secret', () => {
+    const base = { providerSettings: settings(), accountSettings,
+      connectionId: 'pc_gateway', machineId: 'machine-a', credentialSlotId: 'apiKey', required: true,
+      additionalCredentials: [{ slotId: 'upstreamKey' }] };
+    expect(resolveProviderCredentialReference(withSavedSecretMaterializer(base))).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+    const pairedAccountSettings = { secrets: accountSettings.secrets.map(secret => secret.id === 'secret-account'
+      ? { ...secret, encryptedValue: { _isSecretValue: true, encryptedValue: encryptSecretStringV1('upstream-secret-value', key, length => new Uint8Array(length).fill(5)) } }
+      : secret) };
+    const withCompanion = { ...base, accountSettings: pairedAccountSettings, providerSettings: { ...settings(), secretBindingsByConnectionId: {
+      pc_gateway: { account: { apiKey: 'secret-account', upstreamKey: 'secret-account' },
+        byMachineId: { 'machine-a': { apiKey: 'secret-machine' } } },
+    } } };
+    const reference = resolveProviderCredentialReference(withSavedSecretMaterializer(withCompanion));
+    expect(reference).toMatchObject({ ok: true, reference: { additionalCredentials: [{ slotId: 'upstreamKey', secretId: 'secret-account' }] } });
+    if (!reference.ok) throw new Error('Expected both admitted references');
+    const materialize = (current: unknown, isCurrent = () => true) => resolveProviderCredentialPlaintext(withSavedSecretMaterializer({
+      reference: reference.reference, accountSettings: current, settingsSecretsReadKeys: [key],
+      connectionId: 'pc_gateway', machineId: 'machine-a', isCurrent,
+    }));
+    expect(materialize(pairedAccountSettings)).toMatchObject({ ok: true, credential: {
+      value: 'secret-value', additionalCredentials: [{ slotId: 'upstreamKey', value: 'upstream-secret-value' }],
+    } });
+    expect(materialize({ secrets: accountSettings.secrets.filter(secret => secret.id !== 'secret-account') }))
+      .toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+    expect(materialize(accountSettings)).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+    expect(materialize(accountSettings, () => false)).toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+  });
+
   it('selects the machine binding before account binding and fingerprints ciphertext without decrypting', () => {
     const result = resolveProviderCredentialReference(withSavedSecretMaterializer({
       providerSettings: settings(),

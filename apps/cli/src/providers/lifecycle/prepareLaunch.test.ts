@@ -135,6 +135,40 @@ function base(overrides: Record<string, unknown> = {}) {
 }
 
 describe('prepareProviderLaunch', () => {
+  it('resumes retained endpoint facts after harmless adapter and model capability drift without a second consent', async () => {
+    const providerAttempt = attempt();
+    const authorization = providerAttempt.authorization;
+    const metadata = (adapterVersion: number): SessionProviderBindingMetadataV1 => binding({
+      model: { id: 'vendor/model', name: 'Vendor Model', capabilities: {
+        reasoningControls: adapterVersion === 1 ? 'unknown' : 'supported',
+      } },
+      compatibilityFingerprint: `compatibility:v1:${adapterVersion}`,
+      bindingSecurityFingerprint: `binding-security:v1:${adapterVersion}`,
+      runtimeBindingBasis: {
+        v: 1, deployment: { kind: 'external' }, agentTargetKey: selection.ref.agentTargetKey,
+        connectionId, contributionKey: authorization.binding.contributionKey,
+        endpoint: { endpointTemplateId: 'responses', normalizedUrl: 'https://gateway.example/v1',
+          protocol: 'openai-responses', publicHeaders: {} },
+        runtimeCredentialTransport: null, prepared: authorization.prepared,
+        adapterVersion, agentSupport: authorization.support,
+        credentialAuthorization: {
+          connectionSecurityFingerprint: authorization.ticket.connectionSecurityFingerprint,
+          grantFingerprint: authorization.ticket.grantFingerprint,
+          selectedSecretBindingId: authorization.ticket.selectedSecretBindingId,
+          selectedSecretRecordFingerprint: authorization.ticket.selectedSecretRecordFingerprint,
+        },
+      },
+    });
+    const confirmSecurityChange = vi.fn(async () => false);
+    const input = base({ previousBinding: metadata(1), confirmSecurityChange,
+      createAuthorizationAttempt: async () => ({ ok: true as const, attempt: {
+        ...providerAttempt, authorization: { ...authorization, sessionBindingMetadata: metadata(2) },
+      } }),
+    });
+    await expect(prepareProviderLaunch(input)).resolves.toMatchObject({ ok: true });
+    expect(confirmSecurityChange).not.toHaveBeenCalled();
+  });
+
   it('enforces caller model and permission constraints before native or automatic launch', async () => {
     const nativeSelection = { ...selection, ref: { ...selection.ref, providerConnectionId: null } };
     const constraints = { models: [nativeSelection.ref], permissionModes: ['default' as const] };

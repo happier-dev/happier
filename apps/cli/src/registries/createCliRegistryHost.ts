@@ -112,7 +112,9 @@ export function createCliRegistryHostV1(input:Readonly<{credentials?:StoredCrede
     } catch(error) { if(error instanceof SavedSecretOperationAdmissionError)return null;throw error; }
   };
   const createFetchContext = (resolve: typeof resolveToken) => ({ signal: input.signal,
-    withAppCatalog: createAppCatalogReadsV1(scopeKey),
+    withAppCatalog: createAppCatalogReadsV1(scopeKey, {
+      http: createRegistryHttpV1({resolveToken:resolve}), signal: input.signal,
+    }),
     http: createRegistryHttpV1({signal:input.signal,resolveToken:resolve}),
     packageContent:createCliRegistryPackageContentV1(input),
     git: createRegistryGitProtocolV1({signal:input.signal,resolveToken:async source=>{

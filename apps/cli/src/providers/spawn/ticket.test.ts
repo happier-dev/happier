@@ -2,13 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ProviderConnectionIdSchema,
-  createProviderErrorV1,
-  type ProviderErrorV1,
 } from '@happier-dev/protocol';
 
 import {
   mintProviderBindingAuthorizationTicket,
-  revalidateProviderBindingAuthorizationTicket,
+  projectProviderBindingAuthorizationTicketReference,
   type ProviderBindingAuthorizationState,
 } from './ticket';
 
@@ -29,43 +27,29 @@ function state(overrides: Partial<ProviderBindingAuthorizationState> = {}): Prov
 }
 
 describe('provider binding authorization tickets', () => {
-  it('revalidates the exact security-relevant state without depending on display state', () => {
+  it('projects one opaque comparison reference for the complete current authorization ticket', () => {
     const ticket = mintProviderBindingAuthorizationTicket(state());
-
-    expect(revalidateProviderBindingAuthorizationTicket(ticket, state())).toEqual({ ok: true });
+    const reference = projectProviderBindingAuthorizationTicketReference(ticket);
+    expect(reference).not.toContain(ticket.connectionId);
+    expect(reference).not.toContain(ticket.selectedSecretBindingId!);
+    expect(projectProviderBindingAuthorizationTicketReference({
+      selectedSecretRecordFingerprint: ticket.selectedSecretRecordFingerprint,
+      selectedSecretBindingId: ticket.selectedSecretBindingId,
+      grantFingerprint: ticket.grantFingerprint,
+      bindingSecurityFingerprint: ticket.bindingSecurityFingerprint,
+      connectionSecurityFingerprint: ticket.connectionSecurityFingerprint,
+      machineId: ticket.machineId, connectionRevision: ticket.connectionRevision, connectionId: ticket.connectionId,
+    })).toBe(reference);
+    const changed: ProviderBindingAuthorizationState[] = [
+      state({ connectionId: ProviderConnectionIdSchema.parse('pc_other') }), state({ connectionRevision: 4 }),
+      state({ machineId: 'machine-b' }), state({ connectionSecurityFingerprint: 'connection-security:v1:two' }),
+      state({ bindingSecurityFingerprint: 'binding-security:v1:two' }), state({ grantFingerprint: 'account-grant:v1:two' }),
+      state({ selectedSecretBindingId: 'secret-b' }), state({ selectedSecretRecordFingerprint: 'saved-secret-record:v1:two' }),
+      state({ selectedSecretBindingId: null, selectedSecretRecordFingerprint: null }),
+    ];
+    for (const current of changed) expect(projectProviderBindingAuthorizationTicketReference(current)).not.toBe(reference);
   });
 
-  it.each([
-    ['connectionRevision', 4],
-    ['connectionSecurityFingerprint', 'connection-security:v1:two'],
-    ['bindingSecurityFingerprint', 'binding-security:v1:two'],
-    ['grantFingerprint', 'account-grant:v1:two'],
-    ['selectedSecretBindingId', 'secret-b'],
-    ['selectedSecretRecordFingerprint', 'saved-secret-record:v1:two'],
-  ] as const)('rejects a changed %s before commit', (key, value) => {
-    const ticket = mintProviderBindingAuthorizationTicket(state());
-    const result = revalidateProviderBindingAuthorizationTicket(ticket, state({ [key]: value }));
 
-    expect(result).toEqual({
-      ok: false,
-      error: expect.objectContaining({
-        code: 'provider_authorization_changed',
-        connectionId: 'pc_gateway',
-        machineId: 'machine-a',
-      }) as ProviderErrorV1,
-    });
-  });
 
-  it('returns the precise current refusal instead of masking a deletion as a generic race', () => {
-    const ticket = mintProviderBindingAuthorizationTicket(state());
-    const currentError = createProviderErrorV1('provider_connection_not_found', {
-      connectionId,
-      machineId: 'machine-a',
-    });
-
-    expect(revalidateProviderBindingAuthorizationTicket(ticket, currentError)).toEqual({
-      ok: false,
-      error: currentError,
-    });
-  });
 });

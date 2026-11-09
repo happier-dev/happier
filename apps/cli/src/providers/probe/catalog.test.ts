@@ -5,7 +5,6 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   createProviderErrorV1,
   createProviderObservationAuthorizationFingerprintV1,
   type ProviderCatalogProbeV1,
@@ -13,7 +12,8 @@ import {
 
 import { createProviderRuntimeStateStore } from '../runtimeState';
 import type { ProviderProbeAuthorizationPort } from './authorization';
-import { createProviderProbeHttpClient, type ProviderProbeTransport } from './client';
+import { createProviderProbeHttpClient, type ProviderProbeTransport, type ProviderProbeManagedServiceRequest } from './client';
+import { createProviderLocalCatalogFallbackRunner } from './localCommand';
 import {
   createProviderCatalogRefreshFingerprint,
   createProviderCatalogService,
@@ -753,21 +753,15 @@ describe('provider catalog service', () => {
     expect(settled.endpointHealth[0]?.state).toEqual({ status: 'available', activity: 'idle', observedAt: 10_000 });
   });
 
-  it('uses one authorized bounded managed runtime and commits no transient endpoint health', async () => {
+  it('uses one authorized managed runtime and commits no transient endpoint health', async () => {
     const close = vi.fn(async () => {});
-    const managedRequest = vi.fn(async (request: Readonly<{
-      pathAndQuery: string;
-      headers: Readonly<Record<string, string>>;
-      timeoutMs: number;
-    }>) => {
+    const managedRequest = vi.fn<ProviderProbeManagedServiceRequest>(async (request) => {
       // The probe reaches the supervised service through the exact handle, so
       // it hands over a relative path and never a second authenticated URL.
       expect(request.pathAndQuery).toBe('/v1/models');
       expect(Object.keys(request.headers).map((name) => name.toLowerCase()))
         .not.toContain('authorization');
-      expect(request.timeoutMs).toBeLessThanOrEqual(
-        PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs,
-      );
+      expect(request.timeoutMs).toBeUndefined();
       return {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -844,11 +838,7 @@ describe('provider catalog service', () => {
       },
     ] satisfies readonly ProviderManagedCatalogSource[];
     const close = vi.fn(async () => {});
-    const managedRequest = vi.fn(async (request: Readonly<{
-      pathAndQuery: string;
-      headers: Readonly<Record<string, string>>;
-      timeoutMs: number;
-    }>) => ({
+    const managedRequest = vi.fn<ProviderProbeManagedServiceRequest>(async (request) => ({
       status: 503,
       headers: { 'content-type': 'application/json' },
       body: new Response('{"error":"temporarily unavailable"}').body,

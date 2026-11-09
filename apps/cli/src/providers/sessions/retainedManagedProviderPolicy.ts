@@ -84,11 +84,11 @@ export function isRetainedManagedProviderSettingsGrantCurrent(input: Readonly<{
   ) return false;
 
   const expected = basis.data.credentialAuthorization;
+  // The canonical grant fingerprint binds the exact stored row, including its
+  // legacy/new connection identity. The runtime's current projection may be V2.
   const grant = settings.data.machineGrants.find((candidate) => (
     candidate.machineId === machineId
     && candidate.connectionId === basis.data.connectionId
-    && candidate.connectionSecurityFingerprint
-      === expected.connectionSecurityFingerprint
   ));
   return grant !== undefined
     && createProviderMachineGrantFingerprintV1(grant)

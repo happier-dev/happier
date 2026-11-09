@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { ProviderContributionV1Schema } from '@happier-dev/protocol';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PLUGIN_MANIFEST as vercelManifest, activate as activateVercel } from '../../../../../packages/plugins/vercel-ai-gateway/src/manifest';
+import vercelCatalog from '../../../../../packages/plugins/vercel-ai-gateway/src/provider/catalog/fixtures/catalog.json';
 
 import {
   createProviderProbeHttpClient,
@@ -70,6 +73,35 @@ const CATALOG_BODY = JSON.stringify({
 });
 
 describe('externally contributed Provider catalog format', () => {
+  it('dispatches the Gateway plugin parser through activation and the real HTTP catalog consumer', async () => {
+    const testkit = await createPluginTestkit({ manifest: vercelManifest, module: { activate: activateVercel } });
+    try {
+      const parsers = testkit.registration('providers', 'vercel-ai-gateway')?.catalogParsers;
+      const provider = ProviderContributionV1Schema.parse(vercelManifest.contributes?.providers?.[0]);
+      if (provider.catalog.source !== 'probe') throw new Error('Gateway must declare a probed catalog');
+      const probe = provider.catalog.probes[0]!;
+      const endpoint = provider.endpointTemplates.find(candidate => candidate.id === probe.endpointTemplateId)!;
+      if (!endpoint.baseUrl) throw new Error('Gateway must declare a catalog endpoint URL');
+      const requests: string[] = [];
+      const client = createProviderProbeHttpClient({
+        resolveAddresses: async () => ['93.184.216.34'],
+        transport: async request => {
+          requests.push(request.url);
+          return { status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify(vercelCatalog)) };
+        },
+      });
+      const result = await client.getCatalog({ endpointUrl: endpoint.baseUrl, path: probe.path, parser: probe.parser,
+        publicHeaders: endpoint.publicHeaders ?? {}, contributedCatalogParsers: parsers, authorizeDestination: async () => {} });
+      expect(requests).toEqual(['https://ai-gateway.vercel.sh/v1/models']);
+      expect(result.catalog.models.map(model => model.id)).toEqual(['openai/gpt-5', 'anthropic/claude-sonnet-4', 'vmc/team-model']);
+      expect(result.catalog.models[0]).toMatchObject({ contextWindowTokens: 400000,
+        capabilities: { reasoningControls: 'supported', toolRoundTrips: 'supported' },
+        modelOptions: [{ id: 'reasoning_effort', currentValue: 'high' }] });
+    } finally {
+      await testkit.dispose();
+    }
+  });
+
   it('parses a third-party Provider catalog end to end', async () => {
     const testkit = await createPluginTestkit({
       manifest: acmePlugin.manifest,

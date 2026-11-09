@@ -1,16 +1,14 @@
-import { serializeProviderCatalogRuntimeStateKeyV1, serializeProviderEndpointRuntimeStateKeyV1, serializeProviderInstallationRuntimeStateKeyV1, serializeProviderModelLoadRuntimeStateKeyV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
-import type { ProviderCatalogRuntimeStateRecordV1, ProviderEndpointRuntimeStateRecordV1, ProviderInstallationRuntimeStateRecordV1, ProviderModelLoadRuntimeStateRecordV1 } from '@happier-dev/protocol';
+import { serializeProviderCatalogRuntimeStateKeyV1, serializeProviderEndpointRuntimeStateKeyV1, serializeProviderModelLoadRuntimeStateKeyV1 } from '@happier-dev/protocol/providers/runtimeState/v1';
+import type { ProviderCatalogRuntimeStateRecordV1, ProviderEndpointRuntimeStateRecordV1, ProviderModelLoadRuntimeStateRecordV1 } from '@happier-dev/protocol';
 
 export type ProviderRuntimeStateRecordKind =
   | 'endpointHealth'
   | 'catalogs'
-  | 'installationChecks'
   | 'modelLoadStates';
 
 export type ProviderRuntimeStateRecordByKind = Readonly<{
   endpointHealth: ProviderEndpointRuntimeStateRecordV1;
   catalogs: ProviderCatalogRuntimeStateRecordV1;
-  installationChecks: ProviderInstallationRuntimeStateRecordV1;
   modelLoadStates: ProviderModelLoadRuntimeStateRecordV1;
 }>;
 
@@ -23,8 +21,6 @@ export function serializeProviderRuntimeStateRecordKey<K extends ProviderRuntime
       return serializeProviderEndpointRuntimeStateKeyV1(record.key);
     case 'catalogs':
       return serializeProviderCatalogRuntimeStateKeyV1(record.key);
-    case 'installationChecks':
-      return serializeProviderInstallationRuntimeStateKeyV1(record.key);
     case 'modelLoadStates':
       return serializeProviderModelLoadRuntimeStateKeyV1(record.key);
   }

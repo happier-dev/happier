@@ -56,6 +56,18 @@ describe('Team credential source snapshots', () => {
     expect(changed?.currentness.sourceVersion).not.toBe(snapshot?.currentness.sourceVersion);
   });
 
+  it('does not reuse direct material after a Saved Secret held key record rotates', () => {
+    const snapshot = (credentialSecretFingerprint?: string) => createConnectedAccountTeamCredentialSourceSnapshot({
+      source: accountSource,
+      material: { ...material, ...(credentialSecretFingerprint ? { credentialSecretFingerprint } : {}) },
+      authenticationKind: 'manual',
+      isPersistedSourceCurrent: async () => true,
+    });
+    expect(snapshot('key-record-rotated')?.currentness.sourceVersion).not.toBe(snapshot('key-record-first')?.currentness.sourceVersion);
+    expect(snapshot('key-record-first')?.currentness.sourceVersion).not.toBe(snapshot()?.currentness.sourceVersion);
+    expect(snapshot('key-record-first')?.currentness.sourceVersion).toBe(snapshot('key-record-first')?.currentness.sourceVersion);
+  });
+
   it('rejects auto-refreshing Connected Accounts from direct source snapshots', () => {
     expect(createConnectedAccountTeamCredentialSourceSnapshot({
       source: accountSource,

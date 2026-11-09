@@ -1,5 +1,4 @@
-import type { ManagedServiceSpec } from '@happier-dev/plugin-sdk/managed-services';
-import { createCLIProxyAPIManagedHealthResponse } from '../../../../../packages/plugins/cliproxyapi/src/provider/managedHealth.testkit';
+import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
 import { describe, expect, it, vi } from 'vitest';
 import Anthropic from '@anthropic-ai/sdk';
@@ -20,8 +19,10 @@ import type {
   ManagedServiceHandle,
   ManagedServiceResponse,
   ManagedServiceSnapshot,
+  ManagedServiceSpec,
   ManagedServices,
 } from '@happier-dev/plugin-sdk/managed-services';
+import { createCLIProxyAPIManagedHealthResponse } from '../../../../../packages/plugins/cliproxyapi/src/provider/managedHealth.testkit';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
   activate as activateCliProxyApi,
@@ -110,35 +111,6 @@ function connectedAccounts(
   });
 }
 
-function healthyIdentityFor(_boundPurposes: readonly ManagedPurpose[]) {
-  const families = [
-    Object.freeze({
-          purpose: 'openai-upstream',
-          protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
-        }),
-    Object.freeze({
-          purpose: 'anthropic-upstream',
-          protocols: Object.freeze(['openai-chat', 'openai-responses', 'anthropic']),
-        }),
-  ];
-  return Object.freeze({
-    v: 1,
-    contractVersion: 'happier.cliproxyapi-managed/v2',
-    sdkVersion: 'v7.2.95',
-    wrapperBuildVersion: 'cliproxyapi-test-build',
-    protocols: [...new Set(families.flatMap((family) => family.protocols))],
-    purposes: families.map((family) => Object.freeze({
-      consumer: Object.freeze({
-        pluginId: 'happier.provider.cliproxyapi',
-        localId: 'cliproxyapi',
-      }),
-      purpose: family.purpose,
-    })),
-    modelListEnabled: true,
-    sourceClass: 'connected_account',
-  });
-}
-
 describe('CLIProxyAPI composed public managed Provider start', () => {
   it('does not project endpoint access when the live wrapper identity is incompatible', async () => {
     const dispose = vi.fn(async () => undefined);
@@ -184,6 +156,7 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
       connectedAccounts: connectedAccounts(),
       custody: Object.freeze({
         managedServices: Object.freeze({
+            ...createUnavailableManagedServices(),
           dependencies: Object.freeze({}) as never,
           supervise,
         }),
@@ -250,6 +223,7 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
       connectedAccounts: connectedAccounts(boundPurposes),
       custody: Object.freeze({
         managedServices: Object.freeze({
+            ...createUnavailableManagedServices(),
           dependencies: Object.freeze({}) as never,
           supervise,
         }),
@@ -379,6 +353,7 @@ describe('CLIProxyAPI composed public managed Provider start', () => {
       connectedAccounts: connectedAccounts([]),
       custody: Object.freeze({
         managedServices: Object.freeze({
+            ...createUnavailableManagedServices(),
           dependencies: Object.freeze({}) as never,
           supervise,
         }),

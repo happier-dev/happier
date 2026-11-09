@@ -14,7 +14,7 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 import {
   getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken,
-  subscribeActiveAccountSettingsSnapshot,
+  subscribeActiveAccountSettingsKeys,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
@@ -164,8 +164,8 @@ export async function authorizeSessionModelTransitionProviderTargetWithLease(
     agentId: params.agentId,
     lease: params.lease,
     getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
-    subscribeAccountSettingsSnapshot: (listener) =>
-      subscribeActiveAccountSettingsSnapshot(() => listener()),
+    subscribeAccountSettingsSnapshot: (listener, keys) =>
+      subscribeActiveAccountSettingsKeys(keys, () => listener()),
     runtimeStateStore,
     readModelProjection: createAccountScopedProviderModelProjectionReader({
       serverUrl: resolveServerHttpBaseUrl(),
@@ -350,9 +350,10 @@ export function createSessionModelTransitionAuthorizer(params: Readonly<{
       revalidateBeforeEffect: async () => false,
     });
     if (selection.providerConnectionId === null) {
+      const appliedTeamModel = active.readAppliedTeamCredentialModel ? active.readAppliedTeamCredentialModel() : null;
       return bindCurrentAuthorizationProof({
         selection,
-        policy: active.selection.providerConnectionId === null
+        policy: active.selection.providerConnectionId === null && appliedTeamModel === null
           ? params.nativeModelApplyPolicy
           : 'restart_session',
         providerBinding: null,

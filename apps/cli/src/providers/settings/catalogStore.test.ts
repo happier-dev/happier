@@ -21,14 +21,91 @@ import * as persistence from '@/persistence';
 import { prepareProviderConnectionsCatalogForCli, refreshProviderConnectionsCatalogForCli } from './hydrate';
 import { logger } from '@/ui/logger';
 import { createProjectSessionRuntimeFixture } from '@/daemon/testkit/projectSessionRuntimeFixture';
-import { runWithRequesterSessionCurrentnessCheckpoint } from "@/daemon/sessionEncryption/requesterCurrentness";
+
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { DEEPSEEK_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/deepseek/src/provider/contribution';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); });
+
+it('refuses a concurrent Account create without replay, then admits an explicit fresh create without losing the winner', async () => {
+  const credentials = { token: 'fix-c288-two-writer-fixture', encryption: null };
+  let catalog = DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1;
+  let revision = 7;
+  let writes = 0;
+  let releaseWrites = () => {};
+  const writersReady = new Promise<void>(resolve => { releaseWrites = resolve; });
+  let boundaryError: unknown;
+  const server = createServer(async (request, response) => {
+    response.setHeader('Content-Type', 'application/json');
+    try {
+      if (request.url === '/v1/account/encryption/currentness') {
+        response.end(JSON.stringify({ mode: 'plain', version: 1, settingsVersion: 4,
+          signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+      } else if (request.url === '/v1/account/entity-rows/provider-connections' && request.method === 'GET') {
+        response.end(JSON.stringify({ status: 'present', revision, content: { t: 'plain', v: catalog } }));
+      } else if (request.url === '/v1/account/entity-rows/provider-connections' && request.method === 'POST') {
+        let body = '';
+        for await (const chunk of request) body += String(chunk);
+        const mutation = ProviderConnectionsRowMutationV1Schema.parse(JSON.parse(body));
+        writes++;
+        // Hold the actual commit boundary until both independent writers have
+        // captured the same revision; reads used for admission are not this race.
+        if (writes === 2) releaseWrites();
+        if (writes <= 2) await writersReady;
+        if (mutation.expectedRevision !== revision) {
+          response.end(JSON.stringify({ status: 'conflict', revision }));
+        } else {
+          if (mutation.content?.t !== 'plain') throw new Error('Expected Plain catalog fixture');
+          catalog = mutation.content.v;
+          revision++;
+          response.end(JSON.stringify({ status: 'updated', revision, cursor: revision }));
+        }
+      } else throw new Error(`Unexpected two-writer boundary: ${request.method} ${request.url}`);
+    } catch (error) {
+      boundaryError = error;
+      response.statusCode = 500;
+      response.end(JSON.stringify({ error: 'invalid-fixture-request' }));
+    }
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const create = (suffix: string) => runWithServerHttpBaseUrl(base, async () => {
+      const snapshot = { source: 'network' as const, settings: accountSettingsParse({}), rawSettings: {},
+        settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) };
+      const operationContext = createInvocationSavedSecretOperationContextV1({ credentials, snapshot,
+        serverHttpBaseUrl: base, isCurrent: async () => true });
+      const execute = createCliAccountProviderActionExecuteV1({ credentials, operationContext, serverHttpBaseUrl: base,
+        readDefinitions: async () => [{ contributionKey: 'happier.provider.deepseek/deepseek',
+          definition: DEEPSEEK_PROVIDER_CONTRIBUTION, provenance: 'first_party' }] });
+      return execute(parseProviderActionRequestV1('providers.connections.create_contribution', {
+        action: 'createContribution', connectionId: `pc_fix_c288_${suffix}`,
+        contributionKey: 'happier.provider.deepseek/deepseek', displayName: suffix, savedSecretId: null, enable: false,
+      }), { surface: 'cli' });
+    });
+    const results = await Promise.all(['first', 'second'].map(create));
+    expect(boundaryError).toBeUndefined();
+    expect(results.filter(result => result.ok)).toHaveLength(1);
+    expect(results.find(result => !result.ok)).toMatchObject({ ok: false, errorCode: 'provider_connection_changed',
+      details: { retryable: true, action: 'review_connection' } });
+    expect(catalog.connections).toHaveLength(1);
+    expect(revision).toBe(8);
+    expect(writes).toBe(2);
+    // The person can submit again after reviewing current state; the failed
+    // invocation itself never dispatches a second catalog mutation.
+    expect(await create(results[0]?.ok ? 'second' : 'first')).toMatchObject({ ok: true });
+    expect(catalog.connections.map(row => row.id).sort()).toEqual(['pc_fix_c288_first', 'pc_fix_c288_second']);
+    expect(revision).toBe(9);
+    expect(writes).toBe(3);
+  } finally {
+    releaseWrites();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
 
 it.each(['unchanged', 'catalog-edited-before-approval', 'connection-edited', 'catalog-raced'] as const)(
   'approves a Gateway hub update through the real Account executor and HTTP catalog store: %s', async scenario => {
@@ -136,7 +213,7 @@ it.each(['unchanged', 'catalog-edited-before-approval', 'connection-edited', 'ca
         expect(boundaryError).toBeUndefined();
         const applied = scenario === 'unchanged' || scenario === 'catalog-edited-before-approval';
         expect(decided).toMatchObject({ ok: true, result: { execution: applied ? { ok: true }
-          : { ok: false, errorCode: scenario === 'connection-edited' ? 'provider_connection_changed' : 'provider_catalog_conflict' } } });
+          : { ok: false, errorCode: 'provider_connection_changed', details: { action: 'review_connection' } } } });
         const observed = await executor.execute('providers.connections.describe', { connectionId: created.id }, invocation);
         expect(observed).toMatchObject({ ok: true, result: { connections: [applied
           ? { connectionId: created.id, revision: 2, gatewayPlacement: { kind: 'machine', machineId: 'hub-machine' } }
@@ -293,12 +370,12 @@ it.each([4, 'absent'] as const)('refreshes demanded Provider authority while pre
   }
 });
 
-it.each(['readCatalogForMutation', 'readCatalog', 'prepare', 'refresh'] as const)('shares requester Home verification within %s and rechecks the next read', async method => {
+it.each(['readCatalogForMutation', 'readCatalog', 'prepare', 'refresh'] as const)('uses local requester authority for %s and refuses the next read after retirement', async method => {
   const f = await createProjectSessionRuntimeFixture();
   await f.bootstrap.ensureAccountSettingsCurrent();
   const get = vi.mocked(axios.get).getMockImplementation()!;
   let profileReads = 0;
-  let profileReadsAtRow = 0;
+  let rowReads = 0;
   vi.mocked(axios.get).mockImplementation(async (url, options) => {
     const path = new URL(String(url)).pathname;
     if (path === '/v1/account/profile') profileReads++;
@@ -306,7 +383,7 @@ it.each(['readCatalogForMutation', 'readCatalog', 'prepare', 'refresh'] as const
       mode: 'plain', version: 1, settingsVersion: 0,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
     if (path === '/v1/account/entity-rows/provider-connections') {
-      if (profileReadsAtRow === 0) profileReadsAtRow = profileReads;
+      rowReads++;
       return { status: 200, data: {
         status: 'present', revision: 1, content: { t: 'plain', v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } } };
     }
@@ -317,32 +394,30 @@ it.each(['readCatalogForMutation', 'readCatalog', 'prepare', 'refresh'] as const
   });
   const store = createCliProviderConnectionsStoreForOperation({ operationContext: f.bootstrap.savedSecretOperationContext });
   const expectedScopeKey = f.bootstrap.savedSecretOperationContext.readSnapshot()!.scopeKey!;
-  let admissionProfileReads = 0;
   const read = () => method === 'prepare' || method === 'refresh'
     ? (method === 'prepare' ? prepareProviderConnectionsCatalogForCli : refreshProviderConnectionsCatalogForCli)({
       expectedScopeKey,
       operationContext: f.bootstrap.savedSecretOperationContext,
     })
     : method === 'readCatalogForMutation' ? store.readCatalogForMutation()
-      : store.readCatalog({ onReadyBeforeCleanup: async () => { admissionProfileReads = profileReads; } });
+      : store.readCatalog();
   expect(await read()).toMatchObject({ status: 'ready' });
-  // Public preparation and its row reader prove the same requester fact.
-  // Count actual Home profile reads before the row, excluding optional history.
-  expect(profileReadsAtRow).toBe(1);
-  if (method === 'readCatalog' || method === 'readCatalogForMutation') {
-    expect(method === 'readCatalog' ? admissionProfileReads : profileReads).toBe(1);
-    // Post-cutover reads have no source/history maintenance preparation.
-    expect(profileReads).toBe(1);
-  }
-  f.retire();
+  // The captured requester owns its local lifetime; no remote Profile read
+  // reauthorizes the same admitted operation.
+  expect(profileReads).toBe(0);
+  const admittedRowReads = rowReads;
+  expect(admittedRowReads).toBeGreaterThan(0);
+  await f.bootstrap.dispose();
   if (method === 'prepare' || method === 'refresh') {
     await expect(read()).resolves.toMatchObject({ status: 'unavailable', reason: 'scope-retired' });
   } else {
     await expect(read()).rejects.toMatchObject({ code: 'scope-retired' });
   }
+  expect(rowReads).toBe(admittedRowReads);
+  expect(profileReads).toBe(0);
 });
 
-it.each([false, true])('requires fresh requester authority before history cleanup within a catalog read (revoked=%s)', async revoked => {
+it.each([false, true])('requires a live requester before history cleanup within a catalog read (revoked=%s)', async revoked => {
   const f = await createProjectSessionRuntimeFixture();
   await f.bootstrap.savedSecretOperationContext.commitProviderConnectionsCatalog({ expectedSettingsVersion: 0, catalog: {
     status: 'ready', revision: 1, catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
@@ -360,7 +435,7 @@ it.each([false, true])('requires fresh requester authority before history cleanu
     if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [{
       version: 6, contentKind: 'plain', byteLength: 100, createdAt: '2026-01-01T00:00:00.000Z' }] } };
     if (path === '/v2/account/settings/history/6') {
-      if (revoked) f.retire();
+      if (revoked) await f.bootstrap.dispose();
       return { status: 200, data: { version: 6, content: { t: 'plain', v: {
         providerSettingsV1: { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, defaultsByAgentTargetKey: {} },
       } }, createdAt: '2026-01-01T00:00:00.000Z' } };
@@ -420,12 +495,12 @@ it('keeps one history read checkpoint after public catalog readiness has returne
     const beforeRemainingHistory = profileReads;
     releaseHistory();
     await historyFinished;
-    expect(historyReads).toBe(2);
+    expect(historyReads).toBe(1);
     expect(profileReads).toBe(beforeRemainingHistory);
   } finally { releaseHistory(); }
 });
 
-it.each([false, true])('rechecks requester authority before Provider source activation inside a read checkpoint (revoked=%s)', async revoked => {
+it.each([false, true])('refuses Provider source activation after requester disposal inside a read checkpoint (revoked=%s)', async revoked => {
   const raw = { providerSettingsV1: { ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, defaultsByAgentTargetKey: {} } };
   const f = await createProjectSessionRuntimeFixture({ accountSettings: raw });
   const get = vi.mocked(axios.get).getMockImplementation()!;
@@ -435,7 +510,7 @@ it.each([false, true])('rechecks requester authority before Provider source acti
   vi.mocked(axios.get).mockImplementation(async (url, options) => {
     const path = new URL(String(url)).pathname;
     if (path === '/v1/account/entity-rows/provider-connections') { rowRead = true; return { status: 200, data: row }; }
-    if (path === '/v2/account/settings' && rowRead && revoked) f.retire();
+    if (path === '/v2/account/settings' && rowRead && revoked) await f.bootstrap.dispose();
     if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
     const history = emptyAccountSettingsHistoryCaptureResponse(path);
     if (history) return history;
@@ -452,11 +527,11 @@ it.each([false, true])('rechecks requester authority before Provider source acti
     return { status: 409, data: { success: false, error: 'version-mismatch', currentVersion: 0,
       currentContent: { t: 'plain', v: raw } } };
   });
-  const result = await runWithRequesterSessionCurrentnessCheckpoint(async () => {
+  const result = await (async () => {
     expect(await f.bootstrap.isCurrent()).toBe(true);
     try { return await createCliProviderConnectionsStoreForOperation({ operationContext: f.bootstrap.savedSecretOperationContext }).readCatalog(); }
     catch (error) { if (!revoked) throw error; return null; }
-  });
+  })();
   expect(rowRead).toBe(true);
   if (revoked) {
     expect(writes).toBe(0);
@@ -563,13 +638,12 @@ it.each([['cold', false], ['cold', true], ['reobserve', false], ['joined-equal',
   if (mode === 'joined-equal') {
     expect(getActiveAccountSettingsSnapshot()?.providerConnectionsCatalog).toMatchObject({ cleanup: { status: 'complete' } });
   }
-  // One catalog read plus the history owner's two destination-authority checks.
-  // Cancelled history stops before the last authority check.
+  // History cleanup consumes the admitted catalog without re-reading its authority.
   // A later current-only read adds one row read, not another history census.
-  expect(rowReads).toBe(mode === 'late-reobserve' ? 4 : cancelCleanup ? 2 : 3);
+  expect(rowReads).toBe(mode === 'late-reobserve' ? 2 : 1);
 });
 
-it('refuses a model list from a credential retired after declaration admission without refreshing projections', async () => {
+it('refuses a custom model list from a credential retired after catalog admission without reading declarations or refreshing projections', async () => {
   const credentials = { token: 'provider-retiring-reader', encryption: null };
   const snapshot = { source: 'network' as const, settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 4,
     loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) };
@@ -591,14 +665,15 @@ it('refuses a model list from a credential retired after declaration admission w
     const path = new URL(String(url)).pathname;
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
       mode: 'plain', version: 1, settingsVersion: 4, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
-    if (path === '/v1/account/entity-rows/provider-connections') return { status: 200, data: {
-      status: 'present', revision: 7, content: { t: 'plain', v: catalog } } };
+    if (path === '/v1/account/entity-rows/provider-connections') {
+      retireAfterAdmission = true;
+      return { status: 200, data: { status: 'present', revision: 7, content: { t: 'plain', v: catalog } } };
+    }
     throw new Error(`Pure model read must not refresh Account projections: ${path}`);
   });
   const execute = createCliAccountProviderActionExecuteV1({ credentials, operationContext,
     serverHttpBaseUrl: 'https://retiring-provider-home.invalid', readDefinitions: async () => {
-      retireAfterAdmission = true;
-      return [];
+      throw new Error('Custom source must not load plugin declarations');
     } });
   await expect(execute(parseProviderActionRequestV1('providers.models.list', { connectionId: 'pc_reader' }),
     { surface: 'cli' })).rejects.toMatchObject({ code: 'scope-retired' });
@@ -677,7 +752,8 @@ it.each(['updated', 'uninitialized', 'conflict', 'rollback', 'outcome_unknown'] 
     return;
   }
   if (outcome !== 'updated' && outcome !== 'uninitialized') {
-    expect(result).toMatchObject({ ok: false, errorCode: `provider_catalog_${outcome}` });
+    expect(result).toMatchObject({ ok: false, errorCode: outcome === 'conflict' ? 'provider_connection_changed' : `provider_catalog_${outcome}`,
+      ...(outcome === 'conflict' ? { details: { retryable: true, action: 'review_connection' } } : {}) });
     expect(catalog.connections).toHaveLength(outcome === 'conflict' ? 0 : 1);
     return;
   }

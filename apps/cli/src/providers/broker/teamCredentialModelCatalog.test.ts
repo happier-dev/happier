@@ -141,7 +141,7 @@ describe('createTeamCredentialExternalModelCatalog', () => {
     expect(catalog?.resolveCanonicalModelId('shared')).toBe('shared');
   });
 
-  it('omits a same-id descriptor conflict and fails closed when no coherent model remains', () => {
+  it('retains the same canonical model when protocol presentations use different labels', () => {
     const responses = createTeamCredentialModelCatalogResolver({
       resourceId: 'resource-a', resourceRevision: 7, application,
       rows: [row({ modelId: 'conflict' }), row({ modelId: 'safe' })],
@@ -162,11 +162,28 @@ describe('createTeamCredentialExternalModelCatalog', () => {
     })!;
 
     expect(createTeamCredentialExternalModelCatalog([responses, chat])?.models.map(({ id }) => id))
-      .toEqual(['safe']);
+      .toEqual(['conflict', 'safe']);
     const conflictOnly = createTeamCredentialModelCatalogResolver({
       resourceId: 'resource-a', resourceRevision: 7, application,
       rows: [row({ modelId: 'conflict' })],
     })!;
-    expect(createTeamCredentialExternalModelCatalog([conflictOnly, chat])).toBeNull();
+    expect(createTeamCredentialExternalModelCatalog([conflictOnly, chat])?.resolveCanonicalModelId('conflict'))
+      .toBe('conflict');
+  });
+
+  it('keeps alias collision detection across every protocol presentation of a canonical model', () => {
+    const responses = createTeamCredentialModelCatalogResolver({
+      resourceId: 'resource-a', resourceRevision: 7, application,
+      rows: [row({ modelId: 'model-a', aliases: ['shared'] }), row({ modelId: 'model-b' })],
+    })!;
+    const chatApplication = { ...application, endpointTemplateId: 'cliproxyapi-openai-chat', protocol: 'openai-chat' as const };
+    const chat = createTeamCredentialModelCatalogResolver({
+      resourceId: 'resource-a', resourceRevision: 7, application: chatApplication,
+      rows: [{ ...row({ modelId: 'model-b', aliases: ['shared'] }), application: chatApplication }],
+    })!;
+
+    const catalog = createTeamCredentialExternalModelCatalog([responses, chat]);
+    expect(catalog?.models.map(({ id }) => id)).toEqual(['model-a', 'model-b']);
+    expect(catalog?.resolveCanonicalModelId('shared')).toBeNull();
   });
 });

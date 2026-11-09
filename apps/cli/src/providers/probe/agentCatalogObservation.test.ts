@@ -152,6 +152,38 @@ function input(selection: 'selected-account' | 'other-account' = 'selected-accou
 }
 
 describe('Agent Provider catalog observation', () => {
+  it('retains an exact native credential observation after more than 64 other identities', async () => {
+    let requests = 0;
+    const h = harness(async () => { requests++; return response(200, ['native-model']); });
+    const native = (index: number) => ({ ...input(), service, target: { status: 'ready' as const, endpointUrl: 'https://api.anthropic.com/', headerBindings: [{ name: 'authorization', format: 'bearer' as const }], credentialValue: `native-${index}`,
+      credentialFingerprint: `sha256:${index.toString(16).padStart(8, '0')}${'a'.repeat(56)}` } });
+    const first = await h.observation.observeNative(native(0));
+    for (let index = 1; index <= 65; index++) await h.observation.observeNative(native(index));
+    expect(await h.observation.observeNative({ ...native(0), currentOnly: true })).toEqual(first);
+    expect(requests).toBe(66);
+  });
+  it('reads the exact source observation without dispatch for current-only admission and withdraws a failed refresh', async () => {
+    let models = ['gpt-6.1-sol'];
+    let status = 200;
+    let requests = 0;
+    const h = harness(async () => { requests++; return response(status, models); });
+    expect(await h.observation.observe({ ...input(), currentOnly: true })).toMatchObject({ source: 'static' });
+    expect(requests).toBe(0);
+    const first = await h.observation.observe(input());
+    expect(first).toMatchObject({ source: 'dynamic', models: [{ id: 'gpt-6.1-sol' }] });
+    expect(await h.observation.observe({ ...input(), currentOnly: true })).toEqual(first);
+    expect(await h.observation.observe({ ...input('other-account'), currentOnly: true })).toMatchObject({ source: 'static' });
+    expect(requests).toBe(1);
+    models = ['gpt-6.1-terra'];
+    const changed = await h.observation.observe(input());
+    expect(changed).toMatchObject({ source: 'dynamic', models: [{ id: 'gpt-6.1-terra' }] });
+    expect(await h.observation.observe({ ...input(), currentOnly: true })).toEqual(changed);
+    status = 503;
+    await h.observation.observe(input());
+    expect(await h.observation.observe({ ...input(), currentOnly: true })).toMatchObject({ source: 'dynamic', stale: true });
+    expect(requests).toBe(3);
+  });
+
   it('retains the successful observation time when a refresh fails', async () => {
     let status = 200;
     const h = harness(async () => response(status, ['listed']));
@@ -160,6 +192,72 @@ describe('Agent Provider catalog observation', () => {
     status = 503;
     const failed = await h.observation.observe(input());
     expect(failed).toMatchObject({ observedAt: success.observedAt, stale: true });
+  });
+
+  it('does not spend a longer catalog wait on another callers shorter deadline', async () => {
+    let transportCompleted = false;
+    let releaseTransport!: () => void;
+    const transportGate = new Promise<void>(resolve => { releaseTransport = resolve; });
+    const h = harness(async () => {
+      await transportGate;
+      transportCompleted = true;
+      return response(200, ['longer-wait']);
+    });
+    const native = { ...input(), service, target: {
+      status: 'ready' as const, endpointUrl: 'https://api.anthropic.com/',
+      headerBindings: [{ name: 'x-api-key', format: 'raw' as const }],
+      credentialValue: 'helper', credentialFingerprint: 'sha256:' + 'a'.repeat(64),
+    } };
+    const short = h.observation.observeNative({ ...native, operationId: 'short-deadline', wallDeadlineAtMs: Date.now() + 50, signal: AbortSignal.timeout(50) });
+    const shortRejected = expect(short).rejects.toBeInstanceOf(ProviderProbeCancelledError);
+    const longer = h.observation.observeNative({ ...native, operationId: 'long-deadline', wallDeadlineAtMs: Date.now() + 1000, signal: AbortSignal.timeout(1000) });
+    try {
+      await shortRejected;
+      expect(transportCompleted).toBe(false);
+    } finally {
+      releaseTransport();
+    }
+    await expect(longer).resolves.toMatchObject({ source: 'dynamic', models: [{ id: 'longer-wait' }] });
+  });
+
+  it('keeps native gateway prefixes, header modes and credentials isolated in observation caches', async () => {
+    const requests: Array<{ url: string; headers: Readonly<Record<string, string>> }> = [];
+    const h = harness(async request => {
+      requests.push({ url: request.url, headers: request.headers });
+      return response(200, [`observed-${requests.length}`]);
+    });
+    const native = (endpointUrl: string, token = 'helper-key', apiKeyOnly = false) => ({
+      ...input(), service,
+      target: {
+        status: 'ready' as const, credentialValue: token,
+        credentialFingerprint: `sha256:${(token === 'helper-key' ? 'c' : 'd').repeat(64)}`,
+        endpointUrl,
+        headerBindings: apiKeyOnly
+          ? [{ name: 'x-api-key', format: 'raw' as const }]
+          : [{ name: 'x-api-key', format: 'raw' as const }, { name: 'authorization', format: 'bearer' as const }],
+      },
+    });
+    const first = native('https://gateway.example/one/anthropic/');
+    await expect(h.observation.observeNative(first)).resolves.toMatchObject({ source: 'dynamic', models: [{ id: 'observed-1' }] });
+    expect(requests[0]).toMatchObject({
+      url: 'https://gateway.example/one/anthropic/v1/models?limit=1000',
+      headers: { 'x-api-key': 'helper-key', authorization: 'Bearer helper-key', 'anthropic-version': '2023-06-01' },
+    });
+    expect(requests[0]?.headers).not.toHaveProperty('anthropic-beta');
+    expect(await h.observation.observeNative({ ...first, currentOnly: true })).toMatchObject({ models: [{ id: 'observed-1' }] });
+
+    for (const distinct of [
+      native('https://gateway.example/two/anthropic/'),
+      native('https://other-gateway.example/one/anthropic/'),
+      native('https://gateway.example/one/anthropic/', 'other-key'),
+      native('https://gateway.example/one/anthropic/', 'helper-key', true),
+    ]) {
+      await expect(h.observation.observeNative({ ...distinct, currentOnly: true })).resolves.toMatchObject({ source: 'static' });
+    }
+    await h.observation.observeNative(native('https://gateway.example/one/anthropic/', 'helper-key', true));
+    expect(requests[1]?.headers).toMatchObject({ 'x-api-key': 'helper-key' });
+    expect(requests[1]?.headers).not.toHaveProperty('authorization');
+    expect(h.requestAuth.lookupRequestAuth).not.toHaveBeenCalled();
   });
 
   it('uses a native OAuth bearer through the same catalog observation owner', async () => {
@@ -172,8 +270,10 @@ describe('Agent Provider catalog observation', () => {
     await expect(h.observation.observeNative({
       ...input(),
       service,
-      credential: {
-        accessToken: 'native-oauth-token',
+      target: {
+        status: 'ready' as const, endpointUrl: 'https://api.anthropic.com/',
+        headerBindings: [{ name: 'authorization', format: 'bearer' as const }],
+        credentialValue: 'native-oauth-token',
         credentialFingerprint: `sha256:${'b'.repeat(64)}`,
       },
     })).resolves.toMatchObject({
@@ -192,8 +292,10 @@ describe('Agent Provider catalog observation', () => {
       ...input(),
       consumer: { pluginId: 'external.agent', localId: 'assistant' },
       service,
-      credential: {
-        accessToken: 'native-oauth-token',
+      target: {
+        status: 'ready' as const, endpointUrl: 'https://api.anthropic.com/',
+        headerBindings: [{ name: 'authorization', format: 'bearer' as const }],
+        credentialValue: 'native-oauth-token',
         credentialFingerprint: `sha256:${'b'.repeat(64)}`,
       },
     })).resolves.toMatchObject({ source: 'static', refreshError: true });
@@ -236,42 +338,6 @@ describe('Agent Provider catalog observation', () => {
     await expect(h.observation.observe(input())).resolves.toMatchObject({
       source: 'dynamic', stale: true, models: [{ id: 'curated', name: 'Curated name', description: 'Curated presentation' }],
     });
-  });
-
-  it('keeps a retained native catalog current when only local scheduler capacity is unavailable', async () => {
-    const scheduler = createProviderProbeScheduler({ maxConcurrentOperations: 1, maxPendingOperations: 1 });
-    const h = harness(async () => response(200, ['api-only']), scheduler);
-    await expect(h.observation.observe(input())).resolves.toMatchObject({
-      source: 'dynamic', stale: false, models: [{ id: 'api-only' }],
-    });
-
-    // Success and refusal are two arms of one lane result, so the waiter's
-    // unavailable answer stays part of the scheduled result type.
-    type LaneResult = Readonly<{ status: 'success' | 'error' }>;
-    let releaseActive!: () => void;
-    const active = scheduler.runCatalog<LaneResult>(
-      'occupied',
-      'manual_refresh',
-      () => new Promise<LaneResult>((resolve) => {
-        releaseActive = () => resolve({ status: 'success' });
-      }),
-      { unavailable: () => ({ status: 'error' }) },
-    );
-    const queued = scheduler.runCatalog<LaneResult>(
-      'queued',
-      'manual_refresh',
-      async () => ({ status: 'success' }),
-      { unavailable: () => ({ status: 'error' }) },
-    );
-    await vi.waitFor(() => expect(releaseActive).toBeTypeOf('function'));
-
-    await expect(h.observation.observe(input())).resolves.toMatchObject({
-      source: 'dynamic', stale: false, refreshError: true, models: [{ id: 'api-only' }],
-    });
-
-    releaseActive();
-    await expect(active).resolves.toMatchObject({ status: 'success' });
-    await expect(queued).resolves.toMatchObject({ status: 'success' });
   });
 
   it('keeps the static catalog when the selected endpoint has no fixed URL', async () => {

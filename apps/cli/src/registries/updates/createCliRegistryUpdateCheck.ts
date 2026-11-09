@@ -13,12 +13,14 @@ import { runWithServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client
 import { createCliRegistryHostV1 } from '../createCliRegistryHost';
 import { createRegistryUpdateCheck } from './registryUpdateTracker';
 import { createSkillsUpdateTracker } from './trackers/skillsUpdateTracker';
+import type { RegistryAppUpdateEnvironmentV1 } from '@happier-dev/protocol/registries';
 
 /** One composition for manual Actions and the daemon's existing update gate. */
 export function createCliRegistryUpdateCheck(input: Readonly<{
   credentials: StoredCredentials; serverId?: string; serverHttpBaseUrl?: string; signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
   secretSources?: TargetSecretSourcesV1;
+  readEnvironment?: (environmentId: string) => Promise<RegistryAppUpdateEnvironmentV1>;
 }>) {
   const baseUrl = input.operationContext?.serverHttpBaseUrl ?? input.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   return runWithServerHttpBaseUrl(baseUrl, () => {
@@ -38,7 +40,7 @@ export function createCliRegistryUpdateCheck(input: Readonly<{
       createMcpRegistryUpdateTracker({ store: mcpStore }),
       createAgentRegistryUpdateTracker({ store: createCliAcpCatalogStore(input) }),
       createBrowserExtensionRegistryUpdateTracker({ signal: input.signal })],
-      ctx: registry.fetchContext, admitSource: registry.fetchContext.admitSource, readSources: registry.readSources });
+      ctx: registry.fetchContext, admitSource: registry.fetchContext.admitSource, readSources: registry.readSources, readEnvironment: input.readEnvironment });
     return {
       checkNow: (filter?: Parameters<typeof checker.checkNow>[0]) => runWithServerHttpBaseUrl(baseUrl, () => checker.checkNow(filter)),
       runBackgroundAutoUpdateCheck: () => runWithServerHttpBaseUrl(baseUrl, () => checker.runBackgroundAutoUpdateCheck()),

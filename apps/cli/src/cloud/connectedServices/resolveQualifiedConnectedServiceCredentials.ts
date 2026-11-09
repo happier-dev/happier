@@ -28,6 +28,7 @@ export async function resolveQualifiedConnectedServiceCredentialSource(input: In
   const material = await readQualifiedConnectedAccountCredentialMaterial({
     credentials: input.credentials,
     account: { service, accountId: input.binding.profileId },
+    requestPurpose: 'connected-accounts:purpose-binding',
     getAccountEncryptionMode: async (signal) => input.accountMode ?? await resolveConnectedServiceAccountMode(input.api, { signal }),
     signal: input.signal,
     readCredential: input.readCredential,
@@ -43,12 +44,10 @@ export async function resolveQualifiedConnectedServiceCredentialSource(input: In
     now: 0,
   });
   const projected = ConnectedServiceCredentialRecordV1Schema.safeParse(projection);
-  if (!projected.success && snapshot.authenticationModeId !== 'device') {
-    throw new Error('Connected-account authentication mode has no native credential projection');
-  }
-  // Native adapters consume OAuth token material independently of how login was
-  // obtained (e.g. a device flow). This is an in-process projection only: retain
-  // the exact qualified identity/mode, and never persist or send it as V2 content.
+  // The historical writer's mode map is not native-adapter admission. OAuth
+  // material acquired by device login or native import has the same native shape;
+  // validate that shape below and retain the original qualified identity/mode.
+  // This projection is in-process only, never persisted or sent as V2 content.
   const values = credential.values;
   const record = projected.success ? projected.data : ConnectedServiceCredentialRecordV1Schema.parse({
     v: 1,

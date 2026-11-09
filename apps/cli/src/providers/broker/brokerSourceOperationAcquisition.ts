@@ -48,6 +48,7 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
   endpointTemplateId: string;
   operationClaim: ManagedProviderExplicitStartCustodyRequest['operationClaim'];
   purposeBindings: ManagedProviderExplicitStartCustodyRequest['purposeBindings'];
+  modelCatalogs?: ManagedProviderExplicitStartCustodyRequest['modelCatalogs'];
   /** This operation's own authority: resource, source and consumer liveness. */
   isSourceCurrent(signal: AbortSignal): Promise<boolean>;
   /** Present only where the retained claim can be revalidated in the background. */
@@ -115,6 +116,7 @@ export async function acquireBrokerSourceOperation(input: Readonly<{
       endpointTemplateIds: [input.endpointTemplateId],
     },
     purposeBindings: input.purposeBindings,
+    ...(input.modelCatalogs ? { modelCatalogs: input.modelCatalogs } : {}),
     isAuthorizationCurrent,
     revalidateAuthorization,
     ...(revalidateOperationAuthorization

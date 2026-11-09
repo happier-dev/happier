@@ -1,4 +1,3 @@
-import { PROVIDER_CATALOG_LIMITS_V1 } from '@happier-dev/protocol/providers/catalog/limits';
 import { ProviderCatalogCommandFallbackV1Schema, readBundledProviderCommandCatalogParserFactV1 } from '@happier-dev/protocol/providers/detection/descriptorV1';
 import { ProviderEndpointUrlSyntaxSchema } from '@happier-dev/protocol/providers/endpoint-url';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
@@ -8,8 +7,7 @@ import type { ProviderCatalogFormatParser } from './parsers';
 import { awaitAbortableWithinProviderOperation, awaitWithinProviderOperation, createProviderOperationLifetime,
   providerOperationRemainingMs, type ProviderOperationLifetime } from '../operationLifetime';
 
-const LITERAL_TOKEN = /^[^\u0000-\u001f\u007f;&|`$<>]+$/u;
-const LOCAL_CATALOG_COMMAND_MAX_BYTES = PROVIDER_CATALOG_LIMITS_V1.maxCatalogResponseBytes;
+const LITERAL_TOKEN = /^[^\u0000-\u001f\u007f]+$/u;
 
 export type ProviderLocalCommandRunner = Readonly<{
   runSystemTool(input: Readonly<{
@@ -19,8 +17,8 @@ export type ProviderLocalCommandRunner = Readonly<{
     env?: Readonly<Record<string, string>>;
     timeoutMs?: number;
     signal?: AbortSignal;
-    maxStdoutBytes: number;
-    maxStderrBytes: number;
+    maxStdoutBytes?: number;
+    maxStderrBytes?: number;
     reason: string;
   }>): Promise<
     | Readonly<{ ok: true; exitCode: number | null; stdout: string; stderr: string }>
@@ -58,9 +56,6 @@ export type ProviderLocalCatalogFallbackResult =
 
 function commandStdout(input: unknown): string {
   if (typeof input !== 'string') throw new TypeError('Provider command catalog output must be text');
-  if (Buffer.byteLength(input, 'utf8') > LOCAL_CATALOG_COMMAND_MAX_BYTES) {
-    throw new TypeError('Provider command catalog output exceeds the response limit');
-  }
   return input;
 }
 
@@ -114,8 +109,8 @@ export function resolveProviderCommandCatalogFormatParser(
 
 /**
  * Host-owned normalization of any command format's output. A contributed format
- * decides the model rows; the descriptor schema, dedupe, and size limits stay
- * here so a plugin cannot widen them. An unresolvable or unparseable format
+ * decides the model rows; descriptor validation and dedupe stay here.
+ * An unresolvable or unparseable format
  * reports `unavailable` exactly as a failed command does — the fallback never
  * hands the output to another format's parser.
  */
@@ -133,9 +128,6 @@ function runCommandCatalogFormat(
     return { status: 'unavailable' };
   }
   if (!Array.isArray(rows.models)) return { status: 'unavailable' };
-  if (rows.models.length > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection) {
-    return { status: 'unavailable' };
-  }
   const models: ProviderModelDescriptorV1[] = [];
   const ids = new Set<string>();
   for (const row of rows.models) {
@@ -148,7 +140,7 @@ function runCommandCatalogFormat(
 }
 
 /**
- * Bounded, contribution-declared command fallback used only by the authorized
+ * Contribution-declared command fallback used only by the authorized
  * provider catalog service after HTTP probes fail. It is intentionally not an
  * inventory or endpoint-health primitive.
  */
@@ -181,8 +173,6 @@ export function createProviderLocalCatalogFallbackRunner(input: Readonly<{
       ...(Number.isFinite(lifetime.wallDeadlineAtMs)
         ? { timeoutMs: providerOperationRemainingMs(lifetime) } : {}),
       signal,
-      maxStdoutBytes: LOCAL_CATALOG_COMMAND_MAX_BYTES + 1,
-      maxStderrBytes: 16 * 1024,
       reason: 'provider local catalog fallback',
     }), lifetime);
     if (!result.ok || result.exitCode !== 0) return { status: 'unavailable' };
@@ -200,26 +190,26 @@ export async function runDeclaredProviderLocalCommand(
     parser: 'exit-zero-running' | 'lms-status-json';
   }>,
   runner: ProviderLocalCommandRunner,
+  lifetime: ProviderOperationLifetime = createProviderOperationLifetime({}),
 ): Promise<Readonly<{ status: 'present' | 'absent' }>> {
   if (!descriptor.toolId || descriptor.lookupNames.length === 0
     || descriptor.lookupNames.some((name) => !LITERAL_TOKEN.test(name) || name.includes('/') || name.includes('\\'))
     || descriptor.fixedArgs.some((arg) => !LITERAL_TOKEN.test(arg))) {
     throw new TypeError('Provider local commands require bounded literal tokens');
   }
-  const result = await runner.runSystemTool({
+  const result = await awaitAbortableWithinProviderOperation(signal => runner.runSystemTool({
     toolId: descriptor.toolId,
     lookupNames: [...descriptor.lookupNames],
     args: [...descriptor.fixedArgs],
-    timeoutMs: 5_000,
-    maxStdoutBytes: 64 * 1024,
-    maxStderrBytes: 16 * 1024,
+    signal,
+    ...(Number.isFinite(lifetime.wallDeadlineAtMs) ? { timeoutMs: providerOperationRemainingMs(lifetime) } : {}),
     reason: 'provider local presence check',
-  });
+  }), lifetime);
   if (!result.ok) return { status: 'absent' };
   if (descriptor.parser === 'exit-zero-running') {
     return { status: result.exitCode === 0 ? 'present' : 'absent' };
   }
-  if (result.exitCode !== 0 || Buffer.byteLength(result.stdout, 'utf8') > 64 * 1024) return { status: 'absent' };
+  if (result.exitCode !== 0) return { status: 'absent' };
   try {
     const parsed = JSON.parse(result.stdout) as unknown;
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { status: 'absent' };

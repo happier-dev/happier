@@ -138,7 +138,7 @@ export function createAccountConnectionManagedConsumerSourceOpen(input: AccountC
         machineId: input.machineId, consumerId: JSON.stringify(payload.consumer) },
       isSourceCurrent, revalidateOperationAuthorization: async currentSignal => await input.admitConsumer(payload, currentSignal),
       retainedCurrentnessScope: {
-        facts: ['teams', 'provider-connections', 'saved-secrets', 'connected-services', 'connected-catalog'],
+        facts: ['teams', 'team-credential-material', 'provider-connections', 'saved-secrets', 'connected-services', 'connected-catalog'],
         connectedServiceRefs: source.purposeBindings.bindings.map(binding => (
           binding.target.kind === 'account' ? binding.target.account.service : binding.target.service
         )),

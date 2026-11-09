@@ -1,6 +1,7 @@
 import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/connections/v1';
+import { readProviderAdditionalCredentialSlotsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
 import { patchProviderEndpointOverrideV1, resolveEffectiveProviderEndpointV1 } from '@happier-dev/protocol/providers/connections/v1';
-import { ProviderSettingsLimitError, ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
+import { ProviderSettingsV1Schema } from '@happier-dev/protocol/providers/settings/v1';
 import { compareProviderCanonicalStringsV1 } from '@happier-dev/protocol/providers/canonicalOrderV1';
 import { createProviderDiscoveryCandidateIdV1 } from '@happier-dev/protocol/providers/detection/v1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -103,11 +104,10 @@ function candidateSelections(input: Readonly<{
       );
     }
     const declaredEndpointIds = new Set(contribution.endpointTemplates.map((endpoint) => endpoint.id));
-    if (input.request.endpointOverrides.length !== declaredEndpointIds.size
-      || input.request.endpointOverrides.some((override) =>
+    if (input.request.endpointOverrides.some((override) =>
         !declaredEndpointIds.has(override.endpointTemplateId))) {
       throw new ProviderConnectionValidationError(
-        'Explicit Provider authoring requires one override for every declared endpoint',
+        'Explicit Provider authoring references an undeclared endpoint',
       );
     }
     return [{
@@ -265,7 +265,9 @@ async function resolvedContributionAuthoringPreview(input: Readonly<{
   }
   const contribution = source.definition;
   const credential = contribution.credential
-    ? { slotId: 'apiKey' as const, label: 'api_key' as const, required: contribution.credential.required }
+    ? { slotId: 'apiKey' as const, label: 'api_key' as const, required: contribution.credential.required,
+        ...(contribution.credential.authorityDescription ? { authorityDescription: contribution.credential.authorityDescription } : {}),
+        ...(readProviderAdditionalCredentialSlotsV1(contribution.credential).length ? { additionalCredentials: readProviderAdditionalCredentialSlotsV1(contribution.credential) } : {}) }
     : null;
   const machineId = resolution.record.scope === 'machine' ? input.request.machineId : null;
   const endpoints = resolution.record.endpoints.map((endpoint) => ({
@@ -601,11 +603,6 @@ export function createProviderAuthoringOperations(context: ProviderConnectionSer
     } catch (error) {
       const providerError = parseProviderError(error);
       if (providerError) return { status: 'error', error: providerError };
-      if (error instanceof ProviderSettingsLimitError) {
-        return { status: 'error', error: createProviderErrorV1('provider_settings_limit_exceeded', {
-          connectionId: input.connectionId, machineId: input.machineId,
-        }) };
-      }
       throw error;
     }
   }

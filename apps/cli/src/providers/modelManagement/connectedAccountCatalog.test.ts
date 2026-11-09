@@ -5,10 +5,84 @@ import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/de
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createBrokerProviderRegistry } from '@/providers/broker/providerBroker.testkit';
 
-import { projectConnectedAccountCatalog } from './connectedAccountCatalog';
+import { projectConnectedAccountCatalog, readConnectedAccountModelCatalog } from './connectedAccountCatalog';
 import { projectDaemonProviderTeamCredentialRequestPolicySupportV1 } from './runtimeServices';
+import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
 
 afterEach(() => vi.restoreAllMocks());
+
+it('replaces static membership with one exact current account observation across route applications', async () => {
+  const base = createBrokerProviderRegistry();
+  const registry = { ...base, providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
+    ...provider, definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: {
+      ...provider.definition.managedRuntime, connectedAccounts: [{ purpose: 'openai-upstream',
+        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id), staticModels: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] }],
+    } }),
+  }])) };
+  let sourceCurrent = true;
+  const unavailable = async (): Promise<never> => { throw new Error('No mutation, delivery or Gateway during browsing'); };
+  const purposes = createConnectedAccountPurposeBindingOwner({
+    store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+    selectTarget: unavailable, materializeAccount: unavailable, projectTargetAccounts: unavailable,
+    assertTargetAccountMaterializable: unavailable,
+    resolveTarget: async target => sourceCurrent && target.kind === 'account' ? { account: target.account, displayName: 'Exact source' } : null,
+  });
+  const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'source-account' };
+  const request = { machineId: 'broker', agentTargetKey: 'agent:happier.agent.codex/codex', sourceCatalog: true as const,
+    connectedAccountTarget: { kind: 'account' as const, account } };
+  let nativeReads = 0;
+  let models = [{ id: 'default', name: 'Default' }, { id: 'gpt-6.1-sol', name: 'Sol' }];
+  let refreshError = false;
+  // The native executable is the process boundary; its canonical observation
+  // schema supplies the same producer envelope that model listing returns.
+  const observeModels = async (input: { account: typeof account }) => {
+    nativeReads++;
+    expect(input.account).toEqual(account);
+    return AgentModelsProbeObservationSchema.parse({ agentId: 'codex', source: 'dynamic', supportsFreeform: false,
+      observedAt: 1, refreshError, availableModels: models });
+  };
+  const input = { registry, providerSettings: DEFAULT_PROVIDER_SETTINGS_V1,
+    resolveSelection: purposes.resolveBindingIntentSelection, request, observeModels };
+  const observed = await projectConnectedAccountCatalog(input);
+  expect(observed.groups).toHaveLength(3);
+  expect(observed.groups.every(group => group.rows.length === 1 && group.rows[0]?.descriptor.id === 'gpt-6.1-sol'
+    && group.rows[0].confidence === 'probe' && group.rows[0].sources.probe && !group.rows[0].sources.static)).toBe(true);
+  expect(nativeReads).toBe(1);
+  expect(await observed.isCurrent()).toBe(true);
+
+  const { agentTargetKey: _workerTarget, ...sourceRequest } = request;
+  const source = await readConnectedAccountModelCatalog({ registry, resolveSelection: purposes.resolveBindingIntentSelection,
+    request: sourceRequest, observeModels });
+  expect(source.groups.map(group => group.sourceRevision)).toEqual(observed.groups.map(group => group.sourceRevision));
+  expect(source.groups.flatMap(group => group.rows).every(row => !('agentTargetKey' in row.application))).toBe(true);
+  expect(source.groups.flatMap(group => group.rows).map(row => row.descriptor))
+    .toEqual(observed.groups.flatMap(group => group.rows).map(row => row.descriptor));
+  expect(nativeReads).toBe(2);
+
+  sourceCurrent = false;
+  expect(await observed.isCurrent()).toBe(false);
+  expect((await projectConnectedAccountCatalog(input)).groups).toEqual([]);
+  expect(nativeReads).toBe(2);
+  sourceCurrent = true;
+  const direct = await projectConnectedAccountCatalog({ ...input, request: { ...request, includeDirectMaterialization: true } });
+  expect(direct.groups.every(group => group.rows[0]?.descriptor.id === 'gpt-5.5'
+    && group.rows[0].confidence === 'account_unverified')).toBe(true);
+  expect(nativeReads).toBe(2);
+  models = [{ id: 'gpt-6.1-terra', name: 'Terra' }];
+  const changed = await projectConnectedAccountCatalog(input);
+  expect(changed.groups[0]?.rows.map(row => row.descriptor.id)).toEqual(['gpt-6.1-terra']);
+  expect(changed.groups[0]?.sourceRevision).not.toBe(observed.groups[0]?.sourceRevision);
+  refreshError = true;
+  const stale = await projectConnectedAccountCatalog(input);
+  expect(stale.groups.every(group => group.rows.every(row => row.catalog.stale))).toBe(true);
+  refreshError = false;
+  models = [];
+  const empty = await projectConnectedAccountCatalog(input);
+  expect(empty.groups).toHaveLength(3);
+  expect(empty.groups.every(group => group.rows.length === 0)).toBe(true);
+  expect(nativeReads).toBe(5);
+});
 
 it('projects a thousand admitted descriptors without another per-model validation pass', async () => {
   const base = createBrokerProviderRegistry();

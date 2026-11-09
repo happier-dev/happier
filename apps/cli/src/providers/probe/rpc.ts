@@ -1,7 +1,5 @@
 import { z } from 'zod/mini';
 
-import { PROVIDER_CATALOG_LIMITS_V1 } from '@happier-dev/protocol/providers/catalog/limits';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { ProviderObservationAuthorizationFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
 import { createProviderProbeObservationIdentityV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -98,9 +96,6 @@ function canonicalAuthorizationFingerprints(
   const fingerprints = resolved.observationAuthorizationFingerprints
     .map((value) => ProviderObservationAuthorizationFingerprintV1Schema.parse(value))
     .sort();
-  if (fingerprints.length > PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes) {
-    throw new TypeError('Provider probe authorization fingerprint set exceeds the catalog probe limit');
-  }
   if (new Set(fingerprints).size !== fingerprints.length) {
     throw new TypeError('Provider probe authorization fingerprint set must be unique');
   }
@@ -132,7 +127,7 @@ export function createResolvedProviderProbeRunner(dependencies: Readonly<{
   schedule(
     key: string,
     trigger: ProviderProbeRefreshTrigger,
-    operation: () => Promise<ProviderCatalogRefreshResult>,
+    operation: (signal: AbortSignal) => Promise<ProviderCatalogRefreshResult>,
     options: ProviderProbeSchedulerWaiterOptions<ProviderCatalogRefreshResult>,
   ): Promise<ProviderCatalogRefreshResult>;
 }>) {
@@ -147,17 +142,15 @@ export function createResolvedProviderProbeRunner(dependencies: Readonly<{
       connectionId: resolved.connectionId,
       machineId: resolved.machineId,
     };
-    return dependencies.schedule(key, trigger, () => dependencies.refresh(resolved, operationLifetime), {
+    return dependencies.schedule(key, trigger, (signal) => dependencies.refresh({
+      ...resolved,
+      ...(resolved.operationScope ? { operationScope: { ...resolved.operationScope,
+        lifetime: { ...resolved.operationScope.lifetime, signal } } } : {}),
+    }, { wallDeadlineAtMs: operationLifetime?.wallDeadlineAtMs ?? Infinity, signal }), {
       ...waiterLifetime,
       unavailable: () => ({
         status: 'error',
         error: createProviderErrorV1('provider_endpoint_unavailable', identity),
-      }),
-      // No endpoint request is attempted when local probe admission is full,
-      // so the refusal must not read as a provider outage.
-      localCapacityUnavailable: () => ({
-        status: 'error',
-        error: createProviderErrorV1('provider_probe_capacity_exhausted', identity),
       }),
     });
   };
@@ -180,7 +173,7 @@ export function createProviderProbeRpcHandler(dependencies: Readonly<{
   schedule(
     key: string,
     trigger: ProviderProbeRefreshTrigger,
-    operation: () => Promise<ProviderCatalogRefreshResult>,
+    operation: (signal: AbortSignal) => Promise<ProviderCatalogRefreshResult>,
     options: ProviderProbeSchedulerWaiterOptions<ProviderCatalogRefreshResult>,
   ): Promise<ProviderCatalogRefreshResult>;
 }>) {
@@ -194,7 +187,7 @@ export function createProviderProbeRpcHandler(dependencies: Readonly<{
     // One budget for the whole operation, started before registry and DNS
     // resolution. Every later stage — scheduler admission, destination
     // re-resolution, establishment and body — spends what is left of it.
-    const wallDeadlineAtMs = now() + PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs;
+    const wallDeadlineAtMs = Infinity;
     // Pre-admission resolution belongs to this caller alone, so its
     // cancellation interest applies. Admitted work is shared between waiters and
     // carries the deadline only: one waiter walking away must not cancel a

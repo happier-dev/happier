@@ -115,10 +115,8 @@ export function createProviderModelLoadCatalogPort<TTicket>(dependencies: Readon
     scope: ProviderModelLoadOperationScope;
   }>): Promise<ModelLoadResolvedCatalogRequest>;
   runtimeStore: Pick<ProviderRuntimeStateStore, 'read'>;
-  /** Explicit scheduler-backed refresh; completed TTL entries must be bypassed. */
+  /** Explicit post-load refresh through the scheduler's fresh-read owner. */
   refresh(input: ModelLoadResolvedCatalogRequest & Readonly<{
-    modelId: string;
-    refreshFrontier: string;
     signal: AbortSignal;
   }>): Promise<ProviderCatalogRefreshResult>;
 }>): ProviderModelLoadCatalogPort<TTicket> {
@@ -161,8 +159,6 @@ export function createProviderModelLoadCatalogPort<TTicket>(dependencies: Readon
       }
       return dependencies.refresh({
         ...resolved,
-        modelId: ProviderModelIdSchema.parse(input.modelId),
-        refreshFrontier: input.refreshFrontier,
         signal: input.signal,
       });
     },

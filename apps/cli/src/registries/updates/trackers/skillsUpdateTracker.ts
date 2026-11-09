@@ -21,14 +21,14 @@ export function createSkillsUpdateTracker(input: Readonly<{
   };
   return {
     kind: 'skill',
-    async list() {
-      const items = await input.execute.listRegistryTrackedSkills(input.signal);
+    async list(keys) {
+      const items = await input.execute.listRegistryTrackedSkills(input.signal, keys);
       return items.flatMap(item => {
         if (item.provenance.kind === 'registry') return [{ key: item.skillId, provenance: item.provenance.registry,
           ...(item.upstream ? { upstream: item.upstream } : {}) }];
         if (item.provenance.kind === 'wellKnown') {
           const ref = item.provenance;
-          const source: RegistrySourceDescriptorV1 = { id: `link:${deriveRegistrySourceIdV1(ref.indexUrl)}`, title: item.name,
+          const source: RegistrySourceDescriptorV1 = { id: `link:${deriveRegistrySourceIdV1(ref.indexUrl)}`, title: ref.indexUrl,
             format: 'skills-sh', kinds: ['skill'], url: ref.indexUrl, enabled: true, addedAt: item.createdAt,
             origin: { kind: 'user' }, removable: false };
           const provenance: RegistryProvenanceV1 = { sourceId: source.id, format: source.format, sourceUrl: source.url,
@@ -42,7 +42,7 @@ export function createSkillsUpdateTracker(input: Readonly<{
         const identityUrl = branch ? `${ref.repo}/tree/${encodeURIComponent(branch)}` : ref.repo;
         // Link imports have an admitted repository in their lock, but no Account
         // registry row. This per-check projection is neither stored nor listed.
-        const source: RegistrySourceDescriptorV1 = { id: `link:${deriveRegistrySourceIdV1(identityUrl)}`, title: item.name,
+        const source: RegistrySourceDescriptorV1 = { id: `link:${deriveRegistrySourceIdV1(identityUrl)}`, title: identityUrl,
           format: 'git', kinds: ['skill'], url: ref.repo, enabled: true, addedAt: item.createdAt,
           ...(branch === undefined ? {} : { ref: branch }),
           origin: { kind: 'user' }, removable: false };

@@ -11,6 +11,7 @@ import type { ProviderSpawnAuthorizationAttempt } from '../spawn/authorize';
 import type { ProviderSpawnAuthorization } from '../spawn/resolve';
 import { isSessionControlEnvKey } from '@/session/runtime/control/sessionControlEnvironment';
 import { logProviderUnexpectedFailure, traceRunPreparationPhase } from '@/providers/diagnostics';
+import { ProviderOperationAbandonedError } from '../operationLifetime';
 
 type ProviderLaunchPrerequisiteContext = Readonly<{
   agentTargetKey: string;
@@ -24,6 +25,14 @@ type CreateAuthorizationAttemptContext = Readonly<{
   agentTargetKey: string;
   agentId: string;
 }>;
+
+async function cleanupAfterRefusal(cleanup: ProviderLaunchCleanup | null): Promise<void> {
+  try {
+    await cleanup?.();
+  } catch (error) {
+    logProviderUnexpectedFailure('launch', error);
+  }
+}
 
 /** Host-private acquisition for one already admitted exact consumer. The
  * source owner retains catalog/currentness and supplies only scoped access. */
@@ -132,13 +141,13 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
       createAuthorizationAttempt: dependencies.createAuthorizationAttempt,
     }));
     if (!prepared.ok) {
-      await scope.release();
+      await cleanupAfterRefusal(() => scope.release());
       return prepared;
     }
     if (prepared.kind === 'provider') {
       scope.register({ onFailure: prepared.attempt.cleanupOnFailure, onExit: () => {} });
       if ('materializeManagedEndpoint' in prepared.attempt && !dependencies.prepareManagedEndpoint) {
-        await scope.release();
+        await cleanupAfterRefusal(() => scope.release());
         return {
           ok: false,
           error: createProviderErrorV1('provider_managed_requires_daemon', {
@@ -163,7 +172,7 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
     let materialized;
     if ('materializeManagedEndpoint' in attempt) {
       const current = await trace('provider_before_effect', () => attempt.revalidateBeforeEffect());
-      if (!current.ok) { await scope.release(); return current; }
+      if (!current.ok) { await cleanupAfterRefusal(() => scope.release()); return current; }
       let endpointCleanupRegistered = false;
       const endpoint = await trace('managed_endpoint', () => dependencies.prepareManagedEndpoint!({
         signal: input.signal,
@@ -177,7 +186,7 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
       materialized = await trace('provider_materialization', () => attempt.materializeAfterHooks());
     }
     if (!materialized.ok) {
-      await scope.release();
+      await cleanupAfterRefusal(() => scope.release());
       return materialized;
     }
     const sanitizeDiagnosticText = materialized.redactionLease.snapshotRedactor();
@@ -185,11 +194,11 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
 
     if (revalidateManagedEndpoint) {
       const current = await trace('endpoint_currentness', () => revalidateManagedEndpoint!(input.signal));
-      if (!current.ok) { await scope.release(); return current; }
+      if (!current.ok) { await cleanupAfterRefusal(() => scope.release()); return current; }
     }
     const commitAuthorization = await trace('provider_commit', () => attempt.revalidateBeforeCommit());
     if (!commitAuthorization.ok) {
-      await scope.release();
+      await cleanupAfterRefusal(() => scope.release());
       return commitAuthorization;
     }
     scope.register(attempt.takeCleanupOnExit());
@@ -222,13 +231,14 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
       try {
         if (revalidateManagedEndpoint) {
           const current = await revalidateManagedEndpoint(signal ?? input.signal);
-          if (!current.ok) { await cleanupOnExit?.(); return current; }
+          if (!current.ok) { await cleanupAfterRefusal(cleanupOnExit); return current; }
         }
         const authorization = await attempt.revalidateBeforeCommit(signal);
-        if (!authorization.ok) await cleanupOnExit?.();
+        if (!authorization.ok) await cleanupAfterRefusal(cleanupOnExit);
         return authorization;
-      } catch {
-        await cleanupOnExit?.();
+      } catch (error) {
+        await cleanupAfterRefusal(cleanupOnExit);
+        if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
         return {
           ok: false,
           error: createProviderErrorV1('provider_authorization_changed', {
@@ -256,9 +266,10 @@ export async function prepareDirectProviderLaunch(input: Readonly<{
       cleanupOnExit,
     };
   } catch (error) {
+    await cleanupAfterRefusal(() => scope.release());
+    if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
     const providerError = ProviderErrorV1Schema.safeParse(error);
     if (!providerError.success) logProviderUnexpectedFailure('launch', error);
-    await scope.release();
     if (providerError.success) return { ok: false, error: providerError.data };
     const connectionId = input.selection?.ref.providerConnectionId ?? undefined;
     return {

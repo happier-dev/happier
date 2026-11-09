@@ -5,7 +5,7 @@ import { createNativeRuntimeAbsentProviderBrokerError } from '@/daemon/startup/p
 import { openAccountConnectionProviderBrokerAccess, type OpenAccountConnectionProviderBrokerAccess } from './accountConnectionClient';
 
 export const brokerOpenFailureCases = ['broker_open_refused', 'binding_invalid', 'tunnel_open_failed',
-  'admission_refused', 'endpoint_discovery_failed', 'consumer_binding_invalid', 'native_runtime_absent'] as const;
+  'endpoint_discovery_failed', 'consumer_binding_invalid', 'native_runtime_absent'] as const;
 
 /** Replace Home issuance/admission, native I/O and HTTP, retaining the real consumer/carrier/verifier. */
 export async function openRefusedAccountConnectionBroker(
@@ -37,7 +37,6 @@ export async function openRefusedAccountConnectionBroker(
     ...(reason === 'consumer_binding_invalid' ? { executionRunOccurrenceId: 'unexpected-session-occurrence' } : {}),
     targetMachineId: reason === 'binding_invalid' ? 'wrong-target' : request.targetMachineId,
     openBroker: async () => reason === 'broker_open_refused' ? { ok: false, reasonCode: 'broker_unavailable' } : opened,
-    admitConsumer: async () => reason === 'admission_refused'
-      ? { ok: false, reasonCode: 'session_not_active' } : { ok: true }, openTunnel,
+    openTunnel,
     fetchImpl: async () => new Response(null, { status: 403 }) });
 }

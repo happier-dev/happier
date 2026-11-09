@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, ProviderConnectionIdSchema,
-  ProviderContributionV1Schema, ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
+  ProviderContributionV1Schema, ProviderSettingsV1Schema, splitProviderSettingsV1,
+  createProviderConnectionSecurityFingerprintV1 } from '@happier-dev/protocol';
+import { readProviderConnectionSourceFactsV1 } from '@happier-dev/protocol/providers/connections/sourceFactsV1';
 import { createProviderManagedRuntimeBindingFingerprintV1 } from '@happier-dev/protocol/providers/contributions';
 import type { SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { resolveProviderConnectionForMachine } from '@/providers/registry';
@@ -13,7 +15,7 @@ import { projectProviderBrokerApplication } from './applicationProjection';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 
 describe('personal hub source admission', () => {
-  it.each(['connectionSecurity', 'managedBinding', 'unchanged'] as const)('checks captured %s before projecting or acquiring the current hub', async (changedFact) => {
+  it.each(['connectionSecurity', 'managedBinding', 'unchanged', 'legacyConnectionSecurity'] as const)('checks captured %s before projecting or acquiring the current hub', async (changedFact) => {
     const base = createBrokerProviderRegistry();
     const providersByContributionKey = new Map([...base.providersByContributionKey].map(([key, contribution]) => [key, {
       ...contribution, definition: ProviderContributionV1Schema.parse({ ...contribution.definition,
@@ -49,9 +51,20 @@ describe('personal hub source admission', () => {
       providerConnectionsCatalog: { status: 'ready', revision: 1, catalog }, savedSecretResources: [],
       savedSecretCatalogState: 'ready', settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
       scopeKey: resolveAccountSettingsScopeKeyForToken('personal-account') };
+    if (authorized.record.source.kind !== 'contribution') throw new Error('Expected contributed source');
+    const legacyFingerprint = createProviderConnectionSecurityFingerprintV1({ securityContractVersion: 1, endpoints: [],
+      ...readProviderConnectionSourceFactsV1(authorized.record.source.definition),
+      managedDeployment: { gatewayPlacement: authorized.record.connection.gatewayPlacement,
+        implementationIdentity: authorized.record.deployment.implementationIdentity,
+        managedRuntime: authorized.record.deployment.managedRuntime,
+        logicalEndpoints: authorized.record.source.definition.endpointTemplates
+          .filter(endpoint => authorized.record.deployment.kind === 'managedLocal'
+            && authorized.record.deployment.managedRuntime.endpointTemplateIds.includes(endpoint.id))
+          .map(endpoint => ({ endpointTemplateId: endpoint.id, protocol: endpoint.protocol, publicHeaders: endpoint.publicHeaders })),
+      } });
     const source = { kind: 'account_connection' as const, connectionId,
       expectedConnectionSecurityFingerprint: changedFact === 'connectionSecurity'
-        ? 'connection-security:v1:stale' : authorized.record.connectionSecurityFingerprint,
+        ? 'connection-security:v1:stale' : changedFact === 'legacyConnectionSecurity' ? legacyFingerprint : authorized.record.connectionSecurityFingerprint,
       expectedManagedRuntimeBindingFingerprint: changedFact === 'managedBinding'
         ? 'managed-runtime-binding:v1:stale' : capturedManagedBinding };
     const authority: SignedProviderBrokerRouteGrantV2 = { payload: { v: 2, grantId: 'grant-1',
@@ -76,7 +89,7 @@ describe('personal hub source admission', () => {
           groups: [{ connectionId, providerName: 'Gateway', connectionName: 'Gateway', connectionRole: 'default',
             connectionDisplayNameMode: 'automatic', connectionRevision: 1,
             sourceAuthority: { provider: { identity: application.implementationIdentity, definitionRevision: 1 },
-              connectionSecurityFingerprint: authorized.record.connectionSecurityFingerprint },
+              connectionSecurityFingerprint: source.expectedConnectionSecurityFingerprint },
             authorization: { authorized: true },
             modelLoadAction: 'descriptor_absent', manualModelPolicy: 'allowed', supportsFreeformModelIds: false,
             suppressedConnectedServiceIds: [], rows: [{

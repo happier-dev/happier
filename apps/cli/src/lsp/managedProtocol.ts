@@ -92,7 +92,6 @@ export function createLanguageServerManagedExecAcquirer(options: Readonly<{
             const signal = AbortSignal.any([input.signal, retirement.signal]);
             const service = createStablePluginExecService({
                 processOwner: input.processOwner,
-
                 signal,
                 isOccurrenceCurrent: () => Boolean(occurrenceId
                     && registry.isPluginOccurrenceCurrent?.(input.definition.pluginId, occurrenceId)),

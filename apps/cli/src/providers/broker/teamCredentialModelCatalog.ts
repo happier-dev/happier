@@ -1,28 +1,34 @@
 import type {
-  ProviderBrokerApplicationBindingV1,
-} from '@happier-dev/protocol';
+  ProviderBrokerSourceApplicationBindingV1,
+} from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type {
   TeamCredentialProviderModelCatalogEntryV1,
 } from '@happier-dev/protocol/teams';
 
-export type TeamCredentialModelCatalogResolver = Readonly<{
+/** Source observations have no consuming Agent or recipient selection. */
+export type TeamCredentialSourceCatalogRow = Omit<TeamCredentialProviderModelCatalogEntryV1, 'application' | 'selection'> & Readonly<{
+  application: ProviderBrokerSourceApplicationBindingV1;
+  selection?: TeamCredentialProviderModelCatalogEntryV1['selection'];
+}>;
+
+export type TeamCredentialModelCatalogResolver<TApplication extends ProviderBrokerSourceApplicationBindingV1 = ProviderBrokerSourceApplicationBindingV1> = Readonly<{
   resourceId: string;
   resourceRevision: number;
   sourceRevision: string;
-  application: ProviderBrokerApplicationBindingV1;
-  rows: readonly TeamCredentialProviderModelCatalogEntryV1[];
+  application: TApplication;
+  rows: readonly TeamCredentialSourceCatalogRow[];
   resolveCanonicalModelId(requestedModelId: string): string | null;
 }>;
 
 export type TeamCredentialExternalModelCatalog = Readonly<{
-  applications: readonly ProviderBrokerApplicationBindingV1[];
+  applications: readonly ProviderBrokerSourceApplicationBindingV1[];
   models: readonly Readonly<{ id: string; name?: string }>[];
   resolveCanonicalModelId(requestedModelId: string): string | null;
 }>;
 
 export function isSameTeamCredentialBrokerApplication(
-  left: ProviderBrokerApplicationBindingV1,
-  right: ProviderBrokerApplicationBindingV1,
+  left: ProviderBrokerSourceApplicationBindingV1,
+  right: ProviderBrokerSourceApplicationBindingV1,
 ): boolean {
   return left.agentTargetKey === right.agentTargetKey
     && left.implementationIdentity.pluginId === right.implementationIdentity.pluginId
@@ -31,7 +37,7 @@ export function isSameTeamCredentialBrokerApplication(
     && left.protocol === right.protocol;
 }
 
-function applicationKey(application: ProviderBrokerApplicationBindingV1): string {
+function applicationKey(application: ProviderBrokerSourceApplicationBindingV1): string {
   return [
     application.agentTargetKey,
     application.implementationIdentity.pluginId,
@@ -43,49 +49,31 @@ function applicationKey(application: ProviderBrokerApplicationBindingV1): string
 
 /**
  * Projects the protocol-neutral external model endpoint from exact current
- * application catalogs. A repeated model id is retained only when its full
- * canonical descriptor has identical bytes in every contributing catalog;
- * otherwise that id is omitted as ambiguous. No application is selected as a
- * default for later inference.
+ * application catalogs. Canonical ids identify models; presentation labels may
+ * differ by protocol. Every published alias participates in ambiguity checks.
+ * No application is selected as a default for later inference.
  */
 export function createTeamCredentialExternalModelCatalog(
   catalogs: readonly TeamCredentialModelCatalogResolver[],
 ): TeamCredentialExternalModelCatalog | null {
   if (catalogs.length === 0) return null;
-  const applicationsByKey = new Map<string, ProviderBrokerApplicationBindingV1>();
-  const descriptorById = new Map<string, Readonly<{
-    bytes: string;
-    descriptor: TeamCredentialProviderModelCatalogEntryV1['descriptor'];
-    conflict: boolean;
-  }>>();
-  const modelOrder: string[] = [];
+  const applicationsByKey = new Map<string, ProviderBrokerSourceApplicationBindingV1>();
+  const descriptorById = new Map<string, TeamCredentialProviderModelCatalogEntryV1['descriptor']>();
+  const candidatesBySpelling = new Map<string, Set<string>>();
   for (const catalog of catalogs) {
     applicationsByKey.set(applicationKey(catalog.application), catalog.application);
     for (const row of catalog.rows) {
       const modelId = row.descriptor.id;
-      const bytes = JSON.stringify(row.descriptor);
-      const existing = descriptorById.get(modelId);
-      if (!existing) {
-        modelOrder.push(modelId);
-        descriptorById.set(modelId, { bytes, descriptor: row.descriptor, conflict: false });
-      } else if (existing.bytes !== bytes) {
-        descriptorById.set(modelId, { ...existing, conflict: true });
+      if (!descriptorById.has(modelId)) descriptorById.set(modelId, row.descriptor);
+      for (const spelling of [modelId, ...(row.descriptor.aliases ?? [])]) {
+        const candidates = candidatesBySpelling.get(spelling) ?? new Set<string>();
+        candidates.add(modelId);
+        candidatesBySpelling.set(spelling, candidates);
       }
     }
   }
-  const retained = modelOrder.flatMap((modelId) => {
-    const entry = descriptorById.get(modelId);
-    return entry && !entry.conflict ? [entry.descriptor] : [];
-  });
+  const retained = [...descriptorById.values()];
   if (retained.length === 0) return null;
-  const candidatesBySpelling = new Map<string, Set<string>>();
-  for (const descriptor of retained) {
-    for (const spelling of [descriptor.id, ...(descriptor.aliases ?? [])]) {
-      const candidates = candidatesBySpelling.get(spelling) ?? new Set<string>();
-      candidates.add(descriptor.id);
-      candidatesBySpelling.set(spelling, candidates);
-    }
-  }
   return Object.freeze({
     applications: Object.freeze([...applicationsByKey.values()]),
     models: Object.freeze(retained.map((descriptor) => Object.freeze({
@@ -106,28 +94,28 @@ export function createTeamCredentialExternalModelCatalog(
  * spelling that is canonical for one row and an alias for another. Unknown,
  * ambiguous, stale, mixed-source, and wrong-application catalogs fail closed.
  */
-export function createTeamCredentialModelCatalogResolver(input: Readonly<{
+export function createTeamCredentialModelCatalogResolver<TApplication extends ProviderBrokerSourceApplicationBindingV1>(input: Readonly<{
   resourceId: string;
   resourceRevision: number;
-  application: ProviderBrokerApplicationBindingV1;
-  rows: readonly TeamCredentialProviderModelCatalogEntryV1[];
-}>): TeamCredentialModelCatalogResolver | null {
+  application: TApplication;
+  rows: readonly TeamCredentialSourceCatalogRow[];
+}>): TeamCredentialModelCatalogResolver<TApplication> | null {
   if (input.rows.length === 0) return null;
   const sourceRevisions = new Set<string>();
   const candidatesBySpelling = new Map<string, Set<string>>();
-  const rows: TeamCredentialProviderModelCatalogEntryV1[] = [];
+  const rows: TeamCredentialSourceCatalogRow[] = [];
   for (const row of input.rows) {
     if (
       row.availability !== 'available'
-      || row.selection.resourceId !== input.resourceId
-      || row.selection.expectedResourceRevision !== input.resourceRevision
-      || row.selection.modelId !== row.descriptor.id
+      || row.selection && (row.selection.resourceId !== input.resourceId
+        || row.selection.expectedResourceRevision !== input.resourceRevision
+        || row.selection.modelId !== row.descriptor.id)
       || !isSameTeamCredentialBrokerApplication(row.application, input.application)
     ) return null;
     sourceRevisions.add(row.sourceRevision);
     rows.push(Object.freeze({
       ...row,
-      selection: Object.freeze({ ...row.selection }),
+      ...(row.selection ? { selection: Object.freeze({ ...row.selection }) } : {}),
       descriptor: Object.freeze({
         ...row.descriptor,
         ...(row.descriptor.aliases

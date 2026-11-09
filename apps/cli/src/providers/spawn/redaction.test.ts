@@ -10,11 +10,13 @@ describe('provider redaction lease', () => {
       onClose,
     });
 
+    expect(lease.isActive()).toBe(true);
     expect(lease.redact('failed with Bearer raw-secret and supplement')).toBe('failed with [REDACTED] and [REDACTED]');
     lease.add(['late-value']);
     expect(lease.redact('late-value')).toBe('[REDACTED]');
     lease.close();
     lease.close();
+    expect(lease.isActive()).toBe(false);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(lease.redact('raw-secret')).toBe('raw-secret');
   });

@@ -1,10 +1,10 @@
-import { chmod, mkdir, mkdtemp, readFile, stat, symlink, truncate, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  PROVIDER_RUNTIME_STATE_LIMITS_V1,
   ProviderEndpointRuntimeStateRecordV1Schema,
+  ProviderModelLoadRuntimeStateRecordV1Schema,
   ProviderRuntimeStateFileV1Schema,
   type ProviderRuntimeStateFileV1,
 } from '@happier-dev/protocol';
@@ -43,11 +43,22 @@ const endpointRecord = (id: string, lastAccessedAt: number, activity: 'idle' | '
 function fileWithEndpoint(record = endpointRecord('responses', 1)): ProviderRuntimeStateFileV1 {
   return ProviderRuntimeStateFileV1Schema.parse({
     v: 1, machineId: 'machine_a', endpointHealth: [record], catalogs: [],
-    installationChecks: [], modelLoadStates: [],
+    modelLoadStates: [],
   });
 }
 
 describe('provider runtime-state store', () => {
+  it('retains observations beyond the former endpoint cap across an independent store reopen', async () => {
+    const happyHomeDir = await tempHome();
+    const store = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    const endpointHealth = Array.from({ length: 8_193 }, (_unused, index) =>
+      endpointRecord(`endpoint-${index}`, index + 1));
+    const written = await store.update((state) => ({ ...state, endpointHealth }));
+    expect(written.endpointHealth).toHaveLength(endpointHealth.length);
+    const reopened = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    expect((await reopened.read()).endpointHealth).toEqual(endpointHealth);
+  });
+
   it('reads another store’s committed changes and deletions while retaining its own transient activity', async () => {
     const happyHomeDir = await tempHome();
     const reader = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
@@ -82,7 +93,7 @@ describe('provider runtime-state store', () => {
     });
     await expect(store.read()).resolves.toEqual({
       v: 1, machineId: 'machine_a', endpointHealth: [], catalogs: [],
-      installationChecks: [], modelLoadStates: [],
+      modelLoadStates: [],
     });
     await store.update(() => fileWithEndpoint());
     expect(store.path).toBe(join(happyHomeDir, 'providers', 'runtime-state-v1.json'));
@@ -138,27 +149,25 @@ describe('provider runtime-state store', () => {
       machineId: 'machine_a',
       endpointHealth: [],
       catalogs: [],
-      installationChecks: [],
       modelLoadStates: [],
     });
   });
 
-  it('rejects an oversized file from stat before JSON parsing', async () => {
+  it('reads valid observations beyond the former encoded file cutoff', async () => {
     const happyHomeDir = await tempHome();
     const path = resolveProviderRuntimeStatePath(happyHomeDir);
     await mkdir(join(happyHomeDir, 'providers'), { recursive: true });
-    await writeFile(path, '{}', 'utf8');
-    await truncate(path, PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEncodedBytes + 1);
+    await writeFile(path, JSON.stringify(fileWithEndpoint()) + ' '.repeat(64 * 1024 * 1024), 'utf8');
     const diagnostics: Array<{ reason: string }> = [];
     const store = createProviderRuntimeStateStore({
       happyHomeDir, machineId: 'machine_a',
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
     });
-    await expect(store.read()).resolves.toMatchObject({ endpointHealth: [] });
-    expect(diagnostics).toEqual([expect.objectContaining({ reason: 'encoded_size_exceeded' })]);
+    await expect(store.read()).resolves.toEqual(fileWithEndpoint());
+    expect(diagnostics).toEqual([]);
   });
 
-  it('preflights raw top-level array counts before element parsing', async () => {
+  it('reports malformed rows honestly even beyond the former endpoint count', async () => {
     const happyHomeDir = await tempHome();
     const path = resolveProviderRuntimeStatePath(happyHomeDir);
     await mkdir(join(happyHomeDir, 'providers'), { recursive: true });
@@ -166,11 +175,10 @@ describe('provider runtime-state store', () => {
       v: 1,
       machineId: 'machine_a',
       endpointHealth: Array.from(
-        { length: PROVIDER_RUNTIME_STATE_LIMITS_V1.maxEndpointRecords + 1 },
+        { length: 8_193 },
         () => ({ malformed: true }),
       ),
       catalogs: [],
-      installationChecks: [],
       modelLoadStates: [],
     }), 'utf8');
     const diagnostics: Array<{ reason: string }> = [];
@@ -179,7 +187,7 @@ describe('provider runtime-state store', () => {
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
     });
     await expect(store.read()).resolves.toMatchObject({ endpointHealth: [] });
-    expect(diagnostics).toEqual([expect.objectContaining({ reason: 'limit_exceeded' })]);
+    expect(diagnostics).toEqual([expect.objectContaining({ reason: 'malformed' })]);
   });
 
   it('resets checking activity on restart without discarding settled health', async () => {
@@ -284,6 +292,27 @@ describe('provider runtime-state store', () => {
     await expect(store.update((state) => ({ ...state, machineId: 'machine_b' })))
       .rejects.toThrow(/machine/u);
     await expect(store.read()).resolves.toMatchObject({ machineId: 'machine_a' });
+  });
+
+  it('rejects duplicate, foreign-Machine and orphan-load mutations without replacing valid observations', async () => {
+    const happyHomeDir = await tempHome();
+    const store = createProviderRuntimeStateStore({ happyHomeDir, machineId: 'machine_a' });
+    const original = fileWithEndpoint();
+    await store.update(() => original);
+    const endpoint = original.endpointHealth[0]!;
+    const invalidStates: ProviderRuntimeStateFileV1[] = [
+      { ...original, endpointHealth: [endpoint, endpoint] },
+      { ...original, endpointHealth: [{ ...endpoint, key: { ...endpoint.key, machineId: 'machine_b' } }] },
+      { ...original, modelLoadStates: [ProviderModelLoadRuntimeStateRecordV1Schema.parse({
+        key: { machineId: 'machine_a', connectionId: 'pc_a', catalogObservationId: 'missing', modelId: 'model-a' },
+        loadState: 'loaded', observedAt: 1, lastAccessedAt: 1,
+      })] },
+    ];
+    for (const invalid of invalidStates) {
+      await expect(store.update(() => invalid)).rejects.toThrow();
+      await expect(store.read()).resolves.toEqual(original);
+    }
+    expect(JSON.parse(await readFile(store.path, 'utf8'))).toEqual(original);
   });
 
   it('retains the previous in-memory and disk state when an atomic write fails', async () => {

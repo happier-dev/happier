@@ -14,8 +14,8 @@ import {
 } from '@/providers/registry';
 import { collectProviderConnectionDnsEvidence } from '@/providers/registry/dnsEvidence';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
-import { createCliProviderConnectionsStore } from '@/providers/settings/catalogStore';
-import { refreshActiveProviderConnectionsCatalog, refreshProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
+import { createCliProviderConnectionsStore, createCliProviderConnectionsStoreForOperation } from '@/providers/settings/catalogStore';
+import { prepareProviderConnectionsCatalogForCli, refreshActiveProviderConnectionsCatalog, refreshProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -40,6 +40,7 @@ import {
 import type { ProviderDiscoveryCandidateV1 } from '@happier-dev/protocol';
 import type { ProviderConnectionServiceDeps } from './service/types';
 import type { ProviderConnectionView } from './service';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 
 export type RuntimeProviderConnectionServices = Readonly<
   { service: ReturnType<typeof createProviderConnectionService> }
@@ -54,6 +55,7 @@ export type RuntimeProviderConnectionServices = Readonly<
 export function createRuntimeProviderConnectionServices(input: Readonly<{
   machineId: string;
   credentials: StoredCredentials;
+  operationContext?: SavedSecretOperationContextV1;
   happyHomeDir: string;
   resolveSharedGateway?: import('@/plugins/runtime/invocation/services/managedServicesAdapter').ResolveSharedManagedProviderGatewayBinding;
   featureGate: Readonly<{ isEnabled(featureId: 'providers' | 'providers.localDiscovery'): boolean }>;
@@ -85,6 +87,10 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
     trigger: 'enable',
   ) => Promise<unknown>;
 }>): RuntimeProviderConnectionServices {
+  const readSnapshot = input.operationContext?.readSnapshot ?? getActiveAccountSettingsSnapshot;
+  const captureStore = (signal?: AbortSignal) => input.operationContext
+    ? createCliProviderConnectionsStoreForOperation({ operationContext: input.operationContext, signal })
+    : createCliProviderConnectionsStore({ credentials: input.credentials, signal });
   const loadRegistryProjection = input.resolveRegistry
     ? async (): Promise<ProviderConnectionRegistryProjection> => Object.freeze({
         registry: await input.resolveRegistry!(),
@@ -121,7 +127,7 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
   // registry acquisition.
   const useAuthoritativeManagedStartLease = !input.resolveRegistry
     && !input.startManagedProviderRuntime;
-  const serverHttpBaseUrl = resolveServerHttpBaseUrl();
+  const serverHttpBaseUrl = input.operationContext?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   const executeAccount = async (request: ProviderActionRequestV1,
     preparedSavedSecret?: Parameters<typeof createCliAccountProviderActionExecuteV1>[0]['preparedSavedSecret']) => {
     if (!input.featureGate.isEnabled('providers')) return { ok: false as const, errorCode: 'provider_feature_disabled',
@@ -131,6 +137,7 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
         details: createProviderErrorV1('provider_not_enabled_on_machine', { machineId: request.input.machineId }) };
     }
     return createCliAccountProviderActionExecuteV1({ credentials: input.credentials, serverHttpBaseUrl,
+      ...(input.operationContext ? { operationContext: input.operationContext } : {}),
       preparedSavedSecret, now: input.now,
       readDefinitions: async () => [...(await loadRegistryProjection()).registry.providersByContributionKey]
         .map(([contributionKey, contribution]) => ({ contributionKey, definition: contribution.definition,
@@ -142,23 +149,28 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
     machineId: input.machineId,
     featureGate: input.featureGate,
     loadSnapshot: async (registryProjection, secretSelection, signal) => {
-      const current = getActiveAccountSettingsSnapshot();
+      const current = readSnapshot();
       let active = current?.scopeKey === resolveAccountSettingsScopeKey(input.credentials)
         ? current
-        : await refreshAccountSettingsForMinimumVersion({
+        : input.operationContext ? null : await refreshAccountSettingsForMinimumVersion({
           credentials: input.credentials,
           minSettingsVersion: null,
           mode: 'blocking',
         });
-      const capturedStore = createCliProviderConnectionsStore({ credentials: input.credentials });
+      if (!active) throw createProviderErrorV1('provider_catalog_unavailable');
+      const capturedStore = captureStore(signal);
       // An explicit operation reads current row authority even when the
       // daemon's asynchronous Account-change observer has not caught up yet.
-      const catalog = await refreshProviderConnectionsCatalogForCli({
+      const catalog = input.operationContext && active.providerConnectionsCatalog?.status === 'ready'
+        ? active.providerConnectionsCatalog
+        : await (input.operationContext ? prepareProviderConnectionsCatalogForCli : refreshProviderConnectionsCatalogForCli)({
         expectedScopeKey: resolveAccountSettingsScopeKey(input.credentials), credentials: input.credentials,
+        ...(input.operationContext ? { operationContext: input.operationContext } : {}),
+        ...(signal ? { signal } : {}),
       });
       capturedStore.assertCurrent();
       if (catalog.status !== 'ready' && catalog.status !== 'partial') throw createProviderErrorV1('provider_catalog_unavailable');
-      const refreshed = getActiveAccountSettingsSnapshot();
+      const refreshed = readSnapshot();
       if (!refreshed || refreshed.scopeKey !== active.scopeKey) throw createProviderErrorV1('provider_settings_invalid');
       if (refreshed.providerConnectionsCatalog?.status !== 'ready' && refreshed.providerConnectionsCatalog?.status !== 'partial') {
         throw createProviderErrorV1('provider_catalog_unavailable');
@@ -181,6 +193,7 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
           // Saved Secret owner opens current Home material; consumers retain
           // their existing typed missing/unavailable presentation decisions.
           const admitted = await readSavedSecretCatalogForOperation({
+            ...(input.operationContext ? { operationContext: input.operationContext } : {}),
             expectedScopeKey: resolveAccountSettingsScopeKey(input.credentials),
             references: [...new Set(references)].map(ref => ({ ref, required: false })),
             ...(signal ? { signal } : {}),
@@ -211,10 +224,10 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
       };
     },
     updateProviderSettings: async (mutate, options) => {
-      const store = createCliProviderConnectionsStore({ credentials: input.credentials });
+      const store = captureStore();
       const captured = await store.readCatalog();
       if (captured.status !== 'ready') throw createProviderErrorV1('provider_settings_invalid');
-      const active = getActiveAccountSettingsSnapshot();
+      const active = readSnapshot();
       store.assertCurrent();
       if (!active) throw createProviderErrorV1('provider_settings_invalid');
       const basis = composeProviderSettingsV1(captured.catalog, active.settings.providerDefaultModelSelectionsByAgentTargetKeyV1);
@@ -225,6 +238,7 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
         if (options?.preparedSavedSecret) {
           const result = await promoteSavedSecretWithProviderConnectionsCatalog({
             credentials: input.credentials, preparedSavedSecret: options.preparedSavedSecret,
+            ...(input.operationContext ? { operationContext: input.operationContext } : {}),
             providerConnections: { expectedRevision: captured.revision, catalog },
           });
           if (result.status !== 'applied') {
@@ -247,7 +261,8 @@ export function createRuntimeProviderConnectionServices(input: Readonly<{
         }
         throw error;
       }
-      await refreshActiveProviderConnectionsCatalog({ credentials: input.credentials }, { afterChange: true });
+      await refreshActiveProviderConnectionsCatalog({ credentials: input.credentials,
+        ...(input.operationContext ? { operationContext: input.operationContext } : {}) }, { afterChange: true });
       return next;
     },
     collectDnsEvidence: ({ providerSettings, connectionId, machineId, registry, lifetime }) =>

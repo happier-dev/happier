@@ -1,9 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { expect, it, vi } from 'vitest';
+import { expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { ProviderConnectionIdSchema, ProviderSettingsV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { logger } from '@/ui/logger';
 
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -49,6 +48,9 @@ it('admits signed-out Agent Sessions through the probed local gateway and chosen
     phase = next;
     phases.push({ phase, elapsedMs: Math.round(performance.now() - startedAt) });
   };
+  onTestFailed(() => { console.error('Shared gateway composition failed during', phase,
+    'after', Math.round(performance.now() - startedAt), 'ms'); });
+  onTestFinished(() => { console.info('Shared gateway composition phases', JSON.stringify(phases)); });
   await withConfiguredDaemonTestHome({ prefix: 'shared-gateway-spawn-' }, async ({ homeDir }) => {
     let pauseTarget = false;
     let enterTarget = () => {};
@@ -238,7 +240,7 @@ it('admits signed-out Agent Sessions through the probed local gateway and chosen
                   relayConfig: { relayPolicy: 'disabled', relayUrls: [] } });
                 consumerScope.register(worker.shutdown);
                 consumerScope.register(hub.shutdown);
-                if (!worker.available || !hub.available) throw new Error('Expected native peer endpoints');
+                if (!worker.available || !hub.available) throw new Error(`Expected native peer endpoints: worker=${worker.available ? 'ready' : worker.reason}, hub=${hub.available ? 'ready' : hub.reason}`);
                 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
                 const trustRoots = [{ keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') }];
                 const custody = createManagedProviderExplicitStartCustody({ machineId: hubMachineId,
@@ -299,7 +301,6 @@ it('admits signed-out Agent Sessions through the probed local gateway and chosen
                         endpointId: hub.endpoint.endpointId, endpointRevision: 1, endpoint: hub.endpoint },
                     } satisfies ProviderBrokerAccountOpenResponseV2;
                   },
-                  admitConsumer: async () => ({ ok: true }),
                   openTunnel: createProviderBrokerMachineCarrierTunnelOpen({ homeId: 'home', accountId: 'account',
                     localMachineId: peerMachineId, runtime: worker, resolveTrustRoots: () => trustRoots }),
                 });
@@ -308,7 +309,7 @@ it('admits signed-out Agent Sessions through the probed local gateway and chosen
                   refreshAllowed = false;
                   markPhase('peer refresh refusal');
                   const refreshRefusal = await openPeer().then(() => { throw new Error('Expected refresh refusal'); }, (error: unknown) => error);
-                  expect(readAccountConnectionProviderBrokerFailureDiagnostic(refreshRefusal)).toEqual({
+                  expect(readAccountConnectionProviderBrokerFailureDiagnostic(refreshRefusal)).toMatchObject({
                     reason: 'endpoint_discovery_failed', discoveryCause: 'broker_refresh_refused',
                   });
                   expect(brokerWarnings.mock.calls.filter(([label]) => label === '[ProviderBroker] Machine stream admission refused')).toEqual([]);
@@ -316,7 +317,7 @@ it('admits signed-out Agent Sessions through the probed local gateway and chosen
                   forwarding = false;
                   markPhase('peer target refusal');
                   const refusal = await openPeer().then(() => { throw new Error('Expected peer refusal'); }, (error: unknown) => error);
-                  expect(readAccountConnectionProviderBrokerFailureDiagnostic(refusal)).toEqual({
+                  expect(readAccountConnectionProviderBrokerFailureDiagnostic(refusal)).toMatchObject({
                     reason: 'endpoint_discovery_failed', discoveryCause: 'socket_closed',
                   });
                   expect(brokerWarnings.mock.calls).toContainEqual([
@@ -372,7 +373,7 @@ it('admits signed-out Agent Sessions through the probed local gateway and chosen
                 };
                 markPhase('consumer isolation');
                 const localModels = await readModels(consumer);
-                expect(localModels.status).toBe(200);
+                expect(localModels.status, localModels.body).toBe(200);
                 expect(JSON.parse(localModels.body)).toMatchObject({ data: [{ id: 'example' }] });
                 expect(await readModels(peer)).toEqual(localModels);
                 expect((await readModels(peer, consumer.credential)).status).toBe(403);
@@ -441,7 +442,7 @@ it('admits signed-out Agent Sessions through the probed local gateway and chosen
           readModelProjection: request => hubModels.projectModels(request),
         }).then(result => { settled = true; return result; });
         await entered;
-        await vi.advanceTimersByTimeAsync(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs);
+        await vi.advanceTimersByTimeAsync(30_000);
         // Session admission follows its caller's lifetime, not the endpoint
         // probe budget. Cancellation must still settle a stalled Home read.
         expect(settled).toBe(false);

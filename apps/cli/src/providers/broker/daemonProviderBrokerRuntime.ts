@@ -7,9 +7,9 @@ import type {
   SignedProviderBrokerRouteGrantV1,
   UsageObservationTokens,
 } from '@happier-dev/protocol';
-import { encodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV2, SignedProviderBrokerRouteGrantV1Schema, SignedProviderBrokerRouteGrantV2Schema, type IrohProviderBrokerHandshake, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
-import { DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
-import type { DaemonProviderTeamCredentialBrokerEligibilityRequestV1, DaemonProviderTeamCredentialBrokerEligibilityResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import { encodeProviderBrokerAuthorityV1, encodeProviderBrokerAuthorityV2, SignedProviderBrokerRouteGrantV1Schema, SignedProviderBrokerRouteGrantV2Schema, type IrohProviderBrokerHandshake, type SignedProviderBrokerRouteGrantV2, type ProviderBrokerSourceApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { preserveBrokerSourceHealthFailure } from './sourceFailure';
 
 import {
   providerBrokerRouteGrantExpectedBindingV1 as expectedBinding,
@@ -35,6 +35,7 @@ import type {
   TeamCredentialExternalProviderTerminalUsageV1,
   TeamCredentialRequestPolicyV1,
   TeamCredentialResourceSummaryV1,
+  TeamCredentialResourceReadinessV1,
   TeamCredentialResourceTestAdmissionResponseV1,
 } from '@happier-dev/protocol/teams';
 import type { RunnerCredentialSelectionBindingV1 } from '@happier-dev/protocol/ephemeralRunner/review';
@@ -107,63 +108,7 @@ export type ProviderBrokerAccountConnectionAccess = Readonly<{
   retire(): Promise<void>;
 }>;
 
-type RunnerCredentialSelectionCurrentnessInput = Readonly<{
-  registeredMachineId: string;
-  selection: RunnerCredentialSelectionBindingV1;
-  modelId: string;
-  signal: AbortSignal;
-  readResource(
-    resourceId: string,
-    signal: AbortSignal,
-  ): Promise<TeamCredentialResourceSummaryV1 | null>;
-  resolveEligibility(
-    request: DaemonProviderTeamCredentialBrokerEligibilityRequestV1,
-    signal?: AbortSignal,
-  ): Promise<DaemonProviderTeamCredentialBrokerEligibilityResponseV1>;
-}>;
-
-/** Rechecks one Runner's already frozen exact broker Machine against that
- * Machine's canonical current-only source eligibility owner. Pool membership
- * selected the Machine on the Home; it is intentionally neither enumerated nor
- * ranked again here. */
-export async function resolveRunnerCredentialSelectionCurrentness(
-  input: RunnerCredentialSelectionCurrentnessInput,
-): Promise<'available' | 'source_unavailable' | 'update_required'> {
-  input.signal.throwIfAborted();
-  if (input.selection.brokerMachineId !== input.registeredMachineId) {
-    return 'source_unavailable';
-  }
-  const resource = await input.readResource(input.selection.resourceId, input.signal);
-  input.signal.throwIfAborted();
-  if (
-    !teamCredentialBrokerResourceAcceptsMachine(resource, input.selection.brokerMachineId)
-    || resource.revision !== input.selection.revision
-  ) return 'source_unavailable';
-
-  let rawEligibility: DaemonProviderTeamCredentialBrokerEligibilityResponseV1;
-  try {
-    rawEligibility = await input.resolveEligibility({
-      machineId: input.selection.brokerMachineId,
-      teamId: resource.teamId,
-      resourceId: resource.id,
-      expectedResourceRevision: resource.revision,
-      source: resource.source,
-      application: input.selection.application,
-      modelId: input.modelId,
-      sourceRevision: input.selection.sourceRevision,
-    }, input.signal);
-  } catch {
-    input.signal.throwIfAborted();
-    return 'source_unavailable';
-  }
-  input.signal.throwIfAborted();
-  const eligibility = DaemonProviderTeamCredentialBrokerEligibilityResponseV1Schema.safeParse(rawEligibility);
-  if (!eligibility.success) return 'source_unavailable';
-  if (eligibility.data.status === 'eligible') return 'available';
-  return eligibility.data.reason === 'application_unavailable'
-    ? 'update_required'
-    : 'source_unavailable';
-}
+export { resolveRunnerCredentialSelectionCurrentness } from './runnerCredentialSelectionCurrentness';
 
 export type DaemonProviderBrokerRuntime = Readonly<{
   accountConnectionIngress: boolean;
@@ -173,7 +118,7 @@ export type DaemonProviderBrokerRuntime = Readonly<{
       modelId: string;
     }>,
     signal: AbortSignal,
-  ): Promise<'available' | 'source_unavailable' | 'update_required'>;
+  ): Promise<TeamCredentialResourceReadinessV1>;
   resolveProviderBrokerApplicationTarget(
     input: ProviderBrokerApplicationTargetInput,
   ): Promise<Readonly<{ port: number; localCapability: string }> | null>;
@@ -308,7 +253,7 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
   };
 
   return Object.freeze({
-    async acquireSource({ source, resourceId, brokerMachineId, operation, expectedResourceRevision, application, modelId, sourceRevision }) {
+    async acquireSource({ source, resourceId, brokerMachineId, operation, expectedResourceRevision, application, modelId, sourceRevision, admittedSourceMember }) {
       if (retired) return null;
       // The resource revision is a mutable policy fact the Home rechecks on
       // every request, not stream identity: a harmless policy edit must not
@@ -343,6 +288,7 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
             application: input.application,
             modelId,
             sourceRevision,
+            ...(admittedSourceMember ? { admittedSourceMember } : {}),
             ...(input.revalidateOperationAuthorization ? {
               revalidateOperationAuthorization: (signal?: AbortSignal) =>
                 input.revalidateOperationAuthorization!(expectedResourceRevision, signal),
@@ -371,6 +317,7 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
               application: input.application,
               modelId,
               sourceRevision,
+              ...(admittedSourceMember ? { admittedSourceMember } : {}),
               ...(input.revalidateOperationAuthorization ? {
                 revalidateOperationAuthorization: (signal?: AbortSignal) =>
                   input.revalidateOperationAuthorization!(expectedResourceRevision, signal),
@@ -385,7 +332,8 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
               await releaseProjection(acquired).catch(() => undefined);
             }
             if (!retired && acquired && !acquired.ok) {
-              result = { ...brokerSourceAcquisitionFailure(acquired), reasonCode: 'resource_unavailable' };
+              result = { ...brokerSourceAcquisitionFailure(acquired), reasonCode: acquired.reasonCode === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired
+                ? acquired.reasonCode : 'resource_unavailable' };
             }
             return;
           }
@@ -413,6 +361,7 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
           application: input.application,
           modelId,
           sourceRevision,
+          ...(admittedSourceMember ? { admittedSourceMember } : {}),
           ...(input.revalidateOperationAuthorization ? {
             revalidateOperationAuthorization: (signal?: AbortSignal) =>
               input.revalidateOperationAuthorization!(expectedResourceRevision, signal),
@@ -423,7 +372,8 @@ export function createPrivateProviderBrokerStreamLifetime(input: Readonly<{
       const acquired = await projectionPromise;
       if (retired || !acquired?.ok || !acquired.projection.isCurrent()) {
         const failure = !retired && acquired && !acquired.ok
-          ? { ...brokerSourceAcquisitionFailure(acquired), reasonCode: 'resource_unavailable' as const }
+          ? { ...brokerSourceAcquisitionFailure(acquired), reasonCode: acquired.reasonCode === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired
+            ? acquired.reasonCode : 'resource_unavailable' as const }
           : null;
         await close();
         return failure;
@@ -512,20 +462,20 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
   admitExternalRequest?(input: Readonly<{
     binding: Extract<ProviderBrokerRelayApplicationBindingV1, { kind: 'external_api_key' }>;
     expectedResourceRevision: number;
-    application: ProviderBrokerApplicationBindingV1;
+    application: ProviderBrokerSourceApplicationBindingV1;
     requestFacts: ProviderBrokerRequestAdmission['requestFacts'];
     request: ManagedServiceRequest;
   }>): Promise<TeamCredentialExternalProviderAdmissionResponseV1>;
   revalidateExternalAuthorization?(input: Readonly<{
     binding: Extract<ProviderBrokerRelayApplicationBindingV1, { kind: 'external_api_key' }>;
     expectedResourceRevision: number;
-    application: ProviderBrokerApplicationBindingV1;
+    application: ProviderBrokerSourceApplicationBindingV1;
     signal?: AbortSignal;
   }>): Promise<boolean>;
   retireExternalApiKey?(input: Readonly<{
     externalApiKeyId: string;
     operationId: string;
-    application: ProviderBrokerApplicationBindingV1;
+    application: ProviderBrokerSourceApplicationBindingV1;
   }>): Promise<boolean>;
   retireExternalOperation?(input: Readonly<{
     externalApiKeyId: string;
@@ -541,14 +491,14 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
   }>): Promise<Readonly<{
     resourceRevision: number;
     policy: TeamCredentialRequestPolicyV1 | null;
-    application: ProviderBrokerApplicationBindingV1;
+    application: ProviderBrokerSourceApplicationBindingV1;
     modelCatalog: TeamCredentialRequestModelCatalog;
   }> | null>;
   admitResourceTestRequest?(input: Readonly<{
     binding: Extract<ProviderBrokerRelayApplicationBindingV1, { kind: 'resource_test' }>;
     relayAuthorization: PeerTcpTunnelRelayAuthorizationV2;
     expectedResourceRevision: number;
-    application: ProviderBrokerApplicationBindingV1;
+    application: ProviderBrokerSourceApplicationBindingV1;
     requestFacts: ProviderBrokerRequestAdmission['requestFacts'];
     request: ManagedServiceRequest;
   }>): Promise<TeamCredentialResourceTestAdmissionResponseV1>;
@@ -557,7 +507,7 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
     selection: RunnerCredentialSelectionBindingV1;
     modelId: string;
     signal: AbortSignal;
-  }>): Promise<'available' | 'source_unavailable' | 'update_required'>;
+  }>): Promise<TeamCredentialResourceReadinessV1>;
   createRequestId: () => string;
 }>): Promise<DaemonProviderBrokerRuntime> {
   const verify = input.verifyAuthority ?? ((request): ProviderBrokerRouteGrantVerificationResultV1 =>
@@ -571,7 +521,7 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
     }));
   const retireExternalApiKey = async (request: Readonly<{
     binding: Extract<ProviderBrokerRelayApplicationBindingV1, { kind: 'external_api_key' }>;
-    application: ProviderBrokerApplicationBindingV1;
+    application: ProviderBrokerSourceApplicationBindingV1;
   }>): Promise<void> => {
     const retire = input.retireExternalApiKey;
     if (!retire || !request.binding.operationId) return;
@@ -620,13 +570,14 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
       // L10/11 BROKER-05): the member it attributes the request to is read
       // without starting or joining managed custody, so a refused request
       // materializes nothing.
-      const sourceMemberKey = await runProviderBrokerApplicationPhase('source_select', request.requestId, () =>
-        input.sourceOwner.selectSourceMemberKey({
+      const selectedMember = await runProviderBrokerApplicationPhase('source_select', request.requestId, () =>
+        input.sourceOwner.selectSourceMember({
           source: request.selectedSource,
           application: request.authority.payload.application,
           signal: request.request.signal ?? new AbortController().signal,
-        }));
-      if (!sourceMemberKey) return unavailable;
+        })).catch(preserveBrokerSourceHealthFailure);
+      if (!selectedMember) return unavailable;
+      const { sourceMemberKey, sourceMember } = selectedMember;
       const admitted = await runProviderBrokerApplicationPhase('home_admission', request.requestId, () =>
         input.admitRequest({ ...request, sourceMemberKey }));
       if (!admitted.ok) {
@@ -653,11 +604,12 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
           application: request.authority.payload.application,
           modelId: request.requestFacts.modelId,
           sourceRevision: request.expectedSourceRevision,
+          admittedSourceMember: sourceMember,
         }));
       if (!selected) return unavailable;
       if ('reasonCode' in selected) return selected;
-      // A Pool that switched members between admission and acquisition must
-      // not forward under a member the Home did not admit.
+      // Acquisition materializes the admitted member; never forward under a
+      // member the Home did not admit.
       if (selected.sourceMemberKey !== sourceMemberKey) {
         return { ok: false as const, reasonCode: 'resource_changed' as const };
       }
@@ -686,10 +638,11 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
         const terminalUsage = admissionUsageEventId && terminalRequestId
           && input.recordExternalTerminalUsage
           ? {
-              record: async ({ outcome, actualModelId, tokens }: Readonly<{
+              record: async ({ outcome, actualModelId, tokens, reportedCostUsd }: Readonly<{
                 outcome: 'succeeded' | 'failed' | 'cancelled';
                 actualModelId: string | null;
                 tokens: UsageObservationTokens | null;
+                reportedCostUsd?: number;
               }>) => {
                 const result = await input.recordExternalTerminalUsage!({
                   v: 1,
@@ -703,6 +656,7 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
                   measurement: tokens ? 'reported' : 'unavailable',
                   actualModelId,
                   tokens,
+                  ...(reportedCostUsd !== undefined ? { reportedCostUsd } : {}),
                 });
                 if (!result.ok) throw new Error(`External terminal usage rejected: ${result.reasonCode}`);
               },
@@ -751,7 +705,9 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
         const cleanup = async () => { if (!cleaned) { cleaned = true; await acquired.projection.cleanup(); } };
         return {
           ok: true as const,
-          ...(terminalUsage ? { terminalUsage } : {}),
+          ...(terminalUsage ? { terminalUsage: { ...terminalUsage,
+            ...(acquired.projection.requestCostParser ? { requestCostParser: acquired.projection.requestCostParser } : {}),
+          } } : {}),
           access: {
             endpointUrl: acquired.projection.access.endpointUrl,
             async request(providerRequest: ManagedServiceRequest) {
@@ -822,7 +778,7 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
   return Object.freeze({
     accountConnectionIngress: input.accountConnection !== undefined,
     async checkRunnerCredentialSelectionCurrentness(currentness, signal) {
-      return await input.checkRunnerCredentialSelectionCurrentness?.({ ...currentness, signal }) ?? 'update_required';
+      return await input.checkRunnerCredentialSelectionCurrentness?.({ ...currentness, signal }) ?? { kind: 'update_required' };
     },
     async resolveExternalProviderBrokerApplicationTarget({ binding, relayAuthorization, signal }) {
       if (binding.kind === 'external_api_key') {
@@ -901,9 +857,12 @@ export async function startDaemonProviderBrokerRuntime(input: Readonly<{
             async acquireSource(signal) {
               signal?.throwIfAborted();
               if (closed) return null;
-              opening ??= owner.open({ authority, signal: lifetime.signal });
-              const opened = await opening;
-              if (closed || !opened || !await opened.revalidate(signal ?? lifetime.signal)) return null;
+              // A fresh source open already performs this request's Home
+              // admission. Existing access admits only the next request.
+              const opened = opening
+                ? await opening.then(async current => current && await current.revalidate(signal ?? lifetime.signal) ? current : null)
+                : await (opening = owner.open({ authority, signal: lifetime.signal }));
+              if (closed || !opened) return null;
               signal?.throwIfAborted();
               return closed ? null : opened.access;
             },

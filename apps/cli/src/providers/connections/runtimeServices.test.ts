@@ -1,8 +1,6 @@
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { onTestFinished } from 'vitest';
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import { AccountSettingsSchema, DEFAULT_PROVIDER_SETTINGS_V1, FeaturesResponseSchema, ProviderConnectionIdSchema, ProviderConnectionV1Schema, ProviderContributionV1Schema, SavedSecretSchema, createProviderErrorV1 } from '@happier-dev/protocol';
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -17,7 +15,7 @@ import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/se
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
-import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
@@ -59,7 +57,6 @@ async function runtimeRegistry(
     projectManagedServices: managedOwner,
     readSharedProviderGatewayRuntime: managedOwner.readSharedProviderGatewayRuntime,
     contributes: {
-      backupDestinations: [],
       agents: Object.freeze([]),
       actions: Object.freeze([]),
       resources: Object.freeze([]),
@@ -101,6 +98,151 @@ afterEach(async () => {
 });
 
 describe('runtime Provider connection composition', () => {
+  it.each(['providers.connections.describe', 'providers.models.list'] as const)(
+    'reads the admitted requester catalog instead of the worker custodian (%s)', async actionId => {
+      const { createInvocationSavedSecretOperationContextV1 } = await import('@/settings/secrets/savedSecretOperationContext');
+      const { setActiveAccountSettingsSnapshot } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
+      const { resolveProviderConnectionForMachine } = await import('@/providers/registry');
+      const { createRuntimeProviderServices } = await import('@/providers/probe/runtimeServices');
+      const { createRuntimeProviderConnectionServices } = await import('./runtimeServices');
+      const { createCliProviderActionExecuteV1 } = await import('@/session/actions/cliActionDeps/createCliProviderActionDeps');
+      const requester = { token: 'requester-provider-read', encryption: null };
+      const custodian = { token: 'worker-custodian', encryption: null };
+      const connection = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_requester', role: 'named',
+        displayName: 'Requester', displayNameMode: 'custom', revision: 0, createdAt: 1, updatedAt: 1,
+        source: { kind: 'custom', template: { v: 1, name: 'Requester',
+          endpointTemplates: [{ id: 'chat', protocol: 'openai-chat', baseUrl: 'https://requester.example/v1',
+            capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
+          catalog: { source: 'manual', manualModelPolicy: 'allowed' } } } });
+      const { defaultsByAgentTargetKey: _defaults, ...empty } = DEFAULT_PROVIDER_SETTINGS_V1;
+      const registry = { providersByContributionKey: new Map() };
+      const ungranted = { ...empty, connections: [connection], manualModelsByConnectionId: {
+        [connection.id]: [{ id: 'requester-model', addedAt: 1 }],
+      } };
+      const resolved = resolveProviderConnectionForMachine({ connectionId: connection.id, machineId: 'machine-a',
+        providerSettings: { ...ungranted, defaultsByAgentTargetKey: {} }, registry,
+        dnsEvidenceByEndpointUrl: new Map([['https://requester.example/v1', ['1.1.1.1']]]) });
+      if (resolved.status !== 'resolved') throw new Error('Expected custom Provider fixture');
+      const catalog = { ...ungranted, accountGrants: [{ v: 1 as const, connectionId: connection.id,
+        connectionSecurityFingerprint: resolved.record.connectionSecurityFingerprint, confirmedAt: 1 }] };
+      const snapshot = (credentials: StoredCredentials, providerCatalog: typeof empty) => ({ source: 'network' as const,
+        settings: AccountSettingsSchema.parse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1,
+        settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials),
+        providerConnectionsCatalog: { status: 'ready' as const, revision: 1, catalog: providerCatalog } });
+      setActiveAccountSettingsSnapshot(snapshot(custodian, empty));
+      persistenceBoundary.readStoredCredentials.mockResolvedValue(custodian);
+      const operationContext = createInvocationSavedSecretOperationContextV1({ credentials: requester,
+        serverHttpBaseUrl: 'https://requester-home.test', snapshot: snapshot(requester, catalog), isCurrent: async () => true });
+      mockProviderCatalogReadHttp(catalog);
+      const read = vi.mocked(axios.get).getMockImplementation()!;
+      vi.mocked(axios.get).mockImplementation(async (url, options) => {
+        expect(options?.headers).toMatchObject({ Authorization: `Bearer ${requester.token}` });
+        if (new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [] } };
+        return read(url, options);
+      });
+      const runtime = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir: configuration.happyHomeDir,
+        registry, featureGate: { isEnabled: () => true }, resolveAddresses: async () => ['1.1.1.1'] });
+      const execute = createCliProviderActionExecuteV1({ credentials: requester, operationContext,
+        serverId: 'requester-home', serverHttpBaseUrl: 'https://requester-home.test',
+        readProviderForAccount: async request => {
+          if (request.actionId === 'providers.models.list') return runtime.models(request.input, undefined, {
+            getAccountSettingsSnapshot: operationContext.readSnapshot, savedSecretOperationContext: operationContext,
+            isAccountCurrent: () => operationContext.isCurrent(),
+          });
+          return createRuntimeProviderConnectionServices({ machineId: 'machine-a', credentials: requester, operationContext,
+            happyHomeDir: configuration.happyHomeDir, featureGate: { isEnabled: id => id === 'providers' },
+            runtimeSummary: input => runtime.summary(input, {
+              getAccountSettingsSnapshot: operationContext.readSnapshot, savedSecretOperationContext: operationContext,
+              isAccountCurrent: () => operationContext.isCurrent(),
+            }), resolveRegistry: async () => registry, resolveAddresses: async () => ['1.1.1.1'],
+          }).describeConnections(request.input);
+        },
+        // The raw worker RPC refuses private custodian catalog reads. The
+        // admitted requester carrier must reach the real local Provider owner.
+        callMachineAction: async () => { throw Object.assign(new Error('Forbidden'), { rpcErrorCode: 'RPC_FORBIDDEN' }); },
+      });
+      const result = await execute({ actionId, input: { machineId: 'machine-a', connectionId: connection.id } },
+        { surface: 'cli', serverId: 'requester-home' });
+      expect(result, JSON.stringify(result)).toMatchObject(actionId === 'providers.connections.describe'
+        ? { ok: true, result: { status: 'success', connections: [{ connectionId: connection.id, authorized: true }] } }
+        : { ok: true, result: { status: 'success', connectionId: connection.id, models: [{ id: 'requester-model' }] } });
+    });
+  it('reads the selected Saved Secret at Machine binding admission before committing its link', async () => {
+    const { setActiveAccountSettingsSnapshot } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
+    const { createRuntimeProviderConnectionServices } = await import('./runtimeServices');
+    const credentials: StoredCredentials = { token: 'provider-fresh-secret-binding', encryption: null };
+    persistenceBoundary.readStoredCredentials.mockResolvedValue(credentials);
+    const resourceId = 'new-provider-secret';
+    const ref = `happier:shared-secret:v1:${resourceId}`;
+    const { defaultsByAgentTargetKey: _defaults, ...empty } = DEFAULT_PROVIDER_SETTINGS_V1;
+    let catalog: ProviderConnectionsCatalogV1 = { ...empty, connections: [ProviderConnectionV1Schema.parse({
+      v: 1, id: 'pc_fresh_secret', role: 'named', displayName: 'Fresh secret', displayNameMode: 'custom',
+      revision: 0, createdAt: 1, updatedAt: 1, source: { kind: 'custom', template: {
+        v: 1, name: 'Fresh secret', endpointTemplates: [{ id: 'chat', protocol: 'openai-chat',
+          baseUrl: 'https://fresh-secret.example/v1', capabilities: { streaming: 'unknown', toolRoundTrips: 'unknown',
+            statefulResponses: 'unknown', reasoningControls: 'unknown' } }],
+        credential: { kind: 'apiKey', required: true, transports: [{ id: 'bearer', protocols: ['openai-chat'],
+          uses: ['runtime'], destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' } }] },
+        catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+      } },
+    })] };
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {},
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials),
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog },
+      savedSecretResources: [], savedSecretCatalogState: 'temporarily_unavailable' });
+    mockProviderCatalogReadHttp(catalog);
+    const get = vi.mocked(axios.get).getMockImplementation()!;
+    let materialReads = 0;
+    let materialAvailable = true;
+    let materialStatus = 200;
+    vi.mocked(axios.get).mockImplementation(async (url, options) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/entity-rows/provider-connections') return { status: 200, data: {
+        status: 'present', revision: 1, content: { t: 'plain', v: catalog } } };
+      if (path === '/v1/account/saved-secrets/resources/materials') {
+        materialReads++;
+        return { status: materialStatus, data: { resources: materialAvailable ? [{ resourceId, encryptionMode: 'plain', recipientEnvelope: null,
+          entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'Fresh secret', kind: 'apiKey',
+            ownerAccountId: 'owner', revision: 1, materialStatus: 'ready',
+            capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+          storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+            content: { v: 1, name: 'Fresh secret', kind: 'apiKey', value: 'dummy-provider-value' } }),
+        }] : [] } };
+      }
+      return get(url, options);
+    });
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => Response.json(FeaturesResponseSchema.parse({ features: {}, capabilities: {} }))));
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      expect(new URL(String(url)).pathname).toBe('/v1/account/entity-rows/provider-connections');
+      const opened = openProviderConnectionsContentV1({ mode: 'plain', material: null,
+        content: (body as { content: unknown }).content });
+      if (opened.status !== 'opened') throw new Error('fixture_unopenable_provider_link');
+      catalog = opened.catalog;
+      return { status: 200, data: { status: 'updated', revision: 2, cursor: 2 } };
+    });
+    const services = createRuntimeProviderConnectionServices({ machineId: 'machine-a', credentials,
+      happyHomeDir: configuration.happyHomeDir, featureGate: { isEnabled: () => true },
+      runtimeSummary: async () => { throw new Error('Unenabled Provider has no runtime admission'); },
+      resolveRegistry: async () => ({ providersByContributionKey: new Map() }), resolveAddresses: async () => ['1.1.1.1'] });
+    await expect(services.service.bindSecret({ action: 'bindSecret', machineId: 'machine-a',
+      connectionId: 'pc_fresh_secret', credentialSlotId: 'apiKey', savedSecretId: ref, scope: 'machine',
+    })).resolves.toMatchObject({ status: 'success', credential: { boundMachineIds: ['machine-a'] } });
+    expect(catalog.secretBindingsByConnectionId.pc_fresh_secret?.byMachineId['machine-a']?.apiKey).toBe(ref);
+    expect(materialReads).toBe(1);
+    expect(post).toHaveBeenCalledOnce();
+    materialAvailable = false;
+    await expect(services.service.bindSecret({ action: 'bindSecret', machineId: 'machine-a',
+      connectionId: 'pc_fresh_secret', credentialSlotId: 'apiKey',
+      savedSecretId: 'happier:shared-secret:v1:absent', scope: 'machine',
+    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_secret_missing' } });
+    materialStatus = 503;
+    await expect(services.service.bindSecret({ action: 'bindSecret', machineId: 'machine-a',
+      connectionId: 'pc_fresh_secret', credentialSlotId: 'apiKey',
+      savedSecretId: 'happier:shared-secret:v1:absent', scope: 'machine',
+    })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_secret_unavailable' } });
+    expect(post).toHaveBeenCalledOnce();
+  });
+
   it.each(['missing', 'ready'] as const)('isolates Home-current credential readiness per connection in Machine descriptions (%s)', async materialState => {
     const { setActiveAccountSettingsSnapshot } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
     const { resolveProviderConnectionForMachine } = await import('@/providers/registry');
@@ -318,7 +460,10 @@ describe('runtime Provider connection composition', () => {
     const { setActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot } = await import('@/settings/accountSettings/activeAccountSettingsSnapshot');
     const credentials: StoredCredentials = { token: 'provider-runtime-row-test', encryption: null };
     setActiveAccountSettingsSnapshot({
-      source: 'network', settings: AccountSettingsSchema.parse({}), rawSettings: {},
+      source: 'network', settings: AccountSettingsSchema.parse({}),
+      // A catalog-only snapshot still needs source/history inspection. A
+      // known empty root deliberately bypasses that optional maintenance.
+      ...(outage === 'history' ? {} : { rawSettings: {} }),
       settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [],
       scopeKey: resolveAccountSettingsScopeKey(credentials),
     });

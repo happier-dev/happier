@@ -23,6 +23,20 @@ describe('Provider CLI refusal presentation', () => {
     }
   });
 
+  it('names the Saved Secret owner reason so a refusal is not read as an absent secret', () => {
+    const reasons = ['reference_missing', 'reference_unavailable', 'reference_forbidden', 'reference_deleted',
+      'reference_mode_incompatible', 'reference_repair_required', 'reference_corrupt', 'reference_stale',
+      'reference_collision_migration_required'] as const;
+    const reasonLines = reasons.map((savedSecretReason) => {
+      const presentation = presentProviderCliRefusal(createProviderErrorV1('provider_secret_missing', { savedSecretReason }));
+      expect(presentation, savedSecretReason).toHaveLength(3);
+      expect(presentation[2], savedSecretReason).toMatch(/^Saved Secret: [A-Z].*\.$/);
+      return presentation[2];
+    });
+    expect(new Set(reasonLines).size).toBe(reasons.length);
+    expect(presentProviderCliRefusal(createProviderErrorV1('provider_secret_missing'))).toHaveLength(2);
+  });
+
   it('renders only typed bounded context fields', () => {
     const error = {
       ...createProviderErrorV1('provider_binding_changed', {

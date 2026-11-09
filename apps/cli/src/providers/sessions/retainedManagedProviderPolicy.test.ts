@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderConnectionIdSchema,
+  ProviderConnectionSecurityFingerprintV1Schema,
   ProviderRuntimeBindingBasisV1Schema,
   ProviderSettingsV1Schema,
   createProviderMachineGrantFingerprintV1,
@@ -89,6 +90,15 @@ function settings(
 }
 
 describe('retained managed Provider settings/grant policy', () => {
+  it('keeps an admitted legacy grant when the runtime carries its new destination projection', () => {
+    expect(isRetainedManagedProviderSettingsGrantCurrent({ machineId, providerSettings: settings(),
+      runtimeBindingBasis: ProviderRuntimeBindingBasisV1Schema.parse({ ...runtimeBindingBasis, credentialAuthorization: {
+        ...runtimeBindingBasis.credentialAuthorization,
+        connectionSecurityFingerprint: ProviderConnectionSecurityFingerprintV1Schema.parse('connection-security:v2:current-destination'),
+      } }),
+    })).toBe(true);
+  });
+
   it('keeps exact adopted P authorized when current Q removes or changes its declaration', () => {
     expect(isRetainedManagedProviderSettingsGrantCurrent({
       machineId,

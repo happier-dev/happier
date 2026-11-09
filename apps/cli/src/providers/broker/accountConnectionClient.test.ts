@@ -1,9 +1,10 @@
+import { readProviderBrokerResponseBody } from '@/providers/broker/providerBroker.testkit';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
-import { createProviderBrokerRouteGrantSigningInputV2, type ProviderBrokerAccountAdmissionResponseV2, type ProviderBrokerAccountOpenResponseV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { createProviderBrokerRouteGrantSigningInputV2, type ProviderBrokerAccountOpenResponseV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { createProviderBrokerMachineCarrierTunnelOpen } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
 import { openAccountConnectionProviderBrokerAccess, readAccountConnectionProviderBrokerFailureDiagnostic } from './accountConnectionClient';
 import { logger } from '@/ui/logger';
@@ -16,8 +17,6 @@ describe('personal connection broker consumer', () => {
     ['broker_open_refused', undefined, 'ordinary'],
     ['binding_invalid', undefined, 'ordinary'],
     ['binding_invalid', undefined, 'signature'],
-    ['admission_refused', undefined, 'ordinary'],
-    ['admission_refused', undefined, 'post_discovery'],
     ['tunnel_open_failed', undefined, 'ordinary'],
     ['endpoint_discovery_failed', 403, 'ordinary'],
     ['endpoint_discovery_failed', 204, 'ordinary'],
@@ -25,6 +24,8 @@ describe('personal connection broker consumer', () => {
     ['endpoint_discovery_failed', undefined, 'timeout'],
     ['endpoint_discovery_failed', undefined, 'abort'],
     ['endpoint_discovery_failed', undefined, 'unknown'],
+    ['endpoint_discovery_failed', undefined, 'refresh'],
+    ['endpoint_discovery_failed', 403, 'typed_http'],
   ] as const)('logs the private %s branch (HTTP %s, %s) without disclosing broker material', async (reason, httpStatus, variant) => {
     const connectionId = ProviderConnectionIdSchema.parse('gateway-1');
     const application = { agentTargetKey: 'backend:claude:built_in', protocol: 'anthropic',
@@ -47,7 +48,7 @@ describe('personal connection broker consumer', () => {
     let publishedClosed = false;
     let retirementAcknowledged = false;
     let nativeOpens = 0;
-    let admissionReads = 0;
+    let homeReads = 0;
     // A real closed HTTP connection reproduces c72's no-status discovery shape.
     const discoveryServer = variant === 'socket' ? createServer((request) => request.socket.destroy()) : null;
     let localPort = 43123;
@@ -77,11 +78,10 @@ describe('personal connection broker consumer', () => {
       const error = await openAccountConnectionProviderBrokerAccess({ homeId: 'home-1', accountId: 'account-1',
         initiatorMachineId: 'worker-1', targetMachineId: reason === 'binding_invalid' && variant !== 'signature' ? 'different-hub' : 'hub-1',
         connectionId, consumer, application, ...capturedFacts, signal: new AbortController().signal,
-        openBroker: async () => reason === 'broker_open_refused' ? { ok: false, reasonCode: 'broker_unavailable' } : opened,
-        admitConsumer: async () => {
-          admissionReads++;
-          return reason !== 'admission_refused' || (variant === 'post_discovery' && admissionReads === 1)
-            ? { ok: true } : { ok: false, reasonCode: 'session_not_active' };
+        openBroker: async () => {
+          homeReads++;
+          if (reason === 'broker_open_refused') return { ok: false, reasonCode: 'broker_unavailable' };
+          return variant === 'refresh' && homeReads > 1 ? { ok: false, reasonCode: 'resource_unavailable' } : opened;
         },
         openTunnel,
         fetchImpl: async (request, options) => {
@@ -92,19 +92,20 @@ describe('personal connection broker consumer', () => {
             name: 'private-name-do-not-log', code: 'private-code-do-not-log',
           });
           return new Response(null, { status: httpStatus ?? 204,
-            headers: { 'x-happier-provider-endpoint-path': httpStatus === 204 ? 'https://private.example/?token=do-not-log' : '/' } });
+            headers: { 'x-happier-provider-endpoint-path': httpStatus === 204 ? 'https://private.example/?token=do-not-log' : '/',
+              ...(variant === 'typed_http' ? { 'x-happier-provider-broker-error-code': 'resource_unavailable' } : {}) } });
         },
       }).then(() => { throw new Error('Expected broker refusal'); }, (error: unknown) => error);
       // Tunnel exceptions retain their existing shape; diagnostics must not alter settlement.
       if (reason !== 'tunnel_open_failed' && variant !== 'signature') expect(ProviderErrorV1Schema.parse(error).code).toBe('provider_endpoint_unavailable');
       const records = warning.mock.calls.filter(([label]) => label === '[ProviderBroker] Account connection open refused');
       const diagnostic = {
-        ...(reason === 'admission_refused' ? { admissionReasonCode: 'session_not_active' } : {}),
         ...(reason === 'broker_open_refused' ? { admissionReasonCode: 'broker_unavailable' } : {}),
+        ...(variant === 'refresh' || variant === 'typed_http' ? { admissionReasonCode: 'resource_unavailable' } : {}),
         reason, ...(httpStatus === undefined ? {} : { httpStatus }),
         ...(reason === 'endpoint_discovery_failed' ? { discoveryCause: variant === 'socket' ? 'socket_closed'
           : variant === 'timeout' ? 'timeout' : variant === 'abort' ? 'aborted' : variant === 'unknown' ? 'transport_error'
-            : httpStatus === 204 ? 'invalid_metadata' : 'http_response' } : {}),
+            : variant === 'refresh' ? 'broker_refresh_refused' : httpStatus === 204 ? 'invalid_metadata' : 'http_response' } : {}),
       };
       expect(records).toEqual([['[ProviderBroker] Account connection open refused', diagnostic]]);
       expect(readAccountConnectionProviderBrokerFailureDiagnostic(error)).toEqual(diagnostic);
@@ -112,12 +113,10 @@ describe('personal connection broker consumer', () => {
       for (const privateValue of ['do-not-log', 'synthetic-private', 'home-1', 'account-1', 'gateway-1', 'worker-1', 'hub-1', 'a'.repeat(64), opened.authority.signature.valueBase64Url]) {
         expect(serialized).not.toContain(privateValue);
       }
-      if (reason === 'admission_refused' && variant !== 'post_discovery') {
+      if (variant === 'refresh') {
+        expect(homeReads).toBe(2); // Refusal settles without a new Home read or native dial.
         expect(nativeOpens).toBe(0);
-        expect(publishedClosed).toBe(false);
-        expect(retirementAcknowledged).toBe(false);
-      }
-      if (reason === 'endpoint_discovery_failed' || variant === 'post_discovery') {
+      } else if (reason === 'endpoint_discovery_failed') {
         expect(publishedClosed).toBe(true);
         expect(retirementAcknowledged).toBe(true);
       }
@@ -183,7 +182,7 @@ describe('personal connection broker consumer', () => {
       resolveTrustRoots: () => [{ keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') }], nowMs: () => 150 });
     const access = await openAccountConnectionProviderBrokerAccess({ homeId: 'home-1', accountId: 'account-1',
       initiatorMachineId: 'worker-1', targetMachineId: 'hub-1', connectionId, consumer, application, ...capturedFacts,
-      signal: new AbortController().signal, openBroker: async () => opened, admitConsumer: async () => ({ ok: true }),
+      signal: new AbortController().signal, openBroker: async () => opened,
       openTunnel });
     const binding = await access.readHttpBinding();
     let cleanup: Promise<void> | null = null;
@@ -200,12 +199,15 @@ describe('personal connection broker consumer', () => {
   });
   it('publishes only the exact admitted source and forwards streamed bytes without replay', async () => {
     let effects = 0;
+    let admitted = true;
+    let openReads = 0;
     let declaredEndpointPath = '/';
     const server = createServer((request, response) => {
       if (request.url === '/v1/_happier/provider-broker/endpoint') {
         response.writeHead(204, { 'x-happier-provider-endpoint-path': declaredEndpointPath }).end();
         return;
       }
+      if (!admitted) { response.writeHead(403).end(); return; }
       effects++;
       response.writeHead(200, { 'content-type': 'text/event-stream' });
       response.end('data: admitted\n\n');
@@ -229,49 +231,36 @@ describe('personal connection broker consumer', () => {
       target: { custodianAccountId: 'account-1', brokerMachineId: 'hub-1', endpointId: 'b'.repeat(64), endpointRevision: 1,
         endpoint: { endpointId: 'b'.repeat(64) } },
     };
-    let admitted = true;
-    let admittedResponseReads = 0;
-    // The Home adapter has already decoded this typed response. Count field reads
-    // to detect another schema traversal inside the consumer, without mocking it.
-    const admittedResponse = { get ok(): true { admittedResponseReads++; return true; } };
-    let pendingAdmission: Promise<ProviderBrokerAccountAdmissionResponseV2> | null = null;
     let carrierClosed = false;
     let retirementAttempt = 0;
     try {
       const access = await openAccountConnectionProviderBrokerAccess({ homeId: 'home-1', accountId: 'account-1',
         initiatorMachineId: 'worker-1', targetMachineId: 'hub-1', connectionId, consumer, application, ...capturedFacts,
-        signal: new AbortController().signal, openBroker: async () => opened,
-        admitConsumer: async () => pendingAdmission ? await pendingAdmission
-          : admitted ? admittedResponse : { ok: false, reasonCode: 'session_not_active' },
+        signal: new AbortController().signal, openBroker: async () => { openReads++; return opened; },
         openTunnel: async () => ({ localPort: address.port, localCapability: 'c'.repeat(64), observedPath: 'relay',
           retire: async () => { if (++retirementAttempt === 1) throw new Error('Home is unavailable during retirement'); },
           close: async () => { carrierClosed = true; } }) });
       const result = await access.access.request({ method: 'POST', pathAndQuery: '/v1/messages', body: new TextEncoder().encode('{}') });
-      expect(await new Response(result.body).text()).toBe('data: admitted\n\n');
+      expect(await new Response(await readProviderBrokerResponseBody(result.body)).text()).toBe('data: admitted\n\n');
       expect(effects).toBe(1);
-      expect(admittedResponseReads).toBe(3); // Pre/post-discovery admission and this fresh request, once each.
+      // The Home-issued open and target per-request admission are the owners;
+      // reading this local binding must not add another Home round trip.
+      expect(openReads).toBe(1);
       admitted = false;
-      const refusal = await access.readHttpBinding().catch((error: unknown) => error);
-      expect(refusal).toMatchObject({ code: 'provider_endpoint_unavailable' });
-      expect(readAccountConnectionProviderBrokerFailureDiagnostic(refusal)).toEqual({
-        reason: 'admission_refused', admissionReasonCode: 'session_not_active',
-      });
+      await expect(access.readHttpBinding()).resolves.toHaveProperty('endpointUrl');
+      expect(await access.access.request({ method: 'POST', pathAndQuery: '/v1/messages' })).toMatchObject({ status: 403 });
+      expect(openReads).toBe(1);
       expect(effects).toBe(1);
       admitted = true;
       await expect(access.readHttpBinding()).resolves.toMatchObject({ endpointUrl: `http://127.0.0.1:${address.port}/` });
-      let finishAdmission!: (value: ProviderBrokerAccountAdmissionResponseV2) => void;
-      pendingAdmission = new Promise<ProviderBrokerAccountAdmissionResponseV2>(resolve => { finishAdmission = resolve; });
-      const pendingBinding = access.readHttpBinding();
       await expect(access.cleanup()).rejects.toThrow('Home is unavailable during retirement');
       expect(carrierClosed).toBe(true);
-      finishAdmission({ ok: true });
-      await expect(pendingBinding).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
       await expect(access.cleanup()).resolves.toBeUndefined();
       expect(effects).toBe(1);
       await expect(access.readHttpBinding()).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
       await expect(openAccountConnectionProviderBrokerAccess({ homeId: 'home-1', accountId: 'account-1',
         initiatorMachineId: 'worker-1', targetMachineId: 'different-hub', connectionId, consumer, application, ...capturedFacts,
-        signal: new AbortController().signal, openBroker: async () => opened, admitConsumer: async () => ({ ok: true }),
+        signal: new AbortController().signal, openBroker: async () => opened,
         openTunnel: async () => { throw new Error('unadmitted transport reached'); } })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
       const runConsumer = { kind: 'execution_run', executionRunId: 'run-1' } as const;
       const runOpened: Extract<ProviderBrokerAccountOpenResponseV2, { ok: true }> = { ...opened,
@@ -280,12 +269,12 @@ describe('personal connection broker consumer', () => {
       await expect(openAccountConnectionProviderBrokerAccess({ homeId: 'home-1', accountId: 'account-1',
         initiatorMachineId: 'worker-1', targetMachineId: 'hub-1', connectionId, consumer: runConsumer, application, ...capturedFacts,
         executionRunOccurrenceId: 'captured-other-occurrence', signal: new AbortController().signal,
-        openBroker: async () => runOpened, admitConsumer: async () => ({ ok: true }),
+        openBroker: async () => runOpened,
         openTunnel: async () => { throw new Error('Different Run occurrence reached transport'); } })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });
       const runAccess = await openAccountConnectionProviderBrokerAccess({ homeId: 'home-1', accountId: 'account-1',
         initiatorMachineId: 'worker-1', targetMachineId: 'hub-1', connectionId, consumer: runConsumer, application, ...capturedFacts,
         executionRunOccurrenceId: 'current-occurrence', signal: new AbortController().signal,
-        openBroker: async () => runOpened, admitConsumer: async () => ({ ok: true }),
+        openBroker: async () => runOpened,
         openTunnel: async () => ({ localPort: address.port, localCapability: 'd'.repeat(64), observedPath: 'direct',
           retire: async () => {}, close: async () => {} }) });
       await expect(runAccess.readHttpBinding()).resolves.toMatchObject({ endpointUrl: `http://127.0.0.1:${address.port}/` });
@@ -295,7 +284,7 @@ describe('personal connection broker consumer', () => {
       let unpublishedClosed = false;
       await expect(openAccountConnectionProviderBrokerAccess({ homeId: 'home-1', accountId: 'account-1',
         initiatorMachineId: 'worker-1', targetMachineId: 'hub-1', connectionId, consumer, application, ...capturedFacts,
-        signal: new AbortController().signal, openBroker: async () => opened, admitConsumer: async () => ({ ok: true }),
+        signal: new AbortController().signal, openBroker: async () => opened,
         openTunnel: async () => ({ localPort: address.port, localCapability: 'e'.repeat(64), observedPath: 'direct',
           retire: async () => { unpublishedRetired = true; }, close: async () => { unpublishedClosed = true; } }),
       })).rejects.toMatchObject({ code: 'provider_endpoint_unavailable' });

@@ -3,7 +3,7 @@ import axios from 'axios';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS, ProviderConnectionIdSchema, ProviderSettingsV1Schema, SessionModelSelectionV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema, ProviderSettingsV1Schema, SessionModelSelectionV1Schema, splitProviderSettingsV1 } from '@happier-dev/protocol';
 import { ProviderConnectionsRowMutationV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { DaemonProviderBindingStatusResponseV1Schema, DaemonProviderModelProjectionRequestV1Schema, DaemonProviderModelProjectionResponseV1Schema, DaemonProviderModelsResponseV1Schema, DaemonProviderProbeResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -39,6 +39,7 @@ import { createSessionProviderInputConsumer } from '@/agent/runtime/session/inpu
 import { registerMachineProviderRpcHandlers } from '@/api/machine/rpcHandlers.providers';
 import { createLegacyProfileMigrationRpcServices } from '@/providers/migrations/rpc';
 import type { RpcOperationDiagnostics } from '@/api/rpc/types';
+import { MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
 import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '@/daemon/connectedServices/accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import type { QualifiedConnectedAccountGroupV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
@@ -54,7 +55,7 @@ vi.mock('socket.io-client', () => ({ io: socketBoundary.io }));
 vi.mock('@/session/transport/rpc/machineRpc', () => ({ callExactMachineRpc: transport.call }));
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); transport.call.mockReset(); });
 
-it.each(['deadline', 'cancelled'] as const)('settles Gateway binding status during a pending purpose Home read on %s', reason =>
+it.each(['cancelled'] as const)('settles Gateway binding status during a pending purpose Home read on %s', reason =>
   withConfiguredDaemonTestHome({ prefix: 'gateway-binding-status-lifetime-' }, async ({ homeDir }) => {
     let entered = () => {};
     let release = () => {};
@@ -110,20 +111,15 @@ it.each(['deadline', 'cancelled'] as const)('settles Gateway binding status duri
       const controller = new AbortController();
       const request = { machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey, selection,
         launchBinding: authorization.authorization.sessionBindingMetadata };
-      if (reason === 'deadline') vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
       let settled = false;
       pending = rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_BINDING_STATUS, request, { signal: controller.signal })
-        .then(result => { settled = true; return result; });
+        .finally(() => { settled = true; });
+      void pending.catch(() => {});
       await Promise.race([homeEntered, pending.then(result => { throw new Error(`Settled before Home read: ${JSON.stringify(result)}`); })]);
-      if (reason === 'deadline') {
-        await vi.advanceTimersByTimeAsync(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs + 1);
-        expect(settled).toBe(true);
-      } else {
-        controller.abort();
-        await vi.waitFor(() => expect(settled).toBe(true));
-      }
-      expect(DaemonProviderBindingStatusResponseV1Schema.parse(await pending)).toMatchObject({ status: 'incompatible',
-        error: { code: 'provider_catalog_unavailable', retryable: true, action: 'retry' } });
+      const cancelled = expect(pending).rejects.toMatchObject({ reason: 'cancelled' });
+      controller.abort();
+      await vi.waitFor(() => expect(settled).toBe(true));
+      await cancelled;
       expect(homeSignal?.aborted).toBe(true);
       expect(logs).toHaveBeenCalledWith('[RPC] Request completed', expect.objectContaining({
         method: RPC_METHODS.DAEMON_PROVIDERS_BINDING_STATUS, failedPhase: 'purpose_bindings', causeCode: reason,
@@ -133,7 +129,7 @@ it.each(['deadline', 'cancelled'] as const)('settles Gateway binding status duri
       release(); holdHome = false; vi.useRealTimers();
       expect(DaemonProviderBindingStatusResponseV1Schema.parse(await rpc.invokeLocal(
         RPC_METHODS.DAEMON_PROVIDERS_BINDING_STATUS, request))).toEqual({ status: 'current' });
-    } finally { release(); vi.useRealTimers(); await pending; await fixture.cleanup(); }
+    } finally { release(); vi.useRealTimers(); await pending?.catch(() => {}); await fixture.cleanup(); }
   }));
 
 it.each(['admission', 'pre-launch'] as const)('keeps a requester Home outage retryable at %s instead of reporting changed authorization', phase =>
@@ -166,9 +162,10 @@ it.each(['admission', 'pre-launch'] as const)('keeps a requester Home outage ret
         } }),
       });
       const request = { connectionId: 'run-gateway', machineId: fixture.machineId };
-      expect(DaemonProviderProbeResponseV1Schema.parse(await services.probe(request))).toMatchObject({ status: 'error', error: {
-        code: 'provider_catalog_unavailable', retryable: true, action: 'retry',
-      } });
+      const admitted = DaemonProviderProbeResponseV1Schema.parse(await services.probe(request));
+      expect(admitted).toMatchObject(phase === 'admission'
+        ? { status: 'error', error: { code: 'provider_catalog_unavailable', retryable: true, action: 'retry' } }
+        : { status: 'success' });
       injectOutage = false;
       unavailable = false;
       const diagnostics = vi.fn<(value: RpcOperationDiagnostics) => void>();
@@ -195,7 +192,7 @@ it.each([
   { phase: 'managed_runtime', local: false },
   { phase: 'purpose_bindings', local: true },
 ] as const)(
-  'identifies $phase when the saved probe deadline expires on the existing RPC completion line (local=$local)', ({ phase, local }) =>
+  'identifies $phase when the saved probe is cancelled on the existing RPC completion line (local=$local)', ({ phase, local }) =>
   withConfiguredDaemonTestHome({ prefix: 'gateway-catalog-deadline-' }, async ({ homeDir }) => {
     let entered = () => {};
     let release = () => {};
@@ -251,23 +248,27 @@ it.each([
         } });
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
       const request = { connectionId: 'run-gateway', machineId: fixture.machineId };
-      pending = local ? rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_PROBE, request)
-        : rpc.handleRequest({ method: `${fixture.machineId}:${RPC_METHODS.DAEMON_PROVIDERS_PROBE}`, params: request });
+      const caller = new AbortController();
+      pending = local ? rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_PROBE, request, { signal: caller.signal })
+        : rpc.handleRequest({ method: `${fixture.machineId}:${RPC_METHODS.DAEMON_PROVIDERS_PROBE}`, params: request, timeoutMs: 100 });
+      void pending.catch(() => {});
       await Promise.race([targetEntered, pending.then(result => { throw new Error(`Probe settled before the boundary: ${JSON.stringify(result)}`); })]);
-      await vi.advanceTimersByTimeAsync(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs + 1);
-      expect(await pending).toMatchObject({ status: 'error', error: {
-        code: 'provider_catalog_unavailable', retryable: true, action: 'retry',
-      } });
+      const cancelled = local ? expect(pending).rejects.toMatchObject({ reason: 'cancelled' }) : null;
+      if (local) caller.abort();
+      else await vi.advanceTimersByTimeAsync(101);
+      if (cancelled) await cancelled;
+      else if (phase === 'purpose_bindings') expect(await pending).toMatchObject({ errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE });
+      else expect(await pending).toMatchObject({ status: 'error', error: { code: 'provider_endpoint_unavailable' } });
       if (phase !== 'managed_runtime') expect(homeSignal?.aborted).toBe(true);
       expect(logs).toHaveBeenCalledWith('[RPC] Request completed', expect.objectContaining({
-        method: RPC_METHODS.DAEMON_PROVIDERS_PROBE, failedPhase: phase, causeCode: 'deadline',
+        method: RPC_METHODS.DAEMON_PROVIDERS_PROBE, failedPhase: phase, causeCode: 'cancelled',
         phaseDurationsMs: expect.objectContaining({ [phase]: expect.any(Number) }),
         phaseTimingsMs: expect.arrayContaining([expect.objectContaining({ phase,
           startedAtMs: expect.any(Number), finishedAtMs: expect.any(Number), durationMs: expect.any(Number) })]),
       }));
       expect(JSON.stringify(logs.mock.calls)).not.toMatch(/fixture-token|upstream-account|run-gateway/);
     } finally {
-      release(); vi.useRealTimers(); await pending; await fixture.cleanup();
+      release(); vi.useRealTimers(); await pending?.catch(() => {}); await fixture.cleanup();
     }
   }));
 
@@ -301,7 +302,8 @@ it.each(['deadline', 'caller cancellation'] as const)('aborts the pre-effect Hom
         resolveQualifiedConnectedAccountV4Support: () => 'advertised',
         establishedRuntimeOwner: { invokeWithReceipt: unavailable, invokeDirectMaterial: unavailable },
         store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
-        qualifiedApi: { listAccounts, listGroups: unavailable, readGroup: async (_group, signal) => {
+        qualifiedApi: { listAccountsForServices: async services => ({ services, accounts: (await listAccounts()).accounts }),
+          listAccounts, listGroups: unavailable, readGroup: async (_group, signal) => {
           groupReads += 1;
           if (groupReads > 1) { homeSignal = signal; enter(); await released; }
           return group;
@@ -338,17 +340,19 @@ it.each(['deadline', 'caller cancellation'] as const)('aborts the pre-effect Hom
       // Cancel the containing authorization operation. A public probe waiter
       // can detach without cancelling already-admitted shared scheduler work.
       pending = authorization.authorize(request, { lifetime: createProviderOperationLifetime({ signal: caller.signal,
-        wallTimeMs: PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs }) });
+        wallTimeMs: 100 }) });
+      void pending.catch(() => {});
       await Promise.race([entered, pending.then(result => { throw new Error(`Probe settled before the Home read: ${JSON.stringify(result)}`); })]);
-      if (abandonment === 'deadline') await vi.advanceTimersByTimeAsync(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs + 1);
+      const cancelled = expect(pending).rejects.toMatchObject({ reason: abandonment === 'deadline' ? 'deadline' : 'cancelled' });
+      if (abandonment === 'deadline') await vi.advanceTimersByTimeAsync(101);
       else caller.abort();
-      expect(await pending).toMatchObject({ ok: false, error: { code: 'provider_catalog_unavailable' } });
+      await cancelled;
       expect(homeSignal?.aborted).toBe(true);
       expect(listAccounts).toHaveBeenCalledTimes(1);
       release();
       await vi.advanceTimersByTimeAsync(0);
       expect(listAccounts).toHaveBeenCalledTimes(1);
-    } finally { release(); vi.useRealTimers(); await pending; await fixture.cleanup(); }
+    } finally { release(); vi.useRealTimers(); await pending?.catch(() => {}); await fixture.cleanup(); }
   }));
 
 it('composes G1 Gateway setup, hub and peer tool turns, isolation, outage, Pending, slow auth and grant recovery', () =>
@@ -497,6 +501,11 @@ it('composes G1 Gateway setup, hub and peer tool turns, isolation, outage, Pendi
       const grant = await setEnabled(true);
       expect(grant, JSON.stringify(grant)).toMatchObject({ status: 'success' });
       expect(catalog.machineGrants.some(grant => grant.machineId === peerId)).toBe(true);
+      expect(grant).toMatchObject({ status: 'success', connection: {
+        authorized: true, grants: { machineState: 'valid' },
+        runtime: { health: 'not_checked', modelCount: null },
+      } });
+      expect(transport.call).not.toHaveBeenCalled();
       expect(await peer.probe(request)).toMatchObject({ status: 'success', models: [{ id: 'gateway-model' }] });
       expect(await peer.models(request)).toMatchObject({ status: 'success', connectionId: request.connectionId,
         models: expect.arrayContaining([expect.objectContaining({ id: 'gateway-model' })]) });
@@ -566,7 +575,7 @@ it('composes G1 Gateway setup, hub and peer tool turns, isolation, outage, Pendi
         await Promise.race([answered, admission.then(result => {
           if (!result.ok) throw new Error(`Peer admission refused before its hub read: ${result.error.code}`);
         })]);
-        await vi.advanceTimersByTimeAsync(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs + 5_000);
+        await vi.advanceTimersByTimeAsync(35_000);
         releaseReply();
         const admitted = await admission;
         expect(admitted, JSON.stringify(admitted)).toMatchObject({ ok: true });
@@ -615,7 +624,7 @@ it('composes G1 Gateway setup, hub and peer tool turns, isolation, outage, Pendi
         expect(await setEnabled(false)).toMatchObject({ status: 'success' });
         return reply;
       });
-      expect(await peer.probe(request)).toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
+      expect(await peer.probe(request)).toMatchObject({ status: 'success', models: [{ id: 'gateway-model' }] });
       transport.call.mockClear();
       expect(await peer.probe(request)).toMatchObject({ status: 'error', error: { code: 'provider_not_enabled_on_machine' } });
       expect(transport.call).not.toHaveBeenCalled();
@@ -646,8 +655,8 @@ it('composes G1 Gateway setup, hub and peer tool turns, isolation, outage, Pendi
         expect(await setEnabled(false)).toMatchObject({ status: 'success' });
         return reply;
       });
-      expect(await projectPeerModels()).toMatchObject({ status: 'success', groups: [],
-        refreshFailures: [{ error: { code: 'provider_authorization_changed' } }] });
+      expect(await projectPeerModels()).toMatchObject({ status: 'success',
+        groups: [{ connectionId: 'run-gateway', authorization: { authorized: true } }] });
       transport.call.mockClear();
       expect(await projectPeerModels()).toMatchObject({ status: 'success', groups: [],
         refreshFailures: [{ error: { code: 'provider_not_enabled_on_machine' } }] });

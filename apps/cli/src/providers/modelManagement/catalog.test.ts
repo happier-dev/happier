@@ -194,13 +194,11 @@ describe('provider model-load catalog port', () => {
     })).resolves.toMatchObject({ status: 'listed', loadState: 'loaded' });
     const controller = new AbortController();
     await expect(port.refresh({
-      connectionId: 'connection-a', machineId: 'machine-a', modelId: 'model-a',
-      refreshFrontier: 'dispatch-a', ticket, signal: controller.signal, scope,
+      connectionId: 'connection-a', machineId: 'machine-a',
+      ticket, signal: controller.signal, scope,
     })).resolves.toMatchObject({ status: 'success' });
     expect(refresh).toHaveBeenCalledWith({
       ...resolved,
-      modelId: 'model-a',
-      refreshFrontier: 'dispatch-a',
       signal: controller.signal,
       operationScope: { lifetime: scope.lifetime },
     });

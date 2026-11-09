@@ -1,8 +1,25 @@
-import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
+import type { ManagedServiceResponse } from '@happier-dev/plugin-sdk/managed-services';
 
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
+
+/** Consume the SDK's reader boundary without assuming a native Web stream. */
+export async function readProviderBrokerResponseBody(body: ManagedServiceResponse['body']): Promise<Uint8Array<ArrayBuffer>> {
+  if (!body) return Buffer.alloc(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks);
+}
 
 /** Declared gateway fixture: the real registry/projection owners are exercised. */
 export function createBrokerProviderRegistry(): ProviderContributionRegistryView {
@@ -34,20 +51,4 @@ export function createBrokerProviderRegistry(): ProviderContributionRegistryView
     identity, pluginId: identity.pluginId, definition, provenance: 'external', source: { kind: 'path' },
   };
   return { providersByContributionKey: new Map([[`${identity.pluginId}/${identity.localId}`, provider]]) };
-}
-
-export async function readProviderBrokerResponseBody(body: ManagedServiceResponse['body']): Promise<Uint8Array<ArrayBuffer>> {
-  if (!body) return Buffer.alloc(0);
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      chunks.push(next.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return Buffer.concat(chunks);
 }

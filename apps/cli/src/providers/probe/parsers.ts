@@ -1,4 +1,3 @@
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import { ProviderCatalogParserV1Schema, readBundledProviderCatalogParserFactV1 } from '@happier-dev/protocol/providers/catalog/descriptorV1';
 import { ProviderCatalogProbeModelV1Schema } from '@happier-dev/protocol/providers/catalog/merge';
 import { ProviderModelLoadStateV1Schema } from '@happier-dev/protocol/providers/runtimeState/v1';
@@ -29,9 +28,6 @@ function ownDataProperty(value: unknown, key: string): unknown {
 
 function boundedArray(value: unknown, label: string): readonly unknown[] {
   if (!Array.isArray(value)) throw new TypeError(`${label} must be an array`);
-  if (value.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxModels) {
-    throw new TypeError(`${label} exceeds the model limit`);
-  }
   return value;
 }
 
@@ -122,22 +118,20 @@ function readAnthropicEffortCapability(value: unknown): Readonly<{
 function optionalOwnStringArray(
   value: unknown,
   key: string,
-  options: Readonly<{ maxItems: number; maxItemLength: number }>,
 ): readonly string[] | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new TypeError('Provider model row must be an object');
   }
   const descriptor = Object.getOwnPropertyDescriptor(value, key);
   if (!descriptor) return undefined;
-  if (!descriptor.enumerable || !('value' in descriptor) || !Array.isArray(descriptor.value)
-    || descriptor.value.length > options.maxItems) {
-    throw new TypeError(`Provider model ${key} must be a bounded string array`);
+  if (!descriptor.enumerable || !('value' in descriptor) || !Array.isArray(descriptor.value)) {
+    throw new TypeError(`Provider model ${key} must be a string array`);
   }
   return descriptor.value.map((_entry, index) => {
     const item = Object.getOwnPropertyDescriptor(descriptor.value, String(index));
     if (!item || !item.enumerable || !('value' in item)
-      || typeof item.value !== 'string' || item.value.length > options.maxItemLength) {
-      throw new TypeError(`Provider model ${key} must be a bounded string array`);
+      || typeof item.value !== 'string') {
+      throw new TypeError(`Provider model ${key} must be a string array`);
     }
     return item.value;
   });
@@ -205,10 +199,7 @@ function parseOllamaTags(input: unknown): ParsedProviderCatalogResponse {
   const rows = boundedArray(ownDataProperty(input, 'models'), 'Ollama model list');
   return {
     models: normalizeModels(rows.flatMap((row) => {
-      const capabilities = optionalOwnStringArray(row, 'capabilities', {
-        maxItems: 32,
-        maxItemLength: 64,
-      });
+      const capabilities = optionalOwnStringArray(row, 'capabilities');
       // Newer Ollama versions expose exact model capabilities on /api/tags.
       // A row explicitly lacking completion support cannot serve a coding-agent
       // session. Older versions omit this field, so absence remains unknown and

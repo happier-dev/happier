@@ -4,6 +4,37 @@ import type {RegistrySourceV1} from '@happier-dev/protocol/registries';
 import {RegistrySourceStatusV1Schema} from '@happier-dev/protocol/registries';
 const source:RegistrySourceV1={id:'repo',title:'Repo',url:'https://github.com/a/b',format:'git',kinds:['skill'],enabled:true,addedAt:0,token:{secretRef:'secret'}};
 describe('registry HTTP boundary',()=>{
+  it('uses the admitted Account credential for a GitHub source without a source token',async()=>{
+    const {token:_token,...publicSource}=source;
+    let authorization:string|null=null;
+    const http=createRegistryHttpV1({resolveToken:async()=> ({value:'connected-account-fixture',origin:'https://api.github.com'}),fetch:async(_url,init)=>{
+      authorization=new Headers(init?.headers).get('authorization');return Response.json({sha:'current'});
+    }});
+    await expect(http.getJson('https://api.github.com/repos/a/b/commits/main',{source:publicSource}))
+      .resolves.toMatchObject({ok:true,value:{sha:'current'}});
+    expect(authorization).toBe('Bearer connected-account-fixture');
+    await http.getJson('https://api.github.com/repos/a/b/commits/main',{source:{...publicSource,url:'https://github.com/a/b.git'}});
+    expect(authorization).toBe('Bearer connected-account-fixture');
+    await http.getText('https://raw.githubusercontent.com/a/b/current/SKILL.md',{source:publicSource});
+    expect(authorization).toBeNull();
+  });
+  it('does not let an anonymous throttle suppress an authenticated request or another credential',async()=>{
+    const url='https://registry-credential-budgets.example/catalog';
+    const {token:_token,...publicSource}=source;
+    let calls=0;
+    const transport:typeof fetch=async(_url,init)=>{
+      calls++;
+      return new Headers(init?.headers).get('authorization')==='Bearer available-fixture'
+        ?Response.json({items:['available']}):new Response(null,{status:429,headers:{'retry-after':'60'}});
+    };
+    await expect(createRegistryHttpV1({fetch:transport}).getJson(url,{source:{...publicSource,url}}))
+      .resolves.toMatchObject({ok:false,status:{state:'rate_limited'}});
+    await expect(createRegistryHttpV1({fetch:transport,resolveToken:async()=> 'limited-fixture'}).getJson(url,{source:{...source,url}}))
+      .resolves.toMatchObject({ok:false,status:{state:'rate_limited'}});
+    await expect(createRegistryHttpV1({fetch:transport,resolveToken:async()=> 'available-fixture'}).getJson(url,{source:{...source,url}}))
+      .resolves.toMatchObject({ok:true,value:{items:['available']}});
+    expect(calls).toBe(3);
+  });
   it('allows a rejected-token check at the upstream reset across Action host factories',async()=>{
     vi.useFakeTimers();
     try {

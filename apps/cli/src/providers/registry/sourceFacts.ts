@@ -36,14 +36,16 @@ export function resolveProviderSourceFacts(record: ResolvedProviderConnectionRec
       contributionKey: source.kind === 'contribution' ? source.contributionKey : null,
     };
   }
-  const endpointTemplates = rawEndpoints.map((template) => {
+  const endpointTemplates = rawEndpoints.flatMap((template) => {
     const endpoint = record.endpoints.find((candidate) => candidate.endpointTemplateId === template.id);
-    if (!endpoint) throw new TypeError('Resolved provider endpoint is missing its source template');
-    return ProviderEndpointTemplateV1Schema.parse({
+    if (!endpoint) return [];
+    return [ProviderEndpointTemplateV1Schema.parse({
       ...template,
       baseUrl: endpoint.normalizedUrl,
+      requiresEndpointOverride: undefined,
       localUrlCandidates: undefined,
-    });
+      publicHeaders: endpoint.publicHeaders,
+    })];
   });
   return {
     endpointTemplates,

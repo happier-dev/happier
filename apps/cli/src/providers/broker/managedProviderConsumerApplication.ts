@@ -6,6 +6,7 @@ import type { ProviderCredentialTransportV1 } from '@happier-dev/protocol';
 import { renderProviderProbeCredential } from '@/providers/spawn/runtimeCredential';
 import { startProviderBrokerApplicationServer } from './providerBrokerApplicationServer';
 import type { ProviderBrokerRequestHandler } from './providerBrokerRequestHandler';
+import { sanitizeProviderBrokerRequestV1 } from './requestPolicyV1';
 
 /** Stable consumer delivery only; its request port retains source admission and upstream custody. */
 export async function startManagedProviderConsumerApplication(input: Readonly<{
@@ -33,16 +34,18 @@ export async function startManagedProviderConsumerApplication(input: Readonly<{
                 const expected = Buffer.from(renderedCredential, 'utf8');
                 return presented.length === expected.length && timingSafeEqual(presented, expected);
             },
-            request: request => {
+            request: async request => {
                 const headers = Object.fromEntries(Object.entries(request.headers ?? {}).flatMap(([name, value]) => {
                     if (name.toLowerCase() === localCredentialHeader || name.toLowerCase() === 'x-happier-machine-local-capability') return [];
                     // Downstream access credentials never reach any upstream
                     // transport; source-owned headers are added by that owner.
                     return [[name, value]];
                 }));
-                return input.request({ ...request, headers,
-                    signal: AbortSignal.any([input.signal, lifetime.signal, ...(request.signal ? [request.signal] : [])]),
-                });
+                const signal = AbortSignal.any([input.signal, lifetime.signal, ...(request.signal ? [request.signal] : [])]);
+                const sanitized = sanitizeProviderBrokerRequestV1({ ...request, headers, signal });
+                return sanitized
+                    ? input.request({ ...sanitized, signal })
+                    : { ok: false, reasonCode: 'request_malformed' };
             },
         },
     });

@@ -1,4 +1,3 @@
-import type { AgentProviderCredentialTransport } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderCredentialTransportV1, ProviderErrorV1, ProviderWireProtocol, ProviderSettingsV1 } from '@happier-dev/protocol';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
@@ -47,6 +46,7 @@ export type ProviderConnectionBrokerSourceSnapshot = Readonly<{
   endpointSetFingerprint: string;
   grantFingerprint: string;
   activationOccurrenceId: string | null;
+  requestCostDeclared?: true;
   endpoint: Readonly<{
     endpointTemplateId: string;
     normalizedUrl: string;
@@ -62,7 +62,7 @@ export type ResolveProviderConnectionBrokerSourceInput = Readonly<{
   machineId: string;
   endpointTemplateId: string;
   protocol: ProviderWireProtocol;
-  expectedCredentialTransport?: AgentProviderCredentialTransport;
+  expectedCredentialTransport?: ProviderCredentialTransportV1;
   accountSettings: unknown;
   providerSettings: ProviderSettingsV1;
   savedSecretMaterializer: SavedSecretMaterializerV1;
@@ -116,7 +116,7 @@ function fail(
 function selectCredential(input: Readonly<{
   record: ResolvedProviderConnectionRecord;
   protocol: ProviderWireProtocol;
-  expectedTransport?: AgentProviderCredentialTransport;
+  expectedTransport?: ProviderCredentialTransportV1;
 }>): Readonly<{ slotId: string; transport: ProviderCredentialTransportV1 }> | null {
   const credential = input.record.source.kind === 'contribution'
     ? input.record.source.definition.credential
@@ -127,7 +127,7 @@ function selectCredential(input: Readonly<{
     && candidate.protocols.includes(input.protocol)
     && candidate.destination.kind === 'httpHeader'
   ));
-  // The private CPX final hop can carry exactly one HTTP-header credential.
+  // The private CPX final hop carries the selected primary and required companion headers.
   // Other transports for the same Provider protocol are valid for their
   // native Agent consumers and must not make this adapter ambiguous.
   const selected = input.expectedTransport
@@ -136,14 +136,15 @@ function selectCredential(input: Readonly<{
         && JSON.stringify(candidate) === JSON.stringify(input.expectedTransport)
       )) ?? null
     : transports.length === 1 ? transports[0]! : null;
-  if (!selected) return null;
+  if (!selected || selected.additionalCredentials?.some(row => row.destination.kind !== 'httpHeader')) return null;
   return { slotId: credential.slotId, transport: selected };
 }
 
 /**
  * Projects the exact current Provider facts required by the Team broker. The
  * Provider registry remains the sole endpoint, grant, catalog and credential
- * binding owner; this adapter does not probe, refresh or decrypt anything.
+ * binding owner. Sealed credential descriptors are opened by the Saved Secret
+ * owner; this adapter never probes, refreshes or acquires native material.
  */
 export function resolveProviderConnectionBrokerSource(
   input: ResolveProviderConnectionBrokerSourceInput,
@@ -216,7 +217,6 @@ export function resolveProviderConnectionBrokerSource(
       }
     }
   }
-
   return {
     ok: true,
     snapshot: {
@@ -231,6 +231,8 @@ export function resolveProviderConnectionBrokerSource(
       machineId: input.machineId,
       connectionRevision: record.connection.revision,
       endpointSetFingerprint: record.endpointSetFingerprint,
+      ...(record.source.definition.requestCost?.endpointTemplateIds.includes(endpoint.endpointTemplateId)
+        ? { requestCostDeclared: true as const } : {}),
       grantFingerprint: record.authorization.grantFingerprint,
       activationOccurrenceId:
         input.registry.providerActivationOccurrenceIdsByPluginId?.get(record.source.pluginId)
@@ -288,7 +290,9 @@ export function resolveProviderConnectionDirectSourceSnapshot(input: Readonly<{
   const candidates = resolution.record.endpoints
     .filter((endpoint) => {
       const credential = selectCredential({ record: resolution.record, protocol: endpoint.protocol });
-      return credential?.slotId === input.source.credentialSlotId;
+      // Direct delivery's current material is one API key; companion sets stay
+      // with the custodian's broker instead of being partially delivered.
+      return credential?.slotId === input.source.credentialSlotId && !credential.transport.additionalCredentials?.length;
     })
     .sort((left, right) => [left.endpointTemplateId, left.protocol, left.normalizedUrl].join('\u0000')
       .localeCompare([right.endpointTemplateId, right.protocol, right.normalizedUrl].join('\u0000')));
@@ -379,53 +383,6 @@ export async function resolveAdmittedProviderConnectionSourceSnapshot(input: Rea
   return resolveFrom(admitted);
 }
 
-function sameSnapshot(
-  left: ProviderConnectionBrokerSourceSnapshot,
-  right: ProviderConnectionBrokerSourceSnapshot,
-): boolean {
-  return left.connectionRevision === right.connectionRevision
-    && left.provider.identity.pluginId === right.provider.identity.pluginId
-    && left.provider.identity.localId === right.provider.identity.localId
-    && left.provider.definitionRevision === right.provider.definitionRevision
-    && left.endpointSetFingerprint === right.endpointSetFingerprint
-    && left.grantFingerprint === right.grantFingerprint
-    && left.activationOccurrenceId === right.activationOccurrenceId
-    && left.endpoint.endpointTemplateId === right.endpoint.endpointTemplateId
-    && left.endpoint.normalizedUrl === right.endpoint.normalizedUrl
-    && left.endpoint.protocol === right.endpoint.protocol
-    && JSON.stringify(left.endpoint.publicHeaders) === JSON.stringify(right.endpoint.publicHeaders)
-    && JSON.stringify(left.endpoint.resolvedAddresses) === JSON.stringify(right.endpoint.resolvedAddresses)
-    && left.credentialRef.transport.id === right.credentialRef.transport.id;
-}
-
-/** Revalidates an opaque Provider source snapshot without disclosing material. */
-export async function isProviderConnectionBrokerSourceCurrent(input: Readonly<{
-  expected: ProviderConnectionBrokerSourceSnapshot;
-  registry: ProviderContributionRegistryView;
-  dnsEvidenceByEndpointUrl: ProviderEndpointDnsEvidence;
-  localCandidateUrlsByConnectionId?: ResolveProviderConnectionBrokerSourceInput['localCandidateUrlsByConnectionId'];
-  getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
-}>): Promise<boolean> {
-  const accountSnapshot = input.getAccountSettingsSnapshot();
-  if (!accountSnapshot) return false;
-  const current = resolveProviderConnectionBrokerSource({
-    source: input.expected.source,
-    machineId: input.expected.machineId,
-    endpointTemplateId: input.expected.endpoint.endpointTemplateId,
-    protocol: input.expected.endpoint.protocol,
-    expectedCredentialTransport: input.expected.credentialRef.transport,
-    accountSettings: accountSnapshot.settings,
-    providerSettings: readProviderSettingsForCli(accountSnapshot).settings,
-    savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(accountSnapshot),
-    registry: input.registry,
-    dnsEvidenceByEndpointUrl: input.dnsEvidenceByEndpointUrl,
-    ...(input.localCandidateUrlsByConnectionId
-      ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
-      : {}),
-  });
-  return current.ok && sameSnapshot(current.snapshot, input.expected);
-}
-
 /** Direct material captures plaintext and therefore pins the exact Saved
  * Secret record. Unlike broker requests, which intentionally acquire the
  * latest value for every request, a rotated direct credential must invalidate
@@ -455,13 +412,14 @@ export async function isProviderConnectionDirectSourceCurrent(input: Readonly<{
         ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
         : {}),
     });
-    if (!current.ok || !sameSnapshot(current.snapshot, input.expected)) return false;
+    if (!current.ok) return false;
     const expectedReference = input.expected.credentialRef.reference;
     const currentReference = current.snapshot.credentialRef.reference;
     return expectedReference.kind === 'apiKey'
       && currentReference.kind === 'apiKey'
       && expectedReference.secretId === currentReference.secretId
-      && expectedReference.secretRecordFingerprint === currentReference.secretRecordFingerprint;
+      && expectedReference.secretRecordFingerprint === currentReference.secretRecordFingerprint
+      && JSON.stringify(expectedReference.additionalCredentials) === JSON.stringify(currentReference.additionalCredentials);
   } catch {
     return false;
   }
@@ -505,15 +463,6 @@ export async function materializeProviderConnectionDirectCredential(input: Reado
       : {}),
   });
   if (!current.ok) return current;
-  if (!sameSnapshot(current.snapshot, input.expected)) {
-    return {
-      ok: false,
-      error: createProviderErrorV1('provider_authorization_changed', {
-        connectionId: input.expected.source.connectionId,
-        machineId: input.expected.machineId,
-      }),
-    };
-  }
   const reference = current.snapshot.credentialRef.reference;
   if (reference.kind === 'team_direct') {
     return {
@@ -562,8 +511,8 @@ export async function materializeProviderConnectionBrokerSource(input: Readonly<
     machineId: input.expected.machineId,
     endpointTemplateId: input.expected.endpoint.endpointTemplateId,
     protocol: input.expected.endpoint.protocol,
-    // The open and its currentness checks already carry the exact selected
-    // transport; final materialization must too, or a Provider publishing
+    // The open already carries the exact selected transport; final
+    // materialization must too, or a Provider publishing
     // several runtime header transports for one protocol becomes ambiguous
     // here and no request can be brokered.
     expectedCredentialTransport: input.expected.credentialRef.transport,
@@ -577,15 +526,6 @@ export async function materializeProviderConnectionBrokerSource(input: Readonly<
       : {}),
   });
   if (!current.ok) return current;
-  if (!sameSnapshot(current.snapshot, input.expected)) {
-    return {
-      ok: false,
-      error: createProviderErrorV1('provider_authorization_changed', {
-        connectionId: input.expected.source.connectionId,
-        machineId: input.expected.machineId,
-      }),
-    };
-  }
   return resolveRuntimeProviderCredential({
     credentialRef: current.snapshot.credentialRef,
     // Materialize from the exact current snapshot whose connection, grant,
@@ -598,11 +538,12 @@ export async function materializeProviderConnectionBrokerSource(input: Readonly<
 
 /**
  * Connects the exact Provider Connection owner to the private CPX/SVC09 data
- * plane. Registry and Settings authority are re-entered for every currentness
- * check and credential acquisition; the bridge receives neither a retained
+ * plane. The open captures source metadata once; credential acquisition uses
+ * that destination and the current Saved Secret. The bridge receives neither a retained
  * plaintext value nor a Provider/Settings object.
  */
 export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
+  acquireRequestCostParser?(identity: Readonly<{ pluginId: string; localId: string }>): Promise<import('@/plugins/projection/registry/types').ResolvedProviderRequestCostParser | null>;
   machineId: string;
   readResource(
     resourceId: string,
@@ -647,35 +588,22 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
   }>;
 }> | null> {
   return async (request) => {
-    if (
-      request.brokerMachineId !== input.machineId
-      || request.signal.aborted
-      || !await input.withRegistry((registry) => isCLIProxyAPIBrokerApplication(registry, request.application))
-    ) return null;
+    if (request.brokerMachineId !== input.machineId || request.signal.aborted) return null;
 
-    const readsResourceCurrent = async (
-      signal: AbortSignal = request.signal,
-    ): Promise<boolean> => {
-      if (signal.aborted) return false;
-      const resource = await input.readResource(request.resourceId, signal);
-      // Enabled, placement and source identity; never the policy revision,
-      // which the Home rechecks per request (`04-private-iroh-broker-transport.md:272`).
-      return teamCredentialBrokerResourceAcceptsMachine(resource, request.brokerMachineId)
-        && sameTeamCredentialBrokerSource(resource.source, request.source);
-    };
-    if (!await readsResourceCurrent()) return null;
-
-    const exactSelectionRequest = request.operation.kind === 'session' || request.operation.kind === 'execution_run'
-      ? await (async () => {
-          const resource = await input.readResource(request.resourceId, request.signal).catch(() => null);
+    const capture = await input.withRegistry(async (registry) => {
+      if (!isCLIProxyAPIBrokerApplication(registry, request.application)) return null;
+      const resource = await input.readResource(request.resourceId, request.signal);
+      if (!teamCredentialBrokerResourceAcceptsMachine(resource, request.brokerMachineId)
+        || !sameTeamCredentialBrokerSource(resource.source, request.source)) return null;
+      const exactSelection = request.operation.kind === 'session' || request.operation.kind === 'execution_run'
+        ? await (async () => {
           if (
             !input.resolveExactSelection
             || !resource?.teamId
             || !request.modelId
             || !request.sourceRevision
           ) return null;
-          return {
-            input: {
+          return await input.resolveExactSelection({
               machineId: input.machineId,
               teamId: resource.teamId,
               resourceId: request.resourceId,
@@ -685,28 +613,14 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
               modelId: request.modelId,
               sourceRevision: request.sourceRevision,
               signal: request.signal,
-            },
-            selection: await input.resolveExactSelection({
-              machineId: input.machineId,
-              teamId: resource.teamId,
-              resourceId: request.resourceId,
-              expectedResourceRevision: request.resourceRevision,
-              source: request.source,
-              application: request.application,
-              modelId: request.modelId,
-              sourceRevision: request.sourceRevision,
-              signal: request.signal,
-            }).catch(() => null),
-          };
+            }).catch(() => null);
         })()
       : null;
-    const exactSelection = exactSelectionRequest?.selection ?? null;
-    if ((request.operation.kind === 'session' || request.operation.kind === 'execution_run')
-      && !exactSelection) return null;
-    if (exactSelection?.protocol !== undefined
-      && exactSelection.protocol !== request.application.protocol) return null;
+      if ((request.operation.kind === 'session' || request.operation.kind === 'execution_run')
+        && !exactSelection) return null;
+      if (exactSelection?.protocol !== undefined
+        && exactSelection.protocol !== request.application.protocol) return null;
 
-    const expected = await input.withRegistry(async (registry) => {
       const captured = input.getAccountSettingsSnapshot();
       if (!captured?.scopeKey) return null;
       const catalog = captured.providerConnectionsCatalog?.status === 'ready'
@@ -762,60 +676,41 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
           : {}),
       });
       return resolved.ok && resolved.snapshot.activationOccurrenceId !== null
-        ? resolved.snapshot
+        ? { snapshot: resolved.snapshot, registry, dnsEvidenceByEndpointUrl, scopeKey: captured.scopeKey }
         : null;
     }).catch(() => null);
-    if (!expected || !await readsResourceCurrent()) return null;
+    if (!capture) return null;
+    const expected = capture.snapshot;
+    const requestCost = request.operation.kind === 'external_api_key' && expected.requestCostDeclared === true
+      ? await input.acquireRequestCostParser?.(expected.provider.identity).catch(() => null)
+      : null;
+    const requestCostParser = requestCost?.activationOccurrenceId === expected.activationOccurrenceId
+      && requestCost.endpointTemplateIds.includes(expected.endpoint.endpointTemplateId)
+      ? (usage: unknown) => requestCost.isCurrent() ? requestCost.parse(usage) : null
+      : undefined;
     const isCurrent = async (
       signal: AbortSignal = request.signal,
     ): Promise<boolean> => {
-      if (!await readsResourceCurrent(signal)) return false;
-      if (exactSelectionRequest) {
-        const currentSelection = await input.resolveExactSelection!({
-          ...exactSelectionRequest.input,
-          signal,
-        });
-        if (!currentSelection
-          || JSON.stringify(currentSelection) !== JSON.stringify(exactSelectionRequest.selection)) return false;
-      }
-      return await input.withRegistry(async (registry) => {
-        const dnsEvidenceByEndpointUrl = await input.collectDnsEvidence({
-          source: request.source,
-          registry,
-          signal,
-        });
-        return await isProviderConnectionBrokerSourceCurrent({
-          expected,
-          registry,
-          dnsEvidenceByEndpointUrl,
-          ...(input.localCandidateUrlsByConnectionId
-            ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
-            : {}),
-          getAccountSettingsSnapshot: input.getAccountSettingsSnapshot,
-        });
-      });
+      return !signal.aborted && input.getAccountSettingsSnapshot()?.scopeKey === capture.scopeKey;
     };
     const acquireRequestCredential = async (): Promise<RuntimeCredentialLease | null> => {
       if (!await isCurrent()) return null;
       try {
-        return await input.withRegistry(async (registry) => {
-          const dnsEvidenceByEndpointUrl = await input.collectDnsEvidence({
-            source: request.source,
-            registry,
-            signal: request.signal,
-          });
-          const materialized = await materializeProviderConnectionBrokerSource({
-            expected,
-            registry,
-            dnsEvidenceByEndpointUrl,
-            ...(input.localCandidateUrlsByConnectionId
-              ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
-              : {}),
-            getAccountSettingsSnapshot: input.getAccountSettingsSnapshot,
-          });
-          if (!materialized.ok) return null;
-          return materialized.lease;
+        const materialized = await materializeProviderConnectionBrokerSource({
+          expected,
+          registry: capture.registry,
+          dnsEvidenceByEndpointUrl: capture.dnsEvidenceByEndpointUrl,
+          ...(input.localCandidateUrlsByConnectionId
+            ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
+            : {}),
+          getAccountSettingsSnapshot: () => {
+            const current = input.getAccountSettingsSnapshot();
+            return current?.scopeKey === capture.scopeKey ? current : null;
+          },
         });
+        if (!materialized.ok) return null;
+        if (request.signal.aborted) { materialized.lease.close(); return null; }
+        return materialized.lease;
       } catch {
         return null;
       }
@@ -836,16 +731,15 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
       acquireRequestCredential,
     }).catch(() => null);
     if (!projection) return null;
-    const sourceCurrent = request.signal.aborted ? null : await isCurrent().catch(() => null);
-    if (request.signal.aborted || sourceCurrent !== true || !projection.isCurrent()) {
-      if (!request.signal.aborted && sourceCurrent !== null && (sourceCurrent === false || !projection.isCurrent())) {
+    if (request.signal.aborted || !projection.isCurrent()) {
+      if (!request.signal.aborted && !projection.isCurrent()) {
         await projection.retire().catch(() => undefined);
       }
       await Promise.resolve(projection.cleanup()).catch(() => undefined);
       return null;
     }
     return Object.freeze({
-      projection,
+      projection: requestCostParser ? Object.freeze({ ...projection, requestCostParser }) : projection,
       retire: projection.retire,
       sourceCurrentness: Object.freeze({
         sourceMember: providerConnectionBrokerSourceMember(request.source),

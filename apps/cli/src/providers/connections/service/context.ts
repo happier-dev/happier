@@ -1,7 +1,7 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { ProviderErrorV1 } from '@happier-dev/protocol';
 
-import type { ProviderConnectionResolution } from '@/providers/registry';
+export { errorForProviderResolution } from '@/providers/registry/resolutionError';
 import { describeProviderConnections } from './describe';
 import type { ProviderConnectionServiceDeps } from './types';
 
@@ -27,29 +27,4 @@ export function createProviderConnectionServiceContext(
       }),
     describe: (input) => describeProviderConnections(deps, input),
   });
-}
-
-export function errorForProviderResolution(
-  resolution: ProviderConnectionResolution,
-  machineId: string,
-): ProviderErrorV1 {
-  switch (resolution.status) {
-    case 'source_unavailable':
-      return createProviderErrorV1('provider_contribution_unavailable', { connectionId: resolution.connectionId, machineId });
-    case 'deleted':
-    case 'missing':
-    case 'invalid':
-      return createProviderErrorV1('provider_connection_not_found', { connectionId: resolution.connectionId, machineId });
-    case 'endpoint_unresolved':
-      return createProviderErrorV1(
-        resolution.reason === 'endpoint_resolution_required'
-          ? 'provider_endpoint_unreachable'
-          : 'provider_connection_invalid',
-        { connectionId: resolution.connectionId, machineId },
-      );
-    case 'resolved':
-      return resolution.record.authorization.authorized
-        ? createProviderErrorV1('provider_authorization_changed', { connectionId: resolution.connectionId, machineId })
-        : createProviderErrorV1(resolution.record.authorization.errorCode, { connectionId: resolution.connectionId, machineId });
-  }
 }

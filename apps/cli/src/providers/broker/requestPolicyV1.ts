@@ -1,4 +1,3 @@
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol/providers/safety/limits';
 import type { ManagedServiceRequest } from '@happier-dev/plugin-sdk/managed-services';
 import type { MachineProvisionerNativeCredentialBindingV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { normalizeProviderEndpointUrlSyntax, normalizeProviderOriginRelativePathSyntax } from '@happier-dev/protocol/providers/safety/url';
@@ -68,19 +67,17 @@ function parseBody(request: ManagedServiceRequest): JsonObject | null {
 function normalizeHeaderName(rawName: string): string | null {
     if (rawName.trim() !== rawName
         || rawName.length === 0
-        || rawName.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderNameChars
         || !HEADER_NAME_PATTERN.test(rawName)) return null;
     const normalized = rawName.toLowerCase();
     return OBJECT_KEY_POISON_HEADER_NAMES.has(normalized) ? null : normalized;
 }
 
 /**
- * Normalizes the exact request that policy may admit. This is intentionally
- * inside the policy owner: admission and every forwarding consumer receive
- * the same safe bytes, so no caller can authorize one request and dispatch a
- * differently sanitized one.
+ * Normalizes the exact request that a broker may admit or forward. Personal
+ * and Team consumers share this owner, including Connection-nominated header
+ * removal, before strict managed-service transport validation.
  */
-function sanitizeRequest(request: ManagedServiceRequest): ManagedServiceRequest | null {
+export function sanitizeProviderBrokerRequestV1(request: ManagedServiceRequest): ManagedServiceRequest | null {
     let pathAndQuery: string;
     try {
         pathAndQuery = normalizeProviderOriginRelativePathSyntax(request.pathAndQuery, { allowQuery: true });
@@ -89,14 +86,12 @@ function sanitizeRequest(request: ManagedServiceRequest): ManagedServiceRequest 
     }
 
     const entries = Object.entries(request.headers ?? {});
-    if (entries.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxPublicHeaders) return null;
     const normalized = new Map<string, string>();
     for (const [rawName, value] of entries) {
         const name = normalizeHeaderName(rawName);
         if (name === null
             || normalized.has(name)
             || typeof value !== 'string'
-            || value.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxHeaderValueChars
             || CONTROL_CHARACTER_PATTERN.test(value)) return null;
         normalized.set(name, value);
     }
@@ -219,7 +214,7 @@ export function evaluateTeamCredentialRequestPolicyV1(input: Readonly<{
 }>): TeamCredentialRequestPolicyEvaluationV1 {
     const parsedPolicy = TeamCredentialRequestPolicyV1Schema.safeParse(input.policy);
     if (!parsedPolicy.success) return { ok: false, reasonCode: 'request_constraint_unsupported' };
-    const request = sanitizeRequest(input.request);
+    const request = sanitizeProviderBrokerRequestV1(input.request);
     if (!request) return { ok: false, reasonCode: 'request_malformed' };
     const route = classifyTeamCredentialRequestRouteV1(request.pathAndQuery);
     if (!route) return { ok: false, reasonCode: 'route_not_allowed' };

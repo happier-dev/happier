@@ -22,6 +22,11 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { hydrateSavedSecretCatalog } from "@/settings/secrets/savedSecretCatalogRead";
+import { readProviderSettingsForCli } from '@/providers/settings/read';
+import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
+import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
+import { resolveProviderModelCompatibility } from '@/providers/catalog/compatibility';
+import { prepareTeamCredentialNativeProviderSource, type TeamCredentialNativeProviderSourceAuthority } from './teamCredentialNativeProviderSource';
 
 import {
   materializeProviderConnectionDirectCredential,
@@ -59,6 +64,7 @@ const definition = ProviderContributionV1Schema.parse({
     id: 'responses',
     protocol: 'openai-responses',
     baseUrl: 'https://gateway.example/v1',
+    publicHeaders: { 'http-referer': 'https://happier.dev', 'x-title': 'Happier' },
     capabilities: {
       streaming: 'supported', toolRoundTrips: 'supported',
       statefulResponses: 'supported', reasoningControls: 'supported',
@@ -196,6 +202,66 @@ describe('Provider direct source admits its shared Saved Secret before preparati
   afterEach(() => {
     resetActiveAccountSettingsSnapshotForTests();
     vi.unstubAllGlobals();
+  });
+
+  it('prepares private native metadata, refreshes the selected key before rendering and refuses missed revocation', async () => {
+    const runtime = await createManagedRunLaunchFixture();
+    try {
+    const agentTargetKey = runtime.agentTargetKey;
+    const adapter = readLeasedAgentProviderBindingAdapter({ lease: runtime.lease, agentId: runtime.agentId });
+    if (!adapter) throw new Error('Expected registered Agent Provider adapter');
+    let authority: TeamCredentialNativeProviderSourceAuthority = {
+      resourceId: 'team-resource', resourceRevision: 7, sourceRevision: 'source-current',
+      custodianAccountId: 'controller-account', enabled: true, source,
+      deliveryPolicy: { preferredAllowedModes: ['vendor-native'] },
+    };
+    const current = getActiveAccountSettingsSnapshot()!;
+    const resolution = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-a',
+      providerSettings: readProviderSettingsForCli(current).settings, registry, dnsEvidenceByEndpointUrl });
+    if (resolution.status !== 'resolved') throw new Error('Expected source');
+    if (definition.catalog.source !== 'static') throw new Error('Expected a static catalog');
+    const model = definition.catalog.staticModels[0]!;
+    const compatibility = resolveProviderModelCompatibility({ record: resolution.record,
+      providerSettings: readProviderSettingsForCli(current).settings, agentTargetKey,
+      support: adapter.support,
+      adapterVersion: adapter.adapter.adapterVersion, model });
+    if (compatibility.result.status !== 'experimental') throw new Error('Expected experimental Gateway');
+    expect(readProviderSettingsForCli(current).settings.experimentalBindingConfirmations).toEqual([]);
+    const input = { controllerAccountId: 'controller-account', controllerMachineId: 'machine-a', accountScopeKey: scopeKey,
+      resource: authority, application: { agentTargetKey, implementationIdentity: contribution.identity,
+        endpointTemplateId: 'responses', protocol: 'openai-responses' as const },
+      binding: { selection: { v: 1 as const, ref: { agentTargetKey, providerConnectionId: connectionId,
+        modelId: model.id }, updatedAt: 1 }, agentId: runtime.agentId, agentTargetKey, lease: runtime.lease },
+      withRegistry: async <T,>(read: (value: typeof registry) => T | Promise<T>) => await read(registry),
+      collectDnsEvidence: async () => dnsEvidenceByEndpointUrl, getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
+      readCurrentResource: async () => authority, signal: new AbortController().signal };
+    const prepared = await prepareTeamCredentialNativeProviderSource(input);
+    expect(prepared, prepared.ok ? 'prepared' : prepared.error.code).toMatchObject({ ok: true });
+    if (!prepared.ok) throw new Error(prepared.error.code);
+    try {
+      expect(axios.get).toHaveBeenCalledTimes(1); // Only the initial fixture hydration.
+      expect(prepared.source.providerTicket).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(prepared.source.endpoint.publicHeaders).toEqual({ 'http-referer': 'https://happier.dev', 'x-title': 'Happier' });
+      expect(JSON.stringify(prepared.source)).not.toContain('shared-provider-value');
+      const rendered = await prepared.source.readRenderedHeaders();
+      expect(axios.get).toHaveBeenCalledTimes(2);
+      expect.soft(rendered).toEqual({ ok: true, headers: { authorization: 'Bearer shared-provider-value' } });
+      expect(prepared.source.redact('Bearer shared-provider-value shared-provider-value')).toBe('[REDACTED] [REDACTED]');
+      expect(await prepareTeamCredentialNativeProviderSource({ ...input, expectedProviderTicket: 'x'.repeat(43) }))
+        .toMatchObject({ ok: false, error: { code: 'provider_authorization_changed' } });
+      authority = { ...authority, sourceRevision: 'replaced-source' };
+      expect(await prepared.source.readRenderedHeaders()).toMatchObject({ ok: true });
+      expect(await prepareTeamCredentialNativeProviderSource(input)).toMatchObject({ ok: false,
+        error: { code: 'provider_authorization_changed' } });
+      authority = { ...authority, sourceRevision: 'source-current' };
+      vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { resources: [] } });
+      expect(await prepared.source.readRenderedHeaders()).toMatchObject({ ok: false });
+      authority = { ...authority, custodianAccountId: 'other-account' };
+      expect(await prepareTeamCredentialNativeProviderSource(input)).toMatchObject({ ok: false,
+        error: { code: 'provider_authorization_changed' } });
+    } finally { await prepared.source.cleanup(); }
+    expect(await prepared.source.readRenderedHeaders()).toMatchObject({ ok: false });
+    } finally { await runtime.cleanup(); }
   });
 
   it('refuses a revoked shared key whose AccountChange hint was missed', async () => {

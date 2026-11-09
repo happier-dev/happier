@@ -81,9 +81,12 @@ export async function startDaemonProviderBrokerRuntimeWithCustody(input: Readonl
     },
   });
   const unsubscribeCurrentness = input.apiMachine.onManagedProviderRetainedCurrentnessInvalidation(
-    async ({ signal }) => {
+    async ({ signal, facts, connectedServiceRefs }) => {
       if (!current) return;
-      await input.custody.revalidateRetainedClaims(signal);
+      await input.custody.revalidateRetainedClaims(signal, undefined, {
+        facts,
+        ...(connectedServiceRefs ? { connectedServiceRefs } : {}),
+      });
     },
   );
   const retireAllClaims = async (): Promise<void> => {

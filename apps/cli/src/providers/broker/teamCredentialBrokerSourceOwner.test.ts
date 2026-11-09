@@ -152,6 +152,7 @@ function sourceCustodyHarness(sourceKind: 'connected_account' | 'connected_pool'
     },
     resumeRead() { readPause?.resolve(undefined); readPause = null; },
     revokeSource() { enabled = false; },
+    expireGateway() { childCurrent = false; },
     failSourceReads() { sourceReadError = true; },
     failSourceReadAfterJoin() { failReadAfterJoin = true; },
     failTargetReads() { targetReadError = true; },
@@ -253,6 +254,73 @@ function request(
 }
 
 describe('Team credential broker source owner', () => {
+  it.each(['acquire', 'request'] as const)('names the deciding currentness predicate once per %s refusal without logging content', async phase => {
+    const diagnostics = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    try {
+      for (const predicate of ['source_not_current', 'source_currentness_unknown', 'projection_not_current'] as const) {
+        const harness = sourceCustodyHarness('connected_pool');
+        try {
+          const acquired = phase === 'request' ? await harness.acquire(new AbortController().signal) : null;
+          if (acquired && !acquired.ok) throw new Error('Expected current Pool source');
+          expect(diagnostics).not.toHaveBeenCalled();
+          // The Home is the boundary. Change its answer at the outer source
+          // check, after the real selection and operation acquisition succeed.
+          const read = harness.readResource.getMockImplementation()!;
+          let reads = 0;
+          harness.readResource.mockImplementation(async () => {
+            reads += 1;
+            if (reads === (phase === 'acquire' ? 4 : 1)) {
+              if (predicate === 'source_not_current') harness.revokeSource();
+              else if (predicate === 'source_currentness_unknown') harness.failSourceReads();
+              else harness.expireGateway();
+            }
+            return await read();
+          });
+          diagnostics.mockClear();
+          if (acquired?.ok) {
+            await expect(acquired.projection.access.request({ method: 'POST', pathAndQuery: '/v1/responses' })).rejects.toMatchObject({
+              failure: { reasonCode: 'source_unavailable', sourceOpenFailureReason: predicate },
+            });
+          } else {
+            await expect(harness.acquire(new AbortController().signal)).resolves.toMatchObject({
+              ok: false, reasonCode: 'source_unavailable', sourceOpenFailureReason: predicate,
+            });
+          }
+          expect(diagnostics.mock.calls).toEqual([['[provider-broker-source]', {
+            stage: 'source_currentness', code: predicate,
+          }]]);
+          expect(harness.childRequest).not.toHaveBeenCalled();
+          expect(harness.managed.readRetainedSemanticCustodyCount()).toBe(predicate === 'source_currentness_unknown' ? 1 : 0);
+          diagnostics.mockClear();
+        } finally {
+          await harness.managed.dispose();
+        }
+      }
+    } finally {
+      diagnostics.mockRestore();
+    }
+  });
+
+  it('preserves refusal and retirement when the currentness diagnostic sink fails', async () => {
+    const harness = sourceCustodyHarness();
+    const diagnostics = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => { throw new Error('Log unavailable'); });
+    try {
+      const acquired = await harness.acquire(new AbortController().signal);
+      if (!acquired.ok) throw new Error('Expected current source');
+      harness.revokeSource();
+      await expect(acquired.projection.access.request({ method: 'POST', pathAndQuery: '/v1/responses' })).rejects.toMatchObject({
+        failure: { reasonCode: 'source_unavailable', sourceOpenFailureReason: 'source_not_current' },
+      });
+      expect(diagnostics).toHaveBeenCalledOnce();
+      expect(harness.managed.readRetainedSemanticCustodyCount()).toBe(0);
+      expect(harness.childCleanup).toHaveBeenCalledOnce();
+      expect(harness.childRequest).not.toHaveBeenCalled();
+    } finally {
+      diagnostics.mockRestore();
+      await harness.managed.dispose();
+    }
+  });
+
   it('retires retained custody on a definite missing Home resource', async () => {
     const harness = sourceCustodyHarness();
     try {
@@ -681,6 +749,7 @@ describe('Team credential broker source owner', () => {
     await expect(owner.acquire(request(accountSource))).resolves.toEqual({
       ok: false,
       reasonCode: 'source_unavailable',
+      sourceOpenFailureReason: 'projection_not_current',
     });
     expect(stale.cleanup).toHaveBeenCalledOnce();
     expect(retire).toHaveBeenCalledOnce();
@@ -699,6 +768,7 @@ describe('Team credential broker source owner', () => {
     await expect(owner.acquire(request(accountSource))).resolves.toEqual({
       ok: false,
       reasonCode: 'source_unavailable',
+      sourceOpenFailureReason: 'source_not_current',
     });
     expect(current.cleanup).toHaveBeenCalledOnce();
     expect(retire).toHaveBeenCalledOnce();

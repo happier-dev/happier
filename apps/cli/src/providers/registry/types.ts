@@ -12,6 +12,7 @@ import type {
   QualifiedConnectedAccountPurposeBindingsV1,
 } from '@happier-dev/protocol';
 import type { ProviderConnectionSecurityFingerprintV1 } from '@happier-dev/protocol/providers';
+import type { ProviderConnectionInvalidReasonV1 } from '@happier-dev/protocol/providers/errors';
 
 import type {
   ResolvedContributionProvenance,
@@ -120,13 +121,7 @@ export type ResolvedProviderConnectionRecord =
       }
   >;
 
-export type ProviderConnectionResolutionInvalidReason =
-  | 'invalid_connection_id'
-  | 'invalid_machine_id'
-  | 'unknown_endpoint_override'
-  | 'managed_deployment_unavailable'
-  | 'managed_purpose_bindings_missing'
-  | 'managed_purpose_bindings_invalid';
+export type ProviderConnectionResolutionInvalidReason = ProviderConnectionInvalidReasonV1;
 
 export type ProviderConnectionEndpointUnresolvedReason =
   | 'endpoint_resolution_required'

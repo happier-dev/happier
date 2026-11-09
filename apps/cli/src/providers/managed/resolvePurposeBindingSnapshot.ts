@@ -3,15 +3,18 @@ import type { PluginContributionIdentityV1, QualifiedConnectedAccountPurposeBind
 import { createProviderErrorV1, ProviderErrorV1Schema, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { rethrowRequesterHomeReadFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { ProviderOperationAbandonedError } from '../operationLifetime';
+import { isConnectedAccountSourceReconnectRequiredError } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
+import { providerErrorFromRpcFailure } from '@happier-dev/protocol/providers/errors';
 
 /** Binding absence requires repair; an unreadable Home cannot establish absence. */
 export function providerManagedPurposeBindingError(error: unknown, context: Readonly<{ connectionId?: string; machineId: string }>): ProviderErrorV1 {
+  if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
+  if (isConnectedAccountSourceReconnectRequiredError(error)) return providerErrorFromRpcFailure(error, context);
   const typed = ProviderErrorV1Schema.safeParse(error);
   if (typed.success) return typed.data;
   try { rethrowRequesterHomeReadFailure(error); }
   catch { return createProviderErrorV1('provider_catalog_unavailable', context); }
-  return createProviderErrorV1(error instanceof ProviderOperationAbandonedError
-    ? 'provider_catalog_unavailable' : 'provider_connection_invalid', context);
+  return createProviderErrorV1('provider_connection_invalid', context);
 }
 
 export type ResolveManagedProviderPurposeBindingIntent = (

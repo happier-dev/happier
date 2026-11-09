@@ -39,17 +39,20 @@ export function getTmuxUtilities(
 }
 
 export async function isTmuxAvailable(): Promise<boolean> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
     const utils = new TmuxUtilities();
     const result = await Promise.race([
       utils.executeTmuxCommand(['list-sessions']),
       new Promise<null>((resolve) => {
-        setTimeout(() => resolve(null), TMUX_AVAILABILITY_PROBE_TIMEOUT_MS);
+        timeoutHandle = setTimeout(() => resolve(null), TMUX_AVAILABILITY_PROBE_TIMEOUT_MS);
       }),
     ]);
     return result !== null;
   } catch {
     return false;
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
   }
 }
 

@@ -243,7 +243,7 @@ export function startFileWatcher(
         options?.onWatcherUnavailable?.(error instanceof Error ? error : new Error('File watcher unavailable'));
     };
 
-    void (async () => {
+    const observationTask = (async () => {
         while (!abortController.signal.aborted) {
             let closeWatcher: (() => void) | undefined;
             let reattachFromEvent = false;
@@ -278,7 +278,6 @@ export function startFileWatcher(
                         }
                         continue;
                     }
-
                     if (!unavailable) logger.debug('[FILE_WATCHER] Parent directory missing; waiting for recovery');
                     reportUnavailable(new Error('File watcher parent directory missing'));
                     await delayUnrefAbortable(WATCH_RECOVERY_DELAY_MS, abortController.signal);
@@ -392,7 +391,7 @@ export function startFileWatcher(
         }
     })();
 
-    return () => {
-        abortController.abort();
-    };
+    return Object.assign(() => { abortController.abort(); }, {
+        async dispose() { abortController.abort(); await observationTask; },
+    });
 }

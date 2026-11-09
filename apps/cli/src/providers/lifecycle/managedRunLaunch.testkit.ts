@@ -35,9 +35,12 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
   acceptedCredentialFormats?: readonly ('raw' | 'bearer')[];
   connectedAccounts?: readonly ConnectedAccountPurposeDeclarationV1[];
   requiredCapabilities?: AgentProviderRequirementsV1['required'];
+  supportsReasoningEffort?: boolean;
   resolveAccountTarget?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['resolveAccountTarget'] }> = {}) {
   const directory = input.directory ?? await mkdtemp(join(tmpdir(), 'happier-managed-run-'));
   const pluginId = 'acme.managed-run';
+  const localAccountServices = [...new Set((input.connectedAccounts ?? []).flatMap(({ service }) =>
+    typeof service === 'string' ? [service] : service.pluginId === pluginId ? [service.localId] : []))];
   const agentId = `${pluginId}/agent`;
   const agentTargetKey = `agent:${agentId}`;
   const gateway = input.physicalGateway ? createSharedGatewayRegistryTestkit({ directory,
@@ -72,6 +75,10 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
       reason: 'Admit the external Agent Provider environment through the real host boundary',
       scope: { envKeys: ['RUN_PROVIDER_TOKEN'], executables: [{ kind: 'systemTool', id: 'fixture-runtime' }] } }], optional: [] },
     contributes: {
+      ...(localAccountServices.length ? { connectedAccountDescriptors: localAccountServices.map(id => ({ id, title: 'Source account',
+        authentication: { defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+          fields: [{ id: 'token', title: 'Token', schema: { type: 'string', minLength: 1 }, secret: true }] }] },
+      })) } : {}),
       systemTools: [{ id: 'fixture-runtime', title: 'Fixture runtime', executableNames: [basename(process.execPath)] }],
       agents: [{ id: 'agent', title: 'Run Agent', runtime: { kind: 'custom' }, primary: 'sessions',
         ...(input.connectedAccounts ? { connectedAccounts: input.connectedAccounts } : {}),
@@ -83,6 +90,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true,
           executionRunContext: { versions: [1] } } },
         providerRequirements: { acceptsProtocols: ['openai-responses'], required: input.requiredCapabilities ?? { streaming: true },
+          ...(input.supportsReasoningEffort !== undefined ? { supportsReasoningEffort: input.supportsReasoningEffort } : {}),
           credentialSupport: { supportsNoAuth: true, apiKeyTransports: [{ protocol: 'openai-responses',
             destination: { kind: 'httpHeader', names: 'anyValidated', formats: input.acceptedCredentialFormats ?? [input.runtimeCredentialHeader?.format ?? 'bearer'] } }] },
           authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: ['RUN_PROVIDER_TOKEN'] },
@@ -96,9 +104,11 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
         catalog: input.probeCatalog
           ? { source: 'probe', sourceRegistryVersion: 'fixture-registry:v1', manualModelPolicy: 'catalog-only',
               probes: [{ endpointTemplateId: 'responses', path: '/models', parser: input.modelLoad ? 'lmstudio-native-models' : 'openai-models' }] }
-          : { source: 'static', manualModelPolicy: 'catalog-only', staticModels: [{ id: 'model-a', name: 'Model A' }] },
+          : { source: 'static', manualModelPolicy: 'catalog-only', staticModels: input.catalogModels
+              ? input.catalogModels.map(model => ({ ...model, name: model.name ?? model.id }))
+              : [{ id: 'model-a', name: 'Model A' }] },
         managedRuntime: { kind: 'managed', sharing: 'connectionMachine', endpointTemplateIds: ['responses'] },
-        compatibilityOverrides: [{ agentTargetKey, protocol: 'openai-responses', status: 'verified',
+        compatibilityOverrides: [{ agentTargetKey, protocol: 'openai-responses', status: input.experimental ? 'experimental' : 'verified',
           reason: 'Fixture endpoint contract', evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-09' } }],
       }] }),
     },
@@ -150,6 +160,13 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
   `, 'utf8');
   await writeFile(join(pluginRoot, 'daemon.mjs'), `import { fixtureAgentRuntimeFactory } from './agentRuntime.mjs';
   export function activate(api) {
+    ${localAccountServices.map(id => `api.connectedAccounts.register(${JSON.stringify(id)}, {
+      authentication: { modes: { manual: { kind: 'manual', async complete() {
+        return { status: 'connected', accountId: 'selected-source', displayName: 'Source', scopes: [] };
+      } } } }, async refresh() { return { status: 'unavailable' }; }, async revoke() { return { status: 'remoteUnsupported' }; },
+      async status() { return { status: 'connected', displayName: 'Source' }; },
+      async materialize() { return { kind: 'httpHeaders', headers: {} }; }
+    });`).join('\n')}
     ${gateway ? '' : "api.providers.register('gateway', { async start() { throw new Error('Worker must not start a managed Provider'); } });"}
     api.agents.register('agent', fixtureAgentRuntimeFactory, {
       sessionRunnerFactory: { module: ${JSON.stringify(input.sessionRunnerFactoryModule ?? './agentRuntime.mjs')}, export: 'fixtureAgentRuntimeFactory', runtimeApiVersion: 1 },
@@ -168,9 +185,15 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
     install: { mode: 'link', manifestVersion: '1.0.0', installedPath: null, trust: createPluginTrustRecord({ pluginId, distribution, approvedAtMs: 1 }) },
     state: { enabled: true },
   } });
+  const loaded = await loadInstalledPlugins({ happyHomeDir });
+  if (!loaded.loadedPlugins.some(plugin => plugin.pluginId === pluginId)) {
+    throw new Error(`Managed Run fixture declaration refused: ${JSON.stringify(loaded.diagnosticsByPluginId[pluginId])}`);
+  }
   const mergedContributes = createMergedContributionRegistry(projectLoadedPluginContributes({
-    loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external', existingAgentIds: new Set(),
-  }), input.includeBundledDeclarations ? (await import('@/plugins/projection/registry/builtIn/snapshot')).getResolvedContributionRegistry() : {});
+    loadResult: loaded, provenance: 'external', existingAgentIds: new Set(),
+  }), input.includeBundledDeclarations
+    ? (await import('@/plugins/projection/registry/builtIn/snapshot')).getResolvedContributionRegistry()
+    : {});
   if (!mergedContributes.providersByContributionKey) throw new Error('Missing committed Provider projection');
   const contributes = { ...mergedContributes, providersByContributionKey: mergedContributes.providersByContributionKey };
   const generationAuthority = await readCurrentCommittedPluginGenerations(resolvePluginStorePaths({ happyHomeDir }), {});
@@ -181,7 +204,11 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
   const registry = lease.registry;
   if (input.activateAgent !== false) {
     const activated = await registry.activateContributionsOnDemand([{ pluginId, family: 'agents', localId: 'agent' }]);
-    if (!registry.activatedPluginIds.has(pluginId)) throw new Error(`Managed Run fixture activation refused: ${JSON.stringify(activated)}`);
+    if (!registry.activatedPluginIds.has(pluginId)) throw new Error(`Managed Run fixture activation refused: ${JSON.stringify({
+      activation: activated, diagnostics: registry.pluginDiagnosticsByPluginId[pluginId],
+      declaredAgents: registry.contributes.agents.filter(agent => agent.pluginId === pluginId).map(agent => agent.id),
+      occurrenceId: registry.readPluginOccurrenceId?.(pluginId),
+    })}`);
     if (!registry.agentRuntimesByAgentId.has(agentId)) throw new Error(`Managed Run Agent registration refused: ${JSON.stringify(activated)}`);
   }
   const base = ProviderSettingsV1Schema.parse({ ...DEFAULT_PROVIDER_SETTINGS_V1, connections: [{

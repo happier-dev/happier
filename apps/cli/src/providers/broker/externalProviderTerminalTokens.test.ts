@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { PROVIDER_ENDPOINT_SAFETY_LIMITS } from '@happier-dev/protocol';
 import type { TeamCredentialRequestProtocolKindV1 } from '@happier-dev/protocol/teams';
 
 import { createExternalProviderTerminalTokenReader } from './externalProviderTerminalTokens';
@@ -26,6 +25,45 @@ function observe(input: Readonly<{
 }
 
 describe('external Provider terminal token observation', () => {
+    it('preserves one terminal reported charge rather than summing repeated usage or upstream costs', () => {
+        const reader = createExternalProviderTerminalTokenReader({
+            routeKind: 'openai_chat_completions', contentType: 'text/event-stream',
+            ...{ requestCostParser: (usage: unknown) => {
+                if (!usage || typeof usage !== 'object') return null;
+                const cost = Reflect.get(usage, 'cost') as unknown;
+                return typeof cost === 'number' ? cost : null;
+            } },
+        });
+        reader.push(encoder.encode('data: {"model":"model","choices":[],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10,"cost":0.12,"cost_details":{"upstream_inference_cost":9}}}\n\n'
+            + 'data: {"model":"model","choices":[],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10,"cost":0.12}}\n\n'
+            + 'data: [DONE]\n\n'));
+        expect(reader.read()).toMatchObject({ outcome: 'succeeded', reportedCostUsd: 0.12 });
+    });
+    it('keeps absent, malformed, failed and unobserved request charges unknown while preserving a free completed request', () => {
+        const body = (cost: unknown) => JSON.stringify({ model: 'model', choices: [{ finish_reason: 'stop' }],
+            usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10, cost } });
+        const read = (text: string, parse?: (usage: unknown) => number | null) => {
+            const reader = createExternalProviderTerminalTokenReader({ routeKind: 'openai_chat_completions',
+                contentType: 'application/json', requestCostParser: parse });
+            reader.push(encoder.encode(text));
+            return reader.read();
+        };
+        const parse = (usage: unknown) => {
+            const cost: unknown = usage && typeof usage === 'object' ? Reflect.get(usage, 'cost') : null;
+            return typeof cost === 'number' ? cost : null;
+        };
+        expect(read(body(0), parse)).toMatchObject({ reportedCostUsd: 0 });
+        for (const cost of [null, -1, '0.12']) expect(read(body(cost), parse)).not.toHaveProperty('reportedCostUsd');
+        expect(read(body(0.12))).not.toHaveProperty('reportedCostUsd');
+        expect(read(body(0.12), () => { throw new Error('malformed vendor cost'); })).toMatchObject({
+            outcome: 'succeeded', tokens: { total: 10 },
+        });
+        expect(read('{"error":{"message":"failed"}}', parse)).not.toHaveProperty('reportedCostUsd');
+        const reader = createExternalProviderTerminalTokenReader({ routeKind: 'openai_chat_completions',
+            contentType: 'text/event-stream', requestCostParser: () => 0.12 });
+        reader.push(encoder.encode('data: {"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10,"cost":0.12}}\n\n'));
+        expect(reader.read()).not.toHaveProperty('reportedCostUsd');
+    });
     it('converts the non-streamed terminal usage block of every managed generation route', () => {
         expect(observe({
             routeKind: 'anthropic_messages',
@@ -162,17 +200,14 @@ describe('external Provider terminal token observation', () => {
             expect(observe({ routeKind: 'openai_responses', contentType: 'application/json', body }).tokens)
                 .toBeNull();
         }
-        // A Provider body beyond the canonical request budget is relayed but
-        // not retained, so its observation stays unknown instead of growing the
-        // daemon's memory or reporting a partial parse.
-        const oversized = `{"model":"gpt-5","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"pad":"${
-            'x'.repeat(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes)}"}`;
+        const oversized = `{"status":"completed","model":"gpt-5","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"pad":"${
+            'x'.repeat(5 * 1024 * 1024 + 1)}"}`;
         expect(observe({
             routeKind: 'openai_responses',
             contentType: 'application/json',
             body: oversized,
             chunkSize: 64 * 1024,
-        })).toEqual({ actualModelId: null, tokens: null });
+        })).toEqual({ actualModelId: 'gpt-5', tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 } });
     });
 
     it.each([
@@ -209,12 +244,12 @@ describe('external Provider terminal token observation', () => {
         expect(reader.read()).toEqual({ outcome: 'succeeded', actualModelId: 'gpt-5', tokens: null });
     });
 
-    it('does not certify a stream whose unobserved oversized event hid its terminal outcome', () => {
+    it('observes complete large events beyond the retired body policy without losing terminal usage', () => {
         const reader = createExternalProviderTerminalTokenReader({ routeKind: 'anthropic_messages', contentType: 'text/event-stream' });
-        reader.push(encoder.encode('data: {"type":"message_start","message":{"usage":{"input_tokens":25,"output_tokens":1}}}\n\n'));
-        reader.push(encoder.encode('data: ' + 'x'.repeat(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes + 1)));
-        reader.push(encoder.encode('\n\ndata: {"type":"message_stop"}\n\n'));
-        expect(reader.read()).toEqual({ outcome: 'failed', actualModelId: null, tokens: null });
+        reader.push(encoder.encode('data: {"type":"message_start","message":{"model":"claude","usage":{"input_tokens":25,"output_tokens":1}},"pad":"'));
+        reader.push(encoder.encode('x'.repeat(5 * 1024 * 1024 + 1)));
+        reader.push(encoder.encode('"}\n\ndata: {"type":"message_delta","usage":{"output_tokens":3}}\n\ndata: {"type":"message_stop"}\n\n'));
+        expect(reader.read()).toEqual({ outcome: 'succeeded', actualModelId: 'claude', tokens: { input: 25, output: 3, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 28 } });
     });
 
     it('keeps observing a long stream whose total size exceeds the budget', () => {
@@ -223,7 +258,7 @@ describe('external Provider terminal token observation', () => {
         // the terminal usage that arrives after the budget's worth of bytes.
         const delta = 'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"text":"'
             + 'x'.repeat(1_000) + '"}}\n\n';
-        const deltas = delta.repeat(Math.ceil(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxDecodedBodyBytes / delta.length) + 1);
+        const deltas = delta.repeat(Math.ceil(5 * 1024 * 1024 / delta.length) + 1);
         expect(observe({
             routeKind: 'anthropic_messages',
             contentType: 'text/event-stream',

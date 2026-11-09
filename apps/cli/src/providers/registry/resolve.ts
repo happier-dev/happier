@@ -309,6 +309,7 @@ function resolveProviderConnectionFromSettings(
       credentialTransports: facts.credentialTransports,
       ...(facts.usageSources ? { usageSources: facts.usageSources } : {}),
       ...(facts.modelLoad ? { modelLoad: facts.modelLoad } : {}),
+      ...(facts.inlineCompletion ? { inlineCompletion: facts.inlineCompletion } : {}),
       managedDeployment: {
         gatewayPlacement: connection.gatewayPlacement,
         implementationIdentity: resolvedManagedDeployment.implementationIdentity,
@@ -392,6 +393,7 @@ function resolveProviderConnectionFromSettings(
     credentialTransports: facts.credentialTransports,
     ...(facts.usageSources ? { usageSources: facts.usageSources } : {}),
     ...(facts.modelLoad ? { modelLoad: facts.modelLoad } : {}),
+    ...(facts.inlineCompletion ? { inlineCompletion: facts.inlineCompletion } : {}),
   } satisfies Parameters<typeof createProviderConnectionSecurityFingerprintV1>[0];
   const assessedByTemplateId = new Map(endpoints.map((endpoint) => [
     endpoint.endpointTemplateId,

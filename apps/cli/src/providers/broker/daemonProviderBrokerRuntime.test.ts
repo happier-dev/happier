@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
+import { ConnectedAccountSourceReconnectRequiredError } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
 import { once } from 'node:events';
 import axios, { AxiosError } from 'axios';
 import tweetnacl from 'tweetnacl';
@@ -98,6 +99,14 @@ const source = {
   credentialIncarnation: 'credential-row-1',
 };
 
+/** A Connected Pool over the same Connected Service as `source`. */
+const connectedPoolSource = {
+  v: 1 as const,
+  kind: 'connected_pool' as const,
+  target: { kind: 'group' as const, service: source.target.account.service, groupId: 'pool-1' },
+  poolIncarnation: 'pool-incarnation-1',
+};
+
 const closeTasks: Array<() => Promise<void>> = [];
 afterEach(async () => {
   await Promise.all(closeTasks.splice(0).map((close) => close()));
@@ -163,6 +172,29 @@ describe('resolveRunnerCredentialSelectionCurrentness', () => {
     return Object.assign(base, overrides);
   };
 
+  it('preserves confirmed source reconnect from the selected broker eligibility response', async () => {
+    await expect(resolveRunnerCredentialSelectionCurrentness({
+      registeredMachineId: 'broker-machine', selection, modelId: 'gpt-5',
+      signal: new AbortController().signal, readResource: async () => resource(),
+      resolveEligibility: async () => ({ status: 'unavailable', reason: 'connected_service_credential_reconnect_required' }),
+    })).resolves.toEqual({ kind: 'source_unavailable', reason: 'connected_service_credential_reconnect_required' });
+  });
+
+  it('retains Home source health with no extra eligibility read and lets the next explicit read recover', async () => {
+    const reconnect = { kind: 'source_unavailable' as const, reason: 'connected_service_credential_reconnect_required' as const };
+    const readResource = vi.fn(async () => resource({ readiness: reconnect }));
+    const resolveEligibility = vi.fn(async () => ({ status: 'eligible' as const }));
+    const input = { registeredMachineId: 'broker-machine', selection, modelId: 'gpt-5',
+      signal: new AbortController().signal, readResource, resolveEligibility };
+    expect(await resolveRunnerCredentialSelectionCurrentness(input)).toEqual(reconnect);
+    expect(readResource).toHaveBeenCalledTimes(1);
+    expect(resolveEligibility).not.toHaveBeenCalled();
+    readResource.mockResolvedValue(resource());
+    expect(await resolveRunnerCredentialSelectionCurrentness(input)).toEqual({ kind: 'available' });
+    expect(readResource).toHaveBeenCalledTimes(2);
+    expect(resolveEligibility).toHaveBeenCalledTimes(1);
+  });
+
   it('accepts a Pool-frozen exact Machine only when that selected daemon is currently eligible', async () => {
     const resolveEligibility = vi.fn(async () => ({ status: 'eligible' as const }));
 
@@ -173,7 +205,7 @@ describe('resolveRunnerCredentialSelectionCurrentness', () => {
       signal: new AbortController().signal,
       readResource: async () => resource({ brokerPlacement: { kind: 'machine_pool', poolId: 'pool-1' } }),
       resolveEligibility,
-    })).resolves.toBe('available');
+    })).resolves.toEqual({ kind: 'available' });
 
     expect(resolveEligibility).toHaveBeenCalledWith({
       machineId: 'broker-machine',
@@ -199,7 +231,7 @@ describe('resolveRunnerCredentialSelectionCurrentness', () => {
       signal: new AbortController().signal,
       readResource: async () => resource({ brokerPlacement: { kind: 'machine_pool', poolId: 'pool-1' } }),
       resolveEligibility,
-    })).resolves.toBe('source_unavailable');
+    })).resolves.toEqual({ kind: 'source_unavailable' });
 
     expect(resolveEligibility).toHaveBeenCalledOnce();
     expect(resolveEligibility).toHaveBeenCalledWith(
@@ -217,7 +249,7 @@ describe('resolveRunnerCredentialSelectionCurrentness', () => {
       signal: new AbortController().signal,
       readResource: async () => resource(),
       resolveEligibility,
-    })).resolves.toBe('available');
+    })).resolves.toEqual({ kind: 'available' });
     expect(resolveEligibility).toHaveBeenCalledWith(
       expect.objectContaining({ machineId: 'broker-machine', modelId: 'gpt-5' }),
       expect.any(AbortSignal),
@@ -235,7 +267,7 @@ describe('resolveRunnerCredentialSelectionCurrentness', () => {
       signal,
       readResource: async () => resource({ brokerPlacement: { kind: 'machine_pool', poolId: 'pool-1' } }),
       resolveEligibility,
-    })).resolves.toBe('source_unavailable');
+    })).resolves.toEqual({ kind: 'source_unavailable' });
     await expect(resolveRunnerCredentialSelectionCurrentness({
       registeredMachineId: 'broker-machine',
       selection,
@@ -243,7 +275,7 @@ describe('resolveRunnerCredentialSelectionCurrentness', () => {
       signal,
       readResource: async () => resource({ brokerPlacement: { kind: 'machine', machineId: 'different-machine' } }),
       resolveEligibility,
-    })).resolves.toBe('source_unavailable');
+    })).resolves.toEqual({ kind: 'source_unavailable' });
 
     expect(resolveEligibility).not.toHaveBeenCalled();
   });
@@ -256,7 +288,7 @@ describe('resolveRunnerCredentialSelectionCurrentness', () => {
       signal: new AbortController().signal,
       readResource: async () => resource({ brokerPlacement: { kind: 'machine_pool', poolId: 'pool-1' } }),
       resolveEligibility: async () => ({ status: 'eligible', extra: true }),
-    })).resolves.toBe('source_unavailable');
+    })).resolves.toEqual({ kind: 'source_unavailable' });
   });
 
   it.each([
@@ -273,7 +305,7 @@ describe('resolveRunnerCredentialSelectionCurrentness', () => {
       signal: new AbortController().signal,
       readResource: async () => resource(overrides),
       resolveEligibility,
-    })).resolves.toBe('source_unavailable');
+    })).resolves.toEqual({ kind: 'source_unavailable' });
     expect(resolveEligibility).not.toHaveBeenCalled();
   });
 
@@ -288,11 +320,11 @@ describe('resolveRunnerCredentialSelectionCurrentness', () => {
     await expect(resolveRunnerCredentialSelectionCurrentness({
       ...base,
       resolveEligibility: async () => ({ status: 'unavailable', reason: 'application_unavailable' }),
-    })).resolves.toBe('update_required');
+    })).resolves.toEqual({ kind: 'update_required' });
     await expect(resolveRunnerCredentialSelectionCurrentness({
       ...base,
       resolveEligibility: async () => ({ status: 'unavailable', reason: 'source_changed' }),
-    })).resolves.toBe('source_unavailable');
+    })).resolves.toEqual({ kind: 'source_unavailable' });
   });
 });
 
@@ -430,7 +462,7 @@ describe('startDaemonProviderBrokerRuntime', () => {
       recordExternalTerminalUsage,
       revalidateExternalAuthorization,
       sourceOwner: Object.freeze({
-        selectSourceMemberKey: async () => null,
+        selectSourceMember: async () => null,
         acquire,
         retireOperation: async () => undefined,
       }),
@@ -573,6 +605,7 @@ describe('startDaemonProviderBrokerRuntime', () => {
     { service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, protocol: 'openai-responses', endpointTemplateId: 'cliproxyapi-openai-responses', purpose: 'anthropic-upstream', modelId: 'claude-sonnet-4-5' },
   ] as const)('streams $purpose through signed $protocol admission and exact source custody', async ({ service, protocol, endpointTemplateId, purpose, modelId }) => {
     const authority = signedAuthority({ ...signedAuthority().payload,
+      grantId: protocol === 'openai-responses' ? '7c2293f5-4cec-4c92-94dd-a57349acd7ab' : signedAuthority().payload.grantId,
       application: { ...signedAuthority().payload.application, endpointTemplateId, protocol },
     });
     const source = { v: 1 as const, kind: 'connected_account' as const,
@@ -723,11 +756,52 @@ describe('startDaemonProviderBrokerRuntime', () => {
     });
     const metadataTarget = await openTarget();
     if (!metadataTarget) throw new Error('metadata target unavailable');
+    const phaseLog = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const metadata = await rawRequestThroughApplicationTarget({ ...metadataTarget, method: 'GET',
       path: PROVIDER_BROKER_PRIVATE_ENDPOINT_PATH, headers: { [PROVIDER_BROKER_MODEL_ID_HEADER]: modelId } });
     expect(metadata).toContain('HTTP/1.1 204 No Content');
     expect(metadata).toContain(`${PROVIDER_BROKER_ENDPOINT_PATH_HEADER}: ${protocol === 'anthropic' ? '/' : '/v1'}`);
-    expect(dispatchOrder).toEqual(['policy', 'metadata-admission', 'source-selection', 'metadata-admission']);
+    expect(dispatchOrder).toEqual(['policy', 'metadata-admission', 'source-selection']);
+    const phases = phaseLog.mock.calls.flatMap(([label, value]) => label === '[provider-broker-application]'
+      && value && typeof value === 'object' && 'phase' in value ? [value as Record<string, unknown>] : []);
+    expect(phases).toHaveLength(6);
+    for (const [phase, count] of [['request_policy', 1], ['model_catalog_authorization', 1], ['source_open', 1]] as const) {
+      const matching = phases.filter(row => row.phase === phase);
+      expect(matching.filter(row => row.status === 'started'), phase).toHaveLength(count);
+      expect(matching.filter(row => row.status === 'completed'), phase).toHaveLength(count);
+    }
+    for (const row of phases) {
+      expect(row).toMatchObject({ brokerRequestId: 'request-1', consumerId: authority.payload.consumer.kind === 'session'
+        ? authority.payload.consumer.sessionId : authority.payload.consumer.executionRunId, durationMs: expect.any(Number),
+        ...(protocol === 'openai-responses' ? { grantId: authority.payload.grantId } : {}) });
+      expect(Object.keys(row).sort()).toEqual(['stage', 'phase', 'brokerRequestId', 'consumerId', 'status', 'durationMs',
+        ...(protocol === 'openai-responses' ? ['grantId'] : [])].sort());
+    }
+    const sourcePhases = phaseLog.mock.calls.flatMap(([label, value]) => label === '[CONNECTED ACCOUNT] Materialization phase'
+      && value && typeof value === 'object' ? [value as Record<string, unknown>] : [])
+      .filter(row => row.materializationKey === 'request-1');
+    const sourceScopes = sourcePhases.filter(row => row.phase === 'materialization_invoke' && !row.parentPhaseId);
+    expect(sourceScopes).toEqual([
+      expect.objectContaining({ agentId: authority.payload.application.agentTargetKey,
+        materializationKey: 'request-1', status: 'started', phaseId: expect.any(String) }),
+      expect.objectContaining({ agentId: authority.payload.application.agentTargetKey,
+        materializationKey: 'request-1', status: 'completed', phaseId: expect.any(String), durationMs: expect.any(Number) }),
+    ]);
+    expect(sourceScopes[1]?.phaseId).toBe(sourceScopes[0]?.phaseId);
+    for (const phase of ['group_selection', 'binding_read', 'materialization_invoke']) {
+      const children = sourcePhases.filter(row => row.phase === phase && row.parentPhaseId === sourceScopes[0]?.phaseId);
+      expect(children.some(row => row.status === 'completed'), phase).toBe(true);
+      for (const start of children.filter(row => row.status === 'started')) {
+        expect(sourcePhases.filter(row => row.phaseId === start.phaseId)).toEqual([
+          start, expect.objectContaining({ status: 'completed', durationMs: expect.any(Number) }),
+        ]);
+      }
+    }
+    for (const row of sourcePhases) {
+      expect(Object.keys(row).sort()).toEqual(['agentId', 'materializationKey', 'phase', 'phaseId', 'status', 'durationMs',
+        ...(row.parentPhaseId ? ['parentPhaseId'] : [])].sort());
+    }
+    phaseLog.mockRestore();
     await vi.waitFor(() => expect(cleanup).toHaveBeenCalledOnce());
     dispatchOrder.length = 0;
     const target = await openTarget();
@@ -864,7 +938,7 @@ describe('startDaemonProviderBrokerRuntime', () => {
       });
     const lifetime = createPrivateProviderBrokerStreamLifetime({
       sourceOwner: Object.freeze({
-        selectSourceMemberKey: async () => null,
+        selectSourceMember: async () => null,
         acquire: ownerAcquire,
         retireOperation,
       }),
@@ -1872,6 +1946,21 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
   }
 
   describe('retained consumer currentness through signed private acquisition', () => {
+    it('admits a personal source once for the first request and refuses the next request after withdrawal', async () => {
+      const target = await startRetainedTarget(true);
+      await target.openInferenceStream();
+      expect(target.homeReads).toEqual([target.key(authority.payload.consumer)]);
+      expect(target.child()).toMatchObject({ starts: 1, current: true });
+
+      target.endConsumer();
+      const stream = await target.admitStream();
+      expect(stream.statusCode).toBe(204);
+      const response = await rawRequestThroughApplicationTarget({ ...stream, method: 'POST', path: '/v1/responses',
+        body: JSON.stringify({ model: 'gpt-5', input: 'withdrawn' }) });
+      expect(response).toContain('HTTP/1.1 403');
+      expect(target.child().starts).toBe(1);
+    });
+
     it('preserves a personal Gateway claim through loading and failed catalog refreshes, then serves the same claim', async () => {
       const target = await startRetainedTarget(true);
       const personal = target.personalConnection!;
@@ -2010,6 +2099,53 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       expect(await target.custody.revalidateRetainedClaims()).toBe(0);
     });
 
+    it('withdraws a Team route on the Home wake so the live stream\'s next request cannot reach the source', async () => {
+      // Owner ruling 10-30: revocation disconnects the route, so a running
+      // Session's NEXT Provider request cannot reach it. Home admission keeps
+      // admitting the job (no per-request permission re-evaluation); the
+      // custodian's retained revalidation on the Team-change wake withdraws it.
+      const target = await startRetainedTarget();
+      await target.infer();
+      const stream = await target.admitStream();
+      expect(stream.statusCode).toBe(204);
+      const socket = connect({ host: '127.0.0.1', port: stream.port });
+      closeTasks.push(async () => { socket.destroy(); });
+      await once(socket, 'connect');
+      let buffer: Buffer = Buffer.alloc(0);
+      let waiting: ((response: string) => void) | null = null;
+      socket.on('data', (chunk: Buffer) => {
+        buffer = Buffer.concat([buffer, chunk]);
+        const parsed = takeHttpResponse(buffer);
+        if (parsed && waiting) {
+          buffer = parsed.rest;
+          const resolve = waiting;
+          waiting = null;
+          resolve(parsed.response);
+        }
+      });
+      const send = async (input: string) => {
+        const response = new Promise<string>(resolve => { waiting = resolve; });
+        const body = JSON.stringify({ model: 'gpt-5', input });
+        socket.write(['POST /v1/responses HTTP/1.1', 'Host: 127.0.0.1', 'Connection: keep-alive',
+          'Content-Type: application/json', `Content-Length: ${Buffer.byteLength(body)}`, '', body].join('\r\n'), 'utf8');
+        return await response;
+      };
+      socket.write(stream.localCapability, 'ascii');
+      expect(await send('admitted')).toContain('HTTP/1.1 200');
+      expect(target.child()).toMatchObject({ starts: 1, current: true });
+
+      // The Home wake after the member's revocation: the retained check reads
+      // the custodian's authorization once and withdraws the route.
+      target.endConsumer();
+      expect(await target.custody.revalidateRetainedClaims(undefined, undefined, { facts: ['teams'] })).toBe(1);
+      expect(target.child()).toMatchObject({ current: false });
+
+      // The same keep-alive stream's next request cannot reach the source.
+      const next = await send('after-revocation');
+      expect(next).not.toContain('HTTP/1.1 200');
+      expect(target.child().starts).toBe(1);
+    });
+
     it('retires the exact closed-stream claim on the Home wake after a release never reaches the target', async () => {
       const target = await startRetainedTarget();
       await target.infer();
@@ -2136,8 +2272,13 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       /** The resource's current request policy, as the Home serves it now. */
       requestPolicy?: () => TeamCredentialResourceSummaryV1['requestPolicy'];
       providerRequest?: ManagedProviderEndpointHttpAccess['request'];
+      /** The custodian's connected account currently needs a reconnect. */
+      sourceReconnectRequired?: () => boolean;
+      /** A Connected Pool source; the selector reads the Pool's current member. */
+      pool?: Readonly<{ source: typeof connectedPoolSource; currentMember: () => string }>;
     }> = {},
   ) {
+    const brokerSource = options.pool?.source ?? source;
     // The Home's current resource revision, read by the daemon's request
     // policy and source-currentness owners exactly as production does.
     const resourceRevision = options.resourceRevision ?? (() => 7);
@@ -2183,11 +2324,17 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
       revalidateRetainedClaims: vi.fn(async () => 0),
       retireAll: vi.fn(async () => 0),
     });
-    const resolveBindingIntentSelection = vi.fn(async ({ purpose, target }) => ({
-      binding: { purpose, target },
-      resolved: { displayName: 'Account 1', account: source.target.account },
-      isCurrent: async () => true,
-    }));
+    const resolveBindingIntentSelection = vi.fn(async ({ purpose, target }) => {
+      if (options.sourceReconnectRequired?.()) throw new ConnectedAccountSourceReconnectRequiredError();
+      const account = options.pool && target.kind === 'group'
+        ? { service: options.pool.source.target.service, accountId: options.pool.currentMember() }
+        : target.kind === 'account' ? target.account : source.target.account;
+      return {
+        binding: { purpose, target },
+        resolved: { displayName: 'Account 1', account },
+        isCurrent: async () => true,
+      };
+    });
     const runtime = await startDaemonProviderBrokerRuntime({
       machineId: 'broker-machine',
       resolveTrustRoots: () => homeTrustRoots,
@@ -2201,7 +2348,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
           models: [{ id: 'gpt-5' }, { id: 'gpt-5-mini' }],
           resolveCanonicalModelId: (modelId: string) => modelId,
         },
-        source,
+        source: brokerSource,
       }),
       admitRequest: async (request) => {
         order.push('home-admission');
@@ -2217,7 +2364,7 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
         }),
         openConnectedServicesSource: createConnectedServicesBrokerSourceOpen({
           withRegistry: async (read) => await read(createBrokerProviderRegistry()),
-          readResource: async () => ({ ...brokerResource, revision: resourceRevision() }),
+          readResource: async () => ({ ...brokerResource, source: brokerSource, revision: resourceRevision() }),
           resolveBindingIntentSelection,
           custody,
         }),
@@ -2310,6 +2457,24 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     expect(target.custody.acquire).not.toHaveBeenCalled();
   });
 
+  it('refuses a request with the custodian source reconnect code before asking the Home', async () => {
+    // The Home's per-request admission does not re-read source sign-in
+    // health; the broker's own source owner produces the typed refusal that
+    // the in-turn failure history presents.
+    let reconnect = false;
+    const admitRequest = vi.fn<Parameters<typeof startTarget>[0]>(async (request) => admittedFor(request));
+    const target = await startTarget(admitRequest, { sourceReconnectRequired: () => reconnect });
+
+    expect(await target.infer()).toContain('HTTP/1.1 200 OK');
+    reconnect = true;
+    const refused = await target.infer();
+
+    expect(refused).not.toContain('HTTP/1.1 200');
+    expect(refused).toContain('connected_service_credential_reconnect_required');
+    expect(admitRequest).toHaveBeenCalledOnce();
+    expect(target.upstreamHits()).toBe(1);
+  });
+
   it('retires the exact operation on actual authority loss, but not on a reached limit', async () => {
     const admitRequest = vi.fn<Parameters<typeof startTarget>[0]>()
       .mockImplementationOnce(async (request) => admittedFor(request))
@@ -2393,6 +2558,30 @@ describe('Provider-broker admission precedes source custody (machine/1 admission
     // One operation, one joined source projection, nothing retired.
     expect(target.custody.acquire).toHaveBeenCalledOnce();
     expect(target.custody.retire).not.toHaveBeenCalled();
+  });
+
+  it('forwards a Pool request with the member the Home admitted when the Pool rotates before acquisition', async () => {
+    let poolMember = 'account-a';
+    const admitted: string[] = [];
+    const target = await startTarget(async (request) => {
+      admitted.push(request.sourceMemberKey);
+      // The Pool switches members (a usage limit) after the Home admitted A.
+      poolMember = 'account-b';
+      return { ok: true as const, resourceId: 'resource-1', brokerMachineId: 'broker-machine',
+        source: connectedPoolSource, operation: authority.payload.consumer, usageEventId: 'usage-1' };
+    }, { pool: { source: connectedPoolSource, currentMember: () => poolMember } });
+
+    const response = await target.infer();
+
+    expect(response).toContain('HTTP/1.1 200 OK');
+    expect(admitted).toEqual([computeTeamCredentialSourceMemberKeyV1({
+      kind: 'connected_account', service: source.target.account.service, connectedAccountId: 'account-a',
+    })]);
+    expect(target.upstreamHits()).toBe(1);
+    // Custody materializes exactly the admitted member, never the rotated one.
+    const acquired = JSON.stringify(vi.mocked(target.custody.acquire).mock.calls.map(([input]) => input.purposeBindings));
+    expect(acquired).toContain('account-a');
+    expect(acquired).not.toContain('account-b');
   });
 
   it('refuses the second request on one keep-alive stream when Home refuses it, with one upstream hit', async () => {

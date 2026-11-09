@@ -19,6 +19,7 @@ it('preserves Provider row authority across cleanup reports while refusing a dif
   expect(sameProviderConnectionsCatalogAuthority(admitted, undefined)).toBe(false);
 });
 
+
 function snapshot(version: number, marker: string, scopeKey = 'account-a'): ActiveAccountSettingsSnapshot {
   return {
     source: 'network',
@@ -53,7 +54,7 @@ describe('direct Provider authoritative settings snapshot reader', () => {
       mode: 'live',
       readCurrent: () => current,
     });
-    expect(read()).toBeNull();
+    expect(read()).toBe(current);
 
     current = snapshot(4, 'other-account', 'account-b');
     expect(read()).toBeNull();
@@ -101,13 +102,13 @@ describe('Provider authorization account-bound snapshot reader', () => {
     expect(read()).toBeNull();
   });
 
-  it('refuses a settings-version regression within the same account scope', () => {
+  it('does not turn a settings-version change into an Account identity fence', () => {
     let current: ActiveAccountSettingsSnapshot | null = snapshot(3, 'current', 'account-a');
     const read = createAccountBoundProviderSnapshotReader(() => current);
     expect(read()).toBe(current);
 
     current = snapshot(2, 'older', 'account-a');
-    expect(read()).toBeNull();
+    expect(read()).toBe(current);
   });
 
   it('pins identity for legacy unscoped snapshot readers instead of accepting a replacement', () => {

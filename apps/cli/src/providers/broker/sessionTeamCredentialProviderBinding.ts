@@ -27,18 +27,11 @@ import { createProviderBrokerEndpointDiscovery } from './providerBrokerEndpointD
 import { assertTeamCredentialModelAdmission, type TeamCredentialModelCompatibilityInput } from './teamCredentialModelCompatibility';
 import { resolveTeamCredentialModelCompatibility } from './teamCredentialModelCompatibility';
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
-import { readTeamCredentialLaunchReadinessRefusal } from '@/session/services/sessionTeamCredentialReadiness';
-import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
-import { assertSessionTeamCredentialNativeModel, materializeSessionTeamCredentialNativeBinding, type SessionTeamCredentialNativeOpen } from './sessionTeamCredentialNativeBinding';
+import { readTeamCredentialLaunchReadinessRefusal } from '@/session/services/sessionTeamCredentialReadiness';
 
-type BrokerTunnel = Readonly<{
-  localPort: number;
-  localCapability: string;
-  observedPath: 'direct' | 'relay' | 'unknown';
-  retire(): Promise<void>;
-  close(): Promise<void>;
-}>;
+import type { ProviderBrokerMachineCarrierTunnel as BrokerTunnel } from '@/daemon/peer/iroh/providerBrokerMachineCarrierTunnelOpen';
+import { assertSessionTeamCredentialNativeModel, materializeSessionTeamCredentialNativeBinding, type SessionTeamCredentialNativeOpen } from './sessionTeamCredentialNativeBinding';
 
 export type SessionTeamCredentialProviderBinding = Readonly<{
   providerBinding: AgentSessionProviderBinding;
@@ -67,7 +60,6 @@ type SessionTeamCredentialProviderBindingOpenDependencies = Readonly<{
   lease: PluginRuntimeRegistryLease;
   materializationBaseDir: string;
   signal: AbortSignal;
-  providerSettingsOperationContext?: SavedSecretOperationContextV1;
   openBroker(request: ProviderBrokerOpenRequestV1, signal: AbortSignal): Promise<ProviderBrokerOpenResponseV1>;
   initialBrokerOpen?: Extract<ProviderBrokerOpenResponseV1, { ok: true }>;
   openTunnel(request: Readonly<{
@@ -209,18 +201,13 @@ function assertExactSelectionIsCoherent(input: Readonly<{
 export async function openExactSessionTeamCredentialProviderBinding(
   input: SessionTeamCredentialProviderBindingOpenDependencies & Readonly<{
     selection: ExactSessionTeamCredentialProviderSelection;
-    revalidateSelection?(input: Readonly<{
-      signal: AbortSignal;
-      brokerOpen: Extract<ProviderBrokerOpenResponseV1, { ok: true }>;
-    }>): Promise<void>;
   }>,
 ): Promise<SessionTeamCredentialProviderBinding> {
   input.signal.throwIfAborted();
   assertExactSelectionIsCoherent(input);
   const selection = input.selection;
-  const assertAdmission = () => assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
+  await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
     model: { ...selection, deliveryMode: 'brokered' }, signal: input.signal });
-  await assertAdmission();
   const consumer = resolveProviderBrokerConsumer(input);
   const materializationScopeId = consumer.kind === 'execution_run'
     ? consumer.executionRunId
@@ -261,12 +248,6 @@ export async function openExactSessionTeamCredentialProviderBinding(
     throw new Error('team_credential_provider_broker_open_changed');
   }
   input.signal.throwIfAborted();
-  // Catalog and recipient consent can require slow Home reads. Complete them
-  // before acquiring native's connection: an unused connection is retired by
-  // its pre-application custody owner before it ever asks for a fresh grant.
-  await input.revalidateSelection?.({ signal: input.signal, brokerOpen: opened });
-  await assertAdmission();
-  input.signal.throwIfAborted();
   const discovery = createProviderBrokerEndpointDiscovery();
   const tunnel = await discovery.openTunnel(() => input.openTunnel({
     brokerOpen: opened,
@@ -289,7 +270,6 @@ export async function openExactSessionTeamCredentialProviderBinding(
         [PROVIDER_BROKER_MODEL_ID_HEADER]: selection.modelId },
       signal: input.signal,
     });
-    await input.revalidateSelection?.({ signal: input.signal, brokerOpen: opened });
     input.signal.throwIfAborted();
 
     const bindingKey = `team_resource:${selection.resourceId}:revision:${selection.expectedResourceRevision}:route:brokered`;
@@ -410,14 +390,17 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
   lease: PluginRuntimeRegistryLease;
   materializationBaseDir: string;
   signal: AbortSignal;
-  providerSettingsOperationContext?: SavedSecretOperationContextV1;
-  readCatalog(signal: AbortSignal): Promise<readonly TeamCredentialProviderModelCatalogEntryV1[]>;
+  readCatalog(signal: AbortSignal, application?: ProviderBrokerApplicationBindingV1): Promise<readonly TeamCredentialProviderModelCatalogEntryV1[]>;
   openBroker?: SessionTeamCredentialProviderBindingOpenDependencies['openBroker'];
   openTunnel?: SessionTeamCredentialProviderBindingOpenDependencies['openTunnel'];
   openTeamDirect?: SessionTeamCredentialDirectOpen;
   openVendorNative?: SessionTeamCredentialNativeOpen;
 }>): Promise<SessionTeamCredentialProviderBinding | null> {
   if (input.binding.slot.kind !== 'provider_model' || input.binding.resourceId === null) return null;
+  if (input.binding.deliveryMode !== 'brokered' && input.binding.deliveryMode !== 'direct'
+    && input.binding.deliveryMode !== 'vendor-native') {
+    throw new SessionTeamCredentialLaunchUnavailableError();
+  }
   const consumer = resolveProviderBrokerConsumer(input);
   const materializationScopeId = consumer.kind === 'execution_run'
     ? consumer.executionRunId
@@ -455,10 +438,9 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
     && candidate.availability === 'available'
   ));
   if (!row) throw new SessionTeamCredentialLaunchUnavailableError();
-  await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
-    model: { ...row, deliveryMode: row.selection.deliveryMode }, signal: input.signal });
-
   if (input.binding.deliveryMode === 'direct') {
+    await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
+      model: { ...row, deliveryMode: 'direct' }, signal: input.signal });
     if (!row.direct) {
       throw new Error('team_credential_direct_material_not_current');
     }
@@ -501,25 +483,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
       throw new Error('team_credential_provider_selection_changed');
     }
 
-    // Re-read after disclosure so a revoke/rotation racing the open cannot be
-    // admitted into a new Session. Already-running providers remain subject to
-    // the product's explicit copied-material disclosure contract.
-    const currentRows = await input.readCatalog(input.signal);
-    const current = currentRows.find((candidate) => (
-      candidate.selection.resourceId === row.selection.resourceId
-      && candidate.selection.expectedResourceRevision === row.selection.expectedResourceRevision
-      && candidate.selection.deliveryMode === row.selection.deliveryMode
-      && candidate.selection.agentTargetKey === row.selection.agentTargetKey
-      && candidate.selection.modelId === row.selection.modelId
-      && candidate.sourceRevision === row.sourceRevision
-      && candidate.availability === 'available'
-      && isDeepStrictEqual(candidate.descriptor, row.descriptor)
-      && isSameTeamCredentialBrokerApplication(candidate.application, row.application)
-      && isDeepStrictEqual(candidate.direct, direct)
-    ));
-    if (!current) throw new Error('team_credential_provider_selection_changed');
-    await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
-      model: { ...current, deliveryMode: current.selection.deliveryMode }, signal: input.signal });
+    input.signal.throwIfAborted();
 
     const bindingKey = `team_resource:${row.selection.resourceId}:revision:${row.selection.expectedResourceRevision}:route:direct`;
     const prepared = prepareLeasedAgentProviderBinding({
@@ -612,26 +576,8 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
     lease: input.lease,
     materializationBaseDir: input.materializationBaseDir,
     signal: input.signal,
-    providerSettingsOperationContext: input.providerSettingsOperationContext,
     openBroker: input.openBroker,
     initialBrokerOpen: opened,
     openTunnel: input.openTunnel,
-    revalidateSelection: async ({ signal }) => {
-      const currentRows = await input.readCatalog(signal);
-      const current = currentRows.find((candidate) => (
-        candidate.selection.resourceId === row.selection.resourceId
-        && candidate.selection.expectedResourceRevision === row.selection.expectedResourceRevision
-        && candidate.selection.deliveryMode === row.selection.deliveryMode
-        && candidate.selection.agentTargetKey === row.selection.agentTargetKey
-        && candidate.selection.modelId === row.selection.modelId
-        && candidate.sourceRevision === row.sourceRevision
-        && candidate.availability === 'available'
-        && isDeepStrictEqual(candidate.descriptor, row.descriptor)
-        && isSameTeamCredentialBrokerApplication(candidate.application, row.application)
-      ));
-      if (!current) throw new Error('team_credential_provider_selection_changed');
-      await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
-        model: { ...current, deliveryMode: current.selection.deliveryMode }, signal });
-    },
   });
 }

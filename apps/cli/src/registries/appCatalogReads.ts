@@ -1,4 +1,5 @@
 import type { RegistryFetchContextV1, RegistryHttpResultV1, RegistryHttpV1 } from '@happier-dev/protocol/registries/formats/registryFormatAdapterV1';
+import { raceWithAbort } from '@happier-dev/cli-common/plugins/http';
 
 type CatalogRead = { commit: string; active: number; resources: Map<string, Promise<RegistryHttpResultV1<Uint8Array>>> };
 type SourceReads = { signature: string; current: CatalogRead; entries: Map<string, CatalogRead> };
@@ -6,8 +7,9 @@ const sources = new Map<string, SourceReads>();
 
 /** One daemon-process owner, scoped to the admitted Account and source. Only
  * the current SHA and older SHA reads still being consumed remain reachable. */
-export function createAppCatalogReadsV1(scopeKey: string | null): NonNullable<RegistryFetchContextV1['withAppCatalog']> {
-  return async ({ source, commit, current, http }, consume) => {
+export function createAppCatalogReadsV1(scopeKey: string | null,
+  input: Readonly<{ http: RegistryHttpV1; signal?: AbortSignal }>): NonNullable<RegistryFetchContextV1['withAppCatalog']> {
+  return async ({ source, commit, current }, consume) => {
     const key = JSON.stringify([scopeKey, source.id]);
     const signature = JSON.stringify([source.url, source.ref, source.path, source.token]);
     let admitted = sources.get(key);
@@ -30,17 +32,21 @@ export function createAppCatalogReadsV1(scopeKey: string | null): NonNullable<Re
     }
     entry.active++;
     const resources = entry.resources;
-    const getBytes: RegistryHttpV1['getBytes'] = (url, options) => {
-      const existing = resources.get(url);
-      if (existing) return existing;
-      const pending = http.getBytes(url, options).then(result => {
-        // The transport already owns reset-proven throttling. Failures settle;
-        // a later explicit read may recover, without a timer or retry loop here.
-        if (!result.ok) resources.delete(url);
-        return result;
-      }, error => { resources.delete(url); throw error; });
-      resources.set(url, pending);
-      return pending;
+    const getBytes: RegistryHttpV1['getBytes'] = async (url, options) => {
+      let pending = resources.get(url);
+      if (!pending) {
+        pending = input.http.getBytes(url, options).then(result => {
+          // The transport already owns reset-proven throttling. Failures settle;
+          // a later explicit read may recover, without a timer or retry loop here.
+          if (!result.ok) resources.delete(url);
+          return result;
+        }, error => { resources.delete(url); throw error; });
+        resources.set(url, pending);
+      }
+      // The admitted transport belongs to the shared read; each caller can
+      // stop waiting without withdrawing another caller's immutable bytes.
+      try { return await raceWithAbort(pending, input.signal); }
+      catch (error) { input.signal?.throwIfAborted(); throw error; }
     };
     const retainedHttp: RegistryHttpV1 = {
       getBytes,

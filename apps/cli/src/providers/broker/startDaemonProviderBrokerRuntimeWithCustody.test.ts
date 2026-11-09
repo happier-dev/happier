@@ -38,6 +38,7 @@ import {
   setActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { logger } from '@/ui/logger';
 
 import { createBrokerProviderRegistry } from './providerBroker.testkit';
 import { createConnectedServicesBrokerSourceMemberSelect, createConnectedServicesBrokerSourceOpen } from './connectedServicesSource';
@@ -49,7 +50,10 @@ const { axiosGet, axiosPost, readCursor, writeCursor } = vi.hoisted(() => ({
   axiosGet: vi.fn(), axiosPost: vi.fn(), readCursor: vi.fn(), writeCursor: vi.fn(),
 }));
 // Home HTTP and persisted cursor I/O are the only substituted host boundaries.
-vi.mock('axios', () => ({ default: { get: axiosGet, post: axiosPost, isAxiosError: () => false }, isAxiosError: () => false }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: Object.assign(Object.create(actual.default), { get: axiosGet, post: axiosPost }) };
+});
 vi.mock('@/persistence', async importOriginal => ({
   ...await importOriginal<typeof import('@/persistence')>(),
   readAccountChangesCursor: readCursor,
@@ -57,6 +61,8 @@ vi.mock('@/persistence', async importOriginal => ({
 }));
 
 it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact close with a %s Home resource-read outcome', async resourceReadFailure => {
+  const warnings = vi.spyOn(logger, 'warnLocalFile');
+  onTestFinished(() => warnings.mockRestore());
   const previousSnapshot = getActiveAccountSettingsSnapshot();
   clearActiveAccountSettingsSnapshot();
   setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1,
@@ -93,8 +99,11 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
   };
   let cursor = 0;
   let homeCursor = 0;
+  let changeKind = 'account';
+  let changeEntityId = 'teams';
   const currentConsumers = new Set(['ended-at-home', 'stream-ended', 'still-current']);
   const homeReads: string[] = [];
+  let resourceReads = 0;
   let resourceFailure: Error | null = null;
   readCursor.mockImplementation(async () => cursor);
   writeCursor.mockImplementation(async (_accountId: string, next: number) => { cursor = next; });
@@ -105,13 +114,14 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
     }
     if (url.endsWith('/v1/auth/ping')) return { status: 200, data: {} };
     if (url.includes('/v2/changes')) return { status: 200, data: {
-      changes: homeCursor > cursor ? [{ cursor: homeCursor, kind: 'account', entityId: 'teams', changedAt: homeCursor, hint: null }] : [],
+      changes: homeCursor > cursor ? [{ cursor: homeCursor, kind: changeKind, entityId: changeEntityId, changedAt: homeCursor, hint: null }] : [],
       nextCursor: homeCursor,
     } };
     throw new Error(`Unexpected Home HTTP read: ${url}`);
   });
   axiosPost.mockImplementation(async (_url: string, body: unknown) => {
     if (body && typeof body === 'object' && 'resourceId' in body) {
+      resourceReads++;
       if (resourceFailure) throw resourceFailure;
       return { status: 200, data: resource };
     }
@@ -126,10 +136,16 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
       ? { ok: true } : { ok: false, reasonCode: 'session_not_active' } };
   });
   const api = await ApiClient.create({ token: 'token', encryption: null });
-  const apiMachine = api.machineSyncClient({ id: 'broker-machine', encryptionMode: 'plain', metadata: null,
+  const apiMachine = await api.machineSyncClient({ id: 'broker-machine', encryptionMode: 'plain', metadata: null,
     metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+  const invalidatedFacts: Array<readonly string[]> = [];
+  onTestFinished(apiMachine.onManagedProviderRetainedCurrentnessInvalidation(async ({ facts }) => {
+    invalidatedFacts.push(facts);
+  }));
   apiMachine.onConnectedServicesProjection(async () => {});
-  const syncTeamChange = async () => {
+  const syncChange = async (kind = 'account', entityId = 'teams') => {
+    changeKind = kind;
+    changeEntityId = entityId;
     homeCursor++;
     await (apiMachine as unknown as { syncChangesOnConnect(options: { reason: 'live' }): Promise<void> })
       .syncChangesOnConnect({ reason: 'live' });
@@ -170,8 +186,8 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
     },
     retire: async claim => await managed.retireManagedProviderExplicitStart(operationIdentity(claim)),
     retireExternalApiKey: unused,
-    revalidateRetainedClaims: async (signal, selector) =>
-      await managed.revalidateManagedProviderExplicitStarts(signal, selector ? operationIdentity(selector) : undefined),
+    revalidateRetainedClaims: async (signal, selector, invalidation) =>
+      await managed.revalidateManagedProviderExplicitStarts(signal, selector ? operationIdentity(selector) : undefined, invalidation),
     retireAll: async () => await managed.retireManagedProviderExplicitStarts('providerBroker'),
   };
   onTestFinished(async () => { await managed.dispose(); });
@@ -199,9 +215,9 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
     resolveRequestPolicy: async () => ({ resourceRevision: 7, sourceRevision: 'source-revision-7', application, source,
       policy: null, modelCatalog: { models: [{ id: 'gpt-5' }], resolveCanonicalModelId: id => id } }),
     admitRequest: async request => await api.admitTeamCredentialProviderBrokerRequest({ v: 1,
-      authority: request.authority, expectedResourceRevision: request.expectedResourceRevision,
-      sourceMemberKey: request.sourceMemberKey, requestId: request.requestId, requestFacts: request.requestFacts,
-    }, { signal: request.request.signal }),
+        authority: request.authority, expectedResourceRevision: request.expectedResourceRevision,
+        sourceMemberKey: request.sourceMemberKey, requestId: request.requestId, requestFacts: request.requestFacts,
+      }, { signal: request.request.signal }),
     authorizeModelCatalog: unused,
   } });
   onTestFinished(runtime.close);
@@ -239,7 +255,10 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
           'Content-Type: application/json', `Content-Length: ${Buffer.byteLength(body)}`, '', body].join('\r\n'));
       });
     });
-    expect(response).toContain('HTTP/1.1 200');
+    expect(response, JSON.stringify({
+      homeRequests: axiosPost.mock.calls.map(([url]) => new URL(String(url)).pathname),
+      warnings: warnings.mock.calls.filter(([label]) => label === '[provider-broker-application]' || label === '[provider-broker-source]') }))
+      .toContain('HTTP/1.1 200');
     const previousReads = homeReads.length;
     socket.destroy();
     await vi.waitFor(() => expect(homeReads).toHaveLength(previousReads + 1));
@@ -248,10 +267,16 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
   expect(homeReads).toEqual([]);
   for (const sessionId of currentConsumers) await infer(sessionId);
   homeReads.length = 0;
+  resourceReads = 0;
+  await syncChange('savedSecretResource', 'unrelated-saved-secret');
+  expect(invalidatedFacts).toEqual([['saved-secrets']]);
+  expect(resourceReads).toBe(0);
+  expect(homeReads).toEqual([]);
+  expect(managed.readRetainedSemanticCustodyCount()).toBe(3);
   resourceFailure = resourceReadFailure === 'network'
     ? new Error('Home network unavailable')
     : createHttpStatusError(resourceReadFailure, 'Home resource read failed');
-  await syncTeamChange();
+  await syncChange();
   expect(homeReads).toEqual([]);
   if (resourceReadFailure === 404) {
     expect(managed.readRetainedSemanticCustodyCount()).toBe(0);
@@ -269,7 +294,7 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
   }
   homeReads.length = 0;
   currentConsumers.delete('ended-at-home');
-  await syncTeamChange();
+  await syncChange();
   expect([...homeReads].sort()).toEqual(['ended-at-home', 'still-current', 'stream-ended']);
   expect(children.get('ended-at-home')).toEqual({ current: false, cleanup: 1 });
   expect(children.get('still-current')).toEqual({ current: true, cleanup: 0 });
@@ -303,7 +328,7 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
     revalidateRetainedCurrentness: async () => { replacementReads++; return false; },
   });
   expect(replacement).not.toBeNull();
-  await syncTeamChange();
+  await syncChange();
   await runtime.retireAllClaims();
   await new Promise<void>(resolve => setImmediate(resolve));
   expect(replacementReads).toBe(0);
@@ -312,6 +337,8 @@ it.each(['network', 500, 403, 404] as const)('composes Team wakes and exact clos
 });
 
 it('composes personal stream close with the exact shared gateway selector through real registry custody', async () => {
+  const warnings = vi.spyOn(logger, 'warnLocalFile');
+  onTestFinished(() => warnings.mockRestore());
   await withConfiguredDaemonTestHome({ prefix: 'personal-broker-composition-' }, async ({ homeDir }) => {
     const controller = createPluginReloadController();
     const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
@@ -319,7 +346,7 @@ it('composes personal stream close with the exact shared gateway selector throug
     const gateway = fixture.gateway!;
     const custody = createManagedProviderExplicitStartCustody({ machineId: fixture.machineId, happyHomeDir: homeDir, controller });
     const api = await ApiClient.create({ token: 'token', encryption: null });
-    const apiMachine = api.machineSyncClient({ id: fixture.machineId, encryptionMode: 'plain', metadata: null,
+    const apiMachine = await api.machineSyncClient({ id: fixture.machineId, encryptionMode: 'plain', metadata: null,
       metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
     const signingKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
     const current = new Map([['selected-connection', true], ['unrelated-connection', true]]);
@@ -380,7 +407,8 @@ it('composes personal stream close with the exact shared gateway selector throug
       const selectedPid = Number(await readFile(join(gateway.directory, 'gateway-started'), 'utf8'));
       const unrelated = await acquire('unrelated-connection');
       const unrelatedPid = Number(await readFile(join(gateway.directory, 'gateway-started'), 'utf8'));
-      expect(selected).not.toBeNull();
+      expect(selected, JSON.stringify(warnings.mock.calls.filter(([label]) => label === '[ProviderBroker] Managed source acquisition refused'
+        || label === '[Provider] Managed runtime start refused'))).not.toBeNull();
       expect(unrelated).not.toBeNull();
       current.set('selected-connection', false);
       current.set('unrelated-connection', false);

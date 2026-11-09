@@ -8,9 +8,9 @@ import { join } from 'node:path';
 import * as persistence from '@/persistence';
 import {
   AccountSettingsSchema,
-  PROVIDER_ENDPOINT_SAFETY_LIMITS,
   DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderConnectionIdSchema,
+  ProviderConnectionSecurityFingerprintV1Schema,
   ProviderContributionV1Schema,
   ProviderEndpointRuntimeStateRecordV1Schema,
   ProviderRuntimeStateFileV1Schema,
@@ -36,6 +36,7 @@ import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
 import type { ResolvedProviderContribution } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createBrokerProviderRegistry } from '@/providers/broker/providerBroker.testkit';
 import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import { commitActiveProviderConnectionsCatalog, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -60,8 +61,8 @@ import { createRuntimeProviderConnectionServices } from '@/providers/connections
 import { createRuntimeProviderServices } from '@/providers/probe/runtimeServices';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
 import { emptyAccountSettingsHistoryCaptureResponse } from '@/settings/accountSettings/emptyAccountSettingsHistoryCapture.testkit';
-import { PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS } from '@/providers/probe/scheduler';
 import type { ProviderModelSettingsMutationIntent } from '@/providers/connections';
+import { createTeamCredentialNativeProviderSourceFixture } from '@/providers/broker/teamCredentialNativeProviderSource.testkit';
 
 import {
   createRuntimeProviderModelManagementServices,
@@ -69,6 +70,57 @@ import {
 } from './runtimeServices';
 
 const temporaryPaths: string[] = [];
+
+it('projects private native source tickets through the real source catalog and refuses a foreign requester', async () => {
+  const fixture = await createTeamCredentialNativeProviderSourceFixture();
+  try {
+    const { services, request } = fixture;
+    const projected = await services.projectModels(request);
+    expect(projected).toMatchObject({ status: 'success', groups: [{ rows: [expect.objectContaining({
+      nativeSource: { providerTicket: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+        authorizationTicket: expect.objectContaining({ selectedSecretBindingId: formatSharedSavedSecretRefV1('native-key') }),
+        endpoint: expect.objectContaining({ normalizedUrl: 'https://example.test/v1' }), credentialTransport: expect.any(Object) },
+    })] }] });
+    expect(JSON.stringify(projected)).not.toContain('native-source-secret');
+    if (projected.status !== 'success' || !projected.groups[0]?.rows[0]) throw new Error('Expected native source row');
+    const row = projected.groups[0].rows[0];
+    const selectedRequest = { ...request, currentSelection: row.ref, application: row.application };
+    const source = await services.prepareTeamCredentialNativeSource(selectedRequest);
+    expect(source).toMatchObject({ ok: true, source: { providerTicket: row.nativeSource?.providerTicket } });
+    if (!source.ok) throw new Error(source.error.code);
+    await source.source.cleanup();
+    const before = fixture.sourceReads;
+    expect(await services.projectModels(request, undefined, { signal: new AbortController().signal, machineAdmission: {
+      actorAccountId: 'member-account', custodianAccountId: 'controller-account', machineId: fixture.machineId,
+      installationId: 'installation', role: 'use', encryptionMode: 'plain',
+    } })).toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
+    expect(fixture.sourceReads).toBe(before);
+    fixture.setResource(fixture.resource && { ...fixture.resource, custodianAccountId: 'wrong-custodian' });
+    expect(await services.projectModels(request)).toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
+    fixture.setProvidersEnabled(false);
+    const disabledReads = fixture.sourceReads;
+    expect(await services.prepareTeamCredentialNativeSource(selectedRequest))
+      .toMatchObject({ ok: false, error: { code: 'provider_feature_disabled' } });
+    expect(fixture.sourceReads).toBe(disabledReads);
+  } finally { await fixture.cleanup(); }
+});
+
+it('keeps native metadata Home and DNS boundary reads independent of the number of offered models', async () => {
+  const observe = async (count: number) => {
+    const fixture = await createTeamCredentialNativeProviderSourceFixture({ catalogModels:
+      Array.from({ length: count }, (_, index) => ({ id: `model-${index}`, name: `Model ${index}` })) });
+    try {
+      const result = await fixture.services.projectModels(fixture.request);
+      expect(result).toMatchObject({ status: 'success' });
+      if (result.status !== 'success') throw new Error('Expected native source metadata');
+      expect(result.groups.flatMap(group => group.rows)).toHaveLength(count);
+      return { home: fixture.sourceReads, dns: fixture.dnsReads };
+    } finally { await fixture.cleanup(); }
+  };
+  expect(await observe(4)).toEqual(await observe(1));
+});
+
+
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -187,9 +239,9 @@ it('settles steady source-any eligibility across three Agents without replaying 
     expect(historyCompleted).toBe(false);
     expect(projectedTargets).toEqual([]);
     // One row+source observation despite steady post-publication demand. The
-    // history owner has additionally verified destination row authority once.
+    // blocked history inventory has no content demanding destination authority.
     expect(sourceReads).toBe(1);
-    expect(rowReads).toBe(2);
+    expect(rowReads).toBe(1);
     expect(withdrawals).toHaveBeenCalledTimes(1);
 
     revision = 2;
@@ -209,6 +261,7 @@ it('settles steady source-any eligibility across three Agents without replaying 
 });
 
 it.each(['owner', 'joined'] as const)('cancels %s broker eligibility inside its pending catalog HTTP read', async custody => {
+  const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
   const credentials = { token: 'eligibility-cancellation', encryption: null };
   const snapshot = providerSnapshot(DEFAULT_PROVIDER_SETTINGS_V1);
   setActiveAccountSettingsSnapshot({ ...snapshot, scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
@@ -237,6 +290,7 @@ it.each(['owner', 'joined'] as const)('cancels %s broker eligibility inside its 
     throw new Error(`Unexpected cancelled eligibility HTTP boundary: ${path}`);
   });
   const services = createRuntimeProviderModelManagementServices({ machineId: 'machine-a',
+    acquireRuntimeLease: async () => runtime.lease,
     featureGate: { isEnabled: () => true },
     modelSettingsMutation: async (): Promise<never> => { throw new Error('No model mutation during eligibility'); } });
   const maintenance = custody === 'joined' ? refreshActiveProviderConnectionsCatalog({ credentials }) : undefined;
@@ -255,7 +309,7 @@ it.each(['owner', 'joined'] as const)('cancels %s broker eligibility inside its 
     await vi.waitFor(() => expect(settled).toBe(true));
     expect(transportAborted).toBe(custody === 'owner');
     await expect(eligibility).resolves.toMatchObject({ status: 'unavailable' });
-  } finally { releaseRow(); await eligibility; await maintenance; }
+  } finally { releaseRow(); await eligibility; await maintenance; await runtime.dispose(); }
 });
 
 async function runtimeStoreWithState(state = createEmptyProviderRuntimeStateFileV1('machine-a')) {
@@ -312,13 +366,16 @@ it.each(['projection', 'manualAdd', 'models'] as const)('cancels the registered 
       : { action: 'manualAdd', machineId: 'machine-a', connectionId: 'pc_missing', expectedConnectionRevision: 1,
           models: [{ id: 'model-a', name: 'Model A' }] };
   let settled = false;
-  const pending = rpc.invokeLocal(method, request, { signal: controller.signal }).then(result => { settled = true; return result; });
+  const pending = rpc.invokeLocal(method, request, { signal: controller.signal }).then(
+    result => { settled = true; return { result }; },
+    (error: unknown) => { settled = true; return { error }; },
+  );
   try {
     await Promise.race([rowEntered, pending.then(result => { throw new Error(`Settled before Home read: ${JSON.stringify(result)}`); })]);
     controller.abort();
     await vi.waitFor(() => expect(settled).toBe(true));
     expect(transportSignal?.aborted).toBe(true);
-    await expect(pending).resolves.toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable', action: 'retry' } });
+    await expect(pending).resolves.toMatchObject({ error: { name: 'ProviderOperationAbandonedError', reason: 'cancelled' } });
   } finally { releaseRow(); await pending; }
 });
 
@@ -501,8 +558,92 @@ describe('runtime provider model-management composition', () => {
     throw new Error('Unexpected model-settings effect');
   };
 
+  it('observes through the installed source Agent without requiring the worker or borrowing ambient Account authority', async () => {
+    const service = { pluginId: 'acme.managed-run', localId: 'accounts' };
+    const fixture = await createManagedRunLaunchFixture({ connectedAccounts: [{ purpose: 'source-models', service: service.localId,
+      required: false, materializationKinds: ['httpHeaders'] }] });
+    const base = createBrokerProviderRegistry();
+    const registry = { ...fixture.lease.registry, contributes: { ...fixture.lease.registry.contributes,
+      providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, { ...provider,
+        definition: ProviderContributionV1Schema.parse({ ...provider.definition, managedRuntime: { ...provider.definition.managedRuntime,
+          connectedAccounts: [{ purpose: 'openai-upstream', service, endpointTemplateIds: provider.definition.endpointTemplates.map(endpoint => endpoint.id),
+            staticModels: [{ id: 'gpt-5.5', name: 'Static' }] }] } }),
+      }])) } };
+    let current = true;
+    let targetReads = 0;
+    let nativeReads = 0;
+    const unavailable = async (): Promise<never> => { throw new Error('Unexpected mutation or delivery'); };
+    const purposes = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+      selectTarget: unavailable, materializeAccount: unavailable, projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
+      resolveTarget: async target => { targetReads++; return current && target.kind === 'account'
+        ? { account: target.account, displayName: 'Source' } : null; },
+    });
+    const services = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId, featureGate: { isEnabled: () => true },
+      acquireRuntimeLease: async () => ({ ...fixture.lease, registry }),
+      resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
+      getAccountSettingsSnapshot: (): never => { throw new Error('Source-only discovery must not read a personal catalog'); },
+      // The installed Machine/native probe is the boundary; source mapping,
+      // purpose admission, registry, projection and currentness remain real.
+      invokeConnectedAccountNativeModels: async request => {
+        nativeReads++;
+        expect(request).toMatchObject({ id: `cli.${fixture.agentId}`, method: 'probeModels', params: {
+          currentOnly: true, bypassCache: false,
+          connectedServices: { v: 2, bindingsByServiceId: { 'acme.managed-run/accounts': { source: 'connected', profileId: 'selected-source' } } },
+        } });
+        return { ok: true, result: { agentId: fixture.agentId, source: 'dynamic', observedAt: 1,
+          supportsFreeform: false, availableModels: [{ id: 'gpt-6.1-sol', name: 'Sol' }] } };
+      }, modelSettingsMutation: unavailable,
+    });
+    const request = { machineId: fixture.machineId, agentTargetKey: 'agent:external.worker/worker', sourceCatalog: true as const,
+      refreshPolicy: 'current_only' as const, connectedAccountTarget: { kind: 'account' as const, account: { service, accountId: 'selected-source' } } };
+    try {
+      const result = await services.projectModels(request);
+      expect(result.status).toBe('success');
+      if (result.status !== 'success') throw new Error('Expected observed source projection');
+      expect(result.groups).toHaveLength(3);
+      expect(result.groups.every(group => group.rows.length === 1 && group.rows[0]?.descriptor.id === 'gpt-6.1-sol'
+        && group.rows[0]?.confidence === 'probe')).toBe(true);
+      expect(nativeReads).toBe(1);
+      const beforeForeign = targetReads;
+      await expect(services.projectModels(request, undefined, { signal: new AbortController().signal, machineAdmission: {
+        actorAccountId: 'recipient', custodianAccountId: 'custodian', machineId: fixture.machineId,
+        installationId: 'installation', role: 'use', encryptionMode: 'plain',
+      } })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_authorization_changed' } });
+      expect(targetReads).toBe(beforeForeign);
+      expect(nativeReads).toBe(1);
+      const scoped = await services.projectModelsForAccount(request, {
+        getAccountSettingsSnapshot: (): never => { throw new Error('No personal catalog'); }, resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
+        resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
+        signal: new AbortController().signal, isCurrent: () => true,
+      });
+      expect(scoped.status).toBe('success');
+      if (scoped.status !== 'success') throw new Error('Expected declaration fallback');
+      expect(scoped.groups.every(group => group.rows[0]?.descriptor.id === 'gpt-5.5'
+        && group.rows[0]?.confidence === 'account_unverified')).toBe(true);
+      expect(nativeReads).toBe(1);
+      const source = await services.readSourceModelCatalogs({ machineId: fixture.machineId,
+        source: { v: 1, kind: 'connected_account', target: request.connectedAccountTarget, credentialIncarnation: 'source-incarnation' },
+        refreshPolicy: 'current_only' });
+      if (source.status !== 'success') throw new Error(source.error.code);
+      expect(source.catalogs).toHaveLength(3);
+      expect(source.catalogs.every(catalog => !('agentTargetKey' in catalog.application)
+        && catalog.rows[0]?.descriptor.id === 'gpt-6.1-sol' && catalog.rows[0]?.confidence === 'probe')).toBe(true);
+      expect(source.catalogs.map(catalog => catalog.sourceRevision)).toEqual(result.groups.map(group => group.sourceRevision));
+      expect(nativeReads).toBe(2);
+      current = false;
+      await expect(services.projectModels(request)).resolves.toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable' } });
+      expect(await services.readSourceModelCatalogs({ machineId: fixture.machineId,
+        source: { v: 1, kind: 'connected_account', target: request.connectedAccountTarget, credentialIncarnation: 'source-incarnation' },
+        refreshPolicy: 'current_only' })).toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable' } });
+      expect(nativeReads).toBe(2);
+    } finally { await fixture.cleanup(); }
+  });
+
   it('projects an admitted Connected Pool source without personal Provider catalog reads and refuses withdrawn sources', async () => {
-    const fixture = await createManagedRunLaunchFixture();
+    // Shipped Codex accepts the broker's raw local capability
+    // header; use that declared transport rather than this fixture's bearer-only default.
+    const fixture = await createManagedRunLaunchFixture({ acceptedCredentialFormats: ['raw', 'bearer'] });
     const base = createBrokerProviderRegistry();
     const registry = { ...fixture.lease.registry, contributes: { ...fixture.lease.registry.contributes,
       providersByContributionKey: new Map([...base.providersByContributionKey].map(([key, provider]) => [key, {
@@ -520,9 +661,10 @@ describe('runtime provider model-management composition', () => {
       store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
       selectTarget: unexpected, materializeAccount: unexpected, projectTargetAccounts: unexpected,
       assertTargetAccountMaterializable: unexpected,
-      resolveTarget: async target => sourceAvailable && target.kind === 'group' ? {
-        account: { service: target.service, accountId: 'pool-account' }, displayName: 'Pool source',
-        group: { groupId: target.groupId, generation: 1 },
+      resolveTarget: async target => sourceAvailable ? {
+        account: target.kind === 'group' ? { service: target.service, accountId: 'pool-account' } : target.account,
+        displayName: 'Pool source',
+        ...(target.kind === 'group' ? { group: { groupId: target.groupId, generation: 1 } } : {}),
       } : null,
     });
     let snapshotReads = 0;
@@ -558,11 +700,58 @@ describe('runtime provider model-management composition', () => {
       expect(admitTeamCredentialSourceModelRowsV1(response)).toMatchObject({ status: 'success', rows: [{
         row: { ref: { modelId: 'pool-model' }, application }, sourceRevision: expect.any(String),
       }] });
+      const mismatchedApplication = { ...application,
+        implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' },
+        endpointTemplateId: 'openai-responses' };
+      const mismatch = await rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
+        { ...request, application: mismatchedApplication });
+      expect(mismatch).toMatchObject({ status: 'error', error: { code: 'provider_incompatible_with_agent' } });
+      expect(admitTeamCredentialSourceModelRowsV1(mismatch)).toMatchObject({ status: 'unavailable', reason: 'incompatible' });
+      await expect(services.readSourceModelCatalogs({ machineId: fixture.machineId,
+        source: eligibilityRequest.source, application: mismatchedApplication, refreshPolicy: 'current_only',
+      })).resolves.toMatchObject({ status: 'error', error: { code: 'provider_incompatible_with_agent' } });
+      for (const target of [request.connectedAccountTarget, { kind: 'account' as const,
+        account: { service: request.connectedAccountTarget.service, accountId: 'pool-account' } }]) {
+        const sourceResponse = await rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
+          { ...request, connectedAccountTarget: target });
+        const admitted = admitTeamCredentialSourceModelRowsV1(sourceResponse);
+        if (admitted.status !== 'success' || !admitted.rows[0]) throw new Error('Expected current connected source row');
+        const produced = admitted.rows[0];
+        const teamModel = TeamCredentialProviderModelCatalogEntryV1Schema.parse({
+          selection: { kind: 'team_credential_provider_model', resourceId: 'resource', teamId: 'team',
+            expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey: fixture.agentTargetKey,
+            modelId: produced.row.descriptor.id },
+          descriptor: produced.row.descriptor, application: produced.row.application, sourceFacts: produced.row.sourceFacts,
+          sourceRevision: produced.sourceRevision, availability: 'available',
+        });
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+          id: 'resource', teamId: 'team', displayName: 'Pool source', resourceRevision: 1,
+          readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+          directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+          connectedServiceSelections: [], sourcePresentation: null, providerModels: [teamModel],
+        });
+        const reviewed = await rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, {
+          machineId: fixture.machineId, agentTargetKey: fixture.agentTargetKey, teamCredentialResources: [resource], mode: 'management',
+        });
+        expect(reviewed).toMatchObject({ status: 'success', groups: [], teamCredentialResources: [{ providerModels: [{ compatibility: {
+          result: { status: 'experimental' }, confirmed: true,
+        } }] }] });
+      }
       expect(snapshotReads).toBe(0);
       expect(http).not.toHaveBeenCalled();
       const eligibility = await services.resolveTeamCredentialBrokerEligibility(eligibilityRequest);
       expect.soft(snapshotReads).toBe(0);
       expect(eligibility).toEqual({ status: 'eligible' });
+      const source = await services.readSourceModelCatalogs({ machineId: fixture.machineId,
+        source: eligibilityRequest.source, refreshPolicy: 'current_only' });
+      if (source.status !== 'success' || !source.catalogs[0]) throw new Error('Expected source-only Pool catalog');
+      expect(source.catalogs).toHaveLength(1);
+      expect(source.catalogs[0].application).not.toHaveProperty('agentTargetKey');
+      expect(source.catalogs[0].rows.map(row => row.descriptor.id)).toEqual(['pool-model']);
+      const sourceEligibility = { machineId: fixture.machineId, teamId: 'team', resourceId: 'resource',
+        expectedResourceRevision: 1, source: eligibilityRequest.source, application: source.catalogs[0].application,
+        sourceRevision: source.catalogs[0].sourceRevision, modelId: 'pool-model' };
+      expect(await services.resolveTeamCredentialBrokerEligibility(sourceEligibility)).toEqual({ status: 'eligible' });
 
       let accountCurrent = true;
       const accountContext = {
@@ -587,6 +776,8 @@ describe('runtime provider model-management composition', () => {
       await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, request))
         .resolves.toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable' } });
       await expect(services.resolveTeamCredentialBrokerEligibility(eligibilityRequest))
+        .resolves.toEqual({ status: 'unavailable', reason: 'source_unavailable' });
+      await expect(services.resolveTeamCredentialBrokerEligibility(sourceEligibility))
         .resolves.toEqual({ status: 'unavailable', reason: 'source_unavailable' });
       expect(snapshotReads).toBe(0);
       expect(http).not.toHaveBeenCalled();
@@ -1020,6 +1211,11 @@ describe('runtime provider model-management composition', () => {
       throw new Error('Expected Provider Connection source');
     }
     const teamProviderSource = parsedTeamProviderSource;
+    const sourceBrokerApplication = {
+      implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+      endpointTemplateId: 'cliproxyapi-openai-chat',
+      protocol: 'openai-chat' as const,
+    };
     await expect(services.resolveTeamCredentialResourceTestCandidate({
       machineId: 'machine-a',
       teamId: 'team-1',
@@ -1028,19 +1224,12 @@ describe('runtime provider model-management composition', () => {
       source: teamProviderSource,
     })).resolves.toMatchObject({
       status: 'success',
-      application: {
-        agentTargetKey: 'agent:happier.agent.codex/codex',
-        implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-        endpointTemplateId: 'cliproxyapi-openai-chat',
-        protocol: 'openai-chat',
-      },
+      application: sourceBrokerApplication,
       request: { route: 'chat_completions', pathAndQuery: '/v1/chat/completions' },
     });
     const brokerApplication = {
+      ...sourceBrokerApplication,
       agentTargetKey: 'agent:happier.agent.codex/codex',
-      implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-      endpointTemplateId: 'cliproxyapi-openai-chat',
-      protocol: 'openai-chat' as const,
     };
     await expect(services.projectModels({
       machineId: 'machine-a',
@@ -1094,6 +1283,22 @@ describe('runtime provider model-management composition', () => {
     if (canonicalProjection.status !== 'success' || !canonicalProjection.groups[0]?.sourceRevision) {
       throw new Error('Expected canonical broker source revision');
     }
+    const historicalFingerprint = resolved.record.legacyGrantFingerprints?.connectionSecurityFingerprint;
+    if (!historicalFingerprint) throw new Error('Expected the captured historical source projection');
+    const legacyFingerprint = ProviderConnectionSecurityFingerprintV1Schema.parse(historicalFingerprint);
+    const legacySource = { ...teamProviderSource, connectionSecurityFingerprint: legacyFingerprint };
+    for (const sourceCatalog of [false, true]) {
+      await expect(services.projectModels({ machineId: 'machine-a', agentTargetKey: canonicalBrokerApplication.agentTargetKey,
+        ...(sourceCatalog ? { sourceCatalog: true as const } : {}),
+        providerConnection: { connectionId, expectedConnectionSecurityFingerprint: legacyFingerprint },
+        application: canonicalBrokerApplication, refreshPolicy: 'current_only',
+      })).resolves.toMatchObject({ status: 'success', groups: [{
+        sourceAuthority: { connectionSecurityFingerprint: legacyFingerprint },
+        rows: [{ application: canonicalBrokerApplication }],
+      }] });
+    }
+    await expect(services.resolveTeamCredentialRequestPolicySupport({ machineId: 'machine-a', source: legacySource,
+      refreshPolicy: 'current_only' })).resolves.toMatchObject({ status: 'success', models: [{ application: sourceBrokerApplication }] });
     await expect(services.resolveTeamCredentialRequestPolicySupport({
       machineId: 'machine-a',
       source: teamProviderSource,
@@ -1101,7 +1306,7 @@ describe('runtime provider model-management composition', () => {
     })).resolves.toMatchObject({
       status: 'success',
       models: [{
-        application: canonicalBrokerApplication,
+        application: sourceBrokerApplication,
         sourceRevision: canonicalProjection.groups[0].sourceRevision,
         descriptor: { id: 'same-id', name: 'Provider Same', aliases: ['same-alias'] },
         model: { canonicalId: 'same-id', aliases: ['same-alias'] },
@@ -1179,24 +1384,24 @@ describe('runtime provider model-management composition', () => {
     }));
     if (!authorization.ok) throw new Error('Expected provider authorization');
     if (custody === 'ambient') {
-      // Binding status shares the explicit read/probe budget, including Home
-      // admission. A Home read that ignores withdrawal cannot retain this RPC.
       let releaseCatalog!: () => void;
       catalogReadGate = new Promise<void>(resolve => { releaseCatalog = resolve; });
       vi.useFakeTimers();
+      const controller = new AbortController();
       const pending = services.resolveBindingStatus({ machineId: 'machine-a',
         agentTargetKey: 'agent:happier.agent.codex/codex', selection,
-        launchBinding: authorization.authorization.sessionBindingMetadata });
+        launchBinding: authorization.authorization.sessionBindingMetadata }, { signal: controller.signal });
       try {
         let settled = false;
-        void pending.then(() => { settled = true; });
-        await vi.advanceTimersByTimeAsync(PROVIDER_ENDPOINT_SAFETY_LIMITS.maxWallTimeMs + 1);
-        expect(settled).toBe(true);
-        await expect(pending).resolves.toMatchObject({ status: 'incompatible',
-          error: { code: 'provider_catalog_unavailable', retryable: true, action: 'retry' } });
+        void pending.then(() => { settled = true; }, () => { settled = true; });
+        await vi.advanceTimersByTimeAsync(30_001);
+        expect(settled).toBe(false);
+        const cancelled = expect(pending).rejects.toMatchObject({ reason: 'cancelled' });
+        controller.abort();
+        await cancelled;
         releaseCatalog();
       } finally {
-        releaseCatalog(); catalogReadGate = undefined; await pending; vi.useRealTimers();
+        releaseCatalog(); catalogReadGate = undefined; await pending.catch(() => {}); vi.useRealTimers();
         // Drain the deliberately unabortable transport before exercising recovery.
         await refreshActiveProviderConnectionsCatalog({ credentials: { token, encryption: null } });
       }
@@ -1365,6 +1570,21 @@ describe('runtime provider model-management composition', () => {
     registry.providersByContributionKey.set(contributionKey, contribution);
     publishProviderSettings(settings, 3);
 
+    const sourceRequest = { machineId: 'machine-a', agentTargetKey: brokerApplication.agentTargetKey,
+      providerConnection: { connectionId, expectedConnectionSecurityFingerprint: teamProviderSource.connectionSecurityFingerprint },
+      application: brokerApplication, refreshPolicy: 'current_only' as const };
+    const beforeRename = await services.projectModels(sourceRequest);
+    if (beforeRename.status !== 'success' || !beforeRename.groups[0]?.sourceRevision) throw new Error('Expected source before rename');
+    publishProviderSettings(ProviderSettingsV1Schema.parse({ ...settings,
+      connections: settings.connections.map(connection => connection.id === connectionId
+        ? { ...connection, revision: connection.revision + 1, displayName: 'Renamed source', displayNameMode: 'custom' }
+        : connection),
+    }), 4);
+    const afterRename = await services.projectModels(sourceRequest);
+    expect(afterRename).toMatchObject({ status: 'success', groups: [expect.objectContaining({
+      connectionName: 'Renamed source', sourceRevision: beforeRename.groups[0].sourceRevision,
+    })] });
+
     registry.providersByContributionKey.delete(contributionKey);
     await expect(services.projectModels({
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', currentSelection: selection.ref,
@@ -1382,7 +1602,7 @@ describe('runtime provider model-management composition', () => {
         connectionTombstones: [{
           v: 1, id: connectionId, contributionKey, lastDisplayName: 'Gateway', deletedAt: 3,
         }],
-      }), 4);
+      }), 5);
     await expect(services.projectModels({
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', currentSelection: selection.ref,
     })).resolves.toMatchObject({
@@ -1684,11 +1904,8 @@ describe('runtime provider model-management composition', () => {
 
   });
 
-  it('submits picker demand to the sole scheduler and retains no tail the scheduler refused', async () => {
-    // The sole probe scheduler admits four active operations and queues 64 more
-    // by default, so exactly one of these legal connections must be refused.
-    const schedulerAdmittedCapacity = PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS + 64;
-    const connectionCount = schedulerAdmittedCapacity + 1;
+  it('submits all picker source demand without a local scheduler ceiling', async () => {
+    const connectionCount = 69;
     const registry = { providersByContributionKey: new Map() };
     const base = ProviderSettingsV1Schema.parse({
       ...DEFAULT_PROVIDER_SETTINGS_V1,
@@ -1851,11 +2068,8 @@ describe('runtime provider model-management composition', () => {
         machineId: 'machine-a',
         agentTargetKey: 'agent:happier.agent.codex/codex',
       });
-      // Every identity is submitted immediately, so the sole scheduler holds
-      // its four active operations and queues its pending maximum while the
-      // transport is blocked. One identity is beyond both and is refused.
       await vi.waitFor(
-        () => expect(releases.length).toBe(4),
+        () => expect(releases.length).toBe(connectionCount),
         { timeout: 5_000 },
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1866,21 +2080,12 @@ describe('runtime provider model-management composition', () => {
       await expect(projection).resolves.toMatchObject({ status: 'success', groups: expect.any(Array) });
       expect(lease.release).toHaveBeenCalledTimes(1);
       await vi.waitFor(
-        () => expect(catalogHosts.size).toBe(schedulerAdmittedCapacity),
+        () => expect(catalogHosts.size).toBe(connectionCount),
         { timeout: 5_000 },
       );
-      // A consumer-side queue would keep feeding the refused tail once the
-      // scheduler drained; the sole scheduler must leave it for a later read.
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(catalogHosts.size).toBe(schedulerAdmittedCapacity);
-      expect(schedulerAdmittedCapacity).toBeLessThan(connectionCount);
-      // DNS belongs to the immutable picker operation: each unique hostname is
-      // resolved once and the same evidence is reused after cold demand.
-      const resolvedHostnames = resolveAddresses.mock.calls.map(([hostname]) => hostname);
-      const duplicateHostnames = resolvedHostnames.filter((hostname, index) =>
-        resolvedHostnames.indexOf(hostname) !== index);
-      expect(duplicateHostnames).toEqual([]);
-      expect(resolveAddresses).toHaveBeenCalledTimes(connectionCount * 2);
+      // Tagged destination consent needs no admission DNS. Actual HTTP
+      // requests still resolve their own destinations through the client.
+      expect(resolveAddresses).not.toHaveBeenCalled();
     } finally {
       releaseAll = true;
       for (const release of releases.splice(0)) release();

@@ -35,7 +35,7 @@ describe('provider probe RPC boundary', () => {
         authorizationGrant,
       }),
       refresh,
-      schedule: async (_key, _trigger, operation) => operation(),
+      schedule: async (_key, _trigger, operation) => operation(new AbortController().signal),
     });
     await expect(handler({
       kind: 'saved', connectionId: 'connection-a', machineId: 'machine-a', trigger: 'manual_refresh', rawKey: 'secret',
@@ -46,7 +46,7 @@ describe('provider probe RPC boundary', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it('opens one wall budget before resolution and spends it through refresh', async () => {
+  it('carries the containing lifetime through resolution and refresh without a local wall budget', async () => {
     let currentMs = 1_000;
     const seen: Array<{ resolveDeadline: number; refreshDeadline: number | undefined }> = [];
     const handler = createProviderProbeRpcHandler({
@@ -67,7 +67,7 @@ describe('provider probe RPC boundary', () => {
         seen.push({ resolveDeadline: 0, refreshDeadline: lifetime?.wallDeadlineAtMs });
         return { status: 'not_supported' as const };
       },
-      schedule: async (_key, _trigger, operation) => operation(),
+      schedule: async (_key, _trigger, operation) => operation(new AbortController().signal),
     });
 
     await expect(handler(
@@ -76,10 +76,8 @@ describe('provider probe RPC boundary', () => {
       () => currentMs,
     )).resolves.toEqual({ status: 'not_supported' });
 
-    // 30_000 is the declared Provider wall budget; the deadline is anchored at
-    // the operation's start, so the 5s spent resolving is not refunded.
-    expect(seen[0]?.resolveDeadline).toBe(31_000);
-    expect(seen[1]?.refreshDeadline).toBe(31_000);
+    expect(seen[0]?.resolveDeadline).toBe(Infinity);
+    expect(seen[1]?.refreshDeadline).toBe(Infinity);
   });
 
   it('admits exactly the reachable demand and explicit refresh triggers', async () => {
@@ -93,7 +91,7 @@ describe('provider probe RPC boundary', () => {
       refresh: async () => ({ status: 'not_supported' }),
       schedule: async (_key, trigger, operation) => {
         triggers.push(trigger);
-        return operation();
+        return operation(new AbortController().signal);
       },
     });
     const identity = { kind: 'saved', connectionId: 'connection-a', machineId: 'machine-a' };
@@ -147,7 +145,7 @@ describe('provider probe RPC boundary', () => {
         authorizationGrant: { ...authorizationGrant, confirmedAt: grantConfirmedAt },
       }),
       refresh: async () => ({ status: 'not_supported' }),
-      schedule: async (key, _trigger, operation) => { keys.push(key); return operation(); },
+      schedule: async (key, _trigger, operation) => { keys.push(key); return operation(new AbortController().signal); },
     });
     const saved = { kind: 'saved' as const, connectionId: 'connection-a', machineId: 'machine-a', trigger: 'manual_refresh' as const };
     await handler(saved);
@@ -186,7 +184,7 @@ describe('provider probe RPC boundary', () => {
         authorizationGrant,
       }),
       refresh: async () => ({ status: 'not_supported' }),
-      schedule: async (key, _trigger, operation) => { keys.push(key); return operation(); },
+      schedule: async (key, _trigger, operation) => { keys.push(key); return operation(new AbortController().signal); },
     });
     await handler({ kind: 'saved', connectionId: 'connection-a', machineId: 'machine-a', trigger: 'manual_refresh' });
     authorizationFingerprints = [observationAuthorizationFingerprint, secondFingerprint];
@@ -235,7 +233,7 @@ describe('provider probe RPC boundary', () => {
         }));
       },
       refresh: async () => ({ status: 'not_supported' }),
-      schedule: async (_key, _trigger, operation) => operation(),
+      schedule: async (_key, _trigger, operation) => operation(new AbortController().signal),
     });
     await expect(handler({
       kind: 'saved', connectionId: 'connection-a', machineId: 'machine-a', trigger: 'manual_refresh',

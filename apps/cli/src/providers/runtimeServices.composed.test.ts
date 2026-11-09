@@ -137,6 +137,9 @@ function operationRequests(): PublicProviderOperationRequests {
 
 function createMachineServices(): RuntimeProviderOperationsProducer['machineServices'] {
   return {
+    async readSourceModelCatalogs() {
+      throw new Error('Public Provider operations must not read a private source catalog');
+    },
     probe: vi.fn(async () => ({
       status: 'success' as const,
       models: [],

@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { watch } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
 
 import {
   createProviderLocalCatalogFallbackRunner,
@@ -29,12 +34,57 @@ describe('runDeclaredProviderLocalCommand', () => {
     })).resolves.toEqual({ status: 'absent' });
   });
 
-  it('rejects shell operators before invoking the runner', async () => {
-    const runSystemTool = vi.fn();
+  it('preserves shell punctuation as literal argv through the system-tool boundary', async () => {
+    const runSystemTool = vi.fn(async () => ({ ok: true as const, exitCode: 0, stdout: '', stderr: '' }));
     await expect(runDeclaredProviderLocalCommand({
       toolId: 'ollama', lookupNames: ['ollama'], fixedArgs: ['serve; rm'], parser: 'exit-zero-running',
-    }, { runSystemTool })).rejects.toThrow('literal');
-    expect(runSystemTool).not.toHaveBeenCalled();
+    }, { runSystemTool })).resolves.toEqual({ status: 'present' });
+    expect(runSystemTool).toHaveBeenCalledWith(expect.objectContaining({ args: ['serve; rm'] }));
+  });
+
+  it('observes complete presence output beyond former time and capture cutoffs', async () => {
+    vi.useFakeTimers();
+    const stdout = JSON.stringify({ status: 'running', details: 'x'.repeat(65 * 1024) });
+    const pending = runDeclaredProviderLocalCommand({ toolId: 'lms', lookupNames: ['lms'], fixedArgs: ['status'], parser: 'lms-status-json' }, {
+      runSystemTool: request => new Promise(resolve => {
+        const success = setTimeout(() => resolve({ ok: true, exitCode: 0, stdout, stderr: '' }), 6_000);
+        if (request.timeoutMs !== undefined) setTimeout(() => { clearTimeout(success); resolve({ ok: false, reasonCode: 'timeout' }); }, request.timeoutMs);
+      }),
+    });
+    try { await vi.advanceTimersByTimeAsync(6_000); expect(await pending).toEqual({ status: 'present' }); }
+    finally { vi.useRealTimers(); }
+  });
+
+  it('cancels the running OS presence command through the containing lifetime', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-presence-cancel-'));
+    const caller = new AbortController();
+    const readyPath = join(directory, 'ready');
+    const script = join(directory, 'presence.cjs');
+    await writeFile(script, `require('node:fs').writeFileSync(${JSON.stringify(readyPath)}, 'ready'); setInterval(() => {}, 1000);`);
+    const watcher = watch(directory);
+    const ready = new Promise<void>(resolve => watcher.on('change', (_event, name) => { if (String(name) === 'ready') resolve(); }));
+    let execution: ReturnType<ProviderLocalCommandRunner['runSystemTool']> | undefined;
+    const runner: ProviderLocalCommandRunner = {
+      runSystemTool: ({ signal, ...request }) => {
+        execution = createDaemonSpawnToolResolutionContext({ processEnv: { PATH: dirname(process.execPath) }, signal }).runSystemTool(request);
+        return execution;
+      },
+    };
+    const pending = runDeclaredProviderLocalCommand({ toolId: basename(process.execPath), lookupNames: [basename(process.execPath)],
+      fixedArgs: [script], parser: 'exit-zero-running' }, runner, createProviderOperationLifetime({ signal: caller.signal }))
+      .then(value => ({ value }), (error: unknown) => ({ error }));
+    try {
+      await ready;
+      caller.abort();
+      expect(await pending).toMatchObject({ error: { reason: 'cancelled' } });
+      await expect(execution).resolves.toMatchObject({ ok: false, reasonCode: 'aborted' });
+    } finally {
+      caller.abort();
+      watcher.close();
+      await pending;
+      await execution;
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
@@ -77,7 +127,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
         // This is the OS command boundary: it obeys the timeout/signal supplied
         // by the real catalog owner rather than simulating internal policy.
         commandSignal = (request as typeof request & { signal?: AbortSignal }).signal;
-        const timer = setTimeout(() => resolve({ ok: false, reasonCode: 'timeout' }), request.timeoutMs);
+        const timer = request.timeoutMs === undefined ? undefined : setTimeout(() => resolve({ ok: false, reasonCode: 'timeout' }), request.timeoutMs);
         complete = () => { clearTimeout(timer); resolve({ ok: true, exitCode: 0,
           stdout: 'NAME ID SIZE MODIFIED\nslow-model id 1 GB now\n', stderr: '' }); };
         commandSignal?.addEventListener('abort', () => { clearTimeout(timer);
@@ -106,17 +156,15 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
       .resolves.toMatchObject({ status: 'success', models: [{ id: 'valid-model' }] });
   });
 
-  it('refuses oversized command output even when a contributed parser returns a valid row', async () => {
+  it('accepts complete command output beyond the former five-MiB capture cap', async () => {
     const fallback = createProviderLocalCatalogFallbackRunner({ runner: {
-      // The command port returns its limit+1 overflow sentinel. A plugin parser
-      // cannot turn that truncated capture into an apparently complete catalog.
       runSystemTool: async () => ({ ok: true, exitCode: 0,
         stdout: 'x'.repeat(5 * 1024 * 1024 + 1), stderr: '' }),
     } });
     await expect(fallback.run({
       descriptor: { ...descriptor, parser: 'acme-list-v1' }, endpointUrl: 'http://127.0.0.1:11434/',
       contributedCatalogParsers: { 'acme-list-v1': () => ({ models: [{ id: 'partial-model' }] }) },
-    })).resolves.toEqual({ status: 'unavailable' });
+    })).resolves.toEqual({ status: 'success', models: [{ id: 'partial-model', name: 'partial-model' }] });
   });
 
   it('parses the official Ollama table and supplies only the declared endpoint environment', async () => {
@@ -129,7 +177,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
     const fallback = createProviderLocalCatalogFallbackRunner({ runner: { runSystemTool } });
 
     await expect(fallback.run({
-      descriptor,
+      descriptor: { ...descriptor, fixedArgs: ['list', 'literal; & | $()'] },
       endpointUrl: 'http://127.0.0.1:22434/',
     })).resolves.toEqual({
       status: 'success',
@@ -137,7 +185,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
     });
     expect(runSystemTool).toHaveBeenCalledWith(expect.objectContaining({
       lookupNames: ['ollama'],
-      args: ['list'],
+      args: ['list', 'literal; & | $()'],
       env: { OLLAMA_HOST: 'http://127.0.0.1:22434/' },
     }));
   });
@@ -159,7 +207,7 @@ describe('createProviderLocalCatalogFallbackRunner', () => {
     expect(runSystemTool).toHaveBeenCalledTimes(2);
   });
 
-  it('rejects malformed, duplicate, and over-limit output without returning a partial catalog', async () => {
+  it('rejects malformed and duplicate output without returning a partial catalog', async () => {
     const outputs = [
       'not the expected header\nmodel-a id 1 GB now\n',
       'NAME ID SIZE MODIFIED\nmodel-a id 1 GB now\nmodel-a id2 2 GB now\n',

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { validateHeaderValue } from 'node:http';
 
 import {
   DEFAULT_PROVIDER_SETTINGS_V1,
@@ -11,6 +12,7 @@ import {
   assessProviderEndpoint,
   createProviderProbeRequestFingerprintV1,
   encryptSecretStringV1,
+  type ProviderCredentialTransportV1,
 } from '@happier-dev/protocol';
 
 import { resolveProviderConnectionForMachine } from '../registry';
@@ -301,6 +303,23 @@ describe('provider probe authorization port', () => {
       id: 'query', protocols: ['openai-responses'], uses: ['probe'],
       destination: { kind: 'queryParam', name: 'key', format: { template: 'token-{secret}' } },
     })).toEqual({ kind: 'queryParam', name: 'key', value: 'token-secret' });
+  });
+
+  it('leaves credential value validation to the actual header and query encoders', () => {
+    const transport = { id: 'header', protocols: ['openai-responses'], uses: ['probe'],
+      destination: { kind: 'httpHeader', name: 'authorization', format: 'raw' } } satisfies ProviderCredentialTransportV1;
+    const tab = renderProviderProbeCredential('key\tpart', transport);
+    expect(tab.value).toBe('key\tpart');
+    expect(() => validateHeaderValue(tab.name, tab.value)).not.toThrow();
+    const invalidHeader = renderProviderProbeCredential('key\r\ninjected: value', transport);
+    expect(() => validateHeaderValue(invalidHeader.name, invalidHeader.value)).toThrow(expect.objectContaining({ code: 'ERR_INVALID_CHAR' }));
+    const query = renderProviderProbeCredential('key\r\npart\0', {
+      ...transport, destination: { kind: 'queryParam', name: 'key', format: 'raw' },
+    });
+    const target = new URL('https://gateway.example/');
+    target.searchParams.set(query.name, query.value);
+    expect(target.searchParams.get('key')).toBe('key\r\npart\0');
+    expect(target.search).toBe('?key=key%0D%0Apart%00');
   });
 
   it('maps snapshot/decryption boundary exceptions to a stable provider error', async () => {

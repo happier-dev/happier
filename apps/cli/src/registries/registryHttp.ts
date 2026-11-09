@@ -1,5 +1,5 @@
 import type { RegistryHttpV1,RegistryHttpResultV1,RegistrySourceV1 } from '@happier-dev/protocol/registries';
-import { readRegistryHttpRateLimitV1 } from '@happier-dev/protocol/registries';
+import { readGitHubRepositoryV1, readRegistryHttpRateLimitV1 } from '@happier-dev/protocol/registries';
 import { registryTokenHeader } from './registryTokenHeader';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/release-runtime/httpRedirects';
 import { createHash } from 'node:crypto';
@@ -24,8 +24,8 @@ export function createRegistryHttpV1(input:Readonly<{signal?:AbortSignal;fetch?:
       input.signal?.throwIfAborted();
       if(seen.has(target.href))return {ok:false,status:{state:'unreachable'}};seen.add(target.href);
       const headers=new Headers();const credentialHeaderNames=new Set<string>();
-      const githubSource=source&&/^https:\/\/github\.com\/[^/]+\/[^/]+(?:\/|$)/.test(source.url);
-      const repo=githubSource?'/'+new URL(source!.url).pathname.split('/').filter(Boolean).slice(0,2).join('/'):null;
+      const githubSource=source?readGitHubRepositoryV1(source.url):null;
+      const repo=githubSource?`/${encodeURIComponent(githubSource.owner)}/${encodeURIComponent(githubSource.repo)}`:null;
       const githubTarget=repo&&(target.origin==='https://api.github.com'&&(target.pathname==='/repos'+repo||target.pathname.startsWith('/repos'+repo+'/'))
         ||target.origin==='https://raw.githubusercontent.com'&&target.pathname.startsWith(repo+'/'));
       const allowed=typeof credential==='object'&&credential!==null

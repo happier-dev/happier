@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { getAgentStaticModels } from '@happier-dev/agents';
 import * as persistence from '@/persistence';
+import type { AgentProviderBindingMaterializeInput } from '@happier-dev/plugin-sdk/agents/runtime';
 // Composed first-party test: exercise the native materializer, not a replacement
 // for the internal binding logic. No production host/plugin import is introduced.
 import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../packages/plugins/opencode/src/agent/providerBinding/adapter';
@@ -48,6 +49,7 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { hydrateSavedSecretCatalog } from "@/settings/secrets/savedSecretCatalogRead";
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import type {
   ResolveManagedProviderPurposeBindingIntent,
 } from '@/providers/managed/resolvePurposeBindingSnapshot';
@@ -74,9 +76,10 @@ import {
   resolveProviderSpawnAuthorization,
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
-import { createForegroundAgentRuntimeAdmissionOwner } from '@/daemon/agentRuntime/foregroundAdmission';
 import { createRuntimeProviderProbeAuthorizationPort } from './probePort';
 import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
+import * as spawnResolution from './resolve';
+import * as runtimeCatalog from './runtimeCatalog';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
 const contributionKey = 'acme.gateway/gateway';
@@ -373,7 +376,7 @@ function agentProviderSupport(
       }],
     },
     authIsolation: { suppressConnectedServiceIds: ['openai-codex'], ownedEnvKeys: ['PROVIDER_KEY'] },
-    materialization: 'engineConfig', applyPolicy, supportsFreeformModelIds,
+    materialization: 'engineConfig', applyPolicy, supportsFreeformModelIds, supportsReasoningEffort: true,
   };
 }
 
@@ -405,12 +408,15 @@ function lease(
   supportsNoAuth = false,
   retainedGenerationCurrent: () => boolean = () => true,
   supportsClaudeHelperModels = false,
+  credentialSupport?: AgentProviderRequirementsV1['credentialSupport'],
+  acceptsProtocols?: AgentProviderRequirementsV1['acceptsProtocols'],
 ): PluginRuntimeRegistryLease {
-  const support = agentProviderSupport(
+  const defaults = agentProviderSupport(
     supportsFreeformModelIds,
     applyPolicy,
     supportsNoAuth,
   );
+  const support = { ...defaults, ...(credentialSupport ? { credentialSupport } : {}), ...(acceptsProtocols ? { acceptsProtocols } : {}) };
   const registryRuntime = {
     contributes: {
       agentDefinitionsById: new Map([['codex', {
@@ -427,7 +433,8 @@ function lease(
       providerBinding: {
         v: 1, adapterVersion: 3, prepare,
         ...(supportsClaudeHelperModels ? { supportsClaudeHelperModels: true } : {}),
-        materialize: vi.fn(async () => ({ v: 1, kind: 'engineConfig', env: [], engineConfig: {} })),
+        materialize: vi.fn(async ({ credential }: AgentProviderBindingMaterializeInput) => ({ v: 1, kind: 'engineConfig',
+          env: [{ name: 'PROVIDER_KEY', value: credential.kind === 'apiKey' ? credential.value : '', source: 'provider' }], engineConfig: {} })),
       },
       isCurrent: () => true,
       retirementSignal: new AbortController().signal,
@@ -522,68 +529,255 @@ function definitiveSelection(modelId = 'model-a') {
 }
 
 describe('provider spawn authorization resolver', () => {
-  it.each(['admission', 'commit', 'foreground'] as const)('cancels deferred DNS during %s and releases admission resources', async (phase) => {
-    const providersByContributionKey = new Map([[canonicalContributionKey, {
-      ...contribution,
-      definition: ProviderContributionV1Schema.parse({ ...definition, credential: { ...definition.credential, required: false } }),
-    }]]);
-    const settings = ProviderSettingsV1Schema.parse({ ...grantedSettings({ providersByContributionKey }), secretBindingsByConnectionId: {} });
-    const snapshot: ActiveAccountSettingsSnapshot = {
-      source: 'network', settings: AccountSettingsSchema.parse(accountSettings(settings)),
-      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(settings).catalog },
-      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [key], scopeKey: 'account-a',
-    };
-    const controller = new AbortController();
-    let enter = () => {};
-    let release = (_addresses: readonly string[]) => {};
+  it.each(['selected', 'unrelated', 'named-private Machine', 'legacy Account', 'legacy Machine', 'different Account', 'cancelled',
+    'companions', 'companions different Account', 'companions cancelled', 'companions personal primary',
+    'companions missing', 'companions unused revoked'] as const)('keeps captured admission and refuses withdrawn custody during the Home secret read: %s', async renamed => {
+    const companions = renamed.startsWith('companions');
+    const providerRegistry = companions ? { providersByContributionKey: new Map([[canonicalContributionKey, {
+      ...contribution, definition: ProviderContributionV1Schema.parse({ ...definition,
+        ...(renamed.endsWith('unused revoked') ? { endpointTemplates: [...definition.endpointTemplates,
+          { ...definition.endpointTemplates[0]!, id: 'unused-family', protocol: 'anthropic' }] } : {}),
+        credential: { ...definition.credential, transports: [...definition.credential!.transports.map(transport => ({ ...transport,
+          additionalCredentials: [{ slotId: 'upstreamKey', destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' } }],
+        })), ...(renamed.endsWith('unused revoked') ? [{ id: 'unused-family', protocols: ['anthropic'], uses: ['runtime'],
+          destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
+          additionalCredentials: [{ slotId: 'unusedKey', destination: { kind: 'httpHeader', name: 'x-unused-key', format: 'raw' } }],
+        }] : [])] },
+      }),
+    }]]) } : registry;
+    const token = 'rename-during-provider-admission';
+    const resourceId = 'provider-admission-key';
+    const ref = formatSharedSavedSecretRefV1(resourceId);
+    const otherId = ProviderConnectionIdSchema.parse('pc_other');
+    let settings = ProviderSettingsV1Schema.parse({ ...grantedSettings(providerRegistry),
+      connections: [...grantedSettings(providerRegistry).connections, { ...grantedSettings(providerRegistry).connections[0]!,
+        id: otherId, role: 'named', displayName: 'Other gateway', displayNameMode: 'custom' }],
+      secretBindingsByConnectionId: { [connectionId]: { account: { apiKey: renamed.endsWith('personal primary') ? 'personal-provider-key' : ref,
+        ...(companions ? { upstreamKey: formatSharedSavedSecretRefV1('provider-companion-key') } : {}),
+        ...(renamed.endsWith('unused revoked') ? { unusedKey: formatSharedSavedSecretRefV1('revoked-unused-key') } : {}) } } },
+    });
+    if (renamed === 'legacy Account') {
+      const resolved = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-a', providerSettings: settings,
+        registry, dnsEvidenceByEndpointUrl: dns });
+      if (resolved.status !== 'resolved') throw new Error('Expected configured legacy Account source');
+      settings = ProviderSettingsV1Schema.parse({ ...settings, accountGrants: [{ ...settings.accountGrants[0]!,
+        connectionSecurityFingerprint: resolved.record.legacyGrantFingerprints!.connectionSecurityFingerprint,
+      }] });
+    }
+    if (renamed === 'named-private Machine' || renamed === 'legacy Machine') {
+      const resolved = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-a', providerSettings: settings,
+        registry, dnsEvidenceByEndpointUrl: new Map([['https://gateway.example/v1', ['10.0.0.1']]]) });
+      if (resolved.status !== 'resolved') throw new Error('Expected named-private source configuration');
+      settings = ProviderSettingsV1Schema.parse({ ...settings, accountGrants: [], machineGrants: [{ v: 1,
+        connectionId, machineId: 'machine-a', confirmedAt: 1,
+        connectionSecurityFingerprint: renamed === 'legacy Machine'
+          ? resolved.record.legacyGrantFingerprints!.connectionSecurityFingerprint : resolved.record.connectionSecurityFingerprint,
+        endpointSetFingerprint: renamed === 'legacy Machine'
+          ? resolved.record.legacyGrantFingerprints!.endpointSetFingerprint : resolved.record.endpointSetFingerprint,
+      }] });
+    }
+    const initial: ActiveAccountSettingsSnapshot = { source: 'network', settings: AccountSettingsSchema.parse({
+      ...(renamed.endsWith('personal primary') ? { secrets: [{ id: 'personal-provider-key', name: 'Primary', kind: 'apiKey', createdAt: 1, updatedAt: 1,
+        encryptedValue: { _isSecretValue: true, encryptedValue: encryptSecretStringV1('admitted-provider-value', key, length => new Uint8Array(length).fill(1)) } }] } : {}),
+    }),
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [key], scopeKey: resolveAccountSettingsScopeKeyForToken(token),
+      providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: splitProviderSettingsV1(settings).catalog } };
+    setActiveAccountSettingsSnapshot(initial);
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({ token, encryption: null });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(
+      FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} })))));
+    let enter!: () => void;
+    let release!: () => void;
     const entered = new Promise<void>(resolve => { enter = resolve; });
-    const network = new Promise<readonly string[]>(resolve => { release = resolve; });
-    let defer = phase !== 'commit';
-    const unsubscribe = vi.fn();
-    const input = {
-      selection: { v: 1 as const, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'model-a' } },
-      machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', lease: lease(undefined, true, 'restart_session', providersByContributionKey, true),
-      getAccountSettingsSnapshot: () => snapshot, subscribeAccountSettingsSnapshot: () => unsubscribe,
-      signal: controller.signal,
-      resolveAddresses: async () => { if (!defer) return ['1.1.1.1']; enter(); return await network; },
-      materializationBaseDir: '/unused', sessionId: `cancel-${phase}`,
-    };
-    let attempt: Awaited<ReturnType<typeof createRuntimeProviderSpawnAuthorizationAttempt>> | undefined;
-    let pending: Promise<unknown> | undefined;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const secretReads = vi.spyOn(axios, 'get').mockImplementation(async () => {
+      enter(); await held;
+      return { status: 200, data: { resources: [{ resourceId, encryptionMode: 'plain', recipientEnvelope: null,
+        storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+          content: { v: 1, name: 'Provider key', kind: 'apiKey', value: 'admitted-provider-value' } }),
+        entry: { ref, source: 'shared_resource', relationship: 'recipient', name: 'Provider key', kind: 'apiKey',
+          ownerAccountId: 'owner', revision: 1, materialStatus: 'ready',
+          capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+      }, ...(companions && !renamed.endsWith('missing') ? [{ resourceId: 'provider-companion-key', encryptionMode: 'plain', recipientEnvelope: null,
+        storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'provider-companion-key', mode: 'plain',
+          content: { v: 1, name: 'Companion key', kind: 'apiKey', value: 'admitted-companion-value' } }),
+        entry: { ref: formatSharedSavedSecretRefV1('provider-companion-key'), source: 'shared_resource', relationship: 'recipient',
+          name: 'Companion key', kind: 'apiKey', ownerAccountId: 'owner', revision: 1, materialStatus: 'ready',
+          capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+      }] : [])] } };
+    });
+    // These spies observe the real admission and model owner; no internal result is replaced.
+    const resolutions = vi.spyOn(spawnResolution, 'resolveProviderSpawnAuthorization');
+    const projections = vi.spyOn(runtimeCatalog, 'resolveProviderRuntimeCatalogSelectionObservation');
+    const resolveAddresses = vi.fn(async () => renamed === 'named-private Machine' || renamed === 'legacy Machine' ? ['10.0.0.1'] : ['1.1.1.1']);
+    const cancellation = new AbortController();
+    const runtimeLease = lease(undefined, true, undefined, providerRegistry.providersByContributionKey,
+      false, undefined, false, companions ? { supportsNoAuth: false, supportsAdditionalCredentials: true,
+        apiKeyTransports: [{ protocol: 'openai-responses', destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['bearer', 'raw'] } }],
+      } : undefined);
+    const pending = createRuntimeProviderSpawnAuthorizationAttempt({
+      selection: { v: 1, updatedAt: 1, ref: definitiveSelection() }, machineId: 'machine-a',
+      agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', lease: runtimeLease,
+      getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot, resolveAddresses, signal: cancellation.signal,
+      materializationBaseDir: '/unused', sessionId: 'rename-during-start',
+    });
+    let result: Awaited<typeof pending> | undefined;
     try {
-      if (phase === 'foreground') {
-        const owner = createForegroundAgentRuntimeAdmissionOwner({ prepare: async (_request, signal) => {
-          const result = await createRuntimeProviderSpawnAuthorizationAttempt({ ...input, signal });
-          if (result.ok) { result.attempt.cleanupOnFailure(); throw new Error('Cancelled admission unexpectedly succeeded'); }
-          return result;
-        } });
-        const admission = owner.admit({ v: 1, attemptId: 'attempt', sessionId: 'session', foregroundPid: 1234,
-          machineId: 'machine-a', directory: '/workspace', agentId: 'codex',
-          backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } });
-        const settled = expect(admission).rejects.toThrow('unavailable');
-        await entered;
-        pending = owner.release('attempt', 'session');
-        try { await pending; await settled; } finally { release(['1.1.1.1']); await admission.catch(() => undefined); await owner.dispose(); }
-        return;
-      } else if (phase === 'commit') {
-        attempt = await createRuntimeProviderSpawnAuthorizationAttempt(input);
-        expect(attempt, JSON.stringify(attempt)).toMatchObject({ ok: true });
-        if (!attempt.ok) throw new Error('Expected admission');
-        defer = true;
-        pending = attempt.attempt.revalidateBeforeCommit();
-      } else pending = createRuntimeProviderSpawnAuthorizationAttempt(input);
       await entered;
-      controller.abort();
-      // The DNS resolver is still pending; cancellation must settle independently.
-      await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'provider_endpoint_unavailable' } });
-      if (phase === 'commit') expect(unsubscribe).toHaveBeenCalledOnce();
+      if (renamed.endsWith('cancelled')) {
+        cancellation.abort();
+        await expect(pending).rejects.toMatchObject({ name: 'ProviderOperationAbandonedError', reason: 'cancelled' });
+        return;
+      }
+      if (renamed.endsWith('different Account')) {
+        setActiveAccountSettingsSnapshot({ ...initial, scopeKey: 'different-account' });
+        release();
+        result = await pending;
+        expect(result).toMatchObject({ ok: false });
+        return;
+      }
+      const changed = ProviderSettingsV1Schema.parse({ ...settings, connections: settings.connections.map(connection =>
+        connection.id === (renamed === 'selected' ? connectionId : otherId)
+          ? { ...connection, displayName: 'Renamed gateway', displayNameMode: 'custom', revision: connection.revision + 1,
+            updatedAt: connection.updatedAt + 1 } : connection) });
+      setActiveAccountSettingsSnapshot({ ...initial, settingsVersion: 2,
+        providerConnectionsCatalog: { status: 'ready', revision: 2, catalog: splitProviderSettingsV1(changed).catalog } });
+      release();
+      result = await pending;
+      if (renamed.endsWith('missing')) {
+        expect(result).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+        expect(secretReads).toHaveBeenCalledTimes(1);
+        return;
+      }
+      expect(result).toMatchObject({ ok: true });
+      if (!result.ok || !('materializeAfterHooks' in result.attempt)) throw new Error('Expected admitted external start');
+      const materialized = await result.attempt.materializeAfterHooks();
+      expect(materialized.ok ? null : materialized.error).toBeNull();
+      if (materialized.ok && companions) {
+        expect(runtimeLease.registry.agentRuntimesByAgentId.get('codex')?.providerBinding?.materialize)
+          .toHaveBeenCalledWith(expect.objectContaining({ credential: expect.objectContaining({
+            value: 'admitted-provider-value', additionalCredentials: [{ slotId: 'upstreamKey', value: 'admitted-companion-value' }],
+          }) }));
+        expect(materialized.redactionLease.redact('admitted-provider-value admitted-companion-value'))
+          .not.toMatch(/admitted-(?:provider|companion)-value/u);
+      }
+      expect(await result.attempt.revalidateBeforeCommit()).toEqual({ ok: true });
+      expect(resolutions).toHaveBeenCalledTimes(1);
+      expect(projections).toHaveBeenCalledTimes(1);
+      if (renamed === 'legacy Machine') expect(resolveAddresses).toHaveBeenCalledTimes(1);
+      else expect(resolveAddresses).not.toHaveBeenCalled();
+      expect(secretReads).toHaveBeenCalledTimes(1);
     } finally {
-      release(['1.1.1.1']);
-      await pending;
-      if (attempt?.ok) attempt.attempt.cleanupOnFailure();
+      release();
+      const settled = result ?? await pending.catch(() => undefined);
+      if (settled?.ok) settled.attempt.cleanupOnFailure();
     }
   });
+
+  it('admits Team source authorization without consent while personal experimental authorization still requires it', () => {
+    const experimentalDefinition = ProviderContributionV1Schema.parse({ ...definition, compatibilityOverrides: [] });
+    const providersByContributionKey = new Map([[canonicalContributionKey, { ...contribution, definition: experimentalDefinition }]]);
+    const experimentalRegistry = { providersByContributionKey };
+    const settings = grantedSettings(experimentalRegistry);
+    const resolution = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-a',
+      providerSettings: settings, registry: experimentalRegistry, dnsEvidenceByEndpointUrl: dns });
+    if (resolution.status !== 'resolved') throw new Error('Expected current experimental source');
+    const model = { id: 'model-a', name: 'Model A', capabilities: { toolRoundTrips: 'supported' as const } };
+    const compatibility = resolveProviderModelCompatibility({ record: resolution.record, providerSettings: settings,
+      agentTargetKey: 'agent:happier.agent.codex/codex', support: agentProviderSupport(), adapterVersion: 3, model });
+    if (compatibility.result.status !== 'experimental') throw new Error('Expected experimental source pairing');
+    const pairing = { agentTargetKey: 'agent:happier.agent.codex/codex',
+      modelId: compatibility.result.confirmationScope.kind === 'model' ? model.id : null,
+      compatibilityFingerprint: compatibility.compatibilityFingerprint, confirmedAt: 1 };
+    const personallyConfirmed = setProviderExperimentalConfirmationV1(settings, { ...pairing, connectionId });
+    const input = { selection: { v: 1 as const, ref: { agentTargetKey: pairing.agentTargetKey, providerConnectionId: connectionId,
+      modelId: model.id }, updatedAt: 1 }, machineId: 'machine-a', agentTargetKey: pairing.agentTargetKey,
+      agentId: 'codex', accountSettings: accountSettings(settings), providerSettings: settings,
+      registry: experimentalRegistry, dnsEvidenceByEndpointUrl: dns,
+      lease: lease(undefined, true, 'restart_session', providersByContributionKey) };
+    expect(resolveProviderSpawnAuthorization(withSavedSecretMaterializer(input))).toMatchObject({ ok: false,
+      error: { code: 'provider_compatibility_unverified' } });
+    expect(resolveProviderSpawnAuthorization(withSavedSecretMaterializer({ ...input, teamCredentialResource: { resourceId: 'team-resource', resourceRevision: 1 } }))).toMatchObject({ ok: true,
+      authorization: { ticket: { connectionId, machineId: 'machine-a' } } });
+    expect(resolveProviderSpawnAuthorization(withSavedSecretMaterializer({ ...input, providerSettings: personallyConfirmed }))).toMatchObject({ ok: true });
+  });
+
   const executableRegistries: ResolvedExecutablePluginRuntimeRegistry[] = [];
+
+  it.each(['activation', 'unchanged', 'native-refusal'] as const)('settles custom source admission across %s at the canonical owner', async phase => {
+    const token = 'fresh-source-account';
+    const template = normalizeCustomProviderTemplateV1({ name: 'Custom gateway', protocol: 'openai-responses',
+      baseUrl: 'https://gateway.example/v1', credentialStyle: 'bearer', catalog: 'manual' });
+    const makeSettings = (changed: boolean) => {
+      const currentTemplate = changed && phase === 'activation' ? { ...template, credential: { ...template.credential!,
+        transports: [...template.credential!.transports, { ...template.credential!.transports[0]!, id: 'other',
+          destination: { kind: 'httpHeader' as const, name: 'x-other-key', format: 'bearer' as const } }] } } : template;
+      const base = ProviderSettingsV1Schema.parse({ ...providerSettings(), connections: [{ ...providerSettings().connections[0]!,
+        role: 'named', displayNameMode: 'custom', revision: changed ? 8 : 7,
+        source: phase === 'native-refusal' ? { kind: 'contribution', contributionKey: canonicalContributionKey }
+          : { kind: 'custom', template: currentTemplate } }],
+        secretBindingsByConnectionId: { [connectionId]: { account: { apiKey: 'happier:shared-secret:v1:source-resource' } } } });
+      const resolution = resolveProviderConnectionForMachine({ connectionId, machineId: 'machine-a',
+        providerSettings: base, registry, dnsEvidenceByEndpointUrl: dns });
+      if (resolution.status !== 'resolved') throw new Error('Expected resolved custom fixture');
+      return ProviderSettingsV1Schema.parse({ ...base, accountGrants: [{ v: 1, connectionId,
+        connectionSecurityFingerprint: resolution.record.connectionSecurityFingerprint, confirmedAt: 1 }] });
+    };
+    const before = makeSettings(false);
+    const after = makeSettings(true);
+    const snapshot = (settings: ProviderSettingsV1, revision: number): ActiveAccountSettingsSnapshot => ({ source: 'network',
+      settings: AccountSettingsSchema.parse({}), settingsVersion: revision, loadedAtMs: revision,
+      settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(token),
+      providerConnectionsCatalog: { status: 'ready', revision, catalog: splitProviderSettingsV1(settings).catalog } });
+    setActiveAccountSettingsSnapshot(snapshot(before, 1));
+    vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue({ token, encryption: null });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(
+      FeaturesResponseSchema.parse({ features: { teams: { enabled: true } }, capabilities: {} })))));
+    // PL31 adjudication accepts one Home catalog read after an activation-window
+    // change. Valid material lets the canonical owner decide the changed pairing.
+    const materials = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { resources: phase !== 'unchanged' ? [{
+      resourceId: 'source-resource', encryptionMode: 'plain', recipientEnvelope: null,
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'source-resource', mode: 'plain',
+        content: phase === 'native-refusal'
+          ? { v: 2, name: 'Source key', kind: 'apiKey', source: { kind: 'external',
+            contribution: { pluginId: 'acme.vault', localId: 'vault' }, account: 'owner', reference: 'vault/key' } }
+          : { v: 1, name: 'Source key', kind: 'apiKey', value: 'fixture-source-key' } }),
+      entry: { ref: 'happier:shared-secret:v1:source-resource', source: 'shared_resource', relationship: phase === 'native-refusal' ? 'owner' : 'recipient',
+        name: 'Source key', kind: 'apiKey', ownerAccountId: 'owner', revision: 1, materialStatus: 'ready',
+        capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+    }] : [] } });
+    let reads = 0;
+    const runtimeLease = lease(undefined, true, undefined, undefined, false, undefined, false, { supportsNoAuth: false,
+      apiKeyTransports: [{ protocol: 'openai-responses', destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['bearer'] } }] });
+    const pending = createRuntimeProviderSpawnAuthorizationAttempt({
+      selection: { v: 1, updatedAt: 1, ref: definitiveSelection() }, machineId: 'machine-a',
+      agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', lease: runtimeLease,
+      ...(phase === 'native-refusal' ? { savedSecretOperationContext: createInvocationSavedSecretOperationContextV1({
+        snapshot: snapshot(before, 1), credentials: { token, encryption: null },
+        serverHttpBaseUrl: 'https://native-refusal.example', isCurrent: async () => true,
+        machineAdmission: { actorAccountId: 'member', custodianAccountId: 'owner', role: 'use' },
+      }) } : {}),
+      getAccountSettingsSnapshot: () => {
+        const value = getActiveAccountSettingsSnapshot();
+        // The second read supplies the cold check; the real activation await then yields.
+        if (++reads === 2 && phase === 'activation') queueMicrotask(() => setActiveAccountSettingsSnapshot(snapshot(after, 2)));
+        return value;
+      },
+      resolveAddresses: async () => {
+        return ['1.1.1.1'];
+      }, materializationBaseDir: '/unused', sessionId: 'fresh-source',
+    });
+    if (phase === 'activation') {
+      await expect(pending).rejects.toMatchObject({ name: 'ProviderCredentialTransportAmbiguityErrorV1' });
+    } else if (phase === 'native-refusal') {
+      await expect(pending).resolves.toMatchObject({ ok: false, error: {
+        code: 'provider_secret_missing', connectionId, machineId: 'machine-a', savedSecretReason: 'reference_forbidden',
+      } });
+    } else {
+      await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
+    }
+    expect(materials).toHaveBeenCalledTimes(1);
+  });
 
   afterEach(async () => {
     await Promise.all(executableRegistries.splice(0).map(async (registry) => {
@@ -594,13 +788,29 @@ describe('provider spawn authorization resolver', () => {
     resetActiveAccountSettingsSnapshotForTests();
   });
 
-  it.each(['no Profile', 'Provider-only shared binding'])(
+  it.each(['no Profile', 'Provider-only shared binding', 'ambiguous transport', 'unused ambiguous family'])(
     'refuses a newly revoked shared Provider credential at launch with %s and no AccountChange', async (profileCase) => {
       const token = 'provider-admission-account';
       const resourceId = 'provider-admission-resource';
       const ref = `happier:shared-secret:v1:${resourceId}`;
+      const unusedFamily = profileCase === 'unused ambiguous family';
+      const providersByContributionKey = profileCase === 'ambiguous transport' || unusedFamily
+        ? new Map([[canonicalContributionKey, { ...contribution, definition: ProviderContributionV1Schema.parse({
+          ...(unusedFamily ? { ...definition, endpointTemplates: [...definition.endpointTemplates,
+            { ...definition.endpointTemplates[0]!, id: 'anthropic', protocol: 'anthropic', modelIdPattern: '^anthropic/' }] } : definition),
+          credential: { ...definition.credential, transports: [...definition.credential!.transports,
+            ...(unusedFamily ? [{ id: 'anthropic-primary', protocols: ['anthropic'], uses: ['runtime'],
+              destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } }] : []),
+            { id: 'second', protocols: [unusedFamily ? 'anthropic' : 'openai-responses'], uses: ['runtime'],
+              destination: { kind: 'httpHeader', name: 'x-other-key', format: 'bearer' } }] },
+        }) }]]) : registry.providersByContributionKey;
+      const runtimeLease = lease(undefined, true, undefined, providersByContributionKey, false, undefined, false,
+        profileCase === 'ambiguous transport' || unusedFamily ? { supportsNoAuth: false,
+          apiKeyTransports: (unusedFamily ? ['openai-responses', 'anthropic'] as const : ['openai-responses'] as const).map((protocol): AgentProviderRequirementsV1['credentialSupport']['apiKeyTransports'][number] => ({ protocol,
+            destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['bearer'] } })) } : undefined,
+        unusedFamily ? ['openai-responses', 'anthropic'] : undefined);
       const providerSettings = ProviderSettingsV1Schema.parse({
-        ...grantedSettings(), secretBindingsByConnectionId: { pc_gateway: { account: { apiKey: ref } } },
+        ...grantedSettings({ providersByContributionKey }), secretBindingsByConnectionId: { pc_gateway: { account: { apiKey: ref } } },
       });
       const settings = AccountSettingsSchema.parse({
         providerDefaultModelSelectionsByAgentTargetKeyV1: providerSettings.defaultsByAgentTargetKey,
@@ -639,10 +849,16 @@ describe('provider spawn authorization resolver', () => {
 
       const admit = () => createRuntimeProviderSpawnAuthorizationAttempt({
         selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'model-a' } },
-        machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', lease: lease(),
+        machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex', lease: runtimeLease,
         getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
         resolveAddresses: async () => ['1.1.1.1'], materializationBaseDir: '/unused', sessionId: 'shared-admission',
       });
+      if (profileCase === 'ambiguous transport') {
+        const result = await admit().catch(() => null);
+        expect(get).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ ok: false, error: { code: 'provider_incompatible_with_agent' } });
+        return;
+      }
       const result = await admit();
       expect(result).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
       expect(getActiveAccountSettingsSnapshot()?.savedSecretResources).toEqual([]);
@@ -660,11 +876,9 @@ describe('provider spawn authorization resolver', () => {
       if (!rotated.ok) throw new Error('Expected rotated Provider admission');
       expect(rotated.attempt.authorization.ticket.selectedSecretRecordFingerprint)
         .not.toBe(restored.attempt.authorization.ticket.selectedSecretRecordFingerprint);
-      // Already admitted attempts keep their exact material fingerprint: the
-      // fresh admission cannot silently replace an earlier attempt's value.
-      await expect(restored.attempt.revalidateBeforeEffect()).resolves.toMatchObject({
-        ok: false, error: { code: 'provider_authorization_changed' },
-      });
+      // Each attempt keeps its admitted material; a later admission cannot
+      // silently replace it or withdraw already-admitted work.
+      await expect(restored.attempt.revalidateBeforeEffect()).resolves.toEqual({ ok: true });
       await expect(rotated.attempt.revalidateBeforeEffect()).resolves.toEqual({ ok: true });
       expect(get).toHaveBeenCalledTimes(3);
     },
@@ -979,7 +1193,6 @@ describe('provider spawn authorization resolver', () => {
         },
         lastAccessedAt: 20,
       }],
-      installationChecks: [],
       modelLoadStates: [],
     });
     const runtimeLease: PluginRuntimeRegistryLease = {
@@ -1432,7 +1645,6 @@ describe('provider spawn authorization resolver', () => {
           },
           lastAccessedAt: 20,
         }],
-        installationChecks: [],
         modelLoadStates: [{
           key: {
             machineId: 'machine-a',
@@ -1496,6 +1708,36 @@ describe('provider spawn authorization resolver', () => {
     const advisory = await authorizeWithPolicy('advisory');
     expect(advisory.ok).toBe(true);
     if (advisory.ok) advisory.attempt.cleanupOnFailure();
+  });
+
+  it.each([
+    { requested: 'ultra', allowed: false, declared: true },
+    { requested: 'medium', allowed: false, declared: true },
+    { requested: 'high', allowed: true, declared: true },
+    { requested: null, allowed: true, declared: true },
+    { requested: undefined, allowed: true, declared: true },
+    { requested: 'high', allowed: false, declared: false },
+    { requested: undefined, allowed: true, declared: false },
+  ])('admits explicit effort against the selected Provider model ($requested, declared=$declared)', ({ requested, allowed, declared }) => {
+    const settings = ProviderSettingsV1Schema.parse({ ...grantedSettings(), manualModelsByConnectionId: {
+      [connectionId]: [{ id: 'model-a', addedAt: 1, ...(declared ? { reasoningEffortLevels: ['low', 'high'] } : {}) }],
+    } });
+    const prepare = vi.fn(() => ({ v: 1 as const, materialization: 'engineConfig' as const, adapterBindingKey: 'gateway' }));
+    const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
+      selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex',
+        providerConnectionId: connectionId, modelId: 'model-a' } },
+      machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
+      accountSettings: accountSettings(settings), providerSettings: settings, registry,
+      dnsEvidenceByEndpointUrl: dns, lease: lease(prepare),
+      ...(requested !== undefined ? { sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 1,
+        overrides: { reasoning_effort: { value: requested, updatedAt: 1 } } } } : {}),
+    }));
+    expect(result.ok).toBe(allowed);
+    if (!allowed) {
+      expect(result).toMatchObject({ ok: false, error: {
+        code: 'provider_model_config_option_unsupported', retryable: false, action: 'choose_model' } });
+      expect(prepare).not.toHaveBeenCalled();
+    }
   });
 
   it('classifies live model changes from exact current and next authorized binding dimensions', () => {
@@ -2221,17 +2463,15 @@ describe('provider spawn authorization resolver', () => {
 
     currentSnapshot = snapshot(unconfirmedSettings, 2);
     expect(result.attempt.isAuthorizationCurrent()).toBe(true);
-    await expect(result.attempt.revalidateBeforeCommit()).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'provider_authorization_changed' },
-    });
+    await expect(result.attempt.revalidateBeforeCommit()).resolves.toEqual({ ok: true });
     expect(resolveBindingIntent).toHaveBeenCalledTimes(1);
 
     currentSnapshot = snapshot(ProviderSettingsV1Schema.parse({
       ...unconfirmedSettings,
       machineGrants: [],
     }), 3);
-    expect(result.attempt.isAuthorizationCurrent()).toBe(false);
+    expect(result.attempt.isAuthorizationCurrent()).toBe(true);
+    expect(result.attempt.isRetainedAuthorizationCurrent({ isExactRetainedRuntimeCurrent: () => true })).toBe(false);
 
     currentSnapshot = snapshot(confirmedSettings, 4);
     const revisionAttempt = await createRuntimeProviderSpawnAuthorizationAttempt({
@@ -2275,14 +2515,8 @@ describe('provider spawn authorization resolver', () => {
       )),
     }), 5);
     expect(revisionAttempt.attempt.isAuthorizationCurrent()).toBe(true);
-    await expect(revisionAttempt.attempt.revalidateBeforeEffect()).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'provider_authorization_changed' },
-    });
-    await expect(revisionAttempt.attempt.revalidateBeforeCommit()).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'provider_authorization_changed' },
-    });
+    await expect(revisionAttempt.attempt.revalidateBeforeEffect()).resolves.toEqual({ ok: true });
+    await expect(revisionAttempt.attempt.revalidateBeforeCommit()).resolves.toEqual({ ok: true });
     transferredCleanup?.();
 
     currentSnapshot = snapshot(confirmedSettings, 6);

@@ -10,7 +10,6 @@ import type { ResolvedProviderContribution } from '@/plugins/projection/registry
 
 import { ProviderOperationAbandonedError, createProviderOperationLifetime } from '../operationLifetime';
 import {
-  PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
   createProviderProbeScheduler,
 } from '../probe/scheduler';
 import {
@@ -314,7 +313,7 @@ describe('provider connection DNS evidence', () => {
     expect(resolveAddresses).not.toHaveBeenCalled();
   });
 
-  it('resolves each hostname once, bounds active lookups, and projects evidence to every connection URL', async () => {
+  it('resolves every demanded hostname once and projects evidence to every connection URL', async () => {
     const base = customConnectionSettings();
     const baseConnection = base.connections[0]!;
     if (baseConnection.source.kind !== 'custom') throw new Error('Expected custom fixture');
@@ -379,9 +378,7 @@ describe('provider connection DNS evidence', () => {
 
     expect(calls.filter((hostname) => hostname === 'shared.example')).toHaveLength(1);
     expect(new Set(calls).size).toBe(calls.length);
-    expect(peak).toBeLessThanOrEqual(
-      PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
-    );
+    expect(peak).toBe(7);
     for (const connection of providerSettings.connections) {
       expect(evidenceByConnectionId.get(connection.id)?.size).toBe(1);
     }
@@ -434,9 +431,7 @@ describe('provider connection DNS evidence', () => {
     });
 
     await expect(collected).rejects.toMatchObject({ reason: 'cancelled' });
-    expect(calls.length).toBeLessThanOrEqual(
-      PROVIDER_PROBE_DEFAULT_MAX_CONCURRENT_OPERATIONS,
-    );
+    expect(calls.length).toBeGreaterThan(0);
     const callsAtSettlement = calls.length;
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(calls).toHaveLength(callsAtSettlement);

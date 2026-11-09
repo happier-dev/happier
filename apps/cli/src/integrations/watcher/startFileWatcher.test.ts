@@ -227,6 +227,59 @@ describe('startFileWatcher', () => {
     }
   });
 
+  it('observes fixed-file creation below a contained alias with initially missing parents without a timer', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happy-file-watcher-missing-alias-parent-'));
+    const native = join(root, 'native');
+    const alias = join(root, 'alias');
+    await mkdir(native);
+    await symlink(native, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const file = join(alias, 'env', 'manifest.toml');
+    let calls = 0;
+    let attachments = 0;
+    const timer = vi.spyOn(globalThis, 'setTimeout');
+    const stop = startFileWatcher(file, () => { calls++; }, {
+      emitInitial: false, recovery: 'events', onWatcherAttached: () => { attachments++; },
+    });
+    try {
+      await vi.waitFor(() => expect(attachments).toBe(1));
+      await mkdir(join(native, 'env'));
+      await writeFile(join(native, 'env', 'manifest.toml'), 'initial');
+      await vi.waitFor(() => expect(calls).toBeGreaterThan(0));
+      await vi.waitFor(() => expect(attachments).toBeGreaterThan(1));
+      const before = calls;
+      await appendFile(join(native, 'env', 'manifest.toml'), 'updated');
+      await vi.waitFor(() => expect(calls).toBeGreaterThan(before));
+      expect(timer.mock.calls.filter(([, delay]) => delay === 1_000)).toHaveLength(0);
+    } finally { await stop.dispose(); await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('reattaches a declaration alias from observed replacement without a recovery timer', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happy-file-watcher-event-recovery-'));
+    const first = join(root, 'first.json');
+    const second = join(root, 'second.json');
+    const file = join(root, 'package.json');
+    await writeFile(first, 'first');
+    await writeFile(second, 'second');
+    await symlink(first, file);
+    let calls = 0;
+    let attachments = 0;
+    const timer = vi.spyOn(globalThis, 'setTimeout');
+    const stop = startFileWatcher(file, () => { calls++; }, {
+      emitInitial: false, recovery: 'events', onWatcherAttached: () => { attachments++; },
+    });
+    try {
+      await vi.waitFor(() => expect(attachments).toBe(1));
+      const replacement = join(root, 'replacement');
+      await symlink(second, replacement);
+      await rename(replacement, file);
+      await vi.waitFor(() => expect(attachments).toBeGreaterThan(1));
+      const before = calls;
+      await appendFile(second, 'updated');
+      await vi.waitFor(() => expect(calls).toBeGreaterThan(before));
+      expect(timer.mock.calls.filter(([, delay]) => delay === 1_000)).toHaveLength(0);
+    } finally { await stop.dispose(); await rm(root, { recursive: true, force: true }); }
+  });
+
   it('observes writes to a file symlink target outside the watched parent and follows retargeting', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happy-file-watcher-symlink-'));
     const logicalDirectory = join(root, 'logical');

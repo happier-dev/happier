@@ -8,13 +8,19 @@ export function applyActiveModelFacts(
   metadata: Metadata,
   target: AuthorizedSessionModelTransitionTarget,
   agentId: string,
-  activeSelectionV1: SessionActiveModelSelection | null = null,
+  activeSelectionV1: SessionActiveModelSelection | null,
 ): Metadata {
   const withBinding = applySessionProviderBindingMetadataV1(
     metadata,
     target.sessionBindingMetadata,
   ) as Metadata;
   const existingState = withBinding.sessionModelsV1;
+  // Explicitly absent execution evidence updates the route/binding only. The
+  // required currentModelId cannot be invented from the configured selector.
+  if (activeSelectionV1 === null && existingState?.agentId !== agentId) {
+    const { sessionModelsV1: _staleState, ...withoutObservedModel } = withBinding;
+    return withoutObservedModel;
+  }
   const state = existingState?.agentId === agentId ? existingState : {
     v: 1 as const,
     agentId,
@@ -91,7 +97,7 @@ export function applyActiveModelFacts(
       ...stateWithoutActiveSelection,
       agentId,
       updatedAt: state.updatedAt,
-      currentModelId: target.selection.modelId,
+      currentModelId: activeSelectionV1 === null ? state.currentModelId : target.selection.modelId,
       availableModels,
       ...(activeSelectionV1 ? { activeSelectionV1 } : {}),
     },

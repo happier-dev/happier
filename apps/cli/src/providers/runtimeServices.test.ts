@@ -38,8 +38,10 @@ const providersEnabledFeatureGate = Object.freeze({
 
 function createMachineServices(): RuntimeProviderOperationsProducer['machineServices'] {
   return {
+    async readSourceModelCatalogs() {
+      throw new Error('Public Provider operations must not read a private source catalog');
+    },
     refreshUsage: vi.fn(async () => ({ status: 'success' as const, sources: [{ sourceId: 'credits', status: 'not_configured' as const }] })),
-    prepareTeamCredentialNativeSource: vi.fn(async () => { throw new Error('Unexpected native Team credential source RPC'); }),
     prepareProfileMigrationSource: vi.fn(async () => { throw new Error('Unexpected Profile migration source RPC'); }),
     probe: vi.fn(async () => ({
       status: 'success' as const,

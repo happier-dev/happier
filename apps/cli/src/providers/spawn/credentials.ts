@@ -1,5 +1,7 @@
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { resolveProviderSecretBindingIdV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
+import { createProviderFingerprintV1 } from '@happier-dev/protocol/providers/fingerprints';
+import { compareProviderCanonicalStringsV1 } from '@happier-dev/protocol/providers/canonicalOrderV1';
 import type { ProviderConnectionId, ProviderCredentialTransportV1, ProviderErrorV1, ProviderSettingsV1 } from '@happier-dev/protocol';
 import type { TeamCredentialDirectMaterialPayloadV1 } from '@happier-dev/protocol/teams';
 
@@ -117,6 +119,14 @@ export type ProviderResolvedCredential =
   | Readonly<{ kind: 'apiKey'; value: string; additionalCredentials?: readonly Readonly<{ slotId: string; value: string }>[] }>;
 
 /** One authority witness includes every bound record without changing the ticket shape. */
+export function providerCredentialReferenceFingerprint(reference: Extract<ProviderCredentialReference, { kind: 'apiKey' }>): string {
+  if (!reference.additionalCredentials?.length) return reference.secretRecordFingerprint;
+  return createProviderFingerprintV1('saved-secret-record', {
+    primary: { secretId: reference.secretId, fingerprint: reference.secretRecordFingerprint },
+    additional: [...reference.additionalCredentials].sort((a, b) => compareProviderCanonicalStringsV1(a.slotId, b.slotId)),
+  });
+}
+
 export type ProviderCredentialPlaintextResultForSpawn =
   | Readonly<{ ok: true; credential: ProviderResolvedCredential }>
   | Readonly<{ ok: false; error: ProviderErrorV1 }>;

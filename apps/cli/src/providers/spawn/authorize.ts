@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { assessProviderEndpoint } from '@happier-dev/protocol/providers/safety/url';
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { ConnectedServiceBindingsV2Schema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { createProviderManagedRuntimeBindingEqualityKeyV1 } from '@happier-dev/protocol/providers/contributions';
-import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { AgentProviderBindingMaterializationV1, ConnectedServiceBindingsV2, ConnectedServiceId, ProviderErrorV1, PluginExecutionScopeV1, QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import type {
   AgentProviderBindingCredential,
@@ -12,7 +10,7 @@ import type {
 
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { materializeLeasedAgentProviderBinding, readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
-import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { ActiveAccountSettingsSnapshot, ActiveAccountSettingsKeys } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ProviderRuntimeStateStore } from '../runtimeState';
 import { evaluateProviderModelLoadPreflight } from '../modelManagement/load';
 import { resolveProviderRuntimeCatalogSelectionObservation } from './runtimeCatalog';
@@ -30,12 +28,11 @@ import type {
 } from './resolve';
 import {
   resolveProviderSpawnAuthorization,
-  isExternalProviderSpawnAuthorization,
+  resolveProviderSpawnSelection,
   resolveProviderSpawnDefinitiveRejection,
   selectProviderSpawnClaudeHelperModels,
   type ResolveProviderSpawnAuthorizationInput,
 } from './resolve';
-import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import {
   awaitAbortableWithinProviderOperation,
   awaitWithinProviderOperation,
@@ -43,11 +40,11 @@ import {
   ProviderOperationAbandonedError,
 } from '../operationLifetime';
 import { resolveProviderConnectionForMachine } from '../registry/resolve';
+import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import { isRemoteProviderGatewayPlacement } from '../managed/gatewayPlacement';
 import { readProviderSettingsForCli } from '../settings/read';
 import { prepareProviderConnectionsCatalogForCli, refreshProviderConnectionsCatalogForCli } from '../settings/hydrate';
 import { resolveProviderCredentialPlaintext } from './credentials';
-import { revalidateProviderBindingAuthorizationTicket } from './ticket';
 import { createAccountBoundProviderSnapshotReader } from '../lifecycle/currentAccountSettingsSnapshot';
 import { activateAgentRuntimeContributionOnDemand } from '@/agent/runtime/registry/activationDemand';
 import {
@@ -63,8 +60,10 @@ import {
 import { projectProviderRuntimeBindingBasis } from './runtimeBindingBasis';
 import { admitRuntimeProviderSavedSecret, providerSavedSecretAdmissionError } from './runtimeCredential';
 import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
-import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
+import { readProviderSpawnCatalogSnapshot } from './catalogAdmission';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import type { SavedSecretCatalogOperationAdmissionV1 } from '@/settings/secrets/savedSecretCatalogRead';
+import { acquireSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { logger } from '@/ui/logger';
 
 type ExternalProviderSpawnAuthorization = Extract<
@@ -76,68 +75,12 @@ type ManagedProviderSpawnAuthorization = Extract<
   { deployment: { kind: 'managedLocal' } }
 >;
 
-type ManagedProviderAuthorizationCurrentnessBasis = Readonly<{
-  ticket: Pick<
-    ManagedProviderSpawnAuthorization['ticket'],
-    | 'connectionId'
-    | 'machineId'
-    | 'connectionSecurityFingerprint'
-    | 'grantFingerprint'
-  >;
-  deployment: Readonly<{
-    contribution: Pick<
-      ManagedProviderSpawnAuthorization['deployment']['contribution'],
-      'identity'
-    >;
-    implementation: Pick<
-      ManagedProviderSpawnAuthorization['deployment']['implementation'],
-      | 'implementationIdentity'
-      | 'managedRuntime'
-      | 'runtime'
-      | 'purposeBindings'
-    >;
-  }>;
-}>;
 
-export function sameManagedProviderAuthorizationCurrentnessBasis(
-  expected: ManagedProviderAuthorizationCurrentnessBasis,
-  actual: ManagedProviderAuthorizationCurrentnessBasis,
-): boolean {
-  return expected.ticket.connectionId === actual.ticket.connectionId
-    && expected.ticket.machineId === actual.ticket.machineId
-    && expected.ticket.connectionSecurityFingerprint
-      === actual.ticket.connectionSecurityFingerprint
-    && expected.ticket.grantFingerprint === actual.ticket.grantFingerprint
-    && expected.deployment.contribution.identity.pluginId
-      === actual.deployment.contribution.identity.pluginId
-    && expected.deployment.contribution.identity.localId
-      === actual.deployment.contribution.identity.localId
-    && expected.deployment.implementation.implementationIdentity.pluginId
-      === actual.deployment.implementation.implementationIdentity.pluginId
-    && expected.deployment.implementation.implementationIdentity.localId
-      === actual.deployment.implementation.implementationIdentity.localId
-    && createProviderManagedRuntimeBindingEqualityKeyV1({
-      implementationIdentity:
-        expected.deployment.implementation.implementationIdentity,
-      managedRuntime: expected.deployment.implementation.managedRuntime,
-      purposeBindings: expected.deployment.implementation.purposeBindings,
-    })
-      === createProviderManagedRuntimeBindingEqualityKeyV1({
-        implementationIdentity:
-          actual.deployment.implementation.implementationIdentity,
-        managedRuntime: actual.deployment.implementation.managedRuntime,
-        purposeBindings: actual.deployment.implementation.purposeBindings,
-      })
-    && expected.deployment.implementation.runtime.runtime
-      === actual.deployment.implementation.runtime.runtime
-    && expected.deployment.implementation.runtime.activationOccurrenceId
-      === actual.deployment.implementation.runtime.activationOccurrenceId
-    && pluginSourceCustodyV1Equal(
-      expected.deployment.implementation.runtime.sourceCustody,
-      actual.deployment.implementation.runtime.sourceCustody,
-    )
-    && expected.deployment.implementation.runtime.isCurrent() === true
-    && actual.deployment.implementation.runtime.isCurrent() === true;
+
+function isExternalProviderSpawnAuthorization(
+  authorization: ProviderSpawnAuthorization,
+): authorization is ExternalProviderSpawnAuthorization {
+  return authorization.deployment.kind === 'external';
 }
 
 function isManagedProviderSpawnAuthorization(
@@ -182,7 +125,7 @@ export function filterSuppressedConnectedServiceBindings(input: Readonly<{
 
 function renderCredential(
   value: string,
-  transport: AgentProviderBindingResolvedFacts['runtimeCredentialTransport'],
+  transport: Pick<NonNullable<AgentProviderBindingResolvedFacts['runtimeCredentialTransport']>, 'destination'> | null,
 ): readonly string[] {
   if (!transport) return [value];
   const format = transport.destination.format;
@@ -237,7 +180,7 @@ export type ProviderSpawnAuthorizationAttempt =
 
 type ProviderSpawnAuthorizationAttemptInput<TAuthorization extends ProviderSpawnAuthorization> = Readonly<{
   initial: TAuthorization;
-  revalidate: (signal?: AbortSignal) => Promise<ProviderSpawnAuthorizationResult>;
+  signal?: AbortSignal;
   resolveCredential: () => ProviderCredentialPlaintextResultForSpawn;
   materialize: (input: Readonly<{
     authorization: TAuthorization;
@@ -305,6 +248,7 @@ export function createProviderSpawnAuthorizationAttempt<
   };
 
   const revalidate = async (signal?: AbortSignal) => {
+    if (input.signal?.aborted || signal?.aborted) throw new ProviderOperationAbandonedError('cancelled');
     if (!isAuthorizationCurrent()) {
       return {
         ok: false as const,
@@ -314,20 +258,7 @@ export function createProviderSpawnAuthorizationAttempt<
         }),
       };
     }
-    const managed = isManagedProviderSpawnAuthorization(input.initial);
-    const current = await input.revalidate(signal);
-    if (!current.ok) {
-      return managed
-        ? {
-            ok: false as const,
-            error: createProviderErrorV1('provider_authorization_changed', {
-              connectionId: input.initial.ticket.connectionId,
-              machineId: input.initial.ticket.machineId,
-            }),
-          }
-        : { ok: false as const, error: current.error };
-    }
-    return revalidateProviderBindingAuthorizationTicket(input.initial.ticket, current.authorization.ticket);
+    return { ok: true as const };
   };
 
   const materialize = async (params: Readonly<{
@@ -340,10 +271,12 @@ export function createProviderSpawnAuthorizationAttempt<
     redactionLease = (input.createRedactionLease ?? createProviderRedactionLease)({
       values: [
         ...(params.credential.kind === 'apiKey'
-          ? renderCredential(
+          ? [...renderCredential(
               params.credential.value,
               params.binding.runtimeCredentialTransport,
-            )
+            ), ...(params.credential.additionalCredentials ?? []).flatMap(credential => renderCredential(
+              credential.value, params.binding.runtimeCredentialTransport?.additionalCredentials?.find(row => row.slotId === credential.slotId) ?? null,
+            ))]
           : []),
         ...Object.values(params.binding.endpoint.publicHeaders).filter((value) => value.length > 0),
       ],
@@ -368,6 +301,7 @@ export function createProviderSpawnAuthorizationAttempt<
       };
     } catch (error) {
       cleanup();
+      if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
       const providerError = ProviderErrorV1Schema.safeParse(error);
       if (providerError.success) return { ok: false as const, error: providerError.data };
       return {
@@ -436,7 +370,8 @@ export function createProviderSpawnAuthorizationAttempt<
       let resolvedCredential: ProviderCredentialPlaintextResultForSpawn;
       try {
         resolvedCredential = input.resolveCredential();
-      } catch {
+      } catch (error) {
+        if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
         return {
           ok: false as const,
           error: createProviderErrorV1('provider_secret_missing', {
@@ -452,6 +387,7 @@ export function createProviderSpawnAuthorizationAttempt<
             kind: 'apiKey',
             transport: authorization.binding.runtimeCredentialTransport!,
             value: resolvedCredential.credential.value,
+            ...(resolvedCredential.credential.additionalCredentials ? { additionalCredentials: resolvedCredential.credential.additionalCredentials } : {}),
           };
         return materialize({ binding: authorization.binding, credential });
       },
@@ -527,6 +463,7 @@ export function createProviderSpawnAuthorizationAttempt<
 
 export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Readonly<{
   selection: ResolveProviderSpawnAuthorizationInput['selection'];
+  sessionConfigOptionOverrides?: ResolveProviderSpawnAuthorizationInput['sessionConfigOptionOverrides'];
   machineId: string;
   agentTargetKey: string;
   agentId: string;
@@ -534,7 +471,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
   /** Explicit binding recovery admits against the catalog reviewed since the previous launch. */
   reobserveProviderCatalog?: boolean;
-  subscribeAccountSettingsSnapshot?: (listener: () => void) => () => void;
+  subscribeAccountSettingsSnapshot?: (listener: () => void, keys: ActiveAccountSettingsKeys) => () => void;
   localCandidateUrlsByConnectionId?: ResolveProviderSpawnAuthorizationInput['localCandidateUrlsByConnectionId'];
   runtimeModelDescriptor?:
     ResolveProviderSpawnAuthorizationInput['runtimeModelDescriptor'];
@@ -593,20 +530,12 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     };
   }
   const initialScopeKey = initialSnapshot.scopeKey;
-  let catalog;
-  try {
-    catalog = !input.reobserveProviderCatalog && initialSnapshot.providerConnectionsCatalog?.status === 'ready'
-      ? initialSnapshot.providerConnectionsCatalog
-      : await observePhase('catalog', () => awaitWithinProviderOperation((input.reobserveProviderCatalog ? refreshProviderConnectionsCatalogForCli : prepareProviderConnectionsCatalogForCli)({ expectedScopeKey: initialScopeKey,
-          operationContext: input.savedSecretOperationContext }), admissionLifetime));
-  } catch (error) {
-    if (error instanceof ProviderOperationAbandonedError) {
-      return { ok: false, error: createProviderErrorV1('provider_endpoint_unavailable', {
-        connectionId: input.selection.ref.providerConnectionId ?? undefined, machineId: input.machineId,
-      }) };
-    }
-    throw error;
-  }
+  const catalog = !input.reobserveProviderCatalog && initialSnapshot.providerConnectionsCatalog?.status === 'ready'
+    ? initialSnapshot.providerConnectionsCatalog
+    : await observePhase('catalog', () => awaitWithinProviderOperation(
+        (input.reobserveProviderCatalog ? refreshProviderConnectionsCatalogForCli : prepareProviderConnectionsCatalogForCli)({
+          expectedScopeKey: initialScopeKey, operationContext: input.savedSecretOperationContext, signal: input.signal,
+        }), admissionLifetime));
   initialSnapshot = getAccountSettingsSnapshot();
   if (catalog.status !== 'ready' || !initialSnapshot) return { ok: false, error: createProviderErrorV1('provider_settings_invalid') };
   const definitive = resolveProviderSpawnDefinitiveRejection({
@@ -618,27 +547,13 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   });
   if (!definitive.ok) return definitive;
 
-  let activationResults;
-  try {
-    activationResults = await observePhase('agent_activation', () => awaitWithinProviderOperation(
-      activateAgentRuntimeContributionOnDemand(
-        input.lease.registry,
-        input.agentId,
-      ),
-      admissionLifetime,
-    ));
-  } catch (error) {
-    if (error instanceof ProviderOperationAbandonedError) {
-      return {
-        ok: false,
-        error: createProviderErrorV1('provider_endpoint_unavailable', {
-          connectionId: input.selection.ref.providerConnectionId ?? undefined,
-          machineId: input.machineId,
-        }),
-      };
-    }
-    throw error;
-  }
+  const activationResults = await observePhase('agent_activation', () => awaitWithinProviderOperation(
+    activateAgentRuntimeContributionOnDemand(
+      input.lease.registry,
+      input.agentId,
+    ),
+    admissionLifetime,
+  ));
   const activationFailures = activationResults.filter((result) => (
     result.diagnostics.length > 0
     && !input.lease.registry.activatedPluginIds.has(result.pluginId)
@@ -671,47 +586,25 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
   }
   let managedPurposeBindingSnapshot = input.managedPurposeBindingSnapshot;
   let admittedSnapshot: ActiveAccountSettingsSnapshot | null = null;
-  const resolveCurrent = async (
-    lifetime = admissionLifetime,
-    admitSavedSecret = false,
-  ): Promise<ProviderSpawnAuthorizationResult> => {
-    let snapshot = getAccountSettingsSnapshot();
-    if (snapshot?.providerConnectionsCatalog?.status !== 'ready') {
-      return {
-        ok: false,
-        error: createProviderErrorV1('provider_connection_not_found', {
-          connectionId: input.selection.ref.providerConnectionId ?? undefined,
-          machineId: input.machineId,
-        }),
-      };
-    }
+  const resolveCurrent = async (): Promise<ProviderSpawnAuthorizationResult> => {
+    const admittedCatalog = await readProviderSpawnCatalogSnapshot({
+      readSnapshot: getAccountSettingsSnapshot, expectedScopeKey: initialScopeKey, lifetime: admissionLifetime,
+      connectionId: input.selection.ref.providerConnectionId, machineId: input.machineId,
+    });
+    if (!admittedCatalog.ok) return admittedCatalog;
+    let snapshot = admittedCatalog.snapshot;
+    let admittedSavedSecretCatalog: SavedSecretCatalogOperationAdmissionV1 | undefined;
     const providerSettings = readProviderSettingsForCli(snapshot).settings;
     const connectionId = input.selection.ref.providerConnectionId;
     if (connectionId === null) {
       return { ok: false, error: createProviderErrorV1('provider_connection_not_found') };
     }
-    let dnsEvidenceByEndpointUrl;
-    try {
-      dnsEvidenceByEndpointUrl = await observePhase('dns', () => collectProviderConnectionDnsEvidence({
-        connectionId,
-        machineId: input.machineId,
-        providerSettings,
-        registry,
-        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}),
-        lifetime,
+    // The canonical collector skips Account-consented public configuration;
+    // Machine consent still needs its named-private endpoint classification.
+    const dnsEvidenceByEndpointUrl = await observePhase('dns', () => collectProviderConnectionDnsEvidence({
+        connectionId, machineId: input.machineId, providerSettings, registry,
+        ...(input.resolveAddresses ? { resolveAddresses: input.resolveAddresses } : {}), lifetime: admissionLifetime,
       }));
-    } catch (error) {
-      if (error instanceof ProviderOperationAbandonedError) {
-        return {
-          ok: false,
-          error: createProviderErrorV1('provider_endpoint_unavailable', {
-            connectionId,
-            machineId: input.machineId,
-          }),
-        };
-      }
-      throw error;
-    }
     const connectionResolution = resolveProviderConnectionForMachine({
       connectionId,
       machineId: input.machineId,
@@ -725,17 +618,18 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           }
         : {}),
     });
-    if (admitSavedSecret && connectionResolution.status === 'resolved') {
+    if (connectionResolution.status === 'resolved') {
       const admitted = await admitRuntimeProviderSavedSecret({
         connection: connectionResolution.record,
         providerSettings,
         snapshot,
         getAccountSettingsSnapshot,
-        lifetime,
+        lifetime: admissionLifetime,
         ...(input.savedSecretOperationContext ? { operationContext: input.savedSecretOperationContext } : {}),
       });
       if (!admitted.ok) return admitted;
       snapshot = admitted.snapshot;
+      admittedSavedSecretCatalog = admitted;
     }
     if (
       connectionResolution.status === 'resolved'
@@ -768,7 +662,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
                 deployment.purposeBindingIntents,
               resolveBindingIntent,
               signal,
-            }), lifetime));
+            }), admissionLifetime));
         } catch (error) {
           return {
             ok: false,
@@ -802,11 +696,9 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
         managedProviderRuntime =
           await observePhase('managed_runtime', () => awaitWithinProviderOperation(acquireManagedProviderRuntime(
             deployment.implementationIdentity,
-          ), lifetime)) ?? undefined;
+          ), admissionLifetime)) ?? undefined;
       } catch (error) {
-        if (error instanceof ProviderOperationAbandonedError) return {
-          ok: false, error: createProviderErrorV1('provider_endpoint_unavailable', { connectionId, machineId: input.machineId }),
-        };
+        if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
         managedProviderRuntime = undefined;
       }
       if (!managedProviderRuntime?.isCurrent()) {
@@ -862,8 +754,9 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
           ...(input.localCandidateUrlsByConnectionId
             ? { localCandidateUrlsByConnectionId: input.localCandidateUrlsByConnectionId }
             : {}),
-        }), lifetime));
+        }), admissionLifetime));
     } catch (error) {
+      if (error instanceof ProviderOperationAbandonedError || error instanceof Error && error.name === 'AbortError') throw error;
       const parsed = ProviderErrorV1Schema.safeParse(error);
       return { ok: false, error: parsed.success ? parsed.data : createProviderErrorV1('provider_endpoint_unavailable', {
         connectionId, machineId: input.machineId,
@@ -875,16 +768,14 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     const runtimeModelDescriptor =
       remotePlacement ? runtimeModelObservation?.model ?? null
         : input.runtimeModelDescriptor ?? runtimeModelObservation?.model ?? null;
-    const authorization = resolveProviderSpawnAuthorization({
+    const authorizationInput: ResolveProviderSpawnAuthorizationInput = {
       selection: input.selection,
+      ...(input.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: input.sessionConfigOptionOverrides } : {}),
       machineId: input.machineId,
       agentTargetKey: input.agentTargetKey,
       agentId: input.agentId,
       accountSettings: snapshot.settings,
       savedSecretResources: snapshot.savedSecretResources,
-      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
-        isCurrent: () => !admissionLifetime.signal?.aborted,
-      }),
       providerSettings,
       registry,
       dnsEvidenceByEndpointUrl,
@@ -901,7 +792,32 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
       ...(runtimeModelObservation !== null
         ? { runtimeCatalogSnapshotExists: true }
         : {}),
-    });
+    };
+    const admissionCredential = connectionResolution.status === 'resolved'
+      ? connectionResolution.record.source.kind === 'contribution'
+        ? connectionResolution.record.source.definition.credential : connectionResolution.record.source.template.credential
+      : undefined;
+    if (admissionCredential?.transports.some(transport => transport.additionalCredentials?.length)
+      && connectionResolution.status === 'resolved' && connectionResolution.record.deployment.kind === 'external') {
+      const selection = resolveProviderSpawnSelection(authorizationInput);
+      if (!selection.ok) return selection;
+      const additionalCredentials = selection.selection.selectedCredentialTransport?.additionalCredentials;
+      if (additionalCredentials?.length) {
+        const admitted = await admitRuntimeProviderSavedSecret({
+          connection: connectionResolution.record, providerSettings, snapshot, getAccountSettingsSnapshot,
+          lifetime: admissionLifetime, additionalCredentials,
+          ...(admittedSavedSecretCatalog ? { admittedCatalog: admittedSavedSecretCatalog } : {}),
+          ...(input.savedSecretOperationContext ? { operationContext: input.savedSecretOperationContext } : {}),
+        });
+        if (!admitted.ok) return admitted;
+        snapshot = admitted.snapshot;
+      }
+    }
+    const authorization = resolveProviderSpawnAuthorization({ ...authorizationInput,
+      accountSettings: snapshot.settings, savedSecretResources: snapshot.savedSecretResources,
+      savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
+        isCurrent: () => !admissionLifetime.signal?.aborted,
+      }) });
     if (!authorization.ok) return authorization;
     admittedSnapshot = snapshot;
     const modelLoadDescriptor =
@@ -925,7 +841,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     }
     return authorization;
   };
-  const initial = await resolveCurrent(admissionLifetime, true);
+  const initial = await resolveCurrent();
   if (!initial.ok) return initial;
   const credentialReference = initial.authorization.credentialReference;
   let savedSecretMaterializer: SavedSecretMaterializerV1 | undefined;
@@ -949,73 +865,6 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     isManagedProviderSpawnAuthorization(initial.authorization)
       ? projectProviderRuntimeBindingBasis(initial.authorization)
       : null;
-  const resolveManagedAuthorizationCurrentnessBasis = ():
-    ManagedProviderAuthorizationCurrentnessBasis | null => {
-    if (!isManagedProviderSpawnAuthorization(initial.authorization)) return null;
-    const snapshot = getAccountSettingsSnapshot();
-    if (snapshot?.providerConnectionsCatalog?.status !== 'ready') return null;
-    const current = resolveProviderConnectionForMachine({
-      connectionId: initial.authorization.ticket.connectionId,
-      machineId: input.machineId,
-      providerSettings: readProviderSettingsForCli(snapshot).settings,
-      registry,
-      dnsEvidenceByEndpointUrl: new Map(),
-    });
-    if (
-      current.status !== 'resolved'
-      || !current.record.authorization.authorized
-      || current.record.deployment.kind !== 'managedLocal'
-      || current.record.source.kind !== 'contribution'
-    ) {
-      return null;
-    }
-    const contribution = registry.providersByContributionKey.get(
-      current.record.source.contributionKey,
-    );
-    if (
-      !contribution
-      || contribution.definition.managedRuntime?.kind !== 'managed'
-      || contribution.identity.pluginId
-        !== current.record.deployment.implementationIdentity.pluginId
-      || contribution.identity.localId
-        !== current.record.deployment.implementationIdentity.localId
-      || !initial.authorization.deployment.implementation
-        .runtime.isCurrent()
-    ) {
-      return null;
-    }
-    return {
-      ticket: {
-        connectionId: current.record.connectionId,
-        machineId: current.record.machineId,
-        connectionSecurityFingerprint:
-          current.record.connectionSecurityFingerprint,
-        grantFingerprint: current.record.authorization.grantFingerprint,
-      },
-      deployment: {
-        contribution,
-        implementation: {
-          implementationIdentity:
-            current.record.deployment.implementationIdentity,
-          managedRuntime:
-            current.record.deployment.managedRuntime,
-          runtime:
-            initial.authorization.deployment.implementation.runtime,
-          purposeBindings:
-            initial.authorization.deployment.implementation.purposeBindings,
-        },
-      },
-    };
-  };
-  const isManagedAuthorizationCurrent = (): boolean => {
-    if (!isManagedProviderSpawnAuthorization(initial.authorization)) return true;
-    const current = resolveManagedAuthorizationCurrentnessBasis();
-    return current !== null
-      && sameManagedProviderAuthorizationCurrentnessBasis(
-        initial.authorization,
-        current,
-      );
-  };
   const isManagedRetainedAuthorizationCurrent = (): boolean => {
     if (!isManagedProviderSpawnAuthorization(initial.authorization)) {
       return false;
@@ -1029,21 +878,15 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
       runtimeBindingBasis: retainedManagedRuntimeBindingBasis,
     });
   };
+  const subscribeAccountSettingsSnapshot = input.subscribeAccountSettingsSnapshot;
   return {
     ok: true,
     attempt: createProviderSpawnAuthorizationAttempt({
       initial: initial.authorization,
-      revalidate: (signal) => resolveCurrent(signal
-        ? {
-            ...admissionLifetime,
-            signal: admissionLifetime.signal
-              ? AbortSignal.any([admissionLifetime.signal, signal])
-              : signal,
-          }
-        : admissionLifetime),
+      signal: admissionLifetime.signal,
       resolveCredential: () => {
-        const snapshot = getAccountSettingsSnapshot();
-        if (!snapshot) {
+        const snapshot = admittedSnapshot;
+        if (!snapshot || getAccountSettingsSnapshot()?.scopeKey !== initialScopeKey) {
           return {
             ok: false,
             error: createProviderErrorV1('provider_authorization_changed', {
@@ -1071,10 +914,12 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
       }),
       materializationBaseDir: input.materializationBaseDir,
       ...(input.scope ? { scope: input.scope } : { sessionId: input.sessionId }),
-      isCurrent: isManagedAuthorizationCurrent,
+      isCurrent: () => getAccountSettingsSnapshot()?.scopeKey === initialScopeKey && !admissionLifetime.signal?.aborted,
       isRetainedPolicyCurrent: isManagedRetainedAuthorizationCurrent,
-      ...(input.subscribeAccountSettingsSnapshot
-        ? { subscribeCurrentness: input.subscribeAccountSettingsSnapshot }
+      ...(subscribeAccountSettingsSnapshot
+        // This observer reads Account lifetime only. Retained Provider policy
+        // is read separately at its point of effect above.
+        ? { subscribeCurrentness: (listener: () => void) => subscribeAccountSettingsSnapshot(listener, {}) }
         : {}),
     }),
   };

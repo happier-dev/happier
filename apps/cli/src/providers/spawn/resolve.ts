@@ -12,7 +12,7 @@ import type { ProviderSettingsReadResultV1 } from '@happier-dev/protocol';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderModelDescriptorV1Schema, resolveModelDisplayName } from '@happier-dev/protocol/models/descriptor';
 import { createProviderManagedRuntimeBindingEqualityKeyV1, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
-import { selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import { ProviderCredentialTransportAmbiguityErrorV1, resolveProviderBindingDeclarationCompatibilityV1, selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import type { AgentProviderRequirementsV1, ProviderBindingAuthorizationTicketV1, ProviderCredentialTransportV1, ProviderErrorV1, ProviderModelLoadDescriptorV1, ProviderModelDescriptorV1, ProviderSettingsV1, ProviderObservationAuthorizationFingerprintV1, ProviderProbeRequestFingerprintV1, ResolvedProviderManagedRuntimeDeclarationV1, QualifiedConnectedAccountPurposeBindingsV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import type {
   AgentProviderBindingAdapter,
@@ -32,13 +32,15 @@ import {
   resolveProviderConnectionForMachineFromSettingsRead,
 } from '../registry/resolve';
 import type {
-  ProviderConnectionEndpointUnresolvedReason,
   ProviderContributionRegistryView,
   ProviderEndpointDnsEvidence,
   ResolvedProviderConnectionRecord,
 } from '../registry/types';
+import { providerConnectionResolutionError } from '../registry/resolutionError';
+export { providerConnectionResolutionError } from '../registry/resolutionError';
 import {
   resolveProviderCredentialReference,
+  providerCredentialReferenceFingerprint,
   type ProviderCredentialReference,
   type ProviderProbeHostCredentialReference,
 } from './credentials';
@@ -54,7 +56,8 @@ import type {
 import { projectProviderRuntimeBindingBasis } from './runtimeBindingBasis';
 import { isRemoteProviderGatewayPlacement } from '../managed/gatewayPlacement';
 import { readProviderModelNameCatalog } from '../registry/contributions';
-import { projectProviderModelReasoningForAgent } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { readProviderReasoningEffortOption, projectProviderModelReasoningForAgent } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 
 export function selectProviderSpawnClaudeHelperModels(input: Readonly<{
   adapter?: Pick<AgentProviderBindingAdapter, 'supportsClaudeHelperModels'>;
@@ -120,12 +123,6 @@ export type ProviderSpawnAuthorization = ProviderSpawnAuthorizationBase & Readon
     }
 >;
 
-export function isExternalProviderSpawnAuthorization(
-  authorization: ProviderSpawnAuthorization,
-): authorization is Extract<ProviderSpawnAuthorization, { deployment: { kind: 'external' } }> {
-  return authorization.deployment.kind === 'external';
-}
-
 export type ProviderSpawnAuthorizationResult =
   | Readonly<{ ok: true; authorization: ProviderSpawnAuthorization }>
   | Readonly<{ ok: false; error: ProviderErrorV1 }>;
@@ -189,6 +186,8 @@ export type ProviderExternalProbeHostAuthorizationTicket = Readonly<{
   probeRequestFingerprint: ProviderProbeRequestFingerprintV1;
   selectedSecretBindingId: string | null;
   selectedSecretRecordFingerprint: string | null;
+  /** Usage requests bind their selected transport independently of inference. */
+  usageAuthorization?: Readonly<{ sourceId: string; observationAuthorizationFingerprint: ProviderObservationAuthorizationFingerprintV1 }>;
 }>;
 
 export type ProviderManagedProbeHostAuthorizationTicket = Readonly<{
@@ -270,6 +269,8 @@ export type ProviderModelLoadHostAuthorizationResult =
 
 export type ResolveProviderSpawnAuthorizationInput = Readonly<{
   selection: SessionModelSelectionV1;
+  /** Requested launch overrides only; inherited/default configuration is normalized by the runtime. */
+  sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   machineId: string;
   /** Exact persisted backend target identity (for example `backend:codex`). */
   agentTargetKey: string;
@@ -581,13 +582,14 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
         machineId: input.request.machineId,
         credentialSlotId: credentialRequirement.slotId,
         required: credentialRequirement.required,
+        additionalCredentials: selectedTransport?.additionalCredentials,
       })
     : { ok: true as const, reference: { kind: 'none' as const } };
   if (!credentialReferenceResult.ok) return credentialReferenceResult;
   const reference = credentialReferenceResult.reference;
   const observationAuthorizationFingerprint = createProviderObservationAuthorizationFingerprintV1({
     selectedSecretBindingId: reference.kind === 'apiKey' ? reference.secretId : null,
-    selectedSecretRecordFingerprint: reference.kind === 'apiKey' ? reference.secretRecordFingerprint : null,
+    selectedSecretRecordFingerprint: reference.kind === 'apiKey' ? providerCredentialReferenceFingerprint(reference) : null,
     credential: reference.kind === 'apiKey' && selectedTransport
       ? { transport: selectedTransport, selectedProtocol: endpoint.protocol, selectedUse: billingCredential ? 'management' : 'probe' }
       : null,
@@ -609,7 +611,8 @@ export function resolveProviderProbeAuthorization(input: Readonly<{
       protocol: endpoint.protocol,
       probeRequestFingerprint: input.request.probeRequestFingerprint,
       selectedSecretBindingId: reference.kind === 'apiKey' ? reference.secretId : null,
-      selectedSecretRecordFingerprint: reference.kind === 'apiKey' ? reference.secretRecordFingerprint : null,
+      selectedSecretRecordFingerprint: reference.kind === 'apiKey' ? providerCredentialReferenceFingerprint(reference) : null,
+      ...(usageSource ? { usageAuthorization: { sourceId: usageSource.id, observationAuthorizationFingerprint } } : {}),
     },
     observationAuthorizationFingerprint,
     credentialRef: reference.kind === 'apiKey' && selectedTransport
@@ -692,6 +695,7 @@ export function resolveProviderModelLoadAuthorization(input: Readonly<{
         machineId: input.request.machineId,
         credentialSlotId: credential.slotId,
         required: credential.required,
+        additionalCredentials: selectedTransport?.additionalCredentials,
       })
     : { ok: true as const, reference: { kind: 'none' as const } };
   if (!credentialReferenceResult.ok) {
@@ -713,7 +717,7 @@ export function resolveProviderModelLoadAuthorization(input: Readonly<{
     protocol: endpoint.protocol,
     descriptor,
     selectedSecretBindingId: reference.kind === 'apiKey' ? reference.secretId : null,
-    selectedSecretRecordFingerprint: reference.kind === 'apiKey' ? reference.secretRecordFingerprint : null,
+    selectedSecretRecordFingerprint: reference.kind === 'apiKey' ? providerCredentialReferenceFingerprint(reference) : null,
   };
   return {
     status: 'authorized',
@@ -741,25 +745,6 @@ export function resolveProviderModelLoadAuthorization(input: Readonly<{
         : null,
     },
   };
-}
-
-export function providerConnectionResolutionError(
-  resolution: Exclude<ReturnType<typeof resolveProviderConnectionForMachine>, { status: 'resolved' }>,
-  machineId: string,
-): ProviderErrorV1 {
-  const context = { connectionId: resolution.connectionId, machineId };
-  switch (resolution.status) {
-    case 'missing':
-    case 'deleted':
-    case 'invalid':
-      return createProviderErrorV1('provider_connection_not_found', context);
-    case 'source_unavailable':
-      return createProviderErrorV1('provider_contribution_unavailable', context);
-    case 'endpoint_unresolved': {
-      const _: ProviderConnectionEndpointUnresolvedReason = resolution.reason;
-      return createProviderErrorV1('provider_endpoint_unavailable', context);
-    }
-  }
 }
 
 /**
@@ -898,6 +883,7 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
   // through the registry, a custom one carries its own template.  Only a
   // contribution can declare the managed runtime a managedLocal deployment needs.
   let catalog: ResolvedProviderContribution['definition']['catalog'];
+  let declaration: ResolvedProviderContribution['definition'] | Extract<ResolvedProviderConnectionRecord['source'], { kind: 'custom' }>['template'];
   if (connection.source.kind === 'contribution') {
     const source = input.registry.providersByContributionKey?.get(connection.source.contributionKey);
     if (!source) {
@@ -913,6 +899,7 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
       };
     }
     catalog = source.definition.catalog;
+    declaration = source.definition;
   } else {
     if (connection.deployment.kind === 'managedLocal') {
       return {
@@ -921,6 +908,7 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
       };
     }
     catalog = connection.source.template.catalog;
+    declaration = connection.source.template;
   }
 
   const rawSupport = input.registry.agentDefinitionsById.get(input.agentId)
@@ -931,6 +919,18 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
   const support = AgentProviderRequirementsV1Schema.safeParse(rawSupport);
   if (!support.success) {
     return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', { connectionId }) };
+  }
+  if (declaration.credential && declaration.credential.transports.length > 1) {
+    try {
+      // Only ambiguity is locally definitive. The canonical resolver owns model
+      // pattern/protocol eligibility; its provisional capability result is ignored.
+      resolveProviderBindingDeclarationCompatibilityV1({ agentTargetKey: input.agentTargetKey,
+        endpoints: declaration.endpointTemplates, credential: declaration.credential, agent: support.data,
+        model: { id: selection.data.modelId, name: selection.data.modelId } });
+    } catch (error) {
+      if (!(error instanceof ProviderCredentialTransportAmbiguityErrorV1)) throw error;
+      return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', { connectionId }) };
+    }
   }
 
   // The cold manifest is the complete set of model ids only when the Provider
@@ -956,9 +956,28 @@ export function resolveProviderSpawnDefinitiveRejection(input: Readonly<{
   return { ok: true };
 }
 
-export function resolveProviderSpawnAuthorization(
+type ProviderSpawnSelectionResult = Readonly<
+  | { ok: false; error: ProviderErrorV1 }
+  | { ok: true; selection: Readonly<{
+      connectionId: NonNullable<SessionModelSelectionV1['ref']['providerConnectionId']>;
+      providerSettings: ProviderSettingsV1;
+      record: ResolvedProviderConnectionRecord;
+      errorContext: Readonly<{ connectionId: string; machineId: string }>;
+      adapter: NonNullable<ReturnType<typeof readLeasedAgentProviderBindingAdapter>>;
+      facts: ResolvedProviderSourceFacts;
+      modelNameCatalog: ReturnType<typeof readProviderModelNameCatalog>;
+      model: ProviderModelDescriptorV1;
+      modelSettings: AgentProviderBindingResolvedFacts['modelSettings'];
+      compatibility: ReturnType<typeof resolveProviderModelCompatibility>;
+      compatibilityResult: Exclude<ReturnType<typeof resolveProviderModelCompatibility>['result'], { status: 'incompatible' }>;
+      selectedCredentialTransport: ProviderCredentialTransportV1 | null;
+    }> }
+>;
+
+/** Resolve the existing model/protocol decision before admitting its required secrets. */
+export function resolveProviderSpawnSelection(
   input: ResolveProviderSpawnAuthorizationInput,
-): ProviderSpawnAuthorizationResult {
+): ProviderSpawnSelectionResult {
   // The cold definitive-rejection phase is deliberately not re-run here.  It
   // answers the same questions from strictly less evidence — no resolved
   // connection record, no runtime catalog observation, and the lease registry
@@ -1012,6 +1031,12 @@ export function resolveProviderSpawnAuthorization(
       : {}),
   });
   if (!model) return { ok: false, error: createProviderErrorV1('provider_model_not_found', errorContext) };
+  const requestedEffort = input.sessionConfigOptionOverrides?.overrides.reasoning_effort?.value;
+  if (requestedEffort != null && readProviderReasoningEffortOption(
+    projectProviderModelReasoningForAgent(model, adapter.support),
+  )?.options?.some(option => option.value === requestedEffort) !== true) {
+    return { ok: false, error: createProviderErrorV1('provider_model_config_option_unsupported', errorContext) };
+  }
   const configuredModelSettings = record.connection.modelSettings?.[model.id];
   const modelSettings = configuredModelSettings?.temperature != null || configuredModelSettings?.maxTokens != null
     ? configuredModelSettings : undefined;
@@ -1034,6 +1059,22 @@ export function resolveProviderSpawnAuthorization(
   if (compatibilityResult.status === 'experimental' && !compatibility.confirmed) {
     return { ok: false, error: createProviderErrorV1('provider_compatibility_unverified', errorContext) };
   }
+  const selectedCredentialTransport = facts.credential ? selectProviderRuntimeCredentialTransportV1({
+    transports: facts.credential.transports, protocol: compatibilityResult.selectedProtocol, agent: adapter.support,
+  }) : null;
+  if (facts.credential && !selectedCredentialTransport) return { ok: false,
+    error: createProviderErrorV1('provider_credential_transport_unavailable', errorContext) };
+  return { ok: true, selection: { connectionId, providerSettings, record, errorContext, adapter, facts,
+    modelNameCatalog, model, modelSettings, compatibility, compatibilityResult, selectedCredentialTransport } };
+}
+
+export function resolveProviderSpawnAuthorization(
+  input: ResolveProviderSpawnAuthorizationInput,
+): ProviderSpawnAuthorizationResult {
+  const resolved = resolveProviderSpawnSelection(input);
+  if (!resolved.ok) return resolved;
+  const { connectionId, providerSettings, record, errorContext, adapter, facts, modelNameCatalog, model,
+    modelSettings, compatibility, compatibilityResult, selectedCredentialTransport } = resolved.selection;
   if (record.deployment.kind === 'managedLocal') {
     const managedPurposeBindingSnapshot = input.managedPurposeBindingSnapshot;
     const contributionSource = record.source.kind === 'contribution'
@@ -1071,19 +1112,7 @@ export function resolveProviderSpawnAuthorization(
     ) {
       return { ok: false, error: createProviderErrorV1('provider_connection_invalid', errorContext) };
     }
-    const runtimeCredentialTransport = facts.credential
-      ? selectProviderRuntimeCredentialTransportV1({
-          transports: facts.credential.transports,
-          protocol: compatibilityResult.selectedProtocol,
-          agent: adapter.support,
-        })
-      : null;
-    if (facts.credential && !runtimeCredentialTransport) {
-      return {
-        ok: false,
-        error: createProviderErrorV1('provider_credential_transport_unavailable', errorContext),
-      };
-    }
+    const runtimeCredentialTransport = selectedCredentialTransport;
     const claudeHelperModels = selectProviderSpawnClaudeHelperModels({
       adapter: adapter.adapter,
       configuredModels: record.connection.claudeHelperModels,
@@ -1256,15 +1285,12 @@ export function resolveProviderSpawnAuthorization(
         machineId: input.machineId,
         credentialSlotId: facts.credential.slotId,
         required: facts.credential.required,
+        additionalCredentials: selectedCredentialTransport?.additionalCredentials,
       })
     : { ok: true as const, reference: { kind: 'none' as const } };
   if (!credentialReferenceResult.ok) return credentialReferenceResult;
   const runtimeCredentialTransport = credentialReferenceResult.reference.kind === 'apiKey'
-    ? selectProviderRuntimeCredentialTransportV1({
-        transports: facts.credential?.transports ?? [],
-        protocol: endpoint.protocol,
-        agent: adapter.support,
-      })
+    ? selectedCredentialTransport
     : null;
   if (credentialReferenceResult.reference.kind === 'apiKey' && !runtimeCredentialTransport) {
     return { ok: false, error: createProviderErrorV1('provider_credential_transport_unavailable', errorContext) };
@@ -1340,7 +1366,7 @@ export function resolveProviderSpawnAuthorization(
     bindingSecurityFingerprint,
     grantFingerprint: record.authorization.grantFingerprint,
     selectedSecretBindingId: reference.kind === 'apiKey' ? reference.secretId : null,
-    selectedSecretRecordFingerprint: reference.kind === 'apiKey' ? reference.secretRecordFingerprint : null,
+    selectedSecretRecordFingerprint: reference.kind === 'apiKey' ? providerCredentialReferenceFingerprint(reference) : null,
   });
   const sessionBindingMetadata = SessionProviderBindingMetadataV1Schema.parse({
     v: 1,

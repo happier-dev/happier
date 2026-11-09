@@ -18,6 +18,16 @@ vi.mock('child_process', () => ({
 }));
 
 describe('TmuxUtilities tmux subprocess environment', () => {
+    it('hides captured tmux control commands at process creation', async () => {
+        vi.resetModules();
+        const { TmuxUtilities } = await import('@/integrations/tmux');
+
+        await new TmuxUtilities('happy').executeTmuxCommand(['list-sessions']);
+
+        expect(getLastSpawnCall()?.options?.windowsHide).toBe(true);
+        expect(getLastSpawnCall()?.options?.shell).toBe(false);
+    });
+
     it('can be imported when configuration is partially mocked without logsDir', async () => {
         vi.resetModules();
         vi.doMock('@/configuration', () => ({

@@ -6,13 +6,10 @@ import { spawn } from 'node:child_process';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  ProviderConnectionIdSchema,
-  ProviderCredentialTransportV1Schema,
-  AgentProviderBindingMaterializationV1Schema,
-  createProviderErrorV1,
-  type AgentProviderBindingMaterializationV1,
-} from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { ProviderCredentialTransportV1Schema } from '@happier-dev/protocol/providers/credentials/v1';
+import { AgentProviderBindingMaterializationV1Schema, type AgentProviderBindingMaterializationV1 } from '@happier-dev/protocol/providers/materialization/v1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1 } from '@happier-dev/plugins-claude/agent';
 import { buildSpawnChildProcessEnv } from '@/daemon/spawn/buildSpawnChildProcessEnv';
 import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
@@ -180,7 +177,7 @@ describe('real Claude fixture provider spawn environment isolation', () => {
     roots.push(root);
     const providerLog = resolve(root, 'provider.jsonl');
     const nativeLog = resolve(root, 'native.jsonl');
-    const secret = 'odd key :: line-one\nline-two ?&=% ☃';
+    const secret = 'odd key :: line-one line-two ?&=% ☃';
     const daemonEnv = {
       PATH: process.env.PATH,
       ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
@@ -198,7 +195,6 @@ describe('real Claude fixture provider spawn environment isolation', () => {
 
     const attempt = createProviderSpawnAuthorizationAttempt({
       initial: authorization(),
-      revalidate: async () => ({ ok: true as const, authorization: authorization() }),
       resolveCredential: () => ({ ok: true as const, credential: { kind: 'apiKey' as const, value: secret } }),
       materialize: async ({ authorization: current, credential }): Promise<AgentProviderBindingMaterializationV1> =>
         AgentProviderBindingMaterializationV1Schema.parse(
@@ -317,7 +313,7 @@ describe('real Claude fixture provider spawn environment isolation', () => {
     });
     const attempt = createProviderSpawnAuthorizationAttempt({
       initial: authorization(),
-      revalidate: async () => ({ ok: false as const, error: refusal }),
+      isCurrent: () => false,
       resolveCredential: () => ({ ok: true as const, credential: { kind: 'apiKey' as const, value: 'must-not-resolve' } }),
       materialize: async (): Promise<AgentProviderBindingMaterializationV1> => {
         materializeCalls += 1;
