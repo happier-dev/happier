@@ -4721,6 +4721,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `expectedIncarnation` (text, required): Expected pool incarnation
 - `expectedRuntimeStateRevision` (text): Expected runtime revision
 
+## `connectedServices.pools.get`
+
+**Read connected-service pool** — Read one qualified pool, its policy and ordered members without refreshing providers or requiring a Machine.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `group` (json, required): Qualified pool
+
 ## `connectedServices.pools.members.add`
 
 **Add connected-service pool member** — Add an account using the pool revision owner.
@@ -5364,7 +5378,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `deployments.deploy`
 
-**Deploy environment** — No additional description is published.
+**Deploy environment** — Deploy an existing saved Environment to a linked target. Discover the named Environment with deployments.environments.list, then use deployments.environments.get to choose its linked target. To deploy that saved definition, supply only serverId, environmentId and targetLinkId from those results. The Action prepares the exact deployment candidate, revisions and hashes for review. The contentArtifactId/contentHeaderVersion/contentBodyVersion input branch accepts an already prepared deployment candidate; Environment and target content Artifacts are not deployment candidates. No caller-authored candidate or shell hash calculation is needed.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -7126,6 +7140,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `requestId` (text, required): Request id
 - `approved` (boolean): Approve permission
 - `answers` (textarea): Question answers (JSON)
+- `nativeChoice` (json): Offered native choice (JSON)
+- `answerDetails` (json): Answer Details
 
 ## `execution.run.send`
 
@@ -9126,6 +9142,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `workspace` (json): Workspace
 - `declaration` (json): Declaration
 - `expectedEffectDigest` (text): Expected Effect Digest
+- `setupReview` (json): Setup Review
 
 ## `localServices.preview.openOrCreate`
 
@@ -14480,7 +14497,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `authoringReview.fingerprint` (text): Fingerprint
 - `authoringReview.revision` (integer): Revision
 - `gatewayPlacement` (json): Gateway Placement
-- `claudeHelperModels` (json): Claude Helper Models
+- `roleModels` (json): Role Models
 
 ## `providers.connections.create_custom`
 
@@ -14678,7 +14695,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `deployment.kind` (select): Deployment
 - `deployment.purposeBindingDefaults` (json): Subscription slots
 - `gatewayPlacement` (json): Gateway runs on
-- `claudeHelperModels` (json): Claude Code helper models
+- `roleModels` (json): Additional models
 - `modelSettings` (json): Model generation settings
 - `action` (text, required): Action
 - `displayNameMode` (select): Display Name Mode
@@ -14876,7 +14893,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Refresh Provider models** — No additional description is published.
 
-- Safety: `safe`; side effect: `read`.
+- Safety: `danger`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
@@ -14886,20 +14903,20 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
-- `agentTargetKey` (text, required): Agent Target Key
+- `agentTargetKey` (json): Agent Target Key
 - `application` (json): Application
-- `includeDirectMaterialization` (boolean): Include Direct Materialization
-- `includeTeamCredentialRequestPolicySupport` (boolean): Include Team Credential Request Policy Support
+- `includeDirectMaterialization` (json): Include Direct Materialization
+- `includeTeamCredentialRequestPolicySupport` (json): Include Team Credential Request Policy Support
 - `providerConnection` (json): Provider Connection
 - `connectedAccountTarget` (json): Connected Account Target
-- `sourceCatalog` (boolean): Source Catalog
+- `sourceCatalog` (json): Source Catalog
 - `nativeSource` (json): Native Source
 - `teamCredentialResources` (json): Team Credential Resources
-- `mode` (select): Mode
-- `sourceConnectionId` (text): Source Connection Id
+- `mode` (json): Mode
+- `sourceConnectionId` (json): Source Connection Id
 - `favoriteSelections` (json): Favorite Selections
-- `refreshPolicy` (text): Refresh Policy
-- `forceRefresh` (boolean, required): Force Refresh
+- `refreshPolicy` (json): Refresh Policy
+- `forceRefresh` (json, required): Force Refresh
 - `currentSelection` (json): Current Selection
 
 ## `providers.models.source_visibility.set`
@@ -20237,6 +20254,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `actor.principalId` (text, required): External principal id
 - `decision` (select, required): Decision
 - `scope` (select, required): Scope
+- `nativeChoice` (json): Native Choice
 
 ## `session.permission.respond`
 
@@ -20251,15 +20269,17 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `sessionId` (text): Session id
-- `decision` (select, required): Decision
+- `decision` (select): Decision
 - `requestId` (text): Request id
 - `turnId` (text): Turn id
+- `nativeChoice` (json): Offered native choice (JSON)
 - `reason` (text): Reason
 - `mode` (select): Mode
 - `allowedTools` (text_list): Allowed Tools
 - `execPolicyAmendment` (json): Exec Policy Amendment
 - `updatedPermissions` (json): Updated Permissions
 - `answers` (json): Answers
+- `answerDetails` (json): Answer Details
 
 ## `session.permission_mode.set`
 
