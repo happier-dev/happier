@@ -735,7 +735,6 @@ describe('first-party plugin public SDK import fence', () => {
       'ProviderLimitCategory',
       'ProviderLimitEvidenceClassification',
       'ProviderLimitEvidenceConfidence',
-      'ProviderLimitEvidenceContext',
       'ProviderLimitEvidenceProvenance',
     ];
     const genericEvidenceValues = [

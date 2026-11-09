@@ -145,7 +145,6 @@ function isRetryablePiProviderFailure(params: Readonly<{
   const limitEvidence = classifyProviderLimitEvidence(params.evidence);
   return hasProviderTimeoutEvidence(params.code, params.message)
     || hasRetryableHappierBrokerBridgeEvidence(params.code, params.message)
-    || limitEvidence.piRetryable === true
     || (
       limitEvidence.confidence === 'high'
       && (limitEvidence.category === 'capacity' || limitEvidence.category === 'rate_limit')

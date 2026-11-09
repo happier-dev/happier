@@ -11,7 +11,6 @@ export {
     classifyProviderLimitEvidence,
     type ProviderLimitEvidenceClassification,
     type ProviderLimitEvidenceConfidence,
-    type ProviderLimitEvidenceContext,
     type ProviderLimitEvidenceProvenance,
     type ProviderLimitCategory,
 } from './providerLimitEvidence.js';

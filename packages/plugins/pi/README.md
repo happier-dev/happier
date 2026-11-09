@@ -18,10 +18,19 @@ each independent upstream attempt. Pi receives neither provider refresh tokens n
 credentials, and it keeps no cross-request token cache. API keys and Claude setup tokens remain direct
 `auth.json` entries.
 
-Codex exposes structured HTTP `401` and `429` response evidence at this seam. For the exact retained
-`0.81.0`, `0.81.1`, `0.82.0`, and `0.82.1` frontier, Happier also admits only the pinned terminal Provider-error
-signatures proven by the real Pi `AgentSession` matrix; arbitrary assistant text and uncharacterized
-future Pi versions remain non-actionable.
+Codex exposes structured HTTP `401` and `429` response evidence at this seam. Pi's
+`src/agent/auth/services/requestAuth/terminalEvidence.ts` owns the characterized terminal
+Provider-error formats and retry facts for `0.81.0`, `0.81.1`, `0.82.0`, and `0.82.1`.
+The generated extension normalizes recognized errors into structured category, quota scope,
+status and code facts. Generic SDK and Protocol consumers do not interpret Pi versions or
+terminal signatures. Arbitrary assistant text and uncharacterized future Pi versions remain
+non-actionable through this terminal-error seam.
+
+The native `AgentSession` matrix must resolve compatible SDK/core pairs. In particular, the
+`0.81.0` SDK supplies `Agent`'s `streamFunction` option, which core `0.81.0` accepts;
+core `0.81.1` expects `streamFn` despite satisfying the SDK's declared `^0.81.0` range.
+A mismatched test installation fails before the first Provider request and supplies no
+request-auth behavior evidence.
 
 Provider transport retries stay disabled. Pi retains its saved-setting-controlled whole-turn retry
 only for exact transient signatures it already classifies as retryable. Happier's request-auth leaf
