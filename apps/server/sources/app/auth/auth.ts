@@ -10,7 +10,7 @@ import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1, projectD
     isDeploymentDomainNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1,
     createDeploymentCandidatePublicationV1, projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainChildActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
-import { isDeploymentBackupReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentBackupReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentControllerSetActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EmbedConfigV1Schema, StoredEmbedConfigV1Schema, type EmbedConfigV1 } from '@happier-dev/protocol/embed';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { type AccountStatusV1 } from '@happier-dev/protocol/home/governance';
@@ -602,9 +602,10 @@ class AuthModule {
         }
         const admittedPrincipal = context.workflowAdmission?.principal;
         const admittedApiPrincipal = admittedPrincipal && 'grant' in admittedPrincipal ? admittedPrincipal : null;
-        const mintApiTokenPrincipal = (nativeAdmission || input.actionId === 'deployments.targets.link') && !('authentication' in input)
+        const approvalMetadataRoot = isDeploymentApprovalMetadataPreparationActionIdV1(input.actionId);
+        const mintApiTokenPrincipal = (nativeAdmission || input.actionId === 'deployments.targets.link' || approvalMetadataRoot) && !('authentication' in input)
             ? admittedApiPrincipal ?? await this.verifyCurrentApiTokenPrincipal(input) : null;
-        if ((nativeAdmission || input.actionId === 'deployments.targets.link') && !('authentication' in input)
+        if ((nativeAdmission || input.actionId === 'deployments.targets.link' || approvalMetadataRoot) && !('authentication' in input)
             && !mintApiTokenPrincipal) throw new ApiTokenOperationError('invalid_token');
         let nativeSource: Readonly<{ id: string; revision: number }> | undefined;
         if (nativeAdmission && !domainRoot) {
@@ -641,6 +642,23 @@ class AuthModule {
             metadataEnvironmentId = projectExternalActionDeploymentMetadataEnvironmentIdV1(input.actionId, inputRecord);
         } catch {
             throw new ApiTokenOperationError('credential_scope_denied');
+        }
+        if (metadataEnvironmentId !== undefined && nativeAdmission && metadataEnvironmentId !== nativeAdmission.environmentId) {
+            throw new ApiTokenOperationError('credential_scope_denied');
+        }
+        if (approvalMetadataRoot && !nativeAdmission) {
+            if (!metadataEnvironmentId) throw new ApiTokenOperationError('credential_scope_denied');
+            const { loadDeploymentEnvironmentInTx } = await import('../deployments/deploymentEnvironmentService');
+            const { canDeployDeploymentEnvironment } = await import('../deployments/deploymentAdmission');
+            const environment = await loadDeploymentEnvironmentInTx(db, input.accountId, input.serverIdentityId, metadataEnvironmentId, {
+                authenticationAuthority: 'account_automation', authenticationEvidence: 'authentication' in input
+                    ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
+            });
+            if (!environment.ok || !(isDeploymentControllerSetActionIdV1(input.actionId)
+                ? environment.admission.canManage && !environment.row.deletedAt
+                : canDeployDeploymentEnvironment(environment.admission, environment.row))) {
+                throw new ApiTokenOperationError('credential_scope_denied');
+            }
         }
         const environmentId = metadataEnvironmentId
             ?? (input.actionId === 'deployments.deploy' || input.actionId === 'action.operations.get'
@@ -1472,7 +1490,7 @@ class AuthModule {
         // The account row is authoritative for revocation, including cache hits.
         const account = await inTx(
             tx => this.readCurrentSignedCredentialAccount(tx, decoded.userId, decoded.tokenEpoch),
-            { readOnly: true },
+            { readOnly: true, singleStatementRead: true },
         );
         if (!account) {
             return decoded.provenance.kind === "ephemeral_session_runner"

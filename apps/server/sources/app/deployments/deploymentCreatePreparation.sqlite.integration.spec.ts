@@ -655,6 +655,85 @@ describe('reviewed create preparation authority', () => {
         } finally { stop(); }
     });
 
+    it.each(['deployments.templates.instantiate', 'deployments.publish.prepare'] as const)(
+        'retains admitted Source Manage through the first %s Source read after membership withdrawal', async actionId => {
+        const f = await fixture();
+        const team = await db.team.create({ data: { name: 'Admitted preparation Source' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: f.actor.id, role: 'owner' } });
+        await db.machineTeamGrant.create({ data: { machineId: f.machine.id, teamId: team.id,
+            accessLevel: 'admin', createdByAccountId: f.actor.id } });
+        const selected = await inTx(tx => createProjectSourceInTx(tx, f.actor.id, { serverId,
+            requestKey: crypto.randomUUID(), name: 'Selected team Source', owner: { kind: 'team', teamId: team.id } }));
+        if (!selected.ok) throw new Error(selected.error);
+        const templateRef = { sourceId: 'apps', itemId: 'web', version: '1',
+            ref: { kind: 'content' as const, digest: `sha256:${'c'.repeat(64)}` } };
+        const input = actionId === 'deployments.templates.instantiate' ? {
+            mode: 'apply' as const, serverId, machineId: f.machine.id, projectSourceId: selected.source.id, templateRef,
+            environment: { kind: 'create' as const, name: 'Admitted app', requestKey: crypto.randomUUID(),
+                protection: 'nonProduction' as const, purpose: 'standard' as const, deployerMode: 'managers' as const,
+                controllerMachineId: f.machine.id },
+            target: { kind: 'new' as const, installationId: f.machine.installationId! },
+            destination: { kind: 'stored' as const }, bindings: [], deploy: { requestKey: crypto.randomUUID() },
+        } : { serverId, machineId: f.machine.id, installationId: f.machine.installationId!,
+            projectSourceId: selected.source.id, sourceRevision: selected.source.revision, templateRef };
+        const envelope = { v: 1 as const, requestId: f.binding.requestId, target: f.binding.target, input };
+        const mintInput = { ...f.binding, actionId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input) };
+        const authorization = await auth.mintExternalActionExecutionAuthorization(mintInput, { input });
+        await db.teamMembership.deleteMany({ where: { teamId: team.id, accountId: f.actor.id } });
+        await expect(auth.mintExternalActionExecutionAuthorization(mintInput, { input }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await withAuthenticatedTestApp(projectSourceRoutes, async app => {
+            const pathFor = (sourceId: string, home = serverId) =>
+                `/v1/projects/sources/${encodeURIComponent(sourceId)}?serverId=${encodeURIComponent(home)}`;
+            const read = (sourceId = selected.source.id, home = serverId) => {
+                const path = pathFor(sourceId, home);
+                const effectActionId = 'projects.sources.read';
+                return app.inject({ method: 'GET', url: path, headers: {
+                    ...currentAccountStoredContentCompatibilityHeaders,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(f.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                        effectActionId, target: f.binding.target, installationId: f.machine.installationId!,
+                        requestId: f.binding.requestId, method: 'GET', path, body: undefined, privateKey: f.key.secretKey }),
+                } });
+            };
+            const token = await auth.createToken(f.actor.id, undefined, { kind: 'account', authority: 'present_user' });
+            const ordinary = await app.inject({ method: 'GET', url: pathFor(selected.source.id),
+                headers: { authorization: `Bearer ${token}`, ...currentAccountStoredContentCompatibilityHeaders } });
+            expect(ordinary.statusCode, ordinary.body).toBe(404);
+            let permissionReads = 0;
+            let sourceReads = 0;
+            const stop = observeSqliteRequests({ before(request) {
+                if (request.model === 'ProjectSource') sourceReads++;
+                if (request.model === 'TeamMembership' || request.model === 'TeamGroupMember') permissionReads++;
+            } });
+            try {
+                const response = await read();
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toMatchObject({ ok: true, source: selected.source, canManage: true });
+                expect(permissionReads).toBe(0);
+                expect(sourceReads).toBe(1);
+                for (const [sourceId, home] of [[f.destination.source.id, serverId], [selected.source.id, 'another-home']]) {
+                    permissionReads = 0;
+                    sourceReads = 0;
+                    const refused = await read(sourceId, home);
+                    expect(refused.statusCode, refused.body).toBe(401);
+                    expect(permissionReads).toBe(0);
+                    expect(sourceReads).toBeLessThanOrEqual(1);
+                }
+            } finally { stop(); }
+            if (actionId === 'deployments.publish.prepare') {
+                await db.projectSource.update({ where: { id: selected.source.id }, data: { revision: { increment: 1 } } });
+            } else {
+                await db.projectSource.delete({ where: { id: selected.source.id } });
+            }
+            expect((await read()).statusCode).toBe(401);
+        }, { authentication: 'real' });
+    });
+
     it('reads newly created Catalog Source metadata from admitted allocation after ownership withdrawal', async () => {
         const f = await fixture();
         const { projectSourceId: _source, copyFrom: _copy, ...base } = f.input;

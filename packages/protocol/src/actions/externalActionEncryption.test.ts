@@ -53,11 +53,20 @@ describe('whole external Action encryption', () => {
     const { browserSessionId: _session, ...missingProjection } = request;
     expect(open(missingProjection)).toBeNull();
   });
-  it('binds the selected binding Environment while keeping authored values encrypted', () => {
-    const bindingRequest = { ...binding, actionId: 'deployments.bindings.set' };
-    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 2,
-      set: [{ purpose: 'variable', name: 'PUBLIC_LABEL', phase: 'runtime', source: { kind: 'value', value: 'private-value' } }],
-      remove: [] };
+  it.each(['deployments.bindings.set', 'deployments.environments.controller.set', 'deployments.cancel', 'deployments.restart'] as const)(
+    'binds the selected %s Environment while keeping authored values encrypted', actionId => {
+    const bindingRequest = { ...binding, actionId };
+    const input = actionId === 'deployments.environments.controller.set'
+      ? { serverId: 'home', environmentId: 'environment', expectedRevision: 2, controllerMachineId: 'private-value' }
+      : actionId === 'deployments.cancel'
+      ? { serverId: 'home', environmentId: 'environment', deploymentId: 'private-value', expectedReceiptRevision: 2 }
+      : actionId === 'deployments.restart'
+      ? { serverId: 'home', environmentId: 'environment', deploymentId: 'private-value', targetLinkId: 'link',
+        machineId: 'machine-1', installationId: 'installation', expectedGeneration: 'generation',
+        service: { kind: 'deployment', machineId: 'machine-1', environmentId: 'environment',
+          environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' } }
+      : { serverId: 'home', environmentId: 'environment', expectedRevision: 2,
+        set: [{ purpose: 'variable', name: 'PUBLIC_LABEL', phase: 'runtime', source: { kind: 'value', value: 'private-value' } }], remove: [] };
     const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding: bindingRequest, input, material, randomBytes });
     expect(request.deploymentMetadataEnvironmentId).toBe(input.environmentId);

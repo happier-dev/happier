@@ -1,18 +1,43 @@
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure } from '../actions/executor/types.js';
 import { artifactSavedByFromActionContextV1 } from '../artifacts/artifactBinaryV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
+import { z } from 'zod/mini';
+import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
+import { DeploymentActionFailureV1Schema } from './deploymentActionsV1.js';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema,
   type DeploymentActionFailureV1 } from './deploymentActionsV1.js';
+
+export const DeploymentApprovalEnvironmentInputV1Schema = lazyZodSchema(() => z.strictObject({
+  serverId: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
+  projection: z.literal('approvalScope'),
+}));
+export const DeploymentApprovalEnvironmentResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ok: z.literal(true), environment: z.strictObject({
+    id: DeploymentIdentifierV1Schema, projectSourceId: DeploymentIdentifierV1Schema,
+    purpose: z.enum(['standard', 'preview']), previewTemplateEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
+  }) }), DeploymentActionFailureV1Schema,
+]));
+export type DeploymentApprovalEnvironmentResultV1 = z.infer<typeof DeploymentApprovalEnvironmentResultV1Schema>;
+type ApprovalMetadataRead = (input: Readonly<{ serverId: string; environmentId: string; context: ActionExecutorContext }>) =>
+  Promise<DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure>;
 
 type EnvironmentApprovalRead = Readonly<{
   serverId: string; environmentId: string; context: ActionExecutorContext;
   read: NonNullable<ActionExecutorDeps['deploymentAction']>;
 }>;
 
-async function readApprovalEnvironment(input: EnvironmentApprovalRead) {
-  const loaded = await input.read('deployments.environments.get', { serverId: input.serverId, environmentId: input.environmentId }, input.context);
+type FullApprovalReadResult = Readonly<{ ok: true;
+  environment: Extract<z.infer<typeof DeploymentEnvironmentGetResultV1Schema>, { ok: true }>['environment'];
+}> | ActionExecuteFailure;
+function readApprovalEnvironment(input: EnvironmentApprovalRead): Promise<FullApprovalReadResult>;
+function readApprovalEnvironment(input: EnvironmentApprovalRead & Readonly<{ readMetadata?: ApprovalMetadataRead }>):
+  Promise<Extract<DeploymentApprovalEnvironmentResultV1, { ok: true }> | ActionExecuteFailure>;
+async function readApprovalEnvironment(input: EnvironmentApprovalRead & Readonly<{ readMetadata?: ApprovalMetadataRead }>) {
+  const loaded = input.readMetadata ? await input.readMetadata(input)
+    : await input.read('deployments.environments.get', { serverId: input.serverId, environmentId: input.environmentId }, input.context);
   if ('errorCode' in loaded) return loaded;
-  const current = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
+  const current = (input.readMetadata ? DeploymentApprovalEnvironmentResultV1Schema : DeploymentEnvironmentGetResultV1Schema).safeParse(loaded);
   if (!current.success) return failure('invalid_action_output');
   if (!current.data.ok) return failure(current.data.error, current.data);
   if (input.context.signal?.aborted) return failure('cancelled');
@@ -35,6 +60,7 @@ export async function resolveInitialDeploymentApprovalV1(input: Omit<Environment
 /** The same exact admitted metadata read serves CLI, daemon and UI policy preparation. */
 export function createDeploymentApprovalScopeResolverV1(
   read: NonNullable<ActionExecutorDeps['deploymentAction']>,
+  readMetadata?: ApprovalMetadataRead,
 ): NonNullable<ActionExecutorDeps['resolveEnvironmentApprovalScope']> {
   return async ({ actionId, input, context }) => {
     const target = readRecord(input);
@@ -64,7 +90,7 @@ export function createDeploymentApprovalScopeResolverV1(
       environmentId = receipt.data.deployment.environmentId;
     }
     if (!environmentId) return failure('invalid_parameters');
-    const current = await readApprovalEnvironment({ read, serverId, environmentId, context });
+    const current = await readApprovalEnvironment({ read, readMetadata, serverId, environmentId, context });
     if (!current.ok) return current;
     const environment = current.environment;
     if ((actionId === 'deployments.prepare' || actionId === 'deployments.templates.instantiate')

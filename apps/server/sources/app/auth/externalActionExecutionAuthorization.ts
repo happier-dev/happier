@@ -4,6 +4,7 @@ import { isMachineSetupCombinedRunHttpPurpose } from '@/app/auth/externalActionM
 import { isExternalActionConnectedAccountInventoryHttpPurpose } from './externalActionConnectedAccountInventoryPurpose';
 import { isExternalActionConnectedSubscriptionPriceHttpPurpose } from './externalActionConnectedMetadataPurpose';
 import * as z from 'zod/mini';
+import { DeploymentApprovalEnvironmentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import type { ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ArtifactReadBatchHttpInputV1Schema, ArtifactTemplateAcceptedVersionInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -17,7 +18,7 @@ import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvir
 import { readDeploymentLinkReviewedSetupHttpPurpose } from '@/app/deployments/deploymentLinkReviewedChildAuthorization';
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
 import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx, deploymentInProgressStates, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
-import { isDeploymentPreparationHttpPurposeInTx,
+import { isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, type DeploymentPreparationSourceRead,
     readDeploymentCreateHttpPurposeInTx, isDeploymentCreateHttpEffect, type DeploymentCreateHttpPurpose,
     readDeploymentTargetRetentionHttpPurpose, type DeploymentTargetRetentionHttpPurpose,
     readDeploymentLinkPreparationHttpPurpose,
@@ -40,7 +41,7 @@ import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, Deploym
     DeploymentChildRoutingV1Schema, readDeploymentChildRpcV1, projectDeploymentChildRoutingV1, doesDeploymentChildInputMatchRootV1,
     readDeploymentArchiveRpcEffectV1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
-import { isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
+import { isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentObservationReadActionIdV1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
@@ -896,6 +897,8 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     deploymentDomainPurpose?: DomainHttpPurpose;
     /** One signed create-purpose result; consumers never infer scope from a raw header. */
     createPreparationAdmission?: DeploymentCreateHttpPurpose;
+    /** Exact Source read produced once by the signed preparation owner. */
+    deploymentPreparationSourceRead?: DeploymentPreparationSourceRead;
     /** The target-enable purpose owner consumed this exact signed managed operation. */
     deploymentTargetRetentionAdmission?: DeploymentTargetRetentionHttpPurpose;
     /** The setup role consumed only the Link's admitted Environment and own Artifact read purpose. */
@@ -1549,6 +1552,8 @@ async function verifyCommon(
     // The installed generic issuer carries reviewed child consent on the original
     // credential. Create children consume the allocated Environment; retention
     // consumes its exact reviewed input before the managed owner's ordinary CAS.
+    const deploymentPreparationSourceRead = await readDeploymentPreparationSourceHttpPurposeInTx(db, binding, effectActionId.data, proof);
+    if (deploymentPreparationSourceRead === false) return refuseExternalActionExecutionRequest('deployment_preparation', proof);
     const createPreparationAdmission = createPreparationEffect
         ? await readDeploymentCreateHttpPurposeInTx(db, binding, effectActionId.data, proof, isReadOnlyArtifactHttpPurpose,
             () => isDeploymentNativeHttpPurpose({ binding, effectActionId: effectActionId.data }, proof)
@@ -1560,11 +1565,13 @@ async function verifyCommon(
         return refuseExternalActionExecutionRequest('reviewed_child', proof);
     }
     if (createPreparationAdmission?.child && !proof.reviewedChild) return refuseExternalActionExecutionRequest('reviewed_child', proof);
-    if (createPreparationAdmission || targetRetentionPurpose) {
+    if (createPreparationAdmission || deploymentPreparationSourceRead || targetRetentionPurpose) {
         const principal = projectAcceptedDeploymentPrincipal(binding);
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority,
             ...(createPreparationAdmission ? { createPreparationAdmission } : {}),
+            ...(deploymentPreparationSourceRead ? { deploymentPreparationSourceRead }
+                : createPreparationAdmission?.source ? { deploymentPreparationSourceRead: { source: createPreparationAdmission.source, canManage: false } } : {}),
             ...(targetRetentionPurpose ? { deploymentTargetRetentionAdmission: targetRetentionPurpose } : {}),
             ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : null;
     }
@@ -2264,6 +2271,21 @@ function isPublicProfilePreparedMutationHttpPurpose(rootActionId: string,
     return proof.method.toUpperCase() === expected.method.toUpperCase() && proof.path === expected.path
         && sameManagedInput(proof.body, expected.body)
         && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, expected.body));
+}
+
+/** The exact signed root admits only its content-free approval relationship. */
+function isDeploymentApprovalMetadataHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
+    proof: ExternalActionExecutionRequestProof): boolean {
+    const binding = verified.binding;
+    if (!isDeploymentApprovalMetadataPreparationActionIdV1(binding.actionId) || verified.effectActionId !== binding.actionId
+        || !binding.environmentId || proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
+    const url = new URL(proof.path, 'http://home.invalid');
+    const expected = { serverId: binding.serverIdentityId, environmentId: binding.environmentId, projection: 'approvalScope' as const };
+    return url.pathname === `/v1/deployments/environments/${encodeURIComponent(binding.environmentId)}`
+        && url.hash === '' && [...url.searchParams].length === 2
+        && url.searchParams.get('serverId') === expected.serverId && url.searchParams.get('projection') === expected.projection
+        && (proof.routeInput === undefined || DeploymentApprovalEnvironmentInputV1Schema.safeParse(proof.routeInput).success
+            && sameStrictJsonValue(proof.routeInput, expected));
 }
 
 /** Author preparation reads spend the binding root; only the incumbent CAS can write grants. */
@@ -3056,6 +3078,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         // encryption and compare-and-set remain with the ordinary Artifact route.
     } else if (isApiTokenOwnContentAccessHttpPurpose(verified, proof)) {
         // The token handlers resolve only the verified root's own content access.
+    } else if (isDeploymentApprovalMetadataHttpPurpose(verified, proof)) {
+        // Mint admitted this root's exact Environment. This projection opens no content.
     } else if (verified.setupReceiverMachineId !== undefined) {
         // A Setup target's own signature admits no other root purpose.
         if (!await isDeploymentPreparationHttpPurposeInTx(db, verified.binding, verified.effectActionId, proof,
@@ -3069,7 +3093,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
             || !isAccountEncryptionCurrentnessHttpRead(proof)
                 && proof.path !== `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`) return null;
-    } else if (verified.createPreparationAdmission || verified.deploymentTargetRetentionAdmission || verified.deploymentLinkReviewedSetupRead
+    } else if (verified.createPreparationAdmission || verified.deploymentPreparationSourceRead
+        || verified.deploymentTargetRetentionAdmission || verified.deploymentLinkReviewedSetupRead
         || verified.acceptedDeploymentReceipt?.read) {
         // verifyCommon already consumed the one purpose + admitted-job result.
     } else if (domainPreparation === true) {

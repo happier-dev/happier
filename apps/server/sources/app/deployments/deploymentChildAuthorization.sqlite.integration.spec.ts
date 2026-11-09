@@ -1349,6 +1349,90 @@ describe('deployment children retain their controller Action authority', () => {
         expect((await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } })).activeDeploymentId).toBe(f.receipt.id);
     });
 
+    it.each(['deployments.environments.controller.set', 'deployments.cancel'] as const)(
+        'retains %s for its exact approval metadata without granting sibling reads', async actionId => {
+            const f = await fixture('team');
+            const target = { kind: 'machine' as const, machineId: f.controller.id };
+            const input = actionId === 'deployments.cancel'
+                ? { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id, expectedReceiptRevision: 1 }
+                : { serverId, environmentId: f.environment.id, expectedRevision: 1, controllerMachineId: f.controller.id };
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id,
+                serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId,
+                machineId: f.controller.id, target, requestId: envelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+            expect(authorization.binding.environmentId).toBe(f.environment.id);
+            await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } },
+                data: { status: 'suspended' } });
+            const headers = (path: string, effectActionId: string = actionId) => ({
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: authorization.token, effectActionId, target,
+                    installationId: f.controller.installationId, requestId: envelope.requestId,
+                    method: 'GET', path, privateKey: f.controller.keys.secretKey }),
+            });
+            await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+                const path = `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}&projection=approvalScope`;
+                const queries: string[] = [];
+                const stop = observeSqliteRequests({ before: query => { if (query.model) queries.push(query.model); } });
+                const read = await app.inject({ method: 'GET', url: path, headers: headers(path) }).finally(stop);
+                expect(read.statusCode, read.body).toBe(200);
+                expect(read.json()).toEqual({ ok: true, environment: { id: f.environment.id,
+                    projectSourceId: f.environment.projectSourceId, purpose: 'standard' } });
+                expect(queries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'Artifact', 'SavedSecretResource'].includes(model))).toEqual([]);
+                expect(queries.filter(model => model === 'DeploymentEnvironment')).toHaveLength(1);
+                for (const url of [
+                    `/v1/deployments/environments/${f.environment.id}?serverId=foreign-home&projection=approvalScope`,
+                    `/v1/deployments/environments/foreign-environment?serverId=${serverId}&projection=approvalScope`,
+                    `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`,
+                ]) expect((await app.inject({ method: 'GET', url, headers: headers(url) })).statusCode).toBe(401);
+                expect((await app.inject({ method: 'GET', url: path,
+                    headers: headers(path, 'deployments.environments.get') })).statusCode).toBe(401);
+            }, { authentication: 'real' });
+        });
+
+    it('admits approval metadata at Manage or Deploy, without turning Environment read into mutation authority', async () => {
+        const f = await fixture('team');
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } },
+            data: { role: 'member' } });
+        const mint = (actionId: 'deployments.cancel' | 'deployments.environments.controller.set', environmentId = f.environment.id,
+            boundEnvironmentId?: string) => {
+            const input = { serverId, environmentId, ...(actionId === 'deployments.cancel'
+                ? { deploymentId: f.receipt.id, expectedReceiptRevision: 1 }
+                : { expectedRevision: 1, controllerMachineId: f.controller.id }) };
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            return auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id, serverIdentityId: serverId,
+                authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId, machineId: f.controller.id,
+                target, requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                ...(boundEnvironmentId ? { environmentId: boundEnvironmentId } : {}) }, { input });
+        };
+        const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const response = await app.inject({ method: 'GET',
+                url: `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}&projection=approvalScope`,
+                headers: { authorization: `Bearer ${token}` } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toEqual({ ok: true, environment: { id: f.environment.id,
+                projectSourceId: f.environment.projectSourceId, purpose: 'standard' } });
+            const ordinary = await app.inject({ method: 'GET',
+                url: `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`,
+                headers: { authorization: `Bearer ${token}` } });
+            expect(ordinary.statusCode, ordinary.body).toBe(200);
+            expect(ordinary.json()).toMatchObject({ ok: true, environment: { contentArtifactId: f.environment.contentArtifactId },
+                targetLinks: [{ id: f.link.id }] });
+        }, { authentication: 'real' });
+        await expect(mint('deployments.cancel')).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await expect(mint('deployments.environments.controller.set')).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { deployerMode: 'members' } });
+        await expect(mint('deployments.cancel')).resolves.toMatchObject({ binding: { environmentId: f.environment.id } });
+        await expect(mint('deployments.environments.controller.set')).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await expect(mint('deployments.cancel', 'foreign-environment')).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await expect(mint('deployments.cancel', f.environment.id, 'foreign-environment')).rejects.toMatchObject({ code: 'credential_scope_denied' });
+    });
+
     it('spends signed restart admission without post-mint Source, Team or Machine permission reads', async () => {
         const f = await fixture('team');
         const actionId = 'deployments.restart' as const;
@@ -1358,17 +1442,20 @@ describe('deployment children retain their controller Action authority', () => {
             service: { kind: 'deployment' as const, machineId: f.member.id, environmentId: f.environment.id,
                 environmentInstanceId: 'instance', composeService: 'web', serviceId: 'instance/web' }, expectedGeneration: 'generation' };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
-        const mint = () => {
+        const mint = (metadataEnvironmentId?: string) => {
             return auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id, serverIdentityId: serverId,
                 authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId,
                 machineId: f.member.id, target, requestId: envelope.requestId, admittedMachineRole: 'use',
-                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, metadataEnvironmentId === undefined
+                ? { input } : { input: { environmentId: metadataEnvironmentId },
+                    deploymentNativeAdmission: projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope }) });
         };
         // The native target must be active when the root is admitted.
         await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
         await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
         await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
         const authorization = await mint();
+        await expect(mint('foreign-environment')).rejects.toMatchObject({ code: 'credential_scope_denied' });
         const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
         const body = { v: 1, admittedMachineRole: 'use' };
         const headers = (method: string, path: string, body?: unknown, effectActionId: string = actionId,
@@ -1432,6 +1519,21 @@ describe('deployment children retain their controller Action authority', () => {
             // The sole Machine read verifies this exact installation's signature; it does not re-admit Use.
             expect(queries.filter(model => model === 'Machine')).toHaveLength(1);
             expect(verified.statusCode, verified.body).toBe(200);
+            const approvalPath = `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}&projection=approvalScope`;
+            const approvalQueries: string[] = [];
+            const stopApproval = observeSqliteRequests({ before: query => { if (query.model) approvalQueries.push(query.model); } });
+            const approval = await app.inject({ method: 'GET', url: approvalPath,
+                headers: headers('GET', approvalPath) }).finally(stopApproval);
+            expect(approval.statusCode, approval.body).toBe(200);
+            expect(approval.json()).toEqual({ ok: true, environment: { id: f.environment.id,
+                projectSourceId: f.environment.projectSourceId, purpose: 'standard' } });
+            expect(approvalQueries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'Artifact', 'SavedSecretResource'].includes(model))).toEqual([]);
+            expect(approvalQueries.filter(model => model === 'DeploymentEnvironment')).toHaveLength(1);
+            for (const url of [
+                `/v1/deployments/environments/${f.environment.id}?serverId=foreign-home&projection=approvalScope`,
+                `/v1/deployments/environments/foreign-environment?serverId=${serverId}&projection=approvalScope`,
+                `/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`,
+            ]) expect((await app.inject({ method: 'GET', url, headers: headers('GET', url) })).statusCode).toBe(401);
             for (const [url, effect] of [
                 [`/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`, 'deployments.environments.get'],
                 [`/v1/deployments/environments/${f.environment.id}/deployments/${f.receipt.id}?serverId=${serverId}`, 'deployments.receipts.get'],

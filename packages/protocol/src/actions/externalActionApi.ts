@@ -28,7 +28,7 @@ import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, ApiTokenGrantV1Schema, ApiTokenSes
 import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1,
-  isDeploymentEnvironmentMetadataReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
+  isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReadAdmissionV1Schema, isDeploymentReadActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
@@ -923,7 +923,7 @@ export type ExternalActionRequestEnvelope = z.infer<typeof ExternalActionRequest
 /** Public resource scope only; metadata content remains sealed in V2. */
 export function projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId: string, input: unknown): string | undefined {
   return (isDeploymentEnvironmentMetadataReadActionIdV1(actionId) || actionId === DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1
-    || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1)
+    || actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || isDeploymentApprovalMetadataPreparationActionIdV1(actionId))
     ? z.looseObject({ environmentId: DeploymentIdentifierV1Schema }).parse(input).environmentId : undefined;
 }
 export function projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1(input: Readonly<{
@@ -1323,6 +1323,7 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   }
   if (value.environmentId !== undefined && ((!API_TOKEN_ENVIRONMENT_ACTION_IDS_V1.some((id) => id === value.actionId)
     && !isDeploymentEnvironmentMetadataReadActionIdV1(value.actionId)
+    && !isDeploymentApprovalMetadataPreparationActionIdV1(value.actionId)
     && value.actionId !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
     && !(value.actionId === 'deployments.environments.update' && isDeploymentEnvironmentUpdateNativeAdmissionV1(native))
     && !('authentication' in value && (value.deploymentChildRoot === true || value.actionId === 'deployments.teardown'

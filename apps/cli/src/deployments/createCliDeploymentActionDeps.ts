@@ -17,7 +17,8 @@ import {
   type DeploymentTeardownInputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1,
 } from '@happier-dev/protocol';
 import type { MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
-import { isDeploymentPromoteActionIdV1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentPromoteActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentApprovalEnvironmentResultV1Schema, type DeploymentApprovalEnvironmentResultV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isDeploymentDomainNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -57,7 +58,7 @@ const domainOperationUnavailable = (requiredFact: 'operationAcceptance' | 'reque
   const phase = requiredFact === 'operationAcceptance'
     ? 'deployment.domain.operation_acceptance_missing' : 'deployment.domain.request_id_missing';
   return { ...failure('operation_unavailable'), error: `operation_unavailable (${phase})`,
-    details: { requiredFact }, cause: { phase, errorClass: 'Error', errorCode: null, httpStatus: null } };
+    details: { requiredFact }, failureCause: { phase, errorClass: 'Error', errorCode: null, httpStatus: null } };
 };
 const transportRefusal = (error: unknown): ActionExecuteFailure | null => readHttpStatus(error) === 431
   ? { ...failure('request_headers_too_large'), details: { httpStatus: 431 } } : null;
@@ -175,9 +176,15 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         : transportRefusal(error) ?? localAdmissionFailure(error) ?? failure('home_unreachable');
     }
   };
+  function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
+    context: ActionExecutorContext, authorizationActionId?: DeploymentTransportActionIdV1,
+    creationReview?: DeploymentEnvironmentCreationReviewV1): Promise<DeploymentActionOutputV1 | ActionExecuteFailure>;
+  function request(actionId: 'deployments.environments.get', input: DeploymentActionInputV1,
+    context: ActionExecutorContext, authorizationActionId: DeploymentTransportActionIdV1,
+    creationReview: undefined, approvalMetadata: true): Promise<DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure>;
   async function request(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1,
     context: ActionExecutorContext, authorizationActionId: DeploymentTransportActionIdV1 = actionId,
-    creationReview?: DeploymentEnvironmentCreationReviewV1): Promise<DeploymentActionOutputV1 | ActionExecuteFailure> {
+    creationReview?: DeploymentEnvironmentCreationReviewV1, approvalMetadata = false): Promise<DeploymentActionOutputV1 | DeploymentApprovalEnvironmentResultV1 | ActionExecuteFailure> {
     let issued = false;
     let method = 'POST';
     let preparedBindingArtifact: Pick<PreparedDeploymentBindingStorageV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'> | undefined;
@@ -267,6 +274,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
           ? DeploymentRollbackInputV1Schema : isDeploymentPromoteActionIdV1(actionId)
           ? DeploymentPromoteInputV1Schema : DeploymentActionInputSchemasV1[actionId], input: transportInput });
       method = bound.method;
+      const path = approvalMetadata ? `${bound.path}&projection=approvalScope` : bound.path;
       let body = bound.body;
       if (actionId === 'deployments.environments.update' && preparedUpdateBindings) {
         body = { ...transportInput, preparedBindings: preparedUpdateBindings };
@@ -303,13 +311,13 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         const changed = await params.admitAccount(input.serverId, context);
         if (changed) return changed;
       }
-      const headers = await params.resolveRequestHeaders(context, authorizationActionId, { method, path: bound.path,
+      const headers = await params.resolveRequestHeaders(context, authorizationActionId, { method, path,
         ...(body === undefined ? {} : { body }) });
       if (!headers) return deploymentAuthorizationFailure('home_request_headers_refused');
       context.signal?.throwIfAborted();
       issued = true;
       context.onTransportIssued?.();
-      const response = await axios.request<unknown>({ url: `${params.serverHttpBaseUrl}${bound.path}`,
+      const response = await axios.request<unknown>({ url: `${params.serverHttpBaseUrl}${path}`,
         method, headers, ...(body === undefined ? {} : { data: body }),
         ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
       const rollback = readHomeDomainConfirmedRollbackV1(response.status, response.data);
@@ -317,7 +325,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         details: { ...rollback.details, requiredFact: 'transaction_commit',
           remedy: 'Retry the action; the Home rolled back its database transaction.' },
         failureCause: projectActionFailureCauseV1({ code: rollback.code, status: response.status }, 'home.database.transaction') };
-      const parsed = (actionId === 'deployments.environments.create'
+      const parsed = (approvalMetadata ? DeploymentApprovalEnvironmentResultV1Schema : actionId === 'deployments.environments.create'
         ? DeploymentEnvironmentCreateResultV1Schema : DeploymentActionOutputSchemasV1[actionId]).safeParse(response.data);
       if (!parsed.success && (response.status === 401 || response.status === 403)) return projectHomeAuthorizationHttpFailure(response.status, headers, response.data);
       if (!parsed.success && method === 'GET' && ![404, 405, 501].includes(response.status)) {
@@ -349,10 +357,15 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         ? 'outcome_unknown' : context.signal?.aborted ? 'cancelled' : 'home_unreachable');
     }
   }
-  return { readEnvironmentAccess, observeEnvironmentAccessChanges, resolveEnvironmentApprovalScope: args => createDeploymentApprovalScopeResolverV1((actionId, input, context) =>
-    request(actionId, input, { ...context, onTransportIssued: undefined },
-      args.actionId === 'deployments.environments.update' || args.actionId === 'deployments.bindings.set'
-        ? args.actionId : actionId))(args),
+  return { readEnvironmentAccess, observeEnvironmentAccessChanges, resolveEnvironmentApprovalScope: args => {
+    const metadataRoot = isDeploymentApprovalMetadataPreparationActionIdV1(args.actionId) ? args.actionId : undefined;
+    return createDeploymentApprovalScopeResolverV1((actionId, input, context) =>
+      request(actionId, input, { ...context, onTransportIssued: undefined },
+        args.actionId === 'deployments.environments.update' || args.actionId === 'deployments.bindings.set'
+          ? args.actionId : actionId), metadataRoot
+        ? ({ serverId, environmentId, context }) => request('deployments.environments.get', { serverId, environmentId },
+          { ...context, onTransportIssued: undefined }, metadataRoot, undefined, true) : undefined)(args);
+  },
     deploymentAction: async (actionId, input, context, creationReview) => {
     const result = await request(actionId, input, context, actionId, creationReview);
     if (actionId === 'deployments.receipts.list' && 'ok' in result && result.ok && 'items' in result) {

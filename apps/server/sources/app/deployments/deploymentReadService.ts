@@ -32,8 +32,27 @@ import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readSavedSecretResourcesForAccountInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { DeploymentApprovalEnvironmentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 
 type AcceptedDeploymentRead = NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
+
+/** Approval needs the admitted relationship, never private definition or Link content. */
+export async function readDeploymentApprovalEnvironmentInTx(tx: Tx, actorAccountId: string,
+    input: Readonly<{ serverId: string; environmentId: string }>, authentication: DeploymentAuthentication,
+    admittedEnvironmentId?: string,
+) {
+    if (admittedEnvironmentId === undefined) {
+        const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
+        if (!loaded.ok) return loaded;
+    }
+    const environment = await tx.deploymentEnvironment.findUnique({ where: { id: admittedEnvironmentId ?? input.environmentId },
+        select: { id: true, projectSourceId: true, purpose: true, previewTemplateEnvironmentId: true } });
+    if (!environment) return deploymentFailure('deployment_unavailable');
+    return DeploymentApprovalEnvironmentResultV1Schema.parse({ ok: true, environment: {
+        id: environment.id, projectSourceId: environment.projectSourceId, purpose: environment.purpose,
+        ...(environment.previewTemplateEnvironmentId ? { previewTemplateEnvironmentId: environment.previewTemplateEnvironmentId } : {}),
+    } });
+}
 
 function acceptedEnvironmentRead(read: AcceptedDeploymentRead, environmentId: string, deploymentId?: string) {
     return read && (read.environmentId === environmentId || deploymentId !== undefined && read.deploymentId === deploymentId)

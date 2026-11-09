@@ -17,7 +17,7 @@ import { DeploymentDomainAddAdmissionInputV1Schema, DeploymentEnvironmentCreateI
     DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, hasDeploymentEnvironmentContentPatchV1 } from '@happier-dev/protocol';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
-    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
+    DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
     DEPLOYMENT_PREPARATION_READ_ACTION_IDS_V1, isDeploymentDomainAddActionIdV1,
     isDeploymentDomainMetadataReadActionIdV1, type DeploymentDomainMetadataReadActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentCandidatePublicationV1, createDeploymentLinkContentArtifactIdV1,
@@ -29,6 +29,7 @@ import { DeploymentEnvironmentTemplateSetInputV1Schema, DeploymentBindingsSetSto
     DeploymentEnvironmentUpdateStorageInputV1Schema, EnvironmentSecretLaunchAdmissionInputV1Schema } from '@happier-dev/deployment-protocol';
 import { ProjectAccountRowReadRequestV1Schema, PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { PROJECT_SOURCE_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readProjectDeploymentDefaultsContentInTx } from '@/app/projects/projectDeploymentDefaultsService';
 import { readArtifactAccessGrantsForAdmittedCustodyInTx,
@@ -728,19 +729,61 @@ export async function isTemplateInstantiationAuthorizedInTx(tx: Tx,
 }
 
 /** The signed root already admitted its requester; later steps retain only its selected relations. */
+async function readAdmittedTemplateInstantiationScopeInTx(tx: Tx,
+    binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'actionId' | 'machineId'>,
+    admission: TemplateAdmission): Promise<Readonly<{ source: ProjectSourceV1 | undefined; environment: DeploymentEnvironmentRow | null }> | null> {
+    if (binding.actionId !== DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+        || admission.environment.kind === 'create' && admission.environment.controllerMachineId !== binding.machineId) return null;
+    let source: ProjectSourceV1 | undefined;
+    if (admission.source) {
+        const custody = await readProjectSourceCustodyInTx(tx, admission.source.id);
+        if (!custody || custody.owner.kind === 'account' && custody.owner.accountId !== binding.accountId) return null;
+        source = custody.source;
+    } else if (admission.newProject?.owner.kind === 'account' && admission.newProject.owner.accountId !== binding.accountId) return null;
+    const environmentId = await readTemplateEnvironmentId(tx, binding, admission);
+    if (!environmentId) return admission.environment.kind === 'create' && admission.target.kind === 'new'
+        ? { source, environment: null } : null;
+    const environment = await tx.deploymentEnvironment.findUnique({ where: { id: environmentId } });
+    return environment !== null && await matchesTemplateEnvironmentScopeInTx(tx, binding, admission, environment)
+        ? { source, environment } : null;
+}
+
 export async function isAdmittedTemplateInstantiationScopeCurrentInTx(tx: Tx,
     binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'actionId' | 'machineId'>,
     admission: TemplateAdmission): Promise<boolean> {
-    if (binding.actionId !== DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
-        || admission.environment.kind === 'create' && admission.environment.controllerMachineId !== binding.machineId) return false;
-    if (admission.source) {
+    return await readAdmittedTemplateInstantiationScopeInTx(tx, binding, admission) !== null;
+}
+
+export type DeploymentPreparationSourceRead = Readonly<{ source: ProjectSourceV1; canManage: boolean }>;
+
+/** Exact Source metadata spends the signed preparation's admitted Manage, never a renewed grant. */
+export async function readDeploymentPreparationSourceHttpPurposeInTx(tx: Tx,
+    binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string,
+    proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
+): Promise<DeploymentPreparationSourceRead | false | null> {
+    const admission = binding.deploymentPreparationAdmission;
+    if (effectActionId !== PROJECT_SOURCE_READ_ACTION_ID_V1
+        || admission?.operation !== 'template' && admission?.operation !== 'catalog') return null;
+    if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
+    let source: ProjectSourceV1 | undefined;
+    if (admission?.operation === 'template') {
+        const scope = await readAdmittedTemplateInstantiationScopeInTx(tx, binding, admission);
+        if (!scope) return false;
+        source = scope.source;
+        if (!source && admission.newProject && scope.environment) {
+            source = (await readProjectSourceCustodyInTx(tx, scope.environment.projectSourceId))?.source;
+        }
+    } else if (admission?.operation === 'catalog') {
+        if (binding.actionId !== DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || admission.machineId !== binding.machineId
+            || admission.installationId !== binding.installationId || !admission.source) return false;
         const custody = await readProjectSourceCustodyInTx(tx, admission.source.id);
-        if (!custody || custody.owner.kind === 'account' && custody.owner.accountId !== binding.accountId) return false;
-    } else if (admission.newProject?.owner.kind === 'account' && admission.newProject.owner.accountId !== binding.accountId) return false;
-    const environmentId = await readTemplateEnvironmentId(tx, binding, admission);
-    if (!environmentId) return admission.environment.kind === 'create' && admission.target.kind === 'new';
-    const environment = await tx.deploymentEnvironment.findUnique({ where: { id: environmentId } });
-    return environment !== null && matchesTemplateEnvironmentScopeInTx(tx, binding, admission, environment);
+        if (!custody || custody.source.revision !== admission.source.revision
+            || custody.owner.kind === 'account' && custody.owner.accountId !== binding.accountId) return false;
+        source = custody.source;
+    }
+    return source && proof.path === `/v1/projects/sources/${encodeURIComponent(source.id)}?serverId=${encodeURIComponent(binding.serverIdentityId)}`
+        && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, { serverId: binding.serverIdentityId, id: source.id }))
+        ? { source, canManage: true } : false;
 }
 
 async function matchesTemplateEnvironmentScopeInTx(tx: Tx,
@@ -835,6 +878,9 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
     if (!admission) return false;
     if (admission.operation === 'create') return await readDeploymentCreateHttpPurposeInTx(tx, binding, effectActionId, proof,
         isReadOnlyArtifactPurpose, isNativeHttpPurpose) !== null;
+    if ((admission.operation === 'template' || admission.operation === 'catalog') && effectActionId === PROJECT_SOURCE_READ_ACTION_ID_V1) {
+        return Boolean(await readDeploymentPreparationSourceHttpPurposeInTx(tx, binding, effectActionId, proof));
+    }
     const routeMatches = (expected: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, expected);
     const method = proof.method.toUpperCase();
     if (admission.operation === 'setup') {
@@ -932,9 +978,6 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
         if (method !== 'GET' || proof.body !== undefined) return false;
         if (!admission.source) return effectActionId === binding.actionId
             && (proof.path === '/v1/account/encryption' || proof.path === '/v1/account/encryption/currentness') && routeMatches({});
-        if (effectActionId === 'projects.sources.read') return proof.path
-            === `/v1/projects/sources/${encodeURIComponent(admission.source.id)}?serverId=${encodeURIComponent(binding.serverIdentityId)}`
-            && routeMatches({ serverId: binding.serverIdentityId, id: admission.source.id });
         if (effectActionId !== binding.actionId) return false;
         if ((proof.path === '/v1/account/encryption' || proof.path === '/v1/account/encryption/currentness') && routeMatches({})) return true;
         if (proof.path === `/v1/projects/${encodeURIComponent(admission.source.id)}/deployment-defaults?serverId=${encodeURIComponent(binding.serverIdentityId)}`
@@ -948,15 +991,6 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
     }
     if (admission.operation === 'template') {
         const environmentId = await readTemplateEnvironmentId(tx, binding, admission);
-        if (effectActionId === 'projects.sources.read') {
-            if (method !== 'GET' || proof.body !== undefined) return false;
-            const sourceId = admission.source?.id ?? (admission.newProject && environmentId
-                ? (await tx.deploymentEnvironment.findUnique({ where: { id: environmentId }, select: { projectSourceId: true } }))?.projectSourceId
-                : undefined);
-            return sourceId !== undefined
-                && proof.path === `/v1/projects/sources/${encodeURIComponent(sourceId)}?serverId=${encodeURIComponent(binding.serverIdentityId)}`
-                && routeMatches({ serverId: binding.serverIdentityId, id: sourceId });
-        }
         if (effectActionId === 'deployments.environments.get') return environmentId !== null && method === 'GET' && proof.body === undefined
             && proof.path === `/v1/deployments/environments/${encodeURIComponent(environmentId)}?serverId=${encodeURIComponent(binding.serverIdentityId)}`
             && routeMatches({ serverId: binding.serverIdentityId, environmentId });

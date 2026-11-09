@@ -18,8 +18,43 @@ import { encryptWithDataKey, encodeBase64 } from '@/api/encryption';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import type { StoredCredentials } from '@/persistence';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
+import { DEPLOYMENT_ACTION_IDS_V1, isDeploymentApprovalMetadataPreparationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 afterEach(() => { vi.restoreAllMocks(); });
+
+it.each(DEPLOYMENT_ACTION_IDS_V1.filter(actionId => getActionSpec(actionId).sideEffectClass === 'write'
+    && getActionSpec(actionId).approvalScope === 'environment'))(
+    'resolves the common approval scope for scoped mutation %s', async actionId => {
+        const { environment } = createDeploymentEnvironmentDetailV1();
+        const signedEffects: string[] = [];
+        const metadataOnly = isDeploymentApprovalMetadataPreparationActionIdV1(actionId);
+        const http = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: metadataOnly
+            ? { ok: true, environment: { id: environment.id, projectSourceId: environment.projectSourceId, purpose: 'standard' } }
+            : { ok: true, environment, targetLinks: [] } });
+        const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+            resolveRequestHeaders: (_context, effect) => { signedEffects.push(effect); return {}; },
+            async dispatchReceipt() { throw new Error('Approval preparation cannot dispatch'); } });
+        const input = { serverId: environment.serverId, environmentId: environment.id, projectSourceId: environment.projectSourceId,
+            environment: { kind: 'existing', environmentId: environment.id } };
+        expect(await deps.resolveEnvironmentApprovalScope!({ actionId, input, context: { serverId: environment.serverId }, phase: 'prepare' }))
+            .toEqual({ scope: { kind: 'environment', environmentId: environment.id } });
+        expect(signedEffects).toEqual([metadataOnly || actionId === 'deployments.environments.update' || actionId === 'deployments.bindings.set'
+            ? actionId : 'deployments.environments.get']);
+        expect(http).toHaveBeenCalledTimes(1);
+    });
+
+it.each(['operationAcceptance', 'requestId'] as const)('preserves the missing domain %s in the canonical failure cause', async requiredFact => {
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: async () => ({}), async dispatchReceipt() { throw new Error('Missing admission cannot dispatch'); } });
+    const result = await deps.deploymentAction!('deployments.domains.remove', {
+        serverId: 'home', environmentId: 'environment', domainId: 'domain', expectedRevision: 1,
+        expectedDomainRevision: 1, requestKey: 'request',
+    }, requiredFact === 'operationAcceptance' ? {} : { operationAcceptance: { operationId: 'operation', accept() {} } });
+    expect(result).toMatchObject({ ok: false, errorCode: 'operation_unavailable', details: { requiredFact },
+        failureCause: { errorClass: 'Error', phase: requiredFact === 'operationAcceptance'
+            ? 'deployment.domain.operation_acceptance_missing' : 'deployment.domain.request_id_missing' } });
+});
 
 it('publishes recovery for failed and unknown receipt-list rows without opening private receipt content', async () => {
     const rows = (['outcome_unknown', 'failed', 'succeeded'] as const).map((state, index) => createDeploymentReceiptHeaderV1({
@@ -188,7 +223,7 @@ it('identifies a rejected Home read field without retaining its value', async ()
         { serverId: 'home', environmentId: 'environment' }, {});
     expect(result).toMatchObject({ ok: false, errorCode: 'invalid_action_output', details: { validation: {
         source: 'deployments.environments.get', httpStatus: 200,
-        issues: expect.arrayContaining([{ code: 'invalid_type', path: ['environment', 'revision'], expected: 'number' }]),
+        issues: expect.arrayContaining([expect.objectContaining({ code: 'invalid_type', path: ['environment', 'revision'], expected: 'number' })]),
     } } });
     expect(JSON.stringify(result)).not.toContain('never-record-rejected-value');
 });
@@ -359,6 +394,25 @@ it('admits the target-only Prepare Environment scope from its authenticated Home
         context, phase: 'prepare' })).resolves.toEqual({ scope: null });
     expect(requests).toHaveBeenCalledTimes(2);
 });
+
+it.each(['deployments.environments.controller.set', 'deployments.restart', 'deployments.cancel'] as const)(
+    'retains %s for its content-free approval scope read', async actionId => {
+        const { environment } = createDeploymentEnvironmentDetailV1();
+        const signedEffects: string[] = [];
+        const http = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true,
+            environment: { id: environment.id, projectSourceId: environment.projectSourceId,
+                purpose: 'preview', previewTemplateEnvironmentId: 'template' } } });
+        const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test',
+            admitAccount: async () => null, resolveRequestHeaders: (_context, effect) => {
+                signedEffects.push(effect); return { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'signed-root' };
+            }, async dispatchReceipt() { throw new Error('Approval preparation cannot dispatch'); } });
+        expect(await deps.resolveEnvironmentApprovalScope!({ actionId,
+            input: { serverId: environment.serverId, environmentId: environment.id }, context: {}, phase: 'prepare' }))
+            .toEqual({ scope: { kind: 'environment', environmentId: 'template' } });
+        expect(signedEffects).toEqual([actionId]);
+        expect(http).toHaveBeenCalledTimes(1);
+        expect(http.mock.calls[0]?.[0].url).toBe(`https://home.test/v1/deployments/environments/${environment.id}?serverId=${environment.serverId}&projection=approvalScope`);
+    });
 
 it('returns retained pending admission without dispatching or claiming an active receipt', async () => {
     const pending = { ok: true, environmentId: 'environment', revision: 3,

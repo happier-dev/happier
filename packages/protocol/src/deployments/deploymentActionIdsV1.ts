@@ -42,6 +42,16 @@ export const DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 = 'deployments.environme
 export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
 export const DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 = 'deployments.receipts.observe';
 export const DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 = 'deployments.templates.instantiate';
+export function isDeploymentControllerSetActionIdV1(value: string): value is 'deployments.environments.controller.set' {
+  return value === 'deployments.environments.controller.set';
+}
+
+/** These finite roots need only the admitted Environment's approval relationship. */
+export function isDeploymentApprovalMetadataPreparationActionIdV1(value: string): value is
+  'deployments.environments.controller.set' | 'deployments.restart' | 'deployments.cancel' {
+  return isDeploymentControllerSetActionIdV1(value) || value === 'deployments.restart'
+    || value === DEPLOYMENT_CANCEL_ACTION_ID_V1;
+}
 
 export const DEPLOYMENT_ACTION_IDS_V1 = [
   'deployments.domains.add', 'deployments.domains.remove', 'deployments.domains.verify', 'deployments.domains.get', 'deployments.domains.list',

@@ -1,4 +1,6 @@
 import { z } from 'zod/mini';
+import { DeploymentApprovalEnvironmentInputV1Schema, DeploymentApprovalEnvironmentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
+import { isDeploymentApprovalMetadataPreparationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { ActionOperationCancelV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import {
@@ -14,6 +16,7 @@ import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentTemplat
     DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/deployment-protocol';
 import { MachineDeploymentReferencesInputV1Schema, MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
+import { getDbProviderFromEnv } from '@/storage/prisma';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx,
     setDeploymentEnvironmentBindingsInTx, setDeploymentEnvironmentTemplateInTx, setDeploymentEnvironmentBackupInTx,
@@ -26,7 +29,7 @@ import { createDeploymentInTx, transitionDeploymentInTx } from '@/app/deployment
 import { cancelDeploymentPendingInTx, cancelDeploymentPendingOperationInTx } from '@/app/deployments/deploymentPendingService';
 import { promoteDeploymentInTx } from '@/app/deployments/deploymentPromotionService';
 import { readDeploymentExecutionBindingFromRequest } from '@/app/deployments/deploymentAcceptedExecution';
-import { readDeploymentEnvironmentInTx, readDeploymentReceiptInTx, readDeploymentEnvironmentAccessInTx,
+import { readDeploymentEnvironmentInTx, readDeploymentReceiptInTx, readDeploymentEnvironmentAccessInTx, readDeploymentApprovalEnvironmentInTx,
     listDeploymentEnvironmentsInTx, listDeploymentReceiptsInTx, readDeploymentMachineReferencesInTx } from '@/app/deployments/deploymentReadService';
 import type { Fastify } from '../../types';
 import { registerEnvironmentSecretLaunchAdmissionRoute } from './environmentSecretLaunchAdmissionRoute';
@@ -150,8 +153,11 @@ export function registerDeploymentRoutes(app: Fastify): void {
             response: responses(outputs['deployments.bindings.set']) },
     }, async (request, reply) => {
         if (request.validationError || request.params.environmentId !== request.body.environmentId) return reply.code(400).send(invalid);
+        // The Environment lock and revision CAS serialize this write, independently of Account publication.
         const result = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request)), {
+                isolationLevel: getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable',
+            });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/template', {
@@ -179,7 +185,10 @@ export function registerDeploymentRoutes(app: Fastify): void {
     }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send(invalid);
         const result = await inTx(tx => createDeploymentEnvironmentInTx(tx, request.userId, request.body,
-            readTeamOperationAuthenticationFromRequest(request)), { isolationLevel: 'Serializable' }).catch((error: unknown) => {
+            readTeamOperationAuthenticationFromRequest(request)), {
+                // PostgreSQL intent locks preserve repeat-key exclusion without a stale Account snapshot.
+                isolationLevel: getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable',
+            }).catch((error: unknown) => {
                 if (error instanceof DeploymentEnvironmentCreationError) return error.failure;
                 throw error;
             });
@@ -206,12 +215,22 @@ export function registerDeploymentRoutes(app: Fastify): void {
     app.get('/v1/deployments/environments/:environmentId', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,
         schema: { params: environmentParams, querystring: z.pipe(z.looseObject({
             includeRetainedTargetLinkCleanup: z.optional(z.pipe(z.literal('true'), z.transform(() => true as const))),
-        }), z.omit(inputs['deployments.environments.get'], { environmentId: true })),
-            response: responses(outputs['deployments.environments.get']) },
+        }), z.union([z.omit(inputs['deployments.environments.get'], { environmentId: true }),
+            z.omit(DeploymentApprovalEnvironmentInputV1Schema, { environmentId: true })])),
+            response: responses(z.union([outputs['deployments.environments.get'], DeploymentApprovalEnvironmentResultV1Schema])) },
     }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send(deploymentLinkValidationFailure(
             'target_link.environment_read', request.validationError.validation, inputs['deployments.environments.get'].shape));
-        const result = await inReadSnapshot(tx => readDeploymentEnvironmentInTx(tx, request.userId, { ...request.query, ...request.params },
+        const input = { ...request.query, ...request.params };
+        if ('projection' in input) {
+            const binding = request.externalActionExecutionAuthorizationBinding;
+            const admittedEnvironmentId = binding && isDeploymentApprovalMetadataPreparationActionIdV1(binding.actionId)
+                ? binding.environmentId : undefined;
+            const result = await inReadSnapshot(tx => readDeploymentApprovalEnvironmentInTx(tx, request.userId, input,
+                readTeamOperationAuthenticationFromRequest(request), admittedEnvironmentId));
+            return reply.code(status(result)).send(result);
+        }
+        const result = await inReadSnapshot(tx => readDeploymentEnvironmentInTx(tx, request.userId, input,
             readTeamOperationAuthenticationFromRequest(request), request.externalActionAcceptedDeploymentRead,
             request.externalActionRegistryAppUpdateRead));
         return reply.code(status(result)).send(result);
@@ -231,7 +250,9 @@ export function registerDeploymentRoutes(app: Fastify): void {
     }, async (request, reply) => {
         if (request.validationError || request.body.environmentId !== request.params.environmentId) return reply.code(400).send(invalid);
         const result = await inTx(tx => createDeploymentInTx(tx, request.userId, request.body, 'deploy',
-            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: 'Serializable' });
+            readTeamOperationAuthenticationFromRequest(request), readDeploymentExecutionBindingFromRequest(request) ?? undefined), {
+                isolationLevel: getDbProviderFromEnv(process.env, 'postgres') === 'postgres' ? 'ReadCommitted' : 'Serializable',
+            });
         return reply.code(status(result)).send(result);
     });
     app.post('/v1/deployments/environments/:environmentId/teardown', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true,
