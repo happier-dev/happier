@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMachineFixture, createSessionFixture } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit';
 import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
 import { serveAccountHomes, installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -294,7 +294,8 @@ function registerStreamingPlaybackHooks(platform: 'ios' | 'web' = 'ios', ttsProv
     const { sync } = await import('@/sync/sync');
     await sync.resumeSync('manual');
     const serverId = account.homes.voice.id;
-    const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() });
+    await vi.waitFor(() => expect(storage.getState().machines['machine-1']?.access?.resourceMode).toBe('plain'));
+    const machine = storage.getState().machines['machine-1']!;
     const target = createSessionFixture({ id: 's1', serverId, active: true, presence: 'online',
       metadata: { machineId: machine.id, path: '/workspace/s1', host: 'voice.test', flavor: 'claude',
         agentRuntimeCapabilitiesV1: { localControl: { supported: true } } } });
