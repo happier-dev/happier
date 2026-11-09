@@ -56,19 +56,9 @@ const TRAY_ICON_FOR_LIGHT_TRAY: Image<'static> = tauri::include_image!("./icons/
 const TRAY_ICON_FOR_DARK_TRAY: Image<'static> = tauri::include_image!("./icons/tray/tray-dark.png");
 #[cfg(desktop)]
 const TRAY_TOOLTIP: &str = "Happier";
-/// The tray is how Windows and Linux reach Quit at all: they get no app menu, and closing the main
-/// window only hides it. It is also the only way to bring that window back on those platforms, and
-/// in menu-bar mode it is all that remains of the app.
-#[cfg(desktop)]
-const DESKTOP_TRAY_ENABLED: bool = true;
 /// What the web UI last told the native side (labels, task params, Updates item, relay names).
 #[cfg(desktop)]
 const PERSISTED_TRAY_STATE_FILE: &str = "tray-state.json";
-
-#[cfg(desktop)]
-fn is_desktop_tray_enabled_for_build() -> bool {
-    DESKTOP_TRAY_ENABLED
-}
 
 /// The one tray model and what the web UI persisted for native use.
 #[cfg(desktop)]
@@ -227,10 +217,6 @@ fn name_rows(services: &mut ServiceList, names: &std::collections::BTreeMap<Stri
 
 #[cfg(desktop)]
 pub fn register(app: &mut App) -> tauri::Result<()> {
-    if !is_desktop_tray_enabled_for_build() {
-        return Ok(());
-    }
-
     let state = TrayState::load(app);
     let initial_model = state
         .0
@@ -473,9 +459,6 @@ pub fn desktop_set_tray_state(
     app: AppHandle,
     state: DesktopTrayStatePayload,
 ) -> Result<Option<crate::menu_bar::PendingDestination>, String> {
-    if !is_desktop_tray_enabled_for_build() {
-        return Ok(None);
-    }
     apply_web_state(&app, state);
     Ok(crate::menu_bar::take_pending_destination(&app))
 }
@@ -697,13 +680,6 @@ fn build_native_item(
 #[cfg(all(test, desktop))]
 mod tests {
     use super::*;
-
-    #[test]
-    fn every_desktop_build_ships_the_tray_so_quit_is_reachable() {
-        // Windows and Linux have no other quit or re-show affordance: no app menu, and the main
-        // window hides on close.
-        assert!(is_desktop_tray_enabled_for_build());
-    }
 
     #[test]
     fn the_web_ui_push_parses_its_rows_labels_and_setting_and_defaults_the_rest() {

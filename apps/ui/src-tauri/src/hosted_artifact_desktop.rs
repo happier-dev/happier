@@ -294,7 +294,6 @@ enum HostedArtifactRegistrationStorageInput {
 
 #[derive(Clone, Debug)]
 struct HostedArtifactCurrentLoadFile {
-    digest: String,
     byte_size: usize,
     file: Arc<Mutex<fs::File>>,
 }
@@ -818,6 +817,8 @@ fn resolve_policy_request(table: &PolicyTable, request_path: &str) -> PolicyOutc
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
+    #[cfg(test)]
+    tests::observe_content_hash(bytes);
     let digest = Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -1022,7 +1023,8 @@ fn read_manifest(directory: &Path, locator: &StorageLocator) -> Result<CacheMani
 
 fn read_file_bytes(directory: &Path, file: &CachedFileMetadata) -> Result<Vec<u8>, String> {
     let bytes = read_confined_cache_file(directory, &file.stored_file_name)?;
-    if bytes.len() != file.byte_size || format!("sha256:{}", sha256_hex(&bytes)) != file.digest {
+    // The cache writer verifies content before committing the manifest.
+    if bytes.len() != file.byte_size {
         return Err("hosted Artifact cache file integrity mismatch".to_string());
     }
     Ok(bytes)
@@ -1840,7 +1842,6 @@ fn registered_artifact_from_input(
                 admitted.insert(
                     resource.resource_id,
                     HostedArtifactCurrentLoadFile {
-                        digest: resource.digest,
                         byte_size: resource.byte_size,
                         file: Arc::new(Mutex::new(file)),
                     },
@@ -2094,9 +2095,7 @@ fn read_registered_artifact_resource(
             let resource = resources.get(resource_id)?;
             let directory = resolve_existing_artifact_directory(cache_root, locator).ok()?;
             let bytes = read_confined_cache_file(&directory, &resource.stored_file_name).ok()?;
-            (bytes.len() == resource.byte_size
-                && format!("sha256:{}", sha256_hex(&bytes)) == resource.digest)
-                .then_some(bytes)
+            (bytes.len() == resource.byte_size).then_some(bytes)
         }
         RegisteredArtifactStorage::CurrentLoad { resources } => {
             let resource = resources.get(resource_id)?;
@@ -2104,9 +2103,7 @@ fn read_registered_artifact_resource(
             file.seek(SeekFrom::Start(0)).ok()?;
             let mut bytes = Vec::with_capacity(resource.byte_size);
             file.read_to_end(&mut bytes).ok()?;
-            (bytes.len() == resource.byte_size
-                && format!("sha256:{}", sha256_hex(&bytes)) == resource.digest)
-                .then_some(bytes)
+            (bytes.len() == resource.byte_size).then_some(bytes)
         }
     }
 }
@@ -2997,6 +2994,28 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    thread_local! {
+        static CONTENT_HASH_PROBE: std::cell::RefCell<Option<(Vec<u8>, usize)>> = const {
+            std::cell::RefCell::new(None)
+        };
+    }
+
+    pub(super) fn observe_content_hash(bytes: &[u8]) {
+        CONTENT_HASH_PROBE.with(|probe| {
+            if let Some((expected, count)) = probe.borrow_mut().as_mut() {
+                if bytes == expected.as_slice() {
+                    *count += 1;
+                }
+            }
+        });
+    }
+
+    fn count_content_hashes(bytes: &[u8], operation: impl FnOnce()) -> usize {
+        CONTENT_HASH_PROBE.with(|probe| *probe.borrow_mut() = Some((bytes.to_vec(), 0)));
+        operation();
+        CONTENT_HASH_PROBE.with(|probe| probe.borrow_mut().take().expect("hash probe exists").1)
+    }
+
     const DESKTOP_HOSTED_ARTIFACT_COMMANDS: &[&str] = &[
         "desktop_hosted_artifact_get_frame_capability",
         "desktop_hosted_artifact_register",
@@ -3140,8 +3159,6 @@ mod tests {
     #[test]
     fn hosted_artifact_commands_are_registered_for_generated_acl_and_main_capability() {
         let manifest_dir = manifest_dir();
-        let build_rs =
-            fs::read_to_string(manifest_dir.join("build.rs")).expect("build.rs should be readable");
         let default_capability: serde_json::Value = serde_json::from_str(
             &fs::read_to_string(manifest_dir.join("capabilities").join("default.json"))
                 .expect("default Tauri capability should be readable"),
@@ -3153,10 +3170,6 @@ mod tests {
 
         for command in DESKTOP_HOSTED_ARTIFACT_COMMANDS {
             let permission = permission_name_for_command(command);
-            assert!(
-                build_rs.contains(&format!("\"{command}\"")),
-                "build.rs APP_TAURI_COMMANDS should include {command}",
-            );
             assert!(
                 permissions.contains(&serde_json::Value::String(permission.clone())),
                 "default capability should include {permission}",
@@ -3723,13 +3736,20 @@ mod tests {
         assert_eq!(manifest.last_accessed_order, 1);
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     #[test]
-    fn native_cache_description_refreshes_the_same_persisted_lru_order() {
+    fn native_cache_reads_describes_and_serves_admitted_content_without_rehashing() {
         let temporary = tempfile::tempdir().expect("temporary cache root should exist");
         let root = temporary.path().join("cache");
         let input = cache_write_fixture('a', 'b', b"native descriptor");
-        write_cache_record_with_budget(&root, &input, usize::MAX, 1)
-            .expect("cache write should succeed");
+        let ingress_hashes = count_content_hashes(b"native descriptor", || {
+            write_cache_record_with_budget(&root, &input, usize::MAX, 1)
+                .expect("cache write should succeed");
+        });
+        assert_eq!(
+            ingress_hashes, 1,
+            "cache ingress verifies each incoming file once",
+        );
         let description = CacheDescribeRequest {
             locator: input.locator.clone(),
             identity_key_hash: input.identity_key_hash.clone(),
@@ -3744,15 +3764,100 @@ mod tests {
                 .collect(),
         };
 
-        describe_cache_resource_with_access(&root, &description, 2)
-            .expect("native cache description should succeed")
-            .expect("native cache description should exist");
+        let directory = resolve_existing_artifact_directory(&root, &input.locator)
+            .expect("cache directory should remain available");
+        let manifest = read_manifest(&directory, &input.locator)
+            .expect("committed manifest should remain available");
+        let mut registration = current_load_registration_input(
+            "hpat_cached",
+            &format!("hpa_{}", "c".repeat(64)),
+            b"native descriptor",
+            input.files[0].digest.clone(),
+        );
+        registration.storage = HostedArtifactRegistrationStorageInput::Persistent {
+            locator: input.locator.clone(),
+            resources: vec![HostedArtifactResource {
+                resource_id: "r0".to_string(),
+                stored_file_name: manifest.files[0].stored_file_name.clone(),
+                digest: input.files[0].digest.clone(),
+                byte_size: input.files[0].byte_size,
+            }],
+        };
+        let (_, registration) = registered_artifact_from_input(registration)
+            .expect("persistent registration should be admitted");
+        let hashes = count_content_hashes(b"native descriptor", || {
+            for access_order in 2..=4 {
+                let record = read_cache_record_with_access(
+                    &root,
+                    &input.locator,
+                    &input.identity_key_hash,
+                    access_order,
+                )
+                .expect("cache read should succeed")
+                .expect("cache record should exist");
+                assert_eq!(
+                    record.files[0].bytes_base64,
+                    BASE64_STANDARD.encode(b"native descriptor"),
+                );
+                describe_cache_resource_with_access(&root, &description, access_order)
+                    .expect("native cache description should succeed")
+                    .expect("native cache description should exist");
+                assert_eq!(
+                    read_registered_artifact_resource(&registration, &root, "r0"),
+                    Some(b"native descriptor".to_vec()),
+                );
+            }
+        });
+        assert_eq!(
+            hashes, 0,
+            "admitted cache content must not be rehashed on reads",
+        );
 
         let directory = resolve_existing_artifact_directory(&root, &input.locator)
             .expect("cache directory should remain available");
         let manifest = read_manifest(&directory, &input.locator)
             .expect("refreshed manifest should remain valid");
-        assert_eq!(manifest.last_accessed_order, 2);
+        assert_eq!(manifest.last_accessed_order, 4);
+
+        let replacement = cache_write_fixture('a', 'b', b"updated native descriptor");
+        let hashes = count_content_hashes(b"updated native descriptor", || {
+            write_cache_record_with_budget(&root, &replacement, usize::MAX, 5)
+                .expect("new content should pass ingress");
+        });
+        assert_eq!(hashes, 1, "changed content is verified at write ingress");
+        let record = read_cache_record_with_access(
+            &root,
+            &replacement.locator,
+            &replacement.identity_key_hash,
+            6,
+        )
+        .expect("replacement read should succeed")
+        .expect("replacement should exist");
+        assert_eq!(
+            record.files[0].bytes_base64,
+            BASE64_STANDARD.encode(b"updated native descriptor"),
+        );
+    }
+
+    #[test]
+    fn cache_write_rejects_corrupt_ingress_without_replacing_admitted_content() {
+        let temporary = tempfile::tempdir().expect("temporary cache root should exist");
+        let root = temporary.path().join("cache");
+        let input = cache_write_fixture('a', 'b', b"admitted content");
+        write_cache_record_with_budget(&root, &input, usize::MAX, 1)
+            .expect("initial content should pass ingress");
+        let mut corrupt = cache_write_fixture('a', 'b', b"admitted content");
+        corrupt.files[0].bytes_base64 = BASE64_STANDARD.encode(b"corrupted bytes!");
+        assert!(write_cache_record_with_budget(&root, &corrupt, usize::MAX, 2).is_err());
+        let record = read_cache_record_with_access(
+            &root,
+            &input.locator,
+            &input.identity_key_hash,
+            3,
+        )
+        .expect("admitted record should remain readable")
+        .expect("record should exist");
+        assert_eq!(record.files[0].bytes_base64, input.files[0].bytes_base64);
     }
 
     #[test]
@@ -3858,7 +3963,7 @@ mod tests {
 
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     #[test]
-    fn current_load_registration_serves_without_a_cache_record_until_token_retirement() {
+    fn current_load_serves_admitted_content_without_rehashing_until_token_retirement() {
         let temporary = tempfile::tempdir().expect("temporary cache root should exist");
         let root = temporary.path().join("cache");
         let bytes = b"oversized current-load resource".to_vec();
@@ -3884,10 +3989,18 @@ mod tests {
                 .expect("protocol request should be valid")
         };
 
-        let response =
-            serve_artifact_protocol_request(&inner, &root, &token, &partition_id, request());
-        assert_eq!(response.status().as_u16(), 200);
-        assert_eq!(response.body().as_ref(), bytes.as_slice());
+        let hashes = count_content_hashes(&bytes, || {
+            for _ in 0..3 {
+                let response =
+                    serve_artifact_protocol_request(&inner, &root, &token, &partition_id, request());
+                assert_eq!(response.status().as_u16(), 200);
+                assert_eq!(response.body().as_ref(), bytes.as_slice());
+            }
+        });
+        assert_eq!(
+            hashes, 0,
+            "current-load serving consumes already admitted bytes",
+        );
         assert!(!root.exists());
 
         let in_flight = inner

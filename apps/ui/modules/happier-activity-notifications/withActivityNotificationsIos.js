@@ -23,7 +23,6 @@ const CRYPTO_SOURCE_FILE_NAMES = [
 ];
 const TARGET_SOURCE_FILE_NAMES = [SHARED_SOURCE_FILE_NAME, PREPARED_CONTEXT_SOURCE_FILE_NAME, STORAGE_LOCATION_SOURCE_FILE_NAME, ENRICHER_SOURCE_FILE_NAME, ...CRYPTO_SOURCE_FILE_NAMES, SOURCE_FILE_NAME];
 const CRYPTO_WORKER_IOS_ROOT = path.join(__dirname, '..', 'happier-crypto-worker', 'ios');
-const CLIBSODIUM_FRAMEWORK_PATH = '../node_modules/@more-tech/react-native-libsodium/libsodium/build/libsodium-apple/Clibsodium.xcframework';
 const MODULE_SOURCE_PATHS = {
   [SHARED_SOURCE_FILE_NAME]: path.join(__dirname, 'ios', SHARED_SOURCE_FILE_NAME),
   [PREPARED_CONTEXT_SOURCE_FILE_NAME]: path.join(__dirname, 'ios', PREPARED_CONTEXT_SOURCE_FILE_NAME),
@@ -121,8 +120,24 @@ function addMissingCryptoSources(project, targetUuid) {
   }
 }
 
-function addSessionCryptoFramework(project, targetUuid) {
-  project.addFramework(CLIBSODIUM_FRAMEWORK_PATH, {
+function sessionCryptoFrameworkPath(projectRoot, platformProjectRoot) {
+  const packageRoot = path.dirname(require.resolve('@more-tech/react-native-libsodium/package.json', { paths: [projectRoot] }));
+  const frameworkPath = path.join(packageRoot, 'libsodium', 'build', 'libsodium-apple', 'Clibsodium.xcframework');
+  if (!fs.existsSync(frameworkPath)) {
+    throw new Error(`Activity notifications require the libsodium XCFramework at ${frameworkPath}. Rebuild @more-tech/react-native-libsodium before iOS prebuild.`);
+  }
+  // Custom frameworks are project-relative, just like this target's sources.
+  // Resolve from the app, not an assumed package-manager node_modules layout.
+  return path.relative(platformProjectRoot, frameworkPath).split(path.sep).join('/');
+}
+
+function addSessionCryptoFramework(project, targetUuid, frameworkPath) {
+  const existing = Object.values(project.pbxFileReferenceSection()).find((file) =>
+    file && typeof file === 'object' && path.basename(unquote(file.path) || '') === 'Clibsodium.xcframework');
+  if (existing && unquote(existing.path) !== frameworkPath) {
+    project.removeFramework(unquote(existing.path), { customFramework: true, embed: false, target: targetUuid });
+  }
+  project.addFramework(frameworkPath, {
     customFramework: true,
     embed: false,
     lastKnownFileType: 'wrapper.xcframework',
@@ -143,8 +158,11 @@ function configureNotificationServiceTarget(project, options) {
     appBundleIdentifier,
     deploymentTarget = '16.0',
     swiftVersion = '5.9',
+    projectRoot,
+    platformProjectRoot,
   } = options;
   const bundleIdentifier = notificationServiceBundleIdentifier(appBundleIdentifier);
+  const frameworkPath = sessionCryptoFrameworkPath(projectRoot, platformProjectRoot);
   const appGroup = `group.${appBundleIdentifier}`;
   const settings = {
     PRODUCT_BUNDLE_IDENTIFIER: `"${bundleIdentifier}"`,
@@ -166,7 +184,7 @@ function configureNotificationServiceTarget(project, options) {
   if (existing) {
     configureTargetBuild(project, existing, settings);
     addMissingCryptoSources(project, existing.uuid);
-    addSessionCryptoFramework(project, existing.uuid);
+    addSessionCryptoFramework(project, existing.uuid, frameworkPath);
     return project;
   }
 
@@ -184,7 +202,7 @@ function configureNotificationServiceTarget(project, options) {
     'Sources',
     target.uuid,
   );
-  addSessionCryptoFramework(project, target.uuid);
+  addSessionCryptoFramework(project, target.uuid, frameworkPath);
   configureTargetBuild(project, target, settings);
   return project;
 }
@@ -227,6 +245,8 @@ function withActivityNotificationsIos(config) {
     configureNotificationServiceTarget(mod.modResults, {
       appBundleIdentifier: mod.ios?.bundleIdentifier,
       deploymentTarget: mod.ios?.deploymentTarget,
+      projectRoot: mod.modRequest.projectRoot,
+      platformProjectRoot: mod.modRequest.platformProjectRoot,
     });
     return mod;
   });

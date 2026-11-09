@@ -8,7 +8,7 @@ async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, 'utf8'));
 }
 
-test('dev Tauri config enables the MCP bridge without widening production capabilities', async () => {
+test('desktop channels enable capture presenters and isolate the dev MCP bridge', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const srcTauriDir = join(dirname(scriptsDir), 'src-tauri');
 
@@ -19,9 +19,12 @@ test('dev Tauri config enables the MCP bridge without widening production capabi
   const mcpBridgeSource = await readFile(join(srcTauriDir, 'src', 'mcp_bridge.rs'), 'utf8');
 
   const productionCapabilities = productionConfig.app?.security?.capabilities ?? [];
-  assert.deepEqual(productionCapabilities, ['default', 'overlay', 'pet_overlay']);
+  for (const capability of ['default', 'overlay', 'notch-presentation', 'pet_overlay', 'capture', 'capture-selection']) {
+    assert.ok(productionCapabilities.includes(capability), `production desktop must admit ${capability}`);
+  }
+  assert.ok(!productionCapabilities.includes('mcp-dev'));
   assert.equal(publicDevConfig.app?.withGlobalTauri, true);
-  assert.deepEqual(publicDevConfig.app?.security?.capabilities ?? [], [...productionCapabilities, 'mcp-dev']);
+  assert.deepEqual(new Set(publicDevConfig.app?.security?.capabilities ?? []), new Set([...productionCapabilities, 'mcp-dev']));
   assert.match(cargoToml, /tauri-plugin-mcp-bridge/);
   assert.match(cargoToml, /tauri-plugin-mcp-bridge = "0\.10"/);
   assert.match(libSource, /cfg\(debug_assertions\)/);

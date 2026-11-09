@@ -1,0 +1,33 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false
+  },
+  "include": [
+    "sources/components/atmosphere/**/*.ts",
+    "sources/components/atmosphere/**/*.tsx",
+    "sources/components/ui/glass/GlassSurface.tsx",
+    "sources/components/ui/glass/glassSurfacePaint.ts",
+    "sources/components/navigation/shell/AppShellMaterialFrame.tsx",
+    "sources/components/hub/HomeHero.tsx",
+    "sources/components/projects/ProjectDetailScreen.tsx",
+    "sources/components/projects/shell/ProjectShellHeader*.tsx",
+    "sources/components/sessions/new/NewSessionScreen.tsx",
+    "sources/components/sessions/new/components/NewSessionSimplePanel.tsx",
+    "sources/components/sessions/new/components/NewSessionWizard.tsx",
+    "sources/components/sessions/new/components/NewSessionComposerCard.tsx",
+    "sources/components/sessions/keyboardAvoidance/ComposerKeyboardScaffold.native.tsx",
+    "sources/components/sessions/keyboardAvoidance/ComposerKeyboardScaffold.web.tsx",
+    "sources/**/*.d.ts",
+    "expo-env.d.ts",
+    "nativewind-env.d.ts",
+    "sources/components/sessions/shell/SessionView.tsx",
+    "sources/components/appShell/workspace/WorkspaceShell.tsx",
+    "sources/components/appShell/splitCanvas/components/SplitCanvasHost.tsx",
+    "sources/components/appShell/splitCanvas/components/SplitCanvasDivider.tsx"
+  ],
+  "exclude": [
+    "sources/**/*.test.ts",
+    "sources/**/*.test.tsx"
+  ]
+}

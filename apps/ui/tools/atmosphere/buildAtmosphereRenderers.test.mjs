@@ -16,7 +16,7 @@ test('both emitted platform engines preserve the independent lab RGBA matrix', a
         const built = await buildAtmosphereRenderers({ outputDirectory: directory });
         const fixture = JSON.parse(await readFile(new URL('../../../../packages/brand/fixtures/atmosphere-parity.json', import.meta.url), 'utf8'));
         const replies = [];
-        const worker = { postMessage: (message) => replies.push(message), performance };
+        const worker = { postMessage: (message) => replies.push(message), performance, AbortController };
         worker.self = worker;
         runInNewContext(await readFile(built.workerFile, 'utf8'), worker);
         const native = { performance };

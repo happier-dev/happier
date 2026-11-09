@@ -59,6 +59,8 @@ internal class ComposerEditText(context: Context) : AppCompatEditText(context) {
   var onComposerChange: ((String, Map<String, Int>, Int) -> Unit)? = null
   var onComposerSelection: ((Map<String, Int>) -> Unit)? = null
   var onComposerKey: ((Map<String, Any>) -> Unit)? = null
+  var forwardHardwareBack = false
+  var onHardwareBack: (() -> Boolean)? = null
   var onComposerSubmit: ((Map<String, Any>) -> Unit)? = null
   var onComposerReference: ((String) -> Unit)? = null
   var onComposerDecoration: ((String) -> Unit)? = null
@@ -281,6 +283,10 @@ internal class ComposerEditText(context: Context) : AppCompatEditText(context) {
         redoEdits.clear()
       }
     } finally { applyingControlled = false }
+    // A controlled edit can change the line count exactly like a typed one (`afterTextChanged`), but
+    // TextView asks for no layout while its host sizes it exactly. The host relays this pass, whose
+    // `onLayout` reports the new content height; without it a restored draft stayed one line tall.
+    requestLayout()
   }
 
   private fun applyReferences(values: List<Map<String, Any?>>) {
@@ -540,6 +546,23 @@ internal class ComposerEditText(context: Context) : AppCompatEditText(context) {
 
   private fun emitPlainKey(key: String, submitting: Boolean = false) {
     onComposerKey?.invoke(keyPayload(key) + if (submitting) mapOf("submitting" to true) else emptyMap())
+  }
+
+  override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
+    if (keyCode == KeyEvent.KEYCODE_BACK && forwardHardwareBack && hasFocus()) {
+      val dispatcher = keyDispatcherState
+      if (dispatcher != null) {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+          if (event.repeatCount == 0) dispatcher.startTracking(event, this)
+          return true
+        }
+        if (event.action == KeyEvent.ACTION_UP) {
+          dispatcher.handleUpEvent(event)
+          if (event.isTracking && !event.isCanceled && onHardwareBack?.invoke() == true) return true
+        }
+      }
+    }
+    return super.onKeyPreIme(keyCode, event)
   }
 
   override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {

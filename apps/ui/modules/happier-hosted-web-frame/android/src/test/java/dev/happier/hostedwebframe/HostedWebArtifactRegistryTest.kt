@@ -2,7 +2,11 @@ package dev.happier.hostedwebframe
 
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.security.MessageDigestSpi
+import java.security.Provider
+import java.security.Security
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -150,7 +154,7 @@ class HostedWebArtifactRegistryTest {
   }
 
   @Test
-  fun `rejects a same-size resource mutation after registration`() {
+  fun `registers and serves verified persistent resources without hashing and accepts changed registration`() {
     val cacheRoot = Files.createTempDirectory("hosted-web-frame-test")
     try {
       val registry = HostedWebArtifactRegistry(cacheRoot.toFile())
@@ -161,11 +165,26 @@ class HostedWebArtifactRegistryTest {
       assertFalse(originalBytes.contentEquals(mutatedBytes))
       writeResource(cacheRoot, scriptStoredFileName, originalBytes)
 
-      assertTrue(registry.register(registration(token)))
-      assertEquals(200, registry.resolve(token, "/assets/app.js").status)
-      writeResource(cacheRoot, scriptStoredFileName, mutatedBytes)
+      val originalInput = registration(token)
+      val changedInput = registration(token, script = mutatedBytes)
+      withSha256Count { digestCount ->
+        assertTrue(registry.register(originalInput))
+        assertEquals("persistent registration must trust the verified store", 0, digestCount())
+        repeat(3) {
+          assertTrue(registry.resolve(token, "/assets/app.js").bytes?.contentEquals(originalBytes) == true)
+        }
+        assertEquals("serving admitted resources must not hash them again", 0, digestCount())
 
-      assertEquals(404, registry.resolve(token, "/assets/app.js").status)
+        writeResource(cacheRoot, scriptStoredFileName, mutatedBytes)
+        assertTrue(registry.resolve(token, "/assets/app.js").bytes?.contentEquals(mutatedBytes) == true)
+        assertEquals(0, digestCount())
+        assertTrue(registry.unregister(token))
+        assertEquals(404, registry.resolve(token, "/assets/app.js").status)
+        assertTrue(registry.register(changedInput))
+        assertEquals(0, digestCount())
+        assertTrue(registry.resolve(token, "/assets/app.js").bytes?.contentEquals(mutatedBytes) == true)
+        assertEquals(0, digestCount())
+      }
     } finally {
       cacheRoot.toFile().deleteRecursively()
     }
@@ -185,10 +204,16 @@ class HostedWebArtifactRegistryTest {
         digest = "sha256:${"0".repeat(64)}"
       )
 
-      assertFalse(registry.register(invalidInput))
-      assertEquals(404, registry.resolve(token, "/assets/app.js").status)
-      assertTrue(registry.register(input))
-      assertTrue(registry.resolve(token, "/assets/app.js").bytes?.contentEquals(bytes) == true)
+      withSha256Count { digestCount ->
+        assertFalse(registry.register(invalidInput))
+        assertEquals(404, registry.resolve(token, "/assets/app.js").status)
+        assertTrue(registry.register(input))
+        assertEquals("each ingress must verify its bytes once", 2, digestCount())
+        repeat(3) {
+          assertTrue(registry.resolve(token, "/assets/app.js").bytes?.contentEquals(bytes) == true)
+        }
+        assertEquals("current-load responses must reuse admitted bytes", 2, digestCount())
+      }
       assertEquals(0, cacheRoot.toFile().walkTopDown().drop(1).count())
       assertTrue(registry.unregister(token))
       assertEquals(404, registry.resolve(token, "/assets/app.js").status)
@@ -317,7 +342,35 @@ class HostedWebArtifactRegistryTest {
       .writeBytes(bytes)
   }
 
-  private fun registration(token: String, includeFallback: Boolean = false): Map<String, Any?> = mapOf(
+  private fun withSha256Count(body: (() -> Int) -> Unit) {
+    val delegateProvider = MessageDigest.getInstance("SHA-256").provider
+    val count = AtomicInteger()
+    // Instrument the platform crypto boundary while still hashing real bytes.
+    val provider = object : Provider("HostedArtifactCountingSha256", 1.0, "SHA-256 counting boundary") {
+      init {
+        putService(object : Service(this, "MessageDigest", "SHA-256", "", emptyList(), emptyMap()) {
+          override fun newInstance(constructorParameter: Any?): Any = object : MessageDigestSpi() {
+            private val delegate = MessageDigest.getInstance("SHA-256", delegateProvider)
+            override fun engineUpdate(input: Byte) = delegate.update(input)
+            override fun engineUpdate(input: ByteArray, offset: Int, len: Int) = delegate.update(input, offset, len)
+            override fun engineReset() = delegate.reset()
+            override fun engineDigest(): ByteArray {
+              count.incrementAndGet()
+              return delegate.digest()
+            }
+          }
+        })
+      }
+    }
+    Security.insertProviderAt(provider, 1)
+    try {
+      body { count.get() }
+    } finally {
+      Security.removeProvider(provider.name)
+    }
+  }
+
+  private fun registration(token: String, includeFallback: Boolean = false, script: ByteArray = scriptBytes): Map<String, Any?> = mapOf(
     "token" to token,
     "storagePartitionId" to "hpa_${"e".repeat(64)}",
     "storage" to mapOf(
@@ -331,8 +384,8 @@ class HostedWebArtifactRegistryTest {
         add(mapOf(
           "resourceId" to "r0",
           "storedFileName" to scriptStoredFileName,
-          "digest" to sha256Digest(scriptBytes),
-          "byteSize" to scriptBytes.size
+          "digest" to sha256Digest(script),
+          "byteSize" to script.size
         ))
         if (includeFallback) {
           add(mapOf(
@@ -356,7 +409,7 @@ class HostedWebArtifactRegistryTest {
             "headers" to mapOf(
               "Cache-Control" to "public, max-age=31536000, immutable",
               "Content-Security-Policy" to "default-src 'none'",
-              "ETag" to "\"${sha256Digest(scriptBytes)}\"",
+              "ETag" to "\"${sha256Digest(script)}\"",
               "X-Content-Type-Options" to "nosniff"
             )
           )

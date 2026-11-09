@@ -353,5 +353,13 @@
   "widget-group": "layout",
   "widget-ungroup": "exclude-square",
   "#alias:pane-arrangement": "square-half",
-  "cursor": "cursor"
+  "cursor": "cursor",
+  "selection": "selection",
+  "arrow-up-right": "arrow-up-right",
+  "text-t": "text-t",
+  "grid-nine": "grid-nine",
+  "pencil-circle": "pencil-circle",
+  "crop": "crop",
+  "highlighter": "highlighter",
+  "arrow-counter-clockwise": "arrow-counter-clockwise"
 }

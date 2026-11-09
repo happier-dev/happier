@@ -256,5 +256,13 @@
   "layout": "GroupItemsIcon",
   "exclude-square": "UngroupItemsIcon",
   "pane-arrangement": "LayoutRightIcon",
-  "cursor": "Cursor01Icon"
+  "cursor": "Cursor01Icon",
+  "selection": "CursorRectangleSelection01Icon",
+  "arrow-up-right": "ArrowUpRight01Icon",
+  "text-t": "TextIcon",
+  "grid-nine": "Grid3X3Icon",
+  "pencil-circle": "PencilEdit02Icon",
+  "crop": "CropIcon",
+  "highlighter": "HighlighterIcon",
+  "arrow-counter-clockwise": "UndoIcon"
 }

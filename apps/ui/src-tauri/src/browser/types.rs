@@ -132,6 +132,8 @@ pub struct DesktopBrowserOpenViewRequest {
     pub view_id: String,
     pub profile_id: String,
     pub url: String,
+    #[serde(default)]
+    pub local_preview: bool,
     /// Optional document-start init script that wires the page's injected devtools to the native
     /// IPC channel (`window.ipc.postMessage(...)`). When present and non-empty the native view is
     /// built with this script and an IPC handler that buffers the posted batch envelopes for

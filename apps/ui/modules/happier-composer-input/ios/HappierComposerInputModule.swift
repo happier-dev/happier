@@ -5,8 +5,8 @@ public final class HappierComposerInputModule: Module {
   public func definition() -> ModuleDefinition {
     Name("HappierComposerInput")
     View(HappierComposerInputView.self) {
-      Events("onChange", "onSelection", "onKeyPress", "onSubmitEditing", "onFocus", "onBlur",
-             "onContentHeightChange", "onScroll", "onReferencePress", "onDecorationPress", "onAttachmentDrop")
+      Events("onComposerChange", "onComposerSelection", "onComposerKeyPress", "onComposerSubmitEditing", "onComposerFocus", "onComposerBlur",
+             "onComposerContentHeightChange", "onComposerScroll", "onComposerReferencePress", "onComposerDecorationPress", "onComposerAttachmentDrop")
       Prop("acceptsAttachmentDrops") { (view: HappierComposerInputView, value: Bool) in view.input.acceptsAttachmentDrops = value }
       Prop("attachmentDropScope") { (view: HappierComposerInputView, value: String) in view.input.attachmentDropScope = value }
       Prop("value") { (view: HappierComposerInputView, value: String) in view.pendingValue = value }

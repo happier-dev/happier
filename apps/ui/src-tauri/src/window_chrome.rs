@@ -1117,6 +1117,38 @@ pub async fn desktop_get_window_chrome_policy(
 
 #[cfg(desktop)]
 #[tauri::command]
+pub async fn desktop_set_native_title_bar(
+    window: WebviewWindow,
+    use_native_title_bar: bool,
+) -> Result<DesktopWindowChromePolicyPayload, String> {
+    if (window.label() != MAIN_WINDOW_LABEL && !crate::app_window::uses_full_chrome(window.app_handle(), window.label()))
+        || resolve_current_desktop_window_platform() != DesktopWindowPlatform::Windows
+    {
+        return Err(
+            "native title bar preference is only available for Windows full windows".into(),
+        );
+    }
+    let state = window.state::<DesktopWindowChromeState>();
+    let policy = resolve_desktop_window_chrome_runtime_policy(
+        MAIN_WINDOW_LABEL,
+        DesktopWindowPlatform::Windows,
+        use_native_title_bar,
+    );
+    // Applying decorations may synchronously deliver resize events, whose state
+    // projection reads the preferences too. Never hold that lock across the OS call.
+    apply_desktop_window_chrome_runtime_policy(&window, policy)?;
+    for (label, other) in window.app_handle().webview_windows() {
+        if label != window.label() && (label == MAIN_WINDOW_LABEL || crate::app_window::uses_full_chrome(window.app_handle(), &label)) {
+            apply_desktop_window_chrome_runtime_policy(&other, policy)?;
+        }
+    }
+    let mut preferences = state.0.lock().map_err(|error| error.to_string())?;
+    preferences.save_applied(use_native_title_bar);
+    Ok(window_chrome_policy_payload(MAIN_WINDOW_LABEL, &preferences))
+}
+
+#[cfg(desktop)]
+#[tauri::command]
 pub async fn desktop_get_window_state(window: Window) -> Result<DesktopWindowStatePayload, String> {
     Ok(resolve_desktop_window_state_payload_for_window(&window))
 }

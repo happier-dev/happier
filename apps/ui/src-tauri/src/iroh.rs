@@ -520,8 +520,6 @@ mod tests {
     #[test]
     fn iroh_commands_are_registered_for_tauri_manifest_and_main_capability() {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let build_rs =
-            fs::read_to_string(manifest_dir.join("build.rs")).expect("build.rs should be readable");
         let capability: Value = serde_json::from_str(
             &fs::read_to_string(manifest_dir.join("capabilities/default.json"))
                 .expect("default capability should be readable"),
@@ -530,12 +528,18 @@ mod tests {
         let permissions = capability["permissions"]
             .as_array()
             .expect("default capability permissions should be an array");
+        let manifests: Value = serde_json::from_str(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/acl-manifests.json"
+        )))
+        .expect("generated ACL manifests should be valid JSON");
 
         for command in IROH_COMMANDS {
             let permission = format!("allow-{}", command.replace('_', "-"));
-            assert!(
-                build_rs.contains(&format!("\"{command}\"")),
-                "build.rs APP_TAURI_COMMANDS should include {command}",
+            assert_eq!(
+                manifests["__app-acl__"]["permissions"][&permission]["commands"]["allow"],
+                json!([command]),
+                "generated ACL permission {permission} should allow {command}",
             );
             assert!(
                 permissions.contains(&Value::String(permission.clone())),

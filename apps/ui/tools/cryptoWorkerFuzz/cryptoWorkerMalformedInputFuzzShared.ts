@@ -1,8 +1,9 @@
 import {
     decodeBase64,
-    encodeBase64,
+    encodeBase64} from '@happier-dev/protocol/crypto/base64';
+import {
     parseSerializedJsonValue,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/serializedJsonValue';
 
 export const DEFAULT_FUZZ_ITERATIONS = 128;
 export const DEFAULT_FUZZ_SEED = 0x5eedc0de;

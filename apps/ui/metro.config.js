@@ -2,6 +2,9 @@ const path = require("node:path");
 const { createArtifactAssetResponse } = require('./scripts/metroArtifactAssetResponse.cjs');
 const fs = require("node:fs");
 const { selectNativeBundleResponse } = require('./scripts/metroNativeBundleResponse.cjs');
+const { isIP } = require('node:net');
+const { createHash } = require('node:crypto');
+const { createMetroCacheStore } = require('./scripts/metroCache.cjs');
 const { protectMetroDependencyConsumption, processMetroDependencyChanges } = require('./scripts/metroDependencyConsumption.cjs');
 const { builtinModules } = require("node:module");
 const {
@@ -125,13 +128,25 @@ const config = getSentryExpoConfig(__dirname, {
   isCSSEnabled: true,
 });
 
+// METROPOOL 2026-10-25: ~377 MiB/worker, no host-admission Metro share; measured latency knee is 16; MEM's 8-worker trial lowered peaks but slowed bundles.
+config.maxWorkers = 16;
+
 // Expo's transform cache key omits the project root and app Babel config.
-// Router transforms embed the root's route directory, so partition captures
-// while retaining invalidation for the web import.meta Babel transform.
+// Stack adds its dependency/configuration lifetime; standalone Expo still
+// invalidates Babel and the shared worklets mode at this configuration owner.
 config.cacheVersion = JSON.stringify([
   `${config.cacheVersion ?? '1.0'}-web-script-import-meta-v1`,
   config.projectRoot,
+  createHash('sha256').update(fs.readFileSync(path.join(__dirname, 'babel.config.js'))).digest('hex'),
+  workletsBundleModeEnabled,
+  process.env.HAPPIER_UI_METRO_CACHE_IDENTITY ?? '',
 ]);
+
+// Retain one source revision per Metro file/options slot, not every edit ever
+// transformed. Stack supplies the current configuration generation's root.
+const metroCacheRoot = process.env.HAPPIER_UI_METRO_CACHE_ROOT
+  || path.join(require('node:os').tmpdir(), 'metro-cache-latest-v1');
+config.cacheStores = ({ FileStore }) => [createMetroCacheStore({ FileStore, root: metroCacheRoot })];
 
 // Development presentation entries share most of their dependencies. Lazy chunk
 // requests create another transitive Metro graph per entry, repeating traversal
@@ -342,9 +357,9 @@ function resolveInternalWorkspaceWatchFolders() {
 }
 
 const internalWorkspacePackages = collectInternalWorkspacePackages(path.resolve(monorepoRoot, "packages"));
-const internalWorkspaceSourceRoots = [...internalWorkspacePackages.values()]
+const internalWorkspaceSourceRoots = new Set([...internalWorkspacePackages.values()]
   // Public authoring examples also supply live UI modules with NodeNext .js imports.
-  .flatMap((packageRoot) => ["src", "examples"].map((folder) => path.resolve(packageRoot, folder)));
+  .flatMap((packageRoot) => ["src", "examples"].map((folder) => path.resolve(packageRoot, folder))));
 const internalWorkspaceWatchFolders = resolveInternalWorkspaceWatchFolders();
 const internalWorkspaceBundledPluginUiArtifactRoots = internalWorkspaceWatchFolders.flatMap((packageRoot) => {
   const packageJson = safeReadJson(path.resolve(packageRoot, "package.json"));
@@ -416,7 +431,9 @@ config.transformer.getTransformOptions = async () => ({
 // Tests anywhere in the watched workspace are never runtime bundle inputs.
 // Colocated tests can import Vitest or use dynamic imports Metro cannot transform.
 const testModuleBlockList = /\.(test|spec)\.[cm]?[jt]sx?$/;
-const projectArtifactsBlockList = /[\\/]\.project[\\/]/;
+// Match directory roots as well as descendants: the fallback watcher must
+// prune transient Cargo trees before enumerating or attaching watches.
+const projectArtifactsBlockList = /[\\/](?:\.project|(?:rust|src-tauri|runner-native-shell)[\\/](?:[^\\/]+[\\/])*target)(?:[\\/]|$)/;
 const nextBuildArtifactsBlockList = /[\\/]\.next[\\/]/;
 const hstackWebArtifactExportBlockList = /[\\/]\.expo[\\/]hstack[\\/]web-artifact-export[\\/]/;
 // Package builders and the packer publish transient siblings of canonical output trees.
@@ -435,10 +452,14 @@ const cliRunnerSnapshotsBlockList = /[\\/]apps[\\/]cli[\\/]\.runner-snapshots(?:
 // with ENOENT before it ever reaches the package's canonical source or `dist` tree.
 const typescriptPackageBuildCacheBlockList =
   /[\\/]\.happier[\\/]typescript-package-build(?:[\\/]|$)/;
-// Package-manager executable shims are never bundle inputs. Excluding them also prevents a retained
-// Metro file-map entry for a symlink from being read as a symlink after a synced install replaces it
-// with a regular wrapper script.
-const packageManagerBinBlockList = /[\\/]node_modules[\\/]\.bin(?:[\\/]|$)/;
+// Package-manager shims, task locks and Skia's postinstall extraction tree
+// are not bundle inputs. The installed Skia script creates this monorepo-
+// relative scratch path, copies its contents to the package's real libs, then
+// deletes it. Pacquet and pnpm likewise publish through temporary package
+// directories. Prune each directory itself before FallbackWatcher descends,
+// retaining the physical .pnpm store and ordinary package source trees.
+const packageManagerTransientBlockList =
+  /[\\/]node_modules[\\/](?:\.bin|\.pnpm-task-run-state-v1|packages[\\/]skia[\\/]artifacts|(?:\.pnpm[\\/])?(?:@[^\\/]+[\\/])?[^\\/]+(?:_pacquet-stage_[^\\/]+|_tmp_[0-9]+))(?:[\\/]|$)/;
 // Resolve workspace dependencies through the retained app/root trees, rather than crawling their
 // duplicate private copies. Use the discovered roots so nested plugin packages follow the same rule.
 const workspaceNodeModulesBlockList = new RegExp([
@@ -461,11 +482,15 @@ const workspaceNodeModulesBlockList = new RegExp([
 const nestedDependencyNodeModulesBlockList =
   /[\\/]node_modules[\\/](?!react-native[\\/]node_modules[\\/]@react-native[\\/]|@pierre[\\/]diffs[\\/]node_modules[\\/]@pierre(?:[\\/]theming(?:[\\/]|$)|$))(?:@[^\\/]+[\\/])?[^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
-  config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testModuleBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, repositoryMetadataBlockList, cliRunnerSnapshotsBlockList, typescriptPackageBuildCacheBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList]
-  : existingBlockList
-    ? [existingBlockList, testModuleBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, repositoryMetadataBlockList, cliRunnerSnapshotsBlockList, typescriptPackageBuildCacheBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList]
-    : [testModuleBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, hstackWebArtifactExportBlockList, packTransientPublicationBlockList, repositoryMetadataBlockList, cliRunnerSnapshotsBlockList, typescriptPackageBuildCacheBlockList, packageManagerBinBlockList, workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList, ...internalWorkspaceDistBlockList];
+const inheritedBlockList = Array.isArray(existingBlockList) ? existingBlockList : existingBlockList ? [existingBlockList] : [];
+config.resolver.blockList = [
+  ...inheritedBlockList,
+  testModuleBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList,
+  hstackWebArtifactExportBlockList, packTransientPublicationBlockList, repositoryMetadataBlockList,
+  cliRunnerSnapshotsBlockList, typescriptPackageBuildCacheBlockList, packageManagerTransientBlockList,
+  workspaceNodeModulesBlockList, nestedDependencyNodeModulesBlockList,
+  ...internalWorkspaceDistBlockList,
+];
 
 addInternalWorkspaceWatchFolders();
 
@@ -758,10 +783,14 @@ function resolvePackageSourceExportTarget(entry, platform) {
 
 function isInternalWorkspaceSourcePath(filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) return false;
-  const absoluteFilePath = path.resolve(filePath);
-  return internalWorkspaceSourceRoots.some(
-    (sourceRoot) => absoluteFilePath === sourceRoot || absoluteFilePath.startsWith(`${sourceRoot}${path.sep}`),
-  );
+  // Visit this path's ancestors instead of scanning every workspace source root.
+  let candidate = path.resolve(filePath);
+  while (true) {
+    if (internalWorkspaceSourceRoots.has(candidate)) return true;
+    const parent = path.dirname(candidate);
+    if (parent === candidate) return false;
+    candidate = parent;
+  }
 }
 
 function resolveExistingSourceCandidate(basePath, blockList) {
@@ -781,9 +810,9 @@ function resolveExistingSourceCandidate(basePath, blockList) {
 }
 
 function resolveInternalWorkspaceSourceImport(candidate, blockList) {
-  if (!isInternalWorkspaceSourcePath(candidate)) return null;
   const ext = path.extname(candidate);
   if (ext !== ".js" && ext !== ".mjs" && ext !== ".cjs") return null;
+  if (!isInternalWorkspaceSourcePath(candidate)) return null;
   const basePath = candidate.slice(0, -ext.length);
   return resolveExistingSourceCandidate(basePath, blockList);
 }
@@ -834,7 +863,7 @@ function resolveBundledPluginUiArtifactAsset(moduleName) {
   }
 }
 
-function resolveInternalWorkspacePackageExport(moduleName, blockList, platform) {
+function resolveInternalWorkspacePackageExport(moduleName, blockList, platform, context) {
   if (typeof moduleName !== "string" || !moduleName.startsWith("@happier-dev/")) return null;
 
   const parts = moduleName.split("/");
@@ -844,9 +873,11 @@ function resolveInternalWorkspacePackageExport(moduleName, blockList, platform) 
   const packageRoot = internalWorkspacePackages.get(packageName);
   if (!packageRoot) return null;
   const packageJsonPath = path.resolve(packageRoot, "package.json");
-  if (!fs.existsSync(packageJsonPath)) return null;
-
-  const packageJson = safeReadJson(packageJsonPath);
+  // Metro owns manifest caching and invalidates it on file-map changes.
+  // Standalone resolver callers without that context keep uncached reads.
+  const packageJson = typeof context?.getPackage === "function"
+    ? context.getPackage(packageJsonPath)
+    : safeReadJson(packageJsonPath);
   if (!packageJson || typeof packageJson !== "object") return null;
   const exportKey = subpath.length > 0 ? `./${subpath}` : ".";
   const exportEntry = packageJson.exports?.[exportKey] ?? (subpath.length === 0 ? packageJson.main : null);
@@ -1015,6 +1046,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     resolvedModuleName,
     config.resolver.blockList,
     platform,
+    context,
   );
   if (internalWorkspacePackagePath) {
     return { type: "sourceFile", filePath: internalWorkspacePackagePath };
@@ -1238,6 +1270,31 @@ config.server.enhanceMiddleware = (middleware, metroServer) => {
   const artifactAssetResponse = createArtifactAssetResponse(enhanced, artifactOnlyAssetExts);
   return (req, res, next) => {
     selectNativeBundleResponse(req);
+    // Remove this diagnostic once the caller of platform-less bundle requests is fixed.
+    const requestUrl = req.url ?? '/';
+    if (requestUrl.split('?')[0].endsWith('.bundle')) {
+      let url;
+      try { url = new URL(requestUrl, 'http://localhost'); } catch { /* Diagnostics must not reject malformed URLs. */ }
+      if (url?.pathname.endsWith('.bundle') && !url.searchParams.has('platform')) {
+        const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : '';
+        const userAgentFamily = /\b(?:Mozilla|Chrome|Safari|Firefox|Edg)\//i.test(userAgent) ? 'browser'
+          : /^curl(?:\/|\s|$)/i.test(userAgent) ? 'curl'
+            : /\b(?:node(?:\.js)?|undici)(?:\/|\s|$)/i.test(userAgent) ? 'node' : 'other';
+        const forwarded = typeof req.headers['x-forwarded-for'] === 'string'
+          ? req.headers['x-forwarded-for'].split(',')[0].trim() : '';
+        let callerHost = isIP(forwarded) ? forwarded : null;
+        if (!callerHost && typeof req.headers.referer === 'string') {
+          try { callerHost = new URL(req.headers.referer).host || null; } catch { /* No usable referer host. */ }
+        }
+        const readFlag = name => {
+          const value = url.searchParams.get(name);
+          return value === 'true' || value === '1' ? true : value === 'false' || value === '0' ? false : null;
+        };
+        console.info('[metro-request-attribution] ' + JSON.stringify({
+          path: url.pathname, userAgentFamily, callerHost, lazy: readFlag('lazy'), modulesOnly: readFlag('modulesOnly'),
+        }));
+      }
+    }
     return artifactAssetResponse(req, res, next);
   };
 };

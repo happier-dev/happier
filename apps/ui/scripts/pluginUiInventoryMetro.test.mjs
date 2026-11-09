@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import fs from 'node:fs';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -8,6 +9,120 @@ import test from 'node:test';
 
 const uiRoot = fileURLToPath(new URL('..', import.meta.url));
 const require = createRequire(join(uiRoot, 'package.json'));
+
+test('Metro crawl and watch exclude installer and QA scratch without invalidating bundles', async (t) => {
+  const fixture = await mkdtemp(join(tmpdir(), 'happier-metro-pnpm-state-'));
+  let graph;
+  try {
+    const projectRoot = join(fixture, 'apps/ui');
+    const dependencies = join(fixture, 'node_modules');
+    const state = join(dependencies, '.pnpm-task-run-state-v1');
+    const lock = join(state, 'start.lock', 'owner.js');
+    const ordinary = join(dependencies, '.pnpm', 'ordinary', 'index.js');
+    const skia = join(dependencies, 'packages/skia/artifacts/skia-android-arm-64');
+    const qa = join(projectRoot, '.project/qa');
+    const rustTarget = join(fixture, 'packages/iroh-native/rust/target');
+    const pacquet = join(dependencies, 'expo-asset_pacquet-stage_3276813_1/tools');
+    const scopedPacquet = join(dependencies, '@scope/package_pacquet-stage_3276813_2');
+    const pnpmStage = join(dependencies, '.pnpm/ordinary_tmp_3276813');
+    const transientRoots = [rustTarget, dirname(pacquet), scopedPacquet, pnpmStage];
+    const excluded = [lock, join(skia, 'install.js'), join(qa, 'probe.js'),
+      join(rustTarget, 'source-runtime/digest/release/deps/rustc-transient/index.js'),
+      join(pacquet, 'index.js'), join(scopedPacquet, 'index.js'), join(pnpmStage, 'index.js')];
+    const source = join(projectRoot, 'index.js');
+    await mkdir(projectRoot, { recursive: true });
+    await mkdir(dirname(lock), { recursive: true });
+    await mkdir(dirname(ordinary), { recursive: true });
+    await writeFile(lock, 'transient lock contents');
+    await writeFile(ordinary, 'module.exports = "ordinary dependency";');
+    await writeFile(source, 'module.exports = 1;');
+    for (const file of excluded.slice(1)) {
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, 'module.exports = "scratch";');
+    }
+    delete require.cache[require.resolve(join(uiRoot, 'metro.config.js'))];
+    // Evaluate the real CommonJS configuration at its filesystem boundary so
+    // the existing private predicate is exercised without a production test export.
+    const configPath = join(uiRoot, 'metro.config.js');
+    const { config, isFileBlockedByMetro } = new Function('require', 'module', '__dirname', '__filename',
+      `${await readFile(configPath, 'utf8')}\nreturn { config: module.exports, isFileBlockedByMetro };`)(
+      require, { exports: {} }, uiRoot, configPath);
+    config.projectRoot = projectRoot;
+    config.watchFolders = [projectRoot, dependencies, join(fixture, 'packages')];
+    config.resolver.useWatchman = false;
+    config.maxWorkers = 1;
+    config.fileMapCacheDirectory = join(fixture, 'cache');
+    await mkdir(config.fileMapCacheDirectory);
+    config.reporter = { update() {} };
+    // This is Metro's actual config-to-crawler owner, not a resolver predicate.
+    const createFileMap = require('metro/private/node-haste/DependencyGraph/createFileMap').default;
+    const { fileMap } = createFileMap(config, { watch: true });
+    graph = fileMap;
+    const watchedPaths = [];
+    const watch = fs.watch;
+    t.mock.method(fs, 'watch', (filePath, ...args) => {
+      watchedPaths.push(String(filePath));
+      return watch(filePath, ...args);
+    });
+    const { fileSystem } = await fileMap.build();
+    for (const file of excluded) {
+      assert.equal(fileSystem.exists(file), false, `${file} must be absent from the crawl`);
+    }
+    assert.equal(fileSystem.exists(ordinary), true, 'the physical dependency store remains a bundle input');
+    assert.equal(fileSystem.exists(source), true, 'the source positive control must be watched before mutation');
+    const blockList = config.resolver.blockList;
+    const ignored = candidate => isFileBlockedByMetro(blockList, candidate);
+    for (const cargoRoot of ['packages/iroh-native/rust', 'packages/ssh-native/rust/happier-ssh-native',
+      'packages/desktop-native/rust/happier-desktop-native', 'apps/cli/runner-native-shell',
+      'apps/ui/src-tauri', 'apps/ui/src-tauri/tests/menu_bar_harness']) {
+      const target = join(fixture, cargoRoot, 'target');
+      assert.equal(ignored(target), true, 'every current Cargo target directory must be pruned');
+      assert.equal(ignored(target.replaceAll('/', '\\')), true, 'Cargo roots must also be pruned on Windows');
+    }
+    for (const candidate of [state, dirname(lock), lock, dirname(skia), skia, qa, rustTarget,
+      dirname(pacquet), pacquet, scopedPacquet, pnpmStage, ...excluded]) {
+      assert.equal(ignored(candidate), true, 'the state directory itself must be pruned before recursion');
+      assert.equal(ignored(candidate.replaceAll('/', '\\')), true, 'Windows crawl boundaries must also be pruned');
+    }
+    assert.equal(ignored(join(dependencies, '.pnpm-task-run-state-v1-package', 'index.js')), false,
+      'a sibling package with a similar prefix must remain resolvable');
+    assert.equal(ignored(join(dependencies, '@shopify/react-native-skia/lib/module/index.js')), false);
+    assert.equal(ignored(join(dependencies, 'packages/skia/artifacts-other/index.js')), false);
+    assert.equal(ignored(join(projectRoot, '.happier-other/index.js')), false);
+    assert.equal(ignored(join(fixture, 'packages/iroh-native/rust/target-platform/src/index.js')), false);
+    assert.equal(ignored(join(dependencies, 'expo-asset/tools/index.js')), false);
+    assert.equal(ignored(join(dependencies, '@scope/package/index.js')), false);
+    assert.equal(ignored(join(fixture, 'packages/protocol/src/browser/target/index.ts')), false,
+      'an authored target domain outside Rust projects remains a bundle input');
+    assert.equal(ignored(join(fixture, 'home/.happier/stacks/dev/plugin-ui/artifacts/entry.cjs.bundle')), false,
+      'retained consumer-owned Plugin UI assets outside the checkout remain hashable');
+
+    let scratchInvalidations = 0;
+    const sourceChanged = new Promise((resolve, reject) => {
+      t.signal.addEventListener('abort', () => reject(t.signal.reason), { once: true });
+      fileMap.on('change', ({ eventsQueue }) => {
+        scratchInvalidations += eventsQueue.filter(({ filePath }) => excluded.includes(filePath)).length;
+        if (eventsQueue.some(({ filePath }) => filePath === source)) resolve();
+      });
+    });
+    // A scale-shaped burst in watched roots must produce no scratch-driven
+    // invalidations. A real source edit is the positive watcher control.
+    for (let revision = 0; revision < 100; revision++) {
+      await Promise.all(excluded.map(file => writeFile(file, `module.exports = ${revision};`)));
+    }
+    await writeFile(source, 'module.exports = 2;');
+    await sourceChanged;
+    assert.equal(scratchInvalidations, 0);
+    assert.ok(watchedPaths.includes(projectRoot), 'the real fallback watcher must attach the source root');
+    const transientWatches = watchedPaths.filter(candidate => transientRoots.some(root => candidate === root || candidate.startsWith(root + '/'))).length;
+    assert.equal(transientWatches, 0, 'blocked directories must be pruned before fs.watch attachment');
+    console.log(JSON.stringify({ scratchWrites: excluded.length * 100, scratchInvalidations, transientWatches, sourceIndexed: fileSystem.exists(source) }));
+  } finally {
+    if (graph) await graph.end();
+    delete require.cache[require.resolve(join(uiRoot, 'metro.config.js'))];
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
 
 test('Metro indexes retained private inventory assets before and after its initial crawl', async (t) => {
   const fixture = await mkdtemp(join(tmpdir(), 'happier-plugin-ui-filemap-'));

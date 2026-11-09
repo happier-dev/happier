@@ -50,6 +50,16 @@
     "active": true,
     "createUpdaterArtifacts": false,
     "targets": "all",
+    "windows": {
+      "nsis": {
+        "template": "installer/windows/installer.nsi",
+        "installerHooks": "installer/windows/uninstall-hooks.nsh"
+      },
+      "wix": {
+        "fragmentPaths": ["installer/windows/desktop-uninstall.wxs"],
+        "componentGroupRefs": ["HappierDesktopCleanupIntegration"]
+      }
+    },
     "linux": {
       "deb": { "recommends": ["libgtk-layer-shell0"] }
     },

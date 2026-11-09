@@ -2,7 +2,7 @@
   "name": "@happier-dev/app",
   "main": "index.ts",
   "version": "0.2.10",
-  "happierExpoRuntimeVersion": "0.3.2-native",
+  "happierExpoRuntimeVersion": "0.3.4-native",
   "happier": {
     "installFreshnessInputs": [
       "app.config.js",
@@ -34,7 +34,7 @@
     "submit": "eas submit --platform ios",
     "web": "node ./scripts/ensureWorkspacePackagesBuilt.mjs --expo start --web",
     "test": "../stack/bin/hstack-exec --script=test:local",
-    "test:local": "pnpm --silent run test:unit:local && pnpm --silent run test:built-in-prompts && pnpm --silent run test:web-cli-common-boundary:local && node --test ./scripts/metroChunkSerialization.test.mjs ./scripts/metroNativeBundleResponse.test.mjs ./scripts/deriveTypecheckProjects.test.mjs ./scripts/tauri_deep_link_config.test.mjs ./scripts/icons/registryMetroGraph.test.mjs ./scripts/navigationPackageContract.test.mjs ./scripts/expoRouterHistoryGuard.test.mjs ./scripts/webCapabilityReferrerPolicy.test.mjs ./scripts/nativeModulesPackageContract.test.mjs ./scripts/installFreshnessInputs.contract.test.mjs ./tools/postinstall/metroFailedGraphCleanup.test.mjs ./tools/postinstall/reactNativeUnistylesWebOrientation.test.mjs ./tools/postinstall/reactNativeUnistylesWebCss.test.mjs ./tools/postinstall/reactNativeUnistylesWebLifecycle.test.mjs ./tools/postinstall/reactNativeUnistylesWebTheme.test.mjs ./tools/postinstall/reactNativeGlogModuleMap.test.mjs ./tools/postinstall/patchFailure.test.mjs ./tools/postinstall/verifyNativePatchCompilation.test.mjs ./tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.test.mjs ./tools/postinstall/verifyVendoredLegendPatchMarkers.test.mjs ./tools/postinstall/verifyVendoredReanimatedPatchMarkers.test.mjs ./tools/postinstall/workletsRemoteFunctionLifetime.test.mjs ./plugins/withTerminalNativeBuildInputs.test.mjs ./plugins/withTerminalNativeGhosttyKit.test.mjs ./modules/happier-activity-notifications/tests/androidPlugin.test.mjs ./modules/happier-activity-notifications/tests/iosPlugin.test.mjs ./modules/happier-activity-notifications/tests/nativeAlertContract.test.mjs ./modules/happier-activity-notifications/tests/nativeAlertTurnIdentityJvm.test.mjs ./scripts/runVitestShards.test.mjs ./scripts/generateBundledPluginUiArtifacts.test.mjs ./scripts/ensureWorkspacePackagesBuilt.test.mjs ./scripts/prepareTauriSidecar.test.mjs ./scripts/runTauriBeforeCommand.test.mjs ./scripts/syncPerformanceTelemetryReport.test.mjs ./scripts/tauriMcpQa.test.mjs ./scripts/tauriMcpQa_exitTracker.test.mjs ./scripts/tauri_package_scripts.test.mjs ./scripts/perf/agentBrowserUiPerfAudit.test.mjs ./scripts/perf/webMemoryProfile.test.mjs ./scripts/qa/tauriDesktopSidebarChromeMcpQa.test.mjs ./scripts/qa/tauriPersonalHomeMcpQa.test.mjs ./scripts/qa/tauriDriverSession.test.mjs ./scripts/qa/tauriHostedArtifactPluginUiMcpQa.test.mjs ./scripts/qa/tauriMcpCli.test.mjs ./tools/resolveUiPostinstallTasks.test.mjs ./tools/password/buildPasswordKdfWorker.test.mjs ./tools/atmosphere/buildAtmosphereRenderers.test.mjs ./tools/iroh/browserIrohAssetPackaging.test.mjs ./tools/iroh/productionCarrierPageSeam.test.mjs ./tools/iroh/realHomeVerticalJourney.test.mjs",
+    "test:local": "pnpm --silent run test:unit:local && pnpm --silent run test:built-in-prompts && pnpm --silent run test:web-cli-common-boundary:local && node --test ./scripts/metroChunkSerialization.test.mjs ./scripts/metroWorkletsHmr.test.mjs ./scripts/metroNativeBundleResponse.test.mjs ./scripts/deriveTypecheckProjects.test.mjs ./scripts/tauri_deep_link_config.test.mjs ./scripts/icons/registryMetroGraph.test.mjs ./scripts/navigationPackageContract.test.mjs ./scripts/expoRouterHistoryGuard.test.mjs ./scripts/webCapabilityReferrerPolicy.test.mjs ./scripts/nativeModulesPackageContract.test.mjs ./scripts/installFreshnessInputs.contract.test.mjs ./tools/postinstall/metroFailedGraphCleanup.test.mjs ./tools/postinstall/reactNativeUnistylesWebOrientation.test.mjs ./tools/postinstall/reactNativeUnistylesWebCss.test.mjs ./tools/postinstall/reactNativeUnistylesWebLifecycle.test.mjs ./tools/postinstall/reactNativeUnistylesWebTheme.test.mjs ./tools/postinstall/reactNativeGlogModuleMap.test.mjs ./tools/postinstall/patchFailure.test.mjs ./tools/postinstall/verifyNativePatchCompilation.test.mjs ./tools/postinstall/expoUpdatesSceneStartup.test.mjs ./tools/plugins/expoWidgetsDeploymentTarget.test.mjs ./tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.test.mjs ./tools/postinstall/verifyVendoredLegendPatchMarkers.test.mjs ./tools/postinstall/verifyVendoredReanimatedPatchMarkers.test.mjs ./tools/postinstall/workletsRemoteFunctionLifetime.test.mjs ./plugins/withTerminalNativeBuildInputs.test.mjs ./plugins/withTerminalNativeGhosttyKit.test.mjs ./modules/happier-activity-notifications/tests/androidPlugin.test.mjs ./modules/happier-activity-notifications/tests/iosPlugin.test.mjs ./modules/happier-activity-notifications/tests/nativeAlertContract.test.mjs ./modules/happier-activity-notifications/tests/nativeAlertTurnIdentityJvm.test.mjs ./scripts/runVitestShards.test.mjs ./scripts/generateBundledPluginUiArtifacts.test.mjs ./scripts/ensureWorkspacePackagesBuilt.test.mjs ./scripts/prepareTauriSidecar.test.mjs ./scripts/runTauriBeforeCommand.test.mjs ./scripts/syncPerformanceTelemetryReport.test.mjs ./scripts/tauriMcpQa.test.mjs ./scripts/tauriMcpQa_exitTracker.test.mjs ./scripts/tauri_package_scripts.test.mjs ./scripts/perf/agentBrowserUiPerfAudit.test.mjs ./scripts/perf/webMemoryProfile.test.mjs ./scripts/qa/tauriDesktopSidebarChromeMcpQa.test.mjs ./scripts/qa/tauriPersonalHomeMcpQa.test.mjs ./scripts/qa/tauriDriverSession.test.mjs ./scripts/qa/tauriHostedArtifactPluginUiMcpQa.test.mjs ./scripts/qa/tauriMcpCli.test.mjs ./scripts/qa/hitAreaProbe.test.mjs ./tools/resolveUiPostinstallTasks.test.mjs ./tools/password/buildPasswordKdfWorker.test.mjs ./tools/atmosphere/buildAtmosphereRenderers.test.mjs ./tools/iroh/browserIrohAssetPackaging.test.mjs ./tools/iroh/productionCarrierPageSeam.test.mjs ./tools/iroh/realHomeVerticalJourney.test.mjs",
     "test:unit": "../stack/bin/hstack-exec --script=test:unit:local",
     "test:unit:local": "node ./scripts/runVitestShards.mjs --config vitest.config.ts",
     "test:performance-counts": "../stack/bin/hstack-exec --script=test:unit:local sources/dev/testkit/performance/counts.test.tsx sources/sync/store/domains/pending.publication.test.ts sources/hooks/session/sessionListRuntimeClock.test.tsx sources/sync/store/hooks.useSessionMessages.test.tsx",
@@ -47,6 +47,8 @@
     "test:integration:legend-fabric:local": "vitest run --config vitest.legend-fabric.config.ts",
     "test:integration:legend-native": "../stack/bin/hstack-exec --script=test:integration:legend-native:local",
     "test:integration:legend-native:local": "vitest run --config vitest.legend-native.config.ts",
+    "test:notifications:ios-native": "../stack/bin/hstack-exec --script=test:notifications:ios-native:local",
+    "test:notifications:ios-native:local": "node --test ./tools/postinstall/notificationResponseCompletion.test.mjs",
     "test:watch": "vitest",
     "test:icons:metro": "../stack/bin/hstack-exec -- node --input-type=module -e \"await import('./scripts/icons/registryMetroGraph.test.mjs')\"",
     "test:sync:metro": "../stack/bin/hstack-exec -- node --test ./scripts/syncLazyMetroGraph.test.mjs",
@@ -183,6 +185,7 @@
     "@happier-dev/plugins-gemini": "0.0.0",
     "@happier-dev/plugins-inspector": "0.0.0",
     "@happier-dev/plugins-kiro": "0.0.0",
+    "@happier-dev/plugins-machine-agent37": "0.0.0",
     "@happier-dev/plugins-machine-boat": "0.0.0",
     "@happier-dev/plugins-machine-crabbox": "0.0.0",
     "@happier-dev/plugins-machine-daytona": "0.0.0",
@@ -192,6 +195,7 @@
     "@happier-dev/plugins-machine-freestyle": "0.0.0",
     "@happier-dev/plugins-machine-fly": "0.0.0",
     "@happier-dev/plugins-machine-hetzner": "0.0.0",
+    "@happier-dev/plugins-machine-maritime": "0.0.0",
     "@happier-dev/plugins-machine-railway": "0.0.0",
     "@happier-dev/plugins-machine-services": "0.0.0",
     "@happier-dev/plugins-machine-superserve": "0.0.0",
@@ -208,6 +212,7 @@
     "@happier-dev/plugins-triage": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
+    "@happier-dev/triage-protocol": "0.0.0",
     "@happier-dev/sherpa-native": "0.0.0",
     "@happier-dev/ssh-native": "0.0.0",
     "@happier-dev/sync-client": "0.0.0",
@@ -386,6 +391,15 @@
     "socket.io": "^4.8.1",
     "tsx": "^4.20.4",
     "typescript": "5.9.3"
+  },
+  "expo": {
+    "autolinking": {
+      "ios": {
+        "buildFromSource": [
+          "expo-notifications"
+        ]
+      }
+    }
   },
   "private": true
 }

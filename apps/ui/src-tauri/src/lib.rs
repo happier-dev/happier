@@ -20,6 +20,8 @@ mod dock_icon;
 #[cfg(desktop)]
 mod desktop_exit_policy;
 #[cfg(desktop)]
+mod desktop_startup;
+#[cfg(desktop)]
 mod menu;
 #[cfg(desktop)]
 mod menu_bar;
@@ -63,6 +65,9 @@ mod web_runtime_config;
 mod desktop_boot_credentials;
 
 #[cfg(desktop)]
+mod desktop_notifications;
+
+#[cfg(desktop)]
 mod iroh;
 
 #[cfg(any(desktop, test))]
@@ -85,14 +90,48 @@ mod linux_webkit_env;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
     #[cfg(target_os = "linux")]
     linux_webkit_env::apply_before_gtk_init();
+
+    #[cfg(desktop)]
+    if std::env::args_os().skip(1).any(|arg| arg == "--uninstall-desktop-components") {
+        #[cfg(target_os = "windows")]
+        if let Err(error) = single_instance::ensure_no_running_desktop(&context.config().identifier) {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        // No single-instance forwarding, webviews, tray, or setup acquisition.
+        // Windows installers wait for this process before removing its bundled helper.
+        let result = tauri::Builder::default()
+            // Register the existing login-item adapter so cleanup can remove this app's
+            // registration. Registering the adapter never enables a login item.
+            .setup(|app| {
+                autostart::register(app)?;
+                Ok(())
+            })
+            .build(context)
+            .map_err(|error| format!("Unable to initialize desktop cleanup: {error}"))
+            .and_then(|app| system_tasks::uninstall_desktop_components(app.handle()));
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
+
+    #[cfg(desktop)]
+    desktop_notifications::prepare();
 
     #[cfg(target_os = "macos")]
     happier_desktop_native::capture::macos::initialize_frontmost_tracking();
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        #[cfg(target_os = "windows")]
+        for argument in &args {
+            desktop_notifications::handle_activation(app, argument);
+        }
         menu_bar::on_second_launch(app, args);
     }));
     #[cfg(desktop)]
@@ -102,6 +141,13 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init());
+
+    #[cfg(desktop)]
+    {
+        builder = builder.append_invoke_initialization_script(
+            browser::desktop_browser_availability_init_script(),
+        );
+    }
 
     #[cfg(desktop)]
     if let Some(init_script) =
@@ -151,6 +197,7 @@ pub fn run() {
             .manage(activity_overlay::ActivityOverlayState::default())
             .manage(pet_overlay::DesktopPetOverlayState::default())
             .manage(browser::DesktopBrowserState::default())
+            .manage(desktop_notifications::DesktopNotificationState::default())
             .manage(hosted_artifact_desktop::DesktopHostedArtifactState::default())
             .invoke_handler(with_desktop_commands!(desktop_invoke_handler));
     }
@@ -165,24 +212,57 @@ pub fn run() {
             desktop_lifecycle::install_native_quit(app.handle());
             #[cfg(desktop)]
             {
-                system_tasks::set_desktop_bundle_id(&app.config().identifier);
-                autostart::register(app)?;
-                tray::register(app)?;
+                system_tasks::set_desktop_context(app.handle())?;
                 menu_bar::prepare_launch(app.handle());
-                menu_bar::register(app.handle());
-                window_chrome::register(app)?;
-                capture::shortcuts::install(app.handle());
-                capture::triggers::install_deep_links(app.handle());
-                if !menu_bar::is_active(app.handle()) {
-                    dock_icon::apply();
+                let unavailable = desktop_startup::setup(
+                    tray::model::MenuPlatform::current(),
+                    menu_bar::launched_in_menu_bar_mode(app.handle()),
+                    cfg!(debug_assertions),
+                    |step| match step {
+                        desktop_startup::Step::Autostart => autostart::register(app),
+                        desktop_startup::Step::Tray => tray::register(app),
+                        desktop_startup::Step::MainWindow => {
+                            menu_bar::register(app.handle());
+                            window_chrome::register(app)?;
+                            capture::shortcuts::install(app.handle());
+                            capture::triggers::install_deep_links(app.handle());
+                            if !menu_bar::is_active(app.handle()) {
+                                dock_icon::apply();
+                            }
+                            Ok(())
+                        }
+                        desktop_startup::Step::ActivityOverlay => activity_overlay::register(app),
+                        desktop_startup::Step::Updater => app.handle()
+                            .plugin(tauri_plugin_updater::Builder::new().build()),
+                        desktop_startup::Step::DebugLog => app.handle().plugin(
+                            tauri_plugin_log::Builder::default()
+                                .level(log::LevelFilter::Info)
+                                .build(),
+                        ),
+                    },
+                )?;
+                for failure in &unavailable {
+                    log::warn!("desktop {:?} unavailable: {}", failure.capability, failure.reason);
+                    if failure.capability == desktop_startup::Step::Updater {
+                        use tauri::Manager;
+                        app.state::<app_updates::PendingUpdate>()
+                            .record_setup_failure(failure.reason.clone());
+                    }
                 }
-                activity_overlay::register(app)?;
+                if !unavailable.is_empty() {
+                    tray::update_model(app.handle(), |model| {
+                        model.notice = Some(
+                            unavailable.iter()
+                                .map(|failure| failure.reason.clone())
+                                .collect::<Vec<_>>()
+                                .join("; "),
+                        );
+                    });
+                }
+                desktop_notifications::install(app.handle());
             }
 
-            #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
-
+            #[cfg(not(desktop))]
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -192,7 +272,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             #[cfg(desktop)]
@@ -263,6 +343,7 @@ mod app_updates {
 
     #[derive(Default)]
     pub struct PendingUpdateState {
+        setup_error: Option<String>,
         /// The update the last check offered.
         offered: Option<Update>,
         /// The verified package for `offered`, kept until it is installed.
@@ -271,6 +352,14 @@ mod app_updates {
 
     #[derive(Default)]
     pub struct PendingUpdate(pub Mutex<PendingUpdateState>);
+
+    impl PendingUpdate {
+        pub(super) fn record_setup_failure(&self, reason: String) {
+            if let Ok(mut state) = self.0.lock() {
+                state.setup_error = Some(reason);
+            }
+        }
+    }
 
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -308,6 +397,10 @@ mod app_updates {
         app: AppHandle,
         pending_update: State<'_, PendingUpdate>,
     ) -> Result<Option<UpdateMetadata>, String> {
+        // UpdaterExt assumes successful plugin registration and panics on missing state.
+        if let Some(reason) = pending_update.0.lock().map_err(|_| poisoned())?.setup_error.clone() {
+            return Err(reason);
+        }
         let update = app
             .updater()
             .map_err(|e| e.to_string())?
@@ -446,3 +539,6 @@ mod app_updates {
 
 #[cfg(desktop)]
 mod desktop_lifecycle;
+
+#[cfg(any(target_os = "windows", test))]
+mod single_instance;

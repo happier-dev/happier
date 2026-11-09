@@ -1,16 +1,23 @@
 // @happier-test-preparation source
 // Preparation imports authored SDK TypeScript, as the source child does.
-// Preparation imports authored SDK TypeScript, as the source child does.
 import '../../../packages/cli-common/registerSourceRuntime.mjs';
+import './bundledPluginUiMembership.test.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import fs, { writeFileSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
+import childProcess from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { withPatchedProcessEnv } from '../../stack/scripts/testkit/core/env_scope.mjs';
+import { readBundledPluginUiDeclarationSource } from './bundledPluginUiDeclarationSource.mjs';
 
 import {
   computePluginUiArtifactFileSetSha256DigestV1,
@@ -20,6 +27,8 @@ import {
 import {
   generateBundledPluginUiArtifacts,
   listBundledPluginUiArtifactExports,
+  reapBundledPluginUiArtifactStore,
+  retainBundledPluginUiArtifactsInventory,
   resolveBundledPluginUiArtifactsInputPaths,
   resolveBundledPluginUiArtifactsOutputPath,
   resolveBundledPluginUiArtifactsRetainedRoots,
@@ -27,6 +36,135 @@ import {
 
 const execFileAsync = promisify(execFile);
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+
+test('Metro resolves freshly published retained declarations and assets on native and web', { timeout: 15000 }, async t => {
+  const fixture = await createFixture();
+  let graph;
+  t.after(async () => {
+    if (graph) await graph.end();
+    await rm(fixture.repoRoot, { recursive: true, force: true });
+  });
+  const consumerRoot = join(fixture.repoRoot, 'consumer');
+  const inventoryPath = join(consumerRoot, 'inventory.js');
+  await mkdir(consumerRoot);
+  withPatchedProcessEnv(t, { HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath });
+  const require = createRequire(join(packageRoot, 'package.json'));
+  const configPath = join(packageRoot, 'metro.config.js');
+  delete require.cache[require.resolve(configPath)];
+  t.after(() => { delete require.cache[require.resolve(configPath)]; });
+  const config = require(configPath);
+  config.projectRoot = join(fixture.repoRoot, 'apps/ui');
+  config.watchFolders = [consumerRoot];
+  config.resolver.useWatchman = false;
+  config.maxWorkers = 1;
+  config.fileMapCacheDirectory = join(fixture.repoRoot, 'cache');
+  await mkdir(config.fileMapCacheDirectory);
+  config.reporter = { update() {} };
+  const Graph = require('metro/private/node-haste/DependencyGraph').default;
+  graph = new Graph(config, { watch: true });
+  await graph.ready();
+  let paths;
+  let check;
+  const indexed = new Promise((resolveIndexed, reject) => {
+    check = () => { if (paths?.every(path => graph.doesFileExist(path))) resolveIndexed(); };
+    graph.on('change', check);
+    t.after(() => graph.off('change', check));
+    t.signal.addEventListener('abort', () => reject(new Error('published inventory inputs never entered Metro file map')), { once: true });
+  });
+  await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot, outputPath: inventoryPath,
+    artifactRoots: { fixture: fixture.artifactRoot }, artifactStoreDir: join(consumerRoot, 'artifacts') });
+  paths = resolveBundledPluginUiArtifactsInputPaths(inventoryPath).slice(1);
+  assert.ok(paths.some(path => path.endsWith('/declaration.json.bundle')));
+  check();
+  await indexed;
+  for (const platform of ['ios', 'android', 'web']) {
+    for (const asset of paths) {
+      const resolved = graph.resolveDependency(inventoryPath, {
+        name: asset, data: { key: asset, asyncType: null, isESMImport: false, locs: [] },
+      }, platform, { dev: true });
+      assert.equal(resolved.filePath, asset);
+      assert.ok((await graph.getOrComputeSha1(asset)).sha1);
+    }
+  }
+});
+
+test('Metro bundle admission serves last-good during source preparation and ignores unrelated workspace changes', async t => {
+  const fixture = await createFixture();
+  t.after(() => rm(fixture.repoRoot, { recursive: true, force: true }));
+  const inventoryPath = join(fixture.repoRoot, 'consumer/inventory.js');
+  await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot, outputPath: inventoryPath,
+    artifactRoots: { fixture: fixture.artifactRoot }, artifactStoreDir: join(fixture.repoRoot, 'consumer/artifacts') });
+  const incumbent = await readFile(inventoryPath, 'utf8');
+  withPatchedProcessEnv(t, { HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath });
+  const uiRoot = fileURLToPath(new URL('..', import.meta.url));
+  const require = createRequire(join(uiRoot, 'package.json'));
+  const configPath = join(uiRoot, 'metro.config.js');
+  delete require.cache[require.resolve(configPath)];
+  const config = require(configPath);
+  t.after(() => { delete require.cache[require.resolve(configPath)]; });
+  const watcher = new EventEmitter();
+  const graph = new EventEmitter();
+  graph.doesFileExist = path => fs.existsSync(path);
+  const metroServer = { getWatchFolders: () => config.watchFolders,
+    getBundler: () => ({ getBundler: () => ({ getWatcher: () => watcher, getDependencyGraph: async () => graph }) }),
+    async end() {} };
+  let compilerStarted;
+  let compilerFailed;
+  const started = new Promise((resolveStarted, rejectStarted) => { compilerStarted = resolveStarted; compilerFailed = rejectStarted; });
+  void started.catch(() => {});
+  const children = [];
+  // Hold only the OS compiler process boundary. Input selection, queueing,
+  // inventory admission and the production request middleware remain real.
+  t.mock.method(childProcess, 'fork', () => {
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    children.push(child);
+    compilerStarted();
+    return child;
+  });
+  syncBuiltinESMExports();
+  const errors = [];
+  t.mock.method(console, 'error', (...args) => {
+    errors.push(args);
+    if (children.length === 0) compilerFailed(args.find(value => value instanceof Error) ?? new Error('Source inventory failed before compiler admission'));
+  });
+  const middleware = config.server.enhanceMiddleware((_req, res) => {
+    res.statusCode = 200;
+    res.end(fs.readFileSync(inventoryPath, 'utf8'));
+  }, metroServer);
+  t.after(async () => {
+    for (const child of children) child.emit('close', 1, null);
+    await metroServer.end();
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  const request = () => new Promise((resolveResponse, reject) => {
+    const response = { statusCode: 0, end(body) { resolveResponse({ status: this.statusCode, body }); } };
+    middleware({ url: '/apps/ui/index.ts.bundle?platform=web', headers: {} }, response, reject);
+  });
+  assert.deepEqual(await request(), { status: 200, body: incumbent });
+  const repoRoot = resolve(uiRoot, '../..');
+  // Prime the actual watcher input census and reach a held preparation first.
+  watcher.emit('change', { eventsQueue: [{ filePath: join(uiRoot, 'scripts/prepareSourcePluginUiArtifacts.mjs'), type: 'change' }] });
+  await started;
+  assert.equal(children.length, 1);
+  assert.deepEqual(await request(), { status: 200, body: incumbent }, 'a pending compiler cannot replace last-good request readiness');
+  for (let revision = 0; revision < 76; revision++) watcher.emit('change', { eventsQueue: [
+    { filePath: join(uiRoot, 'sources/app/unrelated.tsx'), type: 'change' },
+    { filePath: join(repoRoot, 'apps/stack/scripts/utils/dev/expo_dev.mjs'), type: 'change' },
+    { filePath: join(repoRoot, '.project/notes.md'), type: 'change' },
+    { filePath: join(repoRoot, 'packages/cli-common/src/machines/managed/provisioners.ts'), type: 'change' },
+    { filePath: inventoryPath, type: 'change' },
+  ] });
+  // The request's real filesystem admission is also an asynchronous boundary
+  // after the queued change handlers; no debounce clock decides the assertion.
+  assert.deepEqual(await request(), { status: 200, body: incumbent });
+  children[0].emit('close', 1, null);
+  await t.waitFor(() => assert.equal(errors.length, 1));
+  assert.equal(children.length, 1, '76 unrelated batches must admit zero trailing preparations');
+  assert.deepEqual(await request(), { status: 200, body: incumbent }, 'failed preparation also leaves last-good served');
+});
 
 test('cold declaration inventory defers full manifests and loads only the demanded plugin in a compiled bundle', async () => {
   const fixture = await createFixture();
@@ -65,6 +203,35 @@ test('cold declaration inventory defers full manifests and loads only the demand
     assert.equal(chunks.length, 2, 'each plugin has one independent declaration chunk');
     assert.ok(chunks.every(output => Object.keys(output.inputs)
       .filter(input => /[/\\]declaration\.js$/.test(input)).length === 1));
+  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
+test('conditional portable source exports publish executable graphs through source preparation', async () => {
+  const fixture = await createFixture();
+  try {
+    const root = join(fixture.repoRoot, 'packages/plugins/fixture');
+    const packageJson = { name: '@happier-dev/plugins-fixture', version: '0.0.0', exports: {
+      './happier-plugin-ui/fixture-card': {
+        'happier-source': './src/card.ts', default: './dist/card.js',
+      },
+    } };
+    await writeFile(join(root, 'package.json'), JSON.stringify(packageJson));
+    await mkdir(join(root, 'src'), { recursive: true });
+    await writeFile(join(root, 'src/card.ts'), 'export function renderSurface() { return null; }');
+    const manifest = JSON.parse(await readFile(join(root, '.happier-plugin/plugin.json'), 'utf8'));
+    const { prepareSourcePluginUiArtifacts } = await import('./prepareSourcePluginUiArtifacts.mjs');
+    const result = await prepareSourcePluginUiArtifacts({ repoRoot: fixture.repoRoot,
+      outputDir: join(fixture.repoRoot, 'source-preparation'),
+      // The source host uses the same package membership decision.
+      plugins: [{ directory: 'fixture', manifest,
+        uiArtifacts: listBundledPluginUiArtifactExports(packageJson).length > 0 }],
+    });
+    assert.deepEqual(result.pluginFailures, []);
+    const inventory = readEmittedPluginUiInventory(await readFile(result.outputPath, 'utf8'));
+    assert.equal(inventory.BUNDLED_PLUGIN_UI_APP_ARTIFACTS.length, 1,
+      'a conditional portable source must reach the compiler rather than publish metadata alone');
+    const declaration = inventory.BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0];
+    assert.equal(declaration.artifactGraphs.length, 1);
   } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
 });
 
@@ -107,6 +274,40 @@ test('declaration data stays outside Metro JavaScript as schema fields grow', as
     }
     t.diagnostic(`Metro mappings: one schema field=${counts[0]}, one thousand fields=${counts[1]}`);
     assert.equal(counts[1], counts[0], 'declaration JSON fields must not multiply retained Metro source-map tuples');
+  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
+test('first-paint declaration bytes depend on discovery facts, not closed-surface schemas or copy', async () => {
+  const fixture = await createFixture();
+  try {
+    const path = join(fixture.repoRoot, 'packages/plugins/fixture/.happier-plugin/plugin.json');
+    const manifest = JSON.parse(await readFile(path, 'utf8'));
+    manifest.contributes.ui.views[0].title = { key: 'nav.title', fallback: 'Fixture' };
+    manifest.contributes.ui.renderers.push({ id: 'closed-body', kind: 'declarative', root: { kind: 'text', text: 'small' } });
+    manifest.contributes.ui.views.push({ ...manifest.contributes.ui.views[0], id: 'closed-page', renderer: 'closed-body' });
+    manifest.contributes.actions = [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['ui'],
+      placementBindings: [], dangerLevel: 'safe', execution: { target: 'daemon' }, inputSchema: { type: 'string', description: 'small' } }];
+    manifest.contributes.ui.translations = [{ locale: 'en', messages: { 'nav.title': 'Fixture page', body: 'small' } }];
+    await writeFile(path, JSON.stringify(manifest));
+    const first = await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot });
+    const small = await readFile(first.outputPath, 'utf8');
+    manifest.contributes.actions[0].inputSchema.description = 'closed-schema-sentinel'.repeat(10000);
+    manifest.contributes.ui.translations[0].messages.body = 'closed-copy-sentinel'.repeat(10000);
+    manifest.contributes.ui.renderers.at(-1).root.text = 'closed-body-sentinel'.repeat(10000);
+    await writeFile(path, JSON.stringify(manifest));
+    const second = await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot });
+    const large = await readFile(second.outputPath, 'utf8');
+    assert.equal(Buffer.byteLength(large), Buffer.byteLength(small));
+    assert.doesNotMatch(large, /closed-schema-sentinel|closed-copy-sentinel|closed-body-sentinel/);
+    const index = readEmittedPluginUiInventory(large).BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0];
+    assert.equal(index.entriesById['translations:happier.fixture'].bundles.en['nav.title'], 'Fixture page');
+    const declaration = await index.loadDeclaration();
+    assert.equal(declaration.normalizedManifest.contributes.actions[0].inputSchema.description.length,
+      manifest.contributes.actions[0].inputSchema.description.length);
+    assert.equal(declaration.normalizedManifest.contributes.ui.renderers.at(-1).root.text,
+      manifest.contributes.ui.renderers.at(-1).root.text);
+    assert.equal(declaration.entriesById['translations:happier.fixture'].bundles.en.body,
+      manifest.contributes.ui.translations[0].messages.body);
   } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
 });
 
@@ -220,6 +421,49 @@ async function addSecondPlugin(repoRoot) {
   }));
 }
 
+test('built RN artifacts resolve without package exports and with Channels-style bundle exports', async () => {
+  const fixture = await createFixture();
+  try {
+    await addSecondPlugin(fixture.repoRoot);
+    const modules = join(fixture.repoRoot, 'apps/ui/node_modules/@happier-dev');
+    await mkdir(modules, { recursive: true });
+    for (const [plugin, relativePath, exports] of [
+      ['fixture', fixture.relativePath, { './happier-plugin-ui/fixture-card': './src/ui/card.tsx' }],
+      ['second', 'react-native/second-card/entry.cjs.bundle', {
+        './happier-plugin-ui/react-native/second-card/entry.cjs.bundle':
+          './dist/happier-plugin-ui/react-native/second-card/entry.cjs.bundle',
+      }],
+    ]) {
+      const root = join(fixture.repoRoot, 'packages/plugins', plugin);
+      await writeFile(join(root, 'package.json'), JSON.stringify({
+        name: `@happier-dev/plugins-${plugin}`, version: '0.0.0', exports,
+      }));
+      await symlink(root, join(modules, `plugins-${plugin}`), process.platform === 'win32' ? 'junction' : 'dir');
+      assert.ok(await stat(join(root, 'dist/happier-plugin-ui', relativePath)));
+    }
+    const result = await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot });
+    assert.deepEqual(result.pluginFailures, []);
+    const inventory = readEmittedPluginUiInventory(await readFile(result.outputPath, 'utf8'), specifier => specifier);
+    const specifiers = Array.from(inventory.BUNDLED_PLUGIN_UI_APP_ARTIFACTS,
+      artifact => artifact.files[0].asset);
+    // This is a packaged consumer, without the preparation process's authored
+    // workspace resolver. Exercise Node's real package exports in a child.
+    const { stdout } = await execFileAsync(process.execPath, ['--input-type=module', '--eval', [
+      'import { createRequire } from "node:module";',
+      `import { resolveBundledPluginUiArtifactsInputPaths } from ${JSON.stringify(pathToFileURL(resolve(packageRoot, 'scripts/generateBundledPluginUiArtifacts.mjs')).href)};`,
+      `const require = createRequire(${JSON.stringify(result.outputPath)});`,
+      `console.log(JSON.stringify({ resolved: ${JSON.stringify(specifiers)}.map(specifier => require.resolve(specifier)), inputPaths: resolveBundledPluginUiArtifactsInputPaths(${JSON.stringify(result.outputPath)}) }));`,
+    ].join('\n')], { env: { ...process.env, NODE_OPTIONS: '' } });
+    const consumer = JSON.parse(stdout);
+    assert.deepEqual(consumer.resolved, [
+      join(fixture.artifactRoot, fixture.relativePath),
+      join(fixture.repoRoot, 'packages/plugins/second/dist/happier-plugin-ui/react-native/second-card/entry.cjs.bundle'),
+    ]);
+    assert.ok(consumer.inputPaths?.includes(
+      join(fixture.artifactRoot, fixture.relativePath)));
+  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
 async function addFixtureBrand(fixture) {
   const pluginRoot = join(fixture.repoRoot, 'packages/plugins/fixture');
   const bytes = await readFile(resolve(packageRoot, '../../packages/plugins/inspector/assets/brand.png'));
@@ -233,35 +477,6 @@ async function addFixtureBrand(fixture) {
   await writeFile(join(pluginRoot, '.happier-plugin/plugin.json'), JSON.stringify(manifest));
   return { bytes, manifest };
 }
-
-test('conditional portable source exports publish executable graphs through source preparation', async () => {
-  const fixture = await createFixture();
-  try {
-    const root = join(fixture.repoRoot, 'packages/plugins/fixture');
-    const packageJson = { name: '@happier-dev/plugins-fixture', version: '0.0.0', exports: {
-      './happier-plugin-ui/fixture-card': {
-        'happier-source': './src/card.ts', default: './dist/card.js',
-      },
-    } };
-    await writeFile(join(root, 'package.json'), JSON.stringify(packageJson));
-    await mkdir(join(root, 'src'), { recursive: true });
-    await writeFile(join(root, 'src/card.ts'), 'export function renderSurface() { return null; }');
-    const manifest = JSON.parse(await readFile(join(root, '.happier-plugin/plugin.json'), 'utf8'));
-    const { prepareSourcePluginUiArtifacts } = await import('./prepareSourcePluginUiArtifacts.mjs');
-    const result = await prepareSourcePluginUiArtifacts({ repoRoot: fixture.repoRoot,
-      outputDir: join(fixture.repoRoot, 'source-preparation'),
-      // The source host uses the same package membership decision.
-      plugins: [{ directory: 'fixture', manifest,
-        uiArtifacts: listBundledPluginUiArtifactExports(packageJson).length > 0 }],
-    });
-    assert.deepEqual(result.pluginFailures, []);
-    const inventory = readEmittedPluginUiInventory(await readFile(result.outputPath, 'utf8'));
-    assert.equal(inventory.BUNDLED_PLUGIN_UI_APP_ARTIFACTS.length, 1,
-      'a conditional portable source must reach the compiler rather than publish metadata alone');
-    const declaration = inventory.BUNDLED_PLUGIN_UI_APP_DECLARATIONS[0].loadDeclaration();
-    assert.equal(declaration.artifactGraphs.length, 1);
-  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
-});
 
 async function addFixtureTranslationResources(fixture) {
   const root = join(fixture.repoRoot, 'packages/plugins/fixture');
@@ -279,6 +494,178 @@ async function addFixtureTranslationResources(fixture) {
   await writeFile(manifestPath, JSON.stringify(manifest));
   return { root, manifestPath, manifest, bytes };
 }
+
+test('historical artifact retention settles unavailable process observations across plugin groups', { skip: typeof process.getuid !== 'function' }, async t => {
+  const fixture = await createFixture();
+  try {
+    const artifactStoreDir = join(fixture.repoRoot, 'consumer/artifacts');
+    const outputPath = join(fixture.repoRoot, 'consumer/inventory.js');
+    await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot,
+      artifactRoots: { fixture: fixture.artifactRoot }, artifactStoreDir, outputPath });
+    const stages = ['fixture', 'second'].map(plugin => join(artifactStoreDir, plugin, '.happier-plugin-ui-stage-orphan'));
+    const historical = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    for (const stage of stages) {
+      await mkdir(stage, { recursive: true });
+      await utimes(stage, historical, historical);
+    }
+    const procRoot = join(fixture.repoRoot, 'unavailable-proc');
+    await mkdir(join(procRoot, '123'), { recursive: true });
+    const missingStatus = join(procRoot, '123/status');
+    let censusAttempts = 0;
+    const readFile = fs.readFileSync;
+    // Observe the real OS read boundary; retain the complete internal census.
+    t.mock.method(fs, 'readFileSync', (path, ...args) => {
+      if (path === missingStatus) censusAttempts++;
+      return readFile(path, ...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      const result = reapBundledPluginUiArtifactStore({ artifactStoreDir, inventoryPaths: [outputPath], procRoot });
+      assert.equal(result.reclaimedRoots, 0);
+      assert.ok(result.observationUnavailable);
+      assert.equal(censusAttempts, 1, 'one unavailable global process observation settles the complete artifact-store sweep');
+      for (const stage of stages) assert.ok(await stat(stage));
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+});
+
+test('historical artifact retention preserves current, last-green and delayed serving graphs', { skip: typeof process.getuid !== 'function' }, async t => {
+  const fixture = await createFixture();
+  try {
+    const artifactStoreDir = join(fixture.repoRoot, 'consumer/artifacts');
+    const outputPath = join(fixture.repoRoot, 'consumer/inventory.js');
+    const retainedPath = join(fixture.repoRoot, 'consumer/last-green.js');
+    const legacyInventoryPath = join(fixture.repoRoot, 'consumer/legacy-retained.js');
+    const options = { repoRoot: fixture.repoRoot, artifactRoots: { fixture: fixture.artifactRoot }, artifactStoreDir, outputPath };
+    const legacyKept = join(dirname(artifactStoreDir), 'preparation-KEEP00');
+    const legacyDiscarded = join(dirname(artifactStoreDir), 'preparation-OLD000');
+    await generateBundledPluginUiArtifacts({ ...options, outputPath: legacyInventoryPath,
+      artifactOutputDirs: { fixture: join(legacyKept, 'inputs/fixture/happier-plugin-ui') } });
+    await mkdir(legacyDiscarded);
+    const publish = async label => {
+      const bytes = Buffer.from(`module.exports = { label: ${JSON.stringify(label)} };`);
+      const manifestPath = join(fixture.artifactRoot, 'ui-artifacts.json');
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+      const entry = manifest.entries[0];
+      entry.files[0].digest = computePluginUiArtifactSha256DigestV1(bytes);
+      entry.files[0].byteSize = bytes.byteLength;
+      entry.digest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: fixture.relativePath, bytes }]);
+      await writeFile(join(fixture.artifactRoot, fixture.relativePath), bytes);
+      await writeFile(manifestPath, JSON.stringify(manifest));
+      return (await generateBundledPluginUiArtifacts(options)).artifactRoots.fixture;
+    };
+    const superseded = (await generateBundledPluginUiArtifacts(options)).artifactRoots.fixture;
+    const supersededInventory = await readFile(outputPath, 'utf8');
+    const lastGreen = await publish('last-green');
+    assert.equal(await retainBundledPluginUiArtifactsInventory({ inventoryPath: outputPath, outputPath: retainedPath }), true);
+    const current = await publish('current');
+    const stage = join(artifactStoreDir, 'fixture/.happier-plugin-ui-stage-orphan');
+    await mkdir(stage);
+    const procRoot = join(fixture.repoRoot, 'empty-proc');
+    await mkdir(procRoot);
+    const historical = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const ageTree = async directory => {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) await ageTree(path);
+        await utimes(path, historical, historical);
+      }
+      await utimes(directory, historical, historical);
+    };
+    await ageTree(artifactStoreDir);
+    await ageTree(legacyKept);
+    await ageTree(legacyDiscarded);
+    const reap = extra => reapBundledPluginUiArtifactStore({ artifactStoreDir,
+      inventoryPaths: [outputPath, retainedPath, legacyInventoryPath], procRoot, ...extra });
+    const getuid = Object.getOwnPropertyDescriptor(process, 'getuid');
+    try {
+      Object.defineProperty(process, 'getuid', { value: undefined, configurable: true });
+      const unsupported = reap({ retainCandidate: () => false });
+      assert.equal(unsupported.reclaimedRoots, 0);
+      assert.ok(unsupported.observationUnavailable, 'unsupported ownership observation retains without breaking publication');
+    } finally { Object.defineProperty(process, 'getuid', getuid); }
+    const serving = reap();
+    assert.equal(serving.reclaimedRoots, 1, 'only abandoned staging can be reaped without retirement evidence');
+    assert.ok(await stat(superseded), 'old browser/native URLs remain readable while their Expo may serve');
+    assert.ok(await stat(legacyDiscarded), 'legacy preparation roots may also contain delayed serving graphs');
+    assert.equal(reap({ retainCandidate: () => undefined }).reclaimedRoots, 0,
+      'an unknown lifecycle observation cannot authorize graph deletion');
+    const aliasParent = join(fixture.repoRoot, 'consumer-alias');
+    await symlink(dirname(artifactStoreDir), aliasParent, 'dir');
+    const aliasStore = join(aliasParent, 'artifacts');
+    const aliasInventory = join(aliasParent, 'inventory.js');
+    // The process boundary is a real procfs-shaped fixture. A detached Metro
+    // need not hold an artifact fd while a browser delays its asset request.
+    const detached = join(procRoot, '123');
+    await mkdir(join(detached, 'fd'), { recursive: true });
+    const uid = process.getuid();
+    await writeFile(join(detached, 'status'), `State:\tS\nUid:\t${uid}\t${uid}\t${uid}\t${uid}\n`);
+    await writeFile(join(detached, 'maps'), '');
+    await symlink(fixture.repoRoot, join(detached, 'cwd'), 'dir');
+    for (const [inventoryPath, binding] of [[aliasInventory, outputPath], [outputPath, aliasInventory]]) {
+      await writeFile(join(detached, 'environ'), `HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY=${binding}\0`);
+      assert.equal(reap({ inventoryPaths: [inventoryPath, retainedPath, legacyInventoryPath],
+        retainCandidate: () => false }).reclaimedRoots, 0,
+      'a live inventory binding protects detached serving graphs through either path alias');
+      assert.ok(await stat(superseded));
+    }
+    await writeFile(join(detached, 'environ'), `HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY=${outputPath}\0`);
+    const currentInventory = await readFile(outputPath, 'utf8');
+    const readProcessFile = fs.readFileSync;
+    // A publisher replaces the inventory after the census observes the live
+    // binding's inode, but before the candidate's final retention check.
+    t.mock.method(fs, 'readFileSync', (path, ...args) => {
+      if (path === join(detached, 'maps')) {
+        const replacement = `${outputPath}.atomic-publication`;
+        writeFileSync(replacement, currentInventory);
+        fs.renameSync(replacement, outputPath);
+      }
+      return readProcessFile(path, ...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.equal(reap({ inventoryPaths: [aliasInventory, retainedPath, legacyInventoryPath],
+        retainCandidate: () => false }).reclaimedRoots, 0,
+      'an atomic inventory publication preserves a live binding across path aliases');
+      assert.ok(await stat(superseded));
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+    await rm(detached, { recursive: true });
+    const retainedInventory = await readFile(retainedPath, 'utf8');
+    await writeFile(retainedPath, 'invalid inventory');
+    const unavailable = reap({ retainCandidate: () => false });
+    assert.equal(unavailable.reclaimedRoots, 0, 'unreadable last-green membership cannot authorize graph deletion');
+    assert.ok(unavailable.observationUnavailable);
+    await writeFile(retainedPath, retainedInventory);
+    const republished = reap({ artifactStoreDir: aliasStore, retainCandidate(directory) {
+      if (directory !== superseded && directory !== superseded.replace(artifactStoreDir, aliasStore)) return true;
+      writeFileSync(retainedPath, supersededInventory.replaceAll(artifactStoreDir, aliasStore));
+      return false;
+    } });
+    assert.equal(republished.reclaimedRoots, 0, 'a selection published through a path alias during observation is rechecked before deletion');
+    assert.ok(await stat(superseded));
+    await writeFile(retainedPath, retainedInventory);
+    const preview = reap({ dryRun: true, retainCandidate: () => false });
+    assert.equal(preview.reclaimableRoots, 2);
+    assert.equal(preview.reclaimedRoots, 0);
+    assert.ok(await stat(superseded));
+    const retired = reap({ retainCandidate: () => false });
+    assert.equal(retired.reclaimedRoots, 2, 'a retired serving runtime releases only superseded graphs');
+    await assert.rejects(stat(superseded), { code: 'ENOENT' });
+    await assert.rejects(stat(legacyDiscarded), { code: 'ENOENT' });
+    assert.ok(await stat(legacyKept), 'inventory references protect legacy preparation subtrees');
+    assert.ok(await stat(lastGreen), 'a separately retained per-plugin last-green graph outlives reclamation');
+    assert.ok(await stat(current));
+    // A failed new compilation still consumes the inventory's last-green graph.
+    const { prepareSourcePluginUiArtifacts } = await import('./prepareSourcePluginUiArtifacts.mjs');
+    const failed = await prepareSourcePluginUiArtifacts({ repoRoot: fixture.repoRoot,
+      outputDir: join(fixture.repoRoot, 'failed-preparation'), outputPath: join(fixture.repoRoot, 'consumer/recovered.js'),
+      artifactStoreDir, retainedInventoryPath: retainedPath,
+      plugins: [{ directory: 'fixture', loadManifest() { throw new Error('authored manifest is invalid'); } }] });
+    assert.equal(failed.pluginFailures.length, 0);
+    assert.equal(failed.diagnostics.length, 1);
+    assert.equal(failed.artifactRoots.fixture, lastGreen);
+  } finally { await rm(fixture.repoRoot, { recursive: true, force: true }); }
+});
 
 for (const sourceStore of [false, true]) {
   test(`packaged JSON Resources use exact raw Metro assets through the existing publication graph (source store: ${sourceStore})`, async () => {
@@ -431,10 +818,7 @@ test('the UI prebuild owns one universal exact app-preseed registry from canonic
     assert.doesNotMatch(output, /import type|\]\) satisfies/);
     assert.match(output, /@satisfies \{import\('\.\/bundledPluginUiArtifactInventory'\)\.BundledPluginUiAppArtifactInventory\}/);
     assert.match(output, /apps\/ui\/scripts\/generateBundledPluginUiArtifacts\.mjs/);
-    assert.match(
-      output,
-      /require\("@happier-dev\/plugins-fixture\/happier-plugin-ui\/react-native\/fixture-card\/entry\.cjs\.bundle"\)/,
-    );
+    assert.ok(output.includes(`require(${JSON.stringify(join(fixture.artifactRoot, fixture.relativePath))})`));
     assert.match(output, /pluginId: "happier\.fixture"/);
     assert.match(output, /artifactId: "fixture-card"/);
     const graph = JSON.parse(output.match(/    artifactGraph: .*\*\/ \((.+)\),/)[1]);
@@ -635,6 +1019,7 @@ test('the emitted JavaScript and committed declaration satisfy the inventory con
   const fixture = await createFixture();
   try {
     await addFixtureBrand(fixture);
+    await addFixtureTranslationResources(fixture);
     await generateBundledPluginUiArtifacts({ repoRoot: fixture.repoRoot, mode: 'write' });
     const outputPath = resolveBundledPluginUiArtifactsOutputPath(fixture.repoRoot);
     const fixtureDir = dirname(outputPath);
@@ -656,14 +1041,16 @@ test('the emitted JavaScript and committed declaration satisfy the inventory con
     ].join('\n'));
     const consumerPath = join(fixtureDir, 'consumer.ts');
     await writeFile(consumerPath, [
-      "import { BUNDLED_PLUGIN_UI_APP_ARTIFACTS, BUNDLED_PLUGIN_UI_APP_DECLARATIONS, BUNDLED_PLUGIN_BRAND_MARKS } from './generatedBundledPluginUiArtifacts';",
-      "import type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration, BundledPluginBrandMark } from './bundledPluginUiArtifactInventory';",
+      "import { BUNDLED_PLUGIN_UI_APP_ARTIFACTS, BUNDLED_PLUGIN_UI_APP_DECLARATIONS, BUNDLED_PLUGIN_BRAND_MARKS, BUNDLED_PLUGIN_PACKAGED_RESOURCES } from './generatedBundledPluginUiArtifacts';",
+      "import type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration, BundledPluginBrandMark, BundledPluginPackagedResource } from './bundledPluginUiArtifactInventory';",
       'const inventory: BundledPluginUiAppArtifactInventory = BUNDLED_PLUGIN_UI_APP_ARTIFACTS;',
       'const declarations: readonly PluginHostBundledUiDeclaration[] = BUNDLED_PLUGIN_UI_APP_DECLARATIONS;',
       'const brands: readonly BundledPluginBrandMark[] = BUNDLED_PLUGIN_BRAND_MARKS;',
+      'const resources: readonly BundledPluginPackagedResource[] = BUNDLED_PLUGIN_PACKAGED_RESOURCES;',
       'void inventory;',
       'void declarations;',
       'void brands;',
+      'void resources;',
       '',
     ].join('\n'));
     const compiler = resolve(packageRoot, '..', '..', 'scripts', 'workspaces', 'runTypeScriptCli.mjs');

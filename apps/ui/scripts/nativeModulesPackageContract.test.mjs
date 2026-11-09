@@ -174,6 +174,14 @@ test('composer input is autolinked on both native platforms with a new binary ru
     }
 });
 
+test('iOS autolinking compiles the patched notification response owner from source', async () => {
+    const { createAutolinkingOptionsLoader } = nodeRequire('expo-modules-autolinking/build/commands/autolinkingOptions');
+    const loader = createAutolinkingOptionsLoader({ projectRoot: appRoot });
+    const options = await loader.getPlatformOptions('ios');
+    assert.ok(options.buildFromSource?.includes('expo-notifications'),
+        'precompiled ExpoNotifications would omit the patched live response completion and admission APIs');
+});
+
 test('apps/ui fast test lane includes the native modules package contract check', async () => {
     const packageJson = await readJson(join(appRoot, 'package.json'));
     // `scripts.test` is only the Stack executor indirection

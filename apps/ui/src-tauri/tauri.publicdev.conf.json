@@ -24,6 +24,8 @@
         "default",
         "overlay",
         "notch-presentation",
+        "capture",
+        "capture-selection",
         "pet_overlay",
         "mcp-dev"
       ]

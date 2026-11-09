@@ -1,9 +1,33 @@
+const path = require('path');
+
 function parseBooleanEnv(name, defaultValue) {
   const value = String(process.env[name] ?? '').trim().toLowerCase();
   if (!value) return defaultValue;
   if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
   if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
   return defaultValue;
+}
+
+const babelPresetExpo = require('babel-preset-expo');
+const objectRestSpreadPlugin = require(require.resolve('@babel/plugin-transform-object-rest-spread', {
+  paths: [path.dirname(require.resolve('babel-preset-expo/package.json'))],
+}));
+
+/**
+ * babel-preset-expo lowers object spread on every non-Hermes engine with
+ * `object-rest-spread { loose }`. That turns `{ ...base, get x() {} }` into
+ * `Object.assign`, which calls the getter once and copies the value, so lazy
+ * getters run eagerly and live getters go stale. The web build already relies
+ * on newer native syntax (optional chaining, nullish coalescing), so on web the
+ * engine runs object spread and rest natively with spec semantics.
+ */
+function babelPresetExpoWithNativeWebObjectSpread(api, options) {
+  const preset = babelPresetExpo(api, options);
+  if (api.caller((caller) => caller?.platform) !== 'web') return preset;
+  return {
+    ...preset,
+    plugins: preset.plugins.filter((plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) !== objectRestSpreadPlugin),
+  };
 }
 
 module.exports = function (api) {
@@ -47,7 +71,7 @@ module.exports = function (api) {
   return {
     // Metro emits scripts on every platform. Dependencies such as zip.js use
     // import.meta even when their worker URL is not needed on native/Hermes.
-    presets: [['babel-preset-expo', { unstable_transformImportMeta: true }]],
+    presets: [[babelPresetExpoWithNativeWebObjectSpread, { unstable_transformImportMeta: true }]],
     env: {
       production: {
         plugins: ["transform-remove-console"],

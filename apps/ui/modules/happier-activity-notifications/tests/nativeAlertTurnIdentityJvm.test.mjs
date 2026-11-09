@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join as joinPath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCipheriv } from 'node:crypto';
-import { parseSessionChangedWakeV1, resolveActivityRemoteAlertEventIdentity, resolveActivityRemoteAlertEventForPersonalEventV2 } from '@happier-dev/protocol';
+import { parseSessionChangedWakeV1} from '@happier-dev/protocol/push/sessionChangedWake';
+import { resolveActivityRemoteAlertEventIdentity, resolveActivityRemoteAlertEventForPersonalEventV2 } from '@happier-dev/protocol/push/activityRemoteAlert';
 
 const testsDir = dirname(fileURLToPath(import.meta.url));
 const moduleRoot = dirname(testsDir);

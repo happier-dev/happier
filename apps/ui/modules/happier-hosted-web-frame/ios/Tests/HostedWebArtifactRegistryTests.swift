@@ -10,8 +10,8 @@ final class HostedWebArtifactRegistryTests: XCTestCase {
     try assertInlineDocumentTokenIsProcessLocalAndSynchronouslyRevoked()
   }
 
-  func testRejectsSameSizeResourceMutationAfterRegistration() throws {
-    try assertSameSizeResourceMutationIsRejected()
+  func testPersistentRegistrationUsesAdmittedCacheBytes() throws {
+    try assertPersistentRegistrationUsesAdmittedCacheBytes()
   }
 
   func testCurrentLoadBytesRemainTokenScopedAndNeedNoPersistentCacheRecord() throws {
@@ -72,7 +72,7 @@ private func assertInlineDocumentTokenIsProcessLocalAndSynchronouslyRevoked() th
   }
 }
 
-private func assertSameSizeResourceMutationIsRejected() throws {
+private func assertPersistentRegistrationUsesAdmittedCacheBytes() throws {
     let cacheRoot = FileManager.default.temporaryDirectory
       .appendingPathComponent("hosted-web-frame-test-\(UUID().uuidString)", isDirectory: true)
     defer {
@@ -93,15 +93,30 @@ private func assertSameSizeResourceMutationIsRejected() throws {
     guard registry.register(registration(digest: sha256Digest(originalBytes))) else {
       throw HostedWebArtifactRegistryTestFailure.assertionFailed("registration must accept canonical original digest")
     }
-    let originalResponse = registry.readResponse(token: token, requestPath: "/assets/app.js")
-    guard originalResponse.status == 200, originalResponse.bytes == originalBytes else {
-      throw HostedWebArtifactRegistryTestFailure.assertionFailed("registered canonical bytes must receive a 200 response")
+    for _ in 0..<3 {
+      let originalResponse = registry.readResponse(token: token, requestPath: "/assets/app.js")
+      guard originalResponse.status == 200, originalResponse.bytes == originalBytes else {
+        throw HostedWebArtifactRegistryTestFailure.assertionFailed("registered canonical bytes must receive a 200 response")
+      }
     }
     try writeResource(root: cacheRoot, bytes: mutatedBytes)
 
     let response = registry.readResponse(token: token, requestPath: "/assets/app.js")
-    guard response.status != 200, response.bytes == nil else {
-      throw HostedWebArtifactRegistryTestFailure.assertionFailed("same-size mutated bytes must not receive a 200 response")
+    guard response.status == 200, response.bytes == mutatedBytes else {
+      throw HostedWebArtifactRegistryTestFailure.assertionFailed("admitted local resources must not be digest-verified per response")
+    }
+    guard registry.unregister(token),
+          registry.readResponse(token: token, requestPath: "/assets/app.js").status == 404 else {
+      throw HostedWebArtifactRegistryTestFailure.assertionFailed("retired persistent registrations must deny later reads")
+    }
+    guard registry.register(registration(digest: sha256Digest(originalBytes))),
+          registry.readResponse(token: token, requestPath: "/assets/app.js").bytes == mutatedBytes else {
+      throw HostedWebArtifactRegistryTestFailure.assertionFailed("persistent registration must trust the admitted local cache rather than rehash it")
+    }
+    guard registry.unregister(token),
+          registry.register(registration(digest: sha256Digest(mutatedBytes))),
+          registry.readResponse(token: token, requestPath: "/assets/app.js").bytes == mutatedBytes else {
+      throw HostedWebArtifactRegistryTestFailure.assertionFailed("changed bytes with their current digest must reach the consumer on new registration")
     }
   }
 
@@ -232,8 +247,8 @@ private struct HostedWebArtifactRegistryTestRunner {
     do {
       try assertInlineDocumentTokenIsProcessLocalAndSynchronouslyRevoked()
       print("PASS HostedWebArtifactRegistryTests.testInlineDocumentTokenIsProcessLocalAndSynchronouslyRevoked")
-      try assertSameSizeResourceMutationIsRejected()
-      print("PASS HostedWebArtifactRegistryTests.testRejectsSameSizeResourceMutationAfterRegistration")
+      try assertPersistentRegistrationUsesAdmittedCacheBytes()
+      print("PASS HostedWebArtifactRegistryTests.testPersistentRegistrationUsesAdmittedCacheBytes")
       try assertCurrentLoadBytesRemainTokenScoped()
       print("PASS HostedWebArtifactRegistryTests.testCurrentLoadBytesRemainTokenScopedAndNeedNoPersistentCacheRecord")
       exit(EXIT_SUCCESS)

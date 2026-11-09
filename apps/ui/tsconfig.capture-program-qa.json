@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "incremental": false, "noEmit": true },
+  "include": [
+    "expo-env.d.ts", "nativewind-env.d.ts", "node_modules/.cache/tsc/router.d.ts", "sources/**/*.d.ts",
+    "../../packages/protocol/src/actions/appShellActionFamily.ts",
+    "sources/sync/ops/actions/appShellAction.ts",
+    "sources/sync/ops/actions/defaultActionExecutor.sessionDraftAppend.test.ts",
+    "sources/components/sessions/composer/appendToSessionDraft.ts",
+    "sources/components/sessions/composer/appendToSessionDraft.test.ts",
+    "sources/components/sessions/composer/composerDocumentOwner.ts",
+    "sources/components/sessions/composer/repositoryComposerDocumentOwner.ts",
+    "sources/components/sessions/presentation/sessionComposerPresentationTargets.ts",
+    "sources/components/sessions/composer/sessionDraftAppendAction.ts",
+    "sources/components/discussions/sendDiscussionSelectionToSession.ts",
+    "sources/components/discussions/sendDiscussionSelectionToSession.test.ts",
+    "sources/components/discussions/DiscussionDetailsView.selection.test.tsx"
+  ],
+  "exclude": []
+}

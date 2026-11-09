@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config'
 import { dirname, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import { readFileSync } from 'node:fs'
 import { createTestHomeEnvironment } from '../../scripts/testing/testHomeEnvironment.mjs'
 
 import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating'
@@ -15,8 +16,19 @@ import {
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const packageRoot = fileURLToPath(new URL('.', import.meta.url));
 const requireUiDependency = createRequire(new URL('./package.json', import.meta.url));
+const nativePlatform = process.env.HAPPIER_UI_TEST_NATIVE_PLATFORM;
+const useNativePlatform = nativePlatform === 'android' || nativePlatform === 'ios';
 // Vitest's --root does not change process.cwd(); aliases and setup belong to this package.
 const resolve = (...paths: string[]) => resolvePath(packageRoot, ...paths);
+// Suites model the official build: its default profile seeds the Home that ambient
+// `getActiveServerSnapshot()` readers rely on (4cb6c60bd1 made source builds seed none).
+// Read it from the build owner rather than copying it; a suite exercising an
+// unconfigured source build stubs EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON to ''.
+const officialBuildDefaultProfileJson = (() => {
+    const value: unknown = JSON.parse(readFileSync(resolve('./eas.json'), 'utf8'))?.build?.base?.env?.EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON;
+    if (typeof value !== 'string' || !value.trim()) throw new Error('eas.json build.base has no EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON');
+    return value;
+})();
 
 // Opt-in browser gates use Metro's two Voice mic source choices without
 // async vi.mock factories that self-wait through the real UI import cycle.
@@ -136,11 +148,15 @@ export default defineConfig({
                 // at all — which forced surfaces to mock the whole list owner
                 // instead of only the third-party recycler underneath it.
                 // Inlining lets Vite apply the node-safe React Native alias.
-                inline: [/@react-navigation\/native/, /@react-navigation\/elements/, /@react-navigation\/bottom-tabs/, /@legendapp\/list/, /react-native-svg/],
+                // The enriched Markdown emitted web renderer also reaches React Native's
+                // color/platform boundary; keep that boundary on the same node-safe alias.
+                inline: [/@react-navigation\/native/, /@react-navigation\/elements/, /@react-navigation\/bottom-tabs/, /@legendapp\/list/, /react-native-svg/, /react-native-enriched-markdown/,
+                    ...(useNativePlatform ? [/expo-secure-store/, /expo-crypto/, /react-native-quick-base64/] : [])],
             },
         },
         env: {
             ...createTestHomeEnvironment().env,
+            EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON: officialBuildDefaultProfileJson,
             HAPPIER_FEATURE_POLICY_ENV: '',
             NODE_ENV: 'test',
             VITEST_UI_SOURCES_DIR: resolve('./sources'),
@@ -171,6 +187,8 @@ export default defineConfig({
         },
     },
     resolve: {
+        // Native regressions use Metro's platform variants while retaining real SDK JavaScript.
+        ...(useNativePlatform ? { extensions: [`.${nativePlatform}.ts`, `.${nativePlatform}.tsx`, '.native.ts', '.native.tsx', '.mjs', '.js', '.ts', '.tsx', '.json'] } : {}),
         // Inlined React Navigation otherwise resolves its own Yarn v1 peer copy of React,
         // which produces an invalid-hook-call split brain with react-test-renderer.
         dedupe: ['react', 'react-dom'],
@@ -194,13 +212,12 @@ export default defineConfig({
             { find: /^@react-native-masked-view\/masked-view(?:\/.*)?$/, replacement: resolve('./sources/dev/reactNativeMaskedViewStub.tsx') },
             { find: /(?:^|[\\/])node_modules[\\/]@react-native-masked-view[\\/]masked-view[\\/].*$/, replacement: resolve('./sources/dev/reactNativeMaskedViewStub.tsx') },
             // Some dependencies import React Native internals (Flow syntax) via subpaths like `react-native/Libraries/...`.
-            { find: /^react-native\//, replacement: resolve('./sources/dev/reactNativeInternalStub.ts') },
+            { find: /^react-native\/.*$/, replacement: resolve('./sources/dev/reactNativeInternalStub.ts') },
             // Vitest runs in node; avoid parsing React Native's Flow entrypoint.
             { find: /^react-native$/, replacement: resolve('./sources/dev/reactNativeStub.ts') },
             { find: /^expo-file-system$/, replacement: resolve('./sources/dev/testkit/mocks/expoFileSystemModule.ts') },
             // Plugin UI's nested SVG peer must reach the same native drawing boundary as UI leaves.
             // Keep the XML parser real: safe native previews validate its AST before drawing.
-            { find: /^react-native-svg\/lib\/commonjs\/xml$/, replacement: requireUiDependency.resolve('react-native-svg/lib/module/xml.js') },
             { find: /^react-native-svg$/, replacement: resolve('./sources/dev/testkit/mocks/reactNativeSvg.ts') },
             { find: /^(?:.*[\\/])?node_modules[\\/]react-native-svg[\\/](?!lib[\\/]module[\\/](?:xml\.js|utils[\\/]fetchData\.js)$).*$/, replacement: resolve('./sources/dev/testkit/mocks/reactNativeSvg.ts') },
             { find: '@livekit/react-native-webrtc', replacement: resolve('./sources/dev/reactNativeWebRtcStub.ts') },
@@ -268,10 +285,10 @@ export default defineConfig({
             // Use libsodium-wrappers in tests instead of the RN native binding.
             { find: '@more-tech/react-native-libsodium', replacement: 'libsodium-wrappers' },
             // Use node-safe platform adapters in tests (avoid static expo-crypto imports).
-            { find: '@/platform/cryptoRandom', replacement: resolve('./sources/platform/cryptoRandom.node.ts') },
+            { find: '@/platform/cryptoRandom', replacement: resolve(useNativePlatform ? './sources/platform/cryptoRandom.ts' : './sources/platform/cryptoRandom.node.ts') },
             { find: '@/platform/hmacSha512', replacement: resolve('./sources/platform/hmacSha512.node.ts') },
             { find: '@/platform/randomUUID', replacement: resolve('./sources/platform/randomUUID.node.ts') },
-            { find: '@/platform/digest', replacement: resolve('./sources/platform/digest.node.ts') },
+            { find: '@/platform/digest', replacement: resolve(useNativePlatform ? './sources/platform/digest.ts' : './sources/platform/digest.node.ts') },
             // `CodeEditor.tsx` picks its platform surface with a runtime `Platform.OS`
             // `require('./CodeEditor.native')`. Vite-node injects `createRequire`, so that
             // call is Node's CJS loader: it cannot resolve a `.tsx` file, and even when it

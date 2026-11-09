@@ -78,8 +78,8 @@ test('hosted HTML keeps the guest bootstrap outside its static entry graph', asy
         for (const edge of outputs[file].imports) if (!edge.external && edge.kind !== 'dynamic-import') visit(edge.path);
     };
     visit(Object.keys(outputs).find(file => outputs[file].entryPoint === entry));
-    const isBootstrap = file => file.endsWith('/hostedHtmlGuestBootstrap.generated.ts');
-    assert.ok(Object.keys(metafile.inputs).some(isBootstrap), 'hosted demand must retain the real SDK guest bootstrap');
+    const isBootstrap = file => file.endsWith('/hostedWeb/guestBootstrap.generated.ts');
+    assert.ok(Object.keys(metafile.inputs).some(isBootstrap), 'hosted demand must retain the real guest bootstrap');
     assert.deepEqual([...required].flatMap(file => Object.keys(outputs[file].inputs)).filter(isBootstrap), [],
         'importing the document builder must not download the guest runtime');
 });
@@ -103,6 +103,60 @@ test('Account and usage presentation contracts do not download the bundled model
     });
     const snapshots = Object.keys(metafile.inputs).filter(file => file.endsWith('/usageModelPriceSnapshot.ts'));
     assert.deepEqual(snapshots, [], 'settings validation and witnessed cost presentation must not load optional pricing data');
+});
+
+test('small UI protocol consumers do not load unrelated Action and Usage catalogs', async () => {
+    const consumer = ts.createSourceFile('isUserFacingSession.ts', readFileSync(join(repoRoot,
+        'apps/ui/sources/sync/domains/session/listing/isUserFacingSession.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
+    const markerImport = consumer.statements.find(node => ts.isImportDeclaration(node)
+        && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings)
+        && node.importClause.namedBindings.elements.some(element => element.name.text === 'isHiddenSystemSession'));
+    assert.ok(markerImport, 'session listing retains its canonical marker reader');
+    const history = ts.createSourceFile('voiceTranscriptHistorySession.ts', readFileSync(join(repoRoot,
+        'apps/ui/sources/voice/persistence/voiceTranscriptHistorySession.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
+    const historyImports = history.statements.filter(node => ts.isImportDeclaration(node)
+        && node.moduleSpecifier.text.startsWith('@happier-dev/protocol/'));
+    assert.ok(historyImports.length, 'voice history retains its canonical marker contracts');
+    const narrowImports = [
+        ['sync/api/automations/apiAutomations.ts', 'automationOccurrenceRequest'],
+        ['sync/domains/state/warmCachePersistence.ts', 'SessionOwnerDisplayV1Schema'],
+        ['desktop/window/appWindowBoot.ts', 'SessionOpenDestinationSchema'],
+    ].map(([file, symbol]) => {
+        const source = ts.createSourceFile(file, readFileSync(join(repoRoot, 'apps/ui/sources', file), 'utf8'),
+            ts.ScriptTarget.Latest, true);
+        const declaration = source.statements.find(node => ts.isImportDeclaration(node)
+            && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings)
+            && node.importClause.namedBindings.elements.some(element => element.name.text === symbol));
+        assert.ok(declaration, `${file} retains its canonical ${symbol} reader`);
+        return declaration.getText(source);
+    });
+    const { metafile, outputFiles } = await build({
+        absWorkingDir: repoRoot,
+        entryPoints: [
+            'apps/ui/sources/components/screenCapture/disclosure/captureDisclosureRule.ts',
+            'apps/ui/sources/components/machines/services/machineServicesListProjection.ts',
+            'packages/cli-common/src/sessionMetadata/updateSessionMetadataTupleWithRetry.ts',
+            'packages/cli-common/src/machines/managed/setupApply.ts',
+            'packages/cli-common/src/machines/managed/enrollmentIsolation.ts',
+            'packages/deployment-protocol/src/index.ts',
+            'packages/deployment-protocol/src/testing/v1.ts',
+        ],
+        bundle: true, format: 'esm', platform: 'browser', conditions: ['happier-source'],
+        outdir: '.ui-protocol-consumer-probe', write: false, metafile: true, logLevel: 'silent',
+        // Probe the listing's real Protocol import without traversing its unrelated UI/native asset graph.
+        stdin: { contents: [markerImport.getText(consumer), ...historyImports.map(node => node.getText(history)), ...narrowImports,
+            'export { automationOccurrenceRequest, SessionOwnerDisplayV1Schema, SessionOpenDestinationSchema, isHiddenSystemSession, buildSystemSessionMetadataV1, readSystemSessionMetadataFromMetadata, VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_KEY, VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG };'].join('\n'),
+            resolveDir: repoRoot, sourcefile: 'session-list-marker-import.ts', loader: 'ts' },
+    });
+    const modules = Object.keys(metafile.inputs);
+    const unrelated = modules.filter(file => /\/protocol\/src\/(?:index|sessions\/index|actions\/index|usage\/usageModelPriceSnapshot|actions\/actionExecutor)\.ts$/.test('/' + file));
+    console.log(JSON.stringify({ entry: 'small UI and shared protocol consumers', modules: modules.length,
+        bytes: outputFiles.reduce((sum, file) => sum + file.contents.byteLength, 0), unrelated }));
+    assert.deepEqual(unrelated, [], 'small consumers must not pull the root Protocol barrel and closed catalogs into their initial graph');
+    assert.ok(modules.some(file => file.endsWith('/protocol/src/sessions/media/imageMarksV1.ts')),
+        'the demanded annotation contract remains in the compiled graph');
+    assert.ok(modules.some(file => file.endsWith('/protocol/src/actions/specs/machine/services.ts')),
+        'the demanded service contract remains in the compiled graph');
 });
 
 for (const [feature, entry, dependency] of [
@@ -191,6 +245,30 @@ function collectUiWebGraph(entries, platform = 'web') {
     return { graph, required };
 }
 
+test('mounted native Action approval summaries do not import their preview Card', () => {
+    const entry = 'apps/ui/sources/components/approvals/useActionApprovalContinuation.ts';
+    const { graph } = collectUiWebGraph([entry], 'ios');
+    const cards = graph.get(join(repoRoot, entry)).filter(edge => !edge.dynamic
+        && edge.file.endsWith('/approvals/ApprovalPreviewCard.tsx'));
+    console.log(JSON.stringify({ feature: 'native approval summary read', eagerPreviewCardEdges: cards.length }));
+    assert.deepEqual(cards, [], 'summary reads use the presentation owner without acquiring the preview UI');
+});
+
+
+test('web clipboard controls do not load native Action approval or execution', () => {
+    const origin = join(repoRoot, 'apps/ui/sources/components/ui/lists/Item.tsx');
+    const entry = resolveUiSource(origin, '@/hooks/ui/useClipboardWrite', 'web');
+    assert.equal(entry?.type, 'sourceFile');
+    const { required } = collectUiWebGraph([relative(repoRoot, entry.filePath)]);
+    const actionModules = [...required].filter(file => /\/(?:components\/approvals|sync\/ops\/actions)\//.test(file));
+    console.log(JSON.stringify({ feature: 'web clipboard', staticUiModules: required.size, nativeActionModules: actionModules.length }));
+    assert.deepEqual(actionModules, [], 'web copy must retain the click-stack clipboard path without native Action custody');
+    const nativeEntry = resolveUiSource(origin, '@/hooks/ui/useClipboardWrite', 'ios');
+    assert.equal(nativeEntry?.type, 'sourceFile');
+    assert.equal(nativeEntry.filePath, join(repoRoot, 'apps/ui/sources/hooks/ui/useClipboardWrite.ts'),
+        'native controls retain the mounted Account and approval owner');
+});
+
 test('session presentation consumers share one demand boundary instead of eagerly importing the transcript', async () => {
     const entries = [
         'components/onboarding/tour/stage/StageSessionDetail.tsx',
@@ -258,19 +336,6 @@ test('native pane, fixture and builtin widget hosts keep their bodies synchronou
     }
 });
 
-test('web clipboard controls do not load native Action approval or execution', () => {
-    const origin = join(repoRoot, 'apps/ui/sources/components/ui/lists/Item.tsx');
-    const entry = resolveUiSource(origin, '@/hooks/ui/useClipboardWrite', 'web');
-    assert.equal(entry?.type, 'sourceFile');
-    const { required } = collectUiWebGraph([relative(repoRoot, entry.filePath)]);
-    const actionModules = [...required].filter(file => /\/(?:components\/approvals|sync\/ops\/actions)\//.test(file));
-    console.log(JSON.stringify({ feature: 'web clipboard', staticUiModules: required.size, nativeActionModules: actionModules.length }));
-    assert.deepEqual(actionModules, [], 'web copy must retain the click-stack clipboard path without native Action custody');
-    const nativeEntry = resolveUiSource(origin, '@/hooks/ui/useClipboardWrite', 'ios');
-    assert.equal(nativeEntry?.type, 'sourceFile');
-    assert.equal(nativeEntry.filePath, join(repoRoot, 'apps/ui/sources/hooks/ui/useClipboardWrite.ts'),
-        'native controls retain the mounted Account and approval owner');
-});
 
 for (const platform of ['web', 'ios', 'android']) test(`${platform === 'web' ? 'collection presentation' : 'private presentation owner'} defers substantial rich renderers and keeps small presenters synchronous (${platform})`, () => {
     const entry = platform === 'web'
@@ -308,14 +373,52 @@ for (const platform of ['web', 'ios', 'android']) test(`${platform === 'web' ? '
         `real presentation demand must retain ${suffix}`);
 });
 
-
-test('mounted native Action approval summaries do not import their preview Card', () => {
-    const entry = 'apps/ui/sources/components/approvals/useActionApprovalContinuation.ts';
-    const { graph } = collectUiWebGraph([entry], 'ios');
-    const cards = graph.get(join(repoRoot, entry)).filter(edge => !edge.dynamic
-        && edge.file.endsWith('/approvals/ApprovalPreviewCard.tsx'));
-    console.log(JSON.stringify({ feature: 'native approval summary read', eagerPreviewCardEdges: cards.length }));
-    assert.deepEqual(cards, [], 'summary reads use the presentation owner without acquiring the preview UI');
+test('media stays on demand and task sharing stays synchronous on every platform', () => {
+    for (const platform of ['ios', 'android', null]) {
+        const edges = [];
+        for (const [host, body] of [
+            ['components/ui/media/stage/MediaStageHost', './MediaStage'],
+            ['components/sharing/tasks/showTaskShareSheet', './TaskShareSheet'],
+        ]) {
+            const origin = join(repoRoot, 'apps/ui/index.ts');
+            const resolved = resolveUiSource(origin, join(repoRoot, 'apps/ui/sources', host), platform);
+            assert.equal(resolved?.type, 'sourceFile');
+            const { outputText } = ts.transpileModule(readFileSync(resolved.filePath, 'utf8'), {
+                fileName: resolved.filePath, compilerOptions: { module: ts.ModuleKind.ESNext, jsx: ts.JsxEmit.ReactJSX },
+            });
+            const source = ts.createSourceFile(resolved.filePath + '.js', outputText, ts.ScriptTarget.Latest, true);
+            const inspect = node => {
+                if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+                    && node.moduleSpecifier?.text === body) edges.push({ host, dynamic: false });
+                if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
+                    && node.arguments[0]?.text === body) edges.push({ host, dynamic: true });
+                ts.forEachChild(node, inspect);
+            };
+            inspect(source);
+        }
+        const eager = edges.filter(edge => !edge.dynamic);
+        console.log(JSON.stringify({ feature: 'media and task-share hosts', platform: platform ?? 'default',
+            eagerBodyModules: eager.length }));
+        assert.deepEqual(eager.map(edge => edge.host), ['components/sharing/tasks/showTaskShareSheet'],
+            `${platform ?? 'default'} only task sharing imports its body synchronously`);
+        assert.equal(edges.filter(edge => edge.dynamic).length, 1, 'media retains its demand edge');
+    }
+    const entries = [
+        'apps/ui/sources/components/plugins/surfaces/usePluginUiMediaStage.ts',
+        'apps/ui/sources/components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx',
+    ];
+    const bodies = [
+        '/ui/media/stage/MediaStage.tsx',
+        '/sharing/tasks/useTaskShareController.ts',
+    ];
+    const { graph, required } = collectUiWebGraph(entries);
+    const eager = [...required].filter(file => bodies.some(suffix => file.endsWith(suffix)));
+    console.log(JSON.stringify({ feature: 'media and task-share openers', eagerBodyModules: eager.length }));
+    assert.deepEqual(eager.map(file => relative(repoRoot, file)),
+        ['apps/ui/sources/components/sharing/tasks/useTaskShareController.ts'],
+        'media stays unopened while task sharing renders synchronously');
+    for (const suffix of bodies) assert.ok([...graph.keys()].some(file => file.endsWith(suffix)),
+        `real presentation demand must retain ${suffix}`);
 });
 
 

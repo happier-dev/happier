@@ -466,6 +466,9 @@ const baseExpoConfig = {
         autolinking: optionalNativeAutolinkingConfig,
         plugins: [
             expoBuildPropertiesPlugin,
+            ["./plugins/withAndroidNetworkSecurityConfig.js", expoBuildPropertiesPlugin[1].android],
+            require("./plugins/withIosPodDeploymentTargetFloor.js"),
+            require("./plugins/withIosSceneLifecycle.js"),
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidReactNativeArchitectures.js"),
             ...(terminalNativeRendererEnabled ? [[
@@ -506,6 +509,7 @@ const baseExpoConfig = {
                 "expo-widgets",
                 {
                     bundleIdentifier: `${iosBundleId}.ExpoWidgetsTarget`,
+                    deploymentTarget: expoBuildPropertiesPlugin[1].ios.deploymentTarget,
                     frequentUpdates: iosLiveActivitiesFrequentUpdates,
                     enablePushNotifications: iosLiveActivitiesPushNotifications,
                     widgets: [

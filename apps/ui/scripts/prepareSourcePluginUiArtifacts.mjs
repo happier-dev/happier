@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildUniversalPluginUiArtifacts } from '../../../packages/plugin-sdk/src/ui/build/buildUniversalUiArtifacts.ts';
-import { generateBundledPluginUiArtifacts, resolveBundledPluginUiArtifactsRetainedRoots,
+import { generateBundledPluginUiArtifacts, readBundledPluginUiArtifactsRetainedInventory,
   resolveBundledPluginUiArtifactsOutputPath, collectBundledPluginUiArtifactSources } from './generateBundledPluginUiArtifacts.mjs';
 import { createBundledPluginPublicationFailure } from '../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
 import { readWorkspacePackages, SOURCE_CONDITION } from '../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -23,8 +23,10 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
   const pluginManifests = {};
   const outputDirs = { ...artifactOutputDirs };
   const compilationFailures = [];
-  const retainedRoots = resolveBundledPluginUiArtifactsRetainedRoots(retainedInventoryPath);
-  const producerRoots = resolveBundledPluginUiArtifactsRetainedRoots(resolveBundledPluginUiArtifactsOutputPath(repoRoot));
+  const retainedInventory = readBundledPluginUiArtifactsRetainedInventory(retainedInventoryPath);
+  const producerInventory = readBundledPluginUiArtifactsRetainedInventory(resolveBundledPluginUiArtifactsOutputPath(repoRoot));
+  const retainedRoots = retainedInventory.roots;
+  const producerRoots = producerInventory.roots;
   const retainedRecords = new Map();
   for (const root of new Set([...retainedRoots.values(), ...producerRoots.values(), ...Object.values(artifactOutputDirs),
     ...plugins.map(({ directory }) => join(repoRoot, 'packages/plugins', directory, 'dist/happier-plugin-ui'))])) {
@@ -50,14 +52,22 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
   const buildOptions = await sourcePluginUiBuildOptions({ repoRoot, packages, resolveSourceImport,
     sourceImportConditions: conditions });
   const successfulInputs = new Map();
-  // The successful compiler-input record travels with the retained graph. Its
-  // manifest is needed when evaluating the next declaration itself fails;
+  // The inventory retains the admitted declaration even when compiler-reuse
+  // metadata is absent. Prefer its original manifest when that metadata exists;
   // the inventory producer still revalidates the complete candidate below.
   const retainedInputs = new Map();
-  for (const root of new Set([...producerRoots.values(), ...retainedRoots.values()])) {
-    const record = await readJsonIfExists(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD));
-    if (record?.version === 2 && record.packageName && record.manifest?.id) {
-      retainedInputs.set(record.packageName, { root, manifest: record.manifest });
+  for (const inventory of [producerInventory, retainedInventory]) {
+    for (const declaration of inventory.declarations.values()) {
+      const root = inventory.roots.get(declaration.pluginId);
+      if (root && declaration.packageName && declaration.normalizedManifest?.id) {
+        retainedInputs.set(declaration.packageName, { root, manifest: declaration.normalizedManifest });
+      }
+    }
+    for (const root of new Set(inventory.roots.values())) {
+      const record = await readJsonIfExists(join(root, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD));
+      if (record?.version === 2 && record.packageName && record.manifest?.id) {
+        retainedInputs.set(record.packageName, { root, manifest: record.manifest });
+      }
     }
   }
   await mkdir(outputDir, { recursive: true });
@@ -150,7 +160,7 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
   }
   for (const diagnostic of result.diagnostics) {
     const unavailable = result.pluginFailures.some((failure) => failure.pluginId === diagnostic.pluginId);
-    console.error(`[plugin:${diagnostic.pluginId}] ${diagnostic.code}: ${diagnostic.message} (${unavailable ? 'UI unavailable' : 'serving last-green UI'})`);
+    console.error(`[plugin:${diagnostic.pluginId}] ${diagnostic.code}: ${diagnostic.message} (${unavailable ? 'UI unavailable' : 'serving last-green UI; stale'})`);
   }
   const reused = [...successfulInputs.values()].filter(input => input.reusedRoot).length;
   console.error(`[source-ui] phase=plugin-ui-input-reuse visited=${plugins.length} compiled=${successfulInputs.size - reused} reused=${reused} failed=${compilationFailures.length}`);

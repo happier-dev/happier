@@ -9,22 +9,6 @@
       "@/*": [
         "./sources/*"
       ],
-      // Author examples can have installed SDK/UI copies. Host checking uses
-      // the current workspace declaration identity, including referenced tests.
-      "@happier-dev/plugin-sdk": [
-        "../../packages/plugin-sdk/dist/index.d.ts"
-      ],
-      "@happier-dev/plugin-sdk/*": [
-        "../../packages/plugin-sdk/dist/*/index.d.ts",
-        "../../packages/plugin-sdk/dist/*.d.ts"
-      ],
-      "@happier-dev/plugin-ui": [
-        "../../packages/plugin-ui/dist/index.d.ts"
-      ],
-      "@happier-dev/plugin-ui/*": [
-        "../../packages/plugin-ui/dist/*/index.d.ts",
-        "../../packages/plugin-ui/dist/*.d.ts"
-      ],
       "react": [
         "./node_modules/@types/react"
       ],

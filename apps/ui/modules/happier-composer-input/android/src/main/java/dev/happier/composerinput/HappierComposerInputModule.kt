@@ -7,7 +7,7 @@ class HappierComposerInputModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("HappierComposerInput")
     View(HappierComposerInputView::class) {
-      Events("onChange", "onSelection", "onKeyPress", "onSubmitEditing", "onFocus", "onBlur", "onContentHeightChange", "onScroll", "onReferencePress", "onDecorationPress", "onAttachmentDrop")
+      Events("onComposerChange", "onComposerSelection", "onComposerKeyPress", "onComposerSubmitEditing", "onComposerFocus", "onComposerBlur", "onComposerContentHeightChange", "onComposerScroll", "onComposerReferencePress", "onComposerDecorationPress", "onComposerAttachmentDrop")
       Prop("acceptsAttachmentDrops") { view: HappierComposerInputView, value: Boolean -> view.editor.acceptsAttachmentDrops = value }
       Prop("attachmentDropScope") { view: HappierComposerInputView, value: String -> view.editor.attachmentDropScope = value }
       Prop("value") { view: HappierComposerInputView, value: String -> view.stageValue(value) }
@@ -20,6 +20,7 @@ class HappierComposerInputModule : Module() {
       Prop("minHeight") { view: HappierComposerInputView, value: Double? -> view.editor.minHeight = ((value ?: 0.0) * view.resources.displayMetrics.density).toInt() }
       Prop("maxHeight") { view: HappierComposerInputView, value: Double? -> view.editor.maxHeight = value?.let { (it * view.resources.displayMetrics.density).toInt() } ?: Int.MAX_VALUE }
       Prop("editable") { view: HappierComposerInputView, value: Boolean -> view.setEditable(value) }
+      Prop("forwardHardwareBack") { view: HappierComposerInputView, value: Boolean -> view.editor.forwardHardwareBack = value }
       Prop("placeholder") { view: HappierComposerInputView, value: String? -> view.editor.hint = value }
       Prop("referenceMenuLabels") { view: HappierComposerInputView, value: Map<String, String> -> view.editor.referenceMenuLabels = value }
       Prop("returnKeyType") { view: HappierComposerInputView, value: String -> view.setReturnKeyType(value) }

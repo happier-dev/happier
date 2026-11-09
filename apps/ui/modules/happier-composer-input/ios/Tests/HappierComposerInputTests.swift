@@ -1,6 +1,7 @@
 import UIKit
 import XCTest
 import UniformTypeIdentifiers
+import ObjectiveC
 @testable import HappierComposerInputNative
 
 @MainActor
@@ -61,8 +62,59 @@ final class HappierComposerInputTests: XCTestCase {
     XCTAssertEqual(input.sourceText, "😀 " + token + " done")
   }
 
+  func testFirstCharacterWithKeyboardControllerDelegateForwarding() throws {
+    let previousKeyWindow = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+      .flatMap { $0.windows }.first { $0.isKeyWindow }
+    let input = HappierComposerTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 38))
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 400))
+    let controller = UIViewController()
+    window.rootViewController = controller
+    controller.view.addSubview(input)
+    window.makeKeyAndVisible()
+    defer {
+      input.resignFirstResponder()
+      input.removeFromSuperview()
+      window.isHidden = true
+      window.rootViewController = nil
+      previousKeyWindow?.makeKey()
+    }
+    input.layoutIfNeeded()
+
+    var changes: [String] = []
+    var selection: [String: Int]?
+    var focused = false
+    input.onChange = { text, _ in changes.append(text) }
+    input.onSelection = { selection = $0 }
+    input.onFocus = { focused = true }
+    input.onBlur = { focused = false }
+    XCTAssertTrue(input.becomeFirstResponder())
+    XCTAssertTrue(focused)
+
+    // Keyboard Controller substitutes UITextView's private delegate ivar and forwards
+    // selectors to the original delegate. Keep that native SDK boundary real-shaped.
+    let originalDelegate = try XCTUnwrap(input.delegate)
+    let composite = KeyboardControllerDelegateBoundary(original: originalDelegate)
+    let delegateIvar = try XCTUnwrap(class_getInstanceVariable(UITextView.self, "_delegate"))
+    object_setIvar(input, delegateIvar, composite)
+    defer { input.delegate = originalDelegate }
+    withExtendedLifetime(composite) {
+      input.insertText("Q")
+      input.layoutIfNeeded()
+    }
+
+    XCTAssertEqual(input.sourceText, "Q")
+    XCTAssertEqual(changes, ["Q"])
+    XCTAssertEqual(input.sourceSelection, ["start": 1, "end": 1])
+    XCTAssertEqual(selection, ["start": 1, "end": 1])
+    XCTAssertGreaterThan(try XCTUnwrap(input.sourceCaretRect()?["height"]), 0)
+    XCTAssertTrue(input.resignFirstResponder())
+    XCTAssertFalse(focused)
+  }
+
   func testSoftKeyboardBackspaceSelectsThenDeletesTheWholeChipAndUndoRestoresIt() {
     let input = makeInput()
+    // Test exact chip deletion independently of UIKit's keyboard-activated smart spacing.
+    input.smartInsertDeleteType = .no
     input.selectedRange = NSRange(location: 4, length: 0)
     input.deleteBackward()
     XCTAssertEqual(input.selectedRange, NSRange(location: 3, length: 1))
@@ -311,5 +363,21 @@ final class HappierComposerInputTests: XCTestCase {
     input.readClipboardText = { nil }
     input.paste(nil)
     XCTAssertEqual(input.sourceText, before)
+  }
+}
+
+// Mirrors only react-native-keyboard-controller's external Objective-C forwarding seam.
+private final class KeyboardControllerDelegateBoundary: NSObject, UITextViewDelegate {
+  private weak var original: UITextViewDelegate?
+
+  init(original: UITextViewDelegate) { self.original = original }
+
+  override func responds(to selector: Selector!) -> Bool {
+    super.responds(to: selector) || original?.responds(to: selector) == true
+  }
+
+  override func forwardingTarget(for selector: Selector!) -> Any? {
+    if original?.responds(to: selector) == true { return original }
+    return super.forwardingTarget(for: selector)
   }
 }

@@ -1,10 +1,12 @@
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from '../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
+import { PLUGIN_PACKAGE_PREFIX, pluginPackageNameToPackageId, readBundledPluginPackageNames } from '../../cli/scripts/build-owned/bundledPluginMembership.ts';
 import { readBundledPluginUiDeclarationSource, renderBundledPluginUiDeclarationSource } from './bundledPluginUiDeclarationSource.mjs';
+import { isHistoricalTempPathReferenced, reapHistoricalTempRoots } from '../../stack/scripts/utils/dev_targets/historical_temp_roots.mjs';
 
 import {
   createBundledPluginPublicationFailure,
@@ -13,7 +15,6 @@ import {
 } from '../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
 
 const uiDir = dirname(dirname(fileURLToPath(import.meta.url)));
-const PLUGIN_PACKAGE_PREFIX = '@happier-dev/plugins-';
 const GENERATED_OUTPUT_RELATIVE_PATH = join(
   'apps',
   'ui',
@@ -74,6 +75,103 @@ export function resolveBundledPluginUiArtifactsInputPaths(inventoryPath) {
   return readBundledPluginUiArtifactsInventory(inventoryPath)?.paths ?? null;
 }
 
+/** Inventories own retained graph membership; the serving lifecycle owns when
+ * older browser/native URLs retire. A missing lifecycle observation retains
+ * every served graph. Modern excluded stages were never published to clients.
+ * Deletion, historical age and process/identity rechecks stay with Stack's reaper.
+ */
+export function reapBundledPluginUiArtifactStore({ artifactStoreDir, inventoryPaths = [],
+  procRoot = '/proc', dryRun = false, retainCandidate = () => true }) {
+  const result = { reclaimedBytes: 0, reclaimedRoots: 0, retainedRoots: 0,
+    observationUnavailable: null, reclaimableBytes: 0, reclaimableRoots: 0 };
+  if (typeof process.getuid !== 'function') {
+    result.observationUnavailable = 'Plugin UI retention requires process ownership observations';
+    return result;
+  }
+  const store = resolve(artifactStoreDir);
+  const inventories = [...new Set(inventoryPaths.map(path => resolve(path)))];
+  const isStage = name => name.startsWith('.happier-plugin-ui-stage-');
+  const contains = (directory, path) => path === directory || path.startsWith(`${directory}${sep}`);
+  const readReferences = () => {
+    try {
+      if (inventories.length === 0) throw new Error('Plugin UI retained inventory is unavailable');
+      return inventories.flatMap(path => {
+        const inventory = readBundledPluginUiArtifactsInventory(path);
+        if (!inventory) throw new Error(`Plugin UI retained inventory is unavailable: ${path}`);
+        return [...inventory.references, ...inventory.declarationPaths, ...Object.values(inventory.artifactRoots)]
+          .map(path => realpathSync(path));
+      });
+    } catch (error) {
+      result.observationUnavailable ??= error.message;
+      return null;
+    }
+  };
+  const retainedReferences = readReferences();
+  const keep = (directory, currentReferences) => {
+    const stage = isStage(basename(directory));
+    // A detached Metro may outlive its parent's state record. Its explicit
+    // inventory binding still protects every graph it could have served.
+    if (!stage) {
+      try {
+        if (currentReferences && inventories.some(path => isHistoricalTempPathReferenced(path, currentReferences))) return true;
+      } catch (error) {
+        result.observationUnavailable ??= error.message;
+        return true;
+      }
+      if (retainCandidate(directory, currentReferences) !== false) return true;
+    }
+    // Reread the producer's current and last-green selections immediately
+    // before the canonical reaper removes an otherwise retired candidate.
+    const references = readReferences();
+    return references === null ? !stage : references.some(path => contains(directory, path));
+  };
+  const children = parent => {
+    try {
+      if (!lstatSync(parent).isDirectory()) throw new Error('Plugin UI retention parent is not a directory');
+      return readdirSync(parent, { withFileTypes: true }).filter(entry => entry.isDirectory());
+    } catch (error) {
+      if (error.code !== 'ENOENT') result.observationUnavailable ??= error.message;
+      return [];
+    }
+  };
+  const sweep = (parent, names) => {
+    const candidates = names.filter(name => {
+      if (isStage(name)) return true;
+      const directory = join(parent, name);
+      let canonicalDirectory;
+      try { canonicalDirectory = realpathSync(directory); }
+      catch (error) {
+        result.observationUnavailable ??= error.message;
+        result.retainedRoots++;
+        return false;
+      }
+      if (retainedReferences === null || retainedReferences.some(path => contains(canonicalDirectory, path))
+        || retainCandidate(directory) !== false) { result.retainedRoots++; return false; }
+      return true;
+    });
+    if (candidates.length === 0) return;
+    const swept = reapHistoricalTempRoots(parent, procRoot, { candidateNames: candidates, dryRun, retainCandidate: keep });
+    for (const key of ['reclaimedBytes', 'reclaimedRoots', 'retainedRoots', 'reclaimableBytes', 'reclaimableRoots']) result[key] += swept[key];
+    result.observationUnavailable ??= swept.observationUnavailable;
+    return swept.observationUnavailable === null;
+  };
+  // Earlier source preparation published directly from preparation-XXXXXX.
+  // These are served graphs, unlike the current excluded compiler stages.
+  const parent = dirname(store);
+  if (sweep(parent, children(parent).filter(entry => isStage(entry.name)
+    || /^preparation-[A-Za-z0-9]{6}$/u.test(entry.name)).map(entry => entry.name)) === false) return result;
+  const entries = children(store);
+  if (sweep(store, entries.filter(entry => isStage(entry.name)).map(entry => entry.name)) === false) return result;
+  for (const entry of entries.filter(entry => !isStage(entry.name))) {
+    const pluginRoot = join(store, entry.name);
+    if (sweep(pluginRoot, children(pluginRoot).filter(child => isStage(child.name)
+      || /^[a-f0-9]{64}$/u.test(child.name)).map(child => child.name)) === false) return result;
+  }
+  return result;
+}
+
+/** Recover roots from this producer's static rows without evaluating UI code.
+ * These are candidates only; publication revalidates their entire byte graph. */
 export function resolveBundledPluginUiArtifactsRetainedRoots(inventoryPath) {
   return readBundledPluginUiArtifactsRetainedInventory(inventoryPath).roots;
 }
@@ -183,10 +281,8 @@ async function materializeArtifactGraph(destination, files, reuseContent) {
         missingRoot = directory;
       }
       if (missingRoot) {
-        // Metro's fallback watcher reads a directory before attaching its watch.
-        // Publish the entire first missing subtree at once, so its crawl cannot
-        // observe an empty parent and then miss children created in that gap.
-        // Reuse the existing excluded scratch prefix, on the same filesystem.
+        // Publish complete new subtrees so a watcher can enumerate their
+        // children as soon as it observes the final directory.
         const stage = await mkdtemp(join(dirname(missingRoot), '.happier-plugin-ui-stage-'));
         try {
           for (const output of outputs.filter(output => output.path.startsWith(`${missingRoot}${sep}`))) {
@@ -225,10 +321,8 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
     ? uiPackageJson.dependencies
     : {};
   const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
-  const pluginDirectories = artifactRoots ? [...new Set([...Object.keys(artifactRoots), ...Object.keys(pluginManifests)])].sort() : (await readdir(pluginsRoot, { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('_'))
-    .map((entry) => entry.name)
-    .sort((left, right) => left.localeCompare(right));
+  const pluginDirectories = artifactRoots ? [...new Set([...Object.keys(artifactRoots), ...Object.keys(pluginManifests)])].sort()
+    : readBundledPluginPackageNames(repoRoot, { requireManifestSource: false }).map(pluginPackageNameToPackageId);
   const sources = [];
   const packagedResources = [];
   const declarations = new Map();
@@ -406,9 +500,10 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
         artifactGraph: entry,
         files: [...entry.files]
           .sort((left, right) => left.relativePath.localeCompare(right.relativePath))
-          .map((file) => ({ relativePath: file.relativePath, specifier: artifactRoots
-            ? assertArtifactPath(artifactsRoot, file.relativePath, packageName)
-            : `${packageName}/happier-plugin-ui/${file.relativePath}` })),
+          // The compiler manifest owns byte paths for both built and source
+          // inputs; package exports declare authored modules, not bundle files.
+          .map((file) => ({ relativePath: file.relativePath,
+            specifier: assertArtifactPath(artifactsRoot, file.relativePath, packageName) })),
       });
     }
     pluginFiles.push(...resourceFiles.values());
@@ -567,8 +662,7 @@ async function collectBundledPluginBrandMarks(repoRoot, pluginManifests, exclude
   const { computePluginUiArtifactSha256DigestV1 } = await import('@happier-dev/protocol/plugins/ui');
   const directories = Object.keys(pluginManifests).length > 0
     ? Object.keys(pluginManifests).sort()
-    : (await readdir(resolve(repoRoot, 'packages/plugins'), { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory() && !entry.name.startsWith('_')).map((entry) => entry.name).sort();
+    : readBundledPluginPackageNames(repoRoot, { requireManifestSource: false }).map(pluginPackageNameToPackageId);
   const marks = [];
   const pluginFailures = [];
   for (const directory of directories) {

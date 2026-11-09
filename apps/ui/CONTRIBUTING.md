@@ -30,6 +30,38 @@ pnpm run ios:preview
 pnpm run ios:production
 ```
 
+### iOS native lifecycle (0.3 development source)
+
+Expo 55 prebuilds use `plugins/withIosSceneLifecycle.js` to adopt one UIKit
+application scene. `plugins/ios/SceneDelegate.swift` is compiled beside the generated
+AppDelegate; widget and notification-service extensions retain their own targets.
+The scene forwards URLs, user activities and lifecycle events to AppDelegate, which
+remains the subscriber/link dispatcher. Expo Linking caches the initial URL, so cold
+links do not depend on when JavaScript subscribes.
+
+Release bootstraps React Native once in AppDelegate without a window, then attaches
+the retained controller when a scene connects. This also starts JavaScript for
+background notification actions that do not open a scene. `applicationState` is not
+a foreground-launch discriminator. Debug starts its factory inside the scene, with
+the window attached before dev-launcher completion. Unlike Expo 54, Expo 55 needs no
+delayed AppDelegate subscriber callback; subscribers run normally in both builds.
+
+`patches/expo-updates@55.0.18.patch` allows updates to complete before a scene exists:
+the deferred splash view receives the completed root in place. With an existing window,
+Expo retains its normal controller replacement. OTA selection, reload and cleanup remain
+owned by Expo Updates; the patch does not create a second window. Its native regression
+test is `tools/postinstall/expoUpdatesSceneStartup.test.mjs` (requires macOS/Swift).
+
+The independent `plugins/withIosPodDeploymentTargetFloor.js` runs after React Native's
+Podfile hook and includes resource-bundle pods. `expo-build-properties` in `app.config.js`
+owns deployment target **16.4** and React Native source compilation;
+`Podfile.properties.json` supplies the floor, with no second hardcoded target.
+The existing Expo Widgets patch exposes its target minimum so the widget target
+also consumes that app-configured deployment target and can import the floored pods.
+Both plugins reject unknown/partial templates instead of silently skipping migration.
+Native changes require a new binary and runtime train (`happierExpoRuntimeVersion` in
+`package.json`); publicdev keeps its existing fingerprint policy.
+
 ### Android Development
 
 ```bash

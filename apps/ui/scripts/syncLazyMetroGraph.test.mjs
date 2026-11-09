@@ -13,6 +13,285 @@ import test from 'node:test';
 const uiRoot = fileURLToPath(new URL('..', import.meta.url));
 const require = createRequire(path.join(uiRoot, 'package.json'));
 
+test('compiled web clipboard hook starts its platform write in the gesture and honors cancellation', async () => {
+    const { build } = require('esbuild');
+    const result = await build({
+        entryPoints: [path.join(uiRoot, 'sources/hooks/ui/useClipboardWrite.web.ts')],
+        bundle: true, format: 'cjs', platform: 'browser', packages: 'external',
+        write: false, metafile: true, logLevel: 'silent',
+    });
+    assert.deepEqual(Object.keys(result.metafile.inputs).filter(file =>
+        /\/(?:components\/approvals|sync\/ops\/actions)\//.test(file)), []);
+    const React = require('react');
+    const { act, create } = require('react-test-renderer');
+    const writes = [];
+    // Browser and native clipboard modules are platform boundaries; all hook and effect code is real.
+    const sandbox = {
+        module: { exports: {} }, navigator: { clipboard: { writeText: async text => { writes.push(text); } } },
+        require: name => name === 'react-native' ? { Platform: { OS: 'web' } }
+            : name === 'expo-clipboard' ? {} : require(name),
+        console,
+    };
+    sandbox.exports = sandbox.module.exports;
+    new Script(result.outputFiles[0].text).runInNewContext(sandbox);
+    const { useClipboardWrite } = sandbox.module.exports;
+    let write;
+    const Probe = () => { write = useClipboardWrite(); return null; };
+    const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    let screen;
+    try {
+        await act(async () => { screen = create(React.createElement(Probe)); });
+        const copied = write('compiled gesture');
+        assert.deepEqual(writes, ['compiled gesture'], 'the browser write must start before the caller can await');
+        assert.equal(await copied, true);
+        const cancellation = new AbortController();
+        cancellation.abort();
+        assert.equal(await write('canceled gesture', { signal: cancellation.signal }), false);
+        assert.deepEqual(writes, ['compiled gesture'], 'an already canceled copy has no platform effect');
+    } finally {
+        if (screen) await act(async () => screen.unmount());
+        globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    }
+});
+
+test('default Action factory keeps capture runtimes outside startup and preserves the compiled annotation import', async () => {
+    const { build } = require('esbuild');
+    const result = await build({
+        entryPoints: [path.join(uiRoot, 'sources/sync/ops/actions/defaultActionExecutor.ts')],
+        outdir: path.join(tmpdir(), 'happier-action-startup-graph'),
+        bundle: true, splitting: true, format: 'esm', platform: 'browser', packages: 'external',
+        resolveExtensions: ['.web.tsx', '.web.ts', '.web.js', '.tsx', '.ts', '.js', '.json'],
+        loader: { '.png': 'file', '.jpg': 'file', '.jpeg': 'file', '.gif': 'file', '.webp': 'file',
+            '.svg': 'file', '.ttf': 'file', '.otf': 'file', '.wav': 'file' },
+        metafile: true, write: false, logLevel: 'silent',
+    });
+    const outputs = result.metafile.outputs;
+    const entry = Object.keys(outputs).find(file => outputs[file].entryPoint?.endsWith('/defaultActionExecutor.ts'));
+    assert.ok(entry, 'inspect the real default factory entry');
+    const startupInputs = new Set();
+    const visited = new Set();
+    const visit = file => {
+        if (visited.has(file)) return;
+        visited.add(file);
+        for (const input of Object.keys(outputs[file].inputs)) startupInputs.add(input.replaceAll('\\', '/'));
+        for (const dependency of outputs[file].imports) {
+            if (!dependency.external && dependency.kind !== 'dynamic-import') visit(dependency.path);
+        }
+    };
+    visit(entry);
+    const captureRuntimes = [...startupInputs].filter(file =>
+        /\/sources\/(?:components\/screenCapture\/|desktop\/capture\/)/.test(`/${file}`)
+        || /\/(?:mediaAnnotationActionRuntime|recordingActionRuntime|prepareRecordingDelivery|screenCaptureActions)\.ts$/.test(file));
+    console.log(JSON.stringify({ entry: 'default Action factory', startupCaptureModules: captureRuntimes.length, captureRuntimes }));
+    assert.deepEqual(captureRuntimes, [], 'before a capture or annotation Action, startup must evaluate zero capture runtimes');
+    const annotation = Object.values(outputs).find(output => output.entryPoint?.endsWith('/mediaAnnotationActionRuntime.ts'));
+    assert.ok(annotation?.exports.includes('executeMediaAnnotationAction'),
+        'the compiled deferred module must retain the real Action callback export');
+});
+
+test('compiled machine directory utilities avoid the protocol root barrel', async () => {
+    const { build } = require('esbuild');
+    const { sourcePluginUiBuildOptions } = await import('../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs');
+    const sourceOptions = await sourcePluginUiBuildOptions({ repoRoot: path.resolve(uiRoot, '../..') });
+    const result = await build({
+        entryPoints: [path.join(uiRoot, 'sources/utils/sessions/machineDefaultDirectory.ts')],
+        bundle: true, format: 'cjs', platform: 'browser', packages: 'external',
+        write: false, metafile: true, logLevel: 'silent',
+        plugins: [{ name: 'authored-workspace-source', setup(builder) {
+            builder.onResolve({ filter: /^@happier-dev\// }, args => {
+                const resolved = sourceOptions.resolveSourceImport(args.path);
+                return resolved ? { path: resolved } : undefined;
+            });
+        } }],
+    });
+    const inputs = Object.keys(result.metafile.inputs).map(file => file.replaceAll('\\', '/'));
+    const protocolInputs = inputs.filter(file => /(?:^|\/)packages\/protocol\/src\//.test(file));
+    const rootBarrels = protocolInputs.filter(file => file.endsWith('/protocol/src/index.ts'));
+    console.log(JSON.stringify({ entry: 'machine directory utilities', inputModules: inputs.length,
+        protocolModules: protocolInputs.length, compiledBytes: result.outputFiles[0].contents.length, rootBarrels }));
+    const externalProtocolImports = Object.values(result.metafile.inputs).flatMap(input =>
+        input.imports.filter(dependency => dependency.external && dependency.path.startsWith('@happier-dev/protocol')));
+    assert.deepEqual(externalProtocolImports, [], 'traverse protocol source instead of hiding it behind an external import');
+    assert.deepEqual(rootBarrels, [], 'directory defaults must not traverse every unrelated protocol export');
+});
+
+test('base translation import synchronously loads only its initial locale bundle', async () => {
+    const { build } = require('esbuild');
+    const result = await build({
+        entryPoints: [path.join(uiRoot, 'sources/text/i18n.ts')],
+        outdir: path.join(tmpdir(), 'happier-i18n-static-graph'),
+        bundle: true, splitting: true, format: 'esm', platform: 'node',
+        metafile: true, write: false,
+    });
+    const outputs = result.metafile.outputs;
+    const entry = Object.keys(outputs).find(file => outputs[file].entryPoint?.endsWith('/i18n.ts'));
+    assert.ok(entry);
+    const inputs = new Set();
+    const visited = new Set();
+    const visit = file => {
+        if (visited.has(file)) return;
+        visited.add(file);
+        for (const input of Object.keys(outputs[file].inputs)) inputs.add(input);
+        for (const dependency of outputs[file].imports) {
+            if (!dependency.external && dependency.kind !== 'dynamic-import') visit(dependency.path);
+        }
+    };
+    visit(entry);
+    const locales = [...inputs].filter(file => /\/text\/translations\/(?:ca|de|en|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)\.ts$/.test(file));
+    console.log(JSON.stringify({ entry: 'base translation import', staticModules: inputs.size, synchronousLocales: locales }));
+    assert.deepEqual(locales.map(file => path.basename(file)).sort(), ['en.ts'],
+        'importing i18n must not evaluate every unselected locale before settings readiness');
+    assert.deepEqual([...inputs].filter(file => file.endsWith('/bundledPluginTranslations.generated.ts')), [],
+        'the aggregate plugin translation payload must not enter the initial locale graph');
+});
+
+test('web development translation assets keep unselected locales outside the single Metro graph', async () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'happier-locale-dev-assets-'));
+    let server;
+    try {
+        const { prepareLocaleAssets } = await import('./prepareLocaleAssets.mjs');
+        await prepareLocaleAssets({ uiPackageDir: uiRoot });
+        writeFileSync(path.join(fixture, 'index.js'), `import * as text from ${JSON.stringify(path.join(uiRoot, 'sources/text/i18n.ts'))};\nglobalThis.localeText = text;`);
+        // A watch:false file map takes one initial census of fixture entries.
+        writeFileSync(path.join(fixture, 'before.js'), `import * as text from ${JSON.stringify(path.join(uiRoot, 'sources/text/i18n.ts'))};\nimport * as portable from ${JSON.stringify(path.join(uiRoot, 'sources/text/localeBundleLoaders.ts'))};\nglobalThis.localeText = {text,portable};`);
+        delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
+        const config = require(path.join(uiRoot, 'metro.config.js'));
+        config.watchFolders = [...config.watchFolders, fixture];
+        config.maxWorkers = 2;
+        config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(fixture, 'transforms') })];
+        config.fileMapCacheDirectory = path.join(fixture, 'filemap');
+        mkdirSync(config.fileMapCacheDirectory, { recursive: true });
+        config.reporter = { update() {} };
+        let modulePaths;
+        let transformedBytes;
+        config.serializer.customSerializer = async (_entry, _prepend, graph) => {
+            modulePaths = [...graph.dependencies.keys()].map(file => file.replaceAll('\\', '/'));
+            transformedBytes = [...graph.dependencies.values()].reduce((total, module) => total + module.output
+                .filter(output => output.type.startsWith('js/'))
+                .reduce((bytes, output) => bytes + Buffer.byteLength(output.data.code), 0), 0);
+            return { code: '', map: '{}' };
+        };
+        const Server = require('metro/private/Server').default;
+        server = new Server(config, { watch: false });
+        await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+            entryFile: path.join(fixture, 'index.js'), platform: 'web', dev: true, minify: false, lazy: false,
+        });
+        const unselected = modulePaths.filter(file =>
+            /\/text\/(?:translations\/(?:features\/)?(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)(?:Overrides)?\.ts|bundledPluginTranslations\/(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)\.generated\.ts)$/.test(file));
+        const after = { modules: modulePaths.length, transformedBytes };
+        assert.deepEqual(unselected, [], 'single-graph web development must deliver only English fallback until a locale is requested');
+        assert.ok(modulePaths.some(file => file.endsWith('/text/translations/en.ts')), 'English fallback remains synchronous');
+        // The extracted portable loader retains the previous import graph. Force it
+        // into a matched control to measure the eager dev graph with identical inputs.
+        await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+            entryFile: path.join(fixture, 'before.js'), platform: 'web', dev: true, minify: false, lazy: false,
+        });
+        assert.ok(modulePaths.some(file => file.endsWith('/text/translations/ru.ts')),
+            'the matched eager-loader control must actually traverse an unselected locale');
+        console.log(JSON.stringify({ entry: 'single-graph development translations',
+            before: { modules: modulePaths.length, transformedBytes }, after, unselected }));
+    } finally {
+        if (server) await server.end();
+        rmSync(fixture, { recursive: true, force: true });
+    }
+});
+
+test('compiled web locale demand preserves formatters, coalesces reads and retries an unavailable asset', async () => {
+    const { prepareLocaleAssets } = await import('./prepareLocaleAssets.mjs');
+    await prepareLocaleAssets({ uiPackageDir: uiRoot });
+    const { build } = require('esbuild');
+    const result = await build({
+        entryPoints: [path.join(uiRoot, 'sources/text/localeBundlesSync.ts')],
+        bundle: true, format: 'cjs', platform: 'browser', packages: 'external', write: false,
+        resolveExtensions: ['.web.ts', '.ts', '.js'],
+        plugins: [{ name: 'expo-asset-registry-boundary', setup(builder) {
+            builder.onLoad({ filter: /\.locale\.bundle$/ }, args => ({
+                contents: `module.exports = ${JSON.stringify(args.path)};`, loader: 'js',
+            }));
+        } }],
+    });
+    const reads = [];
+    let unavailable = false;
+    const sandbox = {
+        module: { exports: {} }, TextEncoder, TextDecoder, Uint8Array, console,
+        require: name => name === 'expo-asset' ? { Asset: { fromModule: uri => ({ uri, downloadAsync: async () => {} }) } } : require(name),
+        fetch: async uri => {
+            reads.push(uri);
+            return unavailable ? { ok: false } : new Response(readFileSync(uri));
+        },
+    };
+    sandbox.exports = sandbox.module.exports;
+    new Script(result.outputFiles[0].text).runInNewContext(sandbox);
+    const loader = sandbox.module.exports;
+    assert.equal(loader.readLocaleBundle('en').host.common.submit, 'Submit');
+    assert.equal(reads.length, 0, 'English boot must not read any optional locale assets');
+    const spanish = loader.preloadLocaleBundle('es');
+    assert.equal(loader.preloadLocaleBundle('es'), spanish, 'concurrent demand shares the existing locale owner');
+    await spanish;
+    const host = loader.readLocaleBundle('es').host;
+    assert.equal(host.common.submit, 'Enviar');
+    const find = node => {
+        for (const [key, value] of Object.entries(node)) {
+            if (key === 'mcpServersStatusDetected') return value;
+            if (value && typeof value === 'object') { const result = find(value); if (result) return result; }
+        }
+    };
+    const formatter = find(host);
+    assert.equal(typeof formatter, 'function', 'executable translation assets must preserve callable formatting');
+    assert.ok(formatter({ provider: 'locale-format-control' }).includes('locale-format-control'));
+    await loader.preloadLocaleBundle('es');
+    assert.equal(reads.length, 1, 'settled locale demand does not reread its asset');
+    unavailable = true;
+    await assert.rejects(loader.preloadLocaleBundle('fr'), /Translation asset unavailable: fr/);
+    assert.equal(loader.readLocaleBundle('fr'), undefined, 'failed copy never replaces a usable locale');
+    unavailable = false;
+    await loader.preloadLocaleBundle('fr');
+    assert.equal(typeof loader.readLocaleBundle('fr').host.common.submit, 'string');
+    assert.equal(reads.length, 3, 'a failed demand remains retryable without an automatic retry loop');
+    await loader.preloadLocaleBundle('zh-Hant');
+    assert.equal(typeof loader.readLocaleBundle('zh-Hant').host.tabs.inbox, 'string');
+});
+
+test('native translation lookup evaluates only requested locale payloads synchronously', async () => {
+    const { build } = require('esbuild');
+    const result = await build({
+        stdin: { contents: `export * from './sources/text/localeBundlesSync';`, resolveDir: uiRoot },
+        bundle: true, format: 'cjs', platform: 'node', write: false,
+        resolveExtensions: ['.native.ts', '.ts', '.js'],
+        plugins: [{
+            name: 'observe-locale-evaluation',
+            setup(builder) {
+                builder.onLoad({ filter: /[\\/]text[\\/](?:translations[\\/](?:ca|de|en|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)\.ts|bundledPluginTranslations(?:[\\/][^\\/]+)?\.generated\.ts)$/ }, args => ({
+                    contents: `globalThis.loadedLocales.push(${JSON.stringify(path.relative(uiRoot, args.path))});\n${readFileSync(args.path, 'utf8')}`,
+                    loader: 'ts',
+                }));
+            },
+        }],
+    });
+    // Built-in modules remain the real Node platform boundary for this compiled native adapter.
+    const sandbox = { module: { exports: {} }, loadedLocales: [], TextEncoder, TextDecoder, require };
+    sandbox.exports = sandbox.module.exports;
+    new Script(result.outputFiles[0].text).runInNewContext(sandbox);
+    const loader = sandbox.module.exports;
+    const spanish = loader.readLocaleBundle('es');
+    const payloads = () => Array.from(sandbox.loadedLocales, file => file.replaceAll('\\', '/'));
+    console.log(JSON.stringify({ entry: 'native selected Spanish', evaluatedPayloads: payloads() }));
+    assert.deepEqual(payloads().sort(), [
+        'sources/text/bundledPluginTranslations/es.generated.ts', 'sources/text/translations/es.ts',
+    ], 'native lookup must synchronously evaluate the selected payload, not the twelve-locale inventory');
+    assert.equal(spanish.host.common.submit, 'Enviar');
+    assert.equal(loader.readLocaleBundle('es').host, spanish.host, 'module caching retains the selected tree');
+    assert.equal(sandbox.loadedLocales.length, 2);
+    const english = loader.readLocaleBundle('en');
+    assert.equal(english.host.common.submit, 'Submit');
+    assert.equal(english.plugins['agentInput.connectedServiceLabel.gemini'], 'Google Gemini');
+    assert.equal(sandbox.loadedLocales.length, 4, 'English fallback loads only on request');
+    const traditional = loader.readLocaleBundle('zh-Hant');
+    assert.equal(typeof traditional.host.tabs.inbox, 'string');
+    assert.equal(payloads().some(file => file.includes('/fr.')), false);
+});
+
 test('web math consumers share one KaTeX implementation for import and require', async () => {
     const fixture = mkdtempSync(path.join(tmpdir(), 'happier-web-math-'));
     let server;
@@ -461,192 +740,4 @@ test('sync consumers and lazy presence never pull the sync implementation into t
         if (server) await server.end();
         rmSync(cache, { recursive: true, force: true });
     }
-});
-
-test('compiled web clipboard hook starts its platform write in the gesture and honors cancellation', async () => {
-    const { build } = require('esbuild');
-    const result = await build({
-        entryPoints: [path.join(uiRoot, 'sources/hooks/ui/useClipboardWrite.web.ts')],
-        bundle: true, format: 'cjs', platform: 'browser', packages: 'external',
-        write: false, metafile: true, logLevel: 'silent',
-    });
-    assert.deepEqual(Object.keys(result.metafile.inputs).filter(file =>
-        /\/(?:components\/approvals|sync\/ops\/actions)\//.test(file)), []);
-    const React = require('react');
-    const { act, create } = require('react-test-renderer');
-    const writes = [];
-    // Browser and native clipboard modules are platform boundaries; all hook and effect code is real.
-    const sandbox = {
-        module: { exports: {} }, navigator: { clipboard: { writeText: async text => { writes.push(text); } } },
-        require: name => name === 'react-native' ? { Platform: { OS: 'web' } }
-            : name === 'expo-clipboard' ? {} : require(name),
-        console,
-    };
-    sandbox.exports = sandbox.module.exports;
-    new Script(result.outputFiles[0].text).runInNewContext(sandbox);
-    const { useClipboardWrite } = sandbox.module.exports;
-    let write;
-    const Probe = () => { write = useClipboardWrite(); return null; };
-    const previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-    let screen;
-    try {
-        await act(async () => { screen = create(React.createElement(Probe)); });
-        const copied = write('compiled gesture');
-        assert.deepEqual(writes, ['compiled gesture'], 'the browser write must start before the caller can await');
-        assert.equal(await copied, true);
-        const cancellation = new AbortController();
-        cancellation.abort();
-        assert.equal(await write('canceled gesture', { signal: cancellation.signal }), false);
-        assert.deepEqual(writes, ['compiled gesture'], 'an already canceled copy has no platform effect');
-    } finally {
-        if (screen) await act(async () => screen.unmount());
-        globalThis.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
-    }
-});
-
-test('web development translation assets keep unselected locales outside the single Metro graph', async () => {
-    const fixture = mkdtempSync(path.join(tmpdir(), 'happier-locale-dev-assets-'));
-    let server;
-    try {
-        const { prepareLocaleAssets } = await import('./prepareLocaleAssets.mjs');
-        await prepareLocaleAssets({ uiPackageDir: uiRoot });
-        writeFileSync(path.join(fixture, 'index.js'), `import * as text from ${JSON.stringify(path.join(uiRoot, 'sources/text/i18n.ts'))};\nglobalThis.localeText = text;`);
-        // A watch:false file map takes one initial census of fixture entries.
-        writeFileSync(path.join(fixture, 'before.js'), `import * as text from ${JSON.stringify(path.join(uiRoot, 'sources/text/i18n.ts'))};\nimport * as portable from ${JSON.stringify(path.join(uiRoot, 'sources/text/localeBundleLoaders.ts'))};\nglobalThis.localeText = {text,portable};`);
-        delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
-        const config = require(path.join(uiRoot, 'metro.config.js'));
-        config.watchFolders = [...config.watchFolders, fixture];
-        config.maxWorkers = 2;
-        config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(fixture, 'transforms') })];
-        config.fileMapCacheDirectory = path.join(fixture, 'filemap');
-        mkdirSync(config.fileMapCacheDirectory, { recursive: true });
-        config.reporter = { update() {} };
-        let modulePaths;
-        let transformedBytes;
-        config.serializer.customSerializer = async (_entry, _prepend, graph) => {
-            modulePaths = [...graph.dependencies.keys()].map(file => file.replaceAll('\\', '/'));
-            transformedBytes = [...graph.dependencies.values()].reduce((total, module) => total + module.output
-                .filter(output => output.type.startsWith('js/'))
-                .reduce((bytes, output) => bytes + Buffer.byteLength(output.data.code), 0), 0);
-            return { code: '', map: '{}' };
-        };
-        const Server = require('metro/private/Server').default;
-        server = new Server(config, { watch: false });
-        await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
-            entryFile: path.join(fixture, 'index.js'), platform: 'web', dev: true, minify: false, lazy: false,
-        });
-        const unselected = modulePaths.filter(file =>
-            /\/text\/(?:translations\/(?:features\/)?(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)(?:Overrides)?\.ts|bundledPluginTranslations\/(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)\.generated\.ts)$/.test(file));
-        const after = { modules: modulePaths.length, transformedBytes };
-        assert.deepEqual(unselected, [], 'single-graph web development must deliver only English fallback until a locale is requested');
-        assert.ok(modulePaths.some(file => file.endsWith('/text/translations/en.ts')), 'English fallback remains synchronous');
-        // The extracted portable loader retains the previous import graph. Force it
-        // into a matched control to measure the eager dev graph with identical inputs.
-        await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
-            entryFile: path.join(fixture, 'before.js'), platform: 'web', dev: true, minify: false, lazy: false,
-        });
-        assert.ok(modulePaths.some(file => file.endsWith('/text/translations/ru.ts')),
-            'the matched eager-loader control must actually traverse an unselected locale');
-        console.log(JSON.stringify({ entry: 'single-graph development translations',
-            before: { modules: modulePaths.length, transformedBytes }, after, unselected }));
-    } finally {
-        if (server) await server.end();
-        rmSync(fixture, { recursive: true, force: true });
-    }
-});
-
-test('compiled web locale demand preserves formatters, coalesces reads and retries an unavailable asset', async () => {
-    const { prepareLocaleAssets } = await import('./prepareLocaleAssets.mjs');
-    await prepareLocaleAssets({ uiPackageDir: uiRoot });
-    const { build } = require('esbuild');
-    const result = await build({
-        entryPoints: [path.join(uiRoot, 'sources/text/localeBundlesSync.ts')],
-        bundle: true, format: 'cjs', platform: 'browser', packages: 'external', write: false,
-        resolveExtensions: ['.web.ts', '.ts', '.js'],
-        plugins: [{ name: 'expo-asset-registry-boundary', setup(builder) {
-            builder.onLoad({ filter: /\.locale\.bundle$/ }, args => ({
-                contents: `module.exports = ${JSON.stringify(args.path)};`, loader: 'js',
-            }));
-        } }],
-    });
-    const reads = [];
-    let unavailable = false;
-    const sandbox = {
-        module: { exports: {} }, TextEncoder, TextDecoder, Uint8Array, console,
-        require: name => name === 'expo-asset' ? { Asset: { fromModule: uri => ({ uri, downloadAsync: async () => {} }) } } : require(name),
-        fetch: async uri => {
-            reads.push(uri);
-            return unavailable ? { ok: false } : new Response(readFileSync(uri));
-        },
-    };
-    sandbox.exports = sandbox.module.exports;
-    new Script(result.outputFiles[0].text).runInNewContext(sandbox);
-    const loader = sandbox.module.exports;
-    assert.equal(loader.readLocaleBundle('en').host.common.submit, 'Submit');
-    assert.equal(reads.length, 0, 'English boot must not read any optional locale assets');
-    const spanish = loader.preloadLocaleBundle('es');
-    assert.equal(loader.preloadLocaleBundle('es'), spanish, 'concurrent demand shares the existing locale owner');
-    await spanish;
-    const host = loader.readLocaleBundle('es').host;
-    assert.equal(host.common.submit, 'Enviar');
-    const find = node => {
-        for (const [key, value] of Object.entries(node)) {
-            if (key === 'mcpServersStatusDetected') return value;
-            if (value && typeof value === 'object') { const result = find(value); if (result) return result; }
-        }
-    };
-    const formatter = find(host);
-    assert.equal(typeof formatter, 'function', 'executable translation assets must preserve callable formatting');
-    assert.ok(formatter({ provider: 'locale-format-control' }).includes('locale-format-control'));
-    await loader.preloadLocaleBundle('es');
-    assert.equal(reads.length, 1, 'settled locale demand does not reread its asset');
-    unavailable = true;
-    await assert.rejects(loader.preloadLocaleBundle('fr'), /Translation asset unavailable: fr/);
-    assert.equal(loader.readLocaleBundle('fr'), undefined, 'failed copy never replaces a usable locale');
-    unavailable = false;
-    await loader.preloadLocaleBundle('fr');
-    assert.equal(typeof loader.readLocaleBundle('fr').host.common.submit, 'string');
-    assert.equal(reads.length, 3, 'a failed demand remains retryable without an automatic retry loop');
-    await loader.preloadLocaleBundle('zh-Hant');
-    assert.equal(typeof loader.readLocaleBundle('zh-Hant').host.tabs.inbox, 'string');
-});
-
-test('native translation lookup evaluates only requested locale payloads synchronously', async () => {
-    const { build } = require('esbuild');
-    const result = await build({
-        stdin: { contents: `export * from './sources/text/localeBundlesSync';`, resolveDir: uiRoot },
-        bundle: true, format: 'cjs', platform: 'node', write: false,
-        resolveExtensions: ['.native.ts', '.ts', '.js'],
-        plugins: [{
-            name: 'observe-locale-evaluation',
-            setup(builder) {
-                builder.onLoad({ filter: /[\\/]text[\\/](?:translations[\\/](?:ca|de|en|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)\.ts|bundledPluginTranslations(?:[\\/][^\\/]+)?\.generated\.ts)$/ }, args => ({
-                    contents: `globalThis.loadedLocales.push(${JSON.stringify(path.relative(uiRoot, args.path))});\n${readFileSync(args.path, 'utf8')}`,
-                    loader: 'ts',
-                }));
-            },
-        }],
-    });
-    // Built-in modules remain the real Node platform boundary for this compiled native adapter.
-    const sandbox = { module: { exports: {} }, loadedLocales: [], TextEncoder, TextDecoder, require };
-    sandbox.exports = sandbox.module.exports;
-    new Script(result.outputFiles[0].text).runInNewContext(sandbox);
-    const loader = sandbox.module.exports;
-    const spanish = loader.readLocaleBundle('es');
-    const payloads = () => Array.from(sandbox.loadedLocales, file => file.replaceAll('\\', '/'));
-    console.log(JSON.stringify({ entry: 'native selected Spanish', evaluatedPayloads: payloads() }));
-    assert.deepEqual(payloads().sort(), [
-        'sources/text/bundledPluginTranslations/es.generated.ts', 'sources/text/translations/es.ts',
-    ], 'native lookup must synchronously evaluate the selected payload, not the twelve-locale inventory');
-    assert.equal(spanish.host.common.submit, 'Enviar');
-    assert.equal(loader.readLocaleBundle('es').host, spanish.host, 'module caching retains the selected tree');
-    assert.equal(sandbox.loadedLocales.length, 2);
-    const english = loader.readLocaleBundle('en');
-    assert.equal(english.host.common.submit, 'Submit');
-    assert.equal(english.plugins['agentInput.connectedServiceLabel.gemini'], 'Google Gemini');
-    assert.equal(sandbox.loadedLocales.length, 4, 'English fallback loads only on request');
-    const traditional = loader.readLocaleBundle('zh-Hant');
-    assert.equal(typeof traditional.host.tabs.inbox, 'string');
-    assert.equal(payloads().some(file => file.includes('/fr.')), false);
 });

@@ -143,9 +143,9 @@ const ALLOW_SAME_STRING_KEYS = new Set<string>([
     // Onboarding / setup placeholders should remain literal.
     'promptLibrary.supportingFilePathPlaceholder',
     'settingsSession.handoff.includeIgnoredMode.globsPlaceholder',
-    'settings.machineSetupRemoteSshTargetPlaceholder',
-    'settings.machineSetupRemoteSshUsernamePlaceholder',
-    'settings.machineSetupRemoteSshHostPlaceholder',
+    'settings.machineEnrollRemoteSshTargetPlaceholder',
+    'settings.machineEnrollRemoteSshUsernamePlaceholder',
+    'settings.machineEnrollRemoteSshHostPlaceholder',
     // "Home" is the Happier product term, "Logo" is shared across locales, and the
     // Team name placeholder is a sample company name rather than UI copy.
     'teams.homeLabel',
@@ -170,10 +170,6 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
     // Italian writes "Privacy" as English does.
     'settingsNotifications.activitySurfaces.privacyTitle': new Set(['it']),
     // Desktop overlay: the word each locale's own UI uses is spelled like the English one.
-    'settingsDesktop.overlay.compactStylePanelTitle': new Set(['de', 'es', 'pl']), // "Panel" is the German, Spanish and Polish word for a UI panel.
-    'settingsDesktop.overlay.densityCompactTitle': new Set(['fr']), // French "Compact" (adjective).
-    'settingsDesktop.overlay.interactionTitle': new Set(['fr']), // French "Interaction".
-    'settingsDesktop.overlay.placementTitle': new Set(['fr']), // French "Placement".
     // Session settings pages: true cognates, the word each locale uses in its own UI.
     'settingsSessionPages.runtime.terminalSection': new Set(['fr', 'de', 'es', 'pt', 'ca', 'pl']),
     'settingsSessionPages.wizard.steps.backends': new Set(['fr', 'de', 'ca', 'pl']),

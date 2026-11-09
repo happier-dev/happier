@@ -1,61 +1,51 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { readPluginTranslationResources } from '../../../../scripts/testing/readPluginTranslationResources';
+import { pluginPackageNameToPackageId, readBundledPluginPackageNames } from '../../../cli/scripts/build-owned/bundledPluginMembership';
 
 import {
     SUPPORTED_LANGUAGE_CODES,
     type SupportedLanguage,
 } from '../../sources/text/_all.js';
 
-const INLINE_TRANSLATION_BUNDLE_FILES = [
-    'elevenlabs/src/manifest.ts',
-    'google/src/voice/declarations.ts',
-    'inspector/src/manifest.ts',
-    'openai-compat/src/manifest.ts',
-    'posthog/src/manifest.ts',
-    'scm-azure-devops/src/manifest.ts',
-    'scm-bitbucket/src/manifest.ts',
-    'scm-github/src/manifest.ts',
-    'scm-gitlab/src/manifest.ts',
-    'sentry/src/manifest.ts',
-] as const;
-
-const MODULE_BUNDLES = [
-    'channel-discord',
-    'channel-telegram',
-    'channels',
-    'claude',
-    'cliproxyapi',
-    'codex',
-    'copilot',
-    'gemini',
-    'grok',
-    'ohmypi',
-    'pi',
-    'posthog',
-    'scm-azure-devops',
-    'sentry',
-    'triage',
-] as const;
-
-const ADDITIONAL_MODULE_BUNDLES = [
-    'inspector/src/ui/additionalTranslations.ts',
-    'posthog/src/ui/renderTranslations.ts',
-    'sentry/src/ui/renderTranslations.ts',
-    'scm-azure-devops/src/ui/renderTranslations.ts',
-    'scm-azure-devops/src/ui/additionalTranslations.ts',
-    'scm-bitbucket/src/ui/renderTranslations.ts',
-    'scm-bitbucket/src/ui/additionalTranslations.ts',
-    'scm-github/src/ui/renderTranslations.ts',
-    'scm-github/src/ui/additionalTranslations.ts',
-    'scm-gitlab/src/ui/renderTranslations.ts',
-    'scm-gitlab/src/ui/additionalTranslations.ts',
-    'triage/src/ui/additionalTranslations.ts',
-] as const;
 
 type Bundle = Readonly<{ locale: string; keys: readonly string[]; values: readonly string[] }>;
+
+const PLUGIN_ROOT = path.resolve(__dirname, '../../../../packages/plugins');
+
+// The former inline/module audit covered these catalogs, not every plugin.
+const CONTENT_AUDITED_PLUGINS = new Set([
+    'elevenlabs', 'google', 'inspector', 'openai-compat', 'posthog', 'scm-azure-devops',
+    'scm-bitbucket', 'scm-github', 'scm-gitlab', 'sentry', 'channel-discord',
+    'channel-telegram', 'channels', 'claude', 'cliproxyapi', 'codex', 'copilot',
+    'gemini', 'grok', 'ohmypi', 'pi', 'triage',
+]);
+
+function packagedPlugins(): readonly string[] {
+    return readdirSync(PLUGIN_ROOT, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && existsSync(path.join(PLUGIN_ROOT, entry.name, 'assets/i18n/en.json')))
+        .map(entry => entry.name).sort();
+}
+
+function readPackagedBundles(plugin: string): readonly Bundle[] {
+    const packageRoot = pathToFileURL(`${path.join(PLUGIN_ROOT, plugin)}${path.sep}`);
+    const messagesByLocale = readPluginTranslationResources(packageRoot);
+    expect(readdirSync(new URL('assets/i18n/', packageRoot)).filter(name => name.endsWith('.json')).map(name => name.slice(0, -5)).sort())
+        .toEqual([...SUPPORTED_LANGUAGE_CODES].sort());
+    return Object.keys(messagesByLocale).map(locale => {
+        const file = new URL(`assets/i18n/${locale}.json`, packageRoot);
+        const source = ts.parseJsonText(file.pathname, readFileSync(file, 'utf8'));
+        const statement = source.statements[0];
+        const object = statement && ts.isExpressionStatement(statement) ? unwrapObject(statement.expression) : null;
+        if (!object) throw new Error(`${file.pathname}: expected a JSON message object`);
+        // Preserve duplicate-key detection: JSON.parse alone silently overwrites them.
+        return readMessageObject(object, locale);
+    });
+}
 
 const FORBIDDEN_SCRIPTS_BY_LOCALE: Readonly<Partial<Record<SupportedLanguage, RegExp>>> = {
     ru: /[\u3040-\u30ff\u3400-\u9fff]/,
@@ -93,21 +83,6 @@ function unwrapObject(node: ts.Expression): ts.ObjectLiteralExpression | null {
     return null;
 }
 
-function unwrapRowsArray(node: ts.Expression): ts.ArrayLiteralExpression | null {
-    if (ts.isArrayLiteralExpression(node)) return node;
-    if (ts.isCallExpression(node)) {
-        // A manifest may project its locale rows through a catalog helper (the
-        // triage sources wrap theirs in the shared source-settings projector).
-        // The literal rows remain the author-owned portion this source
-        // validator can inspect; helper-projected keys retain their owner
-        // tests in `@happier-dev/triage-sources`.
-        for (const argument of [...node.arguments].reverse()) {
-            const rows = unwrapRowsArray(argument);
-            if (rows !== null) return rows;
-        }
-    }
-    return null;
-}
 
 function stringValue(node: ts.Expression): string | null {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
@@ -136,77 +111,6 @@ function readMessageObject(
     return { locale, keys: entries.map(([key]) => key), values: entries.map(([, value]) => value) };
 }
 
-function readInlineManifestBundles(file: string): readonly Bundle[] {
-    const source = readFileSync(file, 'utf8');
-    const root = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-    const stringConstants = new Map<string, string>();
-    for (const statement of root.statements) {
-        if (!ts.isVariableStatement(statement)) continue;
-        for (const declaration of statement.declarationList.declarations) {
-            if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
-            const value = stringValue(declaration.initializer);
-            if (value !== null) stringConstants.set(declaration.name.text, value);
-        }
-    }
-    const resolveString = (expression: ts.Expression): string | null => (
-        stringValue(expression)
-        ?? (ts.isIdentifier(expression) ? stringConstants.get(expression.text) ?? null : null)
-    );
-    const resolvePropertyName = (name: ts.PropertyName): string | null => (
-        ts.isComputedPropertyName(name)
-            ? resolveString(name.expression)
-            : propertyName(name)
-    );
-    let bundles: Bundle[] | null = null;
-    function visit(node: ts.Node): void {
-        if (bundles || !ts.isPropertyAssignment(node) || propertyName(node.name) !== 'translations') {
-            ts.forEachChild(node, visit);
-            return;
-        }
-        const rows = unwrapRowsArray(node.initializer);
-        if (rows === null) {
-            ts.forEachChild(node, visit);
-            return;
-        }
-        const parsed = rows.elements.map((element): Bundle | null => {
-            const object = unwrapObject(element as ts.Expression);
-            if (!object) return null;
-            const localeProperty = object.properties.find((property) => ts.isPropertyAssignment(property) && propertyName(property.name) === 'locale');
-            const messagesProperty = object.properties.find((property) => ts.isPropertyAssignment(property) && propertyName(property.name) === 'messages');
-            if (!localeProperty || !messagesProperty || !ts.isPropertyAssignment(localeProperty) || !ts.isPropertyAssignment(messagesProperty)) return null;
-            const locale = resolveString(localeProperty.initializer);
-            const messages = unwrapObject(messagesProperty.initializer);
-            return locale && messages
-                ? readMessageObject(messages, locale, resolvePropertyName, resolveString)
-                : null;
-        });
-        if (parsed.length > 0 && parsed.every((entry): entry is Bundle => entry !== null)) bundles = parsed;
-    }
-    visit(root);
-    if (!bundles) throw new Error(`${file}: literal translations bundle not found`);
-    return bundles;
-}
-
-function readModuleBundles(file: string): readonly Bundle[] {
-    const source = readFileSync(file, 'utf8');
-    const root = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-    for (const statement of root.statements) {
-        if (!ts.isVariableStatement(statement)) continue;
-        for (const declaration of statement.declarationList.declarations) {
-            if (!ts.isIdentifier(declaration.name) || !declaration.name.text.endsWith('_UI_TRANSLATIONS') || !declaration.initializer) continue;
-            const object = unwrapObject(declaration.initializer);
-            if (!object) continue;
-            return object.properties.map((property) => {
-                if (!ts.isPropertyAssignment(property)) throw new Error(`${file}: non-literal locale bundle`);
-                const locale = propertyName(property.name);
-                const messages = unwrapObject(property.initializer);
-                if (!locale || !messages) throw new Error(`${file}: non-literal locale bundle`);
-                return readMessageObject(messages, locale);
-            });
-        }
-    }
-    throw new Error(`${file}: *_UI_TRANSLATIONS object not found`);
-}
 
 function readGeneratedHostBundles(file: string): ReadonlyMap<string, Readonly<Record<string, string>>> {
     const source = readFileSync(file, 'utf8');
@@ -233,9 +137,18 @@ function readGeneratedHostBundles(file: string): ReadonlyMap<string, Readonly<Re
 }
 
 function placeholders(value: string): readonly string[] {
-    return [...value.matchAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/g)]
-        .map((match) => match[1] ?? '')
+    return [...new Set([...value.matchAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/g)]
+        .map((match) => match[1] ?? ''))]
         .sort();
+}
+
+function parityPlaceholders(key: string, value: string, english: ReadonlyMap<string, string>): readonly string[] {
+    const otherKey = key.replace(/\.(zero|one|two|few|many|other)$/, '.other');
+    // Count formatters supply {count} to every plural form. English may spell out
+    // "one", while Russian's "one" form also covers 21 and must interpolate it.
+    const countPlural = /\.(zero|one|two|few|many|other)$/.test(key)
+        && placeholders(english.get(otherKey) ?? '').includes('count');
+    return placeholders(value).filter(name => !countPlural || name !== 'count');
 }
 
 function assertComplete(file: string, bundles: readonly Bundle[]): void {
@@ -251,7 +164,8 @@ function assertComplete(file: string, bundles: readonly Bundle[]): void {
         expect(bundle.values.every((value) => value.trim().length > 0), `${file}:${bundle.locale}`).toBe(true);
         expect(bundle.values.every((value) => value === value.trim()), `${file}:${bundle.locale}: padded translation`).toBe(true);
         const placeholderDrift = bundle.values.flatMap((value, index) => (
-            JSON.stringify(placeholders(value)) === JSON.stringify(placeholders(englishValuesByKey.get(bundle.keys[index]!) ?? ''))
+            JSON.stringify(parityPlaceholders(bundle.keys[index]!, value, englishValuesByKey))
+                === JSON.stringify(parityPlaceholders(bundle.keys[index]!, englishValuesByKey.get(bundle.keys[index]!) ?? '', englishValuesByKey))
                 ? []
                 : [bundle.keys[index]]
         ));
@@ -267,32 +181,91 @@ function assertComplete(file: string, bundles: readonly Bundle[]): void {
 }
 
 describe('built-in plugin translation bundles', () => {
-    it('covers every supported host locale with exact key parity', () => {
-        const root = path.resolve(__dirname, '../../../..');
-        for (const relativeFile of INLINE_TRANSLATION_BUNDLE_FILES) {
-            const file = path.join(root, 'packages/plugins', relativeFile);
-            assertComplete(file, readInlineManifestBundles(file));
+    it('allows count interpolation across plural forms while preserving other placeholder contracts', () => {
+        const keys = ['checks.one', 'checks.other', 'status'];
+        const bundles = SUPPORTED_LANGUAGE_CODES.map(locale => ({ locale, keys,
+            values: locale === 'ru' ? ['{count} {source} {source}', '{count} {source}', '{source}']
+                : ['One {source}', '{count} {source}', '{source}'],
+        }));
+        expect(() => assertComplete('plural-fixture', bundles)).not.toThrow();
+        const changedSource = bundles.map(bundle => bundle.locale === 'ru'
+            ? { ...bundle, values: ['{count} {wrong}', '{count} {source}', '{source}'] } : bundle);
+        expect(() => assertComplete('plural-fixture', changedSource)).toThrow(/interpolation placeholder drift/);
+        const ordinaryCount = bundles.map(bundle => bundle.locale === 'ru'
+            ? { ...bundle, values: ['{count} {source}', '{count} {source}', '{count} {source}'] } : bundle);
+        expect(() => assertComplete('plural-fixture', ordinaryCount)).toThrow(/interpolation placeholder drift/);
+    });
+
+    it('loads Channels copy from admitted Resource declarations through the shared runtime', async () => {
+        const { CHANNELS_PLUGIN_ID, PLUGIN_MANIFEST } = await import('../../../../packages/plugins/channels/src/manifest');
+        const { parsePluginManifest } = await import('@happier-dev/plugin-sdk/manifest');
+        const { projectPluginUiTranslationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui/declarationProjection');
+        const { PluginDeclaredUiEntriesV1Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const { EMPTY_PLUGIN_UI_PROJECTION } = await import('../../sources/sync/domains/plugins/ui/projection');
+        const { createPluginUiTranslationRuntime, resolvePluginLocalizedText } = await import('../../sources/sync/domains/plugins/ui/i18n');
+        const admitted = parsePluginManifest(PLUGIN_MANIFEST);
+        if (!admitted.ok) throw new Error(admitted.diagnostics.map(diagnostic => diagnostic.message).join('; '));
+        const declarations = admitted.manifest.contributes.ui?.translations ?? [];
+        const entriesById = {};
+        projectPluginUiTranslationsV1({ uiTranslationsV2: declarations.map(definition => ({ pluginId: CHANNELS_PLUGIN_ID, definition })) }, entriesById, 'de');
+        const projected = PluginDeclaredUiEntriesV1Schema.parse(entriesById)[`translations:${CHANNELS_PLUGIN_ID}`];
+        if (!projected || projected.contributionKind !== 'translations' || projected.pluginId !== CHANNELS_PLUGIN_ID || !projected.locales) {
+            throw new Error('Expected Channels translation declarations');
         }
-        for (const plugin of MODULE_BUNDLES) {
-            const file = path.join(root, 'packages/plugins', plugin, 'src/ui/translations.ts');
-            assertComplete(file, readModuleBundles(file));
+        const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, translationsByPluginId: { [CHANNELS_PLUGIN_ID]: {
+            ...projected, pluginId: projected.pluginId, contributionKind: 'translations' as const, locales: projected.locales,
+        } } };
+        const reads: string[] = [];
+        const packageRoot = path.resolve(__dirname, '../../../../packages/plugins/channels');
+        const runtime = createPluginUiTranslationRuntime({ projection, readResourceBytes: async (_source, _pluginId, resourceId) => {
+            reads.push(resourceId);
+            const resource = admitted.manifest.contributes.resources?.find(({ id }) => id === resourceId);
+            if (typeof resource?.path !== 'string') throw new Error('Expected a packaged locale Resource');
+            return new Uint8Array(readFileSync(path.join(packageRoot, resource.path)));
+        } });
+        try {
+            expect(reads).toEqual([]);
+            await runtime.demand(CHANNELS_PLUGIN_ID, 'de');
+            expect(reads).toHaveLength(2);
+            expect(runtime.getBundle(CHANNELS_PLUGIN_ID, 'de')).toMatchObject({
+                'plugins.channels.surface.bindingCreatePermissionPlan': 'Planungsmodus',
+            });
+            expect(resolvePluginLocalizedText({ projection, runtime, pluginId: CHANNELS_PLUGIN_ID, locale: 'de',
+                value: { key: 'plugins.channels.surface.bindingCreatePermissionYolo', fallback: 'Skip approval prompts' },
+            })).toBe('Ohne Genehmigungen arbeiten');
+        } finally {
+            runtime.dispose();
         }
-        for (const relativeFile of ADDITIONAL_MODULE_BUNDLES) {
-            const file = path.join(root, 'packages/plugins', relativeFile);
-            assertComplete(file, readModuleBundles(file));
+    });
+
+    it('ships every packaged locale and preserves the established catalog content checks', () => {
+        const plugins = packagedPlugins();
+        const bundledWithLocales = readBundledPluginPackageNames(path.resolve(PLUGIN_ROOT, '../..'))
+            .map(pluginPackageNameToPackageId)
+            .filter(plugin => existsSync(path.join(PLUGIN_ROOT, plugin, 'assets/i18n/en.json')))
+            .sort();
+        expect(plugins).toEqual(bundledWithLocales);
+        for (const plugin of plugins) {
+            const bundles = readPackagedBundles(plugin);
+            if (!CONTENT_AUDITED_PLUGINS.has(plugin)) continue;
+            // GitLab publication copy was composed through a spread from a separate
+            // module, outside the old literal/module audit; preserve its exact values.
+            const audited = plugin === 'scm-gitlab' ? bundles.map(bundle => {
+                const indices = bundle.keys.flatMap((key, index) => key.startsWith('plugins.gitlab.ui.publication.') ? [] : [index]);
+                return { locale: bundle.locale, keys: indices.map(index => bundle.keys[index]!), values: indices.map(index => bundle.values[index]!) };
+            }) : bundles;
+            assertComplete(plugin, audited);
         }
     });
 
     it('keeps the generated host bundle synchronized with source plugin catalogs', () => {
         const root = path.resolve(__dirname, '../../../..');
-        const pluginRoot = path.join(root, 'packages/plugins');
         const generatedByLocale = readGeneratedHostBundles(
             path.join(root, 'apps/ui/sources/text/bundledPluginTranslations.generated.ts'),
         );
 
-        for (const plugin of MODULE_BUNDLES) {
-            const file = path.join(pluginRoot, plugin, 'src/ui/translations.ts');
-            for (const bundle of readModuleBundles(file)) {
+        for (const plugin of packagedPlugins()) {
+            for (const bundle of readPackagedBundles(plugin)) {
                 const generated = generatedByLocale.get(bundle.locale);
                 expect(generated, `${plugin}:${bundle.locale}: missing generated locale`).toBeDefined();
                 expect(

@@ -40,7 +40,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Server as SocketIoServer } from 'socket.io';
 import tweetnacl from 'tweetnacl';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {

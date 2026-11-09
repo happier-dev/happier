@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::sync::{Arc as StdArc, Mutex, Weak};
 use tauri::{Emitter, Manager, Runtime, State, Window};
 use types::{
-    DesktopBrowserAvailability, DesktopBrowserBoundsPayload, DesktopBrowserCaptureClipRect,
+    DesktopBrowserAvailability, DesktopBrowserBoundsPayload,
     DesktopBrowserCaptureErrorCode, DesktopBrowserCaptureRecordingFrameRequest,
     DesktopBrowserCaptureRecordingFrameResult, DesktopBrowserCaptureSnapshotRequest,
     DesktopBrowserCaptureSnapshotResult, DesktopBrowserCapturedRecordingFrame,
@@ -124,6 +124,8 @@ struct DesktopBrowserViewState {
     profile_id: String,
     last_bounds: Option<types::DesktopBrowserBoundsRect>,
     visible: bool,
+    pointer_passthrough: bool,
+    local_preview: bool,
     requested_url: String,
     navigation_generation: u64,
     pending_generation_url: Option<String>,
@@ -406,7 +408,9 @@ impl DesktopBrowserState {
                 DesktopBrowserViewState {
                     profile_id: request.profile_id,
                     last_bounds: None,
-                    visible: true,
+                    visible: false,
+                    pointer_passthrough: false,
+                    local_preview: request.local_preview,
                     requested_url: request.url.clone(),
                     navigation_generation: 0,
                     pending_generation_url: None,
@@ -747,7 +751,7 @@ impl DesktopBrowserState {
         };
 
         if with_native_handle(&key, |handle| {
-            handle.set_bounds(request.rect, request.visible)
+            handle.set_bounds(request.rect, request.visible && !view.pointer_passthrough)
         })
         .is_err()
         {
@@ -764,18 +768,21 @@ impl DesktopBrowserState {
         request: DesktopBrowserPointerPassthroughPayload,
     ) -> DesktopBrowserCommandResult {
         let key = view_key(&request.browser_session_id, &request.view_id);
-        if !self.view_exists(&key) {
+        let mut inner = self.inner.lock().expect("browser state lock poisoned");
+        let Some(view) = inner.views.get_mut(&key) else {
             return self.unavailable_result();
-        }
+        };
 
         if with_native_handle(&key, |handle| {
-            handle.set_pointer_passthrough(request.ignore)
+            // Wry implements passthrough by hiding. Restoring pointer input must not show a
+            // guest hidden by the presentation owner, nor may bounds undo an active drag.
+            handle.set_pointer_passthrough(request.ignore || !view.visible)
         })
         .is_err()
         {
             return self.unavailable_result();
         }
-
+        view.pointer_passthrough = request.ignore;
         self.success_result()
     }
 
@@ -928,6 +935,14 @@ impl DesktopBrowserState {
             .join("profiles")
             .join(stable_path_segment(profile_id))
     }
+}
+
+pub(crate) fn desktop_browser_availability_init_script() -> String {
+    // The same platform owner serves IPC and document-start admission. A later
+    // component probe must not replace an already selected engine or its history.
+    let payload = serde_json::to_string(&desktop_browser_get_availability())
+        .expect("desktop browser availability is serializable");
+    format!("Object.defineProperty(window, '__HAPPIER_DESKTOP_BROWSER_AVAILABILITY__', {{ value: {payload} }});")
 }
 
 #[tauri::command]
@@ -1271,6 +1286,20 @@ impl DesktopBrowserPageInfoSink {
         Self { key, inner }
     }
 
+    fn allow_navigation_response(&self, status: u16, headers: &[(String, String)]) -> bool {
+        let local_preview = self.inner.lock().expect("browser state lock poisoned")
+            .views.get(&self.key).is_some_and(|view| view.local_preview);
+        if local_preview && status == 503 && headers.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("x-happier-preview-transport-unavailable") && value == "1"
+        }) {
+            // HTTP refusal is a completed network response, so WK's failure delegate never fires.
+            // Only the proxy sets this marker; the shared response owner strips upstream copies.
+            self.record_load_failure();
+            return false;
+        }
+        true
+    }
+
     fn record_requested_navigation(&self, url: String) {
         self.with_view(|view| {
             begin_document_navigation(view, &url);
@@ -1316,6 +1345,16 @@ impl DesktopBrowserPageInfoSink {
     fn record_error(&self, url: String, reason: String) {
         self.with_view(|view| {
             view.last_error = Some(DesktopBrowserPageNavigationIssue { url, reason });
+            view.loading_state = DesktopBrowserViewLoadingState::Failed;
+        });
+    }
+
+    fn record_load_failure(&self) {
+        self.with_view(|view| {
+            view.last_error = Some(DesktopBrowserPageNavigationIssue {
+                url: view.requested_url.clone(),
+                reason: "webview_load_failed".to_string(),
+            });
             view.loading_state = DesktopBrowserViewLoadingState::Failed;
         });
     }
@@ -1446,10 +1485,16 @@ fn read_native_page_info(
             current_url: native_url
                 .filter(|url| is_allowed_external_url(url))
                 .or_else(|| {
-                    inner
-                        .published_page_info
-                        .get(key)
-                        .and_then(|(info, _)| info.current_url.clone())
+                    // Only a dead renderer may reuse the last observed native URL.
+                    // Live navigation callbacks must never be shadowed by an older publication.
+                    (view.loading_state == DesktopBrowserViewLoadingState::Crashed)
+                        .then(|| {
+                            inner
+                                .published_page_info
+                                .get(key)
+                                .and_then(|(info, _)| info.current_url.clone())
+                        })
+                        .flatten()
                 })
                 .or_else(|| view.current_url.clone()),
             title: view.title.clone(),
@@ -1703,6 +1748,10 @@ impl WryDesktopBrowserView {
         let title_info = page_info.clone();
         #[cfg(target_os = "macos")]
         let crash_info = page_info.clone();
+        #[cfg(target_os = "macos")]
+        let failed_load_info = page_info.clone();
+        #[cfg(target_os = "macos")]
+        let response_info = page_info.clone();
         let load_info = page_info.clone();
         let history_info = page_info;
         let keyboard_info = history_info.clone();
@@ -1786,7 +1835,11 @@ impl WryDesktopBrowserView {
                 .with_data_store_identifier(hash128(profile_dir.to_string_lossy().as_bytes()))
                 .with_on_web_content_process_terminate_handler(move || {
                     crash_info.record_crash();
-                });
+                })
+                .with_on_page_load_failed_handler(move || {
+                    failed_load_info.record_load_failure();
+                })
+                .with_navigation_response_handler(move |status, headers| response_info.allow_navigation_response(status, headers));
         }
 
         let webview = builder

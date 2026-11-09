@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex};
 
 use objc2::{define_class, msg_send, rc::Retained, runtime::NSObject, MainThreadOnly};
-use objc2_foundation::{MainThreadMarker, NSObjectProtocol};
+use objc2_foundation::{MainThreadMarker, NSError, NSObjectProtocol};
 use objc2_web_kit::{
   WKDownload, WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate,
   WKNavigationResponse, WKNavigationResponsePolicy,
@@ -21,8 +21,8 @@ use crate::{
   wkwebview::{
     download::{navigation_download_action, navigation_download_response},
     navigation::{
-      did_commit_navigation, did_finish_navigation, navigation_policy, navigation_policy_response,
-      web_content_process_did_terminate,
+      did_commit_navigation, did_fail_navigation, did_finish_navigation, navigation_policy,
+      navigation_policy_response, web_content_process_did_terminate,
     },
   },
   PageLoadEvent, WryWebView,
@@ -37,6 +37,8 @@ pub struct WryNavigationDelegateIvars {
   pub download_delegate: Option<Retained<WryDownloadDelegate>>,
   pub on_page_load_handler: Option<Box<dyn Fn(PageLoadEvent)>>,
   pub on_web_content_process_terminate_handler: Option<Box<dyn Fn()>>,
+  pub on_page_load_failed_handler: Option<Box<dyn Fn()>>,
+  pub navigation_response_handler: Option<Box<dyn Fn(u16, &[(String, String)]) -> bool>>,
 }
 
 define_class!(
@@ -78,6 +80,26 @@ define_class!(
       did_commit_navigation(self, webview, navigation);
     }
 
+    #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
+    fn did_fail_provisional_navigation(
+      &self,
+      _webview: &WKWebView,
+      _navigation: Option<&WKNavigation>,
+      error: &NSError,
+    ) {
+      did_fail_navigation(self, error);
+    }
+
+    #[unsafe(method(webView:didFailNavigation:withError:))]
+    fn did_fail_navigation(
+      &self,
+      _webview: &WKWebView,
+      _navigation: Option<&WKNavigation>,
+      error: &NSError,
+    ) {
+      did_fail_navigation(self, error);
+    }
+
     #[unsafe(method(webView:navigationAction:didBecomeDownload:))]
     fn navigation_download_action(
       &self,
@@ -115,6 +137,8 @@ impl WryNavigationDelegate {
     download_delegate: Option<Retained<WryDownloadDelegate>>,
     on_page_load_handler: Option<Box<dyn Fn(PageLoadEvent, String)>>,
     on_web_content_process_terminate_handler: Option<Box<dyn Fn()>>,
+    on_page_load_failed_handler: Option<Box<dyn Fn()>>,
+    navigation_response_handler: Option<Box<dyn Fn(u16, &[(String, String)]) -> bool>>,
     mtm: MainThreadMarker,
   ) -> Retained<Self> {
     let navigation_policy_function = Box::new(move |url: String| -> bool {
@@ -151,6 +175,8 @@ impl WryNavigationDelegate {
         download_delegate,
         on_page_load_handler,
         on_web_content_process_terminate_handler,
+        on_page_load_failed_handler,
+        navigation_response_handler,
       });
 
     unsafe { msg_send![super(delegate), init] }

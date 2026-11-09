@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use happier_desktop_native::capture::{recording::{Phase, Session}, CaptureError};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -53,6 +54,13 @@ pub fn request_quit(app: &AppHandle, intent: QuitIntent) {
     let state: State<'_, DesktopShutdownState> = app.state();
     if let Ok(mut current) = state.intent.lock() { *current = intent; }
     app.exit(0);
+}
+
+/// Successful explicit component removal already settled service ownership. A following
+/// finish-shutdown must exit without offering a second service decision or returning to the tray.
+pub(crate) fn prepare_after_component_removal(app: &AppHandle) {
+    let state: State<'_, DesktopShutdownState> = app.state();
+    state.handoff_used.store(true, Ordering::SeqCst);
 }
 
 fn payload(app: &AppHandle, state: &DesktopShutdownState) -> AppExitRequestedPayload {
@@ -125,6 +133,13 @@ pub fn handle_exit_requested(app: &AppHandle, code: Option<i32>) -> bool {
     }).unwrap_or(RecordingExitState::Failed);
     let request = DesktopExitRequest {
         recording,
+        system_tasks_busy: app
+            .state::<crate::system_tasks::SystemTasksState>()
+            .is_busy()
+            .unwrap_or_else(|error| {
+                eprintln!("Unable to check system tasks before quitting: {error}");
+                true
+            }),
         webview_present: app.get_webview_window("main").is_some(),
         handoff_used: state.handoff_used.load(Ordering::SeqCst),
         is_restart: code == Some(tauri::RESTART_EXIT_CODE),
@@ -132,6 +147,18 @@ pub fn handle_exit_requested(app: &AppHandle, code: Option<i32>) -> bool {
         explicit: code.is_some(),
     };
     match resolve_desktop_exit_action(request) {
+        DesktopExitAction::WaitForSystemTasks => {
+            #[cfg(target_os = "macos")]
+            macos::reply(app, false);
+            let labels = crate::tray::labels(app);
+            app.dialog()
+                .message(labels.quit_wait_for_system_tasks)
+                .title(labels.action_failed_title)
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::Ok)
+                .show(|_| {});
+            true
+        }
         DesktopExitAction::Exit => {
             #[cfg(target_os = "macos")]
             if macos::reply(app, true) { return true; }

@@ -50,7 +50,7 @@ import { createHappierSocket } from '@happier-dev/sync-client';
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
     buildAccountStoredContentCompatibilitySocketAuthV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import type { BrowserIrohHomeCarrier } from '@/sync/runtime/browserIroh/homeCarrier/browserHomeCarrier';

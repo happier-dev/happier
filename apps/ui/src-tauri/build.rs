@@ -24,7 +24,6 @@ macro_rules! desktop_command_names {
 
 const APP_TAURI_COMMANDS: &[&str] = with_desktop_commands!(desktop_command_names);
 
-
 fn is_truthy_env(name: &str) -> bool {
     env::var(name)
         .map(|value| {

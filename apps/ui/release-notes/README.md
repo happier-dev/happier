@@ -3,6 +3,18 @@
 Curated, slide-based release notes shown in the in-app **Story Deck** surface.
 Distinct from `CHANGELOG.md`, which remains the long-form history view.
 
+## Long-form history generation
+
+The long-form view bundles `CHANGELOG.md` using
+`sources/scripts/parseChangelog.ts`. It shares heading parsing with the release
+projector, accepts `Release <id>` and legacy `Version <id>` headings, and keeps
+source order and Markdown while omitting HTML comments. Release identities are
+strings; numeric last-viewed markers from released clients remain readable.
+
+After editing the history, run `pnpm --dir apps/ui exec tsx sources/scripts/parseChangelog.ts`
+from the repository root. The generator's `--check` mode and parser regression
+test detect a stale bundled history. Story Deck generation remains separate.
+
 ## Canonical public source and bounded channels
 
 Each release's exact public Markdown and bounded consumed-channel text are

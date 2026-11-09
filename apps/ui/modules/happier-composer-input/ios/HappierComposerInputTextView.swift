@@ -22,10 +22,39 @@ private final class ComposerReferenceAccessibilityElement: UIAccessibilityElemen
   }
 }
 
+// A reference tap observes alongside UITextView's own gestures. Winning exclusively would
+// stop the text interaction's tap, and a tap on the composer would never begin editing.
+final class ComposerReferenceTapDelegate: NSObject, UIGestureRecognizerDelegate {
+  func gestureRecognizer(
+    _ gestureRecognizer: UIGestureRecognizer,
+    shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+  ) -> Bool { true }
+}
+
+// Keep the delegate separate from UITextView: Keyboard Controller forwards unknown
+// delegate selectors, which must never resolve back to UIKit's text view itself.
+private final class ComposerTextViewDelegate: NSObject, UITextViewDelegate {
+  private weak var owner: HappierComposerTextView?
+
+  init(owner: HappierComposerTextView) { self.owner = owner }
+
+  func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+    owner?.textView(textView, shouldChangeTextIn: range, replacementText: text) ?? true
+  }
+
+  func textViewDidChange(_ textView: UITextView) { owner?.textViewDidChange(textView) }
+  func textViewDidChangeSelection(_ textView: UITextView) { owner?.textViewDidChangeSelection(textView) }
+  func textViewDidBeginEditing(_ textView: UITextView) { owner?.textViewDidBeginEditing(textView) }
+  func textViewDidEndEditing(_ textView: UITextView) { owner?.textViewDidEndEditing(textView) }
+  func scrollViewDidScroll(_ scrollView: UIScrollView) { owner?.scrollViewDidScroll(scrollView) }
+}
+
 /// The native owner of token-bearing UTF-16 source offsets versus UIKit attachment offsets.
 /// User edits retain UIKit's text storage, marked text and undo history.
 @objc(HappierComposerTextView)
-final class HappierComposerTextView: UITextView, UITextViewDelegate, UITextDropDelegate, UIContextMenuInteractionDelegate, UIDropInteractionDelegate {
+final class HappierComposerTextView: UITextView, UITextDropDelegate, UIContextMenuInteractionDelegate, UIDropInteractionDelegate {
+  private lazy var composerDelegate = ComposerTextViewDelegate(owner: self)
+  private let referenceTapDelegate = ComposerReferenceTapDelegate()
   var acceptsAttachmentDrops = false
   var attachmentDropScope = ""
   var onAttachmentDrop: (([String: Any]) -> Void)?
@@ -86,7 +115,7 @@ final class HappierComposerTextView: UITextView, UITextViewDelegate, UITextDropD
     storage.addLayoutManager(layout)
     layout.addTextContainer(container)
     super.init(frame: frame, textContainer: container)
-    delegate = self
+    delegate = composerDelegate
     textDropDelegate = self
     textDragInteraction?.isEnabled = false
     addInteraction(UIDropInteraction(delegate: self))
@@ -112,6 +141,7 @@ final class HappierComposerTextView: UITextView, UITextViewDelegate, UITextDropD
     addInteraction(UIContextMenuInteraction(delegate: self))
     let tap = UITapGestureRecognizer(target: self, action: #selector(referenceTapped(_:)))
     tap.cancelsTouchesInView = false
+    tap.delegate = referenceTapDelegate
     addGestureRecognizer(tap)
     updatePresentation()
   }

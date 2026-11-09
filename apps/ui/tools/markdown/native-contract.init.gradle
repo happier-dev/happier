@@ -1,0 +1,22 @@
+// Run from apps/ui/android against the installed, patched vendor module:
+// ./gradlew -I ../tools/markdown/native-contract.init.gradle \
+//   :react-native-enriched-markdown:testDebugUnitTest \
+//   --tests com.swmansion.enriched.markdown.MarkdownLayoutContractTest
+allprojects { project ->
+    project.plugins.withId("com.android.library") {
+        if (project.name == "react-native-enriched-markdown") {
+            project.android.testOptions.unitTests.includeAndroidResources = true
+            project.android.sourceSets.test.java.srcDir(
+                new File(project.rootProject.projectDir, "../tools/markdown/android"))
+            project.dependencies.add("testImplementation", "junit:junit:4.13.2")
+            project.dependencies.add("testImplementation", "org.robolectric:robolectric:4.14.1")
+            project.tasks.withType(Test).configureEach {
+                testLogging {
+                    events "passed", "failed"
+                    exceptionFormat "full"
+                    showStandardStreams = true
+                }
+            }
+        }
+    }
+}

@@ -1,5 +1,5 @@
 use objc2::DeclaredClass;
-use objc2_foundation::{NSObjectProtocol, NSString};
+use objc2_foundation::{NSError, NSHTTPURLResponse, NSObjectProtocol, NSString};
 use objc2_web_kit::{
   WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationResponse,
   WKNavigationResponsePolicy,
@@ -43,6 +43,25 @@ pub(crate) fn did_finish_navigation(
 ) {
   if let Some(on_page_load) = &this.ivars().on_page_load_handler {
     on_page_load(PageLoadEvent::Finished);
+  }
+}
+
+pub(crate) fn did_fail_navigation(this: &WryNavigationDelegate, error: &NSError) {
+  // NSURLErrorCancelled (-999) is produced by Stop and superseding navigation.
+  // WebKitErrorFrameLoadInterruptedByPolicyChange (102) follows a denied navigation/download.
+  // Neither cancellation may replace the retained page with a transport failure.
+  let domain = error.domain().to_string();
+  if (error.code() == -999 && domain == "NSURLErrorDomain")
+    || (error.code() == 102 && domain == "WebKitErrorDomain")
+  {
+    return;
+  }
+  // WKErrorWebContentProcessTerminated (2) belongs to the dedicated crash callback.
+  if error.code() == 2 && domain == "WKErrorDomain" {
+    return;
+  }
+  if let Some(on_failed) = &this.ivars().on_page_load_failed_handler {
+    on_failed();
   }
 }
 
@@ -90,6 +109,23 @@ pub(crate) fn navigation_policy_response(
   handler: &block2::Block<dyn Fn(WKNavigationResponsePolicy)>,
 ) {
   unsafe {
+    if response.isForMainFrame() {
+      if let Some(inspect) = &this.ivars().navigation_response_handler {
+        if let Ok(http) = response.response().downcast::<NSHTTPURLResponse>() {
+          let headers = http.allHeaderFields();
+          let fields: Vec<(String, String)> = headers.allKeys().iter().filter_map(|key| {
+            let value = headers.objectForKey(&key)?;
+            let key = key.downcast::<NSString>().ok()?;
+            let value = value.downcast::<NSString>().ok()?;
+            Some((key.to_string(), value.to_string()))
+          }).collect();
+          if !inspect(http.statusCode() as u16, &fields) {
+            (*handler).call((WKNavigationResponsePolicy::Cancel,));
+            return;
+          }
+        }
+      }
+    }
     let can_show_mime_type = response.canShowMIMEType();
 
     if !can_show_mime_type {

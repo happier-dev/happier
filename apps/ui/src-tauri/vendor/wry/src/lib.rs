@@ -1519,6 +1519,8 @@ pub(crate) struct PlatformSpecificWebViewAttributes {
   traffic_light_inset: Option<dpi::Position>,
   allow_link_preview: bool,
   on_web_content_process_terminate_handler: Option<Box<dyn Fn()>>,
+  on_page_load_failed_handler: Option<Box<dyn Fn()>>,
+  navigation_response_handler: Option<Box<dyn Fn(u16, &[(String, String)]) -> bool>>,
   #[cfg(target_os = "ios")]
   input_accessory_view_builder: Option<Box<InputAccessoryViewBuilder>>,
   #[cfg(target_os = "ios")]
@@ -1536,6 +1538,8 @@ impl Default for PlatformSpecificWebViewAttributes {
       // platform default for this is true
       allow_link_preview: true,
       on_web_content_process_terminate_handler: None,
+      on_page_load_failed_handler: None,
+      navigation_response_handler: None,
       #[cfg(target_os = "ios")]
       input_accessory_view_builder: None,
       #[cfg(target_os = "ios")]
@@ -1569,6 +1573,11 @@ pub trait WebViewBuilderExtDarwin {
   fn with_allow_link_preview(self, allow_link_preview: bool) -> Self;
   /// Set a handler closure to respond to web content process termination. Available on macOS and iOS only.
   fn with_on_web_content_process_terminate_handler(self, handler: impl Fn() + 'static) -> Self;
+  /// Respond to main-frame navigation failure, excluding cancelled loads. Available on macOS and iOS only.
+  /// Content-process termination is reported through `with_on_web_content_process_terminate_handler`.
+  fn with_on_page_load_failed_handler(self, handler: impl Fn() + 'static) -> Self;
+  /// Inspect a main-frame HTTP response before it commits. Return false to cancel the navigation.
+  fn with_navigation_response_handler(self, handler: impl Fn(u16, &[(String, String)]) -> bool + 'static) -> Self;
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -1592,6 +1601,16 @@ impl WebViewBuilderExtDarwin for WebViewBuilder<'_> {
     self
       .platform_specific
       .on_web_content_process_terminate_handler = Some(Box::new(handler));
+    self
+  }
+
+  fn with_on_page_load_failed_handler(mut self, handler: impl Fn() + 'static) -> Self {
+    self.platform_specific.on_page_load_failed_handler = Some(Box::new(handler));
+    self
+  }
+
+  fn with_navigation_response_handler(mut self, handler: impl Fn(u16, &[(String, String)]) -> bool + 'static) -> Self {
+    self.platform_specific.navigation_response_handler = Some(Box::new(handler));
     self
   }
 }

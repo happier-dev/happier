@@ -8,12 +8,13 @@ import {
   ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentDefault,
   syncSharedDepsForSourceDev as syncSharedDepsForSourceDevDefault,
 } from '../../stack/scripts/utils/proc/pm.mjs';
+import { waitForDependencyRefresh } from '../../stack/scripts/utils/proc/dependency_refresh.mjs';
 import { fileDigestMetadataIdentity } from '../../stack/scripts/utils/fs/cached_file_digest.mjs';
 import { verifyUiPatchedDependencies } from '../tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
 import { prepareSourceUiAssets, publishSourceUiAssets, readSourceUiAssetsRecord,
   resolveSourceUiAssetsRecordPath } from './prepareSourceUiAssets.mjs';
 export { verifyUiPatchedDependencies } from '../tools/postinstall/verifyReactNativeEnrichedMarkdownWebStreamingPatch.mjs';
-export { retainBundledPluginUiArtifactsInventory } from './generateBundledPluginUiArtifacts.mjs';
+export { retainBundledPluginUiArtifactsInventory, reapBundledPluginUiArtifactStore } from './generateBundledPluginUiArtifacts.mjs';
 import {
   generateBundledPluginUiArtifacts as generateBundledPluginUiArtifactsDefault,
   resolveBundledPluginUiArtifactsOutputPath,
@@ -79,6 +80,9 @@ async function waitForMetroPluginUiInventory({ metroServer, metroConfig, invento
 
 export async function prepareUiSourcePluginInventory({ uiPackageDir = uiDir, env = process.env, signal, metroServer, metroConfig } = {}) {
   const repoRoot = resolve(uiPackageDir, '../..');
+  // The compiler import itself reads installed modules, before its subprocess
+  // can apply dependency admission. Wait at this owning entry point first.
+  await waitForDependencyRefresh({ installDir: repoRoot, env, signal });
   const { prepareSourcePluginUiInventory } = await import('../../stack/scripts/build/build_source_web_ui.mjs');
   const requestedInventory = String(env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY ?? '').trim();
   if (requestedInventory && !isAbsolute(requestedInventory)) {
@@ -138,16 +142,18 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
   }))).join('\n');
   const report = error => { if (!closed) logger.error('[plugin-ui] source inventory refresh failed:', error); };
   const inputs = () => inputsPromise ??= (async () => {
+    await waitForDependencyRefresh({ installDir: repoRoot, env, signal: cancellation.signal });
     const { readWorkspacePackages } = await import('../../../packages/cli-common/sourceRuntimeEntries.mjs');
     const { readSourcePluginUiBuildInputs } = await import('../../stack/scripts/utils/fs/workspaceBuildInputs.mjs');
     const packages = await readWorkspacePackages(repoRoot);
     const cli = JSON.parse(await readFile(resolve(repoRoot, 'apps/cli/package.json'), 'utf8'));
+    const packageInputs = new Map();
     // Discovery shares Expo's esbuild service; retain only one graph in flight.
     const groups = [await readSourcePluginUiBuildInputs({ repoDir: repoRoot,
-      compiler: true, inventory: true, packages, includeDirectories: true })];
+      compiler: true, inventory: true, packages, includeDirectories: true, packageInputs })];
     for (const name of (cli.bundledDependencies ?? []).filter(name => name.startsWith('@happier-dev/plugins-'))) {
       groups.push(await readSourcePluginUiBuildInputs({ repoDir: repoRoot,
-        pluginDirectory: name.slice('@happier-dev/plugins-'.length), inventory: true, packages, includeDirectories: true }));
+        pluginDirectory: name.slice('@happier-dev/plugins-'.length), inventory: true, packages, includeDirectories: true, packageInputs }));
     }
     const sourceInputs = readSourceUiAssetsRecord(resolveSourceUiAssetsRecordPath(inventoryPath))?.inputPaths ?? [];
     return new Set([...groups.flat(), 'apps/cli/package.json', 'apps/ui/package.json',
@@ -163,10 +169,13 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
     })) admission = undefined;
     void inputs().then(async paths => {
       const { isWorkspaceBuildInputIgnoredPath } = await import('../../stack/scripts/utils/fs/workspaceBuildInputs.mjs');
-      const changed = eventsQueue.some(({ filePath }) => {
+      const changed = eventsQueue.find(({ filePath, type }) => {
         let path = resolve(filePath);
         if (paths.has(path)) return true;
         if (isWorkspaceBuildInputIgnoredPath(relative(repoRoot, path))) return false;
+        // Directory membership matters for additions/removals and repairing
+        // missing imports. An edit to an unrelated sibling is not a UI input.
+        if (type === 'change') return false;
         while (dirname(path) !== path) {
           path = dirname(path);
           if (paths.has(path)) return true;
@@ -175,11 +184,17 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
       });
       if (closed || !changed || queued) return;
       queued = true;
+      logger.info?.(`[source-ui] phase=plugin-ui-refresh input=${relative(repoRoot, changed.filePath)}`);
       pending = pending.then(async () => {
-        queued = false;
+        // Arrivals during an install share one refresh. Edits during the actual
+        // compiler still request the existing trailing preparation.
+        try {
+          await waitForDependencyRefresh({ installDir: repoRoot, env, signal: cancellation.signal });
+        } finally { queued = false; }
         if (closed) return;
-        await prepareUiSourcePluginInventory({ uiPackageDir, env, signal: cancellation.signal, metroServer, metroConfig });
-        inputsPromise = null;
+        try {
+          await prepareUiSourcePluginInventory({ uiPackageDir, env, signal: cancellation.signal, metroServer, metroConfig });
+        } finally { inputsPromise = null; }
       }).catch(report);
     }).catch(report);
   };

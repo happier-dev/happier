@@ -37,9 +37,6 @@ internal class HostedWebArtifactRegistry(
     val registration = Registration.parse(input, canonicalCacheDirectory) ?: return false
     return lock.write {
       if (registrations.containsKey(registration.token)) return@write false
-      if (!registration.resources.values.all { resource -> registration.readResourceBytes(resource) != null }) {
-        return@write false
-      }
       registrations[registration.token] = registration
       true
     }
@@ -130,9 +127,8 @@ internal class HostedWebArtifactRegistry(
     val table: PolicyTable
   ) {
     /**
-     * The response must carry the exact bytes we verified. Returning a file
-     * after hashing it would permit a later same-size replacement before the
-     * WebView opens its stream.
+     * Copy response bytes while the registry lock still owns the request;
+     * the persistent store and current-load parser own byte verification.
      */
     fun readResourceBytes(resource: Resource): ByteArray? {
       return try {
@@ -151,10 +147,7 @@ internal class HostedWebArtifactRegistry(
           }
           else -> return null
         }
-        if (
-          bytes.size.toLong() != resource.byteSize
-          || sha256Digest(bytes) != resource.digest
-        ) {
+        if (bytes.size.toLong() != resource.byteSize) {
           null
         } else {
           bytes
@@ -225,7 +218,6 @@ internal class HostedWebArtifactRegistry(
 
   private data class Resource(
     val resourceId: String,
-    val digest: String,
     val byteSize: Long,
     val source: ResourceSource
   )
@@ -371,7 +363,6 @@ internal class HostedWebArtifactRegistry(
         }
         resources[resourceId] = Resource(
           resourceId,
-          digest,
           byteSize,
           ResourceSource.Persistent(storedFileName)
         )
@@ -408,7 +399,6 @@ internal class HostedWebArtifactRegistry(
         }
         resources[resourceId] = Resource(
           resourceId,
-          digest,
           byteSize,
           ResourceSource.CurrentLoad(bytes)
         )

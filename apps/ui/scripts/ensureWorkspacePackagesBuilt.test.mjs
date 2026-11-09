@@ -4,11 +4,68 @@ import { cp, mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { EventEmitter } from 'node:events';
+import { writeFileSync } from 'node:fs';
+import { resolveDependencyRefreshLockPath } from '../../stack/scripts/utils/proc/dependency_refresh.mjs';
 import { computeSourceDevSharedDepsSignature } from '../../cli/scripts/buildSharedDeps.mjs';
 import { resolveBundledPluginUiArtifactsOutputPath } from './generateBundledPluginUiArtifacts.mjs';
 import { captureSourceWebBuildInputs } from '../../stack/scripts/build/build_source_runtime.mjs';
 import { createTempFixture } from '../../stack/scripts/testkit/core/temp_fixture.mjs';
 import { SOURCE_UI_ASSET_OUTPUT_PATHS } from './sourceUiAssetPaths.mjs';
+
+test('a failed dependency publication does not strand later source inventory refreshes', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-refresh-recovery-' });
+  const repoRoot = fixture.path('source');
+  const uiPackageDir = join(repoRoot, 'apps/ui');
+  const cliManifestPath = join(repoRoot, 'apps/cli/package.json');
+  await mkdir(uiPackageDir, { recursive: true });
+  await mkdir(join(repoRoot, 'apps/cli'), { recursive: true });
+  await writeFile(cliManifestPath, JSON.stringify({ bundledDependencies: [] }));
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.root };
+  const generationPath = `${resolveDependencyRefreshLockPath(repoRoot, env)}.generation`;
+  await mkdir(join(generationPath, '..'), { recursive: true });
+  // Metro and the dependency publication are external boundaries. Keep the
+  // watcher, input discovery and admission/recovery logic real beneath them.
+  const watcher = new EventEmitter();
+  const metroServer = { getBundler: () => ({ getBundler: () => ({ getWatcher: () => watcher }) }) };
+  const { watchUiSourcePluginInventory } = await import('./ensureWorkspacePackagesBuilt.mjs');
+  let firstFailure;
+  const failed = new Promise(resolve => { firstFailure = resolve; });
+  let nextRefresh;
+  const recovered = new Promise(resolve => { nextRefresh = resolve; });
+  let refreshes = 0;
+  let subscription;
+  subscription = watchUiSourcePluginInventory({ uiPackageDir, env, metroServer, logger: {
+    info() {
+      refreshes += 1;
+      if (refreshes === 1) {
+        writeFileSync(generationPath, JSON.stringify({ generation: 'failed-install', completedGeneration: 'before',
+          installationFailure: { pnpmErrorCode: 'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH' } }));
+      } else {
+        // The next edit has been admitted. Stop before invoking the compiler;
+        // this regression concerns recovery of the containing refresh queue.
+        void subscription.close();
+        nextRefresh();
+      }
+    },
+    error(_message, error) { firstFailure(error); },
+  } });
+  t.after(() => subscription.close());
+  for (let edit = 0; edit < 10; edit += 1) {
+    watcher.emit('change', { eventsQueue: [{ filePath: cliManifestPath, type: 'change' }] });
+  }
+  assert.equal((await failed).code, 'HAPPIER_DEPENDENCY_REFRESH_FAILED');
+  assert.equal(refreshes, 1, 'edits waiting for dependency admission share one refresh');
+  await writeFile(generationPath, JSON.stringify({ generation: 'repaired', completedGeneration: 'repaired' }));
+  watcher.emit('change', { eventsQueue: [{ filePath: cliManifestPath, type: 'change' }] });
+  let deadline;
+  try {
+    await Promise.race([recovered, new Promise((_resolve, reject) => {
+      deadline = setTimeout(() => reject(new Error('the next source edit was stranded after dependency repair')), 2000);
+    })]);
+  } finally { clearTimeout(deadline); }
+  assert.equal(refreshes, 2);
+});
 
 test('source preparation retains last-green assets while refreshing healthy plugin bytes in non-strict modes', async context => {
   const fixture = await createTempFixture(context, { prefix: 'happier-ui-source-retention-' });

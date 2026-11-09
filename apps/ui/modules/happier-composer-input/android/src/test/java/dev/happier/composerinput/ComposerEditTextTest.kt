@@ -50,6 +50,43 @@ class ComposerEditTextTest {
   private val token = "[Auth](happier-ref:session:auth)"
   private val prefix = "😀 a "
 
+  @Test fun preImeBackForwardsOnceOnlyForAnOptedInFocusedEditor() {
+    val editor = editor()
+    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+    activity.setContentView(editor)
+    editor.requestFocus()
+    val text = editor.text.toString()
+    val selection = editor.selectionStart
+    var forwarded = 0
+    editor.onHardwareBack = { forwarded += 1; true }
+    fun back(action: Int, repeat: Int = 0, flags: Int = 0) = editor.dispatchKeyEventPreIme(
+      KeyEvent(0, 0, action, KeyEvent.KEYCODE_BACK, repeat, 0, 0, 0, flags),
+    )
+
+    back(KeyEvent.ACTION_DOWN)
+    back(KeyEvent.ACTION_UP)
+    assertEquals(0, forwarded)
+    editor.forwardHardwareBack = true
+    assertTrue(back(KeyEvent.ACTION_DOWN))
+    back(KeyEvent.ACTION_DOWN, repeat = 1)
+    assertEquals(0, forwarded)
+    assertTrue(back(KeyEvent.ACTION_UP))
+    assertEquals(1, forwarded)
+    assertEquals(text, editor.text.toString())
+    assertEquals(selection, editor.selectionStart)
+
+    back(KeyEvent.ACTION_DOWN)
+    back(KeyEvent.ACTION_UP, flags = KeyEvent.FLAG_CANCELED)
+    assertEquals(1, forwarded)
+    editor.isFocusable = false
+    editor.clearFocus()
+    assertFalse(editor.hasFocus())
+    back(KeyEvent.ACTION_DOWN)
+    back(KeyEvent.ACTION_UP)
+    assertEquals(1, forwarded)
+    activity.finish()
+  }
+
   @Test fun treeUriDropRetainsRelativeEntriesAndEmptyDirectoriesAfterTheProviderGrantEnds() {
     val context = RuntimeEnvironment.getApplication()
     val providerFile = File.createTempFile("composer-provider", ".svg", context.cacheDir).apply { writeText("svg") }
@@ -132,6 +169,31 @@ class ComposerEditTextTest {
       measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.AT_MOST))
       layout(0, 0, 600, measuredHeight)
     }
+  }
+
+  @Test @GraphicsMode(GraphicsMode.Mode.NATIVE)
+  fun controlledTextThatAddsLinesReportsItsNewContentHeight() {
+    val context = ContextThemeWrapper(RuntimeEnvironment.getApplication(), androidx.appcompat.R.style.Theme_AppCompat)
+    val editor = ComposerEditText(context).apply {
+      layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+      setTypographyTokens(mapOf("fontSize" to 14, "lineHeight" to 22))
+    }
+    val heights = mutableListOf<Float>()
+    editor.onComposerHeight = { heights.add(it) }
+    // The React Native host sizes the editor exactly and relays a layout the editor requests
+    // (ExpoView.shouldUseAndroidLayout); it never re-measures on its own.
+    val hostHeight = 60
+    fun hostPass() {
+      editor.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(hostHeight, View.MeasureSpec.EXACTLY))
+      editor.layout(0, 0, 600, hostHeight)
+    }
+    editor.setControlledDocument("One line", 0, null, null)
+    hostPass()
+    val oneLine = heights.last()
+    // A draft restored after mount arrives as a controlled value, not as typing.
+    editor.setControlledDocument("Reply exactly DOCK NATIVE QA OK. ".repeat(8), 0, null, null)
+    if (editor.isLayoutRequested) hostPass()
+    assertTrue("reported ${heights.last()} after one line at $oneLine", heights.last() > oneLine * 2)
   }
 
   @Test fun hardwareBackspaceSelectsThenDeletesOneWholeChip() {

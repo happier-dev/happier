@@ -1,12 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const testsDir = dirname(fileURLToPath(import.meta.url));
 const moduleRoot = dirname(testsDir);
 const repoRoot = dirname(dirname(dirname(dirname(moduleRoot))));
+const expoNotificationsRoot = dirname(createRequire(import.meta.url).resolve('expo-notifications/package.json', {
+  paths: [dirname(dirname(moduleRoot))],
+}));
 
 function read(...segments) {
   return readFileSync(join(...segments), 'utf8');
@@ -35,7 +39,7 @@ const kotlinEnricherSource = read(
   moduleRoot, 'android', 'src', 'main', 'java', 'dev', 'happier', 'activitynotifications', 'ActivityNotificationEnricher.kt',
 );
 const installedExpoNotificationRecords = read(
-  dirname(moduleRoot), '..', 'node_modules', 'expo-notifications', 'ios', 'ExpoNotifications', 'Notifications',
+  expoNotificationsRoot, 'ios', 'ExpoNotifications', 'Notifications',
   'NotificationRecords.swift',
 );
 const swiftSessionCryptoSource = read(
@@ -340,13 +344,13 @@ test('the app-process wake arm binds to real expo-notifications entry points', (
   assert.match(kotlinHandoffSource, /FirebaseMessagingDelegate\.runTaskManagerTasks\(/);
   assert.match(kotlinHandoffSource, /RemoteMessageSerializer\.toBundle\(/);
   const delegate = read(
-    dirname(moduleRoot), '..', 'node_modules', 'expo-notifications', 'android', 'src', 'main', 'java',
+    expoNotificationsRoot, 'android', 'src', 'main', 'java',
     'expo', 'modules', 'notifications', 'service', 'delegates', 'FirebaseMessagingDelegate.kt',
   );
   assert.match(delegate, /fun runTaskManagerTasks\(applicationContext: Context, bundle: Bundle\)/,
     'expo-notifications no longer exposes the background-task arm this handoff calls');
   const serializer = read(
-    dirname(moduleRoot), '..', 'node_modules', 'expo-notifications', 'android', 'src', 'main', 'java',
+    expoNotificationsRoot, 'android', 'src', 'main', 'java',
     'expo', 'modules', 'notifications', 'notifications', 'RemoteMessageSerializer.java',
   );
   assert.match(serializer, /public static @NonNull Bundle toBundle\(RemoteMessage message\)/,

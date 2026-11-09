@@ -14,6 +14,11 @@ rust-version = "1.94.1"
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[test]]
+name = "macos_panel_lifecycle"
+path = "tests/macos_panel_lifecycle.rs"
+harness = false
+
 [features]
 devtools = ["wry/devtools"]
 
@@ -57,6 +62,7 @@ tauri-plugin-updater = "2.9"
 tauri-plugin-global-shortcut = "=2.4.1"
 
 [target."cfg(target_os = \"macos\")".dependencies]
+objc2-user-notifications = "=0.3.2"
 block2 = "0.6.1"
 objc2 = "0.6.2"
 objc2-app-kit = { version = "0.3.1", features = ["NSAccessibility", "NSApplication", "NSBitmapImageRep", "NSEvent", "NSImage", "NSImageRep", "NSResponder", "NSScreen", "NSWindow", "NSWorkspace"] }
@@ -71,9 +77,11 @@ webview2-com = "0.38"
 windows-core-061 = { package = "windows-core", version = "=0.61.2" }
 # The tray reads the taskbar theme from the registry; already in the tree via hyper-util.
 windows-registry = "0.6"
-windows = { version = "0.62.2", features = ["Foundation", "UI_ViewManagement", "Win32_Graphics_Dwm", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.60.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows = { version = "0.62.2", features = ["Foundation", "Data_Xml_Dom", "UI_Notifications", "UI_ViewManagement", "Win32_Graphics_Dwm", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [target."cfg(target_os = \"linux\")".dependencies]
+notify-rust = "=4.18.2"
 gtk = "0.18"
 libloading = "0.7.4"
 webkit2gtk = "=2.0.2"

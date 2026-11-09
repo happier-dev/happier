@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; form-action 'none'">
+  <title>Storefront · Checkout</title>
+  <style>
+    :root{color-scheme:light dark;font-family:system-ui,sans-serif;background:light-dark(#faf9f6,#1c1b19);color:light-dark(#282621,#f0eee8)}
+    *{box-sizing:border-box}body{margin:0}header{padding:24px 36px;border-bottom:1px solid light-dark(#ddd9d0,#3e3b35);display:flex;justify-content:space-between;align-items:center}header strong{font-size:20px;letter-spacing:-.5px}header span,small{color:light-dark(#706b60,#b9b2a5)}main{max-width:900px;padding:56px 36px;margin:auto}h1{font-size:40px;letter-spacing:-1.4px;margin:0 0 12px}p{line-height:1.6;margin:0 0 32px;color:light-dark(#706b60,#b9b2a5)}.checkout{display:grid;grid-template-columns:1.25fr 1fr;gap:40px}h2{font-size:18px;margin:0 0 24px}label{display:block;font-size:13px;margin-bottom:8px}input{width:100%;font:inherit;padding:13px;border:1px solid light-dark(#d3cfc6,#4c473f);border-radius:8px;background:transparent;color:inherit;margin-bottom:24px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}aside{padding:28px;border:1px solid light-dark(#ddd9d0,#3e3b35);border-radius:12px;align-self:start}.row{display:flex;justify-content:space-between;gap:16px;line-height:1.6;margin:18px 0}.total{border-top:1px solid light-dark(#ddd9d0,#3e3b35);padding-top:18px;font-weight:650}.product{width:56px;height:56px;border-radius:8px;background:light-dark(#e9e3d6,#373329);display:grid;place-content:center;font-size:28px}.item{display:flex;gap:16px;align-items:center}.item small{display:block}button{border:0;border-radius:8px;width:100%;padding:15px;background:light-dark(#2e4636,#bfd2bf);color:light-dark(#fff,#213329);font:600 14px system-ui;cursor:pointer}.note{display:block;margin-top:14px;text-align:center;font-size:12px}@media(max-width:620px){header{padding:20px}main{padding:32px 20px}h1{font-size:32px}.checkout{grid-template-columns:1fr;gap:24px}aside{grid-row:1}}
+  </style>
+</head>
+<body>
+  <header><strong>fieldwork</strong><span>Your bag · 2 items</span></header>
+  <main>
+    <h1>A little everyday adventure.</h1>
+    <p>Thoughtful essentials, ready for wherever the day takes you.</p>
+    <div class="checkout">
+      <section aria-labelledby="delivery"><h2 id="delivery">Delivery details</h2>
+        <label for="email">Email address</label><input id="email" type="email" value="maya@example.test" autocomplete="off">
+        <div class="pair"><div><label for="first-name">First name</label><input id="first-name" value="Maya" autocomplete="off"></div><div><label for="last-name">Last name</label><input id="last-name" value="Park" autocomplete="off"></div></div>
+        <label for="address">Street address</label><input id="address" value="24 Garden Lane" autocomplete="off">
+        <div class="pair"><div><label for="city">City</label><input id="city" value="Portland" autocomplete="off"></div><div><label for="postal-code">Postal code</label><input id="postal-code" value="97205" autocomplete="off"></div></div>
+        <button type="button">Continue to payment</button><small class="note">Example checkout · no orders or payments are submitted</small>
+      </section>
+      <aside aria-labelledby="summary"><h2 id="summary">Your order</h2>
+        <div class="row"><div class="item"><div class="product" aria-hidden="true">✳</div><div>Everyday tote<small>Natural · Qty 1</small></div></div><span>$38.00</span></div>
+        <div class="row"><div class="item"><div class="product" aria-hidden="true">◒</div><div>Travel tumbler<small>Forest · Qty 1</small></div></div><span>$26.00</span></div>
+        <div class="row"><span>Subtotal</span><span>$64.00</span></div><div class="row"><span>Shipping</span><span>Free</span></div><div class="row total"><span>Total</span><span>$64.00</span></div>
+        <small>Made to last. Packed with care.</small>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

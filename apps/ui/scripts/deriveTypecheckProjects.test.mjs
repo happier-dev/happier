@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import ts from 'typescript';
 
 import { deriveUiTypecheckProjects, prepareUiTypecheckProjects } from './deriveTypecheckProjects.mjs';
 import { installUiTypecheckFixtureDependencies } from '../../../scripts/testing/lib/typecheckProjectFixture.mjs';
+import { readTypecheckProject } from '../../../scripts/workspaces/deriveTypecheckProjects.mjs';
 
 const uiDir = fileURLToPath(new URL('..', import.meta.url));
 const require = createRequire(join(uiDir, 'package.json'));
@@ -15,6 +17,16 @@ const { requireContext } = require('expo-router/internal/testing');
 const { EXPO_ROUTER_CTX_IGNORE } = require('expo-router/_ctx-shared');
 const { getTypedRoutesDeclarationFile } = require('@expo/router-server/build/typed-routes/generate');
 const names = ['foundation', 'core', 'source', 'test-components', 'test-other'];
+
+test('UI composed tests resolve the build-owned projector through a declaration boundary', () => {
+  const { parsed } = readTypecheckProject(join(uiDir, 'tsconfig.json'));
+  const caller = join(uiDir, 'sources/sync/ops/actions/defaultActionExecutor.managedMachine.test.ts');
+  const resolved = ts.resolveModuleName('../../../../../../apps/cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs',
+    caller, parsed.options, ts.sys).resolvedModule;
+  assert.ok(resolved, 'the real projector import must resolve');
+  assert.equal(resolved.extension, ts.Extension.Dmts,
+    'the CLI build script must not become a JavaScript root in a foreign TypeScript project');
+});
 
 test('UI partitions own current and explicit test roots once across separate test programs', async t => {
   const packageDir = await mkdtemp(join(tmpdir(), 'happier-ui-partition-'));

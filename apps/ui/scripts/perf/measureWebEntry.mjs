@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ import { buildStackWebExportEnv } from '../../../stack/scripts/utils/ui/ui_expor
 import { withSourceWebUiInputs } from '../../../stack/scripts/build/build_source_web_ui.mjs';
 import { getDefaultAutostartPaths } from '../../../stack/scripts/utils/paths/paths.mjs';
 import { SOURCE_WEB_EXPORT_ADMISSION_CLASS } from '../../../stack/scripts/utils/dev_targets/remote_commands.mjs';
-import { withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { withBuildInputDependencies, withSingleTrailingBuildPass } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 
 // Use Expo's real export driver and Metro's own source-map consumer. This is
 // measurement tooling: it changes neither app imports nor bundler chunk policy.
@@ -35,7 +35,9 @@ if (!fromExport && !exportWorkerDir) {
 } else if (exportWorkerDir) {
     const workerOutputDir = resolve(exportWorkerDir);
     const workerWebOutputDir = join(workerOutputDir, 'web');
-    await withBuildInputDependencies({ sourceDir: repoRoot }, async dependencyEnv => {
+    await withSingleTrailingBuildPass({ run: async trailing => {
+      if (trailing) await rm(workerWebOutputDir, { recursive: true, force: true });
+      return await withBuildInputDependencies({ sourceDir: repoRoot }, async dependencyEnv => {
         console.log(JSON.stringify({ phase: 'source-preparation', outputDir: workerOutputDir }));
         const { env: isolatedEnv, paths } = await prepareExpoCommandEnv({
             baseDir: getDefaultAutostartPaths(dependencyEnv).baseDir, kind: 'source-web-export', projectDir: uiRoot,
@@ -53,7 +55,8 @@ if (!fromExport && !exportWorkerDir) {
                 cwd: inputs.uiProjectDir, env, admissionClass: SOURCE_WEB_EXPORT_ADMISSION_CLASS, captureStdout: false,
             });
         });
-    });
+      });
+    } });
     process.exit(0);
 }
 

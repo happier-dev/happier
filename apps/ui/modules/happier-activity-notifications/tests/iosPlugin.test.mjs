@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const xcode = require('xcode');
@@ -24,6 +26,20 @@ function loadProject() {
   const project = xcode.project(FIXTURE);
   project.parseSync();
   return project;
+}
+
+function installedLibsodium(t, { hoisted = true, frameworkPresent = true } = {}) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'happier-notification-ios-')));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const projectRoot = join(root, 'apps', 'ui');
+  const platformProjectRoot = join(projectRoot, 'ios');
+  const packageRoot = join(hoisted ? root : projectRoot, 'node_modules', '@more-tech', 'react-native-libsodium');
+  const frameworkPath = join(packageRoot, 'libsodium', 'build', 'libsodium-apple', 'Clibsodium.xcframework');
+  mkdirSync(platformProjectRoot, { recursive: true });
+  mkdirSync(packageRoot, { recursive: true });
+  writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ name: '@more-tech/react-native-libsodium', version: '1.5.6' }));
+  if (frameworkPresent) mkdirSync(frameworkPath, { recursive: true });
+  return { projectRoot, platformProjectRoot, frameworkPath };
 }
 
 function nativeTargets(project) {
@@ -49,9 +65,9 @@ function phaseOf(project, target, isa) {
   return entry?.object ?? null;
 }
 
-test('the alert consumer is built as an app extension the app embeds and depends on', () => {
+test('the alert consumer is built as an app extension the app embeds and depends on', (t) => {
   const project = loadProject();
-  configureNotificationServiceTarget(project, { appBundleIdentifier: 'dev.happier.app' });
+  configureNotificationServiceTarget(project, { ...installedLibsodium(t), appBundleIdentifier: 'dev.happier.app' });
 
   const extension = findTarget(project, TARGET_NAME);
   assert.ok(extension, 'missing notification service extension target');
@@ -100,10 +116,15 @@ test('the alert consumer is built as an app extension the app embeds and depends
   assert.ok(project.writeSync().includes('com.apple.product-type.app-extension'));
 });
 
-test('a repeated prebuild converges on one target and refreshes its identity', () => {
+test('a repeated prebuild converges on one target and refreshes its identity', (t) => {
   const project = loadProject();
-  configureNotificationServiceTarget(project, { appBundleIdentifier: 'dev.happier.app' });
-  configureNotificationServiceTarget(project, { appBundleIdentifier: 'dev.happier.app.dev', deploymentTarget: '17.0' });
+  const installation = installedLibsodium(t);
+  configureNotificationServiceTarget(project, { ...installation, appBundleIdentifier: 'dev.happier.app' });
+  // A project generated before workspace-aware resolution must also converge.
+  const sodium = Object.values(project.pbxFileReferenceSection())
+    .find((file) => file?.path?.includes('Clibsodium.xcframework'));
+  sodium.path = '"../node_modules/@more-tech/react-native-libsodium/libsodium/build/libsodium-apple/Clibsodium.xcframework"';
+  configureNotificationServiceTarget(project, { ...installation, appBundleIdentifier: 'dev.happier.app.dev', deploymentTarget: '17.0' });
 
   assert.equal(nativeTargets(project).length, 2);
   const extension = findTarget(project, TARGET_NAME);
@@ -113,6 +134,38 @@ test('a repeated prebuild converges on one target and refreshes its identity', (
   }
   const app = findTarget(project, 'HappierApp');
   assert.equal(app.target.dependencies.length, 1);
+  const frameworks = phaseOf(project, extension.target, 'PBXFrameworksBuildPhase');
+  assert.equal(frameworks.files.length, 1);
+  const references = Object.values(project.pbxFileReferenceSection())
+    .filter((file) => file?.path?.includes('Clibsodium.xcframework'));
+  assert.equal(references.length, 1);
+  assert.equal(resolve(installation.platformProjectRoot, references[0].path.replace(/^"|"$/g, '')), installation.frameworkPath);
+});
+
+for (const hoisted of [true, false]) {
+  test(`the extension links the installed libsodium XCFramework (${hoisted ? 'hoisted' : 'app-local'})`, (t) => {
+    const installation = installedLibsodium(t, { hoisted });
+    const project = loadProject();
+    configureNotificationServiceTarget(project, { ...installation, appBundleIdentifier: 'dev.happier.app' });
+    const extension = findTarget(project, TARGET_NAME);
+    const frameworks = phaseOf(project, extension.target, 'PBXFrameworksBuildPhase');
+    const linkedFrameworks = frameworks.files.map(({ value }) => {
+      const buildFile = project.pbxBuildFileSection()[value];
+      return project.pbxFileReferenceSection()[buildFile.fileRef];
+    });
+    const sodium = linkedFrameworks.find((file) => String(file.path).includes('Clibsodium.xcframework'));
+    assert.ok(sodium, 'missing libsodium link input');
+    assert.equal(sodium.sourceTree, '"<group>"');
+    assert.equal(resolve(installation.platformProjectRoot, sodium.path.replace(/^"|"$/g, '')), installation.frameworkPath);
+  });
+}
+
+test('prebuild fails visibly when the resolved libsodium package has no XCFramework', (t) => {
+  const installation = installedLibsodium(t, { frameworkPresent: false });
+  assert.throws(
+    () => configureNotificationServiceTarget(loadProject(), { ...installation, appBundleIdentifier: 'dev.happier.app' }),
+    (error) => error instanceof Error && error.message.includes(installation.frameworkPath),
+  );
 });
 
 test('a missing app bundle identifier fails the build instead of shipping a misidentified extension', () => {

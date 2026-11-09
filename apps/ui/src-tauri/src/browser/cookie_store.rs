@@ -128,22 +128,13 @@ fn macos_cookie(
                 ],
                 &[&name, &value, &domain, &path],
             );
-        properties.insert(
-            NSHTTPCookieSecure,
-            if cookie.secure {
-                ns_string!("TRUE")
-            } else {
-                ns_string!("FALSE")
-            },
-        );
-        properties.insert(
-            ns_string!("HttpOnly"),
-            if cookie.http_only {
-                ns_string!("TRUE")
-            } else {
-                ns_string!("FALSE")
-            },
-        );
+        // Foundation treats a present string property as true, including "FALSE".
+        if cookie.secure {
+            properties.insert(NSHTTPCookieSecure, ns_string!("TRUE"));
+        }
+        if cookie.http_only {
+            properties.insert(ns_string!("HttpOnly"), ns_string!("TRUE"));
+        }
         if let Some(expires) = cookie.expires {
             if !expires.is_finite() {
                 return Err(LoginImportCode::SourceFormatUnsupported);
@@ -515,6 +506,10 @@ mod macos_tests {
 
     #[test]
     fn macos_cookie_keeps_native_scope_flags_same_site_and_expiry() {
+        let supported_expiry = objc2_foundation::NSDate::date()
+            .timeIntervalSince1970()
+            .floor()
+            + 86_400.0;
         let cookie = LoginCookie {
             name: "session".into(),
             value: "fixture".into(),
@@ -522,7 +517,7 @@ mod macos_tests {
             path: "/account".into(),
             secure: true,
             http_only: true,
-            expires: Some(2_000_000_000.0),
+            expires: Some(supported_expiry),
             same_site: Some(CookieSameSite::Strict),
         };
         let native = macos_cookie(&cookie).unwrap();
@@ -533,23 +528,25 @@ mod macos_tests {
             assert!(native.isHTTPOnly());
             assert_eq!(
                 native.expiresDate().unwrap().timeIntervalSince1970(),
-                2_000_000_000.0
+                supported_expiry
             );
             assert_eq!(native.sameSitePolicy().unwrap().to_string(), "strict");
-            let host = macos_cookie(&LoginCookie {
-                domain: "example.test".into(),
-                expires: None,
-                secure: false,
-                http_only: false,
-                same_site: Some(CookieSameSite::Lax),
-                ..cookie.clone()
-            })
-            .unwrap();
-            assert_eq!(host.domain().to_string(), "example.test");
-            assert!(!host.isSecure());
-            assert!(!host.isHTTPOnly());
-            assert!(host.expiresDate().is_none());
-            assert_eq!(host.sameSitePolicy().unwrap().to_string(), "lax");
+            for (secure, http_only) in [(false, false), (true, false), (false, true)] {
+                let host = macos_cookie(&LoginCookie {
+                    domain: "example.test".into(),
+                    expires: None,
+                    secure,
+                    http_only,
+                    same_site: Some(CookieSameSite::Lax),
+                    ..cookie.clone()
+                })
+                .unwrap();
+                assert_eq!(host.domain().to_string(), "example.test");
+                assert_eq!(host.isSecure(), secure);
+                assert_eq!(host.isHTTPOnly(), http_only);
+                assert!(host.expiresDate().is_none());
+                assert_eq!(host.sameSitePolicy().unwrap().to_string(), "lax");
+            }
             let unrestricted = macos_cookie(&LoginCookie {
                 same_site: Some(CookieSameSite::None),
                 ..cookie.clone()

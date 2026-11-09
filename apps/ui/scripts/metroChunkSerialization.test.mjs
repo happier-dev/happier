@@ -44,6 +44,7 @@ const baseline = candidate.replace(discoveryFunctions, () => upstreamDiscovery[0
 );
 const baselineSerializer = loadSerializer(baseline);
 const patchedSerializer = loadSerializer(candidate);
+console.log(JSON.stringify({ patchBasis: suppliedPatch === undefined ? 'tracked-dependency-patch' : 'explicit-candidate', serializerPatchPresent: Boolean(serializerPatch) }));
 
 function makeModule(name, dependencies = [], script = false) {
     const modulePath = `/serializer-fixture/${name}.js`;
@@ -108,6 +109,7 @@ test('chunk entry discovery visits the indexed graph linearly at export scale', 
     const graph = makeGraph(modules, new CountedDependencies(modules.map(module => [module.path, module])));
     const chunks = patchedSerializer.inspectChunks(modules[0].path, [], graph, makeOptions(), new CountedChunks());
     assert.equal(chunks.size, asyncCount + 2);
+    console.log(JSON.stringify({ modules: modules.length, chunks: chunks.size, entryDiscoveryVisits: visits }));
     assert.ok(visits <= modules.length, `entry discovery visited ${visits} graph records for ${modules.length} modules`);
 });
 
@@ -134,6 +136,7 @@ test('chunk entries, membership, workers, cycles, URLs, bundle bytes and maps ma
         assert.ok(actual.artifacts.some(artifact => artifact.type === 'js'));
         assert.ok(actual.artifacts.some(artifact => artifact.type === 'map'));
         assert.deepEqual(actual, expected);
+        console.log(JSON.stringify({ splitChunks, artifacts: actual.artifacts.length, identicalBundleAndMapBytes: true }));
     }
 });
 

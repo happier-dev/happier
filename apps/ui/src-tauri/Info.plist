@@ -21,5 +21,7 @@
   <string>Happier uses your microphone for voice conversations and dictation.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>Allow Happier to convert your speech to text to enable voice conversations and transcription.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Happier captures a window or area you choose so you can annotate it and share it with your coding agent.</string>
 </dict>
 </plist>

@@ -1,7 +1,15 @@
 import './sources/boot/configureZodLocale';
 import '@expo/metro-runtime';
+import { installAbortSignalThrowIfAborted } from './sources/boot/installAbortSignalThrowIfAborted';
 import { installWorkspaceBrowserHistory } from './sources/components/appShell/workspace/workspaceBrowserTransport';
 import { installWebReactPerformanceMeasureCleanup } from './sources/dev/webReactPerformanceMeasures';
+import { captureConnectedAccountOAuthCallbackUrl } from './sources/sync/ops/connectedAccounts/connectedAccountOAuthCallbackUrl';
+
+// Force installation before consumers despite Metro inlineRequires.
+installAbortSignalThrowIfAborted();
+
+// Capture OAuth responses before Router can retain the initial address.
+captureConnectedAccountOAuthCallbackUrl();
 
 // This call forces evaluation despite Metro inlineRequires, before Router can
 // install its URL mirror. WorkspaceProvider later binds the live transport.
@@ -88,5 +96,13 @@ try {
     require('./sources/activity/notifications/backgroundWake/defineSessionChangedBackgroundWakeTask');
 } catch {
     console.warn('[notifications] Background notification task unavailable');
+}
+try {
+    const { initializeIOSNotificationBackgroundResponses } = require('./sources/activity/notifications/runtime/iosNotificationBackgroundResponses') as {
+        initializeIOSNotificationBackgroundResponses(): Promise<boolean>;
+    };
+    void initializeIOSNotificationBackgroundResponses();
+} catch {
+    console.warn('[notifications] iOS background notification runtime unavailable');
 }
 require('expo-router/entry');

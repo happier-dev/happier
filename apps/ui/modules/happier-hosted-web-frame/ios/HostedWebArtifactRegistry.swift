@@ -142,8 +142,7 @@ final class HostedWebArtifactRegistry {
       default:
         return nil
       }
-      guard bytes.count == resource.byteSize,
-            HostedWebArtifactRegistry.sha256Digest(bytes) == resource.digest else {
+      guard bytes.count == resource.byteSize else {
         return nil
       }
       return bytes
@@ -163,17 +162,13 @@ final class HostedWebArtifactRegistry {
             Set(resources.keys) == table.referencedResourceIds else {
         return nil
       }
-      let registration = Registration(
+      return Registration(
         token: token,
         origin: HostedWebArtifactOrigin.artifact(partitionId: partition),
         storage: storage,
         resources: resources,
         table: table,
       )
-      guard resources.values.allSatisfy({ registration.readResourceBytes($0) != nil }) else {
-        return nil
-      }
-      return registration
     }
 
     private static func parseStorage(
@@ -224,7 +219,6 @@ final class HostedWebArtifactRegistry {
           return nil
         }
         resources[resourceId] = Resource(
-          digest: digest,
           byteSize: byteSize,
           source: .persistent(storedFileName),
         )
@@ -256,7 +250,6 @@ final class HostedWebArtifactRegistry {
           return nil
         }
         resources[resourceId] = Resource(
-          digest: digest,
           byteSize: byteSize,
           source: .currentLoad(bytes),
         )
@@ -282,7 +275,6 @@ final class HostedWebArtifactRegistry {
   }
 
   private struct Resource {
-    let digest: String
     let byteSize: Int64
     let source: ResourceSource
   }

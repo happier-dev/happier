@@ -3,17 +3,17 @@ import UIKit
 
 final class HappierComposerInputView: ExpoView {
   let input = HappierComposerTextView(frame: .zero)
-  let onChange = EventDispatcher()
-  let onSelection = EventDispatcher()
-  let onKeyPress = EventDispatcher()
-  let onSubmitEditing = EventDispatcher()
-  let onFocus = EventDispatcher()
-  let onBlur = EventDispatcher()
-  let onContentHeightChange = EventDispatcher()
-  let onScroll = EventDispatcher()
-  let onReferencePress = EventDispatcher()
-  let onDecorationPress = EventDispatcher()
-  let onAttachmentDrop = EventDispatcher()
+  let onComposerChange = EventDispatcher()
+  let onComposerSelection = EventDispatcher()
+  let onComposerKeyPress = EventDispatcher()
+  let onComposerSubmitEditing = EventDispatcher()
+  let onComposerFocus = EventDispatcher()
+  let onComposerBlur = EventDispatcher()
+  let onComposerContentHeightChange = EventDispatcher()
+  let onComposerScroll = EventDispatcher()
+  let onComposerReferencePress = EventDispatcher()
+  let onComposerDecorationPress = EventDispatcher()
+  let onComposerAttachmentDrop = EventDispatcher()
   var autoFocus = false
   var mostRecentEventCount = 0
   var pendingValue: String?
@@ -31,27 +31,27 @@ final class HappierComposerInputView: ExpoView {
     }
     input.onChange = { [weak self] text, selection in
       guard let self else { return }
-      self.onChange(self.withCaret(["text": text, "selection": selection, "eventCount": self.input.eventCount, "references": self.input.referenceSnapshots()]))
+      self.onComposerChange(self.withCaret(["text": text, "selection": selection, "eventCount": self.input.eventCount, "references": self.input.referenceSnapshots()]))
     }
     input.onSelection = { [weak self] selection in
       guard let self, !self.applyingControlledProps else { return }
-      self.onSelection(self.withCaret(["selection": selection]))
+      self.onComposerSelection(self.withCaret(["selection": selection]))
     }
-    input.onKeyPress = { [weak self] payload in self?.onKeyPress(payload) }
-    input.onSubmitEditing = { [weak self] payload in self?.onSubmitEditing(payload) }
+    input.onKeyPress = { [weak self] payload in self?.onComposerKeyPress(payload) }
+    input.onSubmitEditing = { [weak self] payload in self?.onComposerSubmitEditing(payload) }
     input.onFocus = { [weak self] in
       guard let self else { return }
-      self.onFocus(self.withCaret([:]))
+      self.onComposerFocus(self.withCaret([:]))
     }
-    input.onBlur = { [weak self] in self?.onBlur([:]) }
-    input.onContentHeightChange = { [weak self] height in self?.onContentHeightChange(["height": height]) }
+    input.onBlur = { [weak self] in self?.onComposerBlur([:]) }
+    input.onContentHeightChange = { [weak self] height in self?.onComposerContentHeightChange(["height": height]) }
     input.onScroll = { [weak self] y in
       guard let self else { return }
-      self.onScroll(self.withCaret(["y": y]))
+      self.onComposerScroll(self.withCaret(["y": y]))
     }
-    input.onReferencePress = { [weak self] ref in self?.onReferencePress(["ref": ref]) }
-    input.onDecorationPress = { [weak self] url in self?.onDecorationPress(["url": url]) }
-    input.onAttachmentDrop = { [weak self] payload in self?.onAttachmentDrop(payload) }
+    input.onReferencePress = { [weak self] ref in self?.onComposerReferencePress(["ref": ref]) }
+    input.onDecorationPress = { [weak self] url in self?.onComposerDecorationPress(["url": url]) }
+    input.onAttachmentDrop = { [weak self] payload in self?.onComposerAttachmentDrop(payload) }
   }
 
   func applyControlledProps() {
@@ -64,7 +64,7 @@ final class HappierComposerInputView: ExpoView {
     input.setControlledDocument(value: value, references: references, eventCount: mostRecentEventCount)
     if let decorations { input.setDecorations(decorations) }
     applyingControlledProps = false
-    if value != nil || references != nil { onSelection(withCaret(["selection": input.sourceSelection])) }
+    if value != nil || references != nil { onComposerSelection(withCaret(["selection": input.sourceSelection])) }
   }
 
   private func withCaret(_ payload: [String: Any]) -> [String: Any] {

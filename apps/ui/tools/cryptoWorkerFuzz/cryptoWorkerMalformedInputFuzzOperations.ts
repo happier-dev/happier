@@ -1,9 +1,12 @@
 import {
-    CRYPTO_GOLDEN_VECTORS,
-    encodeBase64,
-    openEncryptedDataKeyEnvelopeV1,
+    CRYPTO_GOLDEN_VECTORS} from '@happier-dev/protocol/crypto/cryptoGoldenVectors';
+import {
+    encodeBase64} from '@happier-dev/protocol/crypto/base64';
+import {
+    openEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import {
     parseSerializedJsonValue,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/crypto/serializedJsonValue';
 import sodium from 'libsodium-wrappers';
 
 import { UI_CRYPTO_GOLDEN_VECTORS } from '../../sources/sync/encryption/nativeCryptoWorker/cryptoGoldenVectors';

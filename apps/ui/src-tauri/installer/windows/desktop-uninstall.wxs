@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <!-- Referencing this empty group links the fragment and its sequence row through
+         Tauri's supported componentGroupRefs setting, without installing another resource. -->
+    <ComponentGroup Id="HappierDesktopCleanupIntegration" />
+    <!-- Tauri CLI 2.12.1's main template owns the installed executable File Id="Path".
+         Run in the invoking user's context while that executable and hsetup still exist.
+         SYSTEM-managed removals cannot reach another user's recorded desktop setup;
+         that user must run explicit component cleanup before enterprise removal. -->
+    <CustomAction Id="HappierDesktopComponentCleanup"
+                  FileKey="Path"
+                  ExeCommand="--uninstall-desktop-components"
+                  Execute="immediate"
+                  Impersonate="yes"
+                  Return="check" />
+    <Property Id="HAPPIER_DESKTOP_UPGRADE" Secure="yes" />
+    <InstallExecuteSequence>
+      <Custom Action="HappierDesktopComponentCleanup" Before="RemoveFiles">
+        (REMOVE = "ALL") AND NOT UPGRADINGPRODUCTCODE AND NOT HAPPIER_DESKTOP_UPGRADE
+      </Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

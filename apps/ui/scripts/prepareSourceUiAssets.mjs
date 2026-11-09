@@ -57,7 +57,7 @@ export async function prepareSourceUiAssets({ uiPackageDir, outputDir, recordPat
     const retained = readSourceUiAssetsRecord(retainedRecordPath);
     const repoRoot = resolve(uiPackageDir, '../..');
     const packages = await readWorkspacePackages(repoRoot);
-    const compilerInputs = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, compiler: true, packages });
+    const compilerInputs = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, compiler: true, inventory: true, packages });
     const packageRoots = new Map([...packages.values()].map(owner => [owner.root, owner]));
     const dependencyMarker = await readJsonIfExists(resolveDependencyRefreshMarkerPath(repoRoot));
     const dependencyIdentity = dependencyMarker && Array.isArray(dependencyMarker.inputs)

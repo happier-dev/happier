@@ -18,5 +18,7 @@ pub mod menu_bar {
 }
 #[path = "../../../src/app_updates/relaunch.rs"]
 pub mod update_relaunch;
+#[path = "../../../src/desktop_startup.rs"]
+pub mod desktop_startup;
 #[path = "../../../src/web_runtime_config.rs"]
 pub mod web_runtime_config;

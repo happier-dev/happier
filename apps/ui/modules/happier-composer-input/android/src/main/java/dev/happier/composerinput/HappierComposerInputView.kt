@@ -5,22 +5,24 @@ import android.view.ViewGroup
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import com.facebook.react.bridge.ReactContext
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
 
 internal class HappierComposerInputView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
-  private val onChange by EventDispatcher<Map<String, Any>>()
-  private val onSelection by EventDispatcher<Map<String, Any>>()
-  private val onKeyPress by EventDispatcher<Map<String, Any>>()
-  private val onSubmitEditing by EventDispatcher<Map<String, Any>>()
-  private val onFocus by EventDispatcher<Map<String, Any>>()
-  private val onBlur by EventDispatcher<Map<String, Any>>()
-  private val onContentHeightChange by EventDispatcher<Map<String, Any>>()
-  private val onScroll by EventDispatcher<Map<String, Any>>()
-  private val onReferencePress by EventDispatcher<Map<String, Any>>()
-  private val onDecorationPress by EventDispatcher<Map<String, Any>>()
-  private val onAttachmentDrop by EventDispatcher<Map<String, Any>>()
+  private val onComposerChange by EventDispatcher<Map<String, Any>>()
+  private val onComposerSelection by EventDispatcher<Map<String, Any>>()
+  private val onComposerKeyPress by EventDispatcher<Map<String, Any>>()
+  private val onComposerSubmitEditing by EventDispatcher<Map<String, Any>>()
+  private val onComposerFocus by EventDispatcher<Map<String, Any>>()
+  private val onComposerBlur by EventDispatcher<Map<String, Any>>()
+  private val onComposerContentHeightChange by EventDispatcher<Map<String, Any>>()
+  private val onComposerScroll by EventDispatcher<Map<String, Any>>()
+  private val onComposerReferencePress by EventDispatcher<Map<String, Any>>()
+  private val onComposerDecorationPress by EventDispatcher<Map<String, Any>>()
+  private val onComposerAttachmentDrop by EventDispatcher<Map<String, Any>>()
   val editor = ComposerEditText(context)
   private var autoFocus = false
   private var initialScrollY = 0.0
@@ -36,16 +38,25 @@ internal class HappierComposerInputView(context: Context, appContext: AppContext
     orientation = VERTICAL
     editor.id = View.generateViewId()
     addView(editor, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-    editor.onComposerChange = { text, selection, eventCount -> onChange(mapOf("text" to text, "selection" to selection, "eventCount" to eventCount, "nativeInputTag" to editor.id, "references" to editor.referenceSnapshots()) + caretPayload()) }
-    editor.onComposerSelection = { selection -> onSelection(mapOf("selection" to selection, "nativeInputTag" to editor.id) + caretPayload()) }
-    editor.onComposerKey = { event -> onKeyPress(event) }
-    editor.onComposerSubmit = { event -> onSubmitEditing(event) }
-    editor.onComposerReference = { ref -> onReferencePress(mapOf("ref" to ref)) }
-    editor.onComposerDecoration = { url -> onDecorationPress(mapOf("url" to url)) }
-    editor.onComposerAttachmentDrop = { payload -> onAttachmentDrop(payload) }
-    editor.onComposerHeight = { height -> onContentHeightChange(mapOf("height" to height)) }
-    editor.onComposerScroll = { y -> onScroll(mapOf("y" to y) + caretPayload()) }
-    editor.setOnFocusChangeListener { _, focused -> if (focused) onFocus(mapOf("nativeInputTag" to editor.id) + caretPayload()) else onBlur(emptyMap()) }
+    editor.onComposerChange = { text, selection, eventCount -> onComposerChange(mapOf("text" to text, "selection" to selection, "eventCount" to eventCount, "nativeInputTag" to editor.id, "references" to editor.referenceSnapshots()) + caretPayload()) }
+    editor.onComposerSelection = { selection -> onComposerSelection(mapOf("selection" to selection, "nativeInputTag" to editor.id) + caretPayload()) }
+    editor.onComposerKey = { event -> onComposerKeyPress(event) }
+    editor.onHardwareBack = {
+      val back = (appContext.reactContext as? ReactContext)?.getNativeModule(DeviceEventManagerModule::class.java)
+      if (back == null) false else {
+        // Preserve RN's listener ordering; the active pane still owns closing.
+        back.emitHardwareBackPressed()
+        hideEditorKeyboard()
+        true
+      }
+    }
+    editor.onComposerSubmit = { event -> onComposerSubmitEditing(event) }
+    editor.onComposerReference = { ref -> onComposerReferencePress(mapOf("ref" to ref)) }
+    editor.onComposerDecoration = { url -> onComposerDecorationPress(mapOf("url" to url)) }
+    editor.onComposerAttachmentDrop = { payload -> onComposerAttachmentDrop(payload) }
+    editor.onComposerHeight = { height -> onComposerContentHeightChange(mapOf("height" to height)) }
+    editor.onComposerScroll = { y -> onComposerScroll(mapOf("y" to y) + caretPayload()) }
+    editor.setOnFocusChangeListener { _, focused -> if (focused) onComposerFocus(mapOf("nativeInputTag" to editor.id) + caretPayload()) else onComposerBlur(emptyMap()) }
     importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
   }
 
@@ -72,6 +83,10 @@ internal class HappierComposerInputView(context: Context, appContext: AppContext
 
   fun blurEditor() {
     editor.clearFocus()
+    hideEditorKeyboard()
+  }
+
+  private fun hideEditorKeyboard() {
     (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(editor.windowToken, 0)
   }
 
