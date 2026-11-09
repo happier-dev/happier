@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
@@ -158,7 +158,7 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         expect(migrated.featureToggles?.['inbox.friends']).toBeUndefined();
         expect(migrated.featureToggles?.['social.friends']).toBe(true);
         expect(migrated.featureToggles?.['files.editor']).toBeUndefined();
-        expect(migrated.schemaVersion).toBe(7);
+        expect(migrated.schemaVersion).toBe(settingsDefaults.schemaVersion);
     });
 
     it('reads the 0.2 compact and picker aliases without overriding explicit current preferences', () => {

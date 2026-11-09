@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
 import { z } from 'zod/mini';
 
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
@@ -197,7 +198,7 @@ export function applyAccountSettingMutationV1(
   }
 
   const seen = new Set<string>();
-  const next: Record<string, unknown> = { ...raw };
+  const next = migrateAccountSettingsFeaturePreferences(raw);
   // These creation defaults have an explicit tolerant stored-read contract.
   // Repair only retained malformed values; incoming writes below remain strict.
   for (const key of ['memoryUseInNewSessions', 'memoryUseInNewBots'] as const) {
@@ -225,13 +226,24 @@ export function applyAccountSettingMutationV1(
     }
 
     const definition = ACCOUNT_SETTING_DEFINITIONS[operation.key];
+    // Older Actions writers omit newer optional policy roots. Rebase them through
+    // this same owner; current writers clear explicitly with [] or {}.
+    const currentActions = next.actionsSettingsV1;
+    let value: unknown = operation.value;
+    if (operation.key === 'actionsSettingsV1' && isRecord(value) && isRecord(currentActions)) {
+      let retained: Record<string, unknown> = value;
+      for (const key of ['scopedApprovalPreferences', 'callerSurfacePolicies', 'approvalProfiles'] as const) {
+        if (!Object.hasOwn(retained, key) && Object.hasOwn(currentActions, key)) retained = { ...retained, [key]: currentActions[key] };
+      }
+      value = retained;
+    }
     const boundIssue = inspectAccountSettingValueBounds(
-      operation.value,
+      value,
       definition.maximumSerializedValueBytes,
       definition.structuralBoundsOwner,
     );
     if (boundIssue) return invalid(boundIssue.reason);
-    const parsedValue = definition.parseMutationValue(operation.value);
+    const parsedValue = definition.parseMutationValue(value);
     if (!parsedValue.success) {
       return invalid(parsedValue.reason);
     }

@@ -85,6 +85,55 @@ by this path. This is cache custody, not another feature-decision owner or an av
 - Enforce dependencies through `applyFeatureDependencies(...)`.
 - Do not duplicate dependency logic at call sites.
 
+### Account opt-outs and new work (0.3 development)
+
+The Account preference registry (`actions/settings/featurePreferenceMutations.ts`)
+owns one Settings toggle for each optional top-level surface. Browser, Search,
+Discussions, Board, Following, Teams, local provider discovery, Devices,
+Deployments, Bots and Subagents default on. Pets retains its existing
+control and default. Children inherit their parent's decision through catalog
+dependencies; consumers do not add child preferences.
+
+`deployments` and `bots` are server-represented, fail-closed features. Current
+Homes advertise both by default. Operators can opt out with
+`HAPPIER_FEATURE_DEPLOYMENTS__ENABLED=0` or `HAPPIER_FEATURE_BOTS__ENABLED=0`,
+or deny either id through `HAPPIER_BUILD_FEATURES_DENY`. Missing or malformed
+bits from an older Home remain disabled.
+
+An Account toggle controls presentation and admission of new work. It does not
+cancel admitted work, delete records, or stop an executor. Deployment preparation,
+publishing, linking and new execution consume the `deployments` decision. Bot
+creation, template drafting, release, instantiation and update admission consume
+`bots`. The Action family mapping lives in `actionRequiredServerFeature.ts` and
+server admission uses `serverFeatureGate`. Reads, receipts, cancellation,
+delete/unlink and teardown remain reachable. Signed
+continuations use their existing admitted execution authority rather than
+re-evaluating the feature decision.
+
+### Rich Markdown editor preference migration (0.3 development)
+
+Rich Markdown editing is standard and enabled by default. Account Settings v9
+retires the `files.markdownRichEditor:false` value seeded by earlier experimental
+defaults, including 0.2 v8 settings. The Protocol settings migration owner
+applies this transition only below v9, on reads and before current mutations.
+Raw pending writes migrate the baseline before overlaying new choices.
+The Features switch still writes an
+explicit opt-out, which subsequent reads and schema upgrades preserve.
+
+The 0.2 Features screen overwrites this preference when enabling Experiments,
+including in a v9 document. Such a write cannot be distinguished from a deliberate
+opt-out by the current reader; it requires a correction in that older writer.
+
+### Attachment uploads (0.3 development)
+
+Uploads are available by default in the app and embedded Sessions, without an
+Experiments opt-in or Account feature preference. Retired local upload toggles no
+longer affect availability. The canonical `attachments.uploads` server enabled bit
+remains required: only `true` enables uploads; missing or malformed bits fail closed.
+The Home defaults this bit on; operators can disable it with
+`HAPPIER_FEATURE_ATTACHMENTS_UPLOADS__ENABLED=false`. Embedded surface capability
+settings and Session/grant upload authority still narrow what a frame can do.
+
 ### Machine speech (0.3 development)
 
 The CLI local policy for `voice.daemonInference` defaults to enabled. Operators
@@ -101,8 +150,22 @@ standard and enabled by default in 0.3 development. Their switches remain in
 Settings → Features, independent of Experiments, and stored explicit choices
 are preserved. They do not determine the daemon's local policy. Effective use
 still requires the catalog dependencies: Voice Agent requires Voice and Subagents
-(`execution.runs`), and Machine speech requires Voice Agent. Subagents remains
-experimental and opt-in.
+(`execution.runs`), and Machine speech requires Voice Agent. Subagents is standard
+and enabled by default in 0.3 development (owner ruling 2026-11-05), independently
+of Experiments. Its existing `featureToggles['execution.runs']` key preserves explicit
+choices; an Account with no stored choice uses the enabled default. It is a
+client-represented feature, so it has no server enabled bit or server default to
+change. Voice remains server-represented: missing or malformed `voice.enabled`
+bits still disable Voice Agent and Machine speech through catalog dependencies.
+
+### Friends (0.3 development)
+
+Friends is available without an Experiments opt-in or Account feature toggle.
+The shared preference registry no longer authors or applies a Friends preference;
+stored `social.friends` choices remain readable and have no availability effect.
+The canonical `social.friends` server bit still governs availability: only an
+explicit `true` enables it, and missing or malformed bits fail closed. Home
+identity policy and Session sharing authority remain with their existing owners.
 
 ### Browser automation capability ids
 
@@ -132,6 +195,21 @@ The feature catalog has no alias or canonicalization seam, so `sessions.external
 The catalog entry is client-represented, has `defaultFailMode: 'fail_closed'`, and declares no dependencies. Consumers must resolve it through the canonical feature decision runtime rather than reading a server bit or inferring availability from an Agent registration.
 
 Features that declare `sessions.direct` as a dependency, including the current Claude unified-terminal and Codex app-server feature rows, are disabled by `applyFeatureDependencies(...)` when External Sessions is disabled or unknown. Call sites must not reproduce or bypass that dependency closure.
+
+### Compact Usage batch representation
+
+`usage.compactBatch` is the default-on Home representation boundary for compact
+Usage slices and grouped private-price operands, not an Account preference or
+operator rollout switch. The existing `resolveServerUsageAnalyticsCapabilitiesFeature`
+producer publishes its additive enabled bit through its existing registry entry;
+the strict diagnostic `capabilities.server.usageAnalytics` object is unchanged.
+The one Usage batch API owner reads the captured Home's existing feature discovery
+and uses `readServerEnabledBit(..., 'usage.compactBatch') === true`. Missing,
+disabled or unreadable support selects the exact incumbent request bytes without
+retrying an HTTP400. An initial cold read joins that existing discovery attempt,
+not a Usage-owned probe, cache, timer or retry. Remove the old-shape path when no
+supported or development server lacks the bit. Both request shapes remain at the
+same accounting owner during that transition.
 
 ### Public Account profiles feature id
 
@@ -165,21 +243,24 @@ local opt-in or feature decision. New section consumers use `sessions` directly.
 
 ### Workflows feature id
 
-`workflows` is the single availability decision for structured Workflow authoring, execution,
-inspection, storage, and Action/MCP surfaces. It is server-represented, fail-closed, and depends
-on `automations` in the Protocol catalog. The dependency resolver, not callers, disables Workflow
-when Automations is unavailable.
+`workflows` is the single availability decision for Workflow definitions, automatic triggers,
+execution, inspection, storage, and Action/MCP surfaces. It is server-represented and fail-closed.
+The released `automations` id is a compatibility alias resolved to `workflows` by the Protocol
+feature owner, not a second gate or dependency. Dependencies are enforced centrally.
 
 `resolveWorkflowsFeature`, registered in the one `serverFeatureRegistry`, reads
 `HAPPIER_FEATURE_WORKFLOWS__ENABLED` and defaults on after the approved integrated activation.
+The released `HAPPIER_FEATURE_AUTOMATIONS__ENABLED` variable is a fallback alias; an explicit
+canonical variable takes precedence. Current servers publish the legacy `features.automations.enabled`
+bit from the same final decision, including build-policy denial, for supported older clients.
 This default means a current Home explicitly advertises support; it does not make absence truthy.
 Current clients and daemons treat a missing or malformed `features.workflows.enabled` bit as
 disabled, so they safely degrade against an older Home. Older clients drop the additive unknown
 field and retain their representable one-shot Automation behavior.
 
-Workflow-owned server routes use `createServerFeatureGatedRouteApp` with `workflows`. Runtime
+Workflow and automatic-trigger server routes use `createServerFeatureGatedRouteApp` with `workflows`. Runtime
 registration, UI routes, and Action/MCP availability consume the same catalog decision through
-their existing feature-policy owners. The incumbent `automations` bit is not a proxy for Workflow,
+their existing feature-policy owners. A legacy-only response is not proof of Workflow support,
 and capabilities, Action presence, route probing, or local environment checks must not replace the
 canonical decision. The gate controls availability only; existing authorization, Account mode,
 machine assignment, definition validation, runtime currentness, and permission checks still apply.
@@ -191,9 +272,15 @@ settled disabled/unsupported decisions still fail closed without a storage-retry
 Currentness HTTP failures likewise retain their host-local cause for the
 Workflow failure classifier; invalid content and unavailable encryption material remain separate.
 
-The shared V3 Automation API remains available for one-shot recipes; its canonical Run admission
-and claim owners reject/filter Workflow-v2 recipes when `workflows` is disabled, including Run Now,
-without hiding or poisoning claim pagination for ordinary Automation work.
+The UI lists one Workflows preference. Its released `featureToggles.automations` storage key remains
+the one read/write location, so an older client's preference change is not shadowed by a second
+stored flag. Action and build-policy inputs accepting `automations` delegate to the same owner.
+Missing or malformed canonical enabled bits never fall back to the legacy bit on current clients.
+
+A current client hides Workflows for a 0.2 Home advertising only `automations`:
+0.3 Workflow surfaces require `/v3/automations*`, while the released 0.2 Home
+serves `/v2/automations*`. The released alias preserves older inputs and clients;
+it does not establish support for the new client's API.
 
 ### Connected Services pool quota-limit selection
 

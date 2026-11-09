@@ -268,7 +268,7 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
     }
 
     if (
-        inputSchemaVersion < supportedSchemaVersion
+        inputSchemaVersion < 7
         && Object.prototype.hasOwnProperty.call(input, 'filesDiffPresentationStyle')
         && next.filesDiffPresentationStyle === 'split'
     ) {
@@ -291,10 +291,6 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
         inputSchemaVersion,
         supportedSchemaVersion,
     });
-
-    if (inputSchemaVersion < supportedSchemaVersion) {
-        next.schemaVersion = supportedSchemaVersion;
-    }
 
     // Legacy Voice ingress mutates nested compatibility carriers. It must still
     // pass the canonical parser even when the original nested reference survives.

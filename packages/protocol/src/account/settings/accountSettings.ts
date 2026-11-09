@@ -1,4 +1,6 @@
 import { ThemeProfileLibrarySchema } from './themeProfiles.js';
+import { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
+export { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION, migrateAccountSettingsFeaturePreferences } from './featurePreferenceMigration.js';
 import { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS } from './idleCompactionPreferences.js';
 export { MAX_IDLE_COMPACTION_CACHE_WINDOW_MS, resolveIdleCompactionPreference, type IdleCompactionPreference } from './idleCompactionPreferences.js';
 import { backfillClaudeUnifiedTerminalResponseLocations } from '../../agents/claude/settingsPolicy.js';
@@ -176,8 +178,6 @@ function rekeyLegacyBuiltInAgentMap<T>(
   }
   return Object.fromEntries(entries);
 }
-
-export const ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION = 7;
 
 /** Shared picker recovery and favorite ordering; incoming writes validate every target first. */
 export const FavoriteBackendTargetKeysV1Schema = lazyZodSchema(() => z.pipe(z.transform((value) => {
@@ -1435,7 +1435,7 @@ export const AccountSettingsSchema = lazyZodSchema(() => classicZ.pipe(z.transfo
     if (!raw || typeof raw !== 'object' || Array.isArray(raw))
         return {};
     const effective = backfillClaudeUnifiedTerminalResponseLocations(
-        backfillLegacyTargetKeyedAccountSettings(projectSessionListPreferenceIngress(raw as Record<string, unknown>)),
+        backfillLegacyTargetKeyedAccountSettings(projectSessionListPreferenceIngress(migrateAccountSettingsFeaturePreferences(raw as Record<string, unknown>))),
     );
     // Effective readers no longer own these values. Raw persisted baselines must
     // retain them until the destination-first reserved-row importer commits.

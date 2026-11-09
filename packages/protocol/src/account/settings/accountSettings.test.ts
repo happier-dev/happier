@@ -16,6 +16,8 @@ import {
   isExpoPushNotificationChannelEnabled,
   readAccountSettingValueForBackendTarget,
   SessionHandoffDefaultsV1Schema,
+  normalizeAttachmentsUploadsWorkspaceRelativeDir,
+  resolveFilesEditorAiSuggestionPolicy,
 } from './accountSettings.js';
 import { resolveConnectedServicesProviderStateSharingPolicyV1 } from './connectedServicesSettings.js';
 import {
@@ -33,6 +35,57 @@ describe('recording Session-list privacy preference', () => {
     expect(accountSettingsParse({}).sessionListHiddenTagIdsWhileRecording).toEqual({});
     expect(accountSettingsParse({ sessionListHiddenTagIdsWhileRecording: { home: ['private'] } })
       .sessionListHiddenTagIdsWhileRecording).toEqual({ home: ['private'] });
+  });
+});
+
+describe('Bot motion preference', () => {
+  it('defaults older documents to lively and retains each deliberate choice', () => {
+    expect(accountSettingsParse({})).toHaveProperty('botMotion', 'lively');
+    for (const botMotion of ['lively', 'reactions', 'still']) {
+      expect(accountSettingsParse({ botMotion })).toHaveProperty('botMotion', botMotion);
+    }
+    expect(accountSettingsParse({ botMotion: 'unsupported' })).toHaveProperty('botMotion', 'lively');
+  });
+});
+
+describe('SCM resource preferences', () => {
+  it('defaults resource links to Happier and retains an explicit GitHub choice independently of create-form placement', () => {
+    expect(accountSettingsParse({})).toHaveProperty('scmResourceOpenLocation', 'happier');
+    expect(accountSettingsParse({ scmResourceOpenLocation: 'github', scmPullRequestPlacement: 'details' }))
+      .toMatchObject({ scmResourceOpenLocation: 'github', scmPullRequestPlacement: 'details' });
+    expect(accountSettingsParse({ scmResourceOpenLocation: 'unsupported' })).toHaveProperty('scmResourceOpenLocation', 'happier');
+  });
+});
+
+describe('attachment workspace paths', () => {
+  it('keeps formatting opt-in and reads editor intelligence preferences through the Account owner', () => {
+    expect(accountSettingsParse({})).toMatchObject({ filesEditorFormatOnSave: false, filesEditorInlayHints: 'off', filesEditorSemanticHighlighting: true });
+    expect(accountSettingsParse({ filesEditorFormatOnSave: true, filesEditorInlayHints: 'parameters', filesEditorSemanticHighlighting: false }))
+      .toMatchObject({ filesEditorFormatOnSave: true, filesEditorInlayHints: 'parameters', filesEditorSemanticHighlighting: false });
+  });
+  it('uses the target attachment path rules for settings, including Windows and NUL rejection', () => {
+    expect(normalizeAttachmentsUploadsWorkspaceRelativeDir(' uploads\\nested//files ')).toBe('uploads/nested/files');
+    for (const path of ['C:\\uploads', 'C:uploads', 'uploads/../private', 'uploads\0private', '\\\\server\\share']) {
+      expect(normalizeAttachmentsUploadsWorkspaceRelativeDir(path)).toBeNull();
+    }
+  });
+});
+
+describe('composer presentation preferences', () => {
+  it('reads the predecessor collapsed layout as auto and admits only physical flow choices', () => {
+    const predecessor = { agentInputActionBarLayout: 'collapsed', agentInputChipDensity: 'icons' };
+    expect(accountSettingsParse(predecessor)).toMatchObject({ agentInputActionBarLayout: 'auto', agentInputChipDensity: 'icons' });
+    expect(predecessor).toEqual({ agentInputActionBarLayout: 'collapsed', agentInputChipDensity: 'icons' });
+    for (const layout of ['auto', 'wrap', 'scroll']) {
+      expect(ACCOUNT_SETTING_DEFINITIONS.agentInputActionBarLayout.parseMutationValue(layout)).toMatchObject({ success: true, data: layout });
+    }
+    expect(ACCOUNT_SETTING_DEFINITIONS.agentInputActionBarLayout.parseMutationValue('collapsed').success).toBe(false);
+    expect(Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, 'composerPromptLibraryButtonEnabled')).toBe(false);
+    expect(accountSettingsParse({ composerPromptLibraryButtonEnabled: false })).not.toHaveProperty('composerPromptLibraryButtonEnabled');
+  });
+
+  it('defaults the chip layout to auto, so the composer rails scroll as in 0.2 (owner 2026-10-30)', () => {
+    expect(accountSettingsParse({})).toMatchObject({ agentInputActionBarLayout: 'auto' });
   });
 });
 
@@ -83,6 +136,41 @@ describe('file Ask target preference', () => {
   it('defaults old Accounts to side runs and preserves an explicit new-session choice', () => {
     expect(accountSettingsParse({}).filesAskWithoutSessionTarget).toBe('detached_run');
     expect(accountSettingsParse({ filesAskWithoutSessionTarget: 'session' }).filesAskWithoutSessionTarget).toBe('session');
+  });
+});
+
+describe('file editor AI suggestion policy', () => {
+  it('defaults the separate next-edit model to null and retains a deliberate operation-specific selection', () => {
+    const settings = accountSettingsParse({}).filesEditorAiSuggestionsV1;
+    expect(settings.nextEditModelId).toBeNull();
+    const selected = { ...settings, enabled: true, connectionId: 'pc_local', modelId: 'qwen:base', nextEditModelId: 'sweep:edit' };
+    expect(ACCOUNT_SETTING_DEFINITIONS.filesEditorAiSuggestionsV1.parseMutationValue(selected).success).toBe(true);
+    expect(accountSettingsParse({ filesEditorAiSuggestionsV1: { ...selected, futureDisplayFact: true } }).filesEditorAiSuggestionsV1)
+      .toMatchObject(selected);
+    expect(ACCOUNT_SETTING_DEFINITIONS.filesEditorAiSuggestionsV1.parseMutationValue({ ...selected, nextEditModelId: 'not a model id' }).success).toBe(false);
+  });
+  it('keeps existing Accounts off and retains exact source and privacy choices', () => {
+    expect(accountSettingsParse({}).filesEditorAiSuggestionsV1).toMatchObject({
+      enabled: false, connectionId: null, modelId: null, mode: 'automatic', delay: 'normal',
+      excludedGlobs: ['**/.env*', '**/secrets', '**/secrets/**', '**/secrets.*'], disabledLanguageIds: [],
+    });
+    const policy = { enabled: true, connectionId: 'pc_local', modelId: 'coder:base', mode: 'onRequest',
+      delay: 'relaxed', excludedGlobs: ['private/**'], disabledLanguageIds: ['markdown'] };
+    expect(accountSettingsParse({ filesEditorAiSuggestionsV1: policy }).filesEditorAiSuggestionsV1)
+      .toEqual({ ...policy, nextEditEnabled: false, nextEditModelId: null });
+    expect(ACCOUNT_SETTING_DEFINITIONS.filesEditorAiSuggestionsV1.parseMutationValue({ ...policy, modelId: 'not a model id' }).success).toBe(false);
+    expect(accountSettingsParse({ filesEditorAiSuggestionsV1: { ...policy, enabled: 'true' } })
+      .filesEditorAiSuggestionsV1.enabled).toBe(false);
+  });
+  it('excludes secret files at the root and nested paths with either separator style', () => {
+    const policy = accountSettingsParse({ filesEditorAiSuggestionsV1: {
+      enabled: true, connectionId: 'pc_a', modelId: 'base',
+    } }).filesEditorAiSuggestionsV1;
+    for (const path of ['.env.local', 'config/.env.production', 'secrets', 'secrets/token', 'config/secrets.json', 'config\\secrets\\token']) {
+      expect(resolveFilesEditorAiSuggestionPolicy(policy, { path, languageId: 'typescript' }), path).toBe('excluded');
+    }
+    expect(resolveFilesEditorAiSuggestionPolicy(policy, { path: 'src/public.ts', languageId: 'typescript' })).toBeNull();
+    expect(resolveFilesEditorAiSuggestionPolicy({ ...policy, disabledLanguageIds: ['typescript'] }, { path: 'src/public.ts', languageId: 'typescript' })).toBe('language_disabled');
   });
 });
 
@@ -254,8 +342,11 @@ describe('accountSettings', () => {
     expect(accountSettingsParse({ usageCoachPreferencesV1: { ...preferences, digestCadence: 'weekly' } }).usageCoachPreferencesV1).toEqual({ ...preferences, ...defaults });
     expect(accountSettingsParse({}).usageCoachPreferencesV1).toEqual({ v: 1, suppressions: [], ...defaults });
     const configured = { ...preferences, disabledChecks: ['mcp_overhead', 'outside_usage'], modelSuggestion: 'complete_only' };
-    const admitted = ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue(configured);
+    const { suppressions: legacySuppressions, ...currentPreferences } = configured;
+    expect(legacySuppressions).toHaveLength(2);
+    const admitted = ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue(currentPreferences);
     expect(admitted.success).toBe(true);
+    expect(ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue(configured).success).toBe(false);
     expect(accountSettingsParse({ usageCoachPreferencesV1: configured }).usageCoachPreferencesV1).toEqual(configured);
     expect(ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue({ ...configured, disabledChecks: ['invented'] }).success).toBe(false);
     expect(ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue({ ...preferences, digestCadence: 'weekly' }).success).toBe(false);
@@ -431,12 +522,11 @@ describe('accountSettings', () => {
     expect(accountSettingsParse({ sessionReminderAutoClearOnOpen: false }).sessionReminderAutoClearOnOpen).toBe(false);
   });
 
-  it('defaults committed message actions and the composer Library button on while retaining explicit opt-outs', () => {
+  it('defaults committed message actions on while retaining explicit opt-outs', () => {
     const keys = ['transcriptMessageCopyActionEnabled', 'transcriptMessageForkActionEnabled',
       'transcriptMessageRollbackActionEnabled', 'transcriptMessagePinActionEnabled',
       'transcriptMessageSavePromptActionEnabled', 'transcriptMessagePluginActionsEnabled',
-      'transcriptMessageMakeRepeatableActionEnabled',
-      'composerPromptLibraryButtonEnabled'] as const;
+      'transcriptMessageMakeRepeatableActionEnabled'] as const;
     const defaults = accountSettingsParse({});
     const disabled = accountSettingsParse(Object.fromEntries(keys.map((key) => [key, false])));
     for (const key of keys) {
@@ -524,7 +614,7 @@ describe('accountSettings', () => {
   });
 
   it('owns the current schema version for a blank Account Settings document', () => {
-    expect(ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION).toBe(7);
+    expect(ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION).toBe(9);
     expect(accountSettingsParse({}).schemaVersion).toBe(ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION);
   });
 

@@ -20,7 +20,8 @@ export function migrateAccountFeatureToggles(params: {
     }
     delete next['inbox.friends'];
 
-    if (params.inputSchemaVersion < params.supportedSchemaVersion && next['files.editor'] === false) {
+    // Promotion boundaries are fixed: later schema upgrades must preserve opt-outs.
+    if (params.inputSchemaVersion < 7 && next['files.editor'] === false) {
         delete next['files.editor'];
     }
 

@@ -235,6 +235,11 @@
       "types": "./dist/account/settings/connectedServicesSettings.d.ts",
       "default": "./dist/account/settings/connectedServicesSettings.js"
     },
+    "./account/settings/featurePreferenceMigration": {
+      "happier-source": "./src/account/settings/featurePreferenceMigration.ts",
+      "types": "./dist/account/settings/featurePreferenceMigration.d.ts",
+      "default": "./dist/account/settings/featurePreferenceMigration.js"
+    },
     "./account/settings/filesEditorAiSuggestionsV1": {
       "happier-source": "./src/account/settings/filesEditorAiSuggestionsV1.ts",
       "types": "./dist/account/settings/filesEditorAiSuggestionsV1.d.ts",
@@ -7655,6 +7660,11 @@
       "types": "./dist/plugins/actions/connectedAccountPurposeBindingV2.d.ts",
       "default": "./dist/plugins/actions/connectedAccountPurposeBindingV2.js"
     },
+    "./plugins/actions/daemonInvocationKindsV1": {
+      "happier-source": "./src/plugins/actions/daemonInvocationKindsV1.ts",
+      "types": "./dist/plugins/actions/daemonInvocationKindsV1.d.ts",
+      "default": "./dist/plugins/actions/daemonInvocationKindsV1.js"
+    },
     "./plugins/actions/daemonInvocationV1": {
       "happier-source": "./src/plugins/actions/daemonInvocationV1.ts",
       "types": "./dist/plugins/actions/daemonInvocationV1.d.ts",
@@ -13861,6 +13871,11 @@
       "types": "./dist/usage/usageActionIdsV1.d.ts",
       "default": "./dist/usage/usageActionIdsV1.js"
     },
+    "./usage/usageActivityProjectionFacts": {
+      "happier-source": "./src/usage/usageActivityProjectionFacts.ts",
+      "types": "./dist/usage/usageActivityProjectionFacts.d.ts",
+      "default": "./dist/usage/usageActivityProjectionFacts.js"
+    },
     "./usage/usageActivitySummary": {
       "happier-source": "./src/usage/usageActivitySummary.ts",
       "types": "./dist/usage/usageActivitySummary.d.ts",
@@ -13980,6 +13995,11 @@
       "happier-source": "./src/usage/usagePricingPopulation.ts",
       "types": "./dist/usage/usagePricingPopulation.d.ts",
       "default": "./dist/usage/usagePricingPopulation.js"
+    },
+    "./usage/usagePricingReuse": {
+      "happier-source": "./src/usage/usagePricingReuse.ts",
+      "types": "./dist/usage/usagePricingReuse.d.ts",
+      "default": "./dist/usage/usagePricingReuse.js"
     },
     "./usage/usageRecap": {
       "happier-source": "./src/usage/usageRecap.ts",

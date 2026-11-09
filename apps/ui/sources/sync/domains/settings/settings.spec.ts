@@ -2,10 +2,11 @@ import { authoringMemoryDefaults, projectAuthoringMemory } from '@/sync/store/do
 import { describe, it, expect } from 'vitest';
 import {
     DEFAULT_ACTIONS_SETTINGS_V1,
-    DEFAULT_BUILT_IN_BACKEND_PROFILES,
-    PROVIDER_MIGRATION_SOURCE_PROFILE_IDS,
     deriveAttentionDeliveryPolicyFromLegacySettings,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/accountSettings';
+import {
+    DEFAULT_BUILT_IN_BACKEND_PROFILES,
+    PROVIDER_MIGRATION_SOURCE_PROFILE_IDS} from '@happier-dev/protocol/profiles/builtInBackendProfiles';
 import { DEFAULT_AGENT_ID } from '@/agents/registry/registryCore';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import {
@@ -337,7 +338,7 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).featureToggles?.['files.editor']).toBeUndefined();
-            expect((parsed as any).schemaVersion).toBe(7);
+            expect(parsed.schemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
         });
 
         it('keeps explicit disable for files.editor when schemaVersion matches current (user intent)', () => {
@@ -350,7 +351,7 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).featureToggles?.['files.editor']).toBe(false);
-            expect((parsed as any).schemaVersion).toBe(7);
+            expect(parsed.schemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
         });
 
         it('migrates legacy filesDiffPresentationStyle=split to unified (new default) for old schema versions', () => {
@@ -360,7 +361,7 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).filesDiffPresentationStyle).toBe('unified');
-            expect((parsed as any).schemaVersion).toBe(7);
+            expect(parsed.schemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
         });
 
         it('keeps explicit filesDiffPresentationStyle=split when schemaVersion matches current (user intent)', () => {
@@ -370,7 +371,7 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).filesDiffPresentationStyle).toBe('split');
-            expect((parsed as any).schemaVersion).toBe(7);
+            expect(parsed.schemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
         });
 
         it('migrates legacy sessionListDensity=compact to cozy', () => {
@@ -668,7 +669,7 @@ describe('settings', () => {
 	            expect(localConversation.handsFree.endpointing.silenceMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs);
 	            expect(localConversation.handsFree.endpointing.minSpeechMs).toBe(VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs);
 	            expect(localConversation.tts.bargeInEnabled).toBe(true);
-	            expect(localConversation.agent.permissionIntent).toBe('read-only');
+	            expect(localConversation.agent.permissionIntent).toBe('default');
 	            expect(localConversation.agent.idleTtlSeconds).toBe(1800);
             expect(localConversation.agent.chatModelSource).toBe('custom');
             expect(localConversation.agent.chatModelId).toBe('default');
@@ -677,6 +678,19 @@ describe('settings', () => {
             expect(localConversation.streaming.ttsEnabled).toBe(true);
             expect(localConversation.streaming.ttsChunkChars).toBe(200);
             expect(localConversation.agent.verbosity).toBe('short');
+        });
+
+        it.each([
+            [{}, 'default'],
+            [{ voiceSettingsV1: { providers: { local_conversation: { schemaVersion: 1, config: { agent: {} } } } } }, 'default'],
+            [{ voice: { adapters: { local_conversation: { agent: {} } } } }, 'default'],
+            [{ voiceSettingsV1: { providers: { local_conversation: { schemaVersion: 1, config: { agent: { permissionIntent: 'read-only' } } } } } }, 'read-only'],
+            [{ voice: { adapters: { local_conversation: { agent: { permissionPolicy: 'read_only' } } } } }, 'read-only'],
+        ] as const)('projects implicit Voice permissions and preserves saved choices through reload (%j)', (input, permissionIntent) => {
+            const parsed = settingsParse(input);
+            expect(readLocalConversationVoiceSettings(parsed.voice).agent.permissionIntent).toBe(permissionIntent);
+            const reloaded = settingsParse(JSON.parse(JSON.stringify(parsed)));
+            expect(readLocalConversationVoiceSettings(reloaded.voice).agent.permissionIntent).toBe(permissionIntent);
         });
 
         it('does not mutate voice defaults while parsing a partial voice config', () => {
@@ -1012,7 +1026,7 @@ describe('settings', () => {
             expect((parsed as any).permissionPromptSurface).toBe('composer');
         });
 
-        it('parses favorite backend targets and the last new-session picker view', () => {
+        it('parses favorite backend targets without projecting retired picker memory', () => {
             const codexTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
             const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
             const parsed = settingsParse({
@@ -1030,14 +1044,10 @@ describe('settings', () => {
                 codexTargetKey,
                 claudeTargetKey,
             ]);
-            expect((parsed as any).lastNewSessionAgentPickerViewV1).toEqual({
-                kind: 'backend',
-                backendTargetKey: codexTargetKey,
-            });
-
+            expect(parsed).not.toHaveProperty('lastNewSessionAgentPickerViewV1');
             expect(settingsParse({
                 lastNewSessionAgentPickerViewV1: { kind: 'favoriteModels' },
-            } as any).lastNewSessionAgentPickerViewV1).toEqual({ kind: 'favoriteModels' });
+            })).not.toHaveProperty('lastNewSessionAgentPickerViewV1');
         });
 
         it('falls back to no favorite backend targets when the collection is malformed', () => {
@@ -1375,7 +1385,7 @@ describe('settings', () => {
 
         it('opaque-preserves legacy plugin settings when upgrading a pre-v6 payload', () => {
             const parsed = settingsParse({ schemaVersion: 5, codexBackendMode: 'mcp' } as any);
-            expect(parsed.schemaVersion).toBe(7);
+            expect(parsed.schemaVersion).toBe(SUPPORTED_SCHEMA_VERSION);
             expect((parsed as any).codexBackendMode).toBe('mcp');
         });
 
